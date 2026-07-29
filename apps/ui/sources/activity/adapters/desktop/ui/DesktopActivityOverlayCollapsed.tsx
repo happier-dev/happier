@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { AccessibilityInfo, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import Animated, {
     useAnimatedStyle,
     useSharedValue,
@@ -12,6 +12,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useScreenReaderEnabled } from '@/hooks/ui/useScreenReaderEnabled';
 
 import {
     DesktopActivityOverlayChromeBackdrop,
@@ -74,41 +75,6 @@ function resolveNotchWingContentInset(
     }
 
     return desktopActivityOverlayChromeMetrics.collapsed.notchContentInset;
-}
-
-function useScreenReaderEnabled(): boolean {
-    const [screenReaderEnabled, setScreenReaderEnabled] = React.useState(false);
-
-    React.useEffect(() => {
-        let disposed = false;
-        const maybeApi = AccessibilityInfo as unknown as {
-            isScreenReaderEnabled?: () => Promise<boolean>;
-            addEventListener?: (eventName: string, handler: (enabled: boolean) => void) => { remove?: () => void };
-        };
-
-        if (typeof maybeApi.isScreenReaderEnabled === 'function') {
-            void maybeApi.isScreenReaderEnabled().then((enabled) => {
-                if (!disposed) {
-                    setScreenReaderEnabled(Boolean(enabled));
-                }
-            }).catch(() => {});
-        }
-
-        const subscription = typeof maybeApi.addEventListener === 'function'
-            ? maybeApi.addEventListener('screenReaderChanged', (enabled) => {
-                if (!disposed) {
-                    setScreenReaderEnabled(Boolean(enabled));
-                }
-            })
-            : null;
-
-        return () => {
-            disposed = true;
-            subscription?.remove?.();
-        };
-    }, []);
-
-    return screenReaderEnabled;
 }
 
 function selectMostUrgentSlideIndex(

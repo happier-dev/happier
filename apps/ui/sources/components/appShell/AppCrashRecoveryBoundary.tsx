@@ -13,8 +13,7 @@ import {
 import { Typography } from '@/constants/Typography';
 import { getBugReportUserActionTrail } from '@/utils/system/bugReportActionTrail';
 import { getBugReportLogText } from '@/utils/system/bugReportLogBuffer';
-import { persistPreRestartBugReportSnapshot } from '@/utils/system/preRestartBugReportSnapshot';
-import { persistRestartBugReportIntent } from '@/utils/system/restartBugReportIntent';
+import { requireReactNativeScreens } from '@/utils/web/reactNativeScreensCjs';
 
 type AppCrashRecoveryBoundaryProps = Readonly<{
   children: React.ReactNode;
@@ -82,6 +81,28 @@ function readIsSecureContextForDiagnostics(): boolean | null {
   } catch {
     return null;
   }
+}
+
+function NativeCrashRecoveryOverlay(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
+  if (Platform.OS === 'ios') {
+    try {
+      const FullWindowOverlay = requireReactNativeScreens()?.FullWindowOverlay as
+        | React.ComponentType<{ children?: React.ReactNode }>
+        | undefined;
+      if (FullWindowOverlay) return <FullWindowOverlay>{props.children}</FullWindowOverlay>;
+    } catch {
+      // Fall through to a root overlay when react-native-screens is unavailable.
+    }
+  }
+  return (
+    <View
+      testID="app-crash-recovery-native-overlay-fallback"
+      style={styles.nativeOverlayFallback}
+      pointerEvents="auto"
+    >
+      {props.children}
+    </View>
+  );
 }
 
 export function AppBlockingScreen(props: Readonly<{
@@ -236,6 +257,14 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
 
     void (async () => {
       try {
+        const [
+          { persistPreRestartBugReportSnapshot },
+          { persistRestartBugReportIntent },
+        ] = await Promise.all([
+          import('@/utils/system/preRestartBugReportSnapshot'),
+          import('@/utils/system/restartBugReportIntent'),
+        ]);
+
         await persistPreRestartBugReportSnapshot({
           v: 1,
           createdAtMs,
@@ -292,7 +321,7 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
       variant: 'secondary',
     };
 
-    return (
+    const fallback = (
       <AppBlockingScreen
         title={t('appCrash.title')}
         subtitle={t('appCrash.subtitle')}
@@ -301,6 +330,8 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
         actions={[primaryAction, reportBugAction, secondaryAction]}
       />
     );
+    if (Platform.OS === 'web') return fallback;
+    return <NativeCrashRecoveryOverlay>{fallback}</NativeCrashRecoveryOverlay>;
   }
 }
 
@@ -319,6 +350,11 @@ const styles = StyleSheet.create(() => ({
   container: {
     flex: 1,
     minHeight: 0,
+  },
+  nativeOverlayFallback: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 100000,
+    elevation: 100000,
   },
   scrollView: {
     flex: 1,

@@ -18,7 +18,7 @@ vi.mock('@/sync/sync', () => ({
         ensureSidechainMessagesLoaded: vi.fn(),
         loadOlderSidechainMessages: vi.fn(),
         getSyncTuning: () => ({
-            transcriptFlashListEstimatedItemSize: 120,
+            transcriptEstimatedItemSizePx: 120,
         }),
     },
 }));
@@ -89,6 +89,7 @@ describe('ToolFullView (jumpChildId)', () => {
 
         const screen = await renderScreen(React.createElement(ToolFullView, {
             tool: makeToolCall({ name: 'Task' }),
+            owningMessageId: 'task-message-1',
             sessionId: 's1',
             metadata: null,
             messages,

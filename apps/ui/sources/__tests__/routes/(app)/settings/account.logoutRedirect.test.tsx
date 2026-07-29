@@ -18,7 +18,6 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
 
 const logoutMock = vi.hoisted(() => vi.fn(async () => {}));
 

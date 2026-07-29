@@ -10,6 +10,12 @@ const beginSessionProjectScmOperationMock = vi.hoisted(() => vi.fn());
 const finishSessionProjectScmOperationMock = vi.hoisted(() => vi.fn(() => true));
 const appendSessionProjectScmOperationMock = vi.hoisted(() => vi.fn());
 const invalidateFromMutationAndAwaitMock = vi.hoisted(() => vi.fn(async () => {}));
+const daemonProjectionState = vi.hoisted(() => ({
+    current: {
+        phase: 'unsupported',
+        inputs: null,
+    } as Readonly<Record<string, unknown>>,
+}));
 
 const sessionScmRemoteAddMock = vi.hoisted(() => vi.fn<(sessionId: string, request: {
     name: string;
@@ -66,6 +72,7 @@ let sessionSnapshotMock: any = null;
 let capturedRemotesProps: any = null;
 let capturedBranchProps: any = null;
 let capturedPublishProps: any = null;
+let capturedCommitTabProps: any = null;
 
 
 installSessionDetailsPanelCommonModuleMocks({
@@ -190,16 +197,8 @@ vi.mock('@/utils/sessions/machineUtils', () => ({
     isMachineOnline: () => true,
 }));
 
-vi.mock('@/scm/registry/scmUiBackendRegistry', () => ({
-    scmUiBackendRegistry: {
-        getPluginForSnapshot: () => ({
-            displayName: 'Git',
-            commitActionConfig: () => ({ label: 'Commit' }),
-            remoteActionConfig: () => ({ fetch: true, pull: true, push: true }),
-            inferRemoteTarget: () => ({ remote: 'origin', branch: 'main' }),
-            mapCapabilitiesToUiPolicy: () => ({ supportedDiffAreas: ['pending'], changeSetModel: 'index' }),
-        }),
-    },
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+    useDaemonMergedProjectionInputs: () => daemonProjectionState.current,
 }));
 
 vi.mock('@/scm/scmStatusSync', () => ({
@@ -244,7 +243,10 @@ vi.mock('@/components/workspaces/scm/WorkspaceScmHistoryTab', () => ({
 }));
 
 vi.mock('./SessionRightPanelGitCommitTabContent', () => ({
-    SessionRightPanelGitCommitTabContent: () => React.createElement('SessionRightPanelGitCommitTabContent'),
+    SessionRightPanelGitCommitTabContent: (props: any) => {
+        capturedCommitTabProps = props;
+        return React.createElement('SessionRightPanelGitCommitTabContent');
+    },
 }));
 
 vi.mock('@/sync/ops/sessions', () => ({
@@ -350,6 +352,8 @@ describe('SessionRightPanelGitUpdateTab (owner-path compatibility)', () => {
         capturedRemotesProps = null;
         capturedBranchProps = null;
         capturedPublishProps = null;
+        capturedCommitTabProps = null;
+        daemonProjectionState.current = { phase: 'unsupported', inputs: null };
 
         beginSessionProjectScmOperationMock.mockReturnValue({
             started: true,
@@ -387,6 +391,65 @@ describe('SessionRightPanelGitUpdateTab (owner-path compatibility)', () => {
         expect(capturedRemotesProps.writeEnabled).toBe(true);
         expect(capturedBranchProps.writeEnabled).toBe(true);
         expect(capturedPublishProps.writeEnabled).toBe(true);
+    });
+
+    it('uses the daemon-projected packed backend identity in the session source-control surface', async () => {
+        activeGitSubTab = 'commit';
+        sessionSnapshotMock = createSnapshot({
+            repo: {
+                isRepo: true,
+                rootPath: '/repo',
+                backendId: 'acme.scm/stacked',
+                mode: '.stacked',
+                remotes: [],
+            },
+        });
+        daemonProjectionState.current = {
+            phase: 'ready',
+            inputs: {
+                pluginProjectionV2: {
+                    v: 2,
+                    generation: 41,
+                    installedPackagesById: {},
+                    agentsById: {},
+                    backendsById: {},
+                    actionsById: {},
+                    toolsById: {},
+                    commandsById: {},
+                    resourcesById: {},
+                    settingsById: {},
+                    familiesById: {
+                        scmBackends: {
+                            family: 'scmBackends',
+                            entriesById: {
+                                'acme.scm/stacked': {
+                                    id: 'acme.scm/stacked',
+                                    localId: 'stacked',
+                                    pluginId: 'acme.scm',
+                                    title: 'Acme Stacked SCM',
+                                    description: 'Packed stacked-change backend',
+                                    capabilities: ['detect', 'status', 'diff', 'commit'],
+                                },
+                            },
+                        },
+                        scmHostingProviders: {
+                            family: 'scmHostingProviders',
+                            entriesById: {},
+                        },
+                        connectedAccounts: {
+                            family: 'connectedAccounts',
+                            entriesById: {},
+                        },
+                    },
+                    diagnostics: [],
+                },
+            },
+        };
+
+        const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+        await renderScreen(<SessionRightPanelGitView sessionId="session-1" scopeId="session:1" />);
+
+        expect(capturedCommitTabProps.backendLabel).toBe('Acme Stacked SCM');
     });
 
     it('routes remotes and branch-integration callbacks through session-scoped update RPCs', async () => {

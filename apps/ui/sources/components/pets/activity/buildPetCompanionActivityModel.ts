@@ -1,7 +1,6 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import {
     deriveSessionRuntimePresentationState,
-    readFreshInProgressRuntimeSignalTimestamps,
     SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
     type SessionRuntimePresentationState,
 } from '@/sync/domains/session/attention/runtimePresentation';
@@ -95,20 +94,13 @@ function isLiveSessionRuntime(session: Session): boolean {
 function latestRunningRuntimeSignalTimestamp(
     session: Session,
     signals: PetCompanionSessionSignals | undefined,
-    nowMs: number,
 ): number | null {
     return latestTimestamp([
         signals?.latestThinkingActivityAtMs,
         session.thinkingAt,
-        ...readFreshInProgressRuntimeSignalTimestamps({
-            active: session.active,
-            activeAt: session.activeAt,
-            presence: session.presence,
-            thinking: session.thinking,
-            thinkingAt: session.thinkingAt,
-            latestTurnStatus: session.latestTurnStatus ?? null,
-            latestTurnStatusObservedAt: session.latestTurnStatusObservedAt ?? null,
-        }, nowMs),
+        session.latestTurnStatus === 'in_progress'
+            ? session.latestTurnStatusObservedAt
+            : null,
     ]);
 }
 
@@ -130,6 +122,8 @@ function resolveCandidate(
         presence: session.presence,
         thinking: session.thinking,
         thinkingAt: session.thinkingAt,
+        optimisticThinkingAt: session.optimisticThinkingAt ?? null,
+        hasPendingUserMessages: (session.pendingCount ?? 0) > 0,
         latestTurnStatus: session.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: session.latestTurnStatusObservedAt ?? null,
         meaningfulActivityAt: session.meaningfulActivityAt ?? null,
@@ -178,7 +172,7 @@ function resolveCandidate(
     const hasRunningActivity = isLiveSessionRuntime(session) && runtimePresentation.working;
 
     if (hasRunningActivity) {
-        const runtimeSignalAtMs = latestRunningRuntimeSignalTimestamp(session, signals, runtimeNowMs);
+        const runtimeSignalAtMs = latestRunningRuntimeSignalTimestamp(session, signals);
         const activityAtMs = latestTimestamp([
             runtimeSignalAtMs,
             session.createdAt,
@@ -187,7 +181,9 @@ function resolveCandidate(
             session,
             status: 'running',
             activityAtMs,
-            expiresAtMs: resolveRunningExpiresAtMs(runtimeSignalAtMs),
+            expiresAtMs: runtimePresentation.projectedTurnInProgress
+                ? null
+                : resolveRunningExpiresAtMs(runtimeSignalAtMs),
         };
     }
 

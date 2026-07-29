@@ -1,285 +1,102 @@
-import { Redirect, Stack, router, useGlobalSearchParams, usePathname, useSegments } from 'expo-router';
+import { Stack, router, usePathname } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
-import { Platform, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Platform, TouchableOpacity } from 'react-native';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { useUnistyles } from 'react-native-unistyles';
 import { getPreferredLanguage, t } from '@/text';
 import { createAppStackScreenOptions } from '@/components/navigation/createAppStackScreenOptions';
 import { useAuth } from '@/auth/context/AuthContext';
-import { isPublicRouteForUnauthenticated } from '@/auth/routing/authRouting';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
-import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
-import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
-import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
-import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
-import { bootstrapActiveServerFromWebLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
-import { buildTerminalConnectWebHref, isTerminalConnectWebPathname } from '@/utils/path/terminalConnectUrl';
-import { useWebInitialRouteReconcile } from '@/hooks/ui/useWebInitialRouteReconcile';
-import { useHappierVoiceSupport } from '@/hooks/server/useHappierVoiceSupport';
-import { shouldHoldAuthenticatedShellForWebServerOverride } from '@/sync/domains/server/url/shouldHoldAuthenticatedShellForWebServerOverride';
-import { consumeLegacySessionDeepLinkFromWebLocation } from '@/sync/domains/server/url/consumeLegacySessionDeepLinkFromWebLocation';
-import { resolveAuthenticatedWebServerUrlOverrideAction } from '@/sync/domains/server/url/resolveAuthenticatedWebServerUrlOverrideAction';
-import { shouldSwitchToServerUrl } from '@/sync/domains/server/url/serverUrlOverridePolicy';
+import { isTerminalConnectWebPathname } from '@/utils/path/terminalConnectUrl';
 import {
     createFriendsStackScreenOptions,
     createInboxStackScreenOptions,
 } from '@/utils/navigation/createSocialStackScreenOptions';
 import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
-import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
-import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
+import { isTauriDesktop } from '@/utils/platform/tauri';
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { MobileBottomChromeHost } from '@/components/navigation/mobile/chrome/MobileBottomChromeHost';
 import { SessionCockpitChromeRegistryProvider } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+import { BrowserPresentationRetentionProvider } from '@/components/browser/surfaces/browserPresentationRetention';
 import { AuthenticatedAppRuntimeMounts } from '@/components/appShell/runtime/AuthenticatedAppRuntimeMounts';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { useEndpointConnectivity, useSyncError } from '@/sync/domains/state/storage';
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { useSetting } from '@/sync/domains/state/storage';
 import {
-    isSessionRouteInAuthRecoverySubtree,
-    resolveSessionRouteAuthRecoveryState,
-    shouldNormalizeSessionRouteToAuthRecoveryBase,
-} from '@/hooks/session/sessionRouteAuthRecovery';
-
-const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
+    resolveNewSessionRoutePresentation,
+    resolveNewSessionSecretRequirementRoutePresentation,
+} from '@/components/sessions/new/navigation/newSessionPresentation';
+import { resolveSettingsRouteAnimation, resolveSettingsRoutePresentation } from '@/components/settings/navigation/settingsRoutePresentation';
+import { useDeviceType } from '@/utils/platform/responsive';
+import { RootLayoutNavigationEffects } from '@/components/navigation/root/RootLayoutNavigationEffects';
+import { RootLayoutRedirectGate } from '@/components/navigation/root/RootLayoutRedirectGate';
+import { useOnboardingJourneySessionActive } from '@/components/onboarding/tour/state/journeySession';
 
 type StackScreenProps = React.ComponentProps<typeof Stack.Screen>;
 type StackScreenOptions = NonNullable<StackScreenProps['options']>;
 
 const MAIN_TAB_STACK_SCREEN_OPTIONS = { animation: 'none' } as const;
+const SESSION_COCKPIT_SURFACE_STACK_SCREEN_OPTIONS = {
+    animation: 'none',
+    headerShown: false,
+} as const satisfies StackScreenOptions;
 
-export default function RootLayout() {
+/**
+ * Keeps authenticated runtimes outside the full-viewport onboarding journey and
+ * preserves the desktop-overlay/terminal-connect route exclusions.
+ *
+ * Keeping these subscriptions in this leaf prevents their updates from reaching
+ * the Stack subtree.
+ */
+function AuthenticatedAppRuntimeMountsGate({
+    isDesktopOverlayWindow,
+    isAuthenticated,
+    isTauriDesktopHost,
+}: Readonly<{
+    isDesktopOverlayWindow: boolean;
+    isAuthenticated: boolean;
+    isTauriDesktopHost: boolean;
+}>): React.ReactElement | null {
+    const pathname = usePathname();
+    const onboardingJourneyActive = useOnboardingJourneySessionActive();
+    if (onboardingJourneyActive) return null;
+
+    if (isDesktopOverlayWindow || isTerminalConnectWebPathname(pathname)) {
+        return null;
+    }
+
+    return (
+        <AuthenticatedAppRuntimeMounts
+            isAuthenticated={isAuthenticated}
+            isTauriDesktopHost={isTauriDesktopHost}
+        />
+    );
+}
+
+function MobileBottomChromeMountGate(): React.ReactElement | null {
+    const onboardingJourneyActive = useOnboardingJourneySessionActive();
+    if (onboardingJourneyActive) return null;
+    return <MobileBottomChromeHost />;
+}
+
+const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElement {
     const auth = useAuth();
     const isAuthenticated = auth.isAuthenticated;
-    const refreshAuth = auth.refreshFromActiveServer;
-    const segments = useSegments();
-    const pathname = usePathname();
-    const globalSearchParams = useGlobalSearchParams();
     const { theme } = useUnistyles();
     const preferredLanguage = getPreferredLanguage();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
-    const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';
-    const happierVoiceSupported = useHappierVoiceSupport();
     const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
     const isTauriDesktopHost = isTauriDesktop();
-    const isTerminalConnectRoute = isTerminalConnectWebPathname(pathname);
-    const endpointConnectivity = useEndpointConnectivity();
-    const syncError = useSyncError();
-    const activeServerSnapshot = useActiveServerSnapshot();
+    const newSessionPresentationMode = useSetting('newSessionPresentationModeV1');
+    const deviceType = useDeviceType();
     const stackContentStyle = React.useMemo(
         () => ({
             backgroundColor: isDesktopOverlayWindow ? 'transparent' : theme.colors.surface.base,
         }),
         [isDesktopOverlayWindow, theme.colors.surface.base],
     );
-    const sessionRouteAuthRecovery = React.useMemo(
-        () => resolveSessionRouteAuthRecoveryState({
-            routeParams: globalSearchParams,
-            activeServerId: activeServerSnapshot.serverId,
-            endpointStatus: endpointConnectivity.status,
-            syncError,
-        }),
-        [activeServerSnapshot.serverId, endpointConnectivity.status, globalSearchParams, syncError],
-    );
-    const shouldHoldProtectedRouteForAuthRecovery = React.useMemo(
-        () => isSessionRouteInAuthRecoverySubtree({
-            pathname,
-            authRecovery: sessionRouteAuthRecovery,
-        }),
-        [pathname, sessionRouteAuthRecovery],
-    );
-    const shouldNormalizeSessionRouteForAuthRecovery = React.useMemo(
-        () => !isAuthenticated && shouldNormalizeSessionRouteToAuthRecoveryBase({
-            pathname,
-            authRecovery: sessionRouteAuthRecovery,
-        }),
-        [isAuthenticated, pathname, sessionRouteAuthRecovery],
-    );
-
-    useWebInitialRouteReconcile({ routerPathname: pathname });
-
-    React.useEffect(() => {
-        if (!isTauriDesktopHost) return;
-        void invokeTauri('desktop_set_window_mode', { mode: 'main' });
-    }, [isTauriDesktopHost]);
-
-    const [isApplyingWebServerOverride, setIsApplyingWebServerOverride] = React.useState(() =>
-        shouldHoldAuthenticatedShellForWebServerOverride(isAuthenticated),
-    );
-    const webServerOverrideHandledRef = React.useRef(false);
-    React.useEffect(() => {
-        if (!isAuthenticated) {
-            setIsApplyingWebServerOverride(false);
-            return;
-        }
-        if (webServerOverrideHandledRef.current) return;
-        const overrideAction = resolveAuthenticatedWebServerUrlOverrideAction({
-            isAuthenticated,
-            bootstrappedServerUrl: bootstrappedWebServerOverride?.serverUrl ?? null,
-        });
-        if (overrideAction.kind === 'none') {
-            setIsApplyingWebServerOverride(false);
-            return;
-        }
-        webServerOverrideHandledRef.current = true;
-
-        if (overrideAction.kind === 'cleanup_only' || overrideAction.kind === 'refresh_auth') {
-            if (overrideAction.kind === 'refresh_auth') {
-                fireAndForget(refreshAuth(), { tag: 'RootLayout.webServerOverrideBootstrapped.refreshAuth' });
-            }
-            setIsApplyingWebServerOverride(false);
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                try {
-                    window.history.replaceState(null, '', overrideAction.cleanedRelativeUrl);
-                } catch {
-                    // ignore
-                }
-            }
-            return;
-        }
-
-        setIsApplyingWebServerOverride(true);
-        fireAndForget((async () => {
-            try {
-                await upsertActivateAndSwitchServer({
-                    serverUrl: overrideAction.serverUrl,
-                    source: 'url',
-                    scope: 'device',
-                    refreshAuth,
-                });
-            } catch {
-                // keep URL normalization best-effort; server switch can still be repaired elsewhere
-            } finally {
-                setIsApplyingWebServerOverride(false);
-            }
-        })(), { tag: 'RootLayout.webServerOverride' });
-
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            try {
-                window.history.replaceState(null, '', overrideAction.cleanedRelativeUrl);
-            } catch {
-                // ignore
-            }
-        }
-    }, [isAuthenticated, refreshAuth]);
-
-    const legacySessionDeepLinkHandledRef = React.useRef(false);
-    React.useEffect(() => {
-        if (legacySessionDeepLinkHandledRef.current) return;
-        const didConsume = consumeLegacySessionDeepLinkFromWebLocation({
-            isAuthenticated,
-            replaceRelativeUrl: (nextRelativeUrl) => {
-                if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-                try {
-                    window.history.replaceState(null, '', nextRelativeUrl);
-                } catch {
-                    // ignore
-                }
-            },
-            navigateToRoute: (route) => {
-                router.replace(route);
-            },
-        });
-        if (!didConsume) return;
-        legacySessionDeepLinkHandledRef.current = true;
-    }, [isAuthenticated]);
-
-    const shouldRedirect =
-        !isAuthenticated
-        && !isPublicRouteForUnauthenticated(segments)
-        && !shouldHoldProtectedRouteForAuthRecovery;
-    const pendingTerminalHandledRef = React.useRef(false);
-    React.useEffect(() => {
-        if (!shouldNormalizeSessionRouteForAuthRecovery) return;
-        if (!sessionRouteAuthRecovery.baseHref) return;
-        router.replace(sessionRouteAuthRecovery.baseHref);
-    }, [sessionRouteAuthRecovery.baseHref, shouldNormalizeSessionRouteForAuthRecovery]);
-
-    useNotificationResponseRouting({
-        enabled: auth.isAuthenticated && !isDesktopOverlayWindow,
-        refreshAuth: auth.refreshFromActiveServer,
-    });
-
-    React.useEffect(() => {
-        if (!isAuthenticated) {
-            pendingTerminalHandledRef.current = false;
-            return;
-        }
-
-        const pendingTerminalConnect = getPendingTerminalConnect();
-        if (pendingTerminalConnect) {
-            if (pendingTerminalHandledRef.current) return;
-            // Avoid leaking the terminal connect key via query params; use hash params on the dedicated
-            // `/terminal/connect` route instead.
-            const route = buildTerminalConnectWebHref({
-                publicKeyB64Url: pendingTerminalConnect.publicKeyB64Url,
-                serverUrl: pendingTerminalConnect.serverUrl,
-            });
-
-            // If we are already on the terminal-connect page (which persists a pending connect while
-            // clearing the URL hash for safety), do not navigate away.
-            if (segments.includes('terminal') && segments.includes('connect')) return;
-
-            const active = normalizeServerUrl(getActiveServerUrl());
-            const target = normalizeServerUrl(pendingTerminalConnect.serverUrl);
-            if (shouldSwitchToServerUrl({ targetServerUrl: target, activeServerUrl: active })) {
-                pendingTerminalHandledRef.current = true;
-                fireAndForget((async () => {
-                    try {
-                        await upsertActivateAndSwitchServer({
-                            serverUrl: pendingTerminalConnect.serverUrl,
-                            source: 'url',
-                            scope: 'device',
-                            refreshAuth,
-                        });
-                    } catch {
-                        // keep navigation best-effort; terminal flow can still recover with explicit server param
-                    }
-                    router.replace(route);
-                })(), { tag: 'RootLayout.pendingTerminalConnect' });
-                return;
-            }
-
-            pendingTerminalHandledRef.current = true;
-            router.replace(route);
-            return;
-        }
-
-        pendingTerminalHandledRef.current = false;
-    }, [isAuthenticated, refreshAuth, segments]);
-
-    // Server capability gating: if the server doesn't support Happier Voice (misconfigured/disabled),
-    // default the user's voice mode to off (they can still choose BYO ElevenLabs in settings).
-    React.useEffect(() => {
-        if (!isAuthenticated) return;
-        if (happierVoiceSupported !== false) return;
-        let cancelled = false;
-        fireAndForget((async () => {
-            try {
-                // Defer loading sync/storage modules until needed to keep module evaluation light.
-                const [{ storage }, { sync }] = await Promise.all([
-                    import('@/sync/domains/state/storage'),
-                    import('@/sync/sync'),
-                ]);
-
-                if (cancelled) return;
-                const voice = (storage.getState().settings as any)?.voice ?? null;
-                const providerId = voice?.providerId ?? 'off';
-                const billingMode = voice?.adapters?.realtime_elevenlabs?.billingMode ?? 'happier';
-                if (providerId !== 'realtime_elevenlabs') return;
-                if (billingMode !== 'happier') return;
-                sync.applySettings({ voice: { ...voice, providerId: 'off' } }, { source: 'system' });
-            } catch {
-                // Non-fatal: feature gating should never crash the root layout.
-            }
-        })(), { tag: 'RootLayout.happierVoiceGate' });
-        return () => {
-            cancelled = true;
-        };
-    }, [happierVoiceSupported, isAuthenticated]);
 
     // Use custom header on Android and Mac Catalyst, native header on iOS (non-Catalyst)
     const shouldUseCustomHeader = Platform.OS === 'android' || isRunningOnMac() || Platform.OS === 'web';
@@ -333,6 +150,13 @@ export default function RootLayout() {
                 // Nested navigator; per-settings-screen headers are configured in `settings/_layout.tsx`.
                 headerShown: false,
                 ...MAIN_TAB_STACK_SCREEN_OPTIONS,
+                // Tablet/desktop present settings as a modal (nav rail on the left, section
+                // content on the right). Phones keep it as a full-screen tab reached via the
+                // bottom tab bar — see resolveSettingsRoutePresentation.
+                presentation: resolveSettingsRoutePresentation({ deviceType, platformOs: Platform.OS }),
+                // Animate only in modal mode; the phone tab keeps the instant `animation: 'none'`
+                // inherited from MAIN_TAB_STACK_SCREEN_OPTIONS (overridden per device type here).
+                animation: resolveSettingsRouteAnimation({ deviceType }),
             },
             desktopActivityOverlay: {
                 headerShown: false,
@@ -361,7 +185,8 @@ export default function RootLayout() {
                 headerTitle: t('runs.title'),
                 headerBackTitle: back,
             },
-            files: hiddenHeader,
+            files: SESSION_COCKPIT_SURFACE_STACK_SCREEN_OPTIONS,
+            sessionCockpitSurface: SESSION_COCKPIT_SURFACE_STACK_SCREEN_OPTIONS,
             sessionRecent: visibleSessionHistory,
             sessionArchived: visibleSessionHistory,
             terminalIndex: {
@@ -420,9 +245,10 @@ export default function RootLayout() {
             blankBack,
             newPickSecretRequirement: {
                 headerShown: false,
-                // /new is presented modally on iOS. Ensure this overlay screen is too,
-                // otherwise it can end up pushed "behind" the modal (invisible but on the back stack).
-                presentation: Platform.OS === 'ios' ? 'containedModal' : 'modal',
+                presentation: resolveNewSessionSecretRequirementRoutePresentation({
+                    mode: newSessionPresentationMode,
+                    platformOs: Platform.OS,
+                }),
             },
             zenIndex: hiddenHeader,
             zenNew: {
@@ -436,7 +262,7 @@ export default function RootLayout() {
                 headerBackTitle: back,
             },
         } satisfies Record<string, StackScreenOptions>;
-    }, [preferredLanguage]);
+    }, [newSessionPresentationMode, preferredLanguage, deviceType]);
     const friendsManageScreenOptions = React.useCallback((args: { navigation: { navigate: (route: never) => void } }) => ({
         headerShown: true,
         headerTitle: t('navigation.friends'),
@@ -459,13 +285,16 @@ export default function RootLayout() {
         headerTitle: t('newSession.title'),
         headerShown: true,
         headerBackTitle: t('common.cancel'),
-        presentation: 'modal',
+        presentation: resolveNewSessionRoutePresentation({
+            mode: newSessionPresentationMode,
+            platformOs: Platform.OS,
+        }),
         gestureEnabled: true,
         fullScreenGestureEnabled: true,
         // Swipe-to-dismiss is not consistently available across platforms; always provide a close button.
         headerBackVisible: false,
         headerLeft: () => null,
-    }), [preferredLanguage]);
+    }), [newSessionPresentationMode, preferredLanguage]);
     const externalSessionBrowseScreenOptions = React.useMemo<StackScreenOptions>(() => ({
         headerTitle: t('externalSessions.browseTitle'),
         headerShown: true,
@@ -477,31 +306,14 @@ export default function RootLayout() {
         headerLeft: () => null,
     }), [preferredLanguage]);
 
-    // Avoid rendering protected screens for a frame during redirect.
-    if (shouldRedirect) {
-        return <Redirect href="/" />;
-    }
-
-    if (isApplyingWebServerOverride) {
-        return null;
-    }
-
     return (
         <SessionCockpitChromeRegistryProvider>
-            {!isDesktopOverlayWindow && !isTerminalConnectRoute ? (
-                <AuthenticatedAppRuntimeMounts
-                    isAuthenticated={isAuthenticated}
-                    isTauriDesktopHost={isTauriDesktopHost}
-                />
-            ) : null}
-            {debugRouterEnabled && Platform.OS === 'web' ? (
-                <View
-                    testID="debug-router-pathname"
-                    style={{ position: 'absolute', top: 0, left: 0, opacity: 0, pointerEvents: 'none' }}
-                >
-                    <Text>{pathname}</Text>
-                </View>
-            ) : null}
+            <BrowserPresentationRetentionProvider>
+            <AuthenticatedAppRuntimeMountsGate
+                isDesktopOverlayWindow={isDesktopOverlayWindow}
+                isAuthenticated={isAuthenticated}
+                isTauriDesktopHost={isTauriDesktopHost}
+            />
             <Stack screenOptions={rootStackScreenOptions}>
                 <Stack.Screen
                     name="index"
@@ -561,15 +373,15 @@ export default function RootLayout() {
                 />
                 <Stack.Screen
                     name="session/[id]/git"
-                    options={rootStackRouteOptions.hiddenHeader}
+                    options={rootStackRouteOptions.sessionCockpitSurface}
                 />
                 <Stack.Screen
                     name="session/[id]/details"
-                    options={rootStackRouteOptions.hiddenHeader}
+                    options={rootStackRouteOptions.sessionCockpitSurface}
                 />
                 <Stack.Screen
                     name="session/[id]/terminal"
-                    options={rootStackRouteOptions.hiddenHeader}
+                    options={rootStackRouteOptions.sessionCockpitSurface}
                 />
                 <Stack.Screen
                     name="projects/[workspaceRefId]/terminal"
@@ -597,7 +409,7 @@ export default function RootLayout() {
                 />
                 <Stack.Screen
                     name="session/[id]/index"
-                    options={rootStackRouteOptions.hiddenHeader}
+                    options={rootStackRouteOptions.sessionCockpitSurface}
                 />
                 <Stack.Screen
                     name="session/[id]/message/[messageId]"
@@ -729,11 +541,13 @@ export default function RootLayout() {
                 />
                 <Stack.Screen
                     name="new/index"
+                    options={newSessionScreenOptions}
+                />
+                <Stack.Screen
+                    name="external/browse"
                     options={({ navigation }) => ({
-                        ...newSessionScreenOptions,
-                        headerRight: Platform.OS === 'web'
-                            ? undefined
-                            : () => <AppHeaderCloseButton testID="new-session-cancel" onPress={() => safeRouterBack({ router, navigation, fallbackHref: '/' })} />,
+                        ...externalSessionBrowseScreenOptions,
+                        headerRight: () => <AppHeaderCloseButton testID="external-session-browse-cancel" onPress={() => safeRouterBack({ router, navigation, fallbackHref: '/' })} />,
                     })}
                 />
                 <Stack.Screen
@@ -756,7 +570,25 @@ export default function RootLayout() {
                     options={rootStackRouteOptions.zenView}
                 />
             </Stack>
-            <MobileBottomChromeHost />
+            <MobileBottomChromeMountGate />
+            </BrowserPresentationRetentionProvider>
         </SessionCockpitChromeRegistryProvider>
+    );
+});
+
+export default function RootLayout(): React.ReactElement {
+    // Composition root: subscribes to nothing that changes per navigation, so the
+    // `<RootLayoutShell />` element reference stays stable and its Stack subtree is not
+    // re-rendered when the route changes. Navigation/auth side effects live in the null-rendering
+    // `<RootLayoutNavigationEffects />` sibling; the unauthenticated redirect check and the
+    // web-server-override hold live in the `<RootLayoutRedirectGate />`, the only
+    // navigation-subscribing owner in this render path.
+    return (
+        <>
+            <RootLayoutNavigationEffects />
+            <RootLayoutRedirectGate>
+                <RootLayoutShell />
+            </RootLayoutRedirectGate>
+        </>
     );
 }

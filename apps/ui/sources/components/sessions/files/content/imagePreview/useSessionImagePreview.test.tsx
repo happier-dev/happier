@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderHook } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
 
 const workspaceReadFileSpy = vi.hoisted(() => vi.fn());
 const createSessionFilePreviewSourceSpy = vi.hoisted(() => vi.fn());
@@ -287,5 +287,135 @@ describe('useSessionImagePreview', () => {
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         expect(revoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps one in-flight transfer for equivalent workspace scope objects and publishes its URI once', async () => {
+        const preview = createDeferred<{
+            ok: true;
+            source: {
+                kind: 'object-url';
+                uri: string;
+                byteLength: number;
+                mimeType: string;
+                revoke: () => void;
+            };
+        }>();
+        const revoke = vi.fn();
+        createSessionFilePreviewSourceSpy.mockReturnValue(preview.promise);
+
+        const { useSessionImagePreview } = await import('./useSessionImagePreview');
+        const hook = await renderHook(
+            ({ workspaceScope }: {
+                workspaceScope: { serverId: string; machineId: string; rootPath: string };
+            }) => useSessionImagePreview({
+                sessionId: 's1',
+                filePath: '.happier/uploads/messages/m1/file.png',
+                enabled: true,
+                cacheKey: null,
+                mimeType: 'image/png',
+                sizeBytes: 3,
+                workspaceScope,
+                cacheScopeId: 'server-1:m1:/repo',
+            }),
+            {
+                initialProps: {
+                    workspaceScope: { serverId: 'server-1', machineId: 'm1', rootPath: '/repo' },
+                },
+            },
+        );
+
+        expect(createSessionFilePreviewSourceSpy).toHaveBeenCalledTimes(1);
+
+        await hook.rerender({
+            workspaceScope: { serverId: 'server-1', machineId: 'm1', rootPath: '/repo' },
+        });
+
+        expect(createSessionFilePreviewSourceSpy).toHaveBeenCalledTimes(1);
+
+        preview.resolve({
+            ok: true,
+            source: {
+                kind: 'object-url',
+                uri: 'blob:stable-preview',
+                byteLength: 3,
+                mimeType: 'image/png',
+                revoke,
+            },
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(hook.getCurrent()).toEqual({
+            status: 'loaded',
+            uri: 'blob:stable-preview',
+            error: null,
+        });
+        expect(revoke).not.toHaveBeenCalled();
+
+        await hook.unmount();
+        expect(revoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('releases the prior uncached source when the logical file identity changes', async () => {
+        const revokeFirst = vi.fn();
+        const revokeSecond = vi.fn();
+        createSessionFilePreviewSourceSpy
+            .mockResolvedValueOnce({
+                ok: true,
+                source: {
+                    kind: 'object-url',
+                    uri: 'blob:first-preview',
+                    byteLength: 3,
+                    mimeType: 'image/png',
+                    revoke: revokeFirst,
+                },
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                source: {
+                    kind: 'object-url',
+                    uri: 'blob:second-preview',
+                    byteLength: 4,
+                    mimeType: 'image/png',
+                    revoke: revokeSecond,
+                },
+            });
+
+        const workspaceScope = { serverId: 'server-1', machineId: 'm1', rootPath: '/repo' };
+        const { useSessionImagePreview } = await import('./useSessionImagePreview');
+        const hook = await renderHook(
+            ({ filePath }: { filePath: string }) => useSessionImagePreview({
+                sessionId: 's1',
+                filePath,
+                enabled: true,
+                cacheKey: null,
+                mimeType: 'image/png',
+                workspaceScope,
+                cacheScopeId: 'server-1:m1:/repo',
+            }),
+            {
+                initialProps: {
+                    filePath: '.happier/uploads/messages/m1/first.png',
+                },
+            },
+        );
+
+        expect(hook.getCurrent()).toMatchObject({
+            status: 'loaded',
+            uri: 'blob:first-preview',
+        });
+
+        await hook.rerender({
+            filePath: '.happier/uploads/messages/m1/second.png',
+        });
+
+        expect(createSessionFilePreviewSourceSpy).toHaveBeenCalledTimes(2);
+        expect(revokeFirst).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent()).toMatchObject({
+            status: 'loaded',
+            uri: 'blob:second-preview',
+        });
+
+        await hook.unmount();
+        expect(revokeSecond).toHaveBeenCalledTimes(1);
     });
 });

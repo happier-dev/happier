@@ -22,6 +22,7 @@ describe('voiceConversationRuntimeStore', () => {
                 adapterId: null,
                 controlSessionId: 'session-1',
                 state: 'listening',
+                reconnecting: false,
                 micMuted: false,
                 error: null,
             });

@@ -194,6 +194,58 @@ describe('WebMicSession', () => {
         await Promise.all([p1, p2]);
     });
 
+    it('discards a late getUserMedia result after teardown and permits a clean retry', async () => {
+        const lateAcquisition = createDeferred<MediaStream>();
+        const lateTrack = {
+            enabled: true,
+            muted: false,
+            stop: vi.fn(),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        };
+        const lateStream = {
+            getAudioTracks: () => [lateTrack],
+        } as unknown as MediaStream;
+        const retryTrack = {
+            enabled: true,
+            muted: false,
+            stop: vi.fn(),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        };
+        const retryStream = {
+            getAudioTracks: () => [retryTrack],
+        } as unknown as MediaStream;
+        const deferredGetUserMedia = vi.fn()
+            .mockImplementationOnce(() => lateAcquisition.promise)
+            .mockResolvedValueOnce(retryStream);
+        const createAudioContext = vi.fn(() => null);
+        const session = createWebMicSession({
+            getUserMedia: deferredGetUserMedia,
+            mediaDevices: mediaDevices as unknown as MediaDevices,
+            document: documentLike as unknown as Document,
+            createAudioContext,
+        });
+
+        const starting = session.ensureActive();
+        const tearingDown = session.teardown();
+        lateAcquisition.resolve(lateStream);
+        await Promise.all([starting, tearingDown]);
+
+        expect(lateTrack.stop).toHaveBeenCalledTimes(1);
+        expect(lateTrack.addEventListener).not.toHaveBeenCalled();
+        expect(mediaDevices.addEventListener).not.toHaveBeenCalled();
+        expect(documentLike.addEventListener).not.toHaveBeenCalled();
+        expect(createAudioContext).not.toHaveBeenCalled();
+        expect(session.getStream()).toBeNull();
+
+        await session.ensureActive();
+
+        expect(deferredGetUserMedia).toHaveBeenCalledTimes(2);
+        expect(session.getStream()).toBe(retryStream);
+        expect(retryTrack.addEventListener).toHaveBeenCalled();
+    });
+
     it('normalizes browser permission denial into the standard mic_permission_denied error', async () => {
         const deniedGetUserMedia = vi.fn(async () => {
             throw { name: 'NotAllowedError' };

@@ -1,3 +1,4 @@
+import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 
 import { isRunningOnMac } from './platform';
@@ -13,6 +14,6 @@ export function isWebQrScannerSupported(): boolean {
 
 export function canUseCurrentDeviceQrScanner(): boolean {
     if (isRunningOnMac()) return false;
-    if (Platform.OS !== 'web') return true;
+    if (Platform.OS !== 'web') return Device.isDevice;
     return isWebQrScannerSupported();
 }

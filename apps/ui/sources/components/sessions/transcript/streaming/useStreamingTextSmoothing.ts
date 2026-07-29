@@ -1,17 +1,28 @@
 import * as React from 'react';
 
+import { createStreamingTextPacer, type StreamingTextPacer } from './streamingTextPacer';
+
 type StreamingTextSmoothingResult = Readonly<{
-    /**
-     * Frame-batched text for rendering while streaming.
-     * When streaming is inactive, this will match `targetText`.
-     */
     displayText: string;
-    /**
-     * True when the text has changed recently and we should avoid expensive renderers.
-     */
     isStreaming: boolean;
 }>;
 
+const FRAME_FALLBACK_MS = 16;
+// Animation frames can stall entirely while a window is occluded or throttled
+// even though `document.visibilityState` stays 'visible'; the timer backstop
+// guarantees the reveal keeps draining (and `isStreaming` can settle) without
+// depending on frames being produced.
+const FRAME_BACKSTOP_MS = 120;
+
+/**
+ * Paces streamed transcript text: bursty upstream deltas are revealed as a
+ * steady character flow (see streamingTextPacer.ts for the algorithm), and
+ * `isStreaming` stays true until the reveal has drained and the text has been
+ * quiet for `settleDelayMs`, at which point callers swap to the static path.
+ *
+ * The text present when pacing first engages is seeded without animation, so
+ * opening an already-streaming session never replays existing content.
+ */
 export function useStreamingTextSmoothing(params: Readonly<{
     enabled: boolean;
     targetText: string;
@@ -27,29 +38,131 @@ export function useStreamingTextSmoothing(params: Readonly<{
     const [displayText, setDisplayText] = React.useState(targetText);
     const [streamingState, setStreamingState] = React.useState(false);
 
-    const lastObservedTargetTextRef = React.useRef(targetText);
-    const pendingTargetTextRef = React.useRef(targetText);
+    const pacerRef = React.useRef<StreamingTextPacer | null>(null);
     const lastChangeAtMsRef = React.useRef<number | null>(null);
-    const settleTimerRef = React.useRef<any>(null);
-    const scheduledFlushRef = React.useRef(false);
+    const rafHandleRef = React.useRef<number | null>(null);
+    const frameTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const framePendingRef = React.useRef(false);
+    const wakeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const settleTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Detect changes synchronously so we can switch away from expensive renderers in the same render.
-    const didChangeThisRender = enabled && lastObservedTargetTextRef.current !== targetText;
-    if (didChangeThisRender) {
-        lastObservedTargetTextRef.current = targetText;
-        pendingTargetTextRef.current = targetText;
-        lastChangeAtMsRef.current = Date.now();
-    } else if (!enabled) {
-        lastObservedTargetTextRef.current = targetText;
-        pendingTargetTextRef.current = targetText;
-    }
+    const didChangeThisRender =
+        enabled &&
+        pacerRef.current != null &&
+        pacerRef.current.getTargetText() !== targetText;
+
+    const cancelFrame = React.useCallback(() => {
+        framePendingRef.current = false;
+        if (rafHandleRef.current != null) {
+            if (typeof globalThis.cancelAnimationFrame === 'function') {
+                globalThis.cancelAnimationFrame(rafHandleRef.current);
+            }
+            rafHandleRef.current = null;
+        }
+        if (frameTimerRef.current != null) {
+            clearTimeout(frameTimerRef.current);
+            frameTimerRef.current = null;
+        }
+        if (wakeTimerRef.current != null) {
+            clearTimeout(wakeTimerRef.current);
+            wakeTimerRef.current = null;
+        }
+    }, []);
+
+    const clearSettleTimer = React.useCallback(() => {
+        if (settleTimerRef.current != null) {
+            clearTimeout(settleTimerRef.current);
+            settleTimerRef.current = null;
+        }
+    }, []);
+
+    const runTickRef = React.useRef<() => void>(() => {});
+
+    const scheduleFrame = React.useCallback(() => {
+        if (framePendingRef.current || wakeTimerRef.current != null) return;
+        framePendingRef.current = true;
+        const fire = () => {
+            if (!framePendingRef.current) return;
+            framePendingRef.current = false;
+            if (rafHandleRef.current != null) {
+                if (typeof globalThis.cancelAnimationFrame === 'function') {
+                    globalThis.cancelAnimationFrame(rafHandleRef.current);
+                }
+                rafHandleRef.current = null;
+            }
+            if (frameTimerRef.current != null) {
+                clearTimeout(frameTimerRef.current);
+                frameTimerRef.current = null;
+            }
+            runTickRef.current();
+        };
+        const requestAnimationFrameMaybe = globalThis.requestAnimationFrame;
+        const hasRaf = typeof requestAnimationFrameMaybe === 'function';
+        if (hasRaf) {
+            rafHandleRef.current = requestAnimationFrameMaybe(() => {
+                rafHandleRef.current = null;
+                fire();
+            });
+        }
+        frameTimerRef.current = setTimeout(() => {
+            frameTimerRef.current = null;
+            fire();
+        }, hasRaf ? FRAME_BACKSTOP_MS : FRAME_FALLBACK_MS);
+    }, []);
+
+    const scheduleWake = React.useCallback((delayMs: number) => {
+        if (wakeTimerRef.current != null) return;
+        wakeTimerRef.current = setTimeout(() => {
+            wakeTimerRef.current = null;
+            runTickRef.current();
+        }, Math.max(1, Math.ceil(delayMs)));
+    }, []);
+
+    const armSettleTimer = React.useCallback(() => {
+        clearSettleTimer();
+        settleTimerRef.current = setTimeout(() => {
+            settleTimerRef.current = null;
+            const now = Date.now();
+            const ageMs = now - (lastChangeAtMsRef.current ?? now);
+            if (ageMs < settleDelayMs) return;
+            const pacer = pacerRef.current;
+            if (pacer != null && !pacer.isDrained()) {
+                // Backlog remains: keep the drain loop alive so streaming can
+                // still settle even if a scheduled frame was lost.
+                scheduleFrame();
+                return;
+            }
+            setStreamingState(false);
+        }, settleDelayMs);
+    }, [clearSettleTimer, scheduleFrame, settleDelayMs]);
+
+    const runTick = React.useCallback(() => {
+        const pacer = pacerRef.current;
+        if (pacer == null) return;
+        const result = pacer.tick(Date.now());
+        if (result.changed) {
+            setDisplayText(pacer.getDisplayText());
+        }
+        if (result.drained) {
+            armSettleTimer();
+            return;
+        }
+        if (result.wakeDelayMs != null) {
+            scheduleWake(result.wakeDelayMs);
+            return;
+        }
+        scheduleFrame();
+    }, [armSettleTimer, scheduleFrame, scheduleWake]);
+    React.useLayoutEffect(() => {
+        runTickRef.current = runTick;
+    }, [runTick]);
 
     React.useEffect(() => {
         if (!enabled) {
-            if (settleTimerRef.current != null) {
-                clearTimeout(settleTimerRef.current);
-                settleTimerRef.current = null;
-            }
+            cancelFrame();
+            clearSettleTimer();
+            pacerRef.current = null;
+            lastChangeAtMsRef.current = null;
             if (displayText !== targetText) {
                 setDisplayText(targetText);
             }
@@ -59,51 +172,77 @@ export function useStreamingTextSmoothing(params: Readonly<{
             return;
         }
 
-        if (didChangeThisRender && !streamingState) {
-            setStreamingState(true);
-        }
-
-        // Batch `displayText` updates to visual frames to avoid rendering every streamed chunk.
-        if (!scheduledFlushRef.current) {
-            scheduledFlushRef.current = true;
-            const raf = (globalThis as any)?.requestAnimationFrame as undefined | ((cb: () => void) => unknown);
-            const schedule = typeof raf === 'function'
-                ? (cb: () => void) => raf(cb)
-                : (cb: () => void) => setTimeout(cb, 0);
-            schedule(() => {
-                scheduledFlushRef.current = false;
-                setDisplayText(pendingTargetTextRef.current);
-            });
-        }
-
-        if (settleTimerRef.current != null) {
-            clearTimeout(settleTimerRef.current);
-            settleTimerRef.current = null;
-        }
-
-        const lastChangeAtMs = lastChangeAtMsRef.current ?? Date.now();
-        settleTimerRef.current = setTimeout(() => {
-            settleTimerRef.current = null;
-            const now = Date.now();
-            const ageMs = now - (lastChangeAtMsRef.current ?? now);
-            if (ageMs < settleDelayMs) {
-                // Another update likely arrived; allow the next effect cycle to reschedule.
-                return;
+        let pacer = pacerRef.current;
+        if (pacer == null) {
+            // First enabled render: seed the current text without animating it.
+            pacer = createStreamingTextPacer({ initialText: targetText, nowMs: Date.now() });
+            pacerRef.current = pacer;
+            if (displayText !== targetText) {
+                setDisplayText(targetText);
             }
-            setDisplayText(pendingTargetTextRef.current);
-            setStreamingState(false);
-        }, settleDelayMs);
+            return;
+        }
 
-        return () => {
-            if (settleTimerRef.current != null) {
-                clearTimeout(settleTimerRef.current);
-                settleTimerRef.current = null;
+        if (pacer.getTargetText() !== targetText) {
+            lastChangeAtMsRef.current = Date.now();
+            pacer.setTarget(targetText, Date.now());
+            if (!streamingState) {
+                setStreamingState(true);
             }
-        };
-    }, [didChangeThisRender, displayText, enabled, settleDelayMs, streamingState, targetText]);
-
-    return React.useMemo(() => ({
+            if (pacer.isDrained()) {
+                // Non-append or oversized delta jumped straight to the target.
+                setDisplayText(pacer.getDisplayText());
+                armSettleTimer();
+            } else {
+                cancelFrame();
+                scheduleFrame();
+                armSettleTimer();
+            }
+        }
+    }, [
+        armSettleTimer,
+        cancelFrame,
+        clearSettleTimer,
         displayText,
-        isStreaming: enabled && (didChangeThisRender || streamingState),
-    }), [didChangeThisRender, displayText, enabled, streamingState]);
+        enabled,
+        scheduleFrame,
+        streamingState,
+        targetText,
+    ]);
+
+    // Reveal pacing is a foreground nicety: when the page is hidden, show
+    // everything immediately so background progress is never withheld.
+    React.useEffect(() => {
+        if (!enabled) return;
+        const documentMaybe = (globalThis as { document?: Document }).document;
+        if (documentMaybe == null || typeof documentMaybe.addEventListener !== 'function') return;
+        const onVisibilityChange = () => {
+            if (documentMaybe.visibilityState !== 'hidden') return;
+            const pacer = pacerRef.current;
+            if (pacer == null || pacer.isDrained()) return;
+            cancelFrame();
+            pacer.flush();
+            setDisplayText(pacer.getDisplayText());
+            armSettleTimer();
+        };
+        documentMaybe.addEventListener('visibilitychange', onVisibilityChange);
+        return () => {
+            documentMaybe.removeEventListener('visibilitychange', onVisibilityChange);
+        };
+    }, [armSettleTimer, cancelFrame, enabled]);
+
+    React.useEffect(() => {
+        return () => {
+            cancelFrame();
+            clearSettleTimer();
+        };
+    }, [cancelFrame, clearSettleTimer]);
+
+    return React.useMemo(
+        () => ({
+            displayText,
+            isStreaming: enabled && (didChangeThisRender || streamingState),
+        }),
+        [didChangeThisRender, displayText, enabled, streamingState],
+    );
 }

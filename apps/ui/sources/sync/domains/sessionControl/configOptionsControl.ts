@@ -24,8 +24,7 @@ export type SessionConfigOptionValueId = string;
 
 function normalizeValueId(raw: unknown): SessionConfigOptionValueId | null {
     if (typeof raw === 'string') {
-        const trimmed = raw.trim();
-        return trimmed.length > 0 ? trimmed : null;
+        return raw.trim().length > 0 ? raw : null;
     }
     if (typeof raw === 'boolean') return raw ? 'true' : 'false';
     if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
@@ -38,6 +37,21 @@ export type SessionConfigOptionSelectOption = Readonly<{
     description?: string;
 }>;
 
+function hasDuplicateConfigOptionValues(options: readonly SessionConfigOptionSelectOption[]): boolean {
+    const values = new Set<string>();
+    return options.some((option) => {
+        if (values.has(option.value)) return true;
+        values.add(option.value);
+        return false;
+    });
+}
+
+export type SessionConfigOptionSelectGroup = Readonly<{
+    id: string;
+    name: string;
+    options: readonly SessionConfigOptionSelectOption[];
+}>;
+
 export type SessionConfigOption = Readonly<{
     id: string;
     name: string;
@@ -45,6 +59,7 @@ export type SessionConfigOption = Readonly<{
     type: string;
     currentValue: SessionConfigOptionValueId;
     options?: readonly SessionConfigOptionSelectOption[];
+    groups?: readonly SessionConfigOptionSelectGroup[];
 }>;
 
 export type SessionConfigOptionControl = Readonly<{
@@ -91,8 +106,9 @@ function resolveRequestedValue(
 ): SessionConfigOptionValueId | undefined {
     const requestedValue = normalizeValueId(rawValue);
     if (!requestedValue) return undefined;
-    if (option.options?.length) {
-        return option.options.some((entry) => entry.value === requestedValue)
+    const choices = option.options ?? option.groups?.flatMap((group) => group.options);
+    if (choices?.length) {
+        return choices.some((entry) => entry.value === requestedValue)
             ? requestedValue
             : undefined;
     }
@@ -100,14 +116,15 @@ function resolveRequestedValue(
 }
 
 export function normalizeAcpConfigOptionsArray(raw: unknown): SessionConfigOption[] | null {
-    if (!Array.isArray(raw) || raw.length === 0) return null;
+    if (!Array.isArray(raw)) return null;
+    if (raw.length === 0) return [];
 
     const parsed: SessionConfigOption[] = [];
     type RawConfigOptionChoice = Record<string, unknown>;
     for (const entry of raw) {
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
         const rec = entry as Record<string, unknown>;
-        const id = typeof rec.id === 'string' ? rec.id.trim() : '';
+        const id = typeof rec.id === 'string' && rec.id.trim().length > 0 ? rec.id : '';
         const name = typeof rec.name === 'string' ? rec.name.trim() : '';
         const type = typeof rec.type === 'string' ? rec.type.trim() : '';
         if (!id || !name || !type) continue;
@@ -133,6 +150,26 @@ export function normalizeAcpConfigOptionsArray(raw: unknown): SessionConfigOptio
                 )
             : undefined;
 
+        const groups: SessionConfigOptionSelectGroup[] | undefined = Array.isArray(rec.groups)
+            ? rec.groups.map((group: unknown): SessionConfigOptionSelectGroup | null => {
+                if (!group || typeof group !== 'object' || Array.isArray(group)) return null;
+                const groupRecord = group as Record<string, unknown>;
+                const groupId = typeof groupRecord.id === 'string' && groupRecord.id.trim().length > 0 ? groupRecord.id : '';
+                const groupName = typeof groupRecord.name === 'string' ? groupRecord.name.trim() : '';
+                if (!groupId || !groupName || !Array.isArray(groupRecord.options)) return null;
+                const groupOptions: SessionConfigOptionSelectOption[] = groupRecord.options.map((choice: unknown): SessionConfigOptionSelectOption | null => {
+                    if (!choice || typeof choice !== 'object' || Array.isArray(choice)) return null;
+                    const choiceRecord = choice as RawConfigOptionChoice;
+                    const value = normalizeValueId(choiceRecord.value);
+                    const choiceName = typeof choiceRecord.name === 'string' ? choiceRecord.name.trim() : '';
+                    if (!value || !choiceName) return null;
+                    const choiceDescription = typeof choiceRecord.description === 'string' ? choiceRecord.description.trim() : '';
+                    return { value, name: choiceName, ...(choiceDescription ? { description: choiceDescription } : {}) };
+                }).filter((choice: SessionConfigOptionSelectOption | null): choice is SessionConfigOptionSelectOption => choice !== null);
+                return groupOptions.length > 0 ? { id: groupId, name: groupName, options: groupOptions } : null;
+            }).filter((group): group is SessionConfigOptionSelectGroup => group !== null)
+            : undefined;
+
         const description = typeof rec.description === 'string' ? rec.description.trim() : '';
         parsed.push({
             id,
@@ -141,6 +178,7 @@ export function normalizeAcpConfigOptionsArray(raw: unknown): SessionConfigOptio
             currentValue,
             ...(description ? { description } : {}),
             ...(options && options.length > 0 ? { options } : {}),
+            ...(groups && groups.length > 0 ? { groups } : {}),
         } satisfies SessionConfigOption);
     }
 
@@ -185,8 +223,8 @@ export function resolveBooleanConfigOptionNextValue(option: SessionConfigOption,
 }
 
 function buildSessionConfigOptionControls(params: Readonly<{
-    providerId: string;
-    provider: string | null;
+    agentId: string;
+    stateAgentId: string | null;
     configOptions: ReadonlyArray<{
         id: string;
         name: string;
@@ -198,20 +236,35 @@ function buildSessionConfigOptionControls(params: Readonly<{
             name: string;
             description?: string;
         }>;
+        groups?: ReadonlyArray<{
+            id: string;
+            name: string;
+            options: ReadonlyArray<{
+                value: unknown;
+                name: string;
+                description?: string;
+            }>;
+        }>;
     }>;
     overrides?: Readonly<Record<string, Readonly<{ value: unknown }>>> | null;
     hideModeOption: boolean;
     hideModelOption: boolean;
 }>): SessionConfigOptionControl[] | null {
-    if (params.provider !== params.providerId) return null;
+    if (params.stateAgentId !== params.agentId) return null;
 
     const controls: SessionConfigOptionControl[] = [];
+    const idCounts = new Map<string, number>();
+    for (const entry of params.configOptions) {
+        if (typeof entry.id === 'string' && entry.id.trim().length > 0) {
+            idCounts.set(entry.id, (idCounts.get(entry.id) ?? 0) + 1);
+        }
+    }
 
     for (const entry of params.configOptions) {
-        const id = entry.id.trim();
+        const id = entry.id;
         const name = entry.name.trim();
         const type = entry.type.trim();
-        if (!id || !name || !type) continue;
+        if (!id || !name || !type || idCounts.get(id) !== 1) continue;
 
         if (params.hideModeOption && id === 'mode') continue;
         if (params.hideModelOption && (id === 'models' || id === 'model')) continue;
@@ -230,6 +283,32 @@ function buildSessionConfigOptionControls(params: Readonly<{
             })
             .filter((value): value is SessionConfigOptionSelectOption => value !== null);
 
+        const groups: SessionConfigOptionSelectGroup[] = Array.isArray(entry.groups)
+            ? entry.groups.map((group): SessionConfigOptionSelectGroup | null => {
+                const groupId = group.id;
+                const groupName = group.name.trim();
+                const groupOptions: SessionConfigOptionSelectOption[] = group.options.map((choice: Readonly<{
+                    value: unknown;
+                    name: string;
+                    description?: string;
+                }>): SessionConfigOptionSelectOption | null => {
+                    const value = normalizeValueId(choice.value);
+                    const choiceName = choice.name.trim();
+                    if (!value || !choiceName) return null;
+                    const choiceDescription = typeof choice.description === 'string' ? choice.description.trim() : '';
+                    return { value, name: choiceName, ...(choiceDescription ? { description: choiceDescription } : {}) };
+                }).filter((choice: SessionConfigOptionSelectOption | null): choice is SessionConfigOptionSelectOption => choice !== null);
+                return groupId && groupName && groupOptions.length > 0
+                    ? { id: groupId, name: groupName, options: groupOptions }
+                    : null;
+            }).filter((group): group is SessionConfigOptionSelectGroup => group !== null)
+            : [];
+
+        if (options.length > 0 && groups.length > 0) continue;
+        if (new Set(groups.map((group) => group.id)).size !== groups.length) continue;
+        const choices = options.length > 0 ? options : groups.flatMap((group) => group.options);
+        if (hasDuplicateConfigOptionValues(choices)) continue;
+
         const description = typeof entry.description === 'string' ? entry.description.trim() : '';
         const option: SessionConfigOption = {
             id,
@@ -238,6 +317,7 @@ function buildSessionConfigOptionControls(params: Readonly<{
             currentValue,
             ...(description ? { description } : {}),
             ...(options.length > 0 ? { options } : {}),
+            ...(groups.length > 0 ? { groups } : {}),
         };
 
         const requestedValue = resolveRequestedValue(option, params.overrides?.[id]?.value);
@@ -263,19 +343,19 @@ export function computeSessionConfigOptionControls(params: {
         readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_CONFIG_OPTIONS_STATE_KEY, LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY),
     );
     if (!state) return null;
-    if (state.provider !== params.agentId) return null;
+    if (state.agentId !== params.agentId) return null;
     if (state.configOptions.length === 0) return null;
 
     const sessionModes = parseSessionModesState(
         readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODES_STATE_KEY, LEGACY_ACP_SESSION_MODES_STATE_KEY),
     );
-    const hasDedicatedModeControl = sessionModes?.provider === params.agentId && sessionModes.availableModes.length > 0;
+    const hasDedicatedModeControl = sessionModes?.agentId === params.agentId && sessionModes.availableModes.length > 0;
 
     const sessionModels = parseSessionModelsState(
         readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODELS_STATE_KEY, LEGACY_ACP_SESSION_MODELS_STATE_KEY),
     );
     const hasDedicatedModelControl =
-        sessionModels?.provider === params.agentId && sessionModels.availableModels.length > 0;
+        sessionModels?.agentId === params.agentId && sessionModels.availableModels.length > 0;
 
     const metadataRecord = (params.metadata as any) ?? {};
     const parsedOverrides = parseSessionConfigOptionOverridesState(
@@ -283,7 +363,7 @@ export function computeSessionConfigOptionControls(params: {
     );
     const overrides: Record<string, Readonly<{ value: unknown }>> = { ...(parsedOverrides?.overrides ?? {}) };
     for (const option of state.configOptions) {
-        const optionId = typeof option.id === 'string' ? option.id.trim() : '';
+        const optionId = typeof option.id === 'string' && option.id.trim().length > 0 ? option.id : '';
         if (!optionId) continue;
         const intent = readAcpConfigOptionIntentFromMetadata(metadataRecord, optionId);
         if (intent) {
@@ -291,8 +371,8 @@ export function computeSessionConfigOptionControls(params: {
         }
     }
     return buildSessionConfigOptionControls({
-        providerId: params.agentId,
-        provider: state.provider,
+        agentId: params.agentId,
+        stateAgentId: state.agentId,
         configOptions: state.configOptions,
         overrides,
         hideModeOption: hasDedicatedModeControl,
@@ -309,8 +389,8 @@ export function computeSessionConfigOptionControlsForProvider(params: Readonly<{
 }>): SessionConfigOptionControl[] | null {
     if (!Array.isArray(params.configOptions) || params.configOptions.length === 0) return null;
     return buildSessionConfigOptionControls({
-        providerId: params.providerId,
-        provider: params.providerId,
+        agentId: params.providerId,
+        stateAgentId: params.providerId,
         configOptions: params.configOptions,
         overrides: params.overrides ?? null,
         hideModeOption: params.hideModeOption ?? false,

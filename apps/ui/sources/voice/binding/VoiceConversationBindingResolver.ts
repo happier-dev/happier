@@ -1,5 +1,4 @@
 import { storage } from '@/sync/domains/state/storage';
-import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 import {
@@ -9,12 +8,22 @@ import {
 } from './voiceConversationBindingStore';
 import { readPreferredVoiceConversationBindingMetadata } from './voiceConversationBindingMetadata';
 import type { VoiceSessionBinding } from './voiceConversationBindingTypes';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
 type VoiceConversationBindingStoreLike = typeof voiceSessionBindingStore;
 
 type ResolverState = Readonly<{
     sessions?: Record<string, any>;
 }>;
+
+function isBindingAvailableInState(
+    binding: VoiceSessionBinding | null,
+    state: ResolverState,
+): binding is VoiceSessionBinding {
+    if (!binding) return false;
+    if (binding.lifetime === 'runtime_attempt') return true;
+    return Boolean(state.sessions?.[binding.conversationSessionId]);
+}
 
 export function createVoiceConversationBindingResolver(params?: Readonly<{
     getState?: () => ResolverState;
@@ -31,16 +40,20 @@ export function createVoiceConversationBindingResolver(params?: Readonly<{
         if (!conversationSessionId) return null;
         const state = getState();
         const storeBinding = store.getState().getByConversationSessionId(conversationSessionId);
-        const preferredMetadata = resolveSessionListPreferredSessionMetadataFromState(state as any, conversationSessionId);
+        const canonicalSession = state.sessions?.[conversationSessionId] ?? null;
+        const ownerMetadata = readVoiceSessionOwnerMetadataFromState(state as any, conversationSessionId);
         // Single guarded read path: caller-supplied `sessionMetadata` is funneled
         // through the same `isVoiceConversationSystemSessionMetadata` guard as every
         // other persisted read (audit F2) instead of an unguarded fallback.
         const persistedBinding = readPreferredVoiceConversationBindingMetadata({
             conversationSessionId,
-            preferredMetadata,
-            directMetadata: input.sessionMetadata ?? state.sessions?.[conversationSessionId]?.metadata ?? null,
+            preferredMetadata: ownerMetadata,
+            directMetadata: canonicalSession ? null : input.sessionMetadata ?? null,
         });
-        return pickNewerVoiceBinding(storeBinding, persistedBinding);
+        return pickNewerVoiceBinding(
+            isBindingAvailableInState(storeBinding, state) ? storeBinding : null,
+            isBindingAvailableInState(persistedBinding, state) ? persistedBinding : null,
+        );
     };
 
     const resolveByControlSessionId = (input: Readonly<{
@@ -63,6 +76,7 @@ export function createVoiceConversationBindingResolver(params?: Readonly<{
             ...listPersistedVoiceBindingsFromState(state as any),
         ];
         for (const candidate of candidates) {
+            if (!isBindingAvailableInState(candidate, state)) continue;
             if (candidate.controlSessionId !== controlSessionId) continue;
             if (requestedAdapterId && candidate.adapterId !== requestedAdapterId) continue;
             resolved = pickNewerVoiceBinding(resolved, candidate);
@@ -87,6 +101,7 @@ export function createVoiceConversationBindingResolver(params?: Readonly<{
             ...listPersistedVoiceBindingsFromState(state as any),
         ];
         for (const candidate of candidates) {
+            if (!isBindingAvailableInState(candidate, state)) continue;
             if (requestedAdapterId && candidate.adapterId !== requestedAdapterId) continue;
             if (requestedControlSessionIds.size > 0 && !requestedControlSessionIds.has(candidate.controlSessionId)) continue;
             resolved = pickNewerVoiceBinding(resolved, candidate);

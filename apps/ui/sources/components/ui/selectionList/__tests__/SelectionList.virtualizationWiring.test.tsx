@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { createCapturingFlashListMock } from '@/dev/testkit/mocks/flashList';
+import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
 
 import type { SelectionListOption, SelectionListProps, SelectionListStep } from '../_types';
 
@@ -11,15 +11,12 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
-const { module: capturedFlashList, state: flashListState } = createCapturingFlashListMock({
-    componentName: 'FlashListMock',
-    itemWrapperName: 'FlashListItemMock',
+const { module: capturedLegendList, state: legendListState } = createCapturingLegendListMock({
     renderItems: true,
 });
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
-    FlashList: capturedFlashList.FlashList,
-    flashListRuntime: { usingFallback: true },
+vi.mock('@legendapp/list/react-native', () => ({
+    LegendList: capturedLegendList.LegendList,
 }));
 
 function makeOptions(count: number, prefix = 'opt'): ReadonlyArray<SelectionListOption> {
@@ -43,7 +40,7 @@ function defaultProps(rootStep: SelectionListStep, overrides: Partial<SelectionL
 
 describe('SelectionList virtualization wiring (Phase 1.12)', () => {
     it('uses FlashList for sections that exceed the threshold (>50 rows, auto mode)', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         const root: SelectionListStep = {
             id: 'root',
             inputPlaceholder: 'Search',
@@ -58,12 +55,12 @@ describe('SelectionList virtualization wiring (Phase 1.12)', () => {
         };
         const { SelectionList } = await import('../SelectionList');
         await renderScreen(<SelectionList {...defaultProps(root)} />);
-        expect(flashListState.props).not.toBeNull();
-        expect(flashListState.props?.data?.length).toBe(80);
+        expect(legendListState.props).not.toBeNull();
+        expect(legendListState.props?.data?.length).toBe(80);
     });
 
     it('does not virtualize small sections (<=50 rows)', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         const root: SelectionListStep = {
             id: 'root',
             inputPlaceholder: 'Search',
@@ -78,11 +75,11 @@ describe('SelectionList virtualization wiring (Phase 1.12)', () => {
         };
         const { SelectionList } = await import('../SelectionList');
         await renderScreen(<SelectionList {...defaultProps(root)} />);
-        expect(flashListState.props).toBeNull();
+        expect(legendListState.props).toBeNull();
     });
 
     it('honors per-section virtualization=force on a small section', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         const root: SelectionListStep = {
             id: 'root',
             inputPlaceholder: 'Search',
@@ -98,12 +95,12 @@ describe('SelectionList virtualization wiring (Phase 1.12)', () => {
         };
         const { SelectionList } = await import('../SelectionList');
         await renderScreen(<SelectionList {...defaultProps(root)} />);
-        expect(flashListState.props).not.toBeNull();
-        expect(flashListState.props?.data?.length).toBe(3);
+        expect(legendListState.props).not.toBeNull();
+        expect(legendListState.props?.data?.length).toBe(3);
     });
 
     it('preserves virtualization on a synthesized dynamic section descriptor', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         const root: SelectionListStep = {
             id: 'root',
             inputPlaceholder: 'Search',
@@ -126,7 +123,7 @@ describe('SelectionList virtualization wiring (Phase 1.12)', () => {
             await Promise.resolve();
             await Promise.resolve();
         });
-        expect(flashListState.props).not.toBeNull();
-        expect(flashListState.props?.data?.length).toBe(2);
+        expect(legendListState.props).not.toBeNull();
+        expect(legendListState.props?.data?.length).toBe(2);
     });
 });

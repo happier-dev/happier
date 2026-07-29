@@ -1,17 +1,19 @@
 import { create } from 'zustand';
+import type { BundledVoiceProviderDiagnosticEvent } from '@happier-dev/bundled-voice-runtime-contract';
 
 import { randomUUID } from '@/platform/randomUUID';
 
-export type VoiceQaProvider = 'local_voice_agent' | 'realtime_elevenlabs';
+const MAX_VOICE_QA_ENTRIES = 500;
+
+export type VoiceQaProvider = 'local_voice_agent' | 'realtime_conversation';
 export type VoiceQaStatus = 'idle' | 'starting' | 'running' | 'stopping' | 'error';
-export type VoiceQaEntryKind = 'system' | 'user' | 'assistant' | 'provider.raw' | 'error';
+export type VoiceQaEntryKind = 'system' | 'user' | 'assistant' | 'provider.event' | 'error';
 
 export type VoiceQaEntry = Readonly<{
   id: string;
   ts: number;
   kind: VoiceQaEntryKind;
   text: string;
-  raw?: string;
 }>;
 
 type VoiceQaState = Readonly<{
@@ -33,67 +35,38 @@ type VoiceQaState = Readonly<{
   appendUser: (text: string) => void;
   appendAssistant: (text: string) => void;
   appendError: (text: string) => void;
-  appendRealtimeProviderPayload: (payload: unknown) => void;
+  appendRealtimeProviderEvent: (event: BundledVoiceProviderDiagnosticEvent) => void;
 }>;
 
 function normalizeText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
+function createProviderEventSummary(event: BundledVoiceProviderDiagnosticEvent): string {
+  return [
+    `provider=${event.providerId}`,
+    `event=${event.eventType}`,
+    `bytes=${event.payloadBytes ?? 'unknown'}`,
+    `class=${event.redactionClass}`,
+  ].join(' ');
 }
 
-function extractProviderSummary(payload: unknown): string {
-  if (typeof payload === 'string') return payload.trim();
-  if (!payload || typeof payload !== 'object') return safeStringify(payload);
-
-  const queue: unknown[] = [payload];
-  const seen = new Set<unknown>();
-  const out: string[] = [];
-
-  while (queue.length > 0 && out.length < 3) {
-    const next = queue.shift();
-    if (!next || typeof next !== 'object') continue;
-    if (seen.has(next)) continue;
-    seen.add(next);
-
-    for (const [key, value] of Object.entries(next as Record<string, unknown>)) {
-      if (typeof value === 'string') {
-        const normalized = value.trim();
-        if (!normalized) continue;
-        if (/(text|message|transcript|content|reply|utterance)/i.test(key)) {
-          out.push(`${key}: ${normalized}`);
-          if (out.length >= 3) break;
-        }
-      } else if (value && typeof value === 'object') {
-        queue.push(value);
-      }
-    }
-  }
-
-  if (out.length > 0) return out.join('\n');
-  return safeStringify(payload);
-}
-
-function createEntry(kind: VoiceQaEntryKind, text: string, raw?: string): VoiceQaEntry {
+function createEntry(kind: VoiceQaEntryKind, text: string): VoiceQaEntry {
   return {
     id: randomUUID(),
     ts: Date.now(),
     kind,
     text,
-    ...(raw ? { raw } : {}),
   };
 }
 
 function appendEntry(state: VoiceQaState, entry: VoiceQaEntry): VoiceQaState {
+  const retainedEntries = state.entries.length >= MAX_VOICE_QA_ENTRIES
+    ? state.entries.slice(-(MAX_VOICE_QA_ENTRIES - 1))
+    : state.entries;
   return {
     ...state,
-    entries: [...state.entries, entry],
+    entries: [...retainedEntries, entry],
   };
 }
 
@@ -153,12 +126,10 @@ export const useVoiceQaStore = create<VoiceQaState>((set) => ({
       if (!normalized) return state;
       return appendEntry(state, createEntry('error', normalized));
     }),
-  appendRealtimeProviderPayload: (payload) =>
+  appendRealtimeProviderEvent: (event) =>
     set((state) => {
-      if (state.provider !== 'realtime_elevenlabs') return state;
-      const raw = safeStringify(payload);
-      const text = extractProviderSummary(payload);
-      return appendEntry(state, createEntry('provider.raw', text, raw));
+      if (state.provider !== 'realtime_conversation') return state;
+      return appendEntry(state, createEntry('provider.event', createProviderEventSummary(event)));
     }),
 }));
 

@@ -1,7 +1,6 @@
 import { getTrackingAnonymousUserId, tracking } from '@/track';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
-import { PROVIDER_SETTING_ARTIFACT_ENTRIES } from '@/agents/providers/registry/providerSettingArtifacts';
 import { ACCOUNT_SETTING_ARTIFACTS } from '@/sync/domains/settings/registry/account/accountSettingArtifacts';
 import { LOCAL_SETTING_ARTIFACTS } from '@/sync/domains/settings/registry/local/localSettingDefinitions';
 
@@ -60,20 +59,6 @@ function buildTrackedAccountChangeProperties(record: Record<string, unknown>): R
         trackingMode: 'change',
     });
 
-    for (const { artifacts } of PROVIDER_SETTING_ARTIFACT_ENTRIES) {
-        Object.assign(
-            properties,
-            buildSettingsPropertiesFromArtifacts({
-                artifacts,
-                record,
-                currentPrefix: 'acct_setting__',
-                derivedPrefix: 'derived__',
-                identityScope: 'person',
-                trackingMode: 'change',
-            }),
-        );
-    }
-
     return properties;
 }
 
@@ -86,17 +71,6 @@ function buildTrackedAccountChangePropertyKinds(record: Record<string, unknown>)
         identityScope: 'person',
         trackingMode: 'change',
     });
-
-    for (const { artifacts } of PROVIDER_SETTING_ARTIFACT_ENTRIES) {
-        Object.assign(propertyKinds, buildSettingPropertyValueKindMapFromArtifacts({
-            artifacts,
-            record,
-            currentPrefix: 'acct_setting__',
-            derivedPrefix: 'derived__',
-            identityScope: 'person',
-            trackingMode: 'change',
-        }));
-    }
 
     return propertyKinds;
 }

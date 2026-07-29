@@ -5,7 +5,7 @@ export type ImagePreviewCacheKey = Readonly<{
 }>;
 
 export type ImagePreviewCacheValue =
-    | Readonly<{ status: 'loaded'; uri: string; svgXml?: string | null; cleanup?: (() => void | Promise<void>) | null; byteLength?: number | null }>
+    | Readonly<{ status: 'loaded'; uri: string; cleanup?: (() => void | Promise<void>) | null; byteLength?: number | null }>
     | Readonly<{ status: 'error'; error: string }>;
 
 export type ImagePreviewCacheEntry = Readonly<{
@@ -105,9 +105,7 @@ export class ImagePreviewCache {
             if (typeof value.byteLength === 'number' && Number.isFinite(value.byteLength)) {
                 return Math.max(0, Math.floor(value.byteLength));
             }
-            // Fallback for legacy callers that only provide strings.
-            const svgBytes = typeof value.svgXml === 'string' ? value.svgXml.length * 2 : 0;
-            return Math.max(0, value.uri.length * 2 + svgBytes);
+            return Math.max(0, value.uri.length * 2);
         }
         return Math.max(0, value.error.length * 2);
     }

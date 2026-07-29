@@ -5,7 +5,7 @@ import {
     useSetting,
 } from '@/sync/domains/state/storage';
 import { buildSessionMetadataStabilitySignatureValue, buildStableJsonSignature } from '@/sync/domains/session/metadata/sessionMetadataStability';
-import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useMachine } from '@/sync/store/hooks';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import {
@@ -24,6 +24,39 @@ import { useTranscriptRootPendingRequests } from '@/components/sessions/transcri
 import { useTranscriptRootRollbackActions } from '@/components/sessions/transcript/items/useTranscriptRootRollbackActions';
 import { useTranscriptRootThinkingState } from '@/components/sessions/transcript/thinking/useTranscriptRootThinkingState';
 import { useTranscriptRootMessages } from '@/components/sessions/transcript/items/useTranscriptRootMessages';
+import { resolveTranscriptEventEmphasisByMessageId } from '@/components/sessions/transcript/events/transcriptEventEmphasis';
+import type { Message } from '@/sync/domains/messages/messageTypes';
+import { isRecoveredHistoryTranscriptObservation } from '@/sync/domains/messages/transcriptObservationProvenance';
+import { readExternalSessionOperationPresentationFromMetadata } from '@/components/sessions/transcript/items/externalSessionOperationMetadata';
+import { useExternalSessionOperationTranscriptDismissal } from '@/components/sessions/transcript/items/useExternalSessionOperationTranscriptDismissal';
+import { useExternalSessionOperationOwnerHydration } from '@/components/sessions/transcript/items/useExternalSessionOperationOwnerHydration';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
+import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
+
+export function resolveLatestCommittedActivityKey(params: Readonly<{
+    messageIdsOldestFirst: readonly string[];
+    messagesById: Readonly<Record<string, Message>>;
+}>): string | null {
+    for (let index = params.messageIdsOldestFirst.length - 1; index >= 0; index -= 1) {
+        const id = params.messageIdsOldestFirst[index]!;
+        const message = params.messagesById[id];
+        if (!message || !isRecoveredHistoryTranscriptObservation(message)) return id;
+    }
+    return null;
+}
+
+export function resolveExternalSessionOperationMachineSubscriptionTarget(params: Readonly<{
+    isExactOwner: boolean;
+    machineId: string | null;
+    hasPresentation: boolean;
+}>): string | null {
+    return params.isExactOwner && params.hasPresentation
+        ? params.machineId
+        : null;
+}
 
 export function useChatListRootState(props: ChatListProps) {
     const {
@@ -59,11 +92,78 @@ export function useChatListRootState(props: ChatListProps) {
         messagesById,
         session: props.session,
     });
-    const sessionMetadataSignature = React.useMemo(
+    const sharedSessionMetadataSignature = React.useMemo(
         () => buildStableJsonSignature(buildSessionMetadataStabilitySignatureValue(props.session.metadata ?? null)),
         [props.session.metadata],
     );
-    const stableSessionMetadata = useStableValueBySignature(props.session.metadata, sessionMetadataSignature);
+    const stableSharedSessionMetadata = useStableValueBySignature(
+        props.session.metadata,
+        sharedSessionMetadataSignature,
+    );
+    const externalSessionOperationPresentation = React.useMemo(
+        () => readExternalSessionOperationPresentationFromMetadata(stableSharedSessionMetadata),
+        [stableSharedSessionMetadata],
+    );
+    const ownerMetadata = readSessionOwnerMetadataView(props.session);
+    const sessionMetadataSignature = React.useMemo(
+        () => buildStableJsonSignature(buildSessionMetadataStabilitySignatureValue(ownerMetadata)),
+        [ownerMetadata],
+    );
+    const stableSessionMetadata = useStableValueBySignature(ownerMetadata, sessionMetadataSignature);
+    const operationMachineId = React.useMemo(
+        () => resolveSessionMachineId(stableSessionMetadata),
+        [stableSessionMetadata],
+    );
+    const isExactOwner = React.useMemo(() => createSessionActionTarget({
+        session: props.session,
+        currentUserId: activeServerAccountScope?.accountId ?? null,
+    }).isOwnedByCurrentUser, [
+        activeServerAccountScope?.accountId,
+        props.session,
+    ]);
+    const operationMachineSubscriptionTarget =
+        resolveExternalSessionOperationMachineSubscriptionTarget({
+            hasPresentation: externalSessionOperationPresentation !== null,
+            isExactOwner,
+            machineId: operationMachineId,
+        });
+    const operationMachine = useMachine(
+        operationMachineSubscriptionTarget ?? '',
+        operationMachineSubscriptionTarget !== null,
+    );
+    const sessionServerId = usePreferredServerIdForSession(props.session.id);
+    const externalSessionOperationOwnerTarget = React.useMemo(() => (
+        operationMachineSubscriptionTarget === null
+            ? null
+            : {
+                machineId: operationMachineSubscriptionTarget,
+                machineOnline:
+                    operationMachine !== null && isMachineOnline(operationMachine),
+                machineStatusKnown: operationMachine !== null,
+                serverId: sessionServerId,
+            }
+    ), [
+        operationMachine,
+        operationMachineSubscriptionTarget,
+        sessionServerId,
+    ]);
+    const externalSessionOperationOwnerHydration =
+        useExternalSessionOperationOwnerHydration({
+            isExactOwner,
+            machineId: operationMachineId,
+            machineOnline:
+                operationMachine !== null && isMachineOnline(operationMachine),
+            presentation: externalSessionOperationPresentation,
+            serverId: sessionServerId,
+            sessionId: props.session.id,
+        });
+    const {
+        dismissal: externalSessionOperationDismissal,
+        onDismiss: onDismissExternalSessionOperation,
+    } = useExternalSessionOperationTranscriptDismissal({
+        sessionId: props.session.id,
+        progress: externalSessionOperationOwnerHydration.progress,
+    });
 
     const groupingMode = transcriptGroupingMode === 'turns' ? 'turns' : 'linear';
     const groupToolCalls =
@@ -84,12 +184,18 @@ export function useChatListRootState(props: ChatListProps) {
         messagesById,
         pendingMessages,
         pendingUserActionRequests,
+        externalSessionOperationDismissal,
+        externalSessionOperationPresentation,
+        externalSessionOperationProgress:
+            externalSessionOperationOwnerHydration.progress,
         sessionId: props.session.id,
         toolCallsGroupStrategy,
     });
 
-    const latestCommittedActivityKey =
-        messageIdsOldestFirst.length > 0 ? messageIdsOldestFirst[messageIdsOldestFirst.length - 1]! : null;
+    const latestCommittedActivityKey = resolveLatestCommittedActivityKey({
+        messageIdsOldestFirst,
+        messagesById,
+    });
     const { rollbackActionsByMessageId, rollbackRanges } = useTranscriptRootRollbackActions({
         messageIdsOldestFirst,
         messagesById,
@@ -102,6 +208,13 @@ export function useChatListRootState(props: ChatListProps) {
         sessionId: props.session.id,
         sessionThinking: props.session.thinking === true,
     });
+    const eventEmphasisByMessageId = React.useMemo(() => (
+        resolveTranscriptEventEmphasisByMessageId({
+            messageIdsOldestFirst,
+            messagesById,
+            sessionActive: props.session.active === true,
+        })
+    ), [messageIdsOldestFirst, messagesById, props.session.active]);
 
     const interaction = React.useMemo(() => {
         return deriveTranscriptInteractionFromSession({
@@ -133,6 +246,7 @@ export function useChatListRootState(props: ChatListProps) {
             messagePins: sessionMessagePins,
             onToggleMessagePin: togglePersistedSessionMessagePin,
             messagesById: internalMessagesById,
+            eventEmphasisByMessageId,
             forkMessageMetadataById: forkAwareMessageDescriptors?.metadataByMessageId ?? null,
             committedMessagesCount: messageIdsOldestFirst.length,
             latestCommittedActivityKey,
@@ -144,7 +258,7 @@ export function useChatListRootState(props: ChatListProps) {
             controlledByUserOverride: props.controlledByUserOverride,
             controlSwitchTo: props.controlSwitchTo ?? null,
             onRequestSwitchToRemote: props.onRequestSwitchToRemote,
-            directControlFooter: props.directControlFooter,
+            externalControlFooter: props.externalControlFooter,
             approvalRequests: props.approvalRequests,
             interaction,
             jumpToSeq: props.jumpToSeq ?? null,
@@ -152,6 +266,10 @@ export function useChatListRootState(props: ChatListProps) {
             onJumpLanded: props.onJumpLanded,
             onViewportChange: props.onViewportChange,
             onEditPendingMessage: props.onEditPendingMessage,
+            onDismissExternalSessionOperation,
+            onExternalSessionOperationActionResult:
+                externalSessionOperationOwnerHydration.onActionResult,
+            externalSessionOperationOwnerTarget,
             isWarmKeepAliveInstance: props.isWarmKeepAliveInstance === true,
             routeHydrationPending: props.routeHydrationPending === true,
             forkCommon: transcriptSessionCommon.fork,

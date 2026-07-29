@@ -74,6 +74,17 @@ describe('apiPush', () => {
         );
     });
 
+    it('deletePushToken does not send JSON content type without a request body', async () => {
+        const { deletePushToken } = await import('./apiPush');
+        mocks.serverFetch.mockResolvedValueOnce(jsonResponse({ success: true }));
+
+        await deletePushToken(credentials, 'ExponentPushToken[abc]');
+
+        const init = mocks.serverFetch.mock.calls[0]?.[1] as RequestInit | undefined;
+        expect(new Headers(init?.headers).get('Content-Type')).toBeNull();
+        expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${credentials.token}`);
+    });
+
     it('deletePushToken treats 200 with empty body as success', async () => {
         const { deletePushToken } = await import('./apiPush');
         mocks.serverFetch.mockResolvedValueOnce(new Response(null, { status: 200 }));

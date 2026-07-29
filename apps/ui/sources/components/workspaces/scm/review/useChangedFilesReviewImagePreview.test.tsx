@@ -49,7 +49,6 @@ describe('useChangedFilesReviewImagePreview', () => {
                 uri: 'blob:preview',
                 byteLength: 3,
                 mimeType: 'image/png',
-                svgXml: null,
                 revoke: vi.fn(),
             },
         });
@@ -83,43 +82,4 @@ describe('useChangedFilesReviewImagePreview', () => {
         });
     });
 
-    it('supports svg previews (including decoded svgXml for native rendering)', async () => {
-        const { useChangedFilesReviewImagePreview } = await import('./useChangedFilesReviewImagePreview');
-
-        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>';
-        createSessionFilePreviewSourceSpy.mockResolvedValueOnce({
-            ok: true,
-            source: {
-                kind: 'object-url',
-                uri: 'blob:svg-preview',
-                byteLength: svg.length,
-                mimeType: 'image/svg+xml',
-                svgXml: svg,
-                revoke: vi.fn(),
-            },
-        });
-
-        let current: any = null;
-        function Test(props: { enabled: boolean }) {
-            current = useChangedFilesReviewImagePreview({
-                sessionId: 's1',
-                snapshotSignature: 'sig1',
-                filePath: 'image.svg',
-                enabled: props.enabled,
-            });
-            return null;
-        }
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<Test enabled={true} />)).tree;
-
-        expect(createSessionFilePreviewSourceSpy).toHaveBeenCalledTimes(1);
-        expect(current.status).toBe('loaded');
-        expect(current.uri).toBe('blob:svg-preview');
-        expect(current.svgXml).toBe(svg);
-
-        act(() => {
-            tree!.unmount();
-        });
-    });
 });

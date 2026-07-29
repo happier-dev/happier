@@ -98,10 +98,14 @@ export function installAgentInputCommonModuleMocks(
         useFocusedInputHandler: () => {},
     }));
 
-    vi.mock('react-native-reanimated', async (importOriginal) => {
-        const original = await importOriginal<Record<string, unknown>>();
+    vi.mock('react-native-reanimated', async () => {
+        // Use the canonical testkit reanimated mock (same one the global vitest setup
+        // installs) so it covers the full surface the instrument strip needs
+        // (withDelay/withTiming/useSharedValue/useAnimatedStyle/Animated.View).
+        const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+        const mock = createReanimatedModuleMock();
         return {
-            ...original,
+            ...mock,
             runOnJS: <Args extends readonly unknown[], Return>(
                 fn: (...args: Args) => Return,
             ) => fn,
@@ -133,14 +137,12 @@ export function installAgentInputCommonModuleMocks(
             return await activeOptions.storageStore();
         }
 
+        const { createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+        const store = createStorageStoreMock({
+            sessionMessages: {},
+        });
         return {
-            getStorage: () => Object.assign(
-                (selector?: (state: unknown) => unknown) => {
-                    const state = { sessionMessages: {}, localSettings: { uiFontScale: 1 } };
-                    return typeof selector === 'function' ? selector(state) : state;
-                },
-                { getState: () => ({ localSettings: { uiFontScale: 1 } }) },
-            ),
+            getStorage: () => store,
         };
     });
 }

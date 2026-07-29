@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -16,6 +17,13 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     return {};
 }
 
+function readOpacity(style: unknown): number | undefined {
+    const opacity = flattenStyle(style).opacity;
+    if (typeof opacity === 'number') return opacity;
+    const animated = opacity as { __getValue?: () => number } | undefined;
+    return typeof animated?.__getValue === 'function' ? animated.__getValue() : undefined;
+}
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
@@ -25,6 +33,11 @@ vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
+
+vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
+    useReducedMotionPreference: () => false,
+    readReducedMotionPreference: () => false,
+}));
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: React.PropsWithChildren<Record<string, unknown>>) =>
@@ -44,7 +57,6 @@ describe('MessageActionRow', () => {
                 messageId="m1"
                 timestampText="May 19, 2026, 4:30 PM"
                 showActions
-                pointerEvents="auto"
                 isWeb
                 invertTimestampAndActions={false}
             >
@@ -54,11 +66,11 @@ describe('MessageActionRow', () => {
 
         expect(screen.findByTestId('transcript-message-actions-row:m1')).toBeTruthy();
         expect(screen.findByTestId('transcript-message-timestamp:m1')?.props.children).toBe('May 19, 2026, 4:30 PM');
-        expect(screen.findByTestId('transcript-message-actions:m1')?.props.accessibilityElementsHidden).toBe(false);
+        expect(readOpacity(screen.findByTestId('transcript-message-actions:m1')?.props.style)).toBe(1);
         expect(screen.findByTestId('child-action')).toBeTruthy();
     });
 
-    it('hides the row and action descendants when neither timestamp nor actions are visible', async () => {
+    it('never lets the absolutely-positioned row intercept pointer input', async () => {
         const { MessageActionRow } = await import('./MessageActionRow');
 
         const screen = await renderScreen(
@@ -66,8 +78,7 @@ describe('MessageActionRow', () => {
                 messageId="hidden"
                 timestampText={null}
                 showActions={false}
-                pointerEvents="none"
-                isWeb={false}
+                isWeb
                 invertTimestampAndActions={false}
             >
                 <View testID="hidden-child-action" />
@@ -77,14 +88,65 @@ describe('MessageActionRow', () => {
         const row = screen.findByTestId('transcript-message-actions-row:hidden');
         const actions = screen.findByTestId('transcript-message-actions:hidden');
 
-        expect(screen.findAllByTestId('transcript-message-timestamp:hidden')).toHaveLength(0);
-        expect(row?.props.pointerEvents).toBe('none');
-        expect(flattenStyle(row?.props.style).opacity).toBe(0);
-        expect(actions?.props.accessibilityElementsHidden).toBe(true);
-        expect(actions?.props.importantForAccessibility).toBe('no-hide-descendants');
+        expect(flattenStyle(row?.props.style).pointerEvents).toBe('box-none');
+        expect(readOpacity(actions?.props.style)).toBe(0);
+        expect(flattenStyle(actions?.props.style).pointerEvents).toBe('none');
     });
 
-    it('uses style-level pointer events on web and inverts timestamp spacing when requested', async () => {
+    it('keeps a pinned row pin visible without dragging the timestamp or the rest of the actions into view', async () => {
+        const { MessageActionRow } = await import('./MessageActionRow');
+
+        const screen = await renderScreen(
+            <MessageActionRow
+                messageId="pinned"
+                timestampText={null}
+                showActions={false}
+                showPinAction
+                pinAction={<View testID="pin-action" />}
+                isWeb
+                invertTimestampAndActions={false}
+            >
+                <View testID="other-action" />
+            </MessageActionRow>,
+        );
+
+        expect(readOpacity(screen.findByTestId('transcript-message-pin-slot:pinned')?.props.style)).toBe(1);
+        expect(readOpacity(screen.findByTestId('transcript-message-actions:pinned')?.props.style)).toBe(0);
+        expect(screen.findAllByTestId('transcript-message-timestamp:pinned')).toHaveLength(0);
+    });
+
+    it('reports descendant focus so the host can mirror it into its row visibility state', async () => {
+        const { MessageActionRow } = await import('./MessageActionRow');
+        const onActionsFocus = vi.fn();
+        const onActionsBlur = vi.fn();
+
+        const screen = await renderScreen(
+            <MessageActionRow
+                messageId="focus"
+                timestampText={null}
+                showActions={false}
+                onActionsFocus={onActionsFocus}
+                onActionsBlur={onActionsBlur}
+                isWeb
+                invertTimestampAndActions={false}
+            >
+                <View testID="focus-action" />
+            </MessageActionRow>,
+        );
+
+        act(() => {
+            screen.findByTestId('transcript-message-actions:focus')?.props.onFocus?.();
+        });
+        expect(onActionsFocus).toHaveBeenCalledTimes(1);
+        expect(readOpacity(screen.findByTestId('transcript-message-actions:focus')?.props.style)).toBe(1);
+
+        act(() => {
+            screen.findByTestId('transcript-message-actions:focus')?.props.onBlur?.();
+        });
+        expect(onActionsBlur).toHaveBeenCalledTimes(1);
+    });
+
+    it('inverts timestamp spacing when requested', async () => {
         const { MessageActionRow } = await import('./MessageActionRow');
 
         const screen = await renderScreen(
@@ -92,7 +154,6 @@ describe('MessageActionRow', () => {
                 messageId="web-inverted"
                 timestampText="Now"
                 showActions={false}
-                pointerEvents="none"
                 isWeb
                 invertTimestampAndActions
             >
@@ -103,10 +164,8 @@ describe('MessageActionRow', () => {
         const row = screen.findByTestId('transcript-message-actions-row:web-inverted');
         const timestamp = screen.findByTestId('transcript-message-timestamp:web-inverted');
 
-        expect(row?.props.pointerEvents).toBeUndefined();
         expect(flattenStyle(row?.props.style)).toEqual(expect.objectContaining({
             flexDirection: 'row-reverse',
-            pointerEvents: 'none',
         }));
         expect(flattenStyle(timestamp?.props.style)).toEqual(expect.objectContaining({
             marginLeft: 12,

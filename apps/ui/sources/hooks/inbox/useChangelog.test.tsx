@@ -4,7 +4,7 @@ import renderer, { act } from 'react-test-renderer';
 import { MMKV } from 'react-native-mmkv';
 
 import { getLegacyChangelogAutoSeenBaseline } from '@/changelog/releaseNotes/storage';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -49,6 +49,8 @@ describe('useChangelog', () => {
         const { useChangelog } = await import('./useChangelog');
 
         let latest: ChangelogSnapshot | null = null;
+        let storedReleaseIdDuringRender: string | null = null;
+        let storedBaselineDuringRender: string | null = null;
 
         function Probe() {
             const value = useChangelog();
@@ -56,6 +58,9 @@ describe('useChangelog', () => {
                 hasUnread: value.hasUnread,
                 latestReleaseId: value.latestReleaseId,
             };
+            const mmkv = new MMKV();
+            storedReleaseIdDuringRender = mmkv.getString(CHANGELOG_LAST_VIEWED_RELEASE_ID_KEY) ?? null;
+            storedBaselineDuringRender = getLegacyChangelogAutoSeenBaseline();
             return React.createElement('View');
         }
 
@@ -68,6 +73,9 @@ describe('useChangelog', () => {
         const latestValue: ChangelogSnapshot = latest;
         expect(latestValue.hasUnread).toBe(false);
         expect(latestValue.latestReleaseId).toBe('0.2.1');
+        expect(storedReleaseIdDuringRender).toBeNull();
+        expect(storedBaselineDuringRender).toBeNull();
+        await flushHookEffects({ cycles: 2, turns: 2 });
         expect(new MMKV().getString(CHANGELOG_LAST_VIEWED_RELEASE_ID_KEY)).toBe('0.2.1');
         expect(getLegacyChangelogAutoSeenBaseline()).toBe('0.2.1');
     });

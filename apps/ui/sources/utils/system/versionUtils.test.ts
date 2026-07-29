@@ -18,10 +18,10 @@ describe('versionUtils', () => {
             expect(compareVersions('1.9.9', '2.0.0')).toBe(-1);
         });
 
-        it('should handle pre-release versions', () => {
-            expect(compareVersions('0.10.0-1', '0.10.0')).toBe(0);
-            expect(compareVersions('0.10.0-beta', '0.10.0')).toBe(0);
-            expect(compareVersions('0.10.1-1', '0.10.0')).toBe(1);
+        it('rejects unsupported prerelease channels', () => {
+            expect(() => compareVersions('0.10.0-1', '0.10.0')).toThrow();
+            expect(() => compareVersions('0.10.0-beta', '0.10.0')).toThrow();
+            expect(() => compareVersions('0.10.1-1', '0.10.0')).toThrow();
         });
 
         it('orders dev and preview versions using their numeric suffixes', () => {

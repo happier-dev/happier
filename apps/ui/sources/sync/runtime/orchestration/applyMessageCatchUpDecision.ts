@@ -6,7 +6,6 @@ export async function applyMessageCatchUpDecision(params: Readonly<{
     onIncrementalExhausted: 'tail_reset_latest_page' | 'defer_forward_loading';
     fetchNewerPage: (afterSeq: number) => Promise<{ messagesCount: number; nextAfterSeq: number | null }>;
     fetchSnapshotLatestPage: () => Promise<void>;
-    resetTranscriptState: () => void;
     markLoaded: () => void;
     setDeferredForwardLoading: (deferred: boolean) => void;
 }>): Promise<void> {
@@ -20,7 +19,11 @@ export async function applyMessageCatchUpDecision(params: Readonly<{
     }
 
     if (params.decision.kind === 'tail_reset_latest_page') {
-        params.resetTranscriptState();
+        // C6/D2b: fetch-then-merge. A large catch-up gap is NOT a discontinuity — the latest
+        // page is merged on top of existing history via the non-destructive seq-merge in
+        // applyMessages. Wiping the transcript first lost all paginated older pages and opened
+        // an empty-store window; a full reset is reserved for proven discontinuity (truncated
+        // tail / server purge-rewrite), handled by its own callers.
         params.setDeferredForwardLoading(false);
         await params.fetchSnapshotLatestPage();
         params.markLoaded();
@@ -42,7 +45,7 @@ export async function applyMessageCatchUpDecision(params: Readonly<{
     }
 
     if (params.onIncrementalExhausted === 'tail_reset_latest_page') {
-        params.resetTranscriptState();
+        // C6/D2b: fetch-then-merge (see above) — never a destructive reset on a plain gap.
         await params.fetchSnapshotLatestPage();
         params.markLoaded();
         return;

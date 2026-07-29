@@ -9,6 +9,7 @@ type RuntimeLocalMetadataShape = {
     machineId?: unknown;
     flavor?: unknown;
     externalSessionV1?: unknown;
+    externalHistoryImportV1?: unknown;
     claudeSessionId?: unknown;
     codexSessionId?: unknown;
     opencodeSessionId?: unknown;
@@ -46,7 +47,11 @@ export function preserveSessionRuntimeLocalMetadata<T extends RuntimeLocalMetada
     let preservedMetadata = nextMetadata;
     const previousRuntimeLocalMachineId = readRuntimeLocalMachineId(previousMetadata);
 
-    if (preservedMetadata.externalSessionV1 == null && previousMetadata.externalSessionV1 != null) {
+    if (
+        preservedMetadata.externalHistoryImportV1 == null
+        && preservedMetadata.externalSessionV1 == null
+        && previousMetadata.externalSessionV1 != null
+    ) {
         preservedMetadata = {
             ...preservedMetadata,
             externalSessionV1: previousMetadata.externalSessionV1,

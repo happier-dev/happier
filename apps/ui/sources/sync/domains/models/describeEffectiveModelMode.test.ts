@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { describeEffectiveModelMode } from './describeEffectiveModelMode';
 import { getAgentCore } from '@/agents/catalog/catalog';
@@ -13,6 +13,10 @@ function buildMetadata(overrides: Partial<Metadata> = {}): Metadata {
 }
 
 describe('describeEffectiveModelMode', () => {
+    afterEach(() => {
+        vi.doUnmock('@/agents/catalog/catalog');
+    });
+
     it('treats Claude model overrides as next-prompt', () => {
         const out = describeEffectiveModelMode({
             agentType: 'claude',
@@ -34,10 +38,77 @@ describe('describeEffectiveModelMode', () => {
             agentType: 'codex',
             selectedModelId: 'gpt-5-codex-high',
             metadata: buildMetadata({
-                sessionModesV1: { v: 1, provider: 'codex', updatedAt: 1, currentModeId: 'ask', availableModes: [] },
+                sessionModesV1: { v: 1, agentId: 'codex', updatedAt: 1, currentModeId: 'ask', availableModes: [] },
             }),
         });
         expect(out.applyScope).toBe('live');
+    });
+
+    it('keeps the requested model selected while exposing the accepted applied model separately', () => {
+        const out = describeEffectiveModelMode({
+            agentType: 'codex',
+            selectedModelId: 'gpt-5.6-sol',
+            metadata: buildMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    agentId: 'codex',
+                    updatedAt: 10,
+                    currentModelId: 'gpt-5.6-terra',
+                    availableModels: [],
+                },
+                sessionAppliedModelV1: {
+                    v: 1,
+                    provider: 'codex',
+                    updatedAt: 11,
+                    modelId: 'gpt-5.6-terra',
+                    selection: {
+                        agentTargetKey: 'backend:codex',
+                        providerConnectionId: null,
+                        modelId: 'gpt-5.6-terra',
+                    },
+                },
+            }),
+        });
+
+        expect(out.selectedModelId).toBe('gpt-5.6-sol');
+        expect(out.effectiveModelId).toBe('gpt-5.6-sol');
+        expect(out.appliedModelId).toBe('gpt-5.6-terra');
+    });
+
+    it('does not treat provider currentModelId as applied before prompt acceptance', () => {
+        const out = describeEffectiveModelMode({
+            agentType: 'codex',
+            selectedModelId: 'gpt-5.6-sol',
+            metadata: buildMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    agentId: 'codex',
+                    updatedAt: 10,
+                    currentModelId: 'gpt-5.6-sol',
+                    availableModels: [],
+                },
+            }),
+        });
+
+        expect(out.selectedModelId).toBe('gpt-5.6-sol');
+        expect(out.appliedModelId).toBeNull();
+    });
+
+    it('accepts the Remote Dev predecessor applied-model fact', () => {
+        const out = describeEffectiveModelMode({
+            agentType: 'codex',
+            selectedModelId: 'gpt-5.6-sol',
+            metadata: buildMetadata({
+                sessionAppliedModelV1: {
+                    v: 1,
+                    provider: 'codex',
+                    updatedAt: 10,
+                    modelId: 'gpt-5.6-terra',
+                },
+            }),
+        });
+
+        expect(out.appliedModelId).toBe('gpt-5.6-terra');
     });
 
     it('adds a restart note for ACP providers that restart sessions on model change (Gemini)', () => {
@@ -45,7 +116,7 @@ describe('describeEffectiveModelMode', () => {
             agentType: 'gemini',
             selectedModelId: 'gemini-2.5-flash',
             metadata: buildMetadata({
-                sessionModesV1: { v: 1, provider: 'gemini', updatedAt: 1, currentModeId: 'default', availableModes: [] },
+                sessionModesV1: { v: 1, agentId: 'gemini', updatedAt: 1, currentModeId: 'default', availableModes: [] },
             }),
         });
         expect(out.applyScope).toBe('live');
@@ -61,6 +132,31 @@ describe('describeEffectiveModelMode', () => {
 
         expect(out.effectiveModelId).toBe(getAgentCore('gemini').model.defaultMode);
         expect(out.notes.join(' ')).not.toMatch(/custom model ids|not validated/i);
+    });
+
+    it('uses the default sentinel when the provider has no selectable default model', async () => {
+        vi.resetModules();
+        vi.doMock('@/agents/catalog/catalog', async () => {
+            const actual = await vi.importActual<typeof import('@/agents/catalog/catalog')>('@/agents/catalog/catalog');
+            return {
+                ...actual,
+                getAgentCore: (agentId: Parameters<typeof actual.getAgentCore>[0]) => {
+                    const core = actual.getAgentCore(agentId);
+                    return agentId === 'gemini'
+                        ? { ...core, model: { ...core.model, defaultMode: null } }
+                        : core;
+                },
+            };
+        });
+        const { describeEffectiveModelMode: describeEffectiveModelModeWithMock } = await import('./describeEffectiveModelMode');
+
+        const out = describeEffectiveModelModeWithMock({
+            agentType: 'gemini',
+            selectedModelId: null,
+            metadata: null,
+        });
+
+        expect(out.effectiveModelId).toBe('default');
     });
 
     it('only shows the custom model note for explicit unknown model ids', () => {
@@ -86,7 +182,7 @@ describe('describeEffectiveModelMode', () => {
             metadata: buildMetadata({
                 acpSessionModelsV1: {
                     v: 1,
-                    provider: 'unexpected-provider',
+                    agentId: 'unexpected-provider',
                     updatedAt: 1,
                     currentModelId: 'gpt-5-codex',
                     availableModels: [],
@@ -102,7 +198,7 @@ describe('describeEffectiveModelMode', () => {
             agentType: 'codex',
             selectedModelId: 'gpt-5-codex',
             metadata: buildMetadata({
-                acpSessionModesV1: { v: 1, provider: 'codex', updatedAt: 1, currentModeId: 'ask', availableModes: [] },
+                acpSessionModesV1: { v: 1, agentId: 'codex', updatedAt: 1, currentModeId: 'ask', availableModes: [] },
             }),
         });
 

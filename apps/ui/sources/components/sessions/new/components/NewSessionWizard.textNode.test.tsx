@@ -1,6 +1,7 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createProviderErrorV1 } from '@happier-dev/protocol';
 
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
 import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
@@ -59,6 +60,7 @@ vi.mock('@/components/ui/lists/Item', () => ({
     ),
 }));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
+    ItemGroupSelectionContext: React.createContext<{ selectableItemCount: number } | null>(null),
     ItemGroup: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('ItemGroup', props, props.children),
 }));
@@ -294,6 +296,24 @@ describe('NewSessionWizard', () => {
         />);
     }
 
+    it('threads the exact Provider-bound ref through the primary wizard selection callback', async () => {
+        const setModelSelection = vi.fn();
+        await renderWizardForModelRefresh({ setModelSelection });
+        const ref = {
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: 'pc_work',
+            modelId: 'shared-model',
+        };
+
+        (modelSelectionPropsRef.current?.onSelectSelection as ((value: typeof ref) => void) | undefined)?.(ref);
+
+        expect(setModelSelection).toHaveBeenCalledWith(expect.objectContaining({
+            v: 1,
+            ref,
+            updatedAt: expect.any(Number),
+        }));
+    });
+
     it('passes launch status badges through to the wizard composer input', async () => {
         const statusBadges = [{
             key: 'new-session-launch-starting',
@@ -314,10 +334,8 @@ describe('NewSessionWizard', () => {
         const pendingLaunchAttempt: NewSessionLaunchAttempt = {
             attemptId: 'attempt-1',
             spawnNonce: 'spawn-1',
-            spawnAttemptKey: null,
             scopeKey: 'scope-1',
             createdSessionId: null,
-            daemonInitialPromptUsed: false,
             firstTurnLocalId: 'first-turn-1',
             attachmentMessageLocalId: 'attachment-1',
             status: 'spawning',
@@ -338,6 +356,23 @@ describe('NewSessionWizard', () => {
         expect(screen.findByProps({ testID: 'new-session-launch-pending-preview' })).toBeTruthy();
         expect(screen.findByProps({ testID: 'new-session-launch-pending-preview-prompt' }).props.children)
             .toBe('Build the wizard pending launch state');
+    });
+
+    it('renders the canonical typed Provider launch recovery above the primary wizard composer', async () => {
+        const providerLaunchError = createProviderErrorV1('provider_not_enabled_on_machine', {
+            connectionId: 'pc_provider',
+            machineId: 'machine-1',
+        });
+        const screen = await renderWizardForModelRefresh({}, {
+            ...({ providerLaunchError, retryProviderLaunch: vi.fn() } as Record<string, unknown>),
+        });
+
+        expect(screen.findByProps({
+            testID: 'provider-error:provider_not_enabled_on_machine',
+        })).toBeTruthy();
+        expect(screen.findByProps({
+            testID: 'provider-error-action:provider_not_enabled_on_machine',
+        })).toBeTruthy();
     });
 
     it('does not force the wizard shell to full-height on wide web layouts', async () => {

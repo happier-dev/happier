@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { type BackendTargetRefV2 } from '@happier-dev/protocol';
+import { type BackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
 
 import { type AgentId } from '@/agents/catalog/catalog';
 import {
@@ -38,6 +38,11 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
     prepareSecretPromptForProfileSelection: (prevProfileId: string | null) => void;
     hasUserTouchedProfileSelectionRef: React.MutableRefObject<boolean>;
     agentType: AgentId;
+    resolveProfileAuthoringIntent?: (profileId: string) => Readonly<{
+        preferredAgentTargetKey: string | null;
+        modelSelection: SessionModelSelectionV1 | null;
+    }>;
+    setModelSelectionForBackendTarget?: (backendTargetKey: string, selection: SessionModelSelectionV1 | null) => void;
 }>): Readonly<{
     selectProfile: (profileId: string) => void;
 }> {
@@ -101,11 +106,43 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
         latestSelectionRequestIdRef.current = requestId;
         params.hasUserTouchedProfileSelectionRef.current = true;
         pendingProfileSelectionRef.current = { profileId, prevProfileId: prevSelectedProfileId, requestId };
+        const profile = params.profileMap.get(profileId) || getBuiltInProfile(profileId);
+        const authoringIntent = params.resolveProfileAuthoringIntent?.(profileId) ?? null;
+        if (profile && authoringIntent?.preferredAgentTargetKey) {
+            const preferredEntry = params.getCompatibleProfileBackendEntries(profile)
+                .find((entry) => entry.backendTargetKey === authoringIntent.preferredAgentTargetKey) ?? null;
+            if (preferredEntry && isBackendEntrySelectableForNewSession({
+                entry: preferredEntry,
+                detectionTimestamp: params.cliAvailabilityTimestamp,
+                availabilityById: params.cliAvailabilityByAgentId,
+                authStatusById: params.cliAuthStatusByAgentId,
+                installableDepKeyCountByAgentId: params.installableDepKeyCountByAgentId,
+                selectableWithoutCliByAgentId: params.selectableWithoutCliByAgentId,
+            })) {
+                params.setBackendTarget(preferredEntry.backendTarget);
+            }
+        }
+        if (authoringIntent?.modelSelection) {
+            params.setModelSelectionForBackendTarget?.(
+                authoringIntent.modelSelection.ref.agentTargetKey,
+                authoringIntent.modelSelection,
+            );
+        }
         params.setSelectedProfileId(profileId);
     }, [
+        params.cliAvailabilityByAgentId,
+        params.cliAuthStatusByAgentId,
+        params.cliAvailabilityTimestamp,
+        params.getCompatibleProfileBackendEntries,
         params.hasUserTouchedProfileSelectionRef,
+        params.installableDepKeyCountByAgentId,
         params.prepareSecretPromptForProfileSelection,
+        params.profileMap,
+        params.resolveProfileAuthoringIntent,
         params.selectedProfileId,
+        params.selectableWithoutCliByAgentId,
+        params.setBackendTarget,
+        params.setModelSelectionForBackendTarget,
         params.setSelectedProfileId,
     ]);
 
@@ -126,8 +163,26 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
 
             const compatibleBackendEntries = params.getCompatibleProfileBackendEntries(profile);
             const currentSelectable = isCurrentCompatibleBackendSelectable(compatibleBackendEntries);
+            const authoringIntent = params.resolveProfileAuthoringIntent?.(profile.id) ?? null;
+            const preferredEntry = authoringIntent?.preferredAgentTargetKey
+                ? compatibleBackendEntries.find((entry) => entry.backendTargetKey === authoringIntent.preferredAgentTargetKey) ?? null
+                : null;
+            const preferredEntrySelectable = preferredEntry
+                ? isBackendEntrySelectableForNewSession({
+                    entry: preferredEntry,
+                    detectionTimestamp: params.cliAvailabilityTimestamp,
+                    availabilityById: params.cliAvailabilityByAgentId,
+                    authStatusById: params.cliAuthStatusByAgentId,
+                    installableDepKeyCountByAgentId: params.installableDepKeyCountByAgentId,
+                    selectableWithoutCliByAgentId: params.selectableWithoutCliByAgentId,
+                })
+                : false;
 
-            if (compatibleBackendEntries.length > 0 && !currentSelectable) {
+            if (preferredEntry && preferredEntrySelectable) {
+                if (preferredEntry.backendTargetKey !== params.selectedBackendTargetKey) {
+                    params.setBackendTarget(preferredEntry.backendTarget);
+                }
+            } else if (compatibleBackendEntries.length > 0 && !currentSelectable) {
                 const nextEntry = resolveNextCompatibleBackendEntry(compatibleBackendEntries);
                 if (nextEntry) {
                     params.setBackendTarget(nextEntry.backendTarget);
@@ -149,6 +204,7 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
         params.hasUserSelectedPermissionModeRef,
         params.profileMap,
         params.resolveDefaultPermissionMode,
+        params.resolveProfileAuthoringIntent,
         params.selectedBackendTargetKey,
         params.selectedProfileId,
         params.setBackendTarget,

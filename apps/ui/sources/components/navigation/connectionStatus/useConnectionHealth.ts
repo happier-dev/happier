@@ -91,6 +91,7 @@ export function useConnectionHealth() {
         return resolveConnectionHealth({
             socketStatus: socketStatus.status,
             endpointStatus: endpointConnectivity.status,
+            endpointReason: endpointConnectivity.reason,
             hasSyncError: Boolean(activeSyncError),
             syncErrorKind: activeSyncError?.kind,
             machineGroups: activeSelectionMachineGroups.visibleMachineGroups.map((group) => {
@@ -112,7 +113,13 @@ export function useConnectionHealth() {
                 };
             }),
         });
-    }, [activeSelectionMachineGroups.visibleMachineGroups, activeSyncError, endpointConnectivity.status, socketStatus.status]);
+    }, [
+        activeSelectionMachineGroups.visibleMachineGroups,
+        activeSyncError,
+        endpointConnectivity.reason,
+        endpointConnectivity.status,
+        socketStatus.status,
+    ]);
 
     const presentation = React.useMemo(() => {
         return resolveConnectionHealthPresentation(health, {

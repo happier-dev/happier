@@ -15,6 +15,7 @@ function createEndpointSignal(
         sessionId: 'session-1',
         source: 'heuristic',
         transcript: 'hello runtime',
+        endpoint: { reason: 'structural_fallback', confidence: null },
         ...overrides,
     };
 }

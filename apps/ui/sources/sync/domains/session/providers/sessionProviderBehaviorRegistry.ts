@@ -6,17 +6,18 @@ import type { SessionSubagentAutoRecipientContext } from '@/sync/domains/session
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import {
-    BUNDLED_CANONICAL_AGENT_SESSION_PROVIDER_BEHAVIOR_DESCRIPTORS,
-    BUNDLED_CANONICAL_AGENT_SESSION_PROVIDER_BEHAVIORS,
-} from '@/agents/registry/generatedBundledPluginEntries.sessionProviderBehaviors';
+    BUNDLED_CANONICAL_AGENT_SESSION_BEHAVIOR_DESCRIPTORS,
+    BUNDLED_CANONICAL_AGENT_SESSION_BEHAVIORS,
+} from '@/agents/registry/generatedBundledPluginEntries.sessionAgentBehaviors';
 
 import type { ProviderParticipantSnapshot, SessionProviderBehavior } from './sessionProviderBehaviorTypes';
 import { createSessionProviderBehaviorFromDescriptor } from './sessionProviderBehaviorDescriptors';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 const SESSION_PROVIDER_BEHAVIORS: Readonly<Partial<Record<AgentId, SessionProviderBehavior>>> = Object.freeze(
     Object.fromEntries(
         AGENT_IDS.map((agentId) => {
-            const descriptor = BUNDLED_CANONICAL_AGENT_SESSION_PROVIDER_BEHAVIOR_DESCRIPTORS[agentId]?.descriptor;
+            const descriptor = BUNDLED_CANONICAL_AGENT_SESSION_BEHAVIOR_DESCRIPTORS[agentId]?.descriptor;
             const descriptorBehavior = descriptor
                 ? createSessionProviderBehaviorFromDescriptor({
                     kind: 'plugin.ui.v1',
@@ -26,7 +27,7 @@ const SESSION_PROVIDER_BEHAVIORS: Readonly<Partial<Record<AgentId, SessionProvid
                     session: descriptor,
                 }).behavior
                 : {};
-            const fallbackBehavior = BUNDLED_CANONICAL_AGENT_SESSION_PROVIDER_BEHAVIORS[agentId] ?? {};
+            const fallbackBehavior = BUNDLED_CANONICAL_AGENT_SESSION_BEHAVIORS[agentId] ?? {};
             const behavior = {
                 ...descriptorBehavior,
                 ...fallbackBehavior,
@@ -61,6 +62,17 @@ function listSessionProviderBehaviors(params: Readonly<{ flavor: string | null; 
     }
 
     return orderedBehaviors;
+}
+
+function readSessionProviderBehaviorFlavor(metadata: unknown): string | null {
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+        return null;
+    }
+    const rawFlavor = (metadata as Record<string, unknown>).flavor;
+    if (typeof rawFlavor === 'string' && rawFlavor.trim().length > 0) {
+        return rawFlavor;
+    }
+    return resolveAgentIdFromSessionMetadata(metadata);
 }
 
 export function deriveProviderParticipantSnapshot(params: Readonly<{
@@ -106,11 +118,12 @@ export function deriveProviderParticipantTargets(params: Readonly<{
     messages: readonly Message[];
     currentTargets: readonly SessionParticipantTarget[];
 }>): readonly SessionParticipantTarget[] {
-    const flavor = typeof params.session.metadata?.flavor === 'string' ? params.session.metadata.flavor : null;
+    const metadata = readSessionOwnerMetadataView(params.session);
+    const flavor = readSessionProviderBehaviorFlavor(metadata);
     const extras: SessionParticipantTarget[] = [];
     const seenKeys = new Set(params.currentTargets.map((target) => target.key));
 
-    for (const behavior of listSessionProviderBehaviors({ flavor, metadata: params.session.metadata })) {
+    for (const behavior of listSessionProviderBehaviors({ flavor, metadata })) {
         let targets: readonly SessionParticipantTarget[] = [];
         try {
             targets = behavior.participants?.deriveTargets?.(params) ?? [];
@@ -147,8 +160,9 @@ export function deriveProviderSessionSubagents(params: Readonly<{
 export function resolveProviderSessionSubagentAutoRecipient(
     context: SessionSubagentAutoRecipientContext,
 ): ReturnType<NonNullable<NonNullable<SessionProviderBehavior['subagents']>['resolveAutoRecipient']>> {
-    const flavor = typeof context.session.metadata?.flavor === 'string' ? context.session.metadata.flavor : null;
-    for (const behavior of listSessionProviderBehaviors({ flavor, metadata: context.session.metadata })) {
+    const metadata = readSessionOwnerMetadataView(context.session);
+    const flavor = readSessionProviderBehaviorFlavor(metadata);
+    for (const behavior of listSessionProviderBehaviors({ flavor, metadata })) {
         let recipient: ReturnType<NonNullable<NonNullable<SessionProviderBehavior['subagents']>['resolveAutoRecipient']>> = null;
         try {
             recipient = behavior.subagents?.resolveAutoRecipient?.(context) ?? null;

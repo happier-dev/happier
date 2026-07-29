@@ -16,6 +16,7 @@ import { renderHook } from '@/dev/testkit';
 import { createEntryRestoreOwner } from '@/components/sessions/transcript/viewport/entryRestore/entryRestoreOwner';
 import { createSessionOpenLatch } from '@/components/sessions/transcript/viewport/sessionOpen/sessionOpenLatch';
 import { resolveTranscriptRenderWindowProjection } from '@/components/sessions/transcript/viewport/window/resolveTranscriptRenderWindowProjection';
+import { createTranscriptWindowGapItem } from '@/components/sessions/transcript/viewport/window/transcriptWindowGapItem';
 import type { ChatTranscriptListItem } from '@/components/sessions/transcript/chatListTypes';
 import { useTranscriptEntryHost } from './useTranscriptEntryHost';
 
@@ -25,9 +26,6 @@ vi.mock('@/sync/sync', () => ({
             transcriptInitialFillBudgetMs: 2000,
             transcriptInitialFillMaxNoProgressLoads: 3,
             transcriptViewportAnchorOlderLookupMaxLoads: 6,
-            transcriptWebInitialPinStabilizeMs: 3000,
-            transcriptWebInitialPinRetryIntervalMs: 250,
-            transcriptWebInitialPinRetryMilestonesMs: [16, 50, 100, 200, 400, 800],
         }),
     },
 }));
@@ -40,12 +38,9 @@ type EntryHostDeps = Parameters<typeof useTranscriptEntryHost>[0];
 function createStableMembers() {
     const items: readonly ChatTranscriptListItem[] = [];
     const renderWindowProjection = resolveTranscriptRenderWindowProjection<ChatTranscriptListItem>({
-        activeThinkingMessageId: null,
-        entrySliceWindow: null,
-        expandedToolCallsAnchorMessageIds: new Set<string>(),
+        createWindowGapItem: createTranscriptWindowGapItem,
         items,
         listOrientation: 'standard',
-        platformOS: 'ios',
         sessionId: 's1',
         targetWindowState: {
             isWindowMode: false,
@@ -59,10 +54,9 @@ function createStableMembers() {
             hasMoreNewer: null,
             activatedAtMs: null,
         },
-        transcriptNativeHotTailItemCount: 0,
-        transcriptWebHotTailItemCount: 0,
     });
     return {
+        activeTargetWindowTargetRef: { current: null },
         anchorLookupExhaustedRef: { current: false },
         anchorLookupInFlightRef: { current: false },
         anchorLookupLoadCountRef: { current: 0 },
@@ -78,15 +72,12 @@ function createStableMembers() {
         disposeEntryRestoreTransactionForExitRef: { current: () => {} },
         entryRestoreDeadlineTimeoutRef: { current: null },
         entryRestoreOwner: createEntryRestoreOwner(),
-        entrySliceWindowRef: { current: null },
         executeViewportCommand: vi.fn(() => true),
         hasNativeContentMeasurementForCurrentSession: vi.fn(() => false),
         initialFillAbortRef: { current: null },
-        initialWebPinStabilizingRef: { current: false },
         invalidateViewportAnchorCapture: vi.fn(),
         isScrollable: vi.fn(() => false),
         isViewportAnchorSeqLoaded: vi.fn(() => false),
-        jumpToSeqActiveRef: { current: false },
         lastScrollOffsetForIntentRef: { current: null },
         lastUserScrollIntentAtMsRef: { current: Number.NEGATIVE_INFINITY },
         latestJumpToSeqRef: { current: null },
@@ -97,13 +88,12 @@ function createStableMembers() {
         loadOlder: vi.fn(async () => null),
         markNativeInitialViewportAppliedForCurrentSession: vi.fn(),
         nativeMountSettleDeadlineReachedRef: { current: false },
+        nativeMountSettleStable: false,
         observeMountSettleMetrics: vi.fn(),
-        pinToBottom: vi.fn(() => true),
-        pinToBottomRespectingNativeMountSettle: vi.fn(),
         recordRestoreDecisionTelemetry: vi.fn(),
+        recordEntryOwnerOutcome: vi.fn(),
         recordViewportTelemetryEvent: vi.fn(),
         renderWindowProjection,
-        requestBottomFollowScheduledWriteRef: { current: () => {} },
         resolveEntryRestoreOwnerAnchor: vi.fn(() => null),
         resolveNearestSurvivingViewportAnchorIndex: vi.fn(() => null),
         resolveNearestSurvivingViewportAnchorIndexFromItems: vi.fn(() => null),
@@ -119,18 +109,12 @@ function createStableMembers() {
             didAdjustScroll: false,
             status: 'not_found' as const,
         })),
-        revealEntrySliceWindow: vi.fn(() => 0),
         scheduleNativePaintReleaseForEntryRestore: vi.fn(),
-        scheduleFirstSessionOpenWebInitialPinRetryRef: { current: null },
         sessionEntryViewportRef: { current: null },
         sessionOpenLatch: createSessionOpenLatch(),
-        sessionOpenWebInitialPinRetryArmAtMsRef: { current: 0 },
-        sessionOpenWebInitialPinRetryTimeoutRef: { current: null },
-        setEntrySliceWindow: vi.fn(),
         setNativeMountSettleDeadlineReached: vi.fn(),
         updateNativeInitialViewportPendingObservation: vi.fn(),
         updateNativeViewportPaintObserved: vi.fn(),
-        waitForNextVisualUpdate: vi.fn(async () => {}),
         wantsPinnedRef: { current: true },
     };
 }
@@ -139,7 +123,6 @@ function createStableMembers() {
 function buildDeps(members: ReturnType<typeof createStableMembers>): EntryHostDeps {
     return {
         ...members,
-        autoPinDelayMs: 1000,
         committedMessagesCount: 0,
         displayItemsLength: 0,
         isLoaded: false,
@@ -172,7 +155,6 @@ describe('useTranscriptEntryHost identity stability', () => {
         expect(second.runEntryRestoreAttempt).toBe(first.runEntryRestoreAttempt);
         expect(second.applyEntryRestoreOwnerEffects).toBe(first.applyEntryRestoreOwnerEffects);
         expect(second.verifyWebEntryRestoreTransaction).toBe(first.verifyWebEntryRestoreTransaction);
-        expect(second.verifyNativeSliceEntryRestoreTransaction).toBe(first.verifyNativeSliceEntryRestoreTransaction);
         expect(second.observeNativeEntryRestoreHostFacts).toBe(first.observeNativeEntryRestoreHostFacts);
         expect(second.disposeEntryRestoreTransactionForExit).toBe(first.disposeEntryRestoreTransactionForExit);
         // The ref the prepend/materialization paths call back into must also stay pinned

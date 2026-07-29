@@ -40,6 +40,17 @@ describe("local service preview load url policy", () => {
         })).toEqual({ ok: true, url: "http://127.0.0.1:5173/" });
     });
 
+    it("treats desktop as a non-native host: loopback dev servers are allowed", async () => {
+        const mod = await loadPreviewUrlModule();
+
+        // The Tauri/Wry desktop WebView can load a loopback dev server, so `desktop` (Phase 5.5) is
+        // non-native like `web` for the loopback policy — it must NOT be rejected.
+        expect(mod?.resolveLocalServicePreviewLoadUrl({
+            platform: "desktop",
+            url: "http://127.0.0.1:5173/",
+        })).toEqual({ ok: true, url: "http://127.0.0.1:5173/" });
+    });
+
     it("rejects non-http preview urls", async () => {
         const mod = await loadPreviewUrlModule();
 

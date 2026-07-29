@@ -8,7 +8,6 @@ describe('session-open latch source boundary', () => {
     it('keeps session-open one-shot guards inside the latch instead of ChatList effects', () => {
         expect(CHAT_LIST_SOURCE).not.toContain('initialPinSessionIdRef');
         expect(CHAT_LIST_SOURCE).not.toContain('didAutoExpandToolCallsGroupsForSessionRef');
-        expect(CHAT_LIST_SOURCE).not.toContain('entrySliceDegradedSessionRef');
         expect(CHAT_LIST_SOURCE).not.toContain('nativeInitialViewportAppliedSessionRef');
     });
 
@@ -22,10 +21,6 @@ describe('session-open latch source boundary', () => {
         expect(CHAT_LIST_SOURCE).not.toContain('shouldHoldNativeFirstPaintPlaceholderForMountSettle');
         expect(CHAT_LIST_SOURCE).not.toContain('shouldHoldNativeFirstPaintPlaceholderForPendingViewport');
         expect(CHAT_LIST_SOURCE).not.toContain('nativeWarmFirstPaintDistanceAppearsOffBottom');
-    });
-
-    it('keeps web initial-open pin attempts on the latch effect path', () => {
-        expect(CHAT_LIST_SOURCE).not.toContain("tryPinToBottomDom('initial-open')");
     });
 
     it('keeps session-entry resets on latch arm/dispose plans instead of a second effect-time owner', () => {

@@ -40,6 +40,12 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Focused session folder navigation state for the local session list',
         storageScope: 'local',
     },
+    collapsedGroupKeysV1: {
+        schema: z.record(z.string(), z.boolean()).default({}),
+        default: {},
+        description: 'Collapsed state for session list groups on this device',
+        storageScope: 'local',
+    },
     brandHeroSeenAt: {
         schema: z.number().nullable().catch(null),
         default: null,

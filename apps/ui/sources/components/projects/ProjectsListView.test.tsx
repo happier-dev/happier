@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -401,12 +402,7 @@ describe('ProjectsListView', () => {
             createdAtMs: 1,
         };
         const { ProjectsListItemMenu } = await import('./ProjectsListItemMenu');
-        const theme = {
-            colors: {
-                textSecondary: '#666',
-                deleteAction: '#c00',
-            },
-        } as any;
+        const theme = createThemeFixture();
         const firstOnRemove = vi.fn();
         const screen = await renderScreen(
             <ProjectsListItemMenu

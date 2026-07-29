@@ -31,7 +31,6 @@ const routerMockState = vi.hoisted(() => ({
     setParams: vi.fn(),
 }));
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');

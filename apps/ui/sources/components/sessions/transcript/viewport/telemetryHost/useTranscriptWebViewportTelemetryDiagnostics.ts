@@ -2,8 +2,8 @@ import * as React from 'react';
 import {
     configureTranscriptViewportTelemetryFromTuning,
     transcriptViewportTelemetry,
+    type TranscriptViewportTelemetryWebTrigger,
 } from '@/components/sessions/transcript/scroll/transcriptViewportTelemetry';
-import type { ChatTranscriptListItem } from '@/components/sessions/transcript/chatListTypes';
 import { sync } from '@/sync/sync';
 import {
     resolveWebViewportTelemetryDiagnostics as resolveWebViewportTelemetryDiagnosticsRecord,
@@ -13,34 +13,24 @@ import {
     resolveWebTranscriptScrollMetrics,
 } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
 import type { TranscriptOlderPaginationSnapshot } from '@/components/sessions/transcript/pagination/useTranscriptOlderPagination';
-import type {
-    WebPrependTelemetryFacts,
-    WebPrependTelemetryFactsInput,
-} from '@/components/sessions/transcript/viewport/prepend/webPrependOwner';
 import type { TranscriptNavigationRuntimeAnchor } from '@/components/sessions/transcript/viewport/visibility/transcriptNavigationRuntimeAnchors';
 
 type MutableRef<T> = { current: T };
 
 export function useTranscriptWebViewportTelemetryDiagnostics(params: Readonly<{
     chatListNativeId: string;
-    itemsRef: MutableRef<readonly ChatTranscriptListItem[]>;
     listContentHeightRef: MutableRef<number>;
     listLayoutHeightRef: MutableRef<number>;
     olderPaginationSnapshotRef: MutableRef<TranscriptOlderPaginationSnapshot>;
-    resolveWebPrependTelemetryFactsRef: MutableRef<(params: WebPrependTelemetryFactsInput) => WebPrependTelemetryFacts>;
     transcriptNavigationRuntimeAnchorsRef: MutableRef<readonly TranscriptNavigationRuntimeAnchor[]>;
-    webHotColdCountsRef: MutableRef<{ coldCount: number; hotCount: number }>;
     webScrollContainerRef: MutableRef<HTMLElement | null>;
 }>) {
     const {
         chatListNativeId,
-        itemsRef,
         listContentHeightRef,
         listLayoutHeightRef,
         olderPaginationSnapshotRef,
-        resolveWebPrependTelemetryFactsRef,
         transcriptNavigationRuntimeAnchorsRef,
-        webHotColdCountsRef,
         webScrollContainerRef,
     } = params;
 
@@ -72,23 +62,21 @@ export function useTranscriptWebViewportTelemetryDiagnostics(params: Readonly<{
     }, []);
 
     const resolveWebViewportTelemetryDiagnostics = React.useCallback((diagnosticParams: Readonly<{
-        flashListContentHeight?: number;
-        flashListLayoutHeight?: number;
+        listContentHeight?: number;
+        listLayoutHeight?: number;
         metrics?: WebTranscriptScrollMetrics | null;
         paginationPhase?: TranscriptOlderPaginationSnapshot['phase'];
         paginationSuspendedReasons?: TranscriptOlderPaginationSnapshot['suspendedReasons'];
         programmaticWebWrite: boolean;
         scrollable?: boolean;
-        trigger: 'scroll' | 'edge-reached' | 'restore' | 'prepend-restore' | 'jump';
+        trigger: TranscriptViewportTelemetryWebTrigger;
     }>) => {
         return resolveWebViewportTelemetryDiagnosticsRecord({
+            currentListContentHeight: listContentHeightRef.current,
+            currentListLayoutHeight: listLayoutHeightRef.current,
             enabled: Boolean(resolveEnabledViewportTelemetryTuning()),
-            flashListContentHeight: diagnosticParams.flashListContentHeight,
-            flashListLayoutHeight: diagnosticParams.flashListLayoutHeight,
-            hotColdCounts: webHotColdCountsRef.current,
-            items: itemsRef.current,
-            listContentHeight: listContentHeightRef.current,
-            listLayoutHeight: listLayoutHeightRef.current,
+            listContentHeight: diagnosticParams.listContentHeight,
+            listLayoutHeight: diagnosticParams.listLayoutHeight,
             metrics: diagnosticParams.metrics,
             paginationPhase: diagnosticParams.paginationPhase,
             paginationSnapshot: olderPaginationSnapshotRef.current,
@@ -97,17 +85,13 @@ export function useTranscriptWebViewportTelemetryDiagnostics(params: Readonly<{
             runtimeAnchors: transcriptNavigationRuntimeAnchorsRef.current,
             scrollable: diagnosticParams.scrollable,
             trigger: diagnosticParams.trigger,
-            resolveWebPrependTelemetryFacts: (input) => resolveWebPrependTelemetryFactsRef.current(input),
         });
     }, [
-        itemsRef,
         listContentHeightRef,
         listLayoutHeightRef,
         olderPaginationSnapshotRef,
         resolveEnabledViewportTelemetryTuning,
-        resolveWebPrependTelemetryFactsRef,
         transcriptNavigationRuntimeAnchorsRef,
-        webHotColdCountsRef,
     ]);
 
     return {

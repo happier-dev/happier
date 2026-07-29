@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { installVoiceStorageModuleMocks } from '@/voice/persistence/installVoiceStorageModuleMocks';
-import type { VoiceTranscriptEvent } from './voiceConversationTranscript';
 
 const applyMessages = vi.fn();
 const applyMessagesLoaded = vi.fn();
+const evictSessionMessages = vi.fn();
+const persistSessionTranscriptMessage = vi.hoisted(() => vi.fn(async () => undefined));
 type MutableSessionMessagesState = Record<string, { messages: unknown[] }>;
+
+vi.mock('@/sync/sync', () => ({
+    sync: { persistSessionTranscriptMessage },
+}));
 
 const sessionMessages: MutableSessionMessagesState = {};
 const storageState = {
@@ -20,6 +25,7 @@ const storageState = {
         const existing = sessionMessages[sessionId]?.messages ?? [];
         sessionMessages[sessionId] = { messages: [...existing, ...messages] };
     },
+    evictSessionMessages,
 };
 
 installVoiceStorageModuleMocks({
@@ -37,6 +43,8 @@ describe('voiceConversationTranscript', () => {
     beforeEach(() => {
         applyMessages.mockReset();
         applyMessagesLoaded.mockReset();
+        evictSessionMessages.mockReset();
+        persistSessionTranscriptMessage.mockReset();
         for (const key of Object.keys(sessionMessages)) {
             delete sessionMessages[key];
         }
@@ -137,136 +145,117 @@ describe('voiceConversationTranscript', () => {
         );
     });
 
-    it('projects user transcript payloads into selector-visible hidden conversation turns', async () => {
-        const { projectRealtimeVoiceTranscriptEvent } = await import('./voiceConversationTranscript');
-        const { selectVoiceTranscriptEntriesForConversationSession } = await import('./voiceTranscriptSelectors');
-        const event = {
-            type: 'user_transcript',
-            user_transcription_event: {
-                user_transcript: 'open the session',
-                event_id: 1,
-            },
-            turn: {
-                epoch: 7,
-                role: 'user',
-                ts: 123,
-                voiceAgentId: 'voice-agent-1',
-                runId: 'run_1',
-                streamId: 'stream_1',
-            },
-        } satisfies VoiceTranscriptEvent;
+    it('keeps canonical partials ephemeral and persists one stable final across reconnect replay', async () => {
+        const {
+            projectCanonicalVoiceTranscriptEvent,
+            readCanonicalVoiceTranscriptSnapshot,
+        } = await import('./voiceConversationTranscript');
+        const base = {
+            v: 1 as const,
+            epoch: 8,
+            itemId: 'provider-item-1',
+            role: 'assistant' as const,
+            provenance: 'live' as const,
+        };
 
-        projectRealtimeVoiceTranscriptEvent({
-            conversationSessionId: 'carrier-s1',
-            payload: event,
-        });
-
-        expect(selectVoiceTranscriptEntriesForConversationSession(storageState, 'carrier-s1')).toEqual([
-            expect.objectContaining({
-                id: 'voice-turn:voice-agent-1:run_1:stream_1:7:user:123',
-                kind: 'user',
-                text: 'open the session',
-            }),
-        ]);
-    });
-
-    it('projects agent response correction payloads into selector-visible hidden conversation note turns', async () => {
-        const { projectRealtimeVoiceTranscriptEvent } = await import('./voiceConversationTranscript');
-        const { selectVoiceTranscriptEntriesForConversationSession } = await import('./voiceTranscriptSelectors');
-
-        projectRealtimeVoiceTranscriptEvent({
-            conversationSessionId: 'carrier-s1',
-            payload: {
-                type: 'agent_response_correction',
-                agent_response_correction_event: {
-                    original_agent_response: 'old answer',
-                    corrected_agent_response: 'new answer',
-                    event_id: 2,
-                },
+        projectCanonicalVoiceTranscriptEvent({
+            conversationSessionId: 'carrier-canonical',
+            event: {
+                ...base,
+                type: 'voice.transcript.updated',
+                sequence: 1,
+                revision: 1,
+                eventId: 'partial-1',
+                text: 'partial',
             },
         });
+        expect(applyMessages).not.toHaveBeenCalled();
 
-        expect(selectVoiceTranscriptEntriesForConversationSession(storageState, 'carrier-s1')).toEqual([
-            expect.objectContaining({
-                kind: 'note',
-                text: 'Agent response corrected: new answer',
-            }),
-        ]);
-    });
+        projectCanonicalVoiceTranscriptEvent({
+            conversationSessionId: 'carrier-canonical',
+            event: {
+                ...base,
+                type: 'voice.transcript.final',
+                sequence: 2,
+                revision: 2,
+                eventId: 'final-live',
+                text: 'final answer',
+            },
+        });
+        projectCanonicalVoiceTranscriptEvent({
+            conversationSessionId: 'carrier-canonical',
+            event: {
+                ...base,
+                type: 'voice.transcript.final',
+                sequence: 2,
+                revision: 2,
+                eventId: 'final-replay',
+                text: 'final answer',
+                provenance: 'replay',
+            },
+        });
 
-    it('projects generic assistant and user payloads into selector-visible hidden conversation turns', async () => {
-        const { projectRealtimeVoiceTranscriptEvent } = await import('./voiceConversationTranscript');
-        const { selectVoiceTranscriptEntriesForConversationSession } = await import('./voiceTranscriptSelectors');
-
-        projectRealtimeVoiceTranscriptEvent({
-            conversationSessionId: 'carrier-s1',
-            payload: {
-                source: 'ai',
+        expect(applyMessages).not.toHaveBeenCalled();
+        await expect.poll(() => persistSessionTranscriptMessage.mock.calls.length).toBe(1);
+        expect(persistSessionTranscriptMessage).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'carrier-canonical',
+            localId: expect.stringMatching(/^voice-realtime:[^:]+:assistant:provider-item-1$/),
+            messageRole: 'agent',
+            rawRecord: expect.objectContaining({
                 role: 'agent',
-                message: 'I am Happier Voice.',
-            },
-        });
-        projectRealtimeVoiceTranscriptEvent({
-            conversationSessionId: 'carrier-s1',
-            payload: {
-                source: 'user',
-                role: 'user',
-                message: 'Open the session picker.',
-            },
-        });
-
-        expect(selectVoiceTranscriptEntriesForConversationSession(storageState, 'carrier-s1')).toEqual([
-            expect.objectContaining({
-                kind: 'assistant',
-                text: 'I am Happier Voice.',
+                meta: {
+                    happier: expect.objectContaining({
+                        conversationTurnOriginV1: {
+                            v: 1,
+                            channel: 'realtime_conversation',
+                            modality: 'voice',
+                        },
+                    }),
+                },
             }),
-            expect.objectContaining({
-                kind: 'user',
-                text: 'Open the session picker.',
-            }),
+        }));
+        expect(sessionMessages['carrier-canonical']).toBeUndefined();
+        expect(readCanonicalVoiceTranscriptSnapshot('carrier-canonical')).toEqual([
+            expect.objectContaining({ itemId: 'provider-item-1', final: true, text: 'final answer' }),
         ]);
     });
 
-    it('projects tool lifecycle payloads into selector-visible hidden conversation note turns', async () => {
-        const { projectRealtimeVoiceTranscriptEvent } = await import('./voiceConversationTranscript');
-        const { selectVoiceTranscriptEntriesForConversationSession } = await import('./voiceTranscriptSelectors');
-
-        projectRealtimeVoiceTranscriptEvent({
-            conversationSessionId: 'carrier-s1',
-            payload: {
-                type: 'client_tool_call',
-                client_tool_call: {
-                    tool_name: 'sendSessionMessage',
-                    tool_call_id: 'tool_1',
-                    parameters: { message: 'hello' },
-                    event_id: 3,
-                },
-            },
-        });
-        projectRealtimeVoiceTranscriptEvent({
-            conversationSessionId: 'carrier-s1',
-            payload: {
-                type: 'agent_tool_response',
-                agent_tool_response: {
-                    tool_name: 'sendSessionMessage',
-                    tool_call_id: 'tool_1',
-                    tool_type: 'client',
-                    is_error: false,
-                    is_called: true,
-                    event_id: 4,
-                },
+    it('releases only Voice attempt projection state without evicting unrelated Agent rows', async () => {
+        const {
+            projectCanonicalVoiceTranscriptEvent,
+            readCanonicalVoiceTranscriptSnapshot,
+            releaseCanonicalVoiceTranscriptConversation,
+        } = await import('./voiceConversationTranscript');
+        sessionMessages['direct-agent-session'] = {
+            messages: [{
+                id: 'agent-row',
+                role: 'agent',
+                content: [{ type: 'text', text: 'canonical coding result' }],
+            }],
+        };
+        projectCanonicalVoiceTranscriptEvent({
+            conversationSessionId: 'direct-agent-session',
+            event: {
+                v: 1,
+                type: 'voice.transcript.final',
+                epoch: 1,
+                sequence: 1,
+                revision: 1,
+                eventId: 'voice-final',
+                itemId: 'voice-turn',
+                role: 'assistant',
+                text: 'spoken result',
+                provenance: 'live',
             },
         });
 
-        expect(selectVoiceTranscriptEntriesForConversationSession(storageState, 'carrier-s1')).toEqual([
-            expect.objectContaining({
-                kind: 'note',
-                text: 'Tool call: sendSessionMessage',
-            }),
-            expect.objectContaining({
-                kind: 'note',
-                text: 'Tool result: sendSessionMessage succeeded',
-            }),
+        releaseCanonicalVoiceTranscriptConversation('direct-agent-session');
+
+        expect(readCanonicalVoiceTranscriptSnapshot('direct-agent-session')).toEqual([]);
+        expect(evictSessionMessages).not.toHaveBeenCalled();
+        expect(sessionMessages['direct-agent-session']?.messages).toEqual([
+            expect.objectContaining({ id: 'agent-row' }),
         ]);
     });
+
 });

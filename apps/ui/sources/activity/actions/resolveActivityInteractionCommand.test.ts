@@ -99,7 +99,7 @@ describe('resolveActivityInteractionCommand', () => {
 
         expect(command).toMatchObject({
             kind: 'executeAction',
-            actionId: 'approval.request.decide',
+            actionId: 'session.permission.respond',
             defaultSessionId: 'session-1',
             identity: {
                 serverId: 'server-a',
@@ -107,10 +107,9 @@ describe('resolveActivityInteractionCommand', () => {
                 activityName: HAPPIER_FOCUS_LIVE_ACTIVITY_NAME,
             },
             payload: {
-                action: 'allow',
+                decision: 'allow',
                 sessionId: 'session-1',
                 requestId: 'request-1',
-                serverId: 'server-a',
             },
         });
     });

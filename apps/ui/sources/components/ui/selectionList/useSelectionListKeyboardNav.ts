@@ -35,6 +35,12 @@ export type SelectionListInputMode = 'search' | 'value';
 export type SelectionListKeyboardNavParams = Readonly<{
     /** Flat ordered list of currently-visible option ids (skeleton/disabled rows excluded). */
     flatVisibleOptionIds: ReadonlyArray<string>;
+    /**
+     * Preferred visible option to focus before the user explicitly navigates
+     * rows. Selection surfaces use this to align keyboard focus with an
+     * existing selected row on open.
+     */
+    preferredFocusedOptionId?: string | null;
     onActivate: (optionId: string) => void;
     canPopStep: boolean;
     onPopStep: () => void;
@@ -92,12 +98,24 @@ function isCmdOrCtrl(event: SelectionListKeyboardEvent): boolean {
     return Boolean(event.metaKey) || Boolean(event.ctrlKey);
 }
 
+function resolveDefaultFocusedIndex(
+    flatVisibleOptionIds: ReadonlyArray<string>,
+    preferredFocusedOptionId: string | null | undefined,
+): number {
+    if (preferredFocusedOptionId) {
+        const preferredIndex = flatVisibleOptionIds.indexOf(preferredFocusedOptionId);
+        if (preferredIndex >= 0) return preferredIndex;
+    }
+    return flatVisibleOptionIds.length > 0 ? 0 : -1;
+}
+
 /**
  * Keyboard navigation for SelectionList (Phase 1.4 base + Phase 2.5 advanced).
  *
  * Handled keys (in the order checked):
  *  - **Tab** (no Shift): when `ghostSuffixPresent && !isComposing`, accept the
- *    autocomplete and consume.
+ *    autocomplete and consume. Without a ghost, activate only a row explicitly
+ *    focused by Arrow navigation; otherwise preserve native focus traversal.
  *  - **Shift+Tab** (RUX-13): universal back/up shortcut. When `canPopStep`,
  *    pops the step stack and consumes. Else when `onBackUp` returns true,
  *    consumes (path adapter walked the input up one segment). Else falls
@@ -120,6 +138,7 @@ export function useSelectionListKeyboardNav(
 ): SelectionListKeyboardNavApi {
     const {
         flatVisibleOptionIds,
+        preferredFocusedOptionId,
         onActivate,
         canPopStep,
         onPopStep,
@@ -138,13 +157,20 @@ export function useSelectionListKeyboardNav(
     } = params;
 
     const [focusedIndex, setFocusedIndexRaw] = React.useState<number>(() => (
-        flatVisibleOptionIds.length > 0 ? 0 : -1
+        resolveDefaultFocusedIndex(flatVisibleOptionIds, preferredFocusedOptionId)
     ));
-    const [hasExplicitRowFocus, setHasExplicitRowFocus] = React.useState<boolean>(false);
+    const [hasExplicitRowFocusState, setHasExplicitRowFocusState] = React.useState<boolean>(false);
+    const hasExplicitRowFocusRef = React.useRef(false);
+    const setHasExplicitRowFocus = React.useCallback((next: boolean) => {
+        hasExplicitRowFocusRef.current = next;
+        setHasExplicitRowFocusState(next);
+    }, []);
+    const hasExplicitRowFocus = hasExplicitRowFocusState;
     const flatVisibleOptionIdsKey = React.useMemo(
         () => flatVisibleOptionIds.join('\u0000'),
         [flatVisibleOptionIds],
     );
+    const searchInputResetKey = inputMode === 'value' ? null : inputValue;
 
     React.useEffect(() => {
         if (flatVisibleOptionIds.length === 0) {
@@ -152,15 +178,34 @@ export function useSelectionListKeyboardNav(
             setHasExplicitRowFocus(false);
             return;
         }
+        if (inputMode !== 'value') {
+            setFocusedIndexRaw((current) => {
+                const next = resolveDefaultFocusedIndex(
+                    flatVisibleOptionIds,
+                    preferredFocusedOptionId,
+                );
+                return current === next ? current : next;
+            });
+            setHasExplicitRowFocus(false);
+            return;
+        }
         setFocusedIndexRaw((current) => {
+            if (!hasExplicitRowFocusRef.current) {
+                return resolveDefaultFocusedIndex(flatVisibleOptionIds, preferredFocusedOptionId);
+            }
             if (current < 0) return 0;
             if (current >= flatVisibleOptionIds.length) return flatVisibleOptionIds.length - 1;
             return current;
         });
-        if (inputMode === 'value') {
-            setHasExplicitRowFocus(false);
-        }
-    }, [flatVisibleOptionIdsKey, flatVisibleOptionIds.length, inputMode]);
+        setHasExplicitRowFocus(false);
+    }, [
+        flatVisibleOptionIdsKey,
+        flatVisibleOptionIds.length,
+        inputMode,
+        preferredFocusedOptionId,
+        searchInputResetKey,
+        setHasExplicitRowFocus,
+    ]);
 
     const setFocusedIndex = React.useCallback((next: number) => {
         setFocusedIndexRaw(next);
@@ -235,13 +280,14 @@ export function useSelectionListKeyboardNav(
                     length > 0
                     && focusedIndex >= 0
                     && focusedIndex < length
-                    && (inputMode !== 'value' || hasExplicitRowFocus)
+                    && hasExplicitRowFocus
                 ) {
                     onActivate(flatVisibleOptionIds[focusedIndex]);
                     return consume(event);
                 }
-                // No row, no ghost → fall through so accessible focus
-                // traversal still works (DON'T preventDefault).
+                // An implicitly highlighted row is context, not a Tab action.
+                // Fall through until Arrow navigation explicitly focuses a row
+                // so populated search inputs preserve native focus traversal.
                 return false;
             }
             case 'ArrowRight': {

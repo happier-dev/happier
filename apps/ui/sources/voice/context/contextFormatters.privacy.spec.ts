@@ -5,7 +5,12 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import {
   formatMessage,
+  formatPermissionRequest,
+  formatReadyEvent,
+  formatSessionFocus,
   formatSessionFull,
+  formatSessionOffline,
+  formatSessionOnline,
   summarizeAgentRequestForVoiceHuman,
   summarizeMessagesForVoiceHuman,
   formatUserActionRequest,
@@ -71,6 +76,8 @@ function prefs(overrides: Partial<VoiceContextFormatterPrefs>): VoiceContextForm
     voiceShareToolNames: true,
     voiceShareToolArgs: true,
     voiceShareFilePaths: true,
+    voiceSharePermissionRequests: true,
+    voiceShareDeviceInventory: true,
     ...overrides,
   };
 }
@@ -85,6 +92,48 @@ describe('voice context privacy (opt-out defaults)', () => {
       concurrentSessionListCacheByServerId: {},
     }));
   });
+
+  it.each([undefined, null, 'true', 1, {}, []])(
+    'fails closed for omitted or malformed formatter prefs=%p',
+    (formatterPrefs) => {
+      const session = createSession(
+        '/Users/alice/Company/PrivateProject',
+        'PRIVATE SESSION SUMMARY',
+      );
+      const inventoryMessage = createToolCallMessage('m_private_tool', 'listMachines', 2);
+      if (inventoryMessage.kind !== 'tool-call') throw new Error('Expected tool-call fixture');
+      const messages = [
+        createUserMessage('m_private', 'PRIVATE RECENT MESSAGE', 1),
+        {
+          ...inventoryMessage,
+          tool: {
+            ...inventoryMessage.tool,
+            result: { items: [{ label: 'PRIVATE DEVICE' }] },
+          },
+        } satisfies Message,
+      ];
+      const full = Reflect.apply(formatSessionFull, undefined, [session, messages, formatterPrefs]);
+      const permission = Reflect.apply(formatPermissionRequest, undefined, [
+        's1',
+        'req_private',
+        'PRIVATE TOOL NAME',
+        { secret: 'PRIVATE TOOL ARG' },
+        formatterPrefs,
+      ]);
+      const inventory = Reflect.apply(summarizeMessagesForVoiceHuman, undefined, [
+        [messages[1]],
+        formatterPrefs,
+      ]);
+
+      expect(full).not.toContain('PRIVATE SESSION SUMMARY');
+      expect(full).not.toContain('/Users/alice/Company/PrivateProject');
+      expect(full).not.toContain('PRIVATE RECENT MESSAGE');
+      expect(full).not.toContain('PRIVATE DEVICE');
+      expect(permission).not.toContain('PRIVATE TOOL NAME');
+      expect(permission).not.toContain('PRIVATE TOOL ARG');
+      expect(inventory ?? '').not.toContain('PRIVATE DEVICE');
+    },
+  );
 
   it('prefers visible lookup session metadata over stale raw session metadata when formatting the full session', () => {
     storage.setState((state: any) => ({
@@ -154,6 +203,7 @@ describe('voice context privacy (opt-out defaults)', () => {
         presence: 'online',
       } as Session,
       [],
+      prefs({}),
     );
 
     expect(out).toContain('Lookup session summary');
@@ -162,10 +212,29 @@ describe('voice context privacy (opt-out defaults)', () => {
     expect(out).not.toContain('/Users/alice/Company/RawRepo');
   });
 
-  it('includes local project paths by default', () => {
-    const out = formatSessionFull(createSession('/Users/alice/Company/SecretRepo'), []);
+  it('includes canonical owner project paths when sharing is explicitly enabled', () => {
+    const session = createSession('/shared/private-lookalike');
+    storage.setState((state: any) => ({
+      ...state,
+      sessions: {
+        s1: {
+          ...session,
+          metadataLayoutVersion: 1,
+          ownerMetadataView: {
+            path: '/Users/alice/Company/SecretRepo',
+          },
+        },
+      },
+    }));
+
+    const out = formatSessionFull(
+      session,
+      [],
+      prefs({}),
+    );
 
     expect(out).toContain('/Users/alice/Company/SecretRepo');
+    expect(out).not.toContain('/shared/private-lookalike');
     expect(out).toContain('# Session: Hello');
     expect(out).not.toContain('# Session ID: s1');
   });
@@ -188,6 +257,70 @@ describe('voice context privacy (opt-out defaults)', () => {
     );
 
     expect(out).not.toContain('SUPER SECRET SUMMARY');
+  });
+
+  it.each([
+    ['online', formatSessionOnline],
+    ['offline', formatSessionOffline],
+    ['focus', formatSessionFocus],
+  ] as const)('applies real summary and path prefs to the %s session label', (_name, formatter) => {
+    const out = formatter(
+      's_private',
+      {
+        summary: { text: 'PRIVATE STATUS SUMMARY' },
+        path: '/Users/alice/Company/PrivateStatusRepo',
+      },
+      prefs({ voiceShareSessionSummary: false, voiceShareFilePaths: false }),
+    );
+
+    expect(out).not.toContain('PRIVATE STATUS SUMMARY');
+    expect(out).not.toContain('PrivateStatusRepo');
+    expect(out).not.toContain('/Users/alice/Company/PrivateStatusRepo');
+  });
+
+  it('omits pending permission requests when voiceSharePermissionRequests is false', () => {
+    const session = {
+      ...createSession('/tmp/repo'),
+      agentState: {
+        requests: {
+          req_secret: {
+            tool: 'write',
+            kind: 'permission',
+            arguments: { filePath: '/tmp/private.txt', content: 'SECRET_PERMISSION_PAYLOAD' },
+            createdAt: 1,
+          },
+        },
+        completedRequests: {},
+      },
+    } as Session;
+
+    const out = formatSessionFull(session, [], prefs({ voiceSharePermissionRequests: false }));
+
+    expect(out).not.toContain('## Pending Requests');
+    expect(out).not.toContain('req_secret');
+    expect(out).not.toContain('SECRET_PERMISSION_PAYLOAD');
+  });
+
+  it('includes pending permission requests only with an explicit true permission-sharing preference', () => {
+    const session = {
+      ...createSession('/tmp/repo'),
+      agentState: {
+        requests: {
+          req_shared: {
+            tool: 'write',
+            kind: 'permission',
+            arguments: { filePath: '/tmp/shared.txt' },
+            createdAt: 1,
+          },
+        },
+        completedRequests: {},
+      },
+    } as Session;
+
+    expect(formatSessionFull(session, [], prefs({ voiceSharePermissionRequests: true })))
+      .toContain('<request_id>req_shared</request_id>');
+    expect(formatSessionFull(session, []))
+      .not.toContain('<request_id>req_shared</request_id>');
   });
 
   it('redacts file paths inside the shared session summary when voiceShareFilePaths is false', () => {
@@ -247,7 +380,7 @@ describe('voice context privacy (opt-out defaults)', () => {
           error: { code: 'invalid_output' },
         },
       },
-    } as Message);
+    } as Message, prefs({}));
 
     expect(out).toContain('Coding assistant reported:');
     expect(out).toContain('Invalid review output (expected strict JSON).');
@@ -277,10 +410,113 @@ describe('voice context privacy (opt-out defaults)', () => {
           },
         },
       } as Message,
-    ]);
+    ], prefs({}));
 
     expect(summary).toContain('Invalid review output (expected strict JSON).');
     expect(summary).toContain('failed');
+  });
+
+  it('omits immediate tool-result summaries when tool-name sharing is disabled', () => {
+    const summary = summarizeMessagesForVoiceHuman([
+      {
+        kind: 'tool-call',
+        id: 'm_private_tool',
+        localId: null,
+        createdAt: 3,
+        children: [],
+        tool: {
+          name: 'SubAgentRun',
+          state: 'completed',
+          input: { intent: 'review' },
+          createdAt: 3,
+          startedAt: 3,
+          completedAt: 4,
+          description: null,
+          result: { status: 'failed', summary: 'PRIVATE TOOL SUMMARY' },
+        },
+      } as Message,
+    ], prefs({ voiceShareToolNames: false }));
+
+    expect(summary).toBeNull();
+  });
+
+  it('applies summary privacy to immediate tool-result aliases', () => {
+    const summary = summarizeMessagesForVoiceHuman([
+      {
+        kind: 'tool-call',
+        id: 'm_private_session_tool',
+        localId: null,
+        createdAt: 3,
+        children: [],
+        tool: {
+          name: 'listSessions',
+          state: 'completed',
+          input: {},
+          createdAt: 3,
+          startedAt: 3,
+          completedAt: 4,
+          description: null,
+          result: { ok: true, sessions: [{ id: 's1', label: 'PRIVATE SESSION ALIAS' }] },
+        },
+      } as Message,
+    ], prefs({ voiceShareSessionSummary: false }));
+
+    expect(summary).toBeNull();
+  });
+
+  it('omits immediate inventory summaries when device-inventory sharing is disabled', () => {
+    const summary = summarizeMessagesForVoiceHuman([
+      {
+        kind: 'tool-call',
+        id: 'm_private_inventory',
+        localId: null,
+        createdAt: 3,
+        children: [],
+        tool: {
+          name: 'listMachines',
+          state: 'completed',
+          input: {},
+          createdAt: 3,
+          startedAt: 3,
+          completedAt: 4,
+          description: null,
+          result: { ok: true, items: [{ label: 'PRIVATE MACHINE' }] },
+        },
+      } as Message,
+    ], prefs({ voiceShareDeviceInventory: false }));
+
+    expect(summary).toBeNull();
+  });
+
+  it('omits tool names from provider-bound permission summaries and payloads', () => {
+    const formatterPrefs = prefs({ voiceShareToolNames: false });
+    const spoken = summarizeAgentRequestForVoiceHuman(
+      'permission',
+      'req_private_tool',
+      'PRIVATE_TOOL_NAME',
+      {},
+      formatterPrefs,
+    );
+    const contextual = formatPermissionRequest(
+      's1',
+      'req_private_tool',
+      'PRIVATE_TOOL_NAME',
+      {},
+      formatterPrefs,
+    );
+
+    expect(spoken).not.toContain('PRIVATE_TOOL_NAME');
+    expect(contextual).not.toContain('PRIVATE_TOOL_NAME');
+  });
+
+  it('omits ready-event assistant text when recent-message sharing is disabled', () => {
+    const out = formatReadyEvent(
+      's1',
+      [{ kind: 'agent-text', id: 'm_ready', localId: null, createdAt: 1, text: 'PRIVATE READY TEXT' }],
+      prefs({ voiceShareRecentMessages: false }),
+    );
+
+    expect(out).not.toContain('PRIVATE READY TEXT');
   });
 
   it('summarizes recent path discovery results with human-readable labels', () => {
@@ -308,7 +544,7 @@ describe('voice context privacy (opt-out defaults)', () => {
           },
         },
       } as Message,
-    ]);
+    ], prefs({}));
 
     expect(summary).toContain('Payments workspace');
     expect(summary).toContain('Mobile workspace');
@@ -339,7 +575,7 @@ describe('voice context privacy (opt-out defaults)', () => {
           },
         },
       } as Message,
-    ]);
+    ], prefs({}));
 
     expect(summary).toContain('Claude Sonnet');
     expect(summary).toContain('Codex GPT-5');

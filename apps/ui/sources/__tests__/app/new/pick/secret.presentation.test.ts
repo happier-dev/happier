@@ -12,6 +12,7 @@ import {
     installPickerCommonModuleMocks,
     PICKER_THEME_COLORS,
 } from './testHarness';
+import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 enableReactActEnvironment();
 
@@ -50,7 +51,7 @@ installPickerCommonModuleMocks({
         (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettingMutable: () => [[], vi.fn()],
+                useSettingMutable: createUseSettingMutableMockFromReader(() => [[], vi.fn()]),
             },
         }),
 });

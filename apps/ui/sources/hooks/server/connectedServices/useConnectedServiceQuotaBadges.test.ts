@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { ConnectedServiceQuotaSnapshotV1Schema, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import { ConnectedServiceQuotaSnapshotV1Schema } from '@happier-dev/protocol';
+import { sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext } from '@happier-dev/protocol/testing/accountScopedCipherFixtures';
 import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
 import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
@@ -97,8 +98,7 @@ function buildWeeklyQuotaSnapshot(params: Readonly<{
 
 function sealQuotaSnapshot(snapshot: ReturnType<typeof buildWeeklyQuotaSnapshot>): string {
   const secretBytes = new Uint8Array(32).fill(3);
-  return sealAccountScopedBlobCiphertext({
-    kind: 'connected_service_quota_snapshot',
+  return sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext({
     material: { type: 'legacy', secret: secretBytes },
     payload: snapshot,
     randomBytes: (length) => new Uint8Array(length).fill(7),
@@ -139,8 +139,7 @@ describe('useConnectedServiceQuotaBadges', () => {
       ],
     });
 
-    const ciphertext = sealAccountScopedBlobCiphertext({
-      kind: 'connected_service_quota_snapshot',
+    const ciphertext = sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext({
       material: { type: 'legacy', secret: secretBytes },
       payload: snapshot,
       randomBytes: (length) => new Uint8Array(length).fill(7),
@@ -244,8 +243,7 @@ describe('useConnectedServiceQuotaBadges', () => {
         ],
       });
 
-      const ciphertext = sealAccountScopedBlobCiphertext({
-        kind: 'connected_service_quota_snapshot',
+      const ciphertext = sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext({
         material: { type: 'legacy', secret: secretBytes },
         payload: snapshot,
         randomBytes: (length) => new Uint8Array(length).fill(7),

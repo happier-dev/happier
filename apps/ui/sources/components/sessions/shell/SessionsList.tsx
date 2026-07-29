@@ -118,15 +118,33 @@ function SessionsListViewWithResolvedPaneState(props: Readonly<{
     );
 }
 
-function SessionsListViewContent(props: Readonly<{
+type SessionsListViewContentProps = Readonly<{
     storageKind: SessionListStorageFilter;
     paneState: VisibleSessionListPaneState;
     pathname?: string;
     surfaceOwnership?: Partial<SessionListSurfaceOwnership>;
-}>) {
+}>;
+
+function SessionsListViewContent(props: SessionsListViewContentProps) {
+    const surfaceOwnership = normalizeSessionListSurfaceOwnership(props.surfaceOwnership);
+    if (!surfaceOwnership.visible) return null;
+
+    return (
+        <VisibleSessionsListViewContent
+            {...props}
+            surfaceOwnership={surfaceOwnership}
+        />
+    );
+}
+
+function VisibleSessionsListViewContent(
+    props: Omit<SessionsListViewContentProps, 'surfaceOwnership'> & Readonly<{
+        surfaceOwnership: SessionListSurfaceOwnership;
+    }>,
+) {
     const styles = sessionListStyles;
     const safeArea = useChromeSafeAreaInsets();
-    const surfaceOwnership = normalizeSessionListSurfaceOwnership(props.surfaceOwnership);
+    const surfaceOwnership = props.surfaceOwnership;
     const surfaceDataActiveRef = React.useRef(surfaceOwnership.dataActive);
     surfaceDataActiveRef.current = surfaceOwnership.dataActive;
     const [refreshingSessions, setRefreshingSessions] = React.useState(false);

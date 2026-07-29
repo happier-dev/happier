@@ -36,7 +36,9 @@ import {
     type ActionSettingsTargetEntry,
 } from './buildActionSettingsEntries';
 import { normalizeActionsSettings } from './normalizeActionsSettings';
+import { listActionSettingsTargetDefinitions } from './actionSettingsTargetDefinitions';
 import { useActionSettingsNarrowLayout } from './useActionSettingsNarrowLayout';
+import { SessionAgentSpawnPolicyControls } from './SessionAgentSpawnPolicyControls';
 
 const categoryOrder: readonly ActionSettingsTargetCategory[] = ['app', 'voice', 'integrations'];
 
@@ -70,7 +72,11 @@ function decodeActionIdParam(value: string | string[] | undefined): ActionId | n
     }
 
     const decoded = decodeURIComponent(raw);
-    return listActionSpecs().some((spec) => spec.id === decoded) ? (decoded as ActionId) : null;
+    const spec = listActionSpecs().find((candidate) => candidate.id === decoded);
+    if (!spec || listActionSettingsTargetDefinitions(spec).length === 0) {
+        return null;
+    }
+    return decoded as ActionId;
 }
 
 function getTargetSubtitle(target: ActionSettingsTargetEntry): string {
@@ -130,6 +136,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
     const compactLayout = useActionSettingsNarrowLayout();
     const [searchQuery, setSearchQuery] = React.useState('');
     const [rawSettings, setRawSettings] = useSettingMutable('actionsSettingsV1');
+    const [rawSpawnPolicy, setRawSpawnPolicy] = useSettingMutable('sessionAgentSpawnPolicyV1');
     const settings = React.useMemo(() => normalizeActionsSettings(rawSettings), [rawSettings]);
     const voiceSettings = useSetting('voice') as Readonly<{ privacy?: { shareDeviceInventory?: boolean } }> | null;
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
@@ -264,6 +271,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                         rightElement={(
                             <Switch
                                 testID={`settings-actions:action:${entry.actionId}:enabled`}
+                                accessibilityLabel={entry.title}
                                 value={entry.enabled}
                                 onValueChange={handleActionEnabledChange}
                             />
@@ -300,6 +308,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                             const targetModeControl = (
                                 <ActionSettingsTargetModeControl
                                     testIDPrefix={targetTestIDPrefix}
+                                    accessibilityLabel={t(target.titleKey)}
                                     controlState={controlState}
                                     disabled={!entry.enabled || !available}
                                     layout={shouldStackModeControl ? 'stacked' : 'inline'}
@@ -344,6 +353,14 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                             );
                         })}
                     </ItemGroup>
+                ) : null}
+
+                {entry.actionId === 'session.spawn_new' ? (
+                    <SessionAgentSpawnPolicyControls
+                        rawPolicy={rawSpawnPolicy}
+                        disabled={!entry.enabled}
+                        onChange={setRawSpawnPolicy}
+                    />
                 ) : null}
             </ItemList>
         </View>

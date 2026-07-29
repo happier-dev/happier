@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 describe('resolveMachineDaemonTransferDirectPeerRoute', () => {
-    it('maps active listener classes to final direct route kinds', async () => {
+    it('maps only safe active listener mechanisms to final direct route kinds', async () => {
         const { resolveMachineDaemonTransferDirectPeerDiagnostics } = await import('./machineDaemonTransferState');
 
         expect(resolveMachineDaemonTransferDirectPeerDiagnostics({
@@ -36,9 +36,48 @@ describe('resolveMachineDaemonTransferDirectPeerRoute', () => {
             },
         })).toEqual(expect.objectContaining({
             state: 'active',
-            activeListenerClasses: ['loopback_http', 'lan_http', 'tailscale_serve_https'],
-            activeRouteKinds: ['loopback_direct', 'lan_direct', 'tailscale_serve_direct'],
+            activeListenerClasses: ['loopback_http', 'tailscale_serve_https'],
+            activeRouteKinds: ['loopback_direct', 'tailscale_serve_direct'],
         }));
+    });
+
+    it('ignores an undeclared listener class instead of projecting LAN-direct viability', async () => {
+        const {
+            readMachineDaemonTransferState,
+            resolveMachineDaemonTransferDirectPeerDiagnostics,
+        } = await import('./machineDaemonTransferState');
+        const input = {
+            daemonState: {
+                transfer: {
+                    supported: { import: true, export: true },
+                    listenerClasses: {
+                        loopback_http: { enabled: false, configured: false, active: false },
+                        lan_http: { enabled: true, configured: true, active: true },
+                        tailscale_serve_https: { enabled: false, configured: false, active: false, available: false },
+                    },
+                    lifecycle: { mode: 'lazy_idle_shutdown', version: 1 },
+                },
+            },
+        } as const;
+
+        expect(readMachineDaemonTransferState(input)?.listenerClasses).toEqual({
+            loopback_http: { enabled: false, configured: false, active: false },
+            tailscale_serve_https: { enabled: false, configured: false, active: false, available: false },
+        });
+        expect(resolveMachineDaemonTransferDirectPeerDiagnostics(input)).toEqual({
+            route: {
+                status: 'unavailable',
+                checkedAt: 0,
+                expiresAt: 0,
+                failureReason: 'daemon_transfer_listener_unconfigured',
+            },
+            state: 'unconfigured',
+            configuredListenerClasses: [],
+            activeListenerClasses: [],
+            activeRouteKinds: [],
+            inactiveListenerClasses: [],
+            unavailableListenerClasses: [],
+        });
     });
 
     it('returns a viable route when a configured transfer listener is active', async () => {

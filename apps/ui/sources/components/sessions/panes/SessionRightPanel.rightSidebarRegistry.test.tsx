@@ -105,7 +105,7 @@ vi.mock('@/components/sessions/localServices', () => ({
     ),
 }));
 
-vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
+vi.mock('@/components/plugins/projection/useScopedPluginUiProjection', () => ({
     useScopedPluginUiProjection: () => pluginProjectionState.value,
 }));
 
@@ -141,7 +141,6 @@ function createPluginProjection() {
         sessionHeaderActionsById: Object.freeze({}),
         hostedWebById: Object.freeze({}),
         reactNativeBundlesById: Object.freeze({}),
-        embeddedWebBundlesById: Object.freeze({}),
         surfacePlacementsById: Object.freeze({ [placement.id]: placement }),
         surfacePlacementsByPlacement: Object.freeze({ 'session.rightSidebarTab': Object.freeze([placement]) }),
         uiArtifactsById: Object.freeze({}),

@@ -20,6 +20,18 @@ describe('transcriptViewportAnchorResolution', () => {
         })).toBe(1);
     });
 
+    it('never promotes a synthetic window-gap row into restore identity', () => {
+        const gap = {
+            id: 'transcript-window-gap:window-50:older',
+            kind: 'transcript-window-gap',
+        } as const;
+        expect(resolveTranscriptViewportAnchorDescriptor(gap)).toBeNull();
+        expect(resolveTranscriptViewportAnchorIndex({
+            anchor: { messageId: null, itemId: gap.id },
+            items: [gap],
+        })).toBeNull();
+    });
+
     it('finds message ids inside turn rows', () => {
         const items = [
             {

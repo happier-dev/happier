@@ -7,7 +7,6 @@ import {
 } from './lifecycleHostScrollObservationApplier';
 
 const lifecycleState: TranscriptLifecycleHostScrollObservationPlan['state'] = {
-    automaticPinAuthority: true,
     bottomFollowState: {
         dragSession: null,
         mode: 'following',
@@ -90,7 +89,6 @@ function scrollObservationPlan(
         recentUserIntent: false,
         state: lifecycleState,
         steps: [],
-        webPassiveLiveTailCorrectionEffect: null,
         ...overrides,
     };
 }
@@ -135,10 +133,6 @@ function effectsRecorder(log: string[]): TranscriptLifecycleScrollObservationPla
         },
         applyWebUserScrollIntentTimestampLifecycleEffects(effects) {
             log.push(`web-timestamp:${effects.length}`);
-        },
-        applyWebPassiveLiveTailCorrectionEffect(effect) {
-            log.push(`web-passive-correction:${effect.reason}`);
-            return true;
         },
         applyWebUserScrollTakeoverLifecycleEffects(effects) {
             log.push(`web-takeover:${effects.length}`);

@@ -7,6 +7,11 @@ import {
 import type { MarkdownBlock } from '../parseMarkdown';
 import type { MarkdownSourceRange } from '../parseMarkdown';
 import type { MarkdownRenderSegment } from './markdownRenderSegmentTypes';
+import {
+    buildMarkdownContentCacheSlot,
+    readMarkdownRenderSegmentsCache,
+    writeMarkdownRenderSegmentsCache,
+} from './markdownRenderSegmentsCache';
 import { normalizeLooseListContinuations } from './normalizeLooseListContinuations';
 
 type LocatedMarkdownBlockSource = MarkdownBlockSource & Readonly<{
@@ -34,9 +39,6 @@ const SPECIAL_BLOCK_TYPES: ReadonlySet<MarkdownBlock['type']> = new Set([
     'options',
     'table',
 ]);
-const STATIC_SEGMENT_CACHE_MAX_ENTRIES = 64;
-const staticSegmentCache = new Map<string, MarkdownRenderSegment[]>();
-
 function hashMarkdownSource(source: string): string {
     let hash = 2166136261;
     for (let index = 0; index < source.length; index++) {
@@ -117,20 +119,11 @@ function applyFirstLast(segments: readonly DraftMarkdownRenderSegment[]): Markdo
 }
 
 function readStaticSegmentCache(markdown: string): MarkdownRenderSegment[] | null {
-    const cached = staticSegmentCache.get(markdown);
-    if (!cached) return null;
-    staticSegmentCache.delete(markdown);
-    staticSegmentCache.set(markdown, cached);
-    return cached;
+    return readMarkdownRenderSegmentsCache(buildMarkdownContentCacheSlot(markdown), markdown);
 }
 
 function writeStaticSegmentCache(markdown: string, segments: MarkdownRenderSegment[]): void {
-    staticSegmentCache.set(markdown, segments);
-    while (staticSegmentCache.size > STATIC_SEGMENT_CACHE_MAX_ENTRIES) {
-        const oldestKey = staticSegmentCache.keys().next().value;
-        if (typeof oldestKey !== 'string') return;
-        staticSegmentCache.delete(oldestKey);
-    }
+    writeMarkdownRenderSegmentsCache(buildMarkdownContentCacheSlot(markdown), markdown, segments);
 }
 
 function buildEnrichedSegment(markdown: string, source: LocatedMarkdownBlockSource, nextSegmentKey: () => string): DraftMarkdownRenderSegment {

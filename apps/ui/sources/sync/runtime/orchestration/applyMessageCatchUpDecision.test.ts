@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { applyMessageCatchUpDecision } from '@/sync/runtime/orchestration/applyMessageCatchUpDecision';
 
+// C6/D2b: the catch-up executor is non-destructive. `tail_reset_latest_page` (and the
+// incremental-exhausted fallback) now FETCH-then-MERGE the latest page on top of existing
+// history via applyMessages' seq-merge, instead of wiping the transcript first. There is no
+// destructive reset hook in this executor; a full reset is reserved for proven-discontinuity
+// callers (truncated tail / server purge-rewrite) outside this module.
+
 describe('applyMessageCatchUpDecision', () => {
-    it('tails reset by clearing transcript and fetching snapshot', async () => {
-        const resetTranscriptState = vi.fn();
+    it('tails reset by fetching and merging the snapshot without wiping existing history', async () => {
         const fetchSnapshotLatestPage = vi.fn(async () => {});
         const markLoaded = vi.fn();
         const setDeferredForwardLoading = vi.fn();
@@ -14,12 +19,10 @@ describe('applyMessageCatchUpDecision', () => {
             onIncrementalExhausted: 'defer_forward_loading',
             fetchNewerPage: vi.fn(),
             fetchSnapshotLatestPage,
-            resetTranscriptState,
             markLoaded,
             setDeferredForwardLoading,
         });
 
-        expect(resetTranscriptState).toHaveBeenCalledTimes(1);
         expect(fetchSnapshotLatestPage).toHaveBeenCalledTimes(1);
         expect(setDeferredForwardLoading).toHaveBeenCalledWith(false);
         expect(markLoaded).toHaveBeenCalledTimes(1);
@@ -28,7 +31,6 @@ describe('applyMessageCatchUpDecision', () => {
     it('defers forward loading without fetching', async () => {
         const fetchNewerPage = vi.fn();
         const fetchSnapshotLatestPage = vi.fn(async () => {});
-        const resetTranscriptState = vi.fn();
         const markLoaded = vi.fn();
         const setDeferredForwardLoading = vi.fn();
 
@@ -38,7 +40,6 @@ describe('applyMessageCatchUpDecision', () => {
             onIncrementalExhausted: 'tail_reset_latest_page',
             fetchNewerPage,
             fetchSnapshotLatestPage,
-            resetTranscriptState,
             markLoaded,
             setDeferredForwardLoading,
         });
@@ -46,7 +47,6 @@ describe('applyMessageCatchUpDecision', () => {
         expect(setDeferredForwardLoading).toHaveBeenCalledWith(true);
         expect(fetchNewerPage).not.toHaveBeenCalled();
         expect(fetchSnapshotLatestPage).not.toHaveBeenCalled();
-        expect(resetTranscriptState).not.toHaveBeenCalled();
         expect(markLoaded).not.toHaveBeenCalled();
     });
 
@@ -55,7 +55,6 @@ describe('applyMessageCatchUpDecision', () => {
             .mockResolvedValueOnce({ messagesCount: 150, nextAfterSeq: 30 })
             .mockResolvedValueOnce({ messagesCount: 20, nextAfterSeq: null });
         const fetchSnapshotLatestPage = vi.fn(async () => {});
-        const resetTranscriptState = vi.fn();
         const markLoaded = vi.fn();
         const setDeferredForwardLoading = vi.fn();
 
@@ -65,24 +64,21 @@ describe('applyMessageCatchUpDecision', () => {
             onIncrementalExhausted: 'tail_reset_latest_page',
             fetchNewerPage,
             fetchSnapshotLatestPage,
-            resetTranscriptState,
             markLoaded,
             setDeferredForwardLoading,
         });
 
         expect(fetchNewerPage).toHaveBeenCalledTimes(2);
         expect(fetchSnapshotLatestPage).not.toHaveBeenCalled();
-        expect(resetTranscriptState).not.toHaveBeenCalled();
         expect(setDeferredForwardLoading).toHaveBeenCalledWith(false);
         expect(markLoaded).toHaveBeenCalledTimes(1);
     });
 
-    it('tails resets when incremental is exhausted and more pages remain (configured)', async () => {
+    it('fetches and merges the snapshot when incremental is exhausted (configured), without wiping history', async () => {
         const fetchNewerPage = vi.fn()
             .mockResolvedValueOnce({ messagesCount: 150, nextAfterSeq: 30 })
             .mockResolvedValueOnce({ messagesCount: 150, nextAfterSeq: 60 });
         const fetchSnapshotLatestPage = vi.fn(async () => {});
-        const resetTranscriptState = vi.fn();
         const markLoaded = vi.fn();
         const setDeferredForwardLoading = vi.fn();
 
@@ -92,13 +88,11 @@ describe('applyMessageCatchUpDecision', () => {
             onIncrementalExhausted: 'tail_reset_latest_page',
             fetchNewerPage,
             fetchSnapshotLatestPage,
-            resetTranscriptState,
             markLoaded,
             setDeferredForwardLoading,
         });
 
         expect(fetchNewerPage).toHaveBeenCalledTimes(2);
-        expect(resetTranscriptState).toHaveBeenCalledTimes(1);
         expect(fetchSnapshotLatestPage).toHaveBeenCalledTimes(1);
         expect(markLoaded).toHaveBeenCalledTimes(1);
     });
@@ -108,7 +102,6 @@ describe('applyMessageCatchUpDecision', () => {
             .mockResolvedValueOnce({ messagesCount: 150, nextAfterSeq: 30 })
             .mockResolvedValueOnce({ messagesCount: 150, nextAfterSeq: 60 });
         const fetchSnapshotLatestPage = vi.fn(async () => {});
-        const resetTranscriptState = vi.fn();
         const markLoaded = vi.fn();
         const setDeferredForwardLoading = vi.fn();
 
@@ -118,7 +111,6 @@ describe('applyMessageCatchUpDecision', () => {
             onIncrementalExhausted: 'defer_forward_loading',
             fetchNewerPage,
             fetchSnapshotLatestPage,
-            resetTranscriptState,
             markLoaded,
             setDeferredForwardLoading,
         });
@@ -126,7 +118,6 @@ describe('applyMessageCatchUpDecision', () => {
         expect(fetchNewerPage).toHaveBeenCalledTimes(2);
         expect(setDeferredForwardLoading).toHaveBeenCalledWith(false);
         expect(setDeferredForwardLoading).toHaveBeenCalledWith(true);
-        expect(resetTranscriptState).not.toHaveBeenCalled();
         expect(fetchSnapshotLatestPage).not.toHaveBeenCalled();
     });
 });

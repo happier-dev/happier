@@ -197,7 +197,7 @@ const isWatchmanDisabledForLocalRun = parseEnvBool(process.env.HAPPIER_UI_METRO_
 const isCiRun = Boolean(process.env.CI);
 const shouldUseWatchman = !isCiRun && !isStackRun && !isWatchmanDisabledForLocalRun && watchmanOverride === true;
 config.resolver.useWatchman = shouldUseWatchman;
-if (isWatchmanDisabledForLocalRun) {
+if (!shouldUseWatchman) {
   config.watcher = {
     ...(config.watcher || {}),
     useWatchman: false,
@@ -215,28 +215,85 @@ function safeReadJson(filePath) {
   }
 }
 
+function collectInternalWorkspacePackages(rootDir, maxDepth = 4) {
+  const packages = new Map();
+
+  function visit(dir, depth) {
+    if (depth > maxDepth) return;
+    const base = path.basename(dir);
+    if (base === "node_modules" || base.startsWith(".")) return;
+
+    const packageJsonPath = path.resolve(dir, "package.json");
+    const pkg = safeReadJson(packageJsonPath);
+    if (pkg && typeof pkg.name === "string" && pkg.name.startsWith("@happier-dev/")) {
+      packages.set(pkg.name, dir);
+      return;
+    }
+
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      visit(path.resolve(dir, entry.name), depth + 1);
+    }
+  }
+
+  visit(rootDir, 0);
+  return packages;
+}
+
+function collectDependencyNames(pkg, includeDevDependencies) {
+  if (!pkg || typeof pkg !== "object") return [];
+  const depSources = [
+    pkg.dependencies,
+    pkg.optionalDependencies,
+    pkg.peerDependencies,
+    ...(includeDevDependencies ? [pkg.devDependencies] : []),
+  ];
+  const names = [];
+  for (const src of depSources) {
+    if (!src || typeof src !== "object") continue;
+    for (const name of Object.keys(src)) {
+      if (String(name).startsWith("@happier-dev/")) {
+        names.push(String(name));
+      }
+    }
+  }
+  return names;
+}
+
 function resolveInternalWorkspaceWatchFolders() {
   const uiPkgPath = path.resolve(__dirname, "package.json");
   const uiPkg = safeReadJson(uiPkgPath);
   if (!uiPkg) return [];
 
-  const depSources = [uiPkg.dependencies, uiPkg.optionalDependencies, uiPkg.devDependencies];
-  const internal = new Set();
-  for (const src of depSources) {
-    if (!src || typeof src !== "object") continue;
-    for (const name of Object.keys(src)) {
-      if (!String(name).startsWith("@happier-dev/")) continue;
-      internal.add(String(name));
-    }
+  const folders = [];
+  const visited = new Set();
+  const queue = collectDependencyNames(uiPkg, true);
+  while (queue.length > 0) {
+    const name = queue.shift();
+    if (!name || visited.has(name)) continue;
+    visited.add(name);
+
+    const pkgDir = internalWorkspacePackages.get(name);
+    if (!pkgDir) continue;
+    folders.push(pkgDir);
+
+    const pkg = safeReadJson(path.resolve(pkgDir, "package.json"));
+    queue.push(...collectDependencyNames(pkg, false));
   }
 
-  return [...internal]
-    .map((name) => String(name).split("/")[1] || "")
-    .filter((id) => id.length > 0)
-    .map((id) => path.resolve(monorepoRoot, "packages", id))
-    .filter((pkgDir) => fs.existsSync(pkgDir));
+  return folders;
 }
 
+const internalWorkspacePackages = collectInternalWorkspacePackages(path.resolve(monorepoRoot, "packages"));
+const internalWorkspaceSourceRoots = [...internalWorkspacePackages.values()]
+  .map((packageRoot) => path.resolve(packageRoot, "src"));
 const internalWorkspaceWatchFolders = resolveInternalWorkspaceWatchFolders();
 
 function addInternalWorkspaceWatchFolders() {
@@ -274,21 +331,28 @@ const testRouteBlockList = /[\\/]sources[\\/]app[\\/].*\.(test|spec)\.[jt]sx?$/;
 const projectArtifactsBlockList = /[\\/]\.project[\\/]/;
 const nextBuildArtifactsBlockList = /[\\/]\.next[\\/]/;
 const hstackWebArtifactExportBlockList = /[\\/]\.expo[\\/]hstack[\\/]web-artifact-export[\\/]/;
+// `apps/stack/scripts/pack.mjs` owns this transient publication name family. Metro mirrors the
+// packer's exact startsWith semantics at its crawl boundary so in-progress and rollback trees
+// never compete with the canonical workspace `src/**` and `dist/**` trees.
+const packTransientPublicationBlockList =
+  /[\\/](?:\.tmp\.|\.backup\.|\.restore\.|\.dist\.build\.|\.dist\.hstack-stage-|dist\.staging\.|dist\.probe\.)[^\\/]*(?:[\\/]|$)/;
 // Avoid scanning duplicate workspace-local `node_modules/**` trees (typically symlink-heavy) when Metro falls back
 // to the native `find` crawler (no Watchman). We still keep the monorepo root `node_modules` and `apps/ui/node_modules`.
 const workspaceNodeModulesBlockList =
   /[\\/]apps[\\/](?!ui[\\/])[^\\/]+[\\/]node_modules[\\/]|[\\/]packages[\\/][^\\/]+[\\/]node_modules[\\/]/;
 // Also skip nested dependency-private `node_modules/**` trees under watched app/root `node_modules/**`.
 // Metro resolves dependencies through the top-level search paths; crawling nested package-local copies adds a lot of
-// redundant work and frequently hits transient ENOENTs in hoisted/symlinked dependency layouts.
+// redundant work and frequently hits transient ENOENTs in hoisted/symlinked dependency layouts. React Native's own
+// `@react-native/*` packages are an exception: Yarn intentionally keeps packages such as virtualized-lists private to
+// React Native, and narrowed Metro runs must still crawl the resolved source files.
 const nestedDependencyNodeModulesBlockList =
-  /[\\/]node_modules[\\/](?:@[^\\/]+[\\/])?[^\\/]+[\\/]node_modules[\\/]/;
+  /[\\/]node_modules[\\/](?!react-native[\\/]node_modules[\\/]@react-native[\\/])(?:@[^\\/]+[\\/])?[^\\/]+[\\/]node_modules[\\/]/;
 const existingBlockList = config.resolver.blockList;
   config.resolver.blockList = Array.isArray(existingBlockList)
-  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList]
+  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList]
   : existingBlockList
-    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList]
-    : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList];
+    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList]
+    : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList];
 
 addInternalWorkspaceWatchFolders();
 
@@ -299,6 +363,7 @@ config.watchFolders = existingWatchFolders.filter(
 
 const rootNodeModules = path.resolve(__dirname, "../../node_modules");
 const appNodeModules = path.resolve(__dirname, "node_modules");
+const reactNativePrivateNodeModules = path.resolve(appNodeModules, "react-native/node_modules");
 const generatedWorkletsWatchFolders = resolveGeneratedWorkletsWatchFolders() || [];
 for (const generatedWorkletsWatchFolder of generatedWorkletsWatchFolders) {
   if (!config.watchFolders.includes(generatedWorkletsWatchFolder)) {
@@ -353,6 +418,26 @@ for (const folder of watchedHoistedNodeModuleRoots) {
   }
 }
 
+function resolveReactNativePrivatePackageWatchFolders(nodeModulesRoot) {
+  const scopeRoot = path.resolve(nodeModulesRoot, "@react-native");
+  try {
+    return fs.readdirSync(scopeRoot, { withFileTypes: true })
+      .filter((entry) => entry?.isDirectory?.())
+      .map((entry) => path.resolve(scopeRoot, entry.name))
+      .filter((folder) => fs.existsSync(path.resolve(folder, "package.json")));
+  } catch {
+    return [];
+  }
+}
+
+const reactNativePrivatePackageWatchFolders =
+  resolveReactNativePrivatePackageWatchFolders(reactNativePrivateNodeModules);
+for (const folder of reactNativePrivatePackageWatchFolders) {
+  if (!config.watchFolders.includes(folder)) {
+    config.watchFolders.push(folder);
+  }
+}
+
 const shouldNarrowWatchFolders = parseEnvBool(process.env.HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS) === true;
 const shouldRestoreMinimalNodeModulesPaths =
   shouldNarrowWatchFolders && parseEnvBool(process.env.EXPO_NO_METRO_WORKSPACE_ROOT) === true;
@@ -367,6 +452,7 @@ if (shouldRestoreMinimalNodeModulesPaths) {
   config.resolver.disableHierarchicalLookup = true;
   config.resolver.nodeModulesPaths = [
     appNodeModules,
+    reactNativePrivateNodeModules,
     rootNodeModules,
     ...existingNodeModulesPaths,
   ].filter((folder, index, all) => fs.existsSync(folder) && all.indexOf(folder) === index);
@@ -376,6 +462,7 @@ if (shouldNarrowWatchFolders) {
     ...(shouldRestoreMinimalNodeModulesPaths && fs.existsSync(rootNodeModules) ? [rootNodeModules] : []),
     ...internalWorkspaceWatchFolders,
     ...watchedHoistedNodeModuleRoots,
+    ...reactNativePrivatePackageWatchFolders,
     ...generatedWorkletsWatchFolders,
   ]);
   config.watchFolders = config.watchFolders.filter((folder) => allowedWatchFolders.has(folder));
@@ -448,30 +535,94 @@ function resolveExplicitRelativeImportFromOrigin({ originModulePath, moduleName,
 
   const candidate = path.resolve(path.dirname(originModulePath), normalizedModuleName);
   if (isFileBlockedByMetro(blockList, candidate)) return null;
-  if (!fs.existsSync(candidate)) return null;
-  return candidate;
+  if (fs.existsSync(candidate)) return candidate;
+  return resolveInternalWorkspaceSourceImport(candidate, blockList);
 }
 
-function resolvePackageExportTarget(entry) {
+function resolveInternalWorkspaceRelativeSourceImportFromOrigin({ originModulePath, moduleName, blockList }) {
+  if (typeof originModulePath !== "string" || originModulePath.length === 0) return null;
+  if (typeof moduleName !== "string" || !moduleName.startsWith(".")) return null;
+
+  const candidate = path.resolve(path.dirname(originModulePath), moduleName);
+  if (isFileBlockedByMetro(blockList, candidate)) return null;
+  return resolveInternalWorkspaceSourceImport(candidate, blockList);
+}
+
+function resolvePackageExportTarget(entry, platform) {
   if (typeof entry === "string" && entry.length > 0) return entry;
   if (!entry || typeof entry !== "object") return null;
+
+  const platformCondition = platform === "web"
+    ? entry.browser
+    : platform
+      ? entry["react-native"]
+      : null;
+  const platformCandidate = resolvePackageExportTarget(platformCondition, platform);
+  if (platformCandidate) return platformCandidate;
+
   const candidate =
     entry.default ??
     entry.import ??
     entry.require ??
     null;
-  return typeof candidate === "string" && candidate.length > 0 ? candidate : null;
+  return resolvePackageExportTarget(candidate, platform);
 }
 
-function resolveInternalWorkspacePackageViaRootNodeModules(moduleName, blockList) {
-  if (!(shouldRestoreMinimalNodeModulesPaths || isStackRun)) return null;
+function isInternalWorkspaceSourcePath(filePath) {
+  if (typeof filePath !== "string" || filePath.length === 0) return false;
+  const absoluteFilePath = path.resolve(filePath);
+  return internalWorkspaceSourceRoots.some(
+    (sourceRoot) => absoluteFilePath === sourceRoot || absoluteFilePath.startsWith(`${sourceRoot}${path.sep}`),
+  );
+}
+
+function resolveExistingSourceCandidate(basePath, blockList) {
+  const candidates = [
+    `${basePath}.ts`,
+    `${basePath}.tsx`,
+    `${basePath}.js`,
+    `${basePath}.jsx`,
+    `${basePath}.mts`,
+    `${basePath}.cts`,
+  ];
+  for (const candidate of candidates) {
+    if (isFileBlockedByMetro(blockList, candidate)) continue;
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function resolveInternalWorkspaceSourceImport(candidate, blockList) {
+  if (!isInternalWorkspaceSourcePath(candidate)) return null;
+  const ext = path.extname(candidate);
+  if (ext !== ".js" && ext !== ".mjs" && ext !== ".cjs") return null;
+  const basePath = candidate.slice(0, -ext.length);
+  return resolveExistingSourceCandidate(basePath, blockList);
+}
+
+function resolveInternalWorkspaceSourceExport(packageRoot, exportTarget, blockList) {
+  if (typeof exportTarget !== "string" || exportTarget.length === 0) return null;
+  const normalizedTarget = exportTarget.replace(/\\/g, "/").replace(/^\.\//u, "");
+  if (!normalizedTarget.startsWith("dist/")) return null;
+
+  const sourceRelativeTarget = normalizedTarget.slice("dist/".length);
+  const ext = path.extname(sourceRelativeTarget);
+  const sourceBasePath = path.resolve(
+    packageRoot,
+    "src",
+    ext ? sourceRelativeTarget.slice(0, -ext.length) : sourceRelativeTarget,
+  );
+  return resolveExistingSourceCandidate(sourceBasePath, blockList);
+}
+
+function resolveInternalWorkspacePackageExport(moduleName, blockList, platform) {
   if (typeof moduleName !== "string" || !moduleName.startsWith("@happier-dev/")) return null;
 
   const parts = moduleName.split("/");
   if (parts.length < 2) return null;
   const packageName = parts.length >= 2 ? `${parts[0]}/${parts[1]}` : moduleName;
   const subpath = parts.length > 2 ? parts.slice(2).join("/") : "";
-  const packageRoot = path.resolve(rootNodeModules, packageName);
+  const packageRoot = internalWorkspacePackages.get(packageName) ?? path.resolve(rootNodeModules, packageName);
   const packageJsonPath = path.resolve(packageRoot, "package.json");
   if (!fs.existsSync(packageJsonPath)) return null;
 
@@ -481,8 +632,12 @@ function resolveInternalWorkspacePackageViaRootNodeModules(moduleName, blockList
   const exportTarget = resolvePackageExportTarget(
     packageJson.exports?.[exportKey] ??
     (subpath.length === 0 ? packageJson.main : null),
+    platform,
   );
   if (!exportTarget) return null;
+
+  const sourceCandidate = resolveInternalWorkspaceSourceExport(packageRoot, exportTarget, blockList);
+  if (sourceCandidate) return sourceCandidate;
 
   const candidate = path.resolve(packageRoot, exportTarget);
   if (isFileBlockedByMetro(blockList, candidate)) return null;
@@ -509,6 +664,15 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     resolvedModuleName = "@noble/hashes/crypto";
   }
 
+  const internalWorkspaceRelativeSourceImport = resolveInternalWorkspaceRelativeSourceImportFromOrigin({
+    originModulePath: context?.originModulePath,
+    moduleName: resolvedModuleName,
+    blockList: config.resolver.blockList,
+  });
+  if (internalWorkspaceRelativeSourceImport) {
+    return { type: "sourceFile", filePath: internalWorkspaceRelativeSourceImport };
+  }
+
   if (process.env.CI || isStackRun) {
     const explicit = resolveExplicitRelativeImportFromOrigin({
       originModulePath: context?.originModulePath,
@@ -520,9 +684,10 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     }
   }
 
-  const internalWorkspacePackagePath = resolveInternalWorkspacePackageViaRootNodeModules(
+  const internalWorkspacePackagePath = resolveInternalWorkspacePackageExport(
     resolvedModuleName,
     config.resolver.blockList,
+    platform,
   );
   if (internalWorkspacePackagePath) {
     return { type: "sourceFile", filePath: internalWorkspacePackagePath };
@@ -635,6 +800,28 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     return { type: "sourceFile", filePath: nodeOsShim };
   }
   if (platform !== "web" && nativeEmptyNodeBuiltins.has(moduleName)) {
+    // A bare Node-builtin NAME can also be a real installed npm package that ships a
+    // browser/RN implementation (`events` — extended by @callstack/repack's
+    // ScriptManager; `punycode` — required by whatwg-url's url-state-machine; also
+    // buffer/process/util/...). Stubbing those to the empty shim breaks their
+    // consumers at runtime ("Super expression must either be null or a function",
+    // "Cannot read property 'decode' of undefined"). Prefer normal npm resolution for
+    // bare names and only fall back to the empty shim for genuinely-unavailable
+    // builtins. `node:`-prefixed specifiers always mean the builtin — keep stubbing.
+    if (!moduleName.startsWith("node:")) {
+      const builtinNameResolvers = [defaultResolveRequest, context?.resolveRequest];
+      for (const resolveCandidate of builtinNameResolvers) {
+        if (typeof resolveCandidate !== "function") continue;
+        try {
+          const resolvedBuiltinPackage = resolveCandidate(context, moduleName, platform);
+          if (resolvedBuiltinPackage != null && resolvedBuiltinPackage.type !== "empty") {
+            return resolvedBuiltinPackage;
+          }
+        } catch {
+          // Not installed as a real package — fall through to the empty shim.
+        }
+      }
+    }
     return { type: "sourceFile", filePath: nodeEmptyBuiltinShim };
   }
 
@@ -670,7 +857,9 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   // working on machines without Watchman, without scanning the entire `node_modules/**` tree.
   if (canTryNodeResolveFallback) {
     try {
-      const resolved = require.resolve(resolvedModuleName, { paths: [appNodeModules, rootNodeModules] });
+      const resolved = require.resolve(resolvedModuleName, {
+        paths: [appNodeModules, reactNativePrivateNodeModules, rootNodeModules],
+      });
       return { type: "sourceFile", filePath: resolved };
     } catch (error) {
       lastResolutionError = error;

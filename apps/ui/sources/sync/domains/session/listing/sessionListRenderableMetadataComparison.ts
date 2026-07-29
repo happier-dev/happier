@@ -1,5 +1,24 @@
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import {
+    readExternalAgentObservationSessionState,
+    type ExternalAgentObservationSnapshotV1,
+} from '@happier-dev/agents';
+import {
+    readExternalSessionLink,
+    type ExternalSessionLink,
+} from '@/sync/domains/session/external/readExternalSessionLink';
+import { serializeExternalSessionSourceForComparison } from '@/sync/domains/session/external/serializeExternalSessionSourceForComparison';
 import type { SessionListRenderableMetadata } from './sessionListRenderable';
+
+export type SessionListRenderableExternalSessionIdentity = Readonly<{
+    v: 1;
+    agentId: string;
+    machineId: string;
+    remoteSessionId: string;
+    linkedAtMs?: number;
+    source: ExternalSessionLink['source'];
+    codexBackendMode?: string;
+}>;
 
 export type SessionListRenderableMetadataComparison = Readonly<{
     name: string | undefined;
@@ -9,10 +28,8 @@ export type SessionListRenderableMetadataComparison = Readonly<{
     host: string | null;
     machineId: string | null;
     flavor: string | null;
-    externalSessionV1: Readonly<{
-        v: 1;
-        providerId?: string;
-    }> | null;
+    externalSessionV1: SessionListRenderableExternalSessionIdentity | null;
+    externalAgentObservationV1: ExternalAgentObservationSnapshotV1 | null;
     readStateV1: Readonly<{
         v: 1;
         sessionSeq: number;
@@ -20,6 +37,7 @@ export type SessionListRenderableMetadataComparison = Readonly<{
         updatedAt: number;
     }> | null;
     hiddenSystemSession: boolean;
+    terminalControlServiceabilityV1: SessionListRenderableMetadata['terminalControlServiceabilityV1'];
 }>;
 
 type SessionListRenderableMetadataComparisonSnapshot = Readonly<{
@@ -30,34 +48,52 @@ type SessionListRenderableMetadataComparisonSnapshot = Readonly<{
     host: string | null;
     machineId: string | null;
     flavor: string | null;
-    externalSessionV1: unknown;
+    externalSessionV1: SessionListRenderableExternalSessionIdentity | null;
+    externalAgentObservationV1?: unknown;
     readStateV1: unknown;
     hiddenSystemSession: boolean;
+    terminalControlServiceabilityV1?: unknown;
 }>;
 
 function readExternalSessionRenderableMetadata(
-    candidate: unknown,
+    candidate: SessionListRenderableExternalSessionIdentity | null,
     previous?: SessionListRenderableMetadataComparison['externalSessionV1'],
 ): SessionListRenderableMetadataComparison['externalSessionV1'] {
-    if (!candidate || typeof candidate !== 'object') return null;
-    if (!('v' in candidate) || candidate.v !== 1) return null;
+    if (!candidate) return null;
 
     const next = {
         v: 1 as const,
-        ...('providerId' in candidate && typeof candidate.providerId === 'string'
-            ? { providerId: candidate.providerId }
+        agentId: candidate.agentId,
+        machineId: candidate.machineId,
+        remoteSessionId: candidate.remoteSessionId,
+        ...(typeof candidate.linkedAtMs === 'number' && Number.isFinite(candidate.linkedAtMs)
+            ? { linkedAtMs: candidate.linkedAtMs }
             : {}),
+        source: candidate.source,
+        ...(candidate.codexBackendMode ? { codexBackendMode: candidate.codexBackendMode } : {}),
     };
 
-    if (
-        previous
-        && previous.v === next.v
-        && previous.providerId === next.providerId
-    ) {
+    if (previous && areSessionListRenderableExternalSessionIdentitiesEqual(previous, next)) {
         return previous;
     }
 
     return next;
+}
+
+export function areSessionListRenderableExternalSessionIdentitiesEqual(
+    previous: SessionListRenderableExternalSessionIdentity | null | undefined,
+    next: SessionListRenderableExternalSessionIdentity | null | undefined,
+): boolean {
+    if (previous === next) return true;
+    if (!previous || !next) return (previous ?? null) === (next ?? null);
+    return previous.v === next.v
+        && previous.agentId === next.agentId
+        && previous.machineId === next.machineId
+        && previous.remoteSessionId === next.remoteSessionId
+        && previous.linkedAtMs === next.linkedAtMs
+        && previous.codexBackendMode === next.codexBackendMode
+        && serializeExternalSessionSourceForComparison(previous.source)
+            === serializeExternalSessionSourceForComparison(next.source);
 }
 
 function readStateRenderableMetadata(
@@ -101,10 +137,45 @@ function readStateRenderableMetadata(
     return next;
 }
 
+function readExternalAgentObservationRenderableMetadata(
+    candidate: unknown,
+    previous?: SessionListRenderableMetadataComparison['externalAgentObservationV1'],
+): SessionListRenderableMetadataComparison['externalAgentObservationV1'] {
+    const next = readExternalAgentObservationSessionState({
+        externalAgentObservationV1: candidate,
+    }).value;
+    if (!next) return null;
+    return previous && JSON.stringify(previous) === JSON.stringify(next)
+        ? previous
+        : next;
+}
+
+function readTerminalControlServiceability(
+    candidate: unknown,
+    previous?: SessionListRenderableMetadataComparison['terminalControlServiceabilityV1'],
+): SessionListRenderableMetadataComparison['terminalControlServiceabilityV1'] {
+    if (!candidate || typeof candidate !== 'object') return null;
+    const value = candidate as { v?: unknown; state?: unknown; observedAt?: unknown; reason?: unknown };
+    if (value.v !== 1 || !['servable', 'recoverable_unservable', 'unknown'].includes(String(value.state)) || typeof value.observedAt !== 'number') return null;
+    const next = {
+        v: 1 as const,
+        state: value.state as 'servable' | 'recoverable_unservable' | 'unknown',
+        observedAt: value.observedAt,
+        ...(typeof value.reason === 'string' ? { reason: value.reason } : {}),
+    };
+    return previous
+        && previous.state === next.state
+        && previous.observedAt === next.observedAt
+        && previous.reason === next.reason
+        ? previous
+        : next;
+}
+
 function isSessionListRenderableMetadataComparisonSnapshotEqual(
     snapshot: SessionListRenderableMetadataComparisonSnapshot,
     previous: SessionListRenderableMetadata,
     nextExternalSessionV1: SessionListRenderableMetadataComparison['externalSessionV1'],
+    nextExternalAgentObservationV1: SessionListRenderableMetadataComparison['externalAgentObservationV1'],
     nextReadStateV1: SessionListRenderableMetadataComparison['readStateV1'],
 ): boolean {
     return previous.name === snapshot.name
@@ -116,7 +187,9 @@ function isSessionListRenderableMetadataComparisonSnapshotEqual(
         && (previous.flavor ?? null) === snapshot.flavor
         && (previous.hiddenSystemSession === true) === snapshot.hiddenSystemSession
         && previous.externalSessionV1 === nextExternalSessionV1
-        && previous.readStateV1 === nextReadStateV1;
+        && previous.externalAgentObservationV1 === nextExternalAgentObservationV1
+        && previous.readStateV1 === nextReadStateV1
+        && previous.terminalControlServiceabilityV1 === snapshot.terminalControlServiceabilityV1;
 }
 
 function readRenderableSummaryText(metadata: Metadata): string | null {
@@ -139,12 +212,26 @@ export function normalizeSessionListRenderableMetadataComparison(
         normalizedSnapshot.externalSessionV1,
         previous?.externalSessionV1 ?? null,
     );
+    const nextExternalAgentObservationV1 = readExternalAgentObservationRenderableMetadata(
+        normalizedSnapshot.externalAgentObservationV1,
+        previous?.externalAgentObservationV1 ?? null,
+    );
     const nextReadStateV1 = readStateRenderableMetadata(
         normalizedSnapshot.readStateV1,
         previous?.readStateV1 ?? null,
     );
+    normalizedSnapshot.terminalControlServiceabilityV1 = readTerminalControlServiceability(
+        normalizedSnapshot.terminalControlServiceabilityV1,
+        previous?.terminalControlServiceabilityV1 ?? null,
+    );
 
-    if (previous && isSessionListRenderableMetadataComparisonSnapshotEqual(normalizedSnapshot, previous, nextExternalSessionV1, nextReadStateV1)) {
+    if (previous && isSessionListRenderableMetadataComparisonSnapshotEqual(
+        normalizedSnapshot,
+        previous,
+        nextExternalSessionV1,
+        nextExternalAgentObservationV1,
+        nextReadStateV1,
+    )) {
         return previous as SessionListRenderableMetadataComparison;
     }
 
@@ -157,8 +244,10 @@ export function normalizeSessionListRenderableMetadataComparison(
         machineId: normalizedSnapshot.machineId,
         flavor: normalizedSnapshot.flavor,
         externalSessionV1: nextExternalSessionV1,
+        externalAgentObservationV1: nextExternalAgentObservationV1,
         readStateV1: nextReadStateV1,
         hiddenSystemSession: normalizedSnapshot.hiddenSystemSession,
+        terminalControlServiceabilityV1: normalizedSnapshot.terminalControlServiceabilityV1 as SessionListRenderableMetadataComparison['terminalControlServiceabilityV1'],
     };
 
     return previous && areSessionListRenderableMetadataComparisonsEqual(previous, next)
@@ -180,9 +269,11 @@ export function readSessionListRenderableMetadataComparison(
         host: typeof metadata.host === 'string' ? metadata.host : null,
         machineId: typeof metadata.machineId === 'string' ? metadata.machineId : null,
         flavor: typeof metadata.flavor === 'string' ? metadata.flavor : null,
-        externalSessionV1: (metadata as Readonly<{ externalSessionV1?: unknown }>).externalSessionV1,
+        externalSessionV1: readExternalSessionLink(metadata),
+        externalAgentObservationV1: metadata.externalAgentObservationV1,
         readStateV1: (metadata as Readonly<{ readStateV1?: unknown }>).readStateV1,
         hiddenSystemSession: metadata.systemSessionV1?.hidden === true,
+        terminalControlServiceabilityV1: metadata.terminal?.controlServiceabilityV1 ?? null,
     }, previous);
 }
 
@@ -200,8 +291,10 @@ export function readSessionListRenderableMetadataComparisonFromRenderable(
         machineId: metadata.machineId ?? null,
         flavor: metadata.flavor ?? null,
         externalSessionV1: metadata.externalSessionV1 ?? null,
+        externalAgentObservationV1: metadata.externalAgentObservationV1 ?? null,
         readStateV1: metadata.readStateV1 ?? null,
         hiddenSystemSession: metadata.hiddenSystemSession === true,
+        terminalControlServiceabilityV1: metadata.terminalControlServiceabilityV1 ?? null,
     });
 }
 
@@ -231,8 +324,12 @@ export function areSessionListRenderableMetadataComparisonsEqual(
         && (previous.machineId ?? null) === (next.machineId ?? null)
         && (previous.flavor ?? null) === (next.flavor ?? null)
         && (previous.hiddenSystemSession === true) === (next.hiddenSystemSession === true)
-        && (previous.externalSessionV1?.v ?? null) === (next.externalSessionV1?.v ?? null)
-        && (previous.externalSessionV1?.providerId ?? null) === (next.externalSessionV1?.providerId ?? null)
+        && areSessionListRenderableExternalSessionIdentitiesEqual(
+            previous.externalSessionV1,
+            next.externalSessionV1,
+        )
+        && JSON.stringify(previous.externalAgentObservationV1 ?? null)
+            === JSON.stringify(next.externalAgentObservationV1 ?? null)
         && (previous.readStateV1?.v ?? null) === (next.readStateV1?.v ?? null)
         && (previous.readStateV1?.sessionSeq ?? null) === (next.readStateV1?.sessionSeq ?? null)
         && (previous.readStateV1?.pendingActivityAt ?? null) === (next.readStateV1?.pendingActivityAt ?? null)

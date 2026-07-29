@@ -7,6 +7,7 @@ import type {
 } from '@/sync/domains/session/control/submitMode';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { ResumeSessionOptions, ResumeSessionResult } from '@/sync/ops/sessions';
+import type { PendingRequestedActionV1 } from '@happier-dev/protocol';
 
 export type SubmitResultType =
     | 'success'
@@ -30,6 +31,7 @@ export type SubmitWakeState =
 export type SubmitSessionUserMessageResult = Readonly<{
     type: SubmitResultType;
     persistence: SubmitPersistence;
+    providerAcceptancePending?: boolean;
     wake: Readonly<{
         attempted: boolean;
         state: SubmitWakeState;
@@ -59,6 +61,10 @@ export type SessionMessageCallerSurface =
     | 'review_findings_apply'
     | 'participant_composer'
     | 'message_option'
+    | 'voice_turn'
+    | 'subagent_command'
+    | 'pending_message_steer_now'
+    | 'pending_message_send_now'
     | 'sync_submit_message';
 
 export type SubmitSessionUserMessageOptions = Readonly<{
@@ -71,8 +77,11 @@ export type SubmitSessionUserMessageOptions = Readonly<{
     busySteerSendPolicy?: BusySteerSendPolicy;
     explicitMode?: MessageSendMode;
     forceImmediate?: boolean;
+    /** Action explicitly selected for an already-durable row. */
+    requestedAction?: PendingRequestedActionV1;
     profileId?: string | null;
     localId?: string | null;
+    existingDurablePendingMessage?: boolean;
     resumeCapabilityOptions: ResumeCapabilityOptions;
     resumeTargetOverride?: SessionSubmitWakeTargetOverride | null;
     permissionOverride?: PermissionModeOverrideForSpawn | null;
@@ -101,11 +110,17 @@ export type SubmitSessionUserMessageOptions = Readonly<{
 
 export type PendingMessageSubmitResult = Readonly<{
     localId?: string;
+    accepted?: boolean;
+    /** The exact row was durably cancelled while its enqueue operation was in flight. */
+    cancelled?: true;
+    terminal?: true;
 }> | void;
 
 export type DirectMessageSubmitResult = Readonly<{
     localId?: string;
     seq?: number;
+    persistence?: Extract<SubmitPersistence, 'pending' | 'transcript_committed' | 'provider_direct'>;
+    providerAcceptancePending?: boolean;
 }> | void;
 
 export type DirectMessageLocalPendingProjection = Readonly<{
@@ -120,6 +135,11 @@ export interface SessionSubmitPort {
         text: string,
         displayText?: string,
         metaOverrides?: Record<string, unknown>,
+        options?: Readonly<{
+            localId?: string | null;
+            onLocalPendingProjectionCreated?: (event: DirectMessageLocalPendingProjection) => void;
+            requestedAction: PendingRequestedActionV1;
+        }>,
     ): Promise<PendingMessageSubmitResult>;
     sendMessage(
         sessionId: string,
@@ -139,6 +159,11 @@ export interface SessionSubmitPort {
         options?: Readonly<{ serverId?: string | null }>,
     ): Promise<Session | null | undefined>;
     abortSession?(sessionId: string): Promise<void>;
+    updatePendingRequestedAction?(
+        sessionId: string,
+        localId: string,
+        requestedAction: PendingRequestedActionV1,
+    ): Promise<void> | void;
     switchSessionControlToRemote?(sessionId: string): Promise<void>;
     canWakeMachineId?(machineId: string): boolean;
 }

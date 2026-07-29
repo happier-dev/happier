@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderSettingsView } from '@/dev/testkit';
 import { installVoiceSettingsPanelCommonModuleMocks } from '@/voice/settings/panels/voiceSettingsPanelTestHelpers';
 
@@ -12,6 +12,10 @@ type PlatformSelectOptions<T> = {
 (globalThis as any).expo = { EventEmitter: class {} };
 
 const modalPrompt = vi.fn(async (..._args: any[]) => null);
+const localDirectPanelState = vi.hoisted(() => ({
+    sttGroupProps: [] as any[],
+    ttsGroupProps: [] as any[],
+}));
 
 installVoiceSettingsPanelCommonModuleMocks({
     reactNative: async () => {
@@ -53,7 +57,6 @@ installVoiceSettingsPanelCommonModuleMocks({
     },
 });
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('@/components/ui/lists/Item', () => ({
   Item: (props: any) => React.createElement('Item', props),
@@ -65,12 +68,27 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 
 vi.mock('@/components/ui/forms/Switch', () => ({ Switch: () => null }));
 
-vi.mock('@/voice/settings/panels/localStt/LocalVoiceSttGroup', () => ({ LocalVoiceSttGroup: () => null }));
-vi.mock('@/voice/settings/panels/localTts/LocalVoiceTtsGroup', () => ({ LocalVoiceTtsGroup: () => null }));
+vi.mock('@/voice/settings/panels/localStt/LocalVoiceSttGroup', () => ({
+  LocalVoiceSttGroup: (props: any) => {
+    localDirectPanelState.sttGroupProps.push(props);
+    return React.createElement('LocalVoiceSttGroup', props);
+  },
+}));
+vi.mock('@/voice/settings/panels/localTts/LocalVoiceTtsGroup', () => ({
+  LocalVoiceTtsGroup: (props: any) => {
+    localDirectPanelState.ttsGroupProps.push(props);
+    return React.createElement('LocalVoiceTtsGroup', props);
+  },
+}));
 
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 
 describe('LocalDirectSection', () => {
+  beforeEach(() => {
+    localDirectPanelState.sttGroupProps = [];
+    localDirectPanelState.ttsGroupProps = [];
+  });
+
   it('does not produce an unhandledRejection when a prompt rejects', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     const unhandledSpy = vi.fn();
@@ -94,5 +112,27 @@ describe('LocalDirectSection', () => {
     }
 
     expect(unhandledSpy).not.toHaveBeenCalled();
+  });
+
+  it('passes daemon route diagnostics to local neural STT and TTS groups', async () => {
+    const { LocalDirectSection } = await import('@/voice/settings/panels/LocalDirectSection');
+    const voice = voiceSettingsParse({
+      providerId: 'local_direct',
+      providers: {
+        local_direct: { schemaVersion: 1, config: {
+          stt: { provider: 'local_neural' },
+          tts: { provider: 'local_neural' },
+        } },
+      },
+    });
+
+    await renderSettingsView(React.createElement(LocalDirectSection as any, {
+      voice,
+      setVoice: vi.fn(),
+      daemonRouteDiagnosticReason: 'daemon_relay_disabled',
+    }));
+
+    expect(localDirectPanelState.sttGroupProps.at(-1)?.daemonRouteDiagnosticReason).toBe('daemon_relay_disabled');
+    expect(localDirectPanelState.ttsGroupProps.at(-1)?.daemonRouteDiagnosticReason).toBe('daemon_relay_disabled');
   });
 });

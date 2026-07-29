@@ -115,7 +115,7 @@ describe('VoiceSessionSpawnPickerModal', () => {
   beforeEach(() => {
     pathSelectionListPropsRef.current = null;
     recentMachinePathsState = [];
-    machinesState = [createMachine({ spawnReadinessStatus: 'ready' })];
+    machinesState = [createMachine()];
   });
 
     it('passes machine browse config to PathSelectionList after choosing a machine', async () => {
@@ -143,7 +143,6 @@ describe('VoiceSessionSpawnPickerModal', () => {
     it('passes the selected machine platform to PathSelectionList after choosing a Windows machine', async () => {
         machinesState = [createMachine({
             id: 'machine-win',
-            spawnReadinessStatus: 'ready',
             metadata: {
                 host: 'win.local',
                 platform: 'win32',
@@ -177,11 +176,9 @@ describe('VoiceSessionSpawnPickerModal', () => {
         machinesState = [
             createMachine({
                 id: 'machine-1',
-                spawnReadinessStatus: 'ready',
             }),
             createMachine({
                 id: 'machine-2',
-                spawnReadinessStatus: 'ready',
                 metadata: {
                     host: 'linux.local',
                     platform: 'linux',
@@ -308,15 +305,16 @@ describe('VoiceSessionSpawnPickerModal', () => {
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    it('disables create when the selected machine is online but exact spawn readiness is unknown', async () => {
-        machinesState = [createMachine({ spawnReadinessStatus: undefined })];
+    it('allows a structurally ready machine without synthetic spawn readiness to reach the spawn operation', async () => {
+        machinesState = [createMachine()];
         const setChrome = vi.fn();
+        const onResolve = vi.fn();
         const { VoiceSessionSpawnPickerModal } = await import('./VoiceSessionSpawnPickerModal');
 
         const screen = await renderScreen(
             <VoiceSessionSpawnPickerModal
                 onClose={() => {}}
-                onResolve={() => {}}
+                onResolve={onResolve}
                 setChrome={setChrome}
             />,
         );
@@ -329,6 +327,13 @@ describe('VoiceSessionSpawnPickerModal', () => {
         const lastChrome = setChrome.mock.calls.at(-1)?.[0] as ChromeWithFooter;
         const createButton = findCreateButton(lastChrome);
 
-        expect(createButton?.props.disabled).toBe(true);
+        expect(createButton?.props.disabled).toBe(false);
+        await act(async () => {
+            createButton?.props.onPress?.();
+        });
+        expect(onResolve).toHaveBeenCalledWith({
+            machineId: 'machine-1',
+            directory: '/Users/test',
+        });
     });
 });

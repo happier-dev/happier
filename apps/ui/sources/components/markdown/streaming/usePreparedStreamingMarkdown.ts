@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import type { MarkdownStreamingMode } from './useStreamingMarkdownBlocks';
 import { preprocessStreamingMarkdown } from './preprocessStreamingMarkdown';
 import { repairStreamingMarkdownAsync } from './repairStreamingMarkdownAsync';
 import {
@@ -12,6 +11,8 @@ type PreparedStreamingMarkdownState = Readonly<{
     sourceMarkdown: string;
     preparedMarkdown: string;
 }>;
+
+export type MarkdownStreamingMode = 'static' | 'streaming';
 
 function shouldUseAsyncStreamingRepair(markdown: string): boolean {
     return markdown.length >= STREAMING_MARKDOWN_ASYNC_REPAIR_MIN_CHARS;

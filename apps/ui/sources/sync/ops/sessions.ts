@@ -4,6 +4,7 @@
 
 import { apiSocket } from '../api/session/apiSocket';
 import { publishDisplayTitleToMetadata } from '@/sync/state/displayTitlePublish';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { createRpcCallError, isRpcMethodNotAvailableError, readRpcErrorCode as readSessionRpcErrorCode } from '../runtime/rpcErrors';
 import { assertRpcResponseWithSuccess } from '../runtime/assertRpcResponseWithSuccess';
 import { buildResumeHappySessionRpcParams, type ResumeHappySessionRpcParams } from '../domains/session/resume/resumeSessionPayload';
@@ -15,6 +16,9 @@ import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { emitSessionMetadataUpdateWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/emitSessionMetadataUpdateWithServerScope';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
+import type {
+    ServerAccountSessionRequestAuthority,
+} from '@/sync/runtime/orchestration/serverScopedRpc/createSessionRequestWithServerScope';
 import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
@@ -29,11 +33,13 @@ import type {
     SessionContinueWithReplayRpcResult,
     SessionAuthoringValueV1,
     SessionInitialGoalRequestV1,
+    SessionModelSelectionV1,
     SessionForkPoint,
     SessionForkRpcResult,
     SessionForkStrategy,
     SessionRollbackRpcResult,
     SessionRollbackTarget,
+    SpawnSessionExecutionAuthorization,
     SpawnSessionResult,
 } from '@happier-dev/protocol';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol';
@@ -47,12 +53,20 @@ import {
     SessionAuthoringValueV1Schema,
     SPAWN_SESSION_ERROR_CODES,
 } from '@happier-dev/protocol';
+import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { normalizeSpawnSessionResult } from './_shared';
 import { isAccountSettingsScopeChangedDuringSpawnPreparationError } from '@/sync/engine/settings/accountSettingsSpawnPreparationError';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 import { readMachineControlTargetForSession } from './sessionMachineTarget';
 import { stopSessionUsingCanonicalStrategy } from './sessionStopStrategy';
+import {
+    isProviderSafeDaemonSessionMethodAbsent,
+    requiresProviderSafeSessionRpc,
+} from './providerDaemonSessionCompatibility';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { buildResumeCapabilityOptionsFromUiState } from '@/agents/registry/registryUiBehavior';
+import { getPendingQueueWakeResumeOptions } from '@/sync/domains/pending/pendingQueueWake';
 export {
     sessionScmBranchCheckout,
     sessionScmBranchCreate,
@@ -110,7 +124,7 @@ interface SessionPermissionRequest {
      * AskUserQuestion: structured answers keyed by question text.
      * When present, the agent can complete the tool call without requiring a follow-up user message.
      */
-    answers?: Record<string, string>;
+    answers?: StructuredQuestionAnswersV1;
 }
 
 // Mode change operation types
@@ -163,17 +177,6 @@ interface SessionRipgrepResponse {
     error?: string;
 }
 
-// Kill session operation types
-interface SessionKillRequest {
-    // No parameters needed
-}
-
-interface SessionKillResponse {
-    success: boolean;
-    message: string;
-    errorCode?: string;
-}
-
 // Response types for spawn session
 export type ResumeSessionResult = SpawnSessionResult;
 
@@ -204,20 +207,14 @@ export interface ResumeSessionOptions {
      */
     permissionMode?: PermissionMode;
     permissionModeUpdatedAt?: number;
-    /**
-     * Optional: publish an explicit UI-selected model override at resume time.
-     * Use only when the UI selection is newer than metadata.modelOverrideV1.updatedAt.
-     *
-     * NOTE: this should never be the sentinel "default" (that value is represented by omitting the override).
-     */
-    modelId?: string;
-    modelUpdatedAt?: number;
+    /** Optional explicit target-bound model selection. Omission means keep the persisted session intent. */
+    modelSelection?: SessionModelSelectionV1;
     /**
      * Legacy transport fallback for older daemon boundaries.
      * Prefer codexBackendMode for new resume callers.
      */
     experimentalCodexAcp?: boolean;
-    codexBackendMode?: import('@happier-dev/agents').CodexBackendMode;
+    codexBackendMode?: import('@happier-dev/protocol').CodexBackendMode;
     runtimeDescriptorV1?: import('@happier-dev/protocol').RuntimeDescriptorV1;
     /**
      * Transcript cursor to use when the resume request is caused by a just-committed
@@ -225,6 +222,7 @@ export interface ResumeSessionOptions {
      * consumed without replaying older turns.
      */
     initialTranscriptAfterSeq?: number;
+    executionAuthorization?: SpawnSessionExecutionAuthorization;
     initialGoal?: SessionInitialGoalRequestV1;
     /**
      * Internal daemon freshness barrier. Resume callers should normally omit this and let
@@ -250,6 +248,8 @@ export interface ResumeSessionOptions {
  * to the existing Happy session and resumes the agent.
  */
 export async function resumeSession(options: ResumeSessionOptions): Promise<ResumeSessionResult> {
+    let providerSafeRpcRequired = false;
+    storage.getState().markSessionResuming(options.sessionId);
     try {
         const {
             sessionId,
@@ -264,30 +264,43 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             attachMetadataIdentityPolicy,
             permissionMode,
             permissionModeUpdatedAt,
-            modelId,
-            modelUpdatedAt,
+            modelSelection,
             experimentalCodexAcp,
             codexBackendMode,
             runtimeDescriptorV1,
             accountSettingsVersionHint,
             initialTranscriptAfterSeq,
+            executionAuthorization,
             initialGoal,
             preferRequestedMachineTarget,
             preferScopedMachineRpc,
         } = options;
-        const preparation = await prepareAccountSettingsForDaemonSpawnIfNeeded(options.accountSettingsVersionHint);
         const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
 
         const machineTarget = readMachineControlTargetForSession(sessionId);
         const machineId = preferRequestedMachineTarget ? rawMachineId.trim() : machineTarget?.machineId ?? rawMachineId.trim();
         const directory = preferRequestedMachineTarget ? rawDirectory.trim() : machineTarget?.basePath ?? rawDirectory.trim();
         if (!machineId || !directory) {
+            storage.getState().clearSessionResuming(sessionId);
             return {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
                 errorMessage: 'No reachable machine target found to resume session',
             };
         }
+
+        const storedSession = storage.getState().sessions[sessionId];
+        const storedSessionOwnerMetadata = storedSession
+            ? readSessionOwnerMetadataView(storedSession)
+            : null;
+        providerSafeRpcRequired = requiresProviderSafeSessionRpc({
+            modelSelection,
+            existingSessionMetadata: storedSessionOwnerMetadata
+                ? { state: 'known', metadata: storedSessionOwnerMetadata }
+                : { state: 'unknown' },
+        });
+
+        const preparation = await prepareAccountSettingsForDaemonSpawnIfNeeded(options.accountSettingsVersionHint);
 
         const parsedConnectedServicesRaw: SessionAuthoringValueV1['connectedServices'] | undefined =
             connectedServices === undefined
@@ -308,10 +321,10 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             ...(attachMetadataIdentityPolicy ? { attachMetadataIdentityPolicy } : {}),
             ...(permissionMode ? { permissionMode } : {}),
             ...(typeof permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt } : {}),
-            ...(modelId ? { modelId } : {}),
-            ...(typeof modelUpdatedAt === 'number' ? { modelUpdatedAt } : {}),
+            ...(modelSelection ? { modelSelection } : {}),
             ...(typeof accountSettingsVersionHint === 'number' ? { accountSettingsVersionHint } : {}),
             ...(typeof initialTranscriptAfterSeq === 'number' ? { initialTranscriptAfterSeq } : {}),
+            ...(executionAuthorization ? { executionAuthorization } : {}),
             ...(initialGoal ? { initialGoal } : {}),
             ...preparation,
             experimentalCodexAcp,
@@ -321,14 +334,21 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
 
         const result = await machineRpcWithServerScope<unknown, ResumeHappySessionRpcParams>({
             machineId,
-            method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+            method: providerSafeRpcRequired
+                ? RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE
+                : RPC_METHODS.SPAWN_HAPPY_SESSION,
             payload: params,
             serverId,
             timeoutMs: readSpawnSessionRpcTimeoutMsFromEnv(),
             ...(preferScopedMachineRpc ? { preferScoped: true } : {}),
         });
-        return normalizeSpawnSessionResult(result);
+        const normalizedResult = normalizeSpawnSessionResult(result);
+        if (normalizedResult.type === 'error') {
+            storage.getState().clearSessionResuming(sessionId);
+        }
+        return normalizedResult;
     } catch (error) {
+        storage.getState().clearSessionResuming(options.sessionId);
         if (isAccountSettingsScopeChangedDuringSpawnPreparationError(error)) {
             return {
                 type: 'error',
@@ -336,7 +356,11 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
                 errorMessage: 'Account changed while syncing settings. Please retry from the current account.',
             };
         }
-        if (isRpcMethodNotAvailableError(error as any) || readSessionRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+        if (
+            (providerSafeRpcRequired && isProviderSafeDaemonSessionMethodAbsent(error))
+            || isRpcMethodNotAvailableError(error)
+            || readSessionRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+        ) {
             return {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
@@ -369,8 +393,7 @@ export type ContinueSessionWithReplayOptions = Readonly<{
     approvedNewDirectoryCreation?: boolean;
     permissionMode?: PermissionMode;
     permissionModeUpdatedAt?: number;
-    modelId?: string;
-    modelUpdatedAt?: number;
+    modelSelection?: SessionModelSelectionV1;
     replay: Readonly<{
         previousSessionId: string;
         strategy?: 'recent_messages' | 'summary_plus_recent';
@@ -408,8 +431,7 @@ export async function continueSessionWithReplay(options: ContinueSessionWithRepl
                 approvedNewDirectoryCreation: options.approvedNewDirectoryCreation,
                 permissionMode: options.permissionMode,
                 permissionModeUpdatedAt: options.permissionModeUpdatedAt,
-                modelId: options.modelId,
-                modelUpdatedAt: options.modelUpdatedAt,
+                modelSelection: options.modelSelection,
                 replay: options.replay,
             },
             serverId,
@@ -425,7 +447,10 @@ export async function continueSessionWithReplay(options: ContinueSessionWithRepl
         }
         return parsed.data;
     } catch (error) {
-        if (isRpcMethodNotAvailableError(error as any) || readSessionRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+        if (
+            isRpcMethodNotAvailableError(error)
+            || readSessionRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+        ) {
             return {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
@@ -464,10 +489,21 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
             errorMessage: 'No reachable machine target found for session fork',
         };
     }
+    const storedParentSession = storage.getState().sessions[options.parentSessionId];
+    const storedParentOwnerMetadata = storedParentSession
+        ? readSessionOwnerMetadataView(storedParentSession)
+        : null;
+    const providerSafeRpcRequired = requiresProviderSafeSessionRpc({
+        existingSessionMetadata: storedParentOwnerMetadata
+            ? { state: 'known', metadata: storedParentOwnerMetadata }
+            : { state: 'unknown' },
+    });
     try {
         const raw = await machineRpcWithServerScope<unknown, unknown>({
             machineId,
-            method: RPC_METHODS.SESSION_FORK,
+            method: providerSafeRpcRequired
+                ? RPC_METHODS.SESSION_FORK_PROVIDER_SAFE
+                : RPC_METHODS.SESSION_FORK,
             payload: {
                 v: 1,
                 parentSessionId: options.parentSessionId,
@@ -477,6 +513,10 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
                 replayMaxSeedChars: options.replayMaxSeedChars,
             },
             serverId,
+            timeoutMs: readSpawnSessionRpcTimeoutMsFromEnv(),
+            // Fork can create durable provider/session state. Once the request is emitted,
+            // an acknowledgement timeout is outcome-unknown and must not trigger another route.
+            onIssued: () => {},
         });
 
         const parsed = SessionForkRpcResultSchema.safeParse(raw);
@@ -485,7 +525,11 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
         }
         return parsed.data;
     } catch (error) {
-        if (isRpcMethodNotAvailableError(error as any) || readSessionRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+        if (
+            (providerSafeRpcRequired && isProviderSafeDaemonSessionMethodAbsent(error))
+            || isRpcMethodNotAvailableError(error)
+            || readSessionRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+        ) {
             return {
                 ok: false,
                 errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
@@ -507,6 +551,94 @@ export async function rollbackSessionConversation(options: Readonly<{
     serverId?: string | null;
     target?: SessionRollbackTarget;
 }>): Promise<SessionRollbackRpcResult> {
+    const target = options.target ?? { type: 'latest_turn' };
+    const session = storage.getState().sessions[options.sessionId];
+    if (session?.active === false && target.type === 'before_user_message') {
+        const state = storage.getState();
+        const resumeOptions = getPendingQueueWakeResumeOptions({
+            sessionId: options.sessionId,
+            session,
+            resumeCapabilityOptions: buildResumeCapabilityOptionsFromUiState({
+                settings: state.settings,
+                results: undefined,
+            }),
+        });
+        if (!resumeOptions) {
+            return {
+                ok: false,
+                errorCode: 'session_rollback_resume_unavailable',
+                errorMessage: 'This inactive session cannot be resumed for rollback',
+            };
+        }
+
+        const serverId = options.serverId ?? resolvePreferredServerIdForSessionId(options.sessionId);
+        const resumeResult = await resumeSession({
+            ...resumeOptions,
+            ...(serverId ? { serverId } : {}),
+        });
+        if (resumeResult.type === 'error') {
+            return {
+                ok: false,
+                errorCode: resumeResult.errorCode,
+                errorMessage: resumeResult.errorMessage,
+            };
+        }
+
+        const deadlineMs = Date.now() + 30_000;
+        while (true) {
+            // Resume completes before the child necessarily registers its session RPCs. Retrying
+            // only METHOD_NOT_AVAILABLE is safe: it proves rollback execution never started.
+            try {
+                const raw = await sessionRpcWithServerScope<unknown, unknown>({
+                    sessionId: options.sessionId,
+                    serverId,
+                    method: SESSION_RPC_METHODS.SESSION_ROLLBACK,
+                    payload: { v: 1, target },
+                });
+                const parsed = SessionRollbackRpcResultSchema.safeParse(raw);
+                if (!parsed.success) {
+                    return {
+                        ok: false,
+                        errorCode: 'UNEXPECTED',
+                        errorMessage: 'Unsupported rollback response from session RPC',
+                    };
+                }
+                if (
+                    parsed.data.ok
+                    || parsed.data.errorCode !== RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+                    || Date.now() >= deadlineMs
+                ) {
+                    return parsed.data;
+                }
+            } catch (error) {
+                if (
+                    (
+                        !isRpcMethodNotAvailableError(error)
+                        && readSessionRpcErrorCode(error) !== RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+                    )
+                    || Date.now() >= deadlineMs
+                ) {
+                    if (
+                        isRpcMethodNotAvailableError(error)
+                        || readSessionRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+                    ) {
+                        return {
+                            ok: false,
+                            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+                            errorMessage: 'Session rollback did not become available after resuming the session',
+                        };
+                    }
+                    return {
+                        ok: false,
+                        errorCode: 'UNEXPECTED',
+                        errorMessage: error instanceof Error ? error.message : 'Failed to roll back session conversation',
+                    };
+                }
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, 100));
+        }
+    }
+
     try {
         const raw = await sessionRpcWithServerScope<unknown, unknown>({
             sessionId: options.sessionId,
@@ -514,7 +646,7 @@ export async function rollbackSessionConversation(options: Readonly<{
             method: SESSION_RPC_METHODS.SESSION_ROLLBACK,
             payload: {
                 v: 1,
-                target: options.target ?? { type: 'latest_turn' },
+                target,
             },
         });
         const parsed = SessionRollbackRpcResultSchema.safeParse(raw);
@@ -689,7 +821,7 @@ export async function sessionAllow(
     };
     await sessionRpcWithPreferredSessionScope<void, SessionPermissionRequest>({
         sessionId,
-        method: 'permission',
+        method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
         payload: request,
     });
 }
@@ -720,7 +852,7 @@ export async function sessionAllowWithPermissionUpdates(
     };
     await sessionRpcWithPreferredSessionScope<void, SessionPermissionRequest>({
         sessionId,
-        method: 'permission',
+        method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
         payload: request,
     });
 }
@@ -728,12 +860,12 @@ export async function sessionAllowWithPermissionUpdates(
 /**
  * Allow a permission request and attach structured answers (AskUserQuestion).
  *
- * This uses the existing `permission` RPC (no separate RPC required).
+ * AskUserQuestion is a user-action request and uses the canonical user-action RPC.
  */
 export async function sessionAllowWithAnswers(
     sessionId: string,
     id: string,
-    answers: Record<string, string>,
+    answers: StructuredQuestionAnswersV1,
 ): Promise<void> {
     const request: SessionPermissionRequest = {
         id,
@@ -742,7 +874,7 @@ export async function sessionAllowWithAnswers(
     };
     await sessionRpcWithPreferredSessionScope<void, SessionPermissionRequest>({
         sessionId,
-        method: 'permission',
+        method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
         payload: request,
     });
 }
@@ -761,7 +893,7 @@ export async function sessionDeny(
     const request: SessionPermissionRequest = { id, approved: false, mode, allowedTools, decision, reason };
     await sessionRpcWithPreferredSessionScope<void, SessionPermissionRequest>({
         sessionId,
-        method: 'permission',
+        method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
         payload: request,
     });
 
@@ -850,29 +982,11 @@ export async function sessionReadLogTail(
     }
 }
 
-/**
- * Kill the session process immediately
- */
-export async function sessionKill(sessionId: string): Promise<SessionKillResponse> {
-    try {
-        const response = await sessionRpcWithPreferredSessionScope<SessionKillResponse, {}>({
-            sessionId,
-            method: 'killSession',
-            payload: {},
-        });
-        return assertRpcResponseWithSuccess<SessionKillResponse>(response);
-    } catch (error) {
-        return {
-            success: false,
-            message: error instanceof Error ? error.message : 'Unknown error',
-            errorCode: readSessionRpcErrorCode(error),
-        };
-    }
-}
-
 export interface SessionStopResponse {
     success: boolean;
     message?: string;
+    code?: 'session_stop_requested' | 'session_stop_not_found' | 'session_stop_unsupported' | 'session_stop_failed';
+    recovery?: 'wait_for_inactive' | 'upgrade_runtime';
 }
 
 /**
@@ -880,7 +994,7 @@ export interface SessionStopResponse {
  *
  * Primary behavior: stop through the supervising daemon when the hosting machine is reachable.
  * Compatibility fallback: ask the runner to terminate via session RPC.
- * Last-resort cleanup: if no process-control RPC is available, mark the session inactive server-side.
+ * If neither lifecycle owner supports Stop, return explicit upgrade recovery without changing reachability.
  */
 export async function sessionStop(sessionId: string): Promise<SessionStopResponse> {
     return await sessionStopWithServerScope(sessionId, {
@@ -897,39 +1011,32 @@ export async function sessionStopWithServerScope(
         serverId: opts?.serverId ?? null,
     });
     if (stopResult.success) {
-        applyStoppedSessionToLocalList(sessionId);
         return { success: true };
     }
 
-    return { success: false, message: stopResult.message };
-}
-
-function applyStoppedSessionToLocalList(sessionId: string): void {
-    const stoppedAt = Date.now();
-    const patch = {
-        active: false,
-        thinking: false,
-        activeAt: stoppedAt,
-        presence: stoppedAt,
-    } as const;
-    const session = storage.getState().sessions[sessionId];
-
-    if (session) {
-        storage.getState().applySessions([
-            {
-                ...session,
-                ...patch,
-            },
-        ]);
-        return;
+    if (stopResult.reason === 'requested') {
+        return {
+            success: false,
+            message: stopResult.message,
+            code: 'session_stop_requested',
+            recovery: stopResult.recovery,
+        };
     }
 
-    storage.getState().applySessionListRenderablePatches?.([
-        {
-            sessionId,
-            patch,
-        },
-    ]);
+    if (stopResult.reason === 'not_found') {
+        return { success: false, message: stopResult.message, code: 'session_stop_not_found' };
+    }
+
+    if (stopResult.reason === 'unsupported') {
+        return {
+            success: false,
+            message: stopResult.message,
+            code: 'session_stop_unsupported',
+            recovery: stopResult.recovery,
+        };
+    }
+
+    return { success: false, message: stopResult.message, code: 'session_stop_failed' };
 }
 
 export interface SessionArchiveResponse {
@@ -1032,6 +1139,32 @@ export async function sessionDelete(sessionId: string): Promise<{ success: boole
     });
 }
 
+export async function sessionDeleteWithServerAccountAuthority(
+    sessionId: string,
+    authority: ServerAccountSessionRequestAuthority,
+): Promise<{ success: boolean; message?: string }> {
+    try {
+        const response = await authority.request(
+            `/v1/sessions/${encodeURIComponent(sessionId)}`,
+            { method: 'DELETE' },
+        );
+        if (response.ok) {
+            await response.json().catch(() => null);
+            return { success: true };
+        }
+        const error = await response.text().catch(() => '');
+        return {
+            success: false,
+            message: error || 'Failed to delete session',
+        };
+    } catch (error) {
+        return {
+            success: false,
+            message: error instanceof Error ? error.message : 'Unknown error',
+        };
+    }
+}
+
 export async function sessionDeleteWithServerScope(
     sessionId: string,
     opts?: Readonly<{ serverId?: string | null }>,
@@ -1099,7 +1232,7 @@ export async function sessionRename(
             return { success: false, message: 'invalid_parameters' };
         }
 
-        const { sync } = await import('../sync');
+        const sync = getSyncSingleton();
         await publishDisplayTitleToMetadata({
             sessionId: sid,
             title: normalizedTitle,
@@ -1126,6 +1259,5 @@ export type {
     SessionBashRequest,
     SessionBashResponse,
     SessionRipgrepResponse,
-    SessionKillResponse,
-    SessionRenameResponse
+    SessionRenameResponse,
 };

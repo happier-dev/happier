@@ -99,6 +99,14 @@ import { setActiveServerId, upsertServerProfile } from './domains/server/serverP
 import { loadSessionMaterializedMaxSeqById } from './domains/state/persistence';
 import type { AccountSettingsScope } from './domains/settings/scope/accountSettingsScope';
 import type { Session } from './domains/state/storageTypes';
+import type {
+    ServerAccountSessionRequestAuthority,
+} from './runtime/orchestration/serverScopedRpc/createSessionRequestWithServerScope';
+import {
+    markSessionSurfaceHidden,
+    markSessionSurfaceVisible,
+    resetSessionSurfaceVisibilityForTests,
+} from './domains/session/sessionSurfaceVisibility';
 
 const initialStorageState = storage.getState();
 
@@ -123,6 +131,20 @@ function createSession(params: { sessionId: string }): Session {
     };
 }
 
+async function waitForAssertion(assertion: () => void): Promise<void> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+        try {
+            assertion();
+            return;
+        } catch (error) {
+            lastError = error;
+            await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        }
+    }
+    throw lastError;
+}
+
 describe('sync.ensureSessionVisibleForMessageRoute', () => {
     beforeEach(async () => {
         storage.setState(initialStorageState, true);
@@ -132,6 +154,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         runtimeFetchMock.mockReset();
         getCredentialsForServerUrlMock.mockReset();
         createEncryptionFromAuthCredentialsMock.mockReset();
+        resetSessionSurfaceVisibilityForTests();
 
         const { sync } = await import('./sync');
         sync.disconnectServer();
@@ -271,6 +294,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         });
         requestMock.mockReturnValueOnce(requestPromise);
 
+        markSessionSurfaceVisible(sessionId);
         const fetchPromise = (sync as any).fetchMessages(sessionId);
 
         expect(resetSessionMessagesSpy).not.toHaveBeenCalled();
@@ -297,11 +321,15 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             ),
         );
 
-        await fetchPromise;
+        try {
+            await fetchPromise;
 
-        expect(resetSessionMessagesSpy).not.toHaveBeenCalled();
-        expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst).toHaveLength(2);
-        expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst?.[0]).toBe('m-old');
+            expect(resetSessionMessagesSpy).not.toHaveBeenCalled();
+            expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst).toHaveLength(2);
+            expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst?.[0]).toBe('m-old');
+        } finally {
+            markSessionSurfaceHidden(sessionId);
+        }
     });
 
     it('persists session materialization progress in the active account/server scope', async () => {
@@ -399,6 +427,41 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect(storage.getState().accountSettingsSyncStatus).toEqual({ state: 'idle', lastSyncedAt: null });
     });
 
+    it('refuses a functional account-settings mutation when the account changes during preflush', async () => {
+        const { sync } = await import('./sync');
+        const syncInternals = sync as any;
+        const originalSyncSettings = syncInternals.syncSettings;
+        const originalCredentials = syncInternals.credentials;
+        const originalEncryption = syncInternals.encryption;
+        const originalScope = syncInternals.pendingSettingsScope;
+        const originalGeneration = syncInternals.serverScopeGeneration;
+        let releasePreflush!: () => void;
+        const preflush = new Promise<void>((resolve) => { releasePreflush = resolve; });
+        syncInternals.credentials = { token: 'account-a' };
+        syncInternals.encryption = {};
+        syncInternals.pendingSettingsScope = { serverId: 'server-a', accountId: 'account-a' };
+        syncInternals.serverScopeGeneration = 10;
+        syncInternals.syncSettings = vi.fn(async () => preflush);
+        const mutate = vi.fn((raw: Record<string, unknown>) => raw);
+
+        try {
+            const operation = sync.mutateAccountSettings(mutate);
+            syncInternals.pendingSettingsScope = { serverId: 'server-b', accountId: 'account-b' };
+            syncInternals.serverScopeGeneration = 11;
+            syncInternals.credentials = { token: 'account-b' };
+            releasePreflush();
+
+            await expect(operation).rejects.toThrow('Account settings scope changed while mutating settings');
+            expect(mutate).not.toHaveBeenCalled();
+        } finally {
+            syncInternals.syncSettings = originalSyncSettings;
+            syncInternals.credentials = originalCredentials;
+            syncInternals.encryption = originalEncryption;
+            syncInternals.pendingSettingsScope = originalScope;
+            syncInternals.serverScopeGeneration = originalGeneration;
+        }
+    });
+
     it('hydrates e2ee session encryption on deep link before sessions snapshot fetch', async () => {
         const sessionId = 'deep_link_session';
         storage.getState().applySessions([createSession({ sessionId })]);
@@ -479,6 +542,441 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect(requestMock).not.toHaveBeenCalled();
     });
 
+    it('falls back to a session-list snapshot when socket new-session hydration cannot prove active-list visibility', async () => {
+        const sessionId = 'socket_new_session_needs_snapshot_reconcile';
+        const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        upsertAndActivateServer({ serverUrl: 'https://active.example.test', scope: 'tab' });
+        const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        expect(activeServerId).toBeTruthy();
+
+        const { sync } = await import('./sync');
+        const syncInternals = sync as any;
+        const originalFetchSessions = syncInternals.fetchSessions;
+        const fetchSessionsSpy = vi.fn(async () => {});
+
+        syncInternals.credentials = { token: 'active-token', secret: 'active-secret' };
+        syncInternals.activeServerSessionIds = new Set<string>(['older-session']);
+        syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
+        syncInternals.encryption = {
+            decryptEncryptionKey: vi.fn(async () => {
+                throw new Error('socket payload decrypt failed');
+            }),
+            initializeSessions: vi.fn(async () => {}),
+            getSessionEncryption: vi.fn(() => null),
+        };
+        syncInternals.fetchSessions = fetchSessionsSpy;
+
+        requestMock.mockImplementation(async () => (
+            new Response('temporary session hydrate failure', { status: 503 })
+        ));
+
+        try {
+            await syncInternals.handleUpdate({
+                id: 'u_socket_new_session_reconcile',
+                seq: 10,
+                createdAt: 100,
+                body: {
+                    t: 'new-session',
+                    id: sessionId,
+                    seq: 1,
+                    metadata: 'encrypted-metadata',
+                    metadataVersion: 2,
+                    agentState: 'encrypted-agent-state',
+                    agentStateVersion: 3,
+                    dataEncryptionKey: 'encrypted-data-key',
+                    encryptionMode: 'e2ee',
+                    active: true,
+                    activeAt: 100,
+                    createdAt: 90,
+                    updatedAt: 100,
+                },
+            });
+
+            await waitForAssertion(() => {
+                expect(requestMock).toHaveBeenCalledWith(
+                    `/v2/sessions/${sessionId}`,
+                    expect.objectContaining({ method: 'GET' }),
+                );
+            });
+            await waitForAssertion(() => {
+                expect(fetchSessionsSpy).toHaveBeenCalledTimes(1);
+            });
+        } finally {
+            syncInternals.fetchSessions = originalFetchSessions;
+        }
+    });
+
+    it('refreshes the active session-list snapshot after socket new-session hydration even when the by-id row is locally indexed', async () => {
+        const sessionId = 'socket_new_session_indexed_but_visible_list_stale';
+        const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        upsertAndActivateServer({ serverUrl: 'https://active.example.test', scope: 'tab' });
+        const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        expect(activeServerId).toBeTruthy();
+
+        storage.getState().applySessions([
+            {
+                ...createSession({ sessionId }),
+                encryptionMode: 'plain',
+                serverId: activeServerId,
+            } as Session & { serverId: string },
+        ]);
+        expect(
+            storage.getState().sessionListIndexByServerId?.[activeServerId]?.some((item) => (
+                item.type === 'session' && item.sessionId === sessionId
+            )),
+        ).toBe(true);
+
+        const { sync } = await import('./sync');
+        const syncInternals = sync as any;
+        const originalFetchSessions = syncInternals.fetchSessions;
+        const fetchSessionsSpy = vi.fn(async () => {});
+
+        syncInternals.credentials = { token: 'active-token', secret: 'active-secret' };
+        syncInternals.activeServerSessionIds = new Set<string>(['older-session']);
+        syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
+        syncInternals.encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => {}),
+            getSessionEncryption: vi.fn(() => null),
+        };
+        syncInternals.fetchSessions = fetchSessionsSpy;
+
+        requestMock.mockImplementation(async (path: string) => {
+            if (path === `/v2/sessions/${sessionId}`) {
+                return new Response(JSON.stringify({
+                    id: sessionId,
+                    seq: 2,
+                    encryptionMode: 'plain',
+                    metadata: { path: '/tmp/socket-indexed', host: 'local' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 1,
+                    active: true,
+                    activeAt: 120,
+                    createdAt: 100,
+                    updatedAt: 120,
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            return new Response('unexpected request', { status: 404 });
+        });
+
+        try {
+            await syncInternals.hydrateSessionFromSocketUpdate(
+                sessionId,
+                'socket-new-session-reconcile',
+                activeServerId,
+            );
+
+            expect(requestMock).toHaveBeenCalledWith(
+                `/v2/sessions/${sessionId}`,
+                expect.objectContaining({ method: 'GET' }),
+            );
+            expect(fetchSessionsSpy).toHaveBeenCalledTimes(1);
+        } finally {
+            syncInternals.fetchSessions = originalFetchSessions;
+        }
+    });
+
+    it('keeps the exact socket-created active row visible when the reconcile list refresh omits it', async () => {
+        const sessionId = 'socket_new_session_exact_row_retained_after_stale_refresh';
+        const olderSessionId = 'socket_new_session_stale_refresh_older_row';
+        const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        upsertAndActivateServer({ serverUrl: 'https://active.example.test', scope: 'tab' });
+        const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        expect(activeServerId).toBeTruthy();
+
+        storage.getState().applySessions([
+            {
+                ...createSession({ sessionId: olderSessionId }),
+                encryptionMode: 'plain',
+                serverId: activeServerId,
+                metadata: { path: '/tmp/older-row', host: 'local' },
+                metadataVersion: 1,
+            } as Session & { serverId: string },
+        ]);
+
+        const { sync } = await import('./sync');
+        const syncInternals = sync as any;
+        const originalFetchSessions = syncInternals.fetchSessions;
+        const fetchSessionsSpy = vi.fn(async () => {
+            const olderRenderable = storage.getState().sessionListRenderables[olderSessionId];
+            expect(olderRenderable).toBeDefined();
+            storage.getState().replaceSessionListRenderables([olderRenderable]);
+        });
+
+        syncInternals.credentials = { token: 'active-token', secret: 'active-secret' };
+        syncInternals.activeServerSessionIds = new Set<string>([olderSessionId]);
+        syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
+        syncInternals.encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => {}),
+            getSessionEncryption: vi.fn(() => null),
+        };
+        syncInternals.fetchSessions = fetchSessionsSpy;
+
+        requestMock.mockImplementation(async (path: string) => {
+            if (path === `/v2/sessions/${sessionId}`) {
+                return new Response(JSON.stringify({
+                    session: {
+                        id: sessionId,
+                        seq: 2,
+                        encryptionMode: 'plain',
+                        metadata: JSON.stringify({ path: '/tmp/exact-socket-row', host: 'local' }),
+                        metadataVersion: 1,
+                        agentState: null,
+                        agentStateVersion: 1,
+                        active: true,
+                        activeAt: 140,
+                        archivedAt: null,
+                        createdAt: 130,
+                        updatedAt: 140,
+                    },
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            return new Response('unexpected request', { status: 404 });
+        });
+
+        try {
+            await syncInternals.hydrateSessionFromSocketUpdate(
+                sessionId,
+                'socket-new-session-reconcile',
+                activeServerId,
+            );
+
+            expect(fetchSessionsSpy).toHaveBeenCalledWith(expect.objectContaining({
+                awaitSessionListHydration: true,
+                prioritizeSessionIds: [sessionId],
+                requiredHydrationSessionIds: [sessionId],
+            }));
+            expect(storage.getState().sessionListRenderables[sessionId]?.metadata?.path).toBe('/tmp/exact-socket-row');
+            expect(
+                storage.getState().sessionListIndexByServerId?.[activeServerId]?.some((item) => (
+                    item.type === 'session' && item.sessionId === sessionId
+                )),
+            ).toBe(true);
+        } finally {
+            syncInternals.fetchSessions = originalFetchSessions;
+        }
+    });
+
+    it('keeps visible cached socket update hydration targeted instead of refreshing the active session-list snapshot', async () => {
+        const sessionId = 'socket_visible_cached_update_targeted_hydration';
+        const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        upsertAndActivateServer({ serverUrl: 'https://active.example.test', scope: 'tab' });
+        const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        expect(activeServerId).toBeTruthy();
+
+        storage.getState().replaceSessionListRenderables([
+            {
+                id: sessionId,
+                seq: 1,
+                createdAt: 100,
+                updatedAt: 100,
+                active: true,
+                activeAt: 100,
+                archivedAt: null,
+                metadataVersion: 1,
+                agentStateVersion: 0,
+                metadata: { path: '/tmp/visible-cached-update', host: 'local' },
+                thinking: true,
+                thinkingAt: 100,
+                presence: 'online',
+                hasUnreadMessages: false,
+            },
+        ]);
+        markSessionSurfaceVisible(sessionId, activeServerId);
+
+        const { sync } = await import('./sync');
+        const syncInternals = sync as any;
+        const originalFetchSessions = syncInternals.fetchSessions;
+        const fetchSessionsSpy = vi.fn(async () => {});
+
+        syncInternals.credentials = { token: 'active-token', secret: 'active-secret' };
+        syncInternals.activeServerSessionIds = new Set<string>(['older-session']);
+        syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
+        syncInternals.encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => {}),
+            getSessionEncryption: vi.fn(() => null),
+        };
+        syncInternals.fetchSessions = fetchSessionsSpy;
+
+        requestMock.mockImplementation(async (path: string) => {
+            if (path === `/v2/sessions/${sessionId}`) {
+                return new Response(JSON.stringify({
+                    id: sessionId,
+                    seq: 2,
+                    encryptionMode: 'plain',
+                    metadata: { path: '/tmp/visible-cached-update', host: 'local' },
+                    metadataVersion: 2,
+                    agentState: null,
+                    agentStateVersion: 1,
+                    active: false,
+                    activeAt: 120,
+                    createdAt: 100,
+                    updatedAt: 120,
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            return new Response('unexpected request', { status: 404 });
+        });
+
+        try {
+            await syncInternals.hydrateSessionFromSocketUpdate(
+                sessionId,
+                'socket-update-missing-session',
+                activeServerId,
+            );
+
+            expect(requestMock).toHaveBeenCalledWith(
+                `/v2/sessions/${sessionId}`,
+                expect.objectContaining({ method: 'GET' }),
+            );
+            expect(fetchSessionsSpy).not.toHaveBeenCalled();
+        } finally {
+            syncInternals.fetchSessions = originalFetchSessions;
+            markSessionSurfaceHidden(sessionId);
+        }
+    });
+
+    it('keeps shared-session visibility hydration targeted instead of refreshing the active session-list snapshot', async () => {
+        const sessionId = 'share_visibility_targeted_hydration_only';
+        const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        upsertAndActivateServer({ serverUrl: 'https://active.example.test', scope: 'tab' });
+        const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        expect(activeServerId).toBeTruthy();
+
+        const { sync } = await import('./sync');
+        const syncInternals = sync as any;
+        const originalFetchSessions = syncInternals.fetchSessions;
+        const fetchSessionsSpy = vi.fn(async () => {});
+
+        syncInternals.credentials = { token: 'active-token', secret: 'active-secret' };
+        syncInternals.activeServerSessionIds = new Set<string>();
+        syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
+        syncInternals.encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => {}),
+            getSessionEncryption: vi.fn(() => null),
+        };
+        syncInternals.fetchSessions = fetchSessionsSpy;
+
+        requestMock.mockResolvedValue(new Response(JSON.stringify({
+            session: {
+                id: sessionId,
+                seq: 2,
+                encryptionMode: 'plain',
+                metadata: { path: '/tmp/share-targeted', host: 'local' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 1,
+                active: true,
+                activeAt: 120,
+                createdAt: 100,
+                updatedAt: 120,
+                share: { id: 'share-targeted', accessLevel: 'edit' },
+            },
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        }));
+
+        try {
+            await syncInternals.hydrateSessionFromSocketUpdate(
+                sessionId,
+                'share-visibility-change',
+                activeServerId,
+            );
+
+            expect(requestMock).toHaveBeenCalledWith(
+                `/v2/sessions/${sessionId}`,
+                expect.objectContaining({ method: 'GET' }),
+            );
+            expect(fetchSessionsSpy).not.toHaveBeenCalled();
+        } finally {
+            syncInternals.fetchSessions = originalFetchSessions;
+        }
+    });
+
+    it('does not refresh the active session-list snapshot after hydrating a non-active source-server socket update', async () => {
+        const sessionId = 'socket_foreign_server_targeted_hydration';
+        const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
+        const ownerServer = upsertServerProfile({ serverUrl: 'https://scoped.example', name: 'Owner' });
+        setActiveServerId(activeServer.id, { scope: 'device' });
+
+        const { sync } = await import('./sync');
+        const syncInternals = sync as any;
+        const originalFetchSessions = syncInternals.fetchSessions;
+        const fetchSessionsSpy = vi.fn(async () => {});
+
+        syncInternals.credentials = { token: 'active-token', secret: 'active-secret' };
+        syncInternals.activeServerSessionIds = new Set<string>();
+        syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
+        syncInternals.encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => {}),
+            getSessionEncryption: vi.fn(() => null),
+        };
+        syncInternals.fetchSessions = fetchSessionsSpy;
+
+        requestMock.mockRejectedValue(new Error('active request should not be used'));
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'scoped-token', secret: 'scoped-secret' });
+        createEncryptionFromAuthCredentialsMock.mockResolvedValue({
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => {}),
+            getSessionEncryption: vi.fn(() => null),
+        });
+        runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({
+            session: {
+                id: sessionId,
+                seq: 2,
+                encryptionMode: 'plain',
+                metadata: { path: '/tmp/foreign-targeted', host: 'owner' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 1,
+                active: true,
+                activeAt: 120,
+                createdAt: 100,
+                updatedAt: 120,
+                share: null,
+            },
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        }));
+
+        try {
+            await syncInternals.hydrateSessionFromSocketUpdate(
+                sessionId,
+                'socket-new-session-reconcile',
+                ownerServer.id,
+            );
+
+            expect(requestMock).not.toHaveBeenCalled();
+            expect(runtimeFetchMock).toHaveBeenCalledWith(
+                `https://scoped.example/v2/sessions/${sessionId}`,
+                expect.objectContaining({
+                    method: 'GET',
+                    headers: expect.objectContaining({
+                        Authorization: 'Bearer scoped-token',
+                    }),
+                }),
+            );
+            expect(fetchSessionsSpy).not.toHaveBeenCalled();
+        } finally {
+            syncInternals.fetchSessions = originalFetchSessions;
+        }
+    });
+
     it('fast-paths a known encrypted session with metadata, encryption, and null agent state', async () => {
         const sessionId = 'known_session_null_agent_state';
         storage.getState().applySessions([
@@ -496,6 +994,67 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
         (sync as any).encryption = {
             getSessionEncryption: vi.fn(() => ({ decryptMetadata: vi.fn(), decryptAgentState: vi.fn() })),
+        };
+
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+            kind: 'available',
+            sessionId,
+        });
+        expect(requestMock).not.toHaveBeenCalled();
+    });
+
+    it('does not fast-path a layout-v1 owner list row that is missing its owner view', async () => {
+        const sessionId = 'layout1_owner_list_shell';
+        storage.getState().applySessions([{
+            ...createSession({ sessionId }),
+            encryptionMode: 'plain',
+            metadataLayoutVersion: 1,
+            metadata: {
+                v: 1,
+                summary: { text: 'Shared title', updatedAt: 1 },
+            } as unknown as Session['metadata'],
+            ownerMetadataView: null,
+        }]);
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = { token: 't' };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+        (sync as any).encryption = {
+            getSessionEncryption: vi.fn(() => null),
+        };
+        requestMock.mockResolvedValue(new Response('missing', { status: 404 }));
+
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+            kind: 'missing',
+            sessionId,
+        });
+        expect(requestMock).toHaveBeenCalledWith(
+            `/v2/sessions/${sessionId}`,
+            expect.objectContaining({ method: 'GET' }),
+        );
+    });
+
+    it('fast-paths a layout-v1 participant from strict shared metadata without owner data', async () => {
+        const sessionId = 'layout1_shared_participant';
+        storage.getState().applySessions([{
+            ...createSession({ sessionId }),
+            encryptionMode: 'plain',
+            accessLevel: 'view',
+            metadataLayoutVersion: 1,
+            metadata: {
+                v: 1,
+                summary: { text: 'Shared title', updatedAt: 1 },
+            } as unknown as Session['metadata'],
+            ownerMetadataView: null,
+        }]);
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = { token: 't' };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+        (sync as any).encryption = {
+            getSessionEncryption: vi.fn(() => null),
         };
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
@@ -1009,6 +1568,133 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         ).toBe(true);
         expect((sync as any).activeServerSessionIds.has(sessionId)).toBe(false);
         expect(initializeSessions).not.toHaveBeenCalled();
+    });
+
+    it('does not recreate active message synchronization after captured-authority hydration completes following a reset', async () => {
+        const sessionId = 'captured_authority_after_reset';
+        const activeServer = upsertServerProfile({
+            serverUrl: 'https://same-server.example',
+            name: 'Same server',
+        });
+        setActiveServerId(activeServer.id, { scope: 'device' });
+        const scope = {
+            serverId: activeServer.id,
+            accountId: 'account-a',
+        };
+        storage.setState({ profileScope: scope });
+
+        let resolveHydration!: (response: Response) => void;
+        const hydrationResponse = new Promise<Response>((resolve) => {
+            resolveHydration = resolve;
+        });
+        const authorityRequest = vi.fn(async () => await hydrationResponse);
+        const authority = {
+            scope,
+            context: {
+                scope: 'scoped',
+                timeoutMs: 30_000,
+                targetServerId: activeServer.id,
+                targetServerUrl: 'https://same-server.example',
+                targetAccountId: scope.accountId,
+                token: 'account-a-token',
+                credentials: {
+                    token: 'account-a-token',
+                    secret: 'account-a-secret',
+                },
+                encryption: {
+                    decryptEncryptionKey: async () => null,
+                    initializeSessions: async () => undefined,
+                    getSessionEncryption: () => null,
+                },
+            },
+            request: authorityRequest,
+        } as unknown as ServerAccountSessionRequestAuthority;
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = authority.context.credentials;
+        (sync as any).encryption = authority.context.encryption;
+        (sync as any).messagesSync = new Map();
+        (sync as any).activeServerSessionIds = new Set<string>();
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
+
+        const hydration = sync.ensureSessionVisibleForMessageRoute(sessionId, {
+            forceRefresh: true,
+            authority,
+        });
+        await vi.waitFor(() => expect(authorityRequest).toHaveBeenCalledTimes(1));
+
+        (sync as any).messagesSync.clear();
+        storage.getState().resetSessionMessages(sessionId);
+        resolveHydration(new Response(JSON.stringify({
+            session: {
+                id: sessionId,
+                createdAt: 1,
+                updatedAt: 2,
+                seq: 3,
+                active: false,
+                activeAt: 2,
+                encryptionMode: 'plain',
+                dataEncryptionKey: null,
+                metadataVersion: 0,
+                metadata: 'null',
+                agentStateVersion: 0,
+                agentState: null,
+                share: null,
+            },
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        }));
+
+        await expect(hydration).resolves.toMatchObject({
+            kind: 'available',
+            sessionId,
+        });
+        expect((sync as any).messagesSync.has(sessionId)).toBe(false);
+        expect(requestMock).not.toHaveBeenCalled();
+        expect(storage.getState().sessionMessages[sessionId]).toBeUndefined();
+
+        const ordinarySessionId = 'ordinary_hydration_after_reset';
+        requestMock.mockImplementation(async (path: string) => {
+            if (path === `/v2/sessions/${ordinarySessionId}`) {
+                return new Response(JSON.stringify({
+                    session: {
+                        id: ordinarySessionId,
+                        createdAt: 1,
+                        updatedAt: 2,
+                        seq: 3,
+                        active: false,
+                        activeAt: 2,
+                        encryptionMode: 'plain',
+                        dataEncryptionKey: null,
+                        metadataVersion: 0,
+                        metadata: 'null',
+                        agentStateVersion: 0,
+                        agentState: null,
+                        share: null,
+                    },
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            return new Response(JSON.stringify({
+                messages: [],
+                hasMore: false,
+                nextBeforeSeq: null,
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        });
+
+        await expect(sync.ensureSessionVisibleForMessageRoute(ordinarySessionId, {
+            forceRefresh: true,
+        })).resolves.toMatchObject({
+            kind: 'available',
+            sessionId: ordinarySessionId,
+        });
+        expect((sync as any).messagesSync.has(ordinarySessionId)).toBe(true);
     });
 
     it('initializes encrypted explicit-server route hydration with the owner server scope', async () => {

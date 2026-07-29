@@ -17,6 +17,7 @@ import { TextInput } from '@/components/ui/text/Text';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
 import { useScrollRectIntoViewRegistry } from '@/components/ui/scroll/useScrollRectIntoView';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 
 export type DropdownMenuItem = Readonly<{
@@ -24,6 +25,7 @@ export type DropdownMenuItem = Readonly<{
     testID?: string;
     title: string;
     subtitle?: string;
+    accessibilityLabel?: string;
     category?: string;
     icon?: React.ReactNode;
     shortcut?: string;
@@ -203,6 +205,7 @@ export type DropdownMenuProps = Readonly<{
 
 export function DropdownMenu(props: DropdownMenuProps) {
     const { theme } = useUnistyles();
+    const reducedMotion = useReducedMotionPreference();
     const anchorRef = React.useRef<View>(null);
     const resolvedAnchorRef = props.popoverAnchorRef ?? anchorRef;
     const [activeSubmenu, setActiveSubmenu] = React.useState<{
@@ -241,6 +244,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 testID: item.testID,
                 title: item.title,
                 subtitle: item.subtitle,
+                accessibilityLabel: item.accessibilityLabel,
                 category: item.category,
                 disabled: item.disabled,
                 left: item.icon ?? null,
@@ -350,6 +354,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                     showChevron={false}
                     selected={false}
                     {...(cfg.itemProps ?? {})}
+                    webRole={cfg.itemProps?.webRole ?? 'button'}
                     density={resolvedTriggerDensity}
                 />
             );
@@ -405,7 +410,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
     const resultScroll = useScrollRectIntoViewRegistry({
         activeKey: selectedIndex >= 0 ? String(selectedIndex) : null,
         padding: 8,
-        animated: true,
+        animated: !reducedMotion,
     });
 
     const handleCreate = React.useCallback(() => {

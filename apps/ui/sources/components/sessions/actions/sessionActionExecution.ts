@@ -111,7 +111,7 @@ async function runStopArchiveFlow(params: Readonly<{
 async function executeArchiveAction(target: SessionActionTarget, context?: SessionActionExecutionContext): Promise<void> {
     const archiveSession = resolveArchiveSession(context);
 
-    if (target.isActive) {
+    if (target.isActive || target.hasRecoverableTerminalHost) {
         await runStopArchiveFlow({ target, context, archiveAfterStop: 'always' });
         return;
     }

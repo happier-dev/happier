@@ -1,9 +1,12 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import {
-    describeEffectiveModelMode } from '@/sync/domains/models/describeEffectiveModelMode';
-import { DEFAULT_AGENT_ID,
+    describeEffectiveModelMode,
+} from '@/sync/domains/models/describeEffectiveModelMode';
+import {
+    DEFAULT_AGENT_ID,
 } from '@/agents/catalog/catalog';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export function resolveDaemonVoiceAgentModelIds(params: {
     session: Session;
@@ -14,7 +17,7 @@ export function resolveDaemonVoiceAgentModelIds(params: {
         commitModelId?: string;
     };
 }): { chatModelId: string; commitModelId: string } {
-    const metadata = params.session.metadata ?? null;
+    const metadata = readSessionOwnerMetadataView(params.session);
     const agentId = resolveAgentIdFromSessionMetadata(metadata) ?? DEFAULT_AGENT_ID;
 
     const sessionSelected = (params.session.modelMode ?? 'default') as any;

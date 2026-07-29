@@ -1,8 +1,7 @@
 export type SessionHandoffMachineMetadataLike = Readonly<{
     machineId?: string | null;
-    externalSessionV1?: Readonly<{
-        machineId?: string | null;
-    }> | null;
+    externalSessionV1?: unknown;
+    directSessionV1?: unknown;
 }> | null | undefined;
 
 export function normalizeSessionHandoffMachineId(value: unknown): string | null {

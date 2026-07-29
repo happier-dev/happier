@@ -48,8 +48,6 @@ function comment(overrides: Partial<ReviewCommentV1> = {}): ReviewCommentV1 {
 
 const labels = {
     empty: 'No comments',
-    directWriteGranted: 'Direct write enabled',
-    directWriteMissing: 'Proposals only',
     engine: 'Engine',
     stale: 'Stale',
     outdated: 'Outdated',
@@ -98,16 +96,15 @@ describe('review comments panel components', () => {
             <ReviewCommentsPanel
                 comments={comments}
                 labels={labels}
-                directWriteGranted={false}
                 selectedStates={['open']}
             />,
         );
         expect(panel.getTextContent()).toContain('Filters');
         expect(panel.getTextContent()).toContain('Open issue.');
-        expect(panel.getTextContent()).toContain('Proposals only');
+        expect(panel.getTextContent()).not.toContain('Proposals only');
 
         const history = await renderScreen(
-            <ReviewCommentsHistoryView comments={comments} labels={labels} directWriteGranted={true} />,
+            <ReviewCommentsHistoryView comments={comments} labels={labels} />,
         );
         expect(history.getTextContent()).toContain('Resolved issue.');
         expect(history.getTextContent()).not.toContain('Open issue.');
@@ -165,7 +162,6 @@ describe('review comments panel components', () => {
                     comment({ id: 'proposed-1', state: 'proposed', body: 'Proposed issue.' }),
                 ]}
                 labels={labels}
-                directWriteGranted
                 selectedStates={['open', 'proposed']}
                 onBulkTransition={onBulkTransition}
                 bulkTransitionResult={{

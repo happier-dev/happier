@@ -56,7 +56,7 @@ export const onboardingWizardSurfaceStylesheet = StyleSheet.create((theme) => ({
         fontSize: 12,
         lineHeight: 16,
         color: theme.colors.text.secondary,
-        textAlign: 'center',
+        textAlign: 'left',
     },
     relayHintIcon: {
         color: theme.colors.text.secondary,
@@ -66,44 +66,21 @@ export const onboardingWizardSurfaceStylesheet = StyleSheet.create((theme) => ({
         fontSize: 13,
         lineHeight: 18,
         color: theme.colors.text.secondary,
-        textAlign: 'center',
+        textAlign: 'left',
         marginBottom: 6,
     },
     scanCtaBlock: {
         width: '100%',
         maxWidth: 360,
-        alignSelf: 'center',
-    },
-    welcomeHero: {
-        width: '100%',
-    },
-    welcomeBody: {
-        width: '100%',
-        alignItems: 'center',
-        gap: 10,
+        alignSelf: 'flex-start',
     },
     authEntryWrapper: {
         width: '100%',
-        alignItems: 'center',
-    },
-    diagramContainer: {
-        width: '100%',
-        maxWidth: 480,
-        alignItems: 'center',
-        justifyContent: 'center',
-        alignSelf: 'center',
+        alignItems: 'stretch',
     },
     relaySelectRouteContent: {
         width: '100%',
-        gap: 24,
-    },
-    labelContainer: {
-    },
-    label: {
-        fontSize: 16,
-        textAlign: 'center',
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.primary,
+        gap: 18,
     },
 }));
 

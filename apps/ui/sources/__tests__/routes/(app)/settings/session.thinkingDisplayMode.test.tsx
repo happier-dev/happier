@@ -10,6 +10,7 @@ import {
     installSessionSettingsEntryModuleMocks,
     resetSessionSettingsEntryState,
 } from './sessionSettingsEntryTestHelpers';
+import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -30,11 +31,11 @@ installSessionSettingsEntryModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettingMutable: (key: string) => {
+                useSettingMutable: createUseSettingMutableMockFromReader((key) => {
                     if (key === 'sessionThinkingDisplayMode') return ['inline', shared.setThinkingDisplayMode];
                     if (key === 'sessionThinkingInlinePresentation') return ['summary', shared.setThinkingInlinePresentation];
                     return [null, vi.fn()];
-                },
+                }),
             },
         });
     },

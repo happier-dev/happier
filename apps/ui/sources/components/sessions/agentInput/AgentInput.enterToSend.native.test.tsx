@@ -109,7 +109,8 @@ installAgentInputCommonModuleMocks({
     },
 });
 
-vi.mock('@/sync/store/hooks', () => ({
+vi.mock('@/sync/store/hooks', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/store/hooks')>(),
     useLocalSetting: () => 1,
     useSessionServerId: () => null,
 }));
@@ -184,7 +185,7 @@ vi.mock('@/sync/domains/models/modelOptions', () => ({
 }));
 
 vi.mock('@/sync/domains/models/describeEffectiveModelMode', () => ({
-    describeEffectiveModelMode: () => ({ effectiveModelId: 'default' }),
+    describeEffectiveModelMode: () => ({ selectedModelId: 'default', appliedModelId: null, effectiveModelId: 'default' }),
 }));
 
 vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({

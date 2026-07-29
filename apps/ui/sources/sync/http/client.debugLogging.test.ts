@@ -29,8 +29,8 @@ describe('serverFetch debug logging', () => {
 
         const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
         const client = await import('./client');
-        (client as unknown as { setRuntimeFetch: (fn: typeof fetch) => void }).setRuntimeFetch(async () => {
-            throw new TypeError('Network request failed');
+        (client as unknown as { setRuntimeFetch: (fn: typeof fetch) => void }).setRuntimeFetch(async (request) => {
+            throw new TypeError(`Network request failed for ${String(request)}`);
         });
 
         await expect((client as unknown as { serverFetch: typeof import('./client').serverFetch }).serverFetch(
@@ -46,5 +46,38 @@ describe('serverFetch debug logging', () => {
 
         if (previousDebug === undefined) delete process.env.EXPO_PUBLIC_DEBUG;
         else process.env.EXPO_PUBLIC_DEBUG = previousDebug;
+    });
+
+    it('templates public-share capabilities when debug request logging is enabled', async () => {
+        process.env.EXPO_PUBLIC_DEBUG = '1';
+        const secret = 'SENTINEL_PUBLIC_SHARE_CAPABILITY';
+        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
+            getActiveServerSnapshot: () => ({
+                serverId: 'server-a',
+                serverUrl: 'http://localhost:53288',
+                generation: 1,
+            }),
+        }));
+        vi.doMock('@/auth/storage/tokenStorage', () => ({
+            TokenStorage: {
+                getCredentials: vi.fn(async () => null),
+                invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
+            },
+        }));
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const client = await import('./client');
+        (client as unknown as { setRuntimeFetch: (fn: typeof fetch) => void }).setRuntimeFetch(async (request) => {
+            throw new TypeError(`Network request failed for ${String(request)}`);
+        });
+
+        await expect(client.serverFetch(
+            `/v1/public-share/${secret}/messages`,
+            undefined,
+            { includeAuth: false, retry: 'none' },
+        )).rejects.toThrow('Network request failed');
+
+        const combined = logSpy.mock.calls.map((call) => call.map(String).join(' ')).join('\n');
+        expect(combined).not.toContain(secret);
+        expect(combined).toContain('/v1/public-share/:token/messages');
     });
 });

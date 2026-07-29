@@ -3,6 +3,7 @@ import type { ManagedEndpointSupervisor, ManagedEndpointSupervisorState } from '
 import { HappyError } from '@/utils/errors/errors';
 
 import { isAuthenticationResponseStatus } from './authErrors';
+import { buildRetryLaterProbeResultFromResponse } from './retryLaterProbeResult';
 
 export function shouldReportEndpointFailure(params: { init?: RequestInit; error: unknown }): boolean {
     if (params.init?.signal?.aborted) return false;
@@ -88,10 +89,7 @@ export function reportEndpointResponseToSupervisor(
         supervisor.invalidate();
     } else if (response.status >= 500) {
         if (supervisor.reportProbeResult) {
-            supervisor.reportProbeResult({
-                status: 'retry_later',
-                errorMessage: `HTTP ${response.status}`,
-            }, scope);
+            supervisor.reportProbeResult(buildRetryLaterProbeResultFromResponse(response, `HTTP ${response.status}`), scope);
             return;
         }
         supervisor.reportFailure({ errorMessage: `HTTP ${response.status}` });

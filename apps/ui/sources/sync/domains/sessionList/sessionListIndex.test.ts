@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import type { SessionListRenderableSession } from '../session/listing/sessionListRenderable';
 import type { SessionListViewItem } from '../session/listing/sessionListViewData';
-import { buildSessionListIndexFromViewData, buildSessionListIndexNodeId } from './sessionListIndex';
+import {
+    buildSessionListIndexFromViewData,
+    buildSessionListIndexNodeId,
+    resolveSessionListItemOrganizationEligibility,
+} from './sessionListIndex';
 
 function makeRenderable(id: string): SessionListRenderableSession {
     return {
@@ -201,5 +205,89 @@ describe('buildSessionListIndexFromViewData', () => {
 
         const second = buildSessionListIndexFromViewData(viewData, first);
         expect(second).toBe(first);
+    });
+});
+
+describe('resolveSessionListItemOrganizationEligibility', () => {
+    const workspace = {
+        t: 'workspaceScope' as const,
+        serverId: 'server-a',
+        machineId: 'machine-a',
+        rootPath: '/repo',
+    };
+
+    it.each(['persisted', 'direct'] as const)(
+        'gives %s sessions the same folder eligibility in a mixed list',
+        (storageKind) => {
+            expect(resolveSessionListItemOrganizationEligibility({
+                type: 'session',
+                sessionId: `${storageKind}-session`,
+                serverId: 'server-a',
+                storageKind,
+                workspace,
+            }, {
+                foldersFeatureEnabled: true,
+            })).toMatchObject({
+                canUseSessionFolders: true,
+                reason: 'eligible',
+                storageKind,
+            });
+        },
+    );
+
+    it('fails closed when the folders feature bit is absent', () => {
+        expect(resolveSessionListItemOrganizationEligibility({
+            type: 'session',
+            sessionId: 'external-session',
+            serverId: 'server-a',
+            storageKind: 'direct',
+            workspace,
+        }, {
+            foldersFeatureEnabled: false,
+        })).toMatchObject({
+            canUseSessionFolders: false,
+            reason: 'feature-disabled',
+        });
+    });
+
+    it('fails closed for session rows without a durable workspace or server scope', () => {
+        expect(resolveSessionListItemOrganizationEligibility({
+            type: 'session',
+            sessionId: 'unscoped-session',
+            storageKind: 'persisted',
+        }, {
+            foldersFeatureEnabled: true,
+        })).toMatchObject({
+            canUseSessionFolders: false,
+            reason: 'scope-unavailable',
+        });
+    });
+
+    it('admits only folder destinations in the session workspace scope', () => {
+        const item = {
+            type: 'session' as const,
+            sessionId: 'mixed-view-session',
+            serverId: 'server-a',
+            storageKind: 'direct' as const,
+            workspace,
+        };
+
+        expect(resolveSessionListItemOrganizationEligibility(item, {
+            foldersFeatureEnabled: true,
+            destinationWorkspace: workspace,
+        })).toMatchObject({
+            canUseSessionFolders: true,
+            reason: 'eligible',
+        });
+        expect(resolveSessionListItemOrganizationEligibility(item, {
+            foldersFeatureEnabled: true,
+            destinationWorkspace: {
+                ...workspace,
+                rootPath: '/other-repo',
+            },
+        })).toMatchObject({
+            canUseSessionFolders: false,
+            reason: 'destination-scope-mismatch',
+        });
     });
 });

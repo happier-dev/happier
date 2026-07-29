@@ -223,7 +223,6 @@ describe('ChatHeaderView', () => {
                     title="Title"
                     badges={['Direct']}
                     avatarId="avatar-1"
-                    onAvatarPress={() => {}}
                 />
             </SessionScreenTestIdsProvider>,
         );

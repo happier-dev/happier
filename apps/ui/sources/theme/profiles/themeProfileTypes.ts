@@ -8,6 +8,8 @@ export type ThemeProfilePublicTokenId = string;
 
 export type ThemeProfileColorOverrides = Readonly<Record<ThemeProfilePublicTokenId, string>>;
 
+export type ThemeProfileSelectionByMode = Readonly<Record<ThemeProfileMode, string | null>>;
+
 export type ThemeProfileV1 = Readonly<{
     schemaVersion: 1;
     id: string;
@@ -26,7 +28,7 @@ export type ThemeProfileV1 = Readonly<{
 }>;
 
 export type ThemeProfilesLocalStateV1 = Readonly<{
-    activeProfileId: string | null;
+    activeProfileIds: ThemeProfileSelectionByMode;
     profiles: readonly ThemeProfileV1[];
 }>;
 

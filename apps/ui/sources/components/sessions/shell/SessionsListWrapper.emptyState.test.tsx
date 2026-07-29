@@ -337,7 +337,7 @@ describe('SessionsListWrapper (empty state)', () => {
         expect(list.props.paneState.summary.sessionCount).toBe(1);
         expect(list.props.surfaceOwnership).toEqual({
             ownerKey: 'phone-root',
-            visible: true,
+            visible: false,
             interactive: false,
             dataActive: false,
         });

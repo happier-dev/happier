@@ -1,4 +1,5 @@
-import { act } from 'react-test-renderer';
+import * as React from 'react';
+import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred, renderHook, standardCleanup, type Deferred } from '@/dev/testkit';
@@ -10,6 +11,49 @@ import {
 } from './useTranscriptOlderPagination';
 
 type HarnessOverrides = Partial<Omit<UseTranscriptOlderPaginationInput, 'loadOlder'>>;
+type PaginationResult = ReturnType<typeof useTranscriptOlderPagination>;
+
+const neverSettles = new Promise<never>(() => {});
+
+function CommitTimingChild(props: Readonly<{ onLayout: () => void }>) {
+    React.useLayoutEffect(props.onLayout, [props.onLayout]);
+    return null;
+}
+
+function CommitTimingHarness(props: Readonly<{
+    input: UseTranscriptOlderPaginationInput;
+    resultRef: { current: PaginationResult | null };
+    sessionId: string;
+    invokeScrollInChildLayout?: boolean;
+    shouldSuspend?: boolean;
+}>) {
+    const result = useTranscriptOlderPagination(props.input);
+
+    React.useLayoutEffect(() => {
+        props.resultRef.current = result;
+    });
+
+    if (props.shouldSuspend === true) throw neverSettles;
+    return props.invokeScrollInChildLayout === true
+        ? (
+            <CommitTimingChild
+                onLayout={() => result.onScrollObservation({
+                    offsetY: 120,
+                    scrollable: true,
+                    trigger: 'scroll',
+                })}
+            />
+        )
+        : null;
+}
+
+function renderCommitTimingHarness(props: React.ComponentProps<typeof CommitTimingHarness>): React.ReactElement {
+    return (
+        <React.Suspense fallback={null}>
+            <CommitTimingHarness key={props.sessionId} {...props} />
+        </React.Suspense>
+    );
+}
 
 function createHarness(overrides?: HarnessOverrides) {
     const pendingLoads: Deferred<TranscriptOlderPaginationLoadResult | null>[] = [];
@@ -33,10 +77,18 @@ function createHarness(overrides?: HarnessOverrides) {
 
 async function observe(
     hook: { getCurrent: () => ReturnType<typeof useTranscriptOlderPagination> },
-    metrics: { offsetY: number; scrollable?: boolean },
+    metrics: {
+        offsetY: number;
+        scrollable?: boolean;
+        trigger?: 'scroll' | 'edge-reached' | 'layout-committed';
+    },
 ) {
     await act(async () => {
-        hook.getCurrent().onScrollObservation({ offsetY: metrics.offsetY, scrollable: metrics.scrollable ?? true });
+        hook.getCurrent().onScrollObservation({
+            offsetY: metrics.offsetY,
+            scrollable: metrics.scrollable ?? true,
+            trigger: metrics.trigger,
+        });
     });
 }
 
@@ -115,7 +167,7 @@ describe('useTranscriptOlderPagination', () => {
         });
     });
 
-    it('delays the loading indicator by spinnerDelayMs and clears it when the load settles', async () => {
+    it('delays the loading indicator by spinnerDelayMs and clears it when the loaded page commits', async () => {
         vi.useFakeTimers();
         const { input, pendingLoads } = createHarness({ spinnerDelayMs: 200 });
         const hook = await renderHook(() => useTranscriptOlderPagination(input));
@@ -134,6 +186,8 @@ describe('useTranscriptOlderPagination', () => {
         expect(hook.getCurrent().isLoadingOlder).toBe(true);
 
         await resolveLoad(pendingLoads, { status: 'loaded', loaded: 20, hasMore: true });
+        expect(hook.getCurrent().isLoadingOlder).toBe(true);
+        await observe(hook, { offsetY: 800, trigger: 'layout-committed' });
         expect(hook.getCurrent().isLoadingOlder).toBe(false);
     });
 
@@ -220,6 +274,69 @@ describe('useTranscriptOlderPagination', () => {
         fillDone = true;
         await observe(hook, { offsetY: 110 });
         expect(loadOlder).toHaveBeenCalledTimes(1);
+    });
+
+    it('drains the armed machine when readiness re-opens, with zero further scroll observations', async () => {
+        vi.useFakeTimers();
+        let fillDone = false;
+        const { input, loadOlder } = createHarness({ isFillDone: () => fillDone });
+        const hook = await renderHook(() => useTranscriptOlderPagination(input));
+
+        // The reader scrolls to the top and STOPS. The machine arms; readiness suspends the load.
+        await observe(hook, { offsetY: 120 });
+        expect(loadOlder).not.toHaveBeenCalled();
+        expect(hook.getCurrent().getSnapshot().phase).toBe('armed');
+
+        // Readiness re-opens. The reader does not move: no scroll, edge or layout observation
+        // follows, and no cooldown is pending. The pager must still drain its own decision.
+        fillDone = true;
+        await hook.rerender();
+
+        expect(loadOlder).toHaveBeenCalledTimes(1);
+        expect(loadOlder).toHaveBeenLastCalledWith({ trigger: 'readiness-open' });
+    });
+
+    it('never double-fires from the readiness drain (in flight, and parked after the page settles)', async () => {
+        vi.useFakeTimers();
+        const { input, loadOlder, pendingLoads } = createHarness({ cooldownMs: 500 });
+        const hook = await renderHook(() => useTranscriptOlderPagination(input));
+
+        await observe(hook, { offsetY: 120 });
+        expect(loadOlder).toHaveBeenCalledTimes(1);
+
+        // Commits while the page is in flight must not start a second load.
+        await hook.rerender();
+        await hook.rerender();
+        expect(loadOlder).toHaveBeenCalledTimes(1);
+
+        await resolveLoad(pendingLoads, { status: 'loaded', loaded: 20, hasMore: true });
+        await act(async () => {
+            vi.advanceTimersByTime(2_000);
+        });
+
+        // Parked inside the threshold with no EXIT -> ENTER: no follow-up load is owed, and
+        // commits must not manufacture one (anti-burst).
+        await hook.rerender();
+        await hook.rerender();
+        expect(loadOlder).toHaveBeenCalledTimes(1);
+    });
+
+    it('continues a successful exact-top load when its committed layout remains at the edge', async () => {
+        vi.useFakeTimers();
+        const { input, loadOlder, pendingLoads } = createHarness({ cooldownMs: 500 });
+        const hook = await renderHook(() => useTranscriptOlderPagination(input));
+
+        await observe(hook, { offsetY: 0, trigger: 'edge-reached' });
+        expect(loadOlder).toHaveBeenCalledTimes(1);
+        await observe(hook, { offsetY: 0, trigger: 'layout-committed' });
+
+        await resolveLoad(pendingLoads, { status: 'loaded', loaded: 20, hasMore: true });
+        await act(async () => {
+            vi.advanceTimersByTime(500);
+        });
+
+        expect(loadOlder).toHaveBeenCalledTimes(2);
+        expect(loadOlder).toHaveBeenLastCalledWith({ trigger: 'post-cooldown' });
     });
 
     it('suspends loads while the observed offset is <= 0 (negative-offset settling)', async () => {
@@ -326,7 +443,7 @@ describe('useTranscriptOlderPagination', () => {
         expect(loadOlder).toHaveBeenCalledTimes(1);
     });
 
-    it('reset() clears the loading indicator and pending timers, and a late settle is inert', async () => {
+    it('reset() invalidates the pending operation before a fresh load starts', async () => {
         vi.useFakeTimers();
         const { input, loadOlder, pendingLoads } = createHarness({ spinnerDelayMs: 0 });
         const hook = await renderHook(() => useTranscriptOlderPagination(input));
@@ -339,29 +456,178 @@ describe('useTranscriptOlderPagination', () => {
         });
         expect(hook.getCurrent().isLoadingOlder).toBe(false);
 
-        await resolveLoad(pendingLoads, { status: 'loaded', loaded: 20, hasMore: true });
-        expect(hook.getCurrent().isLoadingOlder).toBe(false);
-        expect(hook.getCurrent().hasMore).toBe(true);
-
-        // Fresh session state: the next ENTER loads again.
+        // Fresh dataset state can load while the old operation is still pending.
         await observe(hook, { offsetY: 110 });
         expect(loadOlder).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().isLoadingOlder).toBe(true);
+
+        // The stale dataset reports exhaustion while the fresh load is pending. It
+        // must not finish or exhaust the fresh dataset's machine.
+        await resolveLoad(pendingLoads, { status: 'no_more', loaded: 0, hasMore: false });
+        expect(hook.getCurrent().getSnapshot().phase).toBe('loading');
+        expect(hook.getCurrent().isLoadingOlder).toBe(true);
+        expect(hook.getCurrent().hasMore).toBe(true);
+
+        await resolveLoad(pendingLoads, { status: 'loaded', loaded: 20, hasMore: true });
+        await observe(hook, { offsetY: 800, trigger: 'layout-committed' });
+        expect(hook.getCurrent().isLoadingOlder).toBe(false);
+        expect(hook.getCurrent().hasMore).toBe(true);
     });
 
-    it('cleans up timers on unmount without firing late loads', async () => {
+    it('invalidates an awaited load on unmount before it can schedule a cooldown', async () => {
         vi.useFakeTimers();
         const { input, loadOlder, pendingLoads } = createHarness({ cooldownMs: 500 });
         const hook = await renderHook(() => useTranscriptOlderPagination(input));
 
         await observe(hook, { offsetY: 120 });
-        await resolveLoad(pendingLoads, { status: 'loaded', loaded: 20, hasMore: true });
         await observe(hook, { offsetY: 5_000 });
         await observe(hook, { offsetY: 150 });
 
         await hook.unmount();
+        await resolveLoad(pendingLoads, { status: 'loaded', loaded: 20, hasMore: true });
         await act(async () => {
             vi.advanceTimersByTime(10_000);
         });
         expect(loadOlder).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps committed A inputs through an abandoned same-session B render and publishes committed B before child layout events', async () => {
+        vi.useFakeTimers();
+        const harnessA = createHarness({ cooldownMs: 500 });
+        const harnessB = createHarness({ cooldownMs: 50 });
+        const resultRef: { current: PaginationResult | null } = { current: null };
+        let tree!: renderer.ReactTestRenderer;
+
+        await act(async () => {
+            tree = renderer.create(renderCommitTimingHarness({
+                input: harnessA.input,
+                resultRef,
+                sessionId: 'session-a',
+            }), { unstable_isConcurrent: true } as unknown as renderer.TestRendererOptions);
+        });
+
+        await act(async () => {
+            resultRef.current?.onScrollObservation({ offsetY: 120, scrollable: true, trigger: 'scroll' });
+            resultRef.current?.onScrollObservation({ offsetY: 5_000, scrollable: true, trigger: 'scroll' });
+            resultRef.current?.onScrollObservation({ offsetY: 100, scrollable: true, trigger: 'scroll' });
+        });
+        expect(harnessA.loadOlder).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            React.startTransition(() => {
+                tree.update(renderCommitTimingHarness({
+                    input: harnessB.input,
+                    resultRef,
+                    sessionId: 'session-a',
+                    shouldSuspend: true,
+                }));
+            });
+            await Promise.resolve();
+        });
+
+        await resolveLoad(harnessA.pendingLoads, { status: 'loaded', loaded: 20, hasMore: true });
+        await act(async () => {
+            vi.advanceTimersByTime(50);
+        });
+        expect(harnessA.loadOlder).toHaveBeenCalledTimes(1);
+        expect(harnessB.loadOlder).not.toHaveBeenCalled();
+
+        await act(async () => {
+            vi.advanceTimersByTime(450);
+        });
+        expect(harnessA.loadOlder).toHaveBeenCalledTimes(2);
+        expect(harnessA.loadOlder).toHaveBeenLastCalledWith({ trigger: 'post-cooldown' });
+
+        await act(async () => {
+            resultRef.current?.reset();
+            tree.update(renderCommitTimingHarness({
+                input: harnessB.input,
+                resultRef,
+                sessionId: 'session-a',
+                invokeScrollInChildLayout: true,
+            }));
+        });
+        expect(harnessB.loadOlder).toHaveBeenCalledTimes(1);
+        expect(harnessB.loadOlder).toHaveBeenLastCalledWith({ trigger: 'threshold-enter' });
+
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+});
+
+describe('useTranscriptOlderPagination item-space proximity + continuous indicator', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        standardCleanup();
+    });
+
+    it('arms and loads via itemsToOlderEdge when the estimated px offset is far outside the threshold', async () => {
+        vi.useFakeTimers();
+        const { input, loadOlder } = createHarness({ thresholdItems: 12 });
+        const hook = await renderHook(() => useTranscriptOlderPagination(input));
+
+        await act(async () => {
+            hook.getCurrent().onScrollObservation({ offsetY: 20_000, scrollable: true, itemsToOlderEdge: 40 });
+            hook.getCurrent().onScrollObservation({ offsetY: 20_000, scrollable: true, itemsToOlderEdge: 5 });
+        });
+        expect(loadOlder).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not stall on a negative estimated px offset while the item signal is valid', async () => {
+        vi.useFakeTimers();
+        const { input, loadOlder } = createHarness({ thresholdItems: 12 });
+        const hook = await renderHook(() => useTranscriptOlderPagination(input));
+
+        await act(async () => {
+            hook.getCurrent().onScrollObservation({ offsetY: -700, scrollable: true, itemsToOlderEdge: 30 });
+            hook.getCurrent().onScrollObservation({ offsetY: -700, scrollable: true, itemsToOlderEdge: 4 });
+        });
+        expect(loadOlder).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the loading indicator on across the between-pages gap when a follow-up load is coming', async () => {
+        vi.useFakeTimers();
+        const { input, loadOlder, pendingLoads } = createHarness({ spinnerDelayMs: 200, cooldownMs: 500 });
+        const hook = await renderHook(() => useTranscriptOlderPagination(input));
+
+        await observe(hook, { offsetY: 120 });
+        await act(async () => {
+            vi.advanceTimersByTime(200);
+        });
+        expect(hook.getCurrent().isLoadingOlder).toBe(true);
+
+        // The prepend pushed the threshold out and the user scrolled back in while the
+        // page was landing: the indicator must span the cooldown, not flicker off.
+        await observe(hook, { offsetY: 5_000 });
+        await observe(hook, { offsetY: 100 });
+        await resolveLoad(pendingLoads, { status: 'loaded', loaded: 50, hasMore: true });
+        expect(hook.getCurrent().isLoadingOlder).toBe(true);
+
+        await act(async () => {
+            vi.advanceTimersByTime(500);
+        });
+        expect(loadOlder).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().isLoadingOlder).toBe(true);
+
+        await resolveLoad(pendingLoads, { status: 'no_more', loaded: 0, hasMore: false });
+        expect(hook.getCurrent().isLoadingOlder).toBe(false);
+    });
+
+    it('settles the indicator with the committed page for a parked user (no follow-up load coming)', async () => {
+        vi.useFakeTimers();
+        const { input, pendingLoads } = createHarness({ spinnerDelayMs: 200 });
+        const hook = await renderHook(() => useTranscriptOlderPagination(input));
+
+        await observe(hook, { offsetY: 120 });
+        await act(async () => {
+            vi.advanceTimersByTime(200);
+        });
+        expect(hook.getCurrent().isLoadingOlder).toBe(true);
+
+        await resolveLoad(pendingLoads, { status: 'loaded', loaded: 50, hasMore: true });
+        expect(hook.getCurrent().isLoadingOlder).toBe(true);
+        await observe(hook, { offsetY: 800, trigger: 'layout-committed' });
+        expect(hook.getCurrent().isLoadingOlder).toBe(false);
     });
 });

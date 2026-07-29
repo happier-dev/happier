@@ -10,6 +10,7 @@ import {
     installSessionActionsCommonModuleMocks,
     resetSessionActionsCommonModuleMockState,
 } from './sessionActionsTestHelpers';
+import { SESSION_HEADER_ICON_SIZE_PX } from './sessionHeaderIconMetrics';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -72,7 +73,6 @@ describe('SessionHeaderSubagentsButton', () => {
             <SessionHeaderSubagentsButton
                 scopeId="session:s1"
                 activeCount={2}
-                hasAnySubagents={true}
             />
         );
 
@@ -82,6 +82,8 @@ describe('SessionHeaderSubagentsButton', () => {
         expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'agents' });
         expect(setRightTabSpy).toHaveBeenCalledWith('agents');
         expect(findTestInstanceByTypeContainingText(screen, 'Text', '2')).toBeTruthy();
-        expect(findTestInstanceByTypeWithProps(screen, 'DependabotIcon', { size: 21 })).toBeTruthy();
+        expect(findTestInstanceByTypeWithProps(screen, 'DependabotIcon', {
+            size: SESSION_HEADER_ICON_SIZE_PX,
+        })).toBeTruthy();
     });
 });

@@ -9,8 +9,8 @@ export const SIDECHAIN_JUMP_TO_MESSAGE_MAX_OLDER_LOAD_ATTEMPTS = 25;
 export type SidechainJumpToMessageTarget<TItem> =
     | Readonly<{ ok: false }>
     | Readonly<{
-        match: 'contained' | 'owner';
         ok: true;
+        match: 'contained' | 'owner';
         targetIndex: number;
         targetItem: TItem;
     }>;
@@ -26,8 +26,8 @@ export function resolveSidechainJumpToMessageTarget<TItem>(params: Readonly<{
     const owningIndex = params.items.findIndex((item) => params.ownsMessageId(item, params.messageId));
     if (owningIndex >= 0) {
         return {
-            match: 'owner',
             ok: true,
+            match: 'owner',
             targetIndex: owningIndex,
             targetItem: params.items[owningIndex]!,
         };
@@ -36,8 +36,8 @@ export function resolveSidechainJumpToMessageTarget<TItem>(params: Readonly<{
     const containedIndex = params.items.findIndex((item) => params.containsMessageId(item, params.messageId));
     if (containedIndex >= 0) {
         return {
-            match: 'contained',
             ok: true,
+            match: 'contained',
             targetIndex: containedIndex,
             targetItem: params.items[containedIndex]!,
         };
@@ -62,15 +62,15 @@ export function applySidechainJumpToMessage(params: Readonly<{
 
 export type SidechainJumpToMessageRequestResult<TItem> =
     | Readonly<{
-        loadedPages: number;
         ok: false;
+        loadedPages: number;
         reason: 'aborted' | 'load-unavailable' | 'not_found';
     }>
     | Readonly<{
+        ok: true;
         applied: boolean;
         loadedPages: number;
         match: 'contained' | 'owner';
-        ok: true;
         targetIndex: number;
         targetItem: TItem;
     }>;
@@ -88,10 +88,9 @@ export async function applySidechainJumpToMessageRequest<TItem>(params: Readonly
 }>): Promise<SidechainJumpToMessageRequestResult<TItem>> {
     let loadedPages = 0;
     let exhaustedOlderPages = false;
-
-    while (true) {
+    for (let i = 0; i < SIDECHAIN_JUMP_TO_MESSAGE_MAX_OLDER_LOAD_ATTEMPTS; i += 1) {
         if (isSidechainJumpSignalAborted(params.signal)) {
-            return { loadedPages, ok: false, reason: 'aborted' };
+            return { ok: false, loadedPages, reason: 'aborted' };
         }
 
         const target = resolveSidechainJumpToMessageTarget({
@@ -107,31 +106,28 @@ export async function applySidechainJumpToMessageRequest<TItem>(params: Readonly
                 targetIndex: target.targetIndex,
             });
             return {
+                ok: true,
                 applied,
                 loadedPages,
                 match: target.match,
-                ok: true,
                 targetIndex: target.targetIndex,
                 targetItem: target.targetItem,
             };
         }
 
         if (exhaustedOlderPages) {
-            return { loadedPages, ok: false, reason: 'not_found' };
-        }
-        if (loadedPages >= SIDECHAIN_JUMP_TO_MESSAGE_MAX_OLDER_LOAD_ATTEMPTS) {
-            return { loadedPages, ok: false, reason: 'not_found' };
+            return { ok: false, loadedPages, reason: 'not_found' };
         }
 
         const result = await params.loadOlder();
         if (!result) {
-            return { loadedPages, ok: false, reason: 'load-unavailable' };
+            return { ok: false, loadedPages, reason: 'load-unavailable' };
         }
         if (isSidechainJumpSignalAborted(params.signal)) {
-            return { loadedPages, ok: false, reason: 'aborted' };
+            return { ok: false, loadedPages, reason: 'aborted' };
         }
         if ((result.status === 'no_more' || result.hasMore === false) && result.loaded <= 0) {
-            return { loadedPages, ok: false, reason: 'not_found' };
+            return { ok: false, loadedPages, reason: 'not_found' };
         }
 
         loadedPages += 1;
@@ -140,6 +136,33 @@ export async function applySidechainJumpToMessageRequest<TItem>(params: Readonly
         }
         await (params.yieldForRender?.() ?? Promise.resolve());
     }
+
+    if (isSidechainJumpSignalAborted(params.signal)) {
+        return { ok: false, loadedPages, reason: 'aborted' };
+    }
+    const finalTarget = resolveSidechainJumpToMessageTarget({
+        containsMessageId: params.containsMessageId,
+        items: params.getItems(),
+        messageId: params.messageId,
+        ownsMessageId: params.ownsMessageId,
+    });
+    if (finalTarget.ok) {
+        const applied = applySidechainJumpToMessage({
+            estimatedItemSizePx: params.estimatedItemSizePx,
+            listRef: params.listRef,
+            targetIndex: finalTarget.targetIndex,
+        });
+        return {
+            ok: true,
+            applied,
+            loadedPages,
+            match: finalTarget.match,
+            targetIndex: finalTarget.targetIndex,
+            targetItem: finalTarget.targetItem,
+        };
+    }
+
+    return { ok: false, loadedPages, reason: 'not_found' };
 }
 
 function isSidechainJumpSignalAborted(signal: Readonly<{ aborted: boolean }> | null | undefined): boolean {

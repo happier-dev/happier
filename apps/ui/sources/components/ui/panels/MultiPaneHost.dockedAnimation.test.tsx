@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installPanelCommonModuleMocks } from './panelTestHelpers';
 
@@ -9,6 +9,7 @@ import { installPanelCommonModuleMocks } from './panelTestHelpers';
 
 let capturedAnimatedInitialValues: number[] = [];
 let capturedTimingConfigs: any[] = [];
+let capturedAnimatedValues: any[] = [];
 
 installPanelCommonModuleMocks({
     reactNative: async () => {
@@ -20,10 +21,14 @@ installPanelCommonModuleMocks({
             Animated: {
                 Value: function Value(this: any, initial: number) {
                     capturedAnimatedInitialValues.push(initial);
+                    capturedAnimatedValues.push(this);
                     this.__value = initial;
+                    this.setValue = (value: number) => {
+                        this.__value = value;
+                    };
                     this.interpolate = (config: any) => ({
                         __interpolateConfig: config,
-                        __value: initial,
+                        __valueRef: this,
                     });
                 },
                 timing: (_value: any, config: any) => {
@@ -45,6 +50,11 @@ describe('MultiPaneHost docked pane animation', () => {
     beforeEach(() => {
         capturedAnimatedInitialValues = [];
         capturedTimingConfigs = [];
+        capturedAnimatedValues = [];
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
     });
 
     it('starts docked right/details pane animations from hidden progress and animates their dock width', async () => {
@@ -70,6 +80,32 @@ describe('MultiPaneHost docked pane animation', () => {
 
         expect(findAnimatedDimensionOutputRange(screen, 'width', [0, 360])).toBe(true);
         expect(findAnimatedDimensionOutputRange(screen, 'width', [0, 520])).toBe(true);
+    });
+
+    it('settles docked pane progress open when Animated.timing never completes', async () => {
+        vi.useFakeTimers();
+        const { MultiPaneHost } = await import('./MultiPaneHost');
+
+        await renderScreen(
+            <MultiPaneHost
+                main={<Main />}
+                rightPane={<Right />}
+                detailsPane={<Details />}
+                layout={{ kind: 'threePane', right: 'docked', details: 'docked' }}
+                rightDockWidthPx={360}
+                detailsDockWidthPx={520}
+                onCloseRight={() => {}}
+                onCloseDetails={() => {}}
+                onCommitRightDockWidthPx={() => {}}
+                onCommitDetailsDockWidthPx={() => {}}
+            />,
+        );
+
+        expect(capturedAnimatedValues.slice(0, 2).map((value) => value.__value)).toEqual([0, 0]);
+
+        await vi.advanceTimersByTimeAsync(250);
+
+        expect(capturedAnimatedValues.slice(0, 2).map((value) => value.__value)).toEqual([1, 1]);
     });
 
     it('starts docked bottom pane animation from hidden progress and animates its dock height', async () => {

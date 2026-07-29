@@ -282,7 +282,48 @@ describe('buildVoiceInitialContext', () => {
     expect(out).toContain('## Pending Requests');
     expect(out).toContain('Coding assistant is requesting permission to use write in');
     expect(out).toContain('<request_id>perm_voice_1</request_id>');
-    expect(out).toContain('Ask the human to say approve or deny.');
+    expect(out).toContain('Tell the human to use the canonical session UI to approve or deny it.');
+    expect(out).toContain('A spoken answer does not decide this permission request.');
+  });
+
+  it('does not include a target session pending permission request when sharing is disabled', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        voice: {
+          ...state.settings.voice,
+          privacy: {
+            ...state.settings.voice.privacy,
+            sharePermissionRequests: false,
+          },
+        },
+      },
+      sessions: {
+        s1: {
+          ...createSession('Target session summary'),
+          agentState: {
+            requests: {
+              req_initial_secret: {
+                tool: 'write',
+                kind: 'permission',
+                arguments: { content: 'INITIAL_PERMISSION_SECRET' },
+                createdAt: 1,
+              },
+            },
+            completedRequests: {},
+          },
+        },
+      },
+      sessionMessages: { s1: { messages: [] } },
+    }));
+    useVoiceTargetStore.getState().setTrackedSessionIds(['s1']);
+
+    const out = buildVoiceInitialContext('s1');
+
+    expect(out).not.toContain('## Pending Requests');
+    expect(out).not.toContain('req_initial_secret');
+    expect(out).not.toContain('INITIAL_PERMISSION_SECRET');
   });
 
   it('includes already-pending user-action requests from transcript tool calls when agentState is missing', () => {
@@ -547,7 +588,7 @@ describe('buildVoiceInitialContext', () => {
 
     expect(out).not.toContain('## Pending Requests');
     expect(out).not.toContain('<request_id>req_inactive</request_id>');
-    expect(out).not.toContain('Ask the human to say approve or deny.');
+    expect(out).not.toContain('Tell the human to use the canonical session UI to approve or deny it.');
     expect(out).toContain('# Session: Target session summary');
   });
 
@@ -564,7 +605,7 @@ describe('buildVoiceInitialContext', () => {
             recentMessagesCount: 3,
             shareToolNames: true,
           },
-          adapters: state.settings.voice.adapters,
+          providers: state.settings.voice.providers,
         },
       },
       sessions: {

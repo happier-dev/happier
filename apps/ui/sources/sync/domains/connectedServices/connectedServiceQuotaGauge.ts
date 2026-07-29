@@ -1,11 +1,17 @@
 import type {
     ConnectedServiceQuotaMeterV1,
+    ConnectedServiceQuotaRecoveryCreditsV1,
     ConnectedServiceQuotaSnapshotV1,
     SessionRuntimeIssueV1,
 } from '@happier-dev/protocol';
 import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol';
 
+import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import { clampQuotaPct, deriveQuotaUtilizationPct } from './deriveQuotaUtilizationPct';
+import {
+    QUOTA_REMAINING_CRITICAL_THRESHOLD_PCT,
+    QUOTA_REMAINING_WARNING_THRESHOLD_PCT,
+} from './resolveQuotaTone';
 
 export type ConnectedServiceQuotaGaugeWindowMode =
     | 'most_constrained'
@@ -16,6 +22,12 @@ export type ConnectedServiceQuotaGaugeWindowMode =
     | 'session';
 
 export type ConnectedServiceQuotaGaugeTone = 'neutral' | 'warning' | 'critical';
+
+export type ConnectedServiceQuotaRecoveryCreditSummary = Readonly<{
+    availableCount: number;
+    nextExpiresAtMs: number | null;
+    providerCreditId: string | null;
+}>;
 
 export type ConnectedServiceQuotaGaugeMeterRow = Readonly<{
     meterId: string;
@@ -35,6 +47,7 @@ export type ConnectedServiceQuotaGaugeLabelFormatter = Readonly<{
     remainingWithReset: (params: Readonly<{ percent: string; reset: string }>) => string;
     used: (params: Readonly<{ used: string; limit: string }>) => string;
     durationNow: () => string;
+    durationOutdated: () => string;
     durationDaysHours: (params: Readonly<{ days: number; hours: number }>) => string;
     durationHoursMinutes: (params: Readonly<{ hours: number; minutes: number }>) => string;
     durationHours: (params: Readonly<{ hours: number }>) => string;
@@ -59,6 +72,7 @@ export type ConnectedServiceQuotaGaugeViewModel = Readonly<{
     isStale: boolean;
     effectiveMeter: ConnectedServiceQuotaMeterV1;
     allMeterRows: readonly ConnectedServiceQuotaGaugeMeterRow[];
+    recoveryCreditSummary: ConnectedServiceQuotaRecoveryCreditSummary | null;
 }>;
 
 export type ConnectedServiceQuotaGaugeSourceKind =
@@ -76,8 +90,8 @@ export type ConnectedServiceQuotaGaugeSource = Readonly<{
     checkNowSupported: boolean;
 }>;
 
-const QUOTA_REMAINING_WARNING_THRESHOLD_PCT = 25;
-const QUOTA_REMAINING_CRITICAL_THRESHOLD_PCT = 10;
+// Tone boundaries come from the single canonical owner (`resolveQuotaTone`); the
+// gauge maps them onto its own `neutral | warning | critical` vocabulary below.
 const RUNTIME_ISSUE_QUOTA_PROJECTION_STALE_AFTER_MS = 30_000;
 const RUNTIME_ISSUE_NATIVE_PROFILE_ID = 'native';
 const RUNTIME_ISSUE_PROJECTION_PROFILE_ID = 'runtime';
@@ -212,7 +226,9 @@ function formatResetCountdown(
 ): string | null {
     if (!resetsAtMs) return null;
     const delta = resetsAtMs - nowMs;
-    if (!Number.isFinite(delta) || delta <= 0) return formatter.durationNow();
+    if (!Number.isFinite(delta)) return formatter.durationOutdated();
+    if (delta < 0) return formatter.durationOutdated();
+    if (delta === 0) return formatter.durationNow();
 
     const totalMinutes = Math.floor(delta / 60000);
     const days = Math.floor(totalMinutes / (60 * 24));
@@ -228,6 +244,38 @@ function formatResetCountdown(
 
 function formatNumber(value: number): string {
     return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(1)));
+}
+
+export function summarizeConnectedServiceQuotaRecoveryCredits(
+    recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1 | null | undefined,
+    nowMs: number,
+): ConnectedServiceQuotaRecoveryCreditSummary | null {
+    if (!recoveryCredits) return null;
+
+    const credits = recoveryCredits.credits ?? [];
+    if (credits.length > 0) {
+        const availableCount = recoveryCredits.availableCount;
+        let nextExpiresAtMs: number | null = null;
+        let providerCreditId: string | null = null;
+        for (const credit of credits) {
+            if (credit.status !== 'available') continue;
+            const expiresAtMs = credit.expiresAtMs;
+            if (typeof expiresAtMs === 'number' && Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs) {
+                continue;
+            }
+            if (providerCreditId === null && credit.id) {
+                providerCreditId = credit.id;
+            }
+            if (typeof expiresAtMs === 'number' && Number.isFinite(expiresAtMs)) {
+                nextExpiresAtMs = nextExpiresAtMs === null ? expiresAtMs : Math.min(nextExpiresAtMs, expiresAtMs);
+            }
+        }
+        return availableCount > 0 ? { availableCount, nextExpiresAtMs, providerCreditId } : null;
+    }
+
+    return recoveryCredits.availableCount > 0
+        ? { availableCount: recoveryCredits.availableCount, nextExpiresAtMs: null, providerCreditId: null }
+        : null;
 }
 
 function resolveTone(remainingPct: number): ConnectedServiceQuotaGaugeTone {
@@ -332,6 +380,7 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
         isStale,
         effectiveMeter,
         allMeterRows,
+        recoveryCreditSummary: summarizeConnectedServiceQuotaRecoveryCredits(params.snapshot.recoveryCredits, params.nowMs),
     };
 }
 
@@ -364,13 +413,9 @@ function resolveRuntimeIssueQuotaServiceId(issue: SessionRuntimeIssueV1): Connec
     const connectedServiceId = issue.usageLimit?.connectedService?.serviceId;
     if (connectedServiceId) return connectedServiceId;
 
-    const provider = issue.provider?.trim().toLowerCase();
-    if (!provider) return null;
-    if (provider === 'codex' || provider === 'openai-codex') return 'openai-codex';
-    if (provider === 'claude' || provider === 'anthropic') return 'anthropic';
-    if (provider === 'openai') return 'openai';
-    if (provider === 'gemini') return 'gemini';
-    return null;
+    const agentId = resolveAgentIdFromFlavor(issue.agentId);
+    if (!agentId) return null;
+    return getAgentCore(agentId).connectedServices?.supportedServiceIds[0] ?? null;
 }
 
 function resolveRuntimeIssueQuotaProfileId(issue: SessionRuntimeIssueV1): string {
@@ -440,7 +485,7 @@ export function deriveConnectedServiceQuotaSnapshotFromRuntimeIssue(
 
     if (meters.length === 0) return null;
 
-    const providerId = issue.provider?.trim() || null;
+    const providerId = issue.agentId?.trim() || null;
     const evidence = usageLimit.providerLimitId
         ? {
             kind: 'runtime_usage_limit',
@@ -468,10 +513,52 @@ export function deriveConnectedServiceQuotaSnapshotFromRuntimeIssue(
     };
 }
 
+function snapshotsIdentifySameQuotaProfile(
+    left: ConnectedServiceQuotaSnapshotV1,
+    right: ConnectedServiceQuotaSnapshotV1,
+): boolean {
+    return left.serviceId === right.serviceId && left.profileId === right.profileId;
+}
+
+function withRecoveryCredits(
+    snapshot: ConnectedServiceQuotaSnapshotV1,
+    recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1 | null | undefined,
+): ConnectedServiceQuotaSnapshotV1 {
+    if (!recoveryCredits || snapshot.recoveryCredits) return snapshot;
+    return { ...snapshot, recoveryCredits };
+}
+
+function quotaSnapshotFetchedAtMs(snapshot: ConnectedServiceQuotaSnapshotV1): number {
+    return snapshot.fetchedAtMs ?? snapshot.fetchedAt;
+}
+
+function shouldPreferRuntimeIssueQuotaSnapshot(params: Readonly<{
+    runtimeSnapshot: ConnectedServiceQuotaSnapshotV1;
+    connectedSnapshot: ConnectedServiceQuotaSnapshotV1 | null;
+}>): boolean {
+    if (!params.connectedSnapshot) return true;
+    const runtimeFetchedAtMs = quotaSnapshotFetchedAtMs(params.runtimeSnapshot);
+    const runtimeStaleAtMs = runtimeFetchedAtMs + params.runtimeSnapshot.staleAfterMs;
+    const connectedFetchedAtMs = quotaSnapshotFetchedAtMs(params.connectedSnapshot);
+    return runtimeFetchedAtMs >= connectedFetchedAtMs || runtimeStaleAtMs >= connectedFetchedAtMs;
+}
+
 export function selectConnectedServiceSessionProviderUsageSnapshot(params: Readonly<{
     connectedServiceSnapshot: ConnectedServiceQuotaSnapshotV1 | null;
+    recoveryCredits?: ConnectedServiceQuotaRecoveryCreditsV1 | null;
     runtimeIssue: SessionRuntimeIssueV1 | null | undefined;
 }>): ConnectedServiceQuotaSnapshotV1 | null {
     const runtimeIssueQuotaSnapshot = deriveConnectedServiceQuotaSnapshotFromRuntimeIssue(params.runtimeIssue);
-    return runtimeIssueQuotaSnapshot ?? params.connectedServiceSnapshot;
+    if (!runtimeIssueQuotaSnapshot) return params.connectedServiceSnapshot;
+    if (!shouldPreferRuntimeIssueQuotaSnapshot({
+        runtimeSnapshot: runtimeIssueQuotaSnapshot,
+        connectedSnapshot: params.connectedServiceSnapshot,
+    })) {
+        return params.connectedServiceSnapshot;
+    }
+    const recoveryCredits = params.connectedServiceSnapshot
+        && snapshotsIdentifySameQuotaProfile(runtimeIssueQuotaSnapshot, params.connectedServiceSnapshot)
+        ? params.connectedServiceSnapshot.recoveryCredits ?? null
+        : params.recoveryCredits ?? null;
+    return withRecoveryCredits(runtimeIssueQuotaSnapshot, recoveryCredits);
 }

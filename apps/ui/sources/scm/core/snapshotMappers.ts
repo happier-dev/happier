@@ -71,12 +71,6 @@ export function mapProtocolEntryToUiEntry(entry: ProtocolScmWorkingSnapshot['ent
     };
 }
 
-function mapProtocolScmBackendIdToUiBackendId(
-    backendId: ProtocolScmWorkingSnapshot['repo']['backendId'],
-): ScmWorkingSnapshot['repo']['backendId'] {
-    return backendId === 'git' || backendId === 'sapling' ? backendId : null;
-}
-
 export function mapProtocolSnapshotToUiSnapshot(
     snapshot: ProtocolScmWorkingSnapshot,
     projectKey: string
@@ -87,7 +81,7 @@ export function mapProtocolSnapshotToUiSnapshot(
         repo: {
             isRepo: snapshot.repo.isRepo,
             rootPath: snapshot.repo.rootPath,
-            backendId: mapProtocolScmBackendIdToUiBackendId(snapshot.repo.backendId),
+            backendId: snapshot.repo.backendId,
             mode: snapshot.repo.mode,
             defaultBranch: snapshot.repo.defaultBranch ?? null,
             worktrees: snapshot.repo.worktrees,

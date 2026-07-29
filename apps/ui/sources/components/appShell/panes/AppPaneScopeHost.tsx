@@ -1,5 +1,11 @@
 import * as React from 'react';
 import { Platform, View, useWindowDimensions } from 'react-native';
+import {
+    AppPluginSurfacePlacementStack,
+    useAppPluginSurfacePlacements,
+    useAppShellHasRenderableRightSidebarTabPlacements,
+} from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { AppScopeRightSidebar } from '@/components/appShell/rightSidebar/AppScopeRightSidebar';
 import { MultiPaneHostWithBottom } from '@/components/ui/panels/MultiPaneHostWithBottom';
 import { resolvePaneLayout } from '@/components/ui/panels/paneBreakpoints';
 import { resolveBottomPaneLayout } from '@/components/ui/panels/resolveBottomPaneLayout';
@@ -56,6 +62,9 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
     const rightOpen = Boolean(scopeState?.right.isOpen);
     const detailsOpen = Boolean(scopeState?.details.isOpen);
     const bottomOpen = Boolean(scopeState?.bottom?.isOpen);
+    const appSidePanelPlacements = useAppPluginSurfacePlacements('app.sidePanel');
+    const appBottomPanelPlacements = useAppPluginSurfacePlacements('app.bottomPanel');
+    const hasAppRightSidebarTabPlacements = useAppShellHasRenderableRightSidebarTabPlacements();
     const detailsPaneEnabled = props.detailsPaneEnabled !== false;
     const effectiveDetailsOpen = detailsPaneEnabled ? detailsOpen : false;
     const paneFocusModeActive =
@@ -69,7 +78,20 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
     // nodes null when closed so hidden layouts don't accidentally mount expensive panes.
     const rightPane =
         rightOpen
-            ? (props.rightPane ?? driver?.renderRightPane?.({ scopeId: props.scopeId }) ?? null)
+            ? (
+                props.rightPane
+                ?? driver?.renderRightPane?.({ scopeId: props.scopeId })
+                // Tabbed `app.rightSidebarTab` surfaces take the right pane first (multiple plugin
+                // tabs behind an icon tab bar). The single-stack `app.sidePanel` is the fallback.
+                ?? (hasAppRightSidebarTabPlacements ? (
+                    <AppScopeRightSidebar testID="app-shell-plugin-right-sidebar" />
+                ) : appSidePanelPlacements.placements.length > 0 ? (
+                    <AppPluginSurfacePlacementStack
+                        placement="app.sidePanel"
+                        testID="app-shell-plugin-side-panel-stack"
+                    />
+                ) : null)
+            )
             : null;
     const detailsPane =
         effectiveDetailsOpen
@@ -77,7 +99,16 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
             : null;
     const bottomPane =
         bottomOpen
-            ? (props.bottomPane ?? driver?.renderBottomPane?.({ scopeId: props.scopeId }) ?? null)
+            ? (
+                props.bottomPane
+                ?? driver?.renderBottomPane?.({ scopeId: props.scopeId })
+                ?? (appBottomPanelPlacements.placements.length > 0 ? (
+                    <AppPluginSurfacePlacementStack
+                        placement="app.bottomPanel"
+                        testID="app-shell-plugin-bottom-panel-stack"
+                    />
+                ) : null)
+            )
             : null;
 
     const scaledRightPreferredPx = resolveScaledPaneWidthPxUncapped({

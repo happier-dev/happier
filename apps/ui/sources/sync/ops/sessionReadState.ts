@@ -23,6 +23,7 @@ import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
 import { nowServerMs } from '@/sync/runtime/time';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export type SessionManualReadState = 'read' | 'unread';
 
@@ -162,13 +163,15 @@ function buildManualReadStateRenderablePatch(params: Readonly<{
     lastViewedSessionSeq: number | null;
     updatedAt: number;
 }>): Partial<SessionListRenderableSession> {
-    const metadata = applyManualReadStateToRenderableMetadata({
-        metadata: params.renderable.metadata,
-        readState: params.readState,
-        sessionSeq: params.renderable.seq,
-        lastViewedSessionSeq: params.lastViewedSessionSeq,
-        updatedAt: params.updatedAt,
-    });
+    const metadata = (params.renderable.metadataLayoutVersion ?? 0) === 1
+        ? params.renderable.metadata
+        : applyManualReadStateToRenderableMetadata({
+            metadata: params.renderable.metadata,
+            readState: params.readState,
+            sessionSeq: params.renderable.seq,
+            lastViewedSessionSeq: params.lastViewedSessionSeq,
+            updatedAt: params.updatedAt,
+        });
 
     return {
         hasUnreadMessages: params.readState === 'unread',
@@ -259,16 +262,19 @@ function applyManualReadStateToLocalState(params: Readonly<{
     const session = state.sessions[params.sessionId];
     if (session) {
         const updatedAt = nowServerMs();
+        const ownerMetadataView = applyManualReadStateToMetadata({
+            metadata: readSessionOwnerMetadataView(session),
+            readState: params.readState,
+            sessionSeq: session.seq,
+            lastViewedSessionSeq: params.lastViewedSessionSeq,
+            updatedAt,
+        });
         const nextSession: Session = {
             ...session,
             lastViewedSessionSeq: params.lastViewedSessionSeq,
-            metadata: applyManualReadStateToMetadata({
-                metadata: session.metadata,
-                readState: params.readState,
-                sessionSeq: session.seq,
-                lastViewedSessionSeq: params.lastViewedSessionSeq,
-                updatedAt,
-            }),
+            ...((session.metadataLayoutVersion ?? 0) === 1
+                ? { ownerMetadataView }
+                : { metadata: ownerMetadataView }),
             updatedAt,
         };
 

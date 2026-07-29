@@ -4,6 +4,7 @@ export type VoiceSessionBinding = Readonly<{
     adapterId: string;
     controlSessionId: string;
     conversationSessionId: string;
+    lifetime?: 'runtime_attempt';
     transcriptMode: VoiceConversationTranscriptMode;
     targetSessionId: string | null;
     updatedAt: number;

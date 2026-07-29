@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     changeTextTestInstance,
     renderScreen,
@@ -10,6 +10,7 @@ import { installClaudeSessionSubagentCommonModuleMocks } from './claudeSessionSu
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const sendMessageSpy = vi.fn(async () => undefined);
+const submitMessageSpy = vi.fn(async () => undefined);
 
 installClaudeSessionSubagentCommonModuleMocks();
 
@@ -21,6 +22,7 @@ vi.mock('@/components/ui/text/Text', () => ({
 vi.mock('@/sync/runtime/getSyncSingleton', () => ({
     getSyncSingleton: () => ({
         sendMessage: sendMessageSpy,
+        submitMessage: submitMessageSpy,
     }),
 }));
 
@@ -29,6 +31,11 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 }));
 
 describe('ClaudeAgentTeamLaunchCard', () => {
+    beforeEach(() => {
+        sendMessageSpy.mockClear();
+        submitMessageSpy.mockClear();
+    });
+
     it('sends a structured team-create message', async () => {
         const { ClaudeAgentTeamLaunchCard } = await import('./ClaudeAgentTeamLaunchCard');
 
@@ -44,7 +51,8 @@ describe('ClaudeAgentTeamLaunchCard', () => {
 
         await screen.pressByTestIdAsync('session-subagent-launch-claude-team');
 
-        expect(sendMessageSpy).toHaveBeenCalledWith(
+        expect(sendMessageSpy).not.toHaveBeenCalled();
+        expect(submitMessageSpy).toHaveBeenCalledWith(
             's1',
             'Create team qa-team',
             'Create team qa-team',
@@ -58,6 +66,55 @@ describe('ClaudeAgentTeamLaunchCard', () => {
                     }),
                 },
             }),
+            { callerSurface: 'subagent_command', forceImmediate: true },
+        );
+    });
+
+    it('sends a structured teammate-create message', async () => {
+        const { ClaudeAgentTeamLaunchCard } = await import('./ClaudeAgentTeamLaunchCard');
+
+        const screen = await renderScreen(
+            <ClaudeAgentTeamLaunchCard
+                sessionId="s1"
+                teamIds={['qa-team']}
+                mode="member"
+                initialTeamId="qa-team"
+            />,
+        );
+
+        await act(async () => {
+            changeTextTestInstance(
+                screen.findByProps({ placeholder: 'session.subagents.panel.teammateLabelPlaceholder' }),
+                'alpha',
+                'teammate label input',
+            );
+            changeTextTestInstance(
+                screen.findByProps({ placeholder: 'session.subagents.panel.teammateInstructionsPlaceholder' }),
+                'Handle QA checks.',
+                'teammate instructions input',
+            );
+        });
+
+        await screen.pressByTestIdAsync('session-subagent-launch-claude-teammate');
+
+        expect(sendMessageSpy).not.toHaveBeenCalled();
+        expect(submitMessageSpy).toHaveBeenCalledWith(
+            's1',
+            'Launch teammate alpha · qa-team',
+            'Launch teammate alpha · qa-team',
+            expect.objectContaining({
+                happier: {
+                    kind: 'subagent_launch.v1',
+                    payload: expect.objectContaining({
+                        kind: 'agent_team_member_create',
+                        teamId: 'qa-team',
+                        memberLabel: 'alpha',
+                        instructions: 'Handle QA checks.',
+                        runInBackground: true,
+                    }),
+                },
+            }),
+            { callerSurface: 'subagent_command', forceImmediate: true },
         );
     });
 

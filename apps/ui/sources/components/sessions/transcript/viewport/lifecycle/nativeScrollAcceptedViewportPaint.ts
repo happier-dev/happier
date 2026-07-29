@@ -20,6 +20,18 @@ export type NativeScrollAcceptedViewportPaintEffect = Readonly<{
     type: 'record-accepted-viewport-paint';
 }>;
 
+/**
+ * Native reveal edge. The transcript must not release its first accepted paint before native mount
+ * placement has settled, otherwise it paints and then moves — the cold-open flicker.
+ *
+ * Release requires mount-settle stability, the mount-settle deadline, or the warm keep-alive
+ * allowance. Reaching the live-tail threshold is a precondition, never on its own a reveal.
+ *
+ * This gate can only ever DELAY a reveal. `useTranscriptNativeMountSettleLifecycle` guarantees
+ * `nativeMountSettleDeadlineReached` within
+ * `transcriptInitialFillBudgetMs + transcriptMountSettleQuiescentWindowMs`, so a settle signal that
+ * never stabilizes still reveals on the deadline.
+ */
 export function resolveNativeFollowBottomObservationCanReleasePaint(params: Readonly<{
     distanceFromLiveTailPx: number;
     isWarmKeepAliveInstance: boolean;
@@ -27,10 +39,8 @@ export function resolveNativeFollowBottomObservationCanReleasePaint(params: Read
     nativeMountSettleStable: boolean;
     sessionEntryShouldFollowBottom: boolean | null | undefined;
     thresholdPx: number;
-    usesNativeFlashListBottomMaintenance: boolean;
 }>): boolean {
     if (params.distanceFromLiveTailPx > params.thresholdPx) return false;
-    if (!params.usesNativeFlashListBottomMaintenance) return true;
     if (params.nativeMountSettleStable) return true;
     if (params.nativeMountSettleDeadlineReached) return true;
     return params.isWarmKeepAliveInstance && params.sessionEntryShouldFollowBottom !== false;
@@ -100,10 +110,9 @@ export function resolveNativeScrollAcceptedViewportPaintObservationEffects(param
     isWarmKeepAliveInstance: boolean;
     nativeMountSettleDeadlineReached: boolean;
     nativeMountSettleStable: boolean;
-    sessionId: string;
     sessionEntryShouldFollowBottom: boolean | null | undefined;
+    sessionId: string;
     thresholdPx: number;
-    usesNativeFlashListBottomMaintenance: boolean;
     wantsPinned: boolean;
 }>): readonly NativeScrollAcceptedViewportPaintEffect[] {
     const nativeFollowBottomObservationCanReleasePaint = resolveNativeFollowBottomObservationCanReleasePaint({
@@ -113,7 +122,6 @@ export function resolveNativeScrollAcceptedViewportPaintObservationEffects(param
         nativeMountSettleStable: params.nativeMountSettleStable,
         sessionEntryShouldFollowBottom: params.sessionEntryShouldFollowBottom,
         thresholdPx: params.thresholdPx,
-        usesNativeFlashListBottomMaintenance: params.usesNativeFlashListBottomMaintenance,
     });
 
     return resolveNativeScrollAcceptedViewportPaintEffects({

@@ -6,6 +6,11 @@ export type AssistantTextMessageBaseline = Readonly<{
   baselineCount: number;
 }>;
 
+export type AssistantTextMessageEntry = Readonly<{
+  entryId: string;
+  text: string;
+}>;
+
 function getSessionMessages(sessionId: string): any[] {
   return readStoredSessionMessages(storage.getState(), sessionId) as any[];
 }
@@ -27,28 +32,49 @@ export function collectAssistantTextMessagesSinceBaseline(
   baselineIds: Set<string>,
   baselineCount: number,
 ): string[] {
+  return collectAssistantTextMessageEntriesSinceBaseline(
+    sessionId,
+    baselineIds,
+    baselineCount,
+  ).map((entry) => entry.text);
+}
+
+export function collectAssistantTextMessageEntriesSinceBaseline(
+  sessionId: string,
+  baselineIds: Set<string>,
+  baselineCount: number,
+): AssistantTextMessageEntry[] {
   const messages = getSessionMessages(sessionId);
   const startIndex = messages.length >= baselineCount ? baselineCount : 0;
-  const out: string[] = [];
+  const out: AssistantTextMessageEntry[] = [];
   for (let idx = startIndex; idx < messages.length; idx += 1) {
     const message = messages[idx];
     if (message?.kind !== 'agent-text') continue;
     if (typeof message?.text !== 'string') continue;
     if (typeof message?.id === 'string' && baselineIds.has(message.id)) continue;
     const text = message.text.trim();
-    if (!text) continue;
-    out.push(text);
+    const entryId = (
+      typeof message?.realID === 'string' && message.realID.trim()
+        ? message.realID
+        : typeof message?.localId === 'string' && message.localId.trim()
+          ? message.localId
+          : typeof message?.id === 'string' && message.id.trim()
+            ? message.id
+            : ''
+    ).trim();
+    if (!text || !entryId) continue;
+    out.push({ entryId, text });
   }
   return out;
 }
 
-export async function waitForNextAssistantTextMessage(
+export async function waitForNextAssistantTextMessageEntry(
   sessionId: string,
   baselineIds: Set<string>,
   baselineCount: number,
   timeoutMs: number,
-  signal?: AbortSignal
-): Promise<string | null> {
+  signal?: AbortSignal,
+): Promise<AssistantTextMessageEntry | null> {
   if (signal?.aborted) return null;
   return await new Promise((resolve) => {
     let settled = false;
@@ -78,16 +104,20 @@ export async function waitForNextAssistantTextMessage(
       }
     };
 
-    const done = (text: string | null) => {
+    const done = (entry: AssistantTextMessageEntry | null) => {
       if (settled) return;
       settled = true;
       cleanup();
-      resolve(text);
+      resolve(entry);
     };
 
     const check = () => {
       try {
-        const matches = collectAssistantTextMessagesSinceBaseline(sessionId, baselineIds, baselineCount);
+        const matches = collectAssistantTextMessageEntriesSinceBaseline(
+          sessionId,
+          baselineIds,
+          baselineCount,
+        );
         if (matches.length > 0) done(matches[0] ?? null);
       } catch {
         done(null);
@@ -110,4 +140,21 @@ export async function waitForNextAssistantTextMessage(
     }
     check();
   });
+}
+
+export async function waitForNextAssistantTextMessage(
+  sessionId: string,
+  baselineIds: Set<string>,
+  baselineCount: number,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<string | null> {
+  const entry = await waitForNextAssistantTextMessageEntry(
+    sessionId,
+    baselineIds,
+    baselineCount,
+    timeoutMs,
+    signal,
+  );
+  return entry?.text ?? null;
 }

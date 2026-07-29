@@ -3,14 +3,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { Platform, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { t } from '@/text';
 
 import type { TranscriptSelectableMessageRole } from './_types';
 import { formatMessageSelectionRowAccessibilityLabel } from './messageSelectionAccessibility';
 import { useOptionalTranscriptSelectionActions, useOptionalTranscriptSelectionRow } from './TranscriptMessageSelectionContext';
 
-const TRANSCRIPT_SELECT_ACTION_HIT_SLOP = 15;
-const TRANSCRIPT_SELECT_MODE_HIT_SLOP = 22;
 const TRANSCRIPT_SELECT_ACTION_ICON_SIZE = 12;
 const TRANSCRIPT_SELECT_MODE_ICON_SIZE = 18;
 
@@ -33,9 +32,7 @@ export function SelectMessageButton(props: Readonly<{
     if (!actions || !props.enabled || !visible) return null;
 
     const isSelectionToggle = row.isSelectionMode;
-    const hitSlop = Platform.OS === 'web'
-        ? undefined
-        : (isSelectionToggle ? TRANSCRIPT_SELECT_MODE_HIT_SLOP : TRANSCRIPT_SELECT_ACTION_HIT_SLOP);
+    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
     const iconName = isSelectionToggle
         ? (row.isSelected ? 'checkbox-outline' : 'square-outline')
         : 'checkmark-circle-outline';
@@ -50,7 +47,6 @@ export function SelectMessageButton(props: Readonly<{
             onPress={isSelectionToggle ? row.toggle : () => actions.enter(props.messageId)}
             onHoverIn={props.onHoverIn}
             onHoverOut={props.onHoverOut}
-            hitSlop={hitSlop}
             accessibilityRole={isSelectionToggle ? 'checkbox' : 'button'}
             accessibilityState={isSelectionToggle ? { checked: row.isSelected } : undefined}
             accessibilityLabel={accessibilityLabel}
@@ -59,6 +55,12 @@ export function SelectMessageButton(props: Readonly<{
                 Platform.OS === 'web' ? styles.webActionButton : null,
                 props.invertedActionsLayout ? styles.webActionButtonInverted : null,
                 isSelectionToggle ? styles.selectionToggleButton : null,
+                {
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minHeight: minimumInteractiveTargetSize,
+                    minWidth: minimumInteractiveTargetSize,
+                },
                 row.isSelected ? styles.buttonSelected : null,
                 pressed ? styles.buttonPressed : null,
             ]}
@@ -88,10 +90,6 @@ const styles = StyleSheet.create((theme) => ({
         marginRight: 2,
     },
     selectionToggleButton: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: 32,
-        minWidth: 32,
         padding: 6,
         borderRadius: 16,
         backgroundColor: theme.colors.surface.base,

@@ -44,4 +44,35 @@ describe('Switch.web', () => {
         expect(pressable.props.accessibilityRole).toBe('switch');
         expect(pressable.props['aria-checked']).toBe(true);
     });
+
+    it('keeps compact switches on a named 44px focus and interaction target', async () => {
+        const { Switch } = await import('./Switch.web');
+        const onValueChange = vi.fn();
+        const screen = await renderScreen(<Switch
+            value={false}
+            onValueChange={onValueChange}
+            accessibilityLabel="Fast responses"
+            testID="compact-settings-toggle"
+            compact
+        />);
+
+        const pressable = screen.findByTestId('compact-settings-toggle');
+        if (!pressable) {
+            throw new Error('Expected compact switch pressable to render');
+        }
+        const style = typeof pressable.props.style === 'function'
+            ? pressable.props.style({ pressed: false })
+            : pressable.props.style;
+        const flattened = Object.assign({}, ...(Array.isArray(style) ? style : [style]).filter(Boolean));
+
+        expect(pressable.props.accessibilityLabel).toBe('Fast responses');
+        expect(pressable.props.accessibilityState).toEqual({ checked: false, disabled: false });
+        expect(flattened.minWidth ?? flattened.width).toBeGreaterThanOrEqual(44);
+        expect(flattened.minHeight ?? flattened.height).toBeGreaterThanOrEqual(44);
+
+        const event = { key: ' ', nativeEvent: { key: ' ' }, preventDefault: vi.fn() };
+        pressable.props.onKeyDown(event);
+        expect(event.preventDefault).toHaveBeenCalledOnce();
+        expect(onValueChange).toHaveBeenCalledWith(true);
+    });
 });

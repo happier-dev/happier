@@ -46,6 +46,9 @@ const nativeNavigationMock = {
     canGoBack: () => true,
 };
 const setMobileWorkspaceExperienceMock = vi.hoisted(() => vi.fn());
+const localSettingSetters = vi.hoisted(() => new Map<string, (value: unknown) => void>());
+let localSettingsMock: Record<string, unknown> = {};
+let holdLocalSettingsWrites = false;
 
 const workspaceRefMock = {
     id: 'wr_1',
@@ -58,7 +61,9 @@ const workspaceRefMock = {
 
 vi.mock('@react-navigation/native', () => ({
     useIsFocused: () => true,
-    useNavigation: () => nativeNavigationMock,
+    useNavigation: () => ({
+        canGoBack: nativeNavigationMock.canGoBack,
+    }),
 }));
 
 vi.mock('react-native', async () => {
@@ -71,20 +76,26 @@ vi.mock('react-native', async () => {
 
 vi.mock('expo-router', () => {
     const baseModule = routerMock.module;
-    return {
-        ...baseModule,
-        Stack: {
-            Screen: ({ options }: { options: Record<string, unknown> | (() => Record<string, unknown>) }) => {
+        return {
+            ...baseModule,
+            Stack: {
+                Screen: ({ options }: { options: Record<string, unknown> | (() => Record<string, unknown>) }) => {
                 React.useEffect(() => {
                     setOptionsSpy(typeof options === 'function' ? options() : options);
                     stackListeners.forEach((notify) => notify());
                 }, [options]);
-                return null;
+                    return null;
+                },
             },
-        },
-        useNavigation: () => {
-            const [, force] = React.useReducer((value) => value + 1, 0);
-            React.useLayoutEffect(() => {
+            useRouter: () => ({
+                push: routerMock.spies.push,
+                back: routerMock.spies.back,
+                replace: routerMock.spies.replace,
+                setParams: routerMock.spies.setParams,
+            }),
+            useNavigation: () => {
+                const [, force] = React.useReducer((value) => value + 1, 0);
+                React.useLayoutEffect(() => {
                 stackListeners.add(force);
                 return () => {
                     stackListeners.delete(force);
@@ -125,13 +136,33 @@ vi.mock('@/sync/domains/state/storage', async () => {
             }
             return [null, vi.fn()];
         },
-        useLocalSetting: () => null,
-        useLocalSettingMutable: () => [null, vi.fn()],
+        useLocalSetting: (key: string) => localSettingsMock[key],
+        useLocalSettingMutable: (key: string) => [
+            localSettingsMock[key],
+            getLocalSettingSetter(key),
+        ],
     });
 });
 
 vi.mock('@/components/projects/detail/useWorkspaceRefById', () => ({
     useWorkspaceRefById: () => workspaceRefMock,
+}));
+
+vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
+    useWorkspaceScmSnapshotController: () => ({
+        snapshot: {
+            repo: {
+                isRepo: true,
+                worktrees: [
+                    { id: 'gitwt_main', path: '/repo', branch: 'main', isCurrent: true, isMain: true },
+                    { id: 'gitwt_feature', path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
+                ],
+            },
+        },
+        loading: false,
+        error: null,
+        refresh: vi.fn(async () => {}),
+    }),
 }));
 
 vi.mock('@/components/projects/detail/ProjectDetailsMainPanel', () => ({
@@ -183,8 +214,19 @@ describe('project details route stack options stability', () => {
                 tabState: {},
             },
         };
+        localSettingsMock = {};
+        holdLocalSettingsWrites = false;
+        localSettingSetters.clear();
         setOptionsSpy.mockClear();
         setMobileWorkspaceExperienceMock.mockClear();
+        setMobileWorkspaceExperienceMock.mockImplementation((value: 'classic' | 'cockpit') => {
+            mobileWorkspaceExperience = value;
+        });
+        routerMock.spies.push.mockClear();
+        routerMock.spies.back.mockClear();
+        routerMock.spies.replace.mockClear();
+        routerMock.spies.setParams.mockClear();
+        routerMock.state.router.setParams({ workspaceRefId: 'wr_1' });
         stackListeners.clear();
     });
 
@@ -200,4 +242,43 @@ describe('project details route stack options stability', () => {
 
         expect(setOptionsSpy).toHaveBeenCalledTimes(1);
     });
+
+    it('keeps Stack.Screen options stable when the classic details route re-renders', async () => {
+        deviceType = 'desktop';
+        mobileWorkspaceExperience = 'classic';
+        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/details')).default as React.ComponentType;
+        const screen = await renderScreen(<Screen />);
+
+        await screen.update(<Screen />);
+
+        expect(setOptionsSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('canonicalizes stale project terminal activeRootPath params once across route rerenders', async () => {
+        holdLocalSettingsWrites = true;
+        routerMock.state.router.setParams({
+            workspaceRefId: 'wr_1',
+            activeRootPath: '/repo/.worktrees/feature-auth',
+            worktreeId: undefined,
+        });
+        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/terminal')).default as React.ComponentType;
+        const screen = await renderScreen(<Screen />);
+
+        await screen.update(<Screen />);
+
+        expect(routerMock.spies.replace).toHaveBeenCalledTimes(1);
+        expect(routerMock.spies.replace).toHaveBeenCalledWith('/projects/wr_1/terminal?worktreeId=gitwt_feature');
+    });
 });
+
+function getLocalSettingSetter(key: string): (value: unknown) => void {
+    const existing = localSettingSetters.get(key);
+    if (existing) return existing;
+    const setter = (value: unknown) => {
+        if (!holdLocalSettingsWrites) {
+            localSettingsMock[key] = value;
+        }
+    };
+    localSettingSetters.set(key, setter);
+    return setter;
+}

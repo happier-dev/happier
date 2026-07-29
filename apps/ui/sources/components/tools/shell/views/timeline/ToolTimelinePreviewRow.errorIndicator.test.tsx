@@ -60,6 +60,9 @@ describe('ToolTimelinePreviewRow (error indicator)', () => {
 
         const screen = await renderScreen(<ToolTimelinePreviewRow toolMessage={message as any} metadata={null} />);
         expect(collectHostText(screen.tree)).toContain('Ripgrep search timed out after 20 seconds.');
+        const errorStatus = screen.findByTestId('tool-timeline-preview-row-error');
+        expect(errorStatus?.props.accessible).toBe(true);
+        expect(errorStatus?.props.accessibilityLabel).toBe('Ripgrep search timed out after 20 seconds.');
     });
 
     it('does not show the inline error badge for successful completed tools', async () => {
@@ -72,5 +75,24 @@ describe('ToolTimelinePreviewRow (error indicator)', () => {
 
         const screen = await renderScreen(<ToolTimelinePreviewRow toolMessage={message as any} metadata={null} />);
         expect(collectHostText(screen.tree)).not.toContain('Ripgrep search timed out');
+    });
+
+    it('shows a visible and accessible denied status in collapsed previews', async () => {
+        const { ToolTimelinePreviewRow } = await import('./ToolTimelinePreviewRow');
+        const message = makeToolMessage({
+            state: 'error',
+            result: null,
+            permission: { id: 'permission-1', kind: 'filesystem', status: 'denied' },
+        });
+
+        const screen = await renderScreen(<ToolTimelinePreviewRow toolMessage={message as any} metadata={null} />);
+
+        expect(collectHostText(screen.tree)).toContain('errors.permissionDenied');
+        expect(screen.findByTestId('tool-timeline-preview-row-permission-blocked')).toMatchObject({
+            props: {
+                accessible: true,
+                accessibilityLabel: 'errors.permissionDenied',
+            },
+        });
     });
 });

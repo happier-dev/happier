@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { installSessionSettingsCommonModuleMocks } from './sessionSettingsViewTestHelpers';
+import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -29,14 +30,14 @@ installSessionSettingsCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettingMutable: (name: string) => {
+                useSettingMutable: createUseSettingMutableMockFromReader((name) => {
                     if (name === 'sessionDefaultPermissionModeByTargetKey') return [{}, setDefaultPermissionByAgent];
                     if (name === 'sessionPermissionModeApplyTiming') return ['immediate', setPermissionModeApplyTiming];
                     if (name === 'permissionPromptSurface') return ['composer', setPermissionPromptSurface];
                     if (name === 'newSessionDefaultPersistenceModeV1') return ['persisted', setDefaultPersistenceMode];
                     if (name === 'newSessionDefaultPersistenceModeByTargetKeyV1') return [{}, setDefaultPersistenceModeByTargetKey];
                     return [null, vi.fn()];
-                },
+                }),
                 useSettings: () => ({ schemaVersion: 1, opencodeBackendMode: 'server' } as any),
             },
         });

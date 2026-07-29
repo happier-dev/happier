@@ -106,4 +106,30 @@ describe('resolveDaemonVoiceAgentModelIds', () => {
         });
     });
 
+    it('uses layout-v1 owner metadata for Agent and model facts', () => {
+        const result = resolveDaemonVoiceAgentModelIds({
+            session: {
+                id: 's1',
+                modelMode: '',
+                metadataLayoutVersion: 1,
+                metadata: {
+                    v: 1,
+                    flavor: 'codex',
+                },
+                ownerMetadataView: {
+                    flavor: 'gemini',
+                },
+            } as any,
+            agent: {
+                chatModelSource: 'session',
+                commitModelSource: 'session',
+            },
+        });
+
+        expect(result).toEqual({
+            chatModelId: getAgentCore('gemini').model.defaultMode,
+            commitModelId: getAgentCore('gemini').model.defaultMode,
+        });
+    });
+
 });

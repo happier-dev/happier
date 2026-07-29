@@ -1,50 +1,50 @@
 import * as React from 'react';
-import type { ExternalSessionActivityV1, ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol';
-import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
+import type {
+    ExternalSessionActivityV1,
+    ExternalSessionsAgentId,
+    ExternalSessionsCandidatesListResponse,
+    ExternalSessionsSource,
+    PluginAgentExternalSessionLinkData,
+} from '@happier-dev/protocol';
 
 import { machineExternalSessionsCandidatesList } from '@/sync/ops/machineExternalSessions';
 import { t } from '@/text';
+import {
+    resolveExternalSessionBrowseRpcErrorMessage,
+    resolveExternalSessionBrowseThrownErrorMessage,
+} from './externalSessionBrowseErrorPresentation';
 
 export type ExternalSessionBrowseCandidate = Readonly<{
     remoteSessionId: string;
+    candidateKey?: string;
     title?: string;
     updatedAtMs: number;
     activity?: ExternalSessionActivityV1;
     details?: Record<string, unknown>;
+    linkData?: PluginAgentExternalSessionLinkData;
+    linkedSessionId?: string;
+    imported?: boolean;
+    materializedThrough?: number;
 }>;
 
+export type ExternalSessionBrowsePreparation = NonNullable<
+    Extract<ExternalSessionsCandidatesListResponse, { ok: true }>['preparation']
+>;
+export type ExternalSessionBrowseAutoLinkPolicyScope = NonNullable<
+    Extract<ExternalSessionsCandidatesListResponse, { ok: true }>['autoLinkPolicyScopeV1']
+>;
+
+export function readExternalSessionBrowseCandidateKey(
+    candidate: Pick<ExternalSessionBrowseCandidate, 'candidateKey' | 'remoteSessionId'>,
+): string {
+    return candidate.candidateKey ?? candidate.remoteSessionId;
+}
+
 const CANDIDATES_PAGE_LIMIT = 50;
+const MAX_CANDIDATE_INDEX_PREPARATION_REQUESTS = 250;
+const MAX_EMPTY_FULL_SEARCH_PAGE_REQUESTS = 20;
 
 type CandidateApplyMode = 'replace' | 'append' | 'merge';
-
-function isMethodUnavailableMessage(message: string): boolean {
-    const normalized = message.trim().toLowerCase();
-    return normalized === 'rpc method not available' || normalized === 'method not found';
-}
-
-function isMachineRpcTimeoutError(error: unknown): boolean {
-    return Boolean(
-        error
-        && typeof error === 'object'
-        && (error as { code?: unknown }).code === 'MACHINE_RPC_TIMEOUT',
-    );
-}
-
-function resolveExternalSessionBrowseErrorMessage(error: unknown): string {
-    if (isRpcMethodNotAvailableError(error)) {
-        return t('newSession.daemonRpcUnavailableBody');
-    }
-    if (isMachineRpcTimeoutError(error)) {
-        return t('newSession.daemonRpcUnavailableBody');
-    }
-    if (typeof error === 'string' && isMethodUnavailableMessage(error)) {
-        return t('newSession.daemonRpcUnavailableBody');
-    }
-    if (error instanceof Error && isMethodUnavailableMessage(error.message)) {
-        return t('newSession.daemonRpcUnavailableBody');
-    }
-    return error instanceof Error ? error.message : t('externalSessions.browseFailedToLoad');
-}
 
 function hasCandidateTitle(candidate: ExternalSessionBrowseCandidate): boolean {
     return typeof candidate.title === 'string' && candidate.title.trim().length > 0;
@@ -65,18 +65,16 @@ function mergeExternalSessionBrowseCandidate(
 ): ExternalSessionBrowseCandidate {
     return {
         remoteSessionId: current.remoteSessionId,
+        candidateKey: next.candidateKey ?? current.candidateKey,
         title: hasCandidateTitle(next) ? next.title : current.title,
         updatedAtMs: Math.max(current.updatedAtMs, next.updatedAtMs),
         activity: next.activity ?? current.activity,
         details: mergeCandidateDetails(current.details, next.details),
+        linkData: next.linkData ?? current.linkData,
+        linkedSessionId: next.linkedSessionId ?? current.linkedSessionId,
+        imported: next.imported ?? current.imported,
+        materializedThrough: next.materializedThrough ?? current.materializedThrough,
     };
-}
-
-function compareExternalSessionBrowseCandidates(
-    a: ExternalSessionBrowseCandidate,
-    b: ExternalSessionBrowseCandidate,
-): number {
-    return b.updatedAtMs - a.updatedAtMs || a.remoteSessionId.localeCompare(b.remoteSessionId);
 }
 
 function mergeExternalSessionBrowseCandidates(
@@ -85,13 +83,14 @@ function mergeExternalSessionBrowseCandidates(
 ): readonly ExternalSessionBrowseCandidate[] {
     const merged = new Map<string, ExternalSessionBrowseCandidate>();
     for (const candidate of current) {
-        merged.set(candidate.remoteSessionId, candidate);
+        merged.set(readExternalSessionBrowseCandidateKey(candidate), candidate);
     }
     for (const candidate of next) {
-        const existing = merged.get(candidate.remoteSessionId);
-        merged.set(candidate.remoteSessionId, existing ? mergeExternalSessionBrowseCandidate(existing, candidate) : candidate);
+        const candidateKey = readExternalSessionBrowseCandidateKey(candidate);
+        const existing = merged.get(candidateKey);
+        merged.set(candidateKey, existing ? mergeExternalSessionBrowseCandidate(existing, candidate) : candidate);
     }
-    return Array.from(merged.values()).sort(compareExternalSessionBrowseCandidates);
+    return Array.from(merged.values());
 }
 
 export function useExternalSessionBrowseCandidates(params: Readonly<{
@@ -110,55 +109,112 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
         source,
         searchTerm: normalizedSearchTerm || null,
     }), [machineId, normalizedSearchTerm, providerId, serverId, source]);
+    const scopedSourceRef = React.useRef<Readonly<{
+        scopeKey: string;
+        source: ExternalSessionsSource | null;
+    }>>({
+        scopeKey: currentScopeKey,
+        source,
+    });
+    if (scopedSourceRef.current.scopeKey !== currentScopeKey) {
+        scopedSourceRef.current = {
+            scopeKey: currentScopeKey,
+            source,
+        };
+    }
+    const scopedSource = scopedSourceRef.current.source;
 
     const [candidates, setCandidates] = React.useState<readonly ExternalSessionBrowseCandidate[]>([]);
     const [nextCursor, setNextCursor] = React.useState<string | null>(null);
     const [loading, setLoading] = React.useState(false);
     const [loadingMore, setLoadingMore] = React.useState(false);
     const [searchAugmenting, setSearchAugmenting] = React.useState(false);
+    const [searchIncomplete, setSearchIncomplete] = React.useState(false);
+    const [preparation, setPreparation] = React.useState<ExternalSessionBrowsePreparation | null>(null);
+    const [autoLinkPolicyScope, setAutoLinkPolicyScope] =
+        React.useState<ExternalSessionBrowseAutoLinkPolicyScope | null>(null);
     const [error, setError] = React.useState<string | null>(null);
     const [loadedScopeKey, setLoadedScopeKey] = React.useState<string | null>(null);
 
     const loadGenerationRef = React.useRef(0);
+    const loadedScopeKeyRef = React.useRef<string | null>(null);
+    const activePageRequestKeysRef = React.useRef(new Set<string>());
+    const activeScopeAbortControllerRef = React.useRef<AbortController | null>(null);
+    const seenPageCursorsRef = React.useRef<{
+        scopeKey: string;
+        cursors: Set<string>;
+    }>({ scopeKey: currentScopeKey, cursors: new Set<string>() });
 
     const loadCandidates = React.useCallback(async (opts?: Readonly<{ cursor?: string | null; append?: boolean }>) => {
-        if (!machineId || !providerId || !source) return;
+        if (!machineId || !providerId || !scopedSource) return;
 
         const append = opts?.append === true;
+        const requestedCursor = opts?.cursor ?? null;
+
+        let abortController: AbortController;
         if (!append) {
+            activeScopeAbortControllerRef.current?.abort();
+            abortController = new AbortController();
+            activeScopeAbortControllerRef.current = abortController;
             loadGenerationRef.current += 1;
+            if (loadedScopeKeyRef.current !== currentScopeKey) {
+                loadedScopeKeyRef.current = null;
+                setLoadedScopeKey(null);
+                setAutoLinkPolicyScope(null);
+            }
+            seenPageCursorsRef.current = {
+                scopeKey: currentScopeKey,
+                cursors: new Set<string>(),
+            };
+        } else {
+            abortController = activeScopeAbortControllerRef.current ?? new AbortController();
         }
         const currentGeneration = loadGenerationRef.current;
+        const pageRequestKey = `${currentGeneration}\u0000${currentScopeKey}\u0000${requestedCursor ?? '<root>'}`;
+        if (activePageRequestKeysRef.current.has(pageRequestKey)) return;
+        activePageRequestKeysRef.current.add(pageRequestKey);
 
         if (append) {
             setLoadingMore(true);
         } else {
             setLoading(true);
+            setLoadingMore(false);
             setSearchAugmenting(false);
+            setSearchIncomplete(false);
+            setPreparation(null);
             setError(null);
         }
 
         const shouldStartWithFastSearch = !append && !opts?.cursor && normalizedSearchTerm.length > 0;
-        const requestCandidates = async (searchMode?: 'fast' | 'full') => {
+        let requestObservedPreparation = false;
+        const requestCandidates = async (
+            searchMode?: 'fast' | 'full',
+            cursor: string | null = requestedCursor,
+        ) => {
             const request = {
                 machineId,
                 agentId: providerId,
-                source,
+                source: scopedSource,
                 limit: CANDIDATES_PAGE_LIMIT,
                 ...(normalizedSearchTerm ? { searchTerm: normalizedSearchTerm } : {}),
-                ...(opts?.cursor ? { cursor: opts.cursor } : {}),
+                ...(cursor ? { cursor } : {}),
                 ...(searchMode ? { searchMode } : {}),
             };
-            return serverId
-                ? machineExternalSessionsCandidatesList(request, { serverId })
-                : machineExternalSessionsCandidatesList(request);
+            return machineExternalSessionsCandidatesList(request, {
+                ...(serverId ? { serverId } : {}),
+                signal: abortController.signal,
+            });
         };
         const applyResult = (result: Awaited<ReturnType<typeof machineExternalSessionsCandidatesList>>, mode: CandidateApplyMode): boolean => {
             if (!result.ok) {
+                loadedScopeKeyRef.current = currentScopeKey;
+                setLoadedScopeKey(currentScopeKey);
                 if (mode === 'merge') {
                     return false;
                 }
-                setError(resolveExternalSessionBrowseErrorMessage(result.error));
+                setPreparation(null);
+                if (!append) setAutoLinkPolicyScope(null);
+                setError(resolveExternalSessionBrowseRpcErrorMessage(result.errorCode, 'list'));
                 if (!append) {
                     setCandidates([]);
                     setNextCursor(null);
@@ -168,33 +224,97 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
 
             const nextItems = result.candidates.map((candidate) => ({
                 remoteSessionId: candidate.remoteSessionId,
+                candidateKey: candidate.candidateKey,
                 title: candidate.title,
                 updatedAtMs: candidate.updatedAtMs,
                 activity: candidate.activity,
                 details: candidate.details,
+                linkData: candidate.linkData,
+                linkedSessionId: candidate.linkedSessionId,
+                imported: candidate.imported,
+                materializedThrough: candidate.materializedThrough,
             })) satisfies readonly ExternalSessionBrowseCandidate[];
 
+            loadedScopeKeyRef.current = currentScopeKey;
             setLoadedScopeKey(currentScopeKey);
+            setPreparation(null);
+            if (mode !== 'append') {
+                setAutoLinkPolicyScope(result.autoLinkPolicyScopeV1 ?? null);
+            }
             setCandidates((current) => {
-                if (mode === 'append') return [...current, ...nextItems];
+                if (mode === 'append') return mergeExternalSessionBrowseCandidates(current, nextItems);
                 if (mode === 'merge') return mergeExternalSessionBrowseCandidates(current, nextItems);
-                return nextItems;
+                return mergeExternalSessionBrowseCandidates([], nextItems);
             });
+            setSearchIncomplete(result.searchIncomplete === true);
             if (mode === 'merge') {
                 setNextCursor((current) => result.nextCursor ?? (result.searchIncomplete ? current : null));
             } else {
-                setNextCursor(result.nextCursor ?? null);
+                const returnedCursor = result.nextCursor ?? null;
+                const cursorState = seenPageCursorsRef.current;
+                if (cursorState.scopeKey !== currentScopeKey) {
+                    seenPageCursorsRef.current = {
+                        scopeKey: currentScopeKey,
+                        cursors: new Set<string>(),
+                    };
+                }
+                const seenCursors = seenPageCursorsRef.current.cursors;
+                if (returnedCursor && seenCursors.has(returnedCursor)) {
+                    setNextCursor(null);
+                } else {
+                    if (returnedCursor) seenCursors.add(returnedCursor);
+                    setNextCursor(returnedCursor);
+                }
             }
             setError(null);
             return true;
         };
+        const requestCandidatePage = async (
+            searchMode?: 'fast' | 'full',
+            cursor: string | null = requestedCursor,
+        ): Promise<Readonly<{
+            result: Awaited<ReturnType<typeof machineExternalSessionsCandidatesList>>;
+            prepared: boolean;
+        }> | null> => {
+            let prepared = false;
+            let preparationRequestCount = 0;
+            let lastPreparationScanned: number | null = null;
+            while (preparationRequestCount < MAX_CANDIDATE_INDEX_PREPARATION_REQUESTS) {
+                const result = await requestCandidates(searchMode, cursor);
+                if (abortController.signal.aborted || loadGenerationRef.current !== currentGeneration) {
+                    return null;
+                }
+                if (!result.ok || !result.preparation || append || cursor !== null) {
+                    return { result, prepared };
+                }
+                preparationRequestCount += 1;
+                if (
+                    lastPreparationScanned !== null
+                    && result.preparation.scanned <= lastPreparationScanned
+                ) {
+                    throw new Error(t('externalSessions.browseFailedToLoad'));
+                }
+                lastPreparationScanned = result.preparation.scanned;
+
+                prepared = true;
+                requestObservedPreparation = true;
+                loadedScopeKeyRef.current = currentScopeKey;
+                setLoadedScopeKey(currentScopeKey);
+                setCandidates([]);
+                setNextCursor(null);
+                setAutoLinkPolicyScope(null);
+                setError(null);
+                setPreparation(result.preparation);
+                setLoading(true);
+                setSearchAugmenting(false);
+            }
+            throw new Error(t('externalSessions.browseFailedToLoad'));
+        };
 
         try {
-            const result = await requestCandidates(shouldStartWithFastSearch ? 'fast' : undefined);
-
-            if (loadGenerationRef.current !== currentGeneration) {
-                return;
-            }
+            const pageResult = await requestCandidatePage(shouldStartWithFastSearch ? 'fast' : undefined);
+            if (!pageResult) return;
+            const { result } = pageResult;
 
             const ok = applyResult(result, append ? 'append' : 'replace');
             if (!ok || !shouldStartWithFastSearch || !result.ok || !result.searchIncomplete) {
@@ -204,26 +324,59 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             setLoading(false);
             setSearchAugmenting(true);
             try {
-                const augmentedResult = await requestCandidates('full');
-                if (loadGenerationRef.current !== currentGeneration) {
+                requestObservedPreparation = false;
+                let augmentedPageResult = await requestCandidatePage('full');
+                if (!augmentedPageResult) return;
+                const observedEmptySearchCursors = new Set<string>();
+                let fullSearchPageRequests = 1;
+                while (
+                    augmentedPageResult.result.ok
+                    && augmentedPageResult.result.searchIncomplete
+                    && augmentedPageResult.result.candidates.length === 0
+                    && augmentedPageResult.result.nextCursor
+                    && fullSearchPageRequests < MAX_EMPTY_FULL_SEARCH_PAGE_REQUESTS
+                ) {
+                    const continuationCursor = augmentedPageResult.result.nextCursor;
+                    if (observedEmptySearchCursors.has(continuationCursor)) {
+                        throw new Error(t('externalSessions.browseFailedToLoad'));
+                    }
+                    observedEmptySearchCursors.add(continuationCursor);
+                    const continuationPage = await requestCandidatePage('full', continuationCursor);
+                    if (!continuationPage) return;
+                    augmentedPageResult = continuationPage;
+                    fullSearchPageRequests += 1;
+                }
+                applyResult(
+                    augmentedPageResult.result,
+                    augmentedPageResult.prepared ? 'replace' : 'merge',
+                );
+            } catch (augmentationError) {
+                if (abortController.signal.aborted || loadGenerationRef.current !== currentGeneration) {
                     return;
                 }
-                applyResult(augmentedResult, 'merge');
-            } catch {
-                // Keep fast search results visible if slower augmentation fails.
+                if (requestObservedPreparation) {
+                    setCandidates([]);
+                    setNextCursor(null);
+                    setPreparation(null);
+                    setError(resolveExternalSessionBrowseThrownErrorMessage(augmentationError, 'list'));
+                }
+                // Otherwise keep fast search results visible if slower augmentation fails.
             }
         } catch (loadError) {
-            if (loadGenerationRef.current !== currentGeneration) {
+            if (abortController.signal.aborted || loadGenerationRef.current !== currentGeneration) {
                 return;
             }
+            loadedScopeKeyRef.current = currentScopeKey;
             setLoadedScopeKey(currentScopeKey);
-            setError(resolveExternalSessionBrowseErrorMessage(loadError));
+            setPreparation(null);
+            setError(resolveExternalSessionBrowseThrownErrorMessage(loadError, 'list'));
             if (!append) {
                 setCandidates([]);
                 setNextCursor(null);
             }
         } finally {
-            if (loadGenerationRef.current === currentGeneration) {
+            activePageRequestKeysRef.current.delete(pageRequestKey);
+            if (!abortController.signal.aborted && loadGenerationRef.current === currentGeneration) {
                 if (append) {
                     setLoadingMore(false);
                 } else {
@@ -232,16 +385,42 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 }
             }
         }
-    }, [currentScopeKey, machineId, normalizedSearchTerm, providerId, serverId, source]);
+    }, [currentScopeKey, machineId, normalizedSearchTerm, providerId, scopedSource, serverId]);
 
     React.useEffect(() => {
         void loadCandidates();
     }, [loadCandidates]);
 
+    React.useEffect(() => () => {
+        loadGenerationRef.current += 1;
+        activeScopeAbortControllerRef.current?.abort();
+        activePageRequestKeysRef.current.clear();
+    }, []);
+
     const loadMore = React.useCallback(async () => {
         if (!nextCursor || loadingMore) return;
         await loadCandidates({ cursor: nextCursor, append: true });
     }, [loadCandidates, loadingMore, nextCursor]);
+    const cancelPreparation = React.useCallback(() => {
+        loadGenerationRef.current += 1;
+        activeScopeAbortControllerRef.current?.abort();
+        activeScopeAbortControllerRef.current = null;
+        activePageRequestKeysRef.current.clear();
+        loadedScopeKeyRef.current = currentScopeKey;
+        setLoadedScopeKey(currentScopeKey);
+        setCandidates([]);
+        setNextCursor(null);
+        setLoading(false);
+        setLoadingMore(false);
+        setSearchAugmenting(false);
+        setSearchIncomplete(false);
+        setPreparation(null);
+        setAutoLinkPolicyScope(null);
+        setError(t('externalSessions.browseIndexingCancelled'));
+    }, [currentScopeKey]);
+    const reload = React.useCallback(async () => {
+        await loadCandidates();
+    }, [loadCandidates]);
 
     const scopeMatches = loadedScopeKey === currentScopeKey;
 
@@ -251,7 +430,12 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
         loading,
         loadingMore,
         searchAugmenting: scopeMatches ? searchAugmenting : false,
+        searchIncomplete: scopeMatches ? searchIncomplete : false,
+        preparation: scopeMatches ? preparation : null,
+        autoLinkPolicyScope: scopeMatches ? autoLinkPolicyScope : null,
         error: scopeMatches ? error : null,
         loadMore,
+        cancelPreparation,
+        reload,
     } as const;
 }

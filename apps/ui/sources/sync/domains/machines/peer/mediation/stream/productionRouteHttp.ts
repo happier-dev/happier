@@ -4,10 +4,13 @@ import {
     MachineLiveStreamCapsV1Schema,
     MachineLiveStreamRelayAuthorizationV1Schema,
     MachineLiveStreamStartRequestV1Schema,
+    PEER_MACHINE_LIVE_STREAM_DIRECT_START_PATH_V2,
     PEER_MEDIATION_RECEIPTS,
     PeerLoopbackEndpointCandidateV1Schema,
     PeerLoopbackProbeResponseV1Schema,
     SignedDirectRouteGrantV1Schema,
+    SignedDirectRouteGrantV2Schema,
+    PeerMachineLiveStreamDirectStartResponseV2Schema,
     createPeerRouteNonceSigningInputV1,
     type MachineLiveStreamCapsV1,
     type MachineLiveStreamRelayAuthorizationV1,
@@ -16,7 +19,9 @@ import {
     type PeerLoopbackProbeRequestV1,
     type PeerLoopbackProbeResponseV1,
     type PeerRouteNonceProofV1,
+    type PeerRouteEphemeralProofV2,
     type SignedDirectRouteGrantV1,
+    type SignedDirectRouteGrantV2,
 } from '@happier-dev/protocol';
 
 import { isLegacyAuthCredentials, type AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -53,7 +58,9 @@ const MachineLiveStreamDirectStartResponseSchema = z.discriminatedUnion('ok', [
     }).passthrough(),
 ]);
 
-export type MachineLiveStreamDirectStartResponse = z.infer<typeof MachineLiveStreamDirectStartResponseSchema>;
+export type MachineLiveStreamDirectStartResponse =
+    | z.infer<typeof MachineLiveStreamDirectStartResponseSchema>
+    | z.infer<typeof PeerMachineLiveStreamDirectStartResponseV2Schema>;
 
 export type TargetServer = Readonly<{
     serverId: string;
@@ -71,6 +78,11 @@ export type MachineLiveStreamUnsignedStartRequest = Readonly<{
     routeKind: 'loopback_direct' | 'server_relay';
     sourceMachineId: string;
     targetMachineId: string;
+    // Optional per-tab viewer socket id (C1/W1-C-2). When the watcher is a user-scoped browser
+    // socket, this binds the stream to the exact tab so the server relay can deliver frames via
+    // `io.to(viewerSocketId)`. It is part of the canonical-JSON signing input, so it must be
+    // identical at mint, start-request, and handler-verify time. Omitted for machine→machine.
+    viewerSocketId?: string;
     maxBitrateBps: number;
     maxFramesPerSecond: number;
     maxFrameBytes: number;
@@ -150,9 +162,11 @@ export function createBaseStartRequest(input: Readonly<{
     routeKind: 'loopback_direct' | 'server_relay';
     streamId: string;
     streamFamily: string;
+    viewerSocketId?: string | null;
     caps: MachineLiveStreamCapsV1;
 }>): MachineLiveStreamUnsignedStartRequest {
     const caps = MachineLiveStreamCapsV1Schema.parse(input.caps);
+    const viewerSocketId = String(input.viewerSocketId ?? '').trim();
     return {
         v: 1,
         streamId: input.streamId,
@@ -160,6 +174,7 @@ export function createBaseStartRequest(input: Readonly<{
         routeKind: input.routeKind,
         sourceMachineId: input.sourceMachineId,
         targetMachineId: input.targetMachineId,
+        ...(viewerSocketId ? { viewerSocketId } : {}),
         maxBitrateBps: caps.maxBitrateBps,
         maxFramesPerSecond: caps.maxFramesPerSecond,
         maxFrameBytes: caps.maxFrameBytes,
@@ -224,6 +239,54 @@ export async function requestLiveStreamRouteGrant(input: Readonly<{
             };
         }
         const parsed = SignedDirectRouteGrantV1Schema.safeParse(body.grant);
+        return parsed.success ? { ok: true, value: parsed.data } : { ok: false, reasonCode: 'grant_invalid' };
+    } catch {
+        return { ok: false, reasonCode: 'grant_missing' };
+    }
+}
+
+export async function requestLiveStreamRouteGrantV2(input: Readonly<{
+    server: TargetServer;
+    credentials: AuthCredentials;
+    sourceMachineId: string;
+    endpointFingerprint: string;
+    streamId: string;
+    streamFamily: string;
+    caps: MachineLiveStreamCapsV1;
+    ephemeralPublicKeyBase64Url: string;
+    timeoutMs?: number;
+}>): Promise<OperationResult<SignedDirectRouteGrantV2>> {
+    try {
+        const response = await fetchJson({
+            url: joinBaseAndPath(input.server.serverUrl, '/v1/machines/peer/mediation/route-grants'),
+            timeoutMs: input.timeoutMs,
+            init: {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${input.credentials.token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    v: 2,
+                    kind: 'ephemeral_ed25519',
+                    ephemeralPublicKeyBase64Url: input.ephemeralPublicKeyBase64Url,
+                    machineId: input.sourceMachineId,
+                    flowKind: 'live_stream',
+                    routeKind: 'loopback_direct',
+                    endpointFingerprint: input.endpointFingerprint,
+                    ttlMs: DIRECT_ROUTE_GRANT_TTL_MS.directLiveStream,
+                    scope: {
+                        kind: 'live_stream',
+                        streamId: input.streamId,
+                        streamFamily: input.streamFamily,
+                        maxBitrateBps: input.caps.maxBitrateBps,
+                        maxDurationMs: input.caps.maxDurationMs,
+                        ...(input.caps.maxTotalBytes ? { maxTotalBytes: input.caps.maxTotalBytes } : {}),
+                    },
+                }),
+            },
+        });
+        if (!response.ok) return { ok: false, reasonCode: 'grant_missing' };
+        const body = response.body as { ok?: unknown; reasonCode?: unknown; grant?: unknown } | null;
+        if (body?.ok !== true) return { ok: false, reasonCode: typeof body?.reasonCode === 'string' ? body.reasonCode : 'grant_missing' };
+        const parsed = SignedDirectRouteGrantV2Schema.safeParse(body.grant);
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false, reasonCode: 'grant_invalid' };
     } catch {
         return { ok: false, reasonCode: 'grant_missing' };
@@ -315,6 +378,14 @@ function resolveDirectStreamStartUrl(endpointUrl: string): string {
     return parsed.toString();
 }
 
+function resolveDirectStreamStartUrlV2(endpointUrl: string): string {
+    const parsed = new URL(endpointUrl);
+    parsed.pathname = PEER_MACHINE_LIVE_STREAM_DIRECT_START_PATH_V2;
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString();
+}
+
 export async function postLiveStreamDirectStart(input: Readonly<{
     endpoint: PeerLoopbackEndpointCandidateV1;
     grant: SignedDirectRouteGrantV1;
@@ -353,6 +424,42 @@ export async function postLiveStreamDirectStart(input: Readonly<{
     }
 }
 
+export async function postLiveStreamDirectStartV2(input: Readonly<{
+    endpoint: PeerLoopbackEndpointCandidateV1;
+    grant: SignedDirectRouteGrantV2;
+    proof: PeerRouteEphemeralProofV2;
+    startRequest: MachineLiveStreamStartRequestV1;
+    timeoutMs?: number;
+}>): Promise<OperationResult<MachineLiveStreamDirectStartResponse>> {
+    try {
+        const response = await fetchJson({
+            url: resolveDirectStreamStartUrlV2(input.endpoint.url),
+            timeoutMs: input.timeoutMs,
+            init: {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    v: 2,
+                    streamId: input.startRequest.streamId,
+                    streamFamily: input.startRequest.streamFamily,
+                    routeKind: 'loopback_direct',
+                    flowKind: 'live_stream',
+                    endpointFingerprint: input.endpoint.endpointFingerprint,
+                    grant: input.grant,
+                    proof: input.proof,
+                    startRequest: input.startRequest,
+                }),
+            },
+        });
+        if (!response.ok) return { ok: false, reasonCode: 'topology_unavailable' };
+        const parsed = PeerMachineLiveStreamDirectStartResponseV2Schema.safeParse(response.body);
+        if (!parsed.success) return { ok: false, reasonCode: 'invalid_request' };
+        return parsed.data.ok ? { ok: true, value: parsed.data } : { ok: false, reasonCode: parsed.data.reasonCode };
+    } catch {
+        return { ok: false, reasonCode: 'topology_unavailable' };
+    }
+}
+
 export async function requestLiveStreamRelayAuthorization(input: Readonly<{
     server: TargetServer;
     credentials: AuthCredentials;
@@ -375,6 +482,12 @@ export async function requestLiveStreamRelayAuthorization(input: Readonly<{
                     flowKind: 'live_stream',
                     routeKind: 'server_relay',
                     ttlMs: DIRECT_ROUTE_GRANT_TTL_MS.serverRelayedLiveStream,
+                    // Per-tab viewer target (W1-C-2): the server mint binds this socket id into the
+                    // signed grant payload so frames are delivered to the exact tab. Omitted on the
+                    // legacy machine→machine path (no viewer socket).
+                    ...(input.startRequest.viewerSocketId
+                        ? { viewerSocketId: input.startRequest.viewerSocketId }
+                        : {}),
                     maxFramesPerSecond: input.startRequest.maxFramesPerSecond,
                     maxFrameBytes: input.startRequest.maxFrameBytes,
                     scope: {

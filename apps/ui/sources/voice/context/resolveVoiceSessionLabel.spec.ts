@@ -99,7 +99,7 @@ describe('resolveVoiceSessionLabel', () => {
     ).toBe('Trimmed session summary');
   });
 
-  it('trims the session id before resolving a raw session name', () => {
+  it('does not disclose a raw session name when summary sharing is disabled', () => {
     storage.setState((state: any) => ({
       ...state,
       sessions: {
@@ -119,6 +119,61 @@ describe('resolveVoiceSessionLabel', () => {
         voiceShareSessionSummary: false,
         voiceShareFilePaths: true,
       }),
-    ).toBe('Raw session name');
+    ).toBe('project-alpha');
+  });
+
+  it.each([undefined, null, 'true', 1, {}, []])(
+    'fails closed for omitted or malformed privacy prefs=%p',
+    (privacyPrefs) => {
+      const label = Reflect.apply(resolveVoiceSessionLabel, undefined, [
+        's_private',
+        privacyPrefs,
+        {
+          metadata: {
+            summaryText: 'PRIVATE SESSION SUMMARY',
+            path: '/Users/alice/Company/PrivateProject',
+          },
+        },
+      ]);
+
+      expect(label).toBe('the current session');
+      expect(label).not.toContain('PRIVATE SESSION SUMMARY');
+      expect(label).not.toContain('PrivateProject');
+    },
+  );
+
+  it('uses only the layout-v1 owner view for private path labels', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      sessions: {
+        s_private: {
+          id: 's_private',
+          metadataLayoutVersion: 1,
+          metadata: { v: 1, path: '/shared/private-lookalike' },
+          ownerMetadataView: { path: '/owner/real-project' },
+        },
+      },
+    }));
+
+    expect(resolveVoiceSessionLabel('s_private', {
+      voiceShareSessionSummary: false,
+      voiceShareFilePaths: true,
+    })).toBe('real-project');
+
+    storage.setState((state: any) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        s_private: {
+          ...state.sessions.s_private,
+          ownerMetadataView: null,
+        },
+      },
+    }));
+
+    expect(resolveVoiceSessionLabel('s_private', {
+      voiceShareSessionSummary: false,
+      voiceShareFilePaths: true,
+    })).toBe('the current session');
   });
 });

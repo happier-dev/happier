@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { migrateAccountSettingsServerIdentityKeys } from './serverIdentityKeyMigration';
 
 describe('migrateAccountSettingsServerIdentityKeys', () => {
-    it('preserves explicit expanded tombstones when collapsed group keys collide during identity migration', () => {
+    it('does not migrate local collapsed group keys through account server identity migration', () => {
         const migrated = migrateAccountSettingsServerIdentityKeys({
             settings: {
                 collapsedGroupKeysV1: {
@@ -16,11 +16,12 @@ describe('migrateAccountSettingsServerIdentityKeys', () => {
             legacyServerIds: ['localhost-18829'],
         });
 
-        expect(migrated.changed).toBe(true);
-        expect(migrated.changedKeys).toContain('collapsedGroupKeysV1');
+        expect(migrated.changed).toBe(false);
+        expect(migrated.changedKeys).not.toContain('collapsedGroupKeysV1');
         expect(migrated.settings.collapsedGroupKeysV1).toEqual({
             'server:srv_current:active': false,
-            'server:srv_current:inactive': true,
+            'server:localhost-18829:active': true,
+            'server:localhost-18829:inactive': true,
         });
     });
 });

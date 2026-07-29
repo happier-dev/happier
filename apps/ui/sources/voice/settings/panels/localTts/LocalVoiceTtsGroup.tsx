@@ -62,20 +62,36 @@ export function LocalVoiceTtsGroup(props: {
       <Item
         title={t('settingsVoice.local.autoSpeak')}
         subtitle={t('settingsVoice.local.autoSpeakSubtitle')}
-        rightElement={<Switch value={cfg.autoSpeakReplies} onValueChange={(v) => setCfg({ autoSpeakReplies: v })} />}
+        rightElement={(
+          <Switch
+            accessibilityLabel={t('settingsVoice.local.autoSpeak')}
+            value={cfg.autoSpeakReplies}
+            onValueChange={(v) => setCfg({ autoSpeakReplies: v })}
+          />
+        )}
       />
       <Item
         title={t('settingsVoice.local.bargeIn')}
-        rightElement={<Switch value={cfg.bargeInEnabled} onValueChange={(v) => setCfg({ bargeInEnabled: v })} />}
+        rightElement={(
+          <Switch
+            accessibilityLabel={t('settingsVoice.local.bargeIn')}
+            value={cfg.bargeInEnabled}
+            onValueChange={(v) => setCfg({ bargeInEnabled: v })}
+          />
+        )}
       />
 
-      <providerSpec.Settings
-        cfgTts={cfg}
-        setTts={props.setTts}
-        networkTimeoutMs={props.networkTimeoutMs}
-        popoverBoundaryRef={props.popoverBoundaryRef}
-        daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
-      />
+      {providerSpec ? (
+        <providerSpec.Settings
+          cfgTts={cfg}
+          setTts={props.setTts}
+          networkTimeoutMs={props.networkTimeoutMs}
+          popoverBoundaryRef={props.popoverBoundaryRef}
+          daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+        />
+      ) : (
+        <Item title={t('common.unavailable')} />
+      )}
 
       <Item
         title={t('settingsVoice.local.testTts')}
@@ -88,7 +104,9 @@ export function LocalVoiceTtsGroup(props: {
               if (testStatus === 'speaking') return;
               setTestStatus('speaking');
               const sample = t('settingsVoice.local.testTtsSample');
-              await getLocalTtsProviderSpec(cfg.provider).test({ cfgTts: cfg, networkTimeoutMs: props.networkTimeoutMs, sample });
+              const selectedProvider = getLocalTtsProviderSpec(cfg.provider);
+              if (!selectedProvider) throw new Error('voice_tts_provider_unavailable');
+              await selectedProvider.test({ cfgTts: cfg, networkTimeoutMs: props.networkTimeoutMs, sample });
             } catch (err) {
               fireAndForget(Promise.resolve().then(() => Modal.alert(t('common.error'), formatVoiceTestFailureMessage(t('settingsVoice.local.testTtsFailed'), err))), {
                 tag: 'LocalVoiceTtsGroup.alert.testTtsFailed',

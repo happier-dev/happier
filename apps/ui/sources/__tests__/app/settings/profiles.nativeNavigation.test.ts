@@ -25,6 +25,7 @@ type ProfileRow = {
     compatibility: ProfileCompatibility;
 };
 type CapturedProfilesListProps = {
+    includeDefaultEnvironmentRow?: boolean;
     onAddProfilePress?: () => void;
     onDuplicateProfile?: (profile: ProfileRow) => void;
     onEditProfile?: (profile: ProfileRow) => void;
@@ -148,6 +149,11 @@ describe('ProfileManager (native)', () => {
             pathname: profileEditPath,
             params: {},
         });
+    });
+
+    it('keeps Default Environment visible as the first-class no-profile choice', async () => {
+        await renderProfileManager();
+        expect(capturedProfilesListProps?.includeDefaultEnvironmentRow).toBe(true);
     });
 
     it('navigates to the profile edit screen instead of using the inline modal editor', async () => {

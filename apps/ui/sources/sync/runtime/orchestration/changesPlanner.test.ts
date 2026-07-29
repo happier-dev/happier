@@ -105,6 +105,55 @@ describe('planSyncActionsFromChanges', () => {
         expect(planned.invalidate.profile).toBe(false);
     });
 
+    it('plans scoped session organization snapshot refreshes', () => {
+        const planned = planSyncActionsFromChanges([
+            buildChange({
+                cursor: 1,
+                kind: 'account',
+                entityId: 'session-organization',
+                hint: {
+                    sessionOrganization: true,
+                    scope: 'labels',
+                    sessionIds: ['s1'],
+                    folderIds: ['folder-a'],
+                    tagIds: ['tag-a'],
+                    orderScopes: [{ scopeKind: 'workspace', scopeKey: 'server-a' }],
+                },
+            }),
+        ]);
+
+        expect(planned.sessionOrganization).toEqual({
+            mode: 'snapshot',
+            assignmentSessionIds: ['s1'],
+            folderIds: ['folder-a'],
+            tagIds: ['tag-a'],
+            orderScopes: [{ scopeKind: 'workspace', scopeKey: 'server-a' }],
+            includeFolders: false,
+            includeTags: false,
+            includeLabels: true,
+        });
+        expect(planned.invalidate.settings).toBe(false);
+        expect(planned.invalidate.profile).toBe(false);
+    });
+
+    it('plans a session-list refresh for pin organization hints without message catch-up', () => {
+        const planned = planSyncActionsFromChanges([
+            buildChange({
+                cursor: 1,
+                kind: 'account',
+                entityId: 'session-organization',
+                hint: { sessionOrganization: true, scope: 'pins', sessionIds: ['s-pin'] },
+            }),
+        ]);
+
+        expect(planned.invalidate.sessions).toBe(true);
+        expect(planned.sessionIdsToCatchUp).toEqual([]);
+        expect(planned.sessionOrganization).toMatchObject({
+            mode: 'snapshot',
+            assignmentSessionIds: ['s-pin'],
+        });
+    });
+
     it('records unknown kinds as unsupported without treating them as safe invalidations', () => {
         const planned = planSyncActionsFromChanges([
             buildChange({ cursor: 4, kind: 'unknown-change-kind' as ApiChangeEntry['kind'] }),
@@ -120,7 +169,7 @@ describe('planSyncActionsFromChanges', () => {
         expect(Object.keys(CHANGE_CHECKPOINT_COVERAGE).sort()).toEqual([...ChangeKindSchema.options].sort());
     });
 
-    it('classifies loaded session rows as critical and unloaded session rows as explicit skips', () => {
+    it('classifies every session shell change as critical regardless of transcript load state', () => {
         const loaded = classifyChangeForCheckpoint(
             buildChange({ cursor: 1, kind: 'session', entityId: 'loaded' }),
             { isSessionMessagesLoaded: (sessionId) => sessionId === 'loaded' },
@@ -131,7 +180,7 @@ describe('planSyncActionsFromChanges', () => {
         );
 
         expect(loaded.decision).toBe('critical');
-        expect(unloaded.decision).toBe('intentionally-skipped-by-explicit-policy');
+        expect(unloaded.decision).toBe('critical');
     });
 
     it('plans automation invalidation when automation change kind is present', () => {

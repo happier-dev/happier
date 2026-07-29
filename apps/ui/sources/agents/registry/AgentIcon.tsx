@@ -36,7 +36,9 @@ function applySvgIconColor(svgXml: string, color: string): string {
 
 export const AgentIcon = React.memo(function AgentIcon(props: AgentIconProps) {
     const { agentId, size, color, style, testID } = props;
-    const { theme } = useUnistyles();
+    const { theme, rt } = useUnistyles();
+    // Raw SVG XML is resolved in JS, so subscribe it to adaptive appearance changes explicitly.
+    void rt.colorScheme;
 
     const svgXml = getAgentIconSvgXml(agentId, theme);
     if (svgXml) {

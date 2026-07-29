@@ -4,7 +4,7 @@ import type { VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSt
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
-import { DaemonVoiceInferenceModelSection } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceModelSection';
+import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
 
 export function LocalNeuralSttSettings(props: {
   cfg: VoiceLocalSttSettings;
@@ -32,10 +32,9 @@ export function LocalNeuralSttSettings(props: {
         popoverBoundaryRef={props.popoverBoundaryRef}
         allowDeviceSelection={executionPolicy.allowDeviceSelection}
       />
-      <DaemonVoiceInferenceModelSection
+      <SelectedDaemonModelPackRow
         packId={props.cfg.localNeural.assetId}
-        kind="stt"
-        daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+        kind="stt_sherpa"
       />
     </>
   );

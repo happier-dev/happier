@@ -31,7 +31,7 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
         forbiddenImports: ['@/voice/runtime/VoicePlaybackController'],
     },
     {
-        filePath: 'sources/voice/output/GoogleCloudTtsController.ts',
+        filePath: 'sources/voice/runtime/bundledSpeech/bundledSpeechRuntime.ts',
         requiredImports: ['@/voice/runtime/playback/VoicePlaybackController'],
         forbiddenImports: ['@/voice/runtime/VoicePlaybackController'],
     },
@@ -57,11 +57,6 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
     },
     {
         filePath: 'sources/voice/settings/panels/localTts/LocalNeuralTtsSettings.native.tsx',
-        requiredImports: ['@/voice/runtime/playback/VoicePlaybackController'],
-        forbiddenImports: ['@/voice/runtime/VoicePlaybackController'],
-    },
-    {
-        filePath: 'sources/voice/settings/panels/localTts/providers/googleCloud/googleCloudTtsProvider.tsx',
         requiredImports: ['@/voice/runtime/playback/VoicePlaybackController'],
         forbiddenImports: ['@/voice/runtime/VoicePlaybackController'],
     },

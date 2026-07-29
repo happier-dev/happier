@@ -12,6 +12,7 @@ import { useProfile as useAccountProfile } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { openExternalSessionsResumeIdPickerModal } from '@/components/sessions/external/browse/openExternalSessionsResumeIdPickerModal';
 import { canBrowseExternalSessions, resolveExternalSessionBrowseLockedSource } from '@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption';
+import type { PluginProjectionV2 } from '@happier-dev/protocol';
 
 const LARGE_PICKER_LAYOUT: Pick<
     AgentInputContentPopoverConfig,
@@ -72,6 +73,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
     agentLabel: string;
     agentOptionState: ExternalSessionBrowseLockContext['agentOptionState'];
     settings: ExternalSessionBrowseLockContext['settings'];
+    pluginProjectionV2: PluginProjectionV2 | null | undefined;
 }>): Readonly<{
     pathPopover: AgentInputContentPopoverConfig;
     machinePopover: AgentInputContentPopoverConfig;
@@ -205,7 +207,10 @@ export function useNewSessionInputPopovers(params: Readonly<{
     const resumePopover = React.useMemo<AgentInputContentPopoverConfig>(() => {
         const browseEnabled = params.externalSessionsFeatureEnabled
             && Boolean(params.selectedMachineId)
-            && canBrowseExternalSessions(params.agentType);
+            && canBrowseExternalSessions({
+                agentId: params.agentType,
+                projection: params.pluginProjectionV2,
+            });
         return {
             renderContent: ({ requestClose }) => (
                 <NewSessionResumeSelectionContent
@@ -233,6 +238,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
                                 agentOptionState: params.agentOptionState,
                                 profile: accountProfile,
                                 settings: params.settings,
+                                projection: params.pluginProjectionV2,
                             });
                             if (!source) return null;
                             requestClose();
@@ -242,7 +248,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
                                 lockScope: {
                                     machineId: params.selectedMachineId,
                                     serverId: params.targetServerId ?? null,
-                                    providerId: params.agentType as any,
+                                    providerId: params.agentType,
                                     source,
                                 },
                             });
@@ -267,6 +273,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
         params.agentOptionState,
         params.agentType,
         params.externalSessionsFeatureEnabled,
+        params.pluginProjectionV2,
         params.resumeSessionId,
         params.selectedMachineId,
         params.settings,

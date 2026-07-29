@@ -1,21 +1,27 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
 
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { t } from '@/text';
 
-export function PluginReactNativeUnavailable(): React.ReactElement {
-    const { theme } = useUnistyles();
+type PluginReactNativeUnavailableProps = Readonly<{
+    diagnostics?: readonly string[];
+}>;
+
+export function PluginReactNativeUnavailable(props: PluginReactNativeUnavailableProps): React.ReactElement {
+    const diagnostics = [...new Set(
+        (props.diagnostics ?? []).filter((diagnostic) => diagnostic.trim().length > 0),
+    )];
+    const copy = resolveReasonCopy({ reasonCode: diagnostics[0], kind: 'pluginRuntime' });
     return (
-        <View
+        <SurfaceStateCard
             testID="plugin-rn-ui-unavailable"
-            style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}
-        >
-            <Text style={{ color: theme.colors.text.secondary, fontSize: 13, ...Typography.default(), textAlign: 'center' }}>
-                {t('common.unavailable')}
-            </Text>
-        </View>
+            kind="unavailable"
+            title={copy.title === t('common.unavailable') ? t('pluginReactNative.unavailable') : copy.title}
+            reason={copy.body}
+            // The full diagnostic set stays reachable for QA via the testID
+            // channel only — never in visible product copy (audit PLG-11).
+            diagnosticCode={diagnostics.length > 0 ? diagnostics.slice(0, 3).join('|') : null}
+        />
     );
 }

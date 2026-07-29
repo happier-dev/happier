@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, FlatList } from 'react-native';
+import { View } from 'react-native';
+import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import { Text } from '@/components/ui/text/Text';
 import { useAllSessions } from '@/sync/domains/state/storage';
 import { Session } from '@/sync/domains/state/storageTypes';
@@ -255,7 +256,7 @@ export default function SessionHistory() {
     return (
         <View style={styles.container}>
             <View style={styles.contentContainer}>
-                <FlatList
+                <VirtualizedList
                     data={groupedItems}
                     renderItem={renderItem}
                     keyExtractor={keyExtractor}

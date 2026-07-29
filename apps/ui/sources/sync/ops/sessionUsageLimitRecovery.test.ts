@@ -275,6 +275,7 @@ describe('sessionUsageLimitRecovery ops', () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, status: 'cancelled' });
         await expect(sessionUsageLimitWaitResumeCancel('session-1', {
             issueFingerprint: 'usage-limit:session-1:1',
+            armedAtMs: 1_700_000_000_000,
         }, { refreshMachineTargets })).resolves.toEqual({
             ok: true,
             status: 'cancelled',
@@ -328,6 +329,29 @@ describe('sessionUsageLimitRecovery ops', () => {
                 sessionId: 'session-1',
                 provider: 'codex',
                 operation: 'switch_account_now',
+            },
+        });
+        expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
+    });
+
+    it('consumes reset credits through the generic usage-limit RPC lane', async () => {
+        sessionRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, status: 'ready', sessionId: 'session-1' });
+        const { sessionUsageLimitConsumeResetCredit } = await import('./sessionUsageLimitRecovery');
+
+        await expect(sessionUsageLimitConsumeResetCredit('session-1', {
+            provider: ' codex ',
+            issueFingerprint: 'usage-limit:codex:turn-1',
+            serverId: 'server-route',
+        })).resolves.toEqual({ ok: true, status: 'ready', sessionId: 'session-1' });
+
+        expect(sessionRpcWithServerScopeMock).toHaveBeenCalledWith({
+            sessionId: 'session-1',
+            serverId: 'server-route',
+            method: SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT,
+            payload: {
+                sessionId: 'session-1',
+                provider: 'codex',
+                issueFingerprint: 'usage-limit:codex:turn-1',
             },
         });
         expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
@@ -666,6 +690,8 @@ describe('sessionUsageLimitRecovery ops', () => {
 
         await expect(sessionUsageLimitWaitResumeCancel('session-1', {
             issueFingerprint: 'usage-limit:session-1:1',
+            armedAtMs: 1_700_000_000_000,
+            runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:exact-1',
         })).resolves.toEqual({ ok: true, status: 'cancelled', sessionId: 'session-1' });
 
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
@@ -675,6 +701,8 @@ describe('sessionUsageLimitRecovery ops', () => {
             payload: {
                 sessionId: 'session-1',
                 issueFingerprint: 'usage-limit:session-1:1',
+                armedAtMs: 1_700_000_000_000,
+                runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:exact-1',
             },
         });
     });
@@ -685,6 +713,7 @@ describe('sessionUsageLimitRecovery ops', () => {
 
         await expect(sessionUsageLimitWaitResumeCancel('session-1', {
             issueFingerprint: 'usage-limit:session-1:1',
+            armedAtMs: 1_700_000_000_000,
         })).resolves.toEqual({ ok: true, status: 'cancelled', sessionId: 'session-1' });
     });
 });

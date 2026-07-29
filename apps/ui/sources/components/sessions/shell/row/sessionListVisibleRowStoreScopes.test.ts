@@ -101,6 +101,10 @@ describe('session list visible row store scopes', () => {
     });
 
     it('keeps bounded native lists on all rendered row subscriptions when viewability changes', () => {
+        const twentyVisibleRowKeys = new Set(
+            Array.from({ length: 20 }, (_, index) => `server-a\u0000s${index + 1}`),
+        );
+
         expect(resolveSessionListRowStoreSubscriptionKeysForViewport({
             platformOS: 'ios',
             renderedSessionRows: 145,
@@ -109,10 +113,10 @@ describe('session list visible row store scopes', () => {
         })).toBeNull();
         expect(resolveSessionListRowStoreSubscriptionKeysForViewport({
             platformOS: 'ios',
-            renderedSessionRows: 201,
+            renderedSessionRows: 10_000,
             nativeAllRenderedMaxRows: 200,
-            visibleRowKeys: new Set(['server-a\u0000s1']),
-        })).toEqual(new Set(['server-a\u0000s1']));
+            visibleRowKeys: twentyVisibleRowKeys,
+        })).toEqual(twentyVisibleRowKeys);
     });
 
     it('keeps only priority index items for large lists until viewability is known', () => {
@@ -184,6 +188,7 @@ describe('session list visible row store scopes', () => {
     });
 
     it('derives offscreen runtime-priority keys from row state without treating unread-only rows as priority', () => {
+        const nowMs = 1_000_000;
         const items = [
             { type: 'session', serverId: 'server-a', sessionId: 'visible' },
             { type: 'session', serverId: 'server-a', sessionId: 'active' },
@@ -192,19 +197,34 @@ describe('session list visible row store scopes', () => {
             { type: 'session', serverId: 'server-a', sessionId: 'permission' },
             { type: 'session', serverId: 'server-a', sessionId: 'action' },
             { type: 'session', serverId: 'server-a', sessionId: 'runtime-issue' },
+            { type: 'session', serverId: 'server-a', sessionId: 'background' },
             { type: 'session', serverId: 'server-a', sessionId: 'unread-only' },
         ] satisfies ReadonlyArray<SessionListIndexItem>;
         const runtimePriorityKeys = buildSessionListRuntimePriorityRowKeys(items, {
             'server-a': {
                 active: { active: true },
-                thinking: { thinking: true },
-                'in-progress': { latestTurnStatus: 'in_progress' },
+                thinking: {
+                    active: true,
+                    presence: 'online',
+                    thinking: true,
+                    thinkingAt: nowMs - 1_000,
+                },
+                'in-progress': {
+                    latestTurnStatus: 'in_progress',
+                    latestTurnStatusObservedAt: nowMs - 1_000,
+                },
                 permission: { hasPendingPermissionRequests: true },
                 action: { hasPendingUserActionRequests: true },
                 'runtime-issue': { lastRuntimeIssue: { message: 'needs attention' } },
+                background: {
+                    presence: 'online',
+                    runtimeActivityState: 'active',
+                    runtimeActivityActiveCount: 1,
+                    runtimeActivityRevision: 1,
+                },
                 'unread-only': { hasUnreadMessages: true, latestReadyEventSeq: 2 },
             },
-        });
+        }, nowMs);
 
         expect(runtimePriorityKeys).toEqual(new Set([
             'server-a\u0000active',
@@ -213,6 +233,7 @@ describe('session list visible row store scopes', () => {
             'server-a\u0000permission',
             'server-a\u0000action',
             'server-a\u0000runtime-issue',
+            'server-a\u0000background',
         ]));
         expect(resolveSessionListRowStoreSubscriptionItems(
             items,
@@ -226,6 +247,7 @@ describe('session list visible row store scopes', () => {
             { type: 'session', serverId: 'server-a', sessionId: 'permission' },
             { type: 'session', serverId: 'server-a', sessionId: 'action' },
             { type: 'session', serverId: 'server-a', sessionId: 'runtime-issue' },
+            { type: 'session', serverId: 'server-a', sessionId: 'background' },
         ]);
     });
 

@@ -97,30 +97,11 @@ export function installSessionShellCommonModuleMocks(
 
     vi.mock('@/agents/registry/registryUiBehavior', async () => {
         const activeOptions = sessionShellModuleState.options;
-        if (activeOptions.registryUiBehavior) {
-            return await activeOptions.registryUiBehavior();
-        }
-
-        return {
-            buildResumeCapabilityOptionsFromUiState: () => ({}),
-            buildNewSessionOptionsFromUiState: () => ({}),
-            canSelectAgentWithoutDetectedCli: () => false,
-            getNewSessionAgentInputExtraActionChips: () => [],
-            buildSpawnEnvironmentVariablesFromUiState: () => ({}),
-            buildResumeSessionExtrasFromUiState: () => ({}),
-            buildSpawnSessionExtrasFromUiState: () => ({}),
-            buildWakeResumeExtras: () => ({}),
-            getAgentResumeExperimentsFromSettings: () => ({ enabled: true, switches: {} }),
-            getNewSessionPreflightIssues: () => [],
-            getNewSessionRelevantInstallableDepKeys: () => [],
-            resolveAgentUiBehavior: () => ({}),
-            resolveAgentUiBehaviorFromFlavor: () => ({}),
-            resolveAgentUiBehaviorFromSessionMetadata: () => ({}),
-            resolveSessionGoalActionCapabilityProfile: () => null,
-            classifyAgentSessionComposerNonSteerablePayload: () => null,
-            supportsDetectedMcpConfigScan: () => false,
-            supportsEditableSessionGoals: () => false,
-        } satisfies Partial<RegistryUiBehaviorModule>;
+        const { createRegistryUiBehaviorModuleMock } = await import('@/dev/testkit/mocks/registryUiBehavior');
+        const overrides = activeOptions.registryUiBehavior
+            ? await activeOptions.registryUiBehavior()
+            : undefined;
+        return createRegistryUiBehaviorModuleMock(overrides);
     });
 
     vi.mock('@/sync/domains/state/storage', async (importOriginal) => {

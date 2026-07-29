@@ -1,18 +1,20 @@
 import * as React from 'react';
 import { Message } from '@/sync/domains/messages/messageTypes';
-import { useSession, useSessionMessagesVersion, useSetting } from '@/sync/domains/state/storage';
-import { Session } from '@/sync/domains/state/storageTypes';
+import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessage';
+import { useSession, useSessionMessagesVersion, useSessionPendingMessages, useSetting } from '@/sync/domains/state/storage';
+import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import {
     deriveSessionRuntimePresentationState,
     isFreshTimestamp,
-    readSessionRuntimePresentationFreshnessTimestamps,
+    readSessionRuntimePresentationFreshnessExpirations,
+    SESSION_OPTIMISTIC_PENDING_THINKING_MS,
+    SESSION_RESUMING_PRESENTATION_TIMEOUT_MS,
     SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
 } from '@/sync/domains/session/attention/runtimePresentation';
 import {
     deriveLatestPendingRequestObservedAtFromSession,
     derivePendingRequestFlagsFromSession,
-    listPendingRequestListsFromSession,
     listPendingPermissionRequestsFromSession,
     listPendingTranscriptRequests as listPendingTranscriptRequestsFromSession,
     listPendingUserActionRequestsFromSession,
@@ -23,14 +25,17 @@ import {
     readDisplayMachineIdForSession,
     readDisplayMachineTargetForSession,
     readDisplayPathForSession,
+    readMachineTargetForSession,
 } from '@/sync/ops/sessionMachineTarget';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { t } from '@/text';
+import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { formatPathRelativeToHome } from './formatPathRelativeToHome';
 import { useUnistyles } from 'react-native-unistyles';
 export { formatPathRelativeToHome } from './formatPathRelativeToHome';
 
-export type SessionState = 'disconnected' | 'resuming' | 'thinking' | 'waiting' | 'permission_required' | 'action_required';
+export type SessionState = 'disconnected' | 'recoverable_unservable' | 'resuming' | 'thinking' | 'background_active' | 'waiting' | 'permission_required' | 'action_required';
 
 export interface SessionStatus {
     state: SessionState;
@@ -42,14 +47,10 @@ export interface SessionStatus {
     isPulsing?: boolean;
 }
 
-export const OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS = 15_000;
+export const OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS = SESSION_OPTIMISTIC_PENDING_THINKING_MS;
 export { SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS };
 
 export type PendingPermissionRequest = SessionPendingRequest;
-export type PendingAgentInputRequests = Readonly<{
-    permissionRequests: readonly PendingPermissionRequest[];
-    userActionRequests: readonly PendingPermissionRequest[];
-}>;
 
 type SessionStatusSource = Session | SessionListRenderableSession;
 type SessionStatusColors = Readonly<{
@@ -65,12 +66,33 @@ type GetSessionStatusOptions = Readonly<{
     vibingIndex?: number;
     workingTextMode?: SessionWorkingTextMode;
     statusColors?: SessionStatusColors;
+    hasPendingUserMessages?: boolean;
+    optimisticPendingUserMessageAt?: number | null;
 }>;
 type GetSessionStatusOptionsInput = number | GetSessionStatusOptions;
 type UseSessionStatusOptions = Readonly<{
     subscribeToSession?: boolean;
     subscribeToTranscript?: boolean;
 }>;
+
+function readPrivateDisplayMachineTarget(
+    session: SessionStatusSource,
+    ownerMetadata: ReturnType<typeof readSessionOwnerMetadataView>,
+): { machineId: string; basePath: string } | null {
+    if (session.metadataLayoutVersion === 1) {
+        return readMachineTargetForSession(session.id) ?? readDisplayMachineTargetForSession({
+            sessionId: null,
+            metadata: ownerMetadata,
+        });
+    }
+    if (session.metadataLayoutVersion !== undefined && session.metadataLayoutVersion !== 0) {
+        return null;
+    }
+    return readDisplayMachineTargetForSession({
+        sessionId: session.id,
+        metadata: ownerMetadata,
+    });
+}
 
 const DEFAULT_SESSION_STATUS_COLORS: SessionStatusColors = {
     connected: '#34C759',
@@ -94,13 +116,6 @@ export function listPendingPermissionRequests(session: Session, messages?: Reado
 
 export function listPendingUserActionRequests(session: Session, messages?: ReadonlyArray<Message>): PendingPermissionRequest[] {
     return listPendingUserActionRequestsFromSession(session, messages);
-}
-
-export function listPendingAgentInputRequests(
-    session: Session,
-    messages?: ReadonlyArray<Message>,
-): PendingAgentInputRequests {
-    return listPendingRequestListsFromSession(session, messages);
 }
 
 export function shouldReadTranscriptForPendingRequests(session: Session): boolean {
@@ -128,11 +143,18 @@ function latestPendingRequestObservedAt(session: SessionStatusSource): number | 
     return deriveLatestPendingRequestObservedAtFromSession(session as Session);
 }
 
+function hasPendingUserMessagesFromSource(session: SessionStatusSource): boolean {
+    const pendingCount = (session as SessionListRenderableSession).pendingCount;
+    return typeof pendingCount === 'number' && Number.isFinite(pendingCount) && pendingCount > 0;
+}
+
 type RuntimeStatusFreshnessRefreshInput = Readonly<{
     session: SessionStatusSource;
     hasPendingPermissionRequests: boolean;
     hasPendingUserActionRequests: boolean;
     pendingRequestObservedAt: number | null;
+    hasPendingUserMessages: boolean;
+    optimisticPendingUserMessageAt: number | null;
 }>;
 
 function resolveRuntimeStatusFreshnessRefreshDelayMs(
@@ -140,31 +162,30 @@ function resolveRuntimeStatusFreshnessRefreshDelayMs(
     nowMs: number,
 ): number | null {
     const { session } = input;
-    if (session.active !== true || session.presence !== 'online') return null;
+    if (session.presence !== 'online') return null;
 
-    const delays: number[] = [];
-    const addFreshnessDelay = (timestamp: number | null | undefined) => {
-        if (!isFreshTimestamp(timestamp, nowMs, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS)) return;
-        delays.push(Math.max(0, Math.trunc(timestamp as number) + SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS - nowMs));
-    };
-
-    for (const timestamp of readSessionRuntimePresentationFreshnessTimestamps({
+    const expirations = readSessionRuntimePresentationFreshnessExpirations({
         active: session.active,
         activeAt: session.activeAt,
+        archivedAt: session.archivedAt,
         presence: session.presence,
         thinking: session.thinking,
         thinkingAt: session.thinkingAt,
+        optimisticThinkingAt: session.optimisticThinkingAt ?? input.optimisticPendingUserMessageAt ?? null,
+        hasPendingUserMessages: input.hasPendingUserMessages,
         latestTurnStatus: session.latestTurnStatus,
         latestTurnStatusObservedAt: session.latestTurnStatusObservedAt,
+        runtimeActivityState: session.runtimeActivityState ?? 'unknown',
+        runtimeActivityActiveCount: session.runtimeActivityActiveCount ?? null,
+        runtimeActivityObservedAt: session.runtimeActivityObservedAt ?? null,
+        runtimeActivityRevision: session.runtimeActivityRevision ?? null,
         hasPendingPermissionRequests: input.hasPendingPermissionRequests,
         hasPendingUserActionRequests: input.hasPendingUserActionRequests,
         pendingRequestObservedAt: input.pendingRequestObservedAt,
-    }, nowMs)) {
-        addFreshnessDelay(timestamp);
-    }
+    }, nowMs);
 
-    if (delays.length === 0) return null;
-    return Math.min(...delays);
+    if (expirations.length === 0) return null;
+    return Math.min(...expirations.map((expiresAtMs) => Math.max(0, expiresAtMs - nowMs)));
 }
 
 function useRuntimeStatusFreshnessRefresh(input: RuntimeStatusFreshnessRefreshInput): void {
@@ -182,6 +203,12 @@ function useRuntimeStatusFreshnessRefresh(input: RuntimeStatusFreshnessRefreshIn
         input.session.thinkingAt,
         input.session.latestTurnStatus,
         input.session.latestTurnStatusObservedAt,
+        input.session.runtimeActivityActiveCount,
+        input.session.runtimeActivityObservedAt,
+        input.session.runtimeActivityRevision,
+        input.session.optimisticThinkingAt,
+        input.hasPendingUserMessages,
+        input.optimisticPendingUserMessageAt,
         input.hasPendingPermissionRequests,
         input.hasPendingUserActionRequests,
         input.pendingRequestObservedAt,
@@ -204,18 +231,38 @@ function resolveGetSessionStatusOptions(options?: GetSessionStatusOptionsInput):
  * Uses centralized session state from storage.ts
  */
 export function getSessionStatus(session: SessionStatusSource, nowMs: number = Date.now(), options?: GetSessionStatusOptionsInput): SessionStatus {
-    const { vibingIndex, workingTextMode = 'animated', statusColors = DEFAULT_SESSION_STATUS_COLORS } = resolveGetSessionStatusOptions(options);
+    const resolvedOptions = resolveGetSessionStatusOptions(options);
+    const { vibingIndex, workingTextMode = 'animated', statusColors = DEFAULT_SESSION_STATUS_COLORS } = resolvedOptions;
     const isOnline = session.presence === "online";
+    const isArchived = typeof session.archivedAt === 'number' && Number.isFinite(session.archivedAt);
     const hasPermissions = hasPendingPermissionRequests(session);
     const hasUserActions = hasPendingUserActionRequests(session);
+    const hasPendingUserMessages = resolvedOptions.hasPendingUserMessages ?? hasPendingUserMessagesFromSource(session);
+    const ownerMetadata = readSessionOwnerMetadataView(session);
+    const terminalControlServiceability = 'agentState' in session
+        ? ownerMetadata?.terminal?.controlServiceabilityV1
+        : (session.metadata as SessionListRenderableSession['metadata'])?.terminalControlServiceabilityV1;
+    const optimisticThinkingAt = session.optimisticThinkingAt ?? resolvedOptions.optimisticPendingUserMessageAt ?? null;
+    const isResuming = isFreshTimestamp(
+        session.resumingAt ?? null,
+        nowMs,
+        SESSION_RESUMING_PRESENTATION_TIMEOUT_MS,
+    );
     const runtimePresentation = deriveSessionRuntimePresentationState({
         active: session.active,
         activeAt: session.activeAt,
+        archivedAt: session.archivedAt,
         presence: session.presence,
         thinking: session.thinking,
         thinkingAt: session.thinkingAt,
+        optimisticThinkingAt,
+        hasPendingUserMessages,
         latestTurnStatus: session.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: session.latestTurnStatusObservedAt ?? null,
+        runtimeActivityState: session.runtimeActivityState ?? 'unknown',
+        runtimeActivityActiveCount: session.runtimeActivityActiveCount ?? null,
+        runtimeActivityObservedAt: session.runtimeActivityObservedAt ?? null,
+        runtimeActivityRevision: session.runtimeActivityRevision ?? null,
         meaningfulActivityAt: session.meaningfulActivityAt ?? null,
         lastRuntimeIssue: session.lastRuntimeIssue ?? null,
         hasPendingPermissionRequests: hasPermissions,
@@ -232,6 +279,30 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
         return vibingMessages[idx % vibingMessages.length].toLowerCase() + '…';
     })();
 
+    if (isArchived) {
+        return {
+            state: 'waiting',
+            isConnected: isOnline,
+            statusText: t('status.online'),
+            shouldShowStatus: false,
+            statusColor: statusColors.default,
+            statusDotColor: statusColors.default,
+            isPulsing: false,
+        };
+    }
+
+    if (terminalControlServiceability?.state === 'recoverable_unservable') {
+        return {
+            state: 'recoverable_unservable',
+            isConnected: false,
+            statusText: t('status.disconnected'),
+            shouldShowStatus: true,
+            statusColor: statusColors.error,
+            statusDotColor: statusColors.error,
+            isPulsing: false,
+        };
+    }
+
     if (!isOnline) {
         return {
             state: 'disconnected',
@@ -240,6 +311,18 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
             shouldShowStatus: true,
             statusColor: statusColors.disconnected,
             statusDotColor: statusColors.disconnected,
+        };
+    }
+
+    if (isResuming) {
+        return {
+            state: 'resuming',
+            isConnected: true,
+            statusText: t('session.resuming'),
+            shouldShowStatus: true,
+            statusColor: statusColors.connecting,
+            statusDotColor: statusColors.connecting,
+            isPulsing: true,
         };
     }
 
@@ -281,6 +364,18 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
         };
     }
 
+    if (runtimePresentation.backgroundActive) {
+        return {
+            state: 'background_active',
+            isConnected: true,
+            statusText: t('status.backgroundActive'),
+            shouldShowStatus: true,
+            statusColor: statusColors.default,
+            statusDotColor: statusColors.default,
+            isPulsing: false
+        };
+    }
+
     return {
         state: 'waiting',
         isConnected: true,
@@ -302,17 +397,22 @@ export function useSessionStatus(session: SessionStatusSource, options: UseSessi
     const sessionListWorkingStatusAnimatedTextEnabled = useSetting('sessionListWorkingStatusAnimatedTextEnabled');
     const shouldSubscribeToTranscript = options.subscribeToTranscript !== false && sessionId.length > 0;
     const transcriptVersion = useSessionMessagesVersion(sessionId, shouldSubscribeToTranscript);
+    const pendingMessagesState = useSessionPendingMessages(shouldSubscribeToTranscript ? sessionId : '');
     void transcriptVersion;
 
     const resolvedSession = rawSession ?? session;
     const isOnline = resolvedSession.presence === "online";
     const hasPermissions = hasPendingPermissionRequests(resolvedSession);
     const hasUserActions = hasPendingUserActionRequests(resolvedSession);
+    const hasPendingUserMessages = hasPendingUserMessagesFromSource(resolvedSession) || pendingMessagesState.messages.length > 0;
+    const optimisticPendingUserMessageAt = readLatestLocalOutboundPendingUserMessageAt(pendingMessagesState.messages);
     const pendingRequestObservedAt = latestPendingRequestObservedAt(resolvedSession);
     useRuntimeStatusFreshnessRefresh({
         session: resolvedSession,
         hasPendingPermissionRequests: hasPermissions,
         hasPendingUserActionRequests: hasUserActions,
+        hasPendingUserMessages,
+        optimisticPendingUserMessageAt,
         pendingRequestObservedAt,
     });
 
@@ -320,11 +420,18 @@ export function useSessionStatus(session: SessionStatusSource, options: UseSessi
     const runtimePresentation = deriveSessionRuntimePresentationState({
         active: resolvedSession.active,
         activeAt: resolvedSession.activeAt,
+        archivedAt: resolvedSession.archivedAt,
         presence: resolvedSession.presence,
         thinking: resolvedSession.thinking,
         thinkingAt: resolvedSession.thinkingAt,
+        optimisticThinkingAt: resolvedSession.optimisticThinkingAt ?? optimisticPendingUserMessageAt ?? null,
+        hasPendingUserMessages,
         latestTurnStatus: resolvedSession.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: resolvedSession.latestTurnStatusObservedAt ?? null,
+        runtimeActivityState: resolvedSession.runtimeActivityState ?? 'unknown',
+        runtimeActivityActiveCount: resolvedSession.runtimeActivityActiveCount ?? null,
+        runtimeActivityObservedAt: resolvedSession.runtimeActivityObservedAt ?? null,
+        runtimeActivityRevision: resolvedSession.runtimeActivityRevision ?? null,
         meaningfulActivityAt: resolvedSession.meaningfulActivityAt ?? null,
         lastRuntimeIssue: resolvedSession.lastRuntimeIssue ?? null,
         hasPendingPermissionRequests: hasPermissions,
@@ -341,6 +448,8 @@ export function useSessionStatus(session: SessionStatusSource, options: UseSessi
         vibingIndex,
         workingTextMode: sessionListWorkingStatusAnimatedTextEnabled === false ? 'static' : 'animated',
         statusColors: theme.colors.status as SessionStatusColors,
+        hasPendingUserMessages,
+        optimisticPendingUserMessageAt,
     });
 }
 
@@ -350,18 +459,18 @@ export function useSessionStatus(session: SessionStatusSource, options: UseSessi
  */
 export function getSessionName(session: SessionStatusSource): string {
     const summaryText = readSessionDisplayTitleField(session).value;
+    const ownerMetadata = readSessionOwnerMetadataView(session);
     if (summaryText) {
         return summaryText;
-    } else if (session.metadata?.name) {
-        const name = session.metadata.name.trim();
+    } else if (ownerMetadata?.name) {
+        const name = ownerMetadata.name.trim();
         if (name.length > 0) return name;
-    } else if (session.metadata) {
-        const displayPath = readDisplayMachineTargetForSession({
-            sessionId: session.id,
-            metadata: session.metadata ?? null,
-        })?.basePath ?? readDisplayPathForSession({
-            sessionId: session.id,
-            metadata: session.metadata ?? null,
+    } else if (ownerMetadata) {
+        const displayMetadata = ownerMetadata;
+        const displayPath = readPrivateDisplayMachineTarget(session, ownerMetadata)?.basePath
+            ?? readDisplayPathForSession({
+            sessionId: null,
+            metadata: displayMetadata ?? null,
         });
         const segments = displayPath.split('/').filter(Boolean);
         const lastSegment = segments.pop();
@@ -378,15 +487,14 @@ export function getSessionName(session: SessionStatusSource): string {
  * This ensures the same machine + path combination always gets the same avatar.
  */
 export function getSessionAvatarId(session: SessionStatusSource): string {
-    const reachableTarget = readDisplayMachineTargetForSession({
-        sessionId: session.id,
-        metadata: session.metadata ?? null,
-    });
+    const ownerMetadata = readSessionOwnerMetadataView(session);
+    const displayMetadata = ownerMetadata;
+    const reachableTarget = readPrivateDisplayMachineTarget(session, ownerMetadata);
     const reachableMachineId = reachableTarget?.machineId ?? readDisplayMachineIdForSession({
-        sessionId: session.id,
-        metadata: session.metadata ?? null,
+        sessionId: null,
+        metadata: displayMetadata ?? null,
     });
-    const reachablePath = reachableTarget?.basePath ?? session.metadata?.path ?? null;
+    const reachablePath = reachableTarget?.basePath ?? ownerMetadata?.path ?? null;
 
     if (reachableMachineId && reachablePath) {
         // Combine machine ID and path for a unique, deterministic avatar
@@ -400,12 +508,12 @@ export function getSessionAvatarId(session: SessionStatusSource): string {
  * Returns the session path for the subtitle.
  */
 export function getSessionSubtitle(session: SessionStatusSource): string {
-    const path = readDisplayMachineTargetForSession({
-        sessionId: session.id,
-        metadata: session.metadata ?? null,
-    })?.basePath ?? session.metadata?.path ?? null;
+    const ownerMetadata = readSessionOwnerMetadataView(session);
+    const path = readPrivateDisplayMachineTarget(session, ownerMetadata)?.basePath
+        ?? ownerMetadata?.path
+        ?? null;
     if (path) {
-        return formatPathRelativeToHome(path, session.metadata?.homeDir ?? undefined);
+        return formatPathRelativeToHome(path, ownerMetadata?.homeDir ?? undefined);
     }
     return t('status.unknown');
 }
@@ -458,6 +566,14 @@ export function formatLastSeen(activeAt: number, isActive: boolean = false): str
         return t('status.activeNow');
     }
 
+    // Sessions can reach this without a usable timestamp (0 is the repo-wide
+    // "no timestamp" convention); formatting an invalid Date throws in the
+    // date-formatting path, so degrade to the unknown label instead of
+    // crashing the row.
+    if (typeof activeAt !== 'number' || !Number.isFinite(activeAt) || activeAt <= 0) {
+        return t('status.unknown');
+    }
+
     const now = Date.now();
     const diffMs = now - activeAt;
     const diffSeconds = Math.floor(diffMs / 1000);
@@ -481,7 +597,7 @@ export function formatLastSeen(activeAt: number, isActive: boolean = false): str
             day: 'numeric',
             year: date.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined
         };
-        return date.toLocaleDateString(undefined, options);
+        return formatWithCachedDateTimeFormatter(date, undefined, options);
     }
 }
 

@@ -85,15 +85,16 @@ describe('Text (selectability scope)', () => {
     ]));
   });
 
-  it('removes the default web focus outline from the shared text input wrapper', async () => {
+  it('preserves the browser focus indicator unless a consumer supplies its own', async () => {
     const { TextInput } = await import('./Text');
 
     const screen = await renderScreen(<TextInput value="" onChangeText={() => {}} />);
     const input = screen.findByType('RNTextInput' as any);
-    expect(input.props.style).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        outlineStyle: 'none',
-      }),
+    expect(input.props.style).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ outlineStyle: 'none' }),
+    ]));
+    expect(input.props.style).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ outlineWidth: 0 }),
     ]));
   });
 });

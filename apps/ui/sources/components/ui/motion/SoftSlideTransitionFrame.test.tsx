@@ -75,4 +75,39 @@ describe('SoftSlideTransitionFrame', () => {
         expect(exitStyle.filter).toBe('blur(0px)');
         expect(exitStyle.transitionProperty).toBe('opacity, transform, filter');
     });
+
+    it('keeps outgoing and incoming web slides mounted during a reduced-motion crossfade', async () => {
+        const { SoftSlideTransitionFrame } = await import('./SoftSlideTransitionFrame');
+        const screen = await renderScreen(
+            <SoftSlideTransitionFrame
+                direction="replace"
+                reducedMotion
+                testID="soft"
+                transitionKey="one"
+            >
+                <View testID="slide-one" />
+            </SoftSlideTransitionFrame>,
+        );
+
+        await screen.update(
+            <SoftSlideTransitionFrame
+                direction="forward"
+                reducedMotion
+                testID="soft"
+                transitionKey="two"
+            >
+                <View testID="slide-two" />
+            </SoftSlideTransitionFrame>,
+        );
+
+        const currentStyle = flattenStyle(screen.findByTestId('soft-current-layer')?.props.style);
+        const exitStyle = flattenStyle(screen.findByTestId('soft-exit-layer')?.props.style);
+
+        expect(screen.findByTestId('slide-one')).not.toBeNull();
+        expect(screen.findByTestId('slide-two')).not.toBeNull();
+        expect(currentStyle.transform).toEqual([{ translateX: 0 }]);
+        expect(currentStyle.filter).toBe('blur(0px)');
+        expect(exitStyle.transform).toEqual([{ translateX: 0 }]);
+        expect(exitStyle.filter).toBe('blur(0px)');
+    });
 });

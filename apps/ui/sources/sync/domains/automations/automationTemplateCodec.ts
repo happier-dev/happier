@@ -2,11 +2,12 @@ import { z } from 'zod';
 import {
     AcpConfigOptionOverridesV1Schema,
     BackendTargetRefV2Schema,
+    normalizeCodexBackendMode,
+    SessionModelSelectionV1Schema,
     SessionMcpSelectionV1Schema,
     WindowsRemoteSessionLaunchModeSchema,
     WindowsTerminalWindowNameSchema,
 } from '@happier-dev/protocol';
-import { normalizeCodexBackendMode } from '@happier-dev/agents';
 
 import type { AutomationTemplate } from './automationTypes';
 
@@ -47,6 +48,7 @@ const AutomationTemplateSchema: z.ZodType<AutomationTemplate> = z.object({
     resume: z.string().optional(),
     permissionMode: z.string().optional(),
     permissionModeUpdatedAt: z.number().int().optional(),
+    modelSelection: SessionModelSelectionV1Schema.nullable().optional(),
     modelId: z.string().optional(),
     modelUpdatedAt: z.number().int().optional(),
     sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.optional(),
@@ -81,8 +83,13 @@ function normalizeOptionalString(value: string | null | undefined): string | und
 }
 
 function normalizeTemplate(template: AutomationTemplate): AutomationTemplate {
+    const {
+        modelId: legacyModelId,
+        modelUpdatedAt: legacyModelUpdatedAt,
+        ...canonicalTemplate
+    } = template;
     return {
-        ...template,
+        ...canonicalTemplate,
         directory: template.directory.trim(),
         ...(template.checkoutCreationDraft
             ? {
@@ -101,7 +108,12 @@ function normalizeTemplate(template: AutomationTemplate): AutomationTemplate {
         ...(normalizeOptionalString(template.profileId) ? { profileId: normalizeOptionalString(template.profileId) } : {}),
         ...(normalizeOptionalString(template.resume) ? { resume: normalizeOptionalString(template.resume) } : {}),
         ...(normalizeOptionalString(template.permissionMode) ? { permissionMode: normalizeOptionalString(template.permissionMode) } : {}),
-        ...(normalizeOptionalString(template.modelId) ? { modelId: normalizeOptionalString(template.modelId) } : {}),
+        ...(template.modelSelection === undefined && normalizeOptionalString(legacyModelId)
+            ? {
+                modelId: normalizeOptionalString(legacyModelId),
+                ...(typeof legacyModelUpdatedAt === 'number' ? { modelUpdatedAt: legacyModelUpdatedAt } : {}),
+            }
+            : {}),
         ...(template.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: template.sessionConfigOptionOverrides } : {}),
         ...(normalizeOptionalString(template.agentModeId) ? { agentModeId: normalizeOptionalString(template.agentModeId) } : {}),
         ...(normalizeOptionalString(template.existingSessionId)

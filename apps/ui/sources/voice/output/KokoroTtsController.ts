@@ -10,6 +10,7 @@ export async function speakKokoroText(opts: {
   speed: number;
   timeoutMs: number;
   registerPlaybackStopper: VoicePlaybackStopperRegistrar;
+  onPlaybackStarted?: () => void;
 }): Promise<void> {
   if (!isKokoroRuntimeSupported()) {
     throw new Error('kokoro_runtime_unsupported');
@@ -18,6 +19,12 @@ export async function speakKokoroText(opts: {
   const controller = new AbortController();
   let stopPlayback: (() => void) | null = null;
   let clearStopper = () => {};
+  let playbackStarted = false;
+  const notifyPlaybackStarted = () => {
+    if (playbackStarted) return;
+    playbackStarted = true;
+    opts.onPlaybackStarted?.();
+  };
 
   try {
     clearStopper = opts.registerPlaybackStopper(() => {
@@ -56,6 +63,7 @@ export async function speakKokoroText(opts: {
         bytes: chunk.wavBytes,
         format: 'wav',
         registerPlaybackStopper: registerPlaybackOnly,
+        onPlaybackStarted: notifyPlaybackStarted,
       });
     }
   } finally {

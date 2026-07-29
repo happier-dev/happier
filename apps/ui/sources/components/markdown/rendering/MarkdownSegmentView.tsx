@@ -4,7 +4,7 @@ import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { EnrichedMarkdownTextAdapter } from '../enriched/EnrichedMarkdownTextAdapter';
-import type { Option } from '../MarkdownBlockView';
+import type { Option, OptionLongPressHandler } from '../MarkdownBlockView';
 import type { MarkdownSourceRange, MarkdownSourceRangeAction } from '../MarkdownView';
 import type { StreamingTextRevealPreset } from '../streaming/streamingTextRevealConfig';
 import type { MarkdownRenderingProfile } from './MarkdownRenderingProfile';
@@ -15,6 +15,7 @@ type MarkdownSegmentViewProps = Readonly<{
     segment: MarkdownRenderSegment;
     selectable: boolean;
     onOptionPress?: (option: Option) => void;
+    onOptionLongPress?: OptionLongPressHandler;
     onLinkPress?: (url: string) => boolean | void;
     textStyle?: StyleProp<TextStyle>;
     profile: MarkdownRenderingProfile;
@@ -52,6 +53,7 @@ export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) 
                 last={props.segment.last}
                 selectable={props.selectable}
                 onOptionPress={props.onOptionPress}
+                onOptionLongPress={props.onOptionLongPress}
                 onLinkPress={props.onLinkPress}
                 textStyle={props.textStyle}
                 profile={props.profile}

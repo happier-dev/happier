@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -20,6 +21,8 @@ export type TranscriptNavigationPanelProps = Readonly<{
     activeEntryId: string | null;
     onEntryPress: TranscriptNavigationEntryPressHandler;
     onRequestClose?: () => void;
+    /** True while the session transcript has not produced its first page yet. */
+    isLoading?: boolean;
     testIDPrefix?: string;
 }>;
 
@@ -84,6 +87,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginTop: 6,
         color: theme.colors.text.tertiary,
     },
+    loading: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        paddingHorizontal: 18,
+    },
+    loadingText: {
+        color: theme.colors.text.secondary,
+    },
 }));
 
 function defaultTestIDPrefix(prefix: string | undefined): string {
@@ -99,6 +112,7 @@ function filterEntries(entries: readonly TranscriptNavigationEntry[], mode: Tran
 
 export const TranscriptNavigationPanel = React.memo((props: TranscriptNavigationPanelProps) => {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
     const [mode, setMode] = React.useState<TranscriptNavigationDerivationMode>('all');
     const testIDPrefix = defaultTestIDPrefix(props.testIDPrefix);
     const entries = React.useMemo(() => filterEntries(props.entries, mode), [mode, props.entries]);
@@ -106,6 +120,9 @@ export const TranscriptNavigationPanel = React.memo((props: TranscriptNavigation
     const countLabel = mode === 'pinned'
         ? t('session.transcriptNavigation.pinnedCount', { count: pinnedCount })
         : t('session.transcriptNavigation.entryCount', { count: props.entries.length });
+    // Loading only ever replaces NOTHING: once entries exist, a background refresh must not
+    // erase a list the reader is already using.
+    const showLoading = props.isLoading === true && props.entries.length === 0;
 
     return (
         <View
@@ -137,7 +154,12 @@ export const TranscriptNavigationPanel = React.memo((props: TranscriptNavigation
                 />
             </View>
             <View style={styles.body}>
-                {entries.length > 0 ? (
+                {showLoading ? (
+                    <View testID={`${testIDPrefix}-loading`} style={styles.loading}>
+                        <ActivitySpinner size="small" color={theme.colors.text.secondary} />
+                        <Text style={styles.loadingText}>{t('session.transcriptNavigation.loadingBody')}</Text>
+                    </View>
+                ) : entries.length > 0 ? (
                     <TranscriptNavigationEntryList
                         entries={entries}
                         activeEntryId={props.activeEntryId}

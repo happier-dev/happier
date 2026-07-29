@@ -14,6 +14,7 @@ import {
     applyMoveDetailsTabToGroup,
     applyOpenDetailsTab,
     applyPinDetailsTab,
+    applyReplaceDetailsTab,
     applySetActiveDetailsTab,
     applySetDetailsTabState,
     applySetDetailsSplitRatio,
@@ -23,6 +24,7 @@ import {
     arePaneDetailsStatesEqual,
     createEmptyPaneDetailsState,
 } from '@/components/appShell/panes/details/workspace/detailsWorkspaceReducer';
+import { arePaneStateJsonValuesEqual } from './paneStateStructuralEquality';
 
 export type { DetailsTab, DetailsTabOpenMode, DetailsTabState, PaneDetailsState };
 
@@ -70,6 +72,7 @@ export type AppPaneAction =
     | { type: 'setBottomTab'; scopeId: string; tabId: string }
     | { type: 'setBottomTabState'; scopeId: string; tabId: string; nextState: unknown }
     | { type: 'openDetailsTab'; scopeId: string; tab: DetailsTab; openAs: DetailsTabOpenMode }
+    | { type: 'replaceDetailsTab'; scopeId: string; tabKey: string; tab: DetailsTab; openAs?: DetailsTabOpenMode }
     | { type: 'setDetailsTabState'; scopeId: string; tabKey: string; nextState: unknown }
     | { type: 'pinDetailsTab'; scopeId: string; tabKey: string }
     | { type: 'unpinDetailsTab'; scopeId: string; tabKey: string }
@@ -134,7 +137,7 @@ function areTabStateRecordsEqual(
     if (leftKeys.length !== rightKeys.length) return false;
     for (const key of leftKeys) {
         if (!Object.prototype.hasOwnProperty.call(right, key)) return false;
-        if (!Object.is(left[key], right[key])) return false;
+        if (!arePaneStateJsonValuesEqual(left[key], right[key])) return false;
     }
     return true;
 }
@@ -175,8 +178,25 @@ function evictScopesIfNeeded(state: AppPaneState): AppPaneState {
 
 function upsertScope(state: AppPaneState, scopeId: string, mutate: (prev: PaneScopeState) => PaneScopeState): AppPaneState {
     const prev = state.scopes[scopeId] ?? createEmptyScopeState();
-    const nextScopes = { ...state.scopes, [scopeId]: mutate(prev) };
+    const nextScope = mutate(prev);
+    if (nextScope === prev) return state;
+    const nextScopes = { ...state.scopes, [scopeId]: nextScope };
     return { ...state, scopes: nextScopes };
+}
+
+function updateScopeDetails(
+    state: AppPaneState,
+    scopeId: string,
+    mutate: (prev: PaneDetailsState) => PaneDetailsState,
+): AppPaneState {
+    return upsertScope(state, scopeId, (prev) => {
+        const nextDetails = mutate(prev.details);
+        if (nextDetails === prev.details) return prev;
+        return {
+            ...prev,
+            details: nextDetails,
+        };
+    });
 }
 
 function scopeHasFocusablePane(scope: PaneScopeState | undefined): boolean {
@@ -274,6 +294,10 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
             }));
         }
         case 'setRightTabState': {
+            const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
+            if (arePaneStateJsonValuesEqual(prev.right.tabState[action.tabId], action.nextState)) {
+                return state;
+            }
             return upsertScope(state, action.scopeId, (prev) => ({
                 ...prev,
                 right: {
@@ -321,6 +345,10 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
             }));
         }
         case 'setBottomTabState': {
+            const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
+            if (arePaneStateJsonValuesEqual(prev.bottom.tabState[action.tabId], action.nextState)) {
+                return state;
+            }
             return upsertScope(state, action.scopeId, (prev) => ({
                 ...prev,
                 bottom: {
@@ -333,74 +361,67 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
             }));
         }
         case 'openDetailsTab':
-            return upsertScope(state, action.scopeId, (prev) => ({
-                ...prev,
-                details: applyOpenDetailsTab(prev.details, { tab: action.tab, openAs: action.openAs }),
-            }));
+            return updateScopeDetails(state, action.scopeId, (details) => (
+                applyOpenDetailsTab(details, { tab: action.tab, openAs: action.openAs })
+            ));
+        case 'replaceDetailsTab':
+            return updateScopeDetails(state, action.scopeId, (details) => (
+                applyReplaceDetailsTab(details, {
+                    tabKey: action.tabKey,
+                    tab: action.tab,
+                    openAs: action.openAs,
+                })
+            ));
         case 'setDetailsTabState':
-            return upsertScope(state, action.scopeId, (prev) => ({
-                ...prev,
-                details: applySetDetailsTabState(prev.details, action.tabKey, action.nextState),
-            }));
+            return updateScopeDetails(state, action.scopeId, (details) => (
+                applySetDetailsTabState(details, action.tabKey, action.nextState)
+            ));
         case 'pinDetailsTab':
-            return upsertScope(state, action.scopeId, (prev) => ({
-                ...prev,
-                details: applyPinDetailsTab(prev.details, action.tabKey),
-            }));
+            return updateScopeDetails(state, action.scopeId, (details) => (
+                applyPinDetailsTab(details, action.tabKey)
+            ));
         case 'unpinDetailsTab':
-            return upsertScope(state, action.scopeId, (prev) => ({
-                ...prev,
-                details: applyUnpinDetailsTab(prev.details, action.tabKey),
-            }));
+            return updateScopeDetails(state, action.scopeId, (details) => (
+                applyUnpinDetailsTab(details, action.tabKey)
+            ));
         case 'closeDetails':
-            return clearFocusModeIfScopeCannotFocus(upsertScope(state, action.scopeId, (prev) => ({
-                ...prev,
-                details: applyCloseDetails(prev.details),
-            })), action.scopeId);
+            return clearFocusModeIfScopeCannotFocus(updateScopeDetails(state, action.scopeId, applyCloseDetails), action.scopeId);
         case 'closeDetailsTab':
-            return clearFocusModeIfScopeCannotFocus(upsertScope(state, action.scopeId, (prev) => ({
-                ...prev,
-                details: applyCloseDetailsTab(prev.details, action.tabKey),
-            })), action.scopeId);
+            return clearFocusModeIfScopeCannotFocus(updateScopeDetails(state, action.scopeId, (details) => (
+                applyCloseDetailsTab(details, action.tabKey)
+            )), action.scopeId);
         case 'setActiveDetailsTab':
-            return upsertScope(state, action.scopeId, (prev) => ({
-                ...prev,
-                details: applySetActiveDetailsTab(prev.details, action.tabKey),
-            }));
+            return updateScopeDetails(state, action.scopeId, (details) => (
+                applySetActiveDetailsTab(details, action.tabKey)
+            ));
         case 'splitDetailsGroup':
-            return upsertScope(state, action.scopeId, (prev) => ({
-                ...prev,
-                details: applySplitDetailsGroup(prev.details, {
+            return updateScopeDetails(state, action.scopeId, (details) => (
+                applySplitDetailsGroup(details, {
                     axis: action.axis,
                     groupId: action.groupId,
                     placement: action.placement,
-                }),
-            }));
+                })
+            ));
         case 'setDetailsSplitRatio':
-            return upsertScope(state, action.scopeId, (prev) => ({
-                ...prev,
-                details: applySetDetailsSplitRatio(prev.details, action.splitId, action.ratio),
-            }));
+            return updateScopeDetails(state, action.scopeId, (details) => (
+                applySetDetailsSplitRatio(details, action.splitId, action.ratio)
+            ));
         case 'moveDetailsTabToGroup':
-            return upsertScope(state, action.scopeId, (prev) => ({
-                ...prev,
-                details: applyMoveDetailsTabToGroup(prev.details, { tabKey: action.tabKey, targetGroupId: action.targetGroupId }),
-            }));
+            return updateScopeDetails(state, action.scopeId, (details) => (
+                applyMoveDetailsTabToGroup(details, { tabKey: action.tabKey, targetGroupId: action.targetGroupId })
+            ));
         case 'focusDetailsGroup':
-            return upsertScope(state, action.scopeId, (prev) => ({
-                ...prev,
-                details: applyFocusDetailsGroup(prev.details, action.groupId),
-            }));
+            return updateScopeDetails(state, action.scopeId, (details) => (
+                applyFocusDetailsGroup(details, action.groupId)
+            ));
         case 'setMaximizedDetailsGroup':
-            return upsertScope(state, action.scopeId, (prev) => ({
-                ...prev,
-                details: applySetMaximizedDetailsGroup(prev.details, action.groupId),
-            }));
+            return updateScopeDetails(state, action.scopeId, (details) => (
+                applySetMaximizedDetailsGroup(details, action.groupId)
+            ));
         case 'closeDetailsGroup':
-            return clearFocusModeIfScopeCannotFocus(upsertScope(state, action.scopeId, (prev) => ({
-                ...prev,
-                details: applyCloseDetailsGroup(prev.details, action.groupId),
-            })), action.scopeId);
+            return clearFocusModeIfScopeCannotFocus(updateScopeDetails(state, action.scopeId, (details) => (
+                applyCloseDetailsGroup(details, action.groupId)
+            )), action.scopeId);
         default:
             return state;
     }

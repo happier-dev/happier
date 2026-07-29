@@ -1,5 +1,7 @@
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { areSessionListRenderableExternalSessionIdentitiesEqual } from '@/sync/domains/session/listing/sessionListRenderableMetadataComparison';
+import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol';
 
 import type {
     MachineDisplayCacheEntryV1,
@@ -34,6 +36,25 @@ function normalizeNonNegativeNumberArray(value: readonly number[] | null | undef
     return normalized.length > 0 ? normalized : undefined;
 }
 
+function readCompleteRuntimeActivityProjection(
+    value: unknown,
+): Partial<Pick<
+    SessionListRenderableSession,
+    'runtimeActivityState'
+    | 'runtimeActivityActiveCount'
+    | 'runtimeActivityObservedAt'
+    | 'runtimeActivityRevision'
+>> {
+    const parsed = parseSessionRuntimeActivityProjectionFields(value);
+    if (parsed.kind !== 'valid') return {};
+    return {
+        runtimeActivityState: parsed.projection.state,
+        runtimeActivityActiveCount: parsed.projection.activeCount,
+        runtimeActivityObservedAt: parsed.projection.observedAt,
+        runtimeActivityRevision: parsed.projection.revision,
+    };
+}
+
 function areCacheJsonValuesEqual(next: unknown, previous: unknown): boolean {
     if (next === previous) return true;
     if ((next ?? null) === null || (previous ?? null) === null) return (next ?? null) === (previous ?? null);
@@ -59,9 +80,7 @@ function areExternalSessionCacheEntriesEqual(
     next: SessionListCacheEntryV1['externalSessionV1'],
     previous: SessionListCacheEntryV1['externalSessionV1'],
 ): boolean {
-    if (next === previous) return true;
-    if (!next || !previous) return (next ?? null) === (previous ?? null);
-    return next.v === previous.v && next.providerId === previous.providerId;
+    return areSessionListRenderableExternalSessionIdentitiesEqual(next, previous);
 }
 
 function areSessionListCacheEntriesEqual(
@@ -70,6 +89,7 @@ function areSessionListCacheEntriesEqual(
 ): boolean {
     return (
         nextEntry.seq === previousEntry.seq
+        && (nextEntry.metadataLayoutVersion ?? 0) === (previousEntry.metadataLayoutVersion ?? 0)
         && nextEntry.metadataVersion === previousEntry.metadataVersion
         && nextEntry.agentStateVersion === previousEntry.agentStateVersion
         && nextEntry.updatedAt === previousEntry.updatedAt
@@ -80,10 +100,14 @@ function areSessionListCacheEntriesEqual(
         && nextEntry.archivedAt === previousEntry.archivedAt
         && nextEntry.lastViewedSessionSeq === previousEntry.lastViewedSessionSeq
         && nextEntry.pendingCount === previousEntry.pendingCount
+        && nextEntry.pendingBlockedCount === previousEntry.pendingBlockedCount
         && nextEntry.pendingVersion === previousEntry.pendingVersion
         && (nextEntry.latestTurnStatus ?? null) === (previousEntry.latestTurnStatus ?? null)
         && (nextEntry.latestTurnStatusObservedAt ?? null) === (previousEntry.latestTurnStatusObservedAt ?? null)
         && areCacheJsonValuesEqual(nextEntry.lastRuntimeIssue ?? null, previousEntry.lastRuntimeIssue ?? null)
+        && (nextEntry.runtimeActivityActiveCount ?? null) === (previousEntry.runtimeActivityActiveCount ?? null)
+        && (nextEntry.runtimeActivityObservedAt ?? null) === (previousEntry.runtimeActivityObservedAt ?? null)
+        && (nextEntry.runtimeActivityRevision ?? null) === (previousEntry.runtimeActivityRevision ?? null)
         && areCacheJsonValuesEqual(nextEntry.rollbackEligibleTurnStarts ?? null, previousEntry.rollbackEligibleTurnStarts ?? null)
         && (nextEntry.latestReadyEventSeq ?? null) === (previousEntry.latestReadyEventSeq ?? null)
         && (nextEntry.latestReadyEventAt ?? null) === (previousEntry.latestReadyEventAt ?? null)
@@ -129,8 +153,10 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
         activeAt: entry.activeAt,
         archivedAt: entry.archivedAt,
         pendingCount: entry.pendingCount,
+        pendingBlockedCount: entry.pendingBlockedCount,
         pendingVersion: entry.pendingVersion,
         lastViewedSessionSeq: normalizeNonNegativeInteger(entry.lastViewedSessionSeq),
+        metadataLayoutVersion: entry.metadataLayoutVersion,
         metadataVersion: entry.metadataVersion,
         agentStateVersion: entry.agentStateVersion,
         metadata: metadataUsable ? {
@@ -150,6 +176,7 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
         latestTurnStatus: entry.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: normalizeNonNegativeNumber(entry.latestTurnStatusObservedAt),
         lastRuntimeIssue: entry.lastRuntimeIssue ?? null,
+        ...readCompleteRuntimeActivityProjection(entry),
         rollbackEligibleTurnStarts: normalizeNonNegativeNumberArray(entry.rollbackEligibleTurnStarts),
         latestReadyEventSeq: normalizeNonNegativeInteger(entry.latestReadyEventSeq),
         latestReadyEventAt: normalizeNonNegativeNumber(entry.latestReadyEventAt),
@@ -170,6 +197,7 @@ function shouldPreserveSessionMetadataFromPreviousEntry(
 ): previousEntry is SessionListCacheEntryV1 {
     return session.metadata == null
         && session.metadataUnavailable !== true
+        && (session.metadataLayoutVersion ?? 0) === (previousEntry?.metadataLayoutVersion ?? 0)
         && isSessionListCacheEntryMetadataUsable(previousEntry);
 }
 
@@ -202,9 +230,15 @@ export function buildSessionListCacheEntryFromRenderable(
     const preserveMetadata = shouldPreserveSessionMetadataFromPreviousEntry(session, previousEntry);
     const preserveAgentState = shouldPreserveSessionAgentStateFromPreviousEntry(session, previousEntry);
     const preserveReadState = shouldPreserveSessionReadStateFromPreviousEntry(session, previousEntry);
+    const legacyMetadata = (session.metadataLayoutVersion ?? 0) === 0
+        ? session.metadata
+        : null;
     const nextEntry: SessionListCacheEntryV1 = {
         sessionId: session.id,
         seq: preserveReadState ? previousEntry.seq : normalizeNonNegativeInteger(session.seq) ?? 0,
+        metadataLayoutVersion: preserveMetadata
+            ? previousEntry.metadataLayoutVersion
+            : session.metadataLayoutVersion,
         metadataVersion: preserveMetadata ? previousEntry.metadataVersion : session.metadataVersion,
         agentStateVersion: preserveAgentState ? previousEntry.agentStateVersion : session.agentStateVersion,
         updatedAt: session.updatedAt,
@@ -217,10 +251,12 @@ export function buildSessionListCacheEntryFromRenderable(
             ? previousEntry.lastViewedSessionSeq ?? null
             : normalizeNonNegativeInteger(session.lastViewedSessionSeq),
         pendingCount: session.pendingCount,
+        pendingBlockedCount: session.pendingBlockedCount,
         pendingVersion: session.pendingVersion,
         latestTurnStatus: session.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: normalizeNonNegativeNumber(session.latestTurnStatusObservedAt),
         lastRuntimeIssue: session.lastRuntimeIssue ?? null,
+        ...readCompleteRuntimeActivityProjection(session),
         rollbackEligibleTurnStarts: normalizeNonNegativeNumberArray(session.rollbackEligibleTurnStarts),
         latestReadyEventSeq: normalizeNonNegativeInteger(session.latestReadyEventSeq),
         latestReadyEventAt: normalizeNonNegativeNumber(session.latestReadyEventAt),
@@ -229,17 +265,17 @@ export function buildSessionListCacheEntryFromRenderable(
             : normalizeNonNegativeNumber(session.pendingRequestObservedAt),
         accessLevel: session.accessLevel,
         canApprovePermissions: session.canApprovePermissions,
-        name: preserveMetadata ? previousEntry.name : session.metadata?.name,
+        name: preserveMetadata ? previousEntry.name : legacyMetadata?.name,
         summaryText: preserveMetadata ? previousEntry.summaryText ?? null : session.metadata?.summaryText ?? null,
-        path: preserveMetadata ? previousEntry.path : session.metadata?.path ?? '',
-        homeDir: preserveMetadata ? previousEntry.homeDir ?? null : session.metadata?.homeDir ?? null,
-        host: preserveMetadata ? previousEntry.host ?? null : session.metadata?.host ?? null,
-        machineId: preserveMetadata ? previousEntry.machineId ?? null : session.metadata?.machineId ?? null,
-        flavor: preserveMetadata ? previousEntry.flavor ?? null : session.metadata?.flavor ?? null,
-        externalSessionV1: preserveMetadata ? previousEntry.externalSessionV1 ?? null : session.metadata?.externalSessionV1 ?? null,
+        path: preserveMetadata ? previousEntry.path : legacyMetadata?.path ?? '',
+        homeDir: preserveMetadata ? previousEntry.homeDir ?? null : legacyMetadata?.homeDir ?? null,
+        host: preserveMetadata ? previousEntry.host ?? null : legacyMetadata?.host ?? null,
+        machineId: preserveMetadata ? previousEntry.machineId ?? null : legacyMetadata?.machineId ?? null,
+        flavor: preserveMetadata ? previousEntry.flavor ?? null : legacyMetadata?.flavor ?? null,
+        externalSessionV1: preserveMetadata ? previousEntry.externalSessionV1 ?? null : legacyMetadata?.externalSessionV1 ?? null,
         hiddenSystemSession: preserveMetadata
             ? previousEntry.hiddenSystemSession === true
-            : session.metadata?.hiddenSystemSession === true,
+            : legacyMetadata?.hiddenSystemSession === true,
         keepVisibleWhenInactive: session.keepVisibleWhenInactive === true,
         hasPendingPermissionRequests: preserveAgentState
             ? previousEntry.hasPendingPermissionRequests === true

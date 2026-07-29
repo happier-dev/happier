@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import renderer from 'react-test-renderer';
+import renderer, { act } from 'react-test-renderer';
 
 import {
     collectHostText,
@@ -193,6 +193,81 @@ describe('WorkflowActivityView', () => {
         expect(tree.root.findAllByProps({ testID: 'workflow-card-wf_large-show-more' })).toHaveLength(0);
     });
 
+    it('announces records hydration before committing the loaded workflow body', async () => {
+        const rowMutation = vi.fn();
+        const { TranscriptRowLayoutMutationProvider } = await import(
+            '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext'
+        );
+        const tool = makeToolCall({ id: 'workflow-tool', name: 'Workflow', state: 'running', input: { name: 'Build feature' } });
+        const props = { ...makeToolViewProps(tool), sessionId: 'sess_1' };
+        const renderWithOwner = (toolRevision: number) => (
+            <TranscriptRowLayoutMutationProvider value={rowMutation}>
+                <WorkflowActivityView
+                    {...props}
+                    tool={{ ...props.tool, input: { toolRevision } }}
+                />
+            </TranscriptRowLayoutMutationProvider>
+        );
+        useWorkflowRunForToolUseId.mockReturnValue({
+            runHeadline: null,
+            detail: { state: 'loading', runId: 'wf_1' },
+        });
+        const tree = (await renderScreen(renderWithOwner(1))).tree;
+
+        useWorkflowRunForToolUseId.mockReturnValue({
+            runHeadline: null,
+            detail: {
+                state: 'loaded',
+                runId: 'wf_1',
+                snapshot: snapshot({
+                    title: 'Hydrated workflow',
+                    totalAgents: 1,
+                    agents: [{ id: 'agent-1', title: 'worker', status: 'active', updatedAt: 2 }],
+                }),
+            },
+        });
+        await act(async () => {
+            tree.update(renderWithOwner(2));
+        });
+
+        expect(rowMutation).toHaveBeenCalledWith({
+            reason: 'content-change',
+            sourceId: 'workflow-activity:workflow-tool',
+        });
+        expect(collectHostText(tree)).toContain('Hydrated workflow');
+    });
+
+    it('announces show-more growth before appending workflow agent rows', async () => {
+        const rowMutation = vi.fn();
+        const { TranscriptRowLayoutMutationProvider } = await import(
+            '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext'
+        );
+        useWorkflowRunForToolUseId.mockReturnValue({
+            runHeadline: null,
+            detail: {
+                state: 'loaded',
+                runId: 'wf_large',
+                snapshot: largeSnapshot(30),
+            },
+        });
+        const tool = makeToolCall({ id: 'workflow-tool', name: 'Workflow', state: 'running' });
+        const props = { ...makeToolViewProps(tool), sessionId: 'sess_1' };
+        const tree = (await renderScreen(
+            <TranscriptRowLayoutMutationProvider value={rowMutation}>
+                <WorkflowActivityView {...props} />
+            </TranscriptRowLayoutMutationProvider>,
+        )).tree;
+
+        const showMore = tree.root.findByProps({ testID: 'workflow-card-wf_large-show-more' });
+        await pressTestInstanceAsync(showMore, 'workflow card show more');
+
+        expect(rowMutation).toHaveBeenCalledWith({
+            reason: 'content-change',
+            sourceId: 'workflow-activity:workflow-tool',
+        });
+        expect(collectHostText(tree)).toContain('Agent 20');
+    });
+
     it('expands an agent row to show normalized summary detail when available', async () => {
         useWorkflowRunForToolUseId.mockReturnValue({
             runHeadline: null,
@@ -228,5 +303,59 @@ describe('WorkflowActivityView', () => {
 
         expect(collectHostText(tree).join(' ')).toContain('Full normalized result summary');
         expect(tree.root.findAllByProps({ testID: 'workflow-card-agent-wf_1-agent-1-detail' })).toHaveLength(1);
+    });
+
+    it('announces both the workflow row and nested detail expansions through the transcript owner', async () => {
+        const rowMutation = vi.fn();
+        const { TranscriptRowLayoutMutationProvider } = await import(
+            '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext'
+        );
+        useWorkflowRunForToolUseId.mockReturnValue({
+            runHeadline: null,
+            detail: {
+                state: 'loaded',
+                runId: 'wf_1',
+                snapshot: snapshot({
+                    runId: 'wf_1',
+                    title: 'Investigate',
+                    totalAgents: 1,
+                    agents: [{
+                        id: 'agent-1',
+                        title: 'researcher',
+                        status: 'complete',
+                        updatedAt: 1,
+                        resultPreview: 'Short result',
+                        summary: Array.from({ length: 20 }, (_, index) => `line ${index}`).join('\n'),
+                    }],
+                }),
+            },
+        });
+        const tool = makeToolCall({ id: 'workflow-tool', name: 'Workflow', state: 'running' });
+        const props = { ...makeToolViewProps(tool), sessionId: 'sess_1' };
+        const tree = (await renderScreen(
+            <TranscriptRowLayoutMutationProvider value={rowMutation}>
+                <WorkflowActivityView {...props} />
+            </TranscriptRowLayoutMutationProvider>,
+        )).tree;
+
+        const agentRow = tree.root
+            .findAllByProps({ testID: 'workflow-card-agent-wf_1-agent-1' })
+            .find((node) => typeof node.props.onPress === 'function');
+        await pressTestInstanceAsync(agentRow, 'workflow agent row');
+        const detailToggle = tree.root.findByProps({
+            testID: 'workflow-card-agent-wf_1-agent-1-detail-show-more',
+        });
+        await pressTestInstanceAsync(detailToggle, 'workflow agent detail');
+
+        expect(rowMutation.mock.calls).toEqual([
+            [{
+                reason: 'expand',
+                sourceId: 'workflow-agent:workflow-card-agent-wf_1-agent-1',
+            }],
+            [{
+                reason: 'expand',
+                sourceId: 'workflow-agent-detail:workflow-card-agent-wf_1-agent-1-detail',
+            }],
+        ]);
     });
 });

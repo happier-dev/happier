@@ -1,4 +1,3 @@
-import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { storage } from '@/sync/domains/state/storage';
 import {
     readSessionRuntimePublicationState,
@@ -8,6 +7,7 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import { readVoiceAgentRunMetadataFromSession, type VoiceAgentRunMetadataV1 } from '@/voice/persistence/voiceAgentRunMetadata';
 import { findReusableVoiceConversationRuntimeSessionId, findVoiceConversationSessionId } from '@/voice/persistence/voiceConversationSession';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
 import { voiceConversationBindingResolver } from './VoiceConversationBindingResolver';
 import type { VoiceConversationTranscriptMode, VoiceSessionBinding } from './voiceConversationBindingTypes';
@@ -65,8 +65,7 @@ export function resolvePersistedDaemonConversationSessionId(): string | null {
 
 function readRuntimePublicationForSession(metadataSessionId: string): SessionRuntimePublicationState {
     const state = storage.getState() as any;
-    const preferredMetadata = resolveSessionListPreferredSessionMetadataFromState(state, metadataSessionId);
-    const metadata = preferredMetadata ?? state.sessions?.[metadataSessionId]?.metadata ?? null;
+    const metadata = readVoiceSessionOwnerMetadataFromState(state, metadataSessionId);
     return readSessionRuntimePublicationState(metadata);
 }
 

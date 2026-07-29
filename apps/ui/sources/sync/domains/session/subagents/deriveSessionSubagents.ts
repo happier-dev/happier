@@ -1,9 +1,12 @@
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
 import { deriveExecutionRunSubagents } from './executionRuns/deriveExecutionRunSubagents';
 import { deriveProviderSessionSubagents } from './providers';
 import { deriveSubAgentSidechainSubagents } from './subAgentSidechains/deriveSubAgentSidechainSubagents';
 import type { SessionSubagent, SessionSubagentActiveExecutionRunState } from './types';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 function sortSubagents(subagents: readonly SessionSubagent[]): readonly SessionSubagent[] {
     return [...subagents].sort((left, right) => {
@@ -20,13 +23,15 @@ function sortSubagents(subagents: readonly SessionSubagent[]): readonly SessionS
 }
 
 export function deriveSessionSubagents(params: Readonly<{
-    session: Readonly<{ metadata?: Readonly<{ flavor?: unknown }> | null }>;
+    session: Pick<Session, 'metadataLayoutVersion' | 'metadata' | 'ownerMetadataView'>;
     messages: readonly Message[];
     activeExecutionRuns?: readonly SessionSubagentActiveExecutionRunState[];
 }>): readonly SessionSubagent[] {
-    const flavor = typeof (params.session as any)?.metadata?.flavor === 'string'
-        ? String((params.session as any).metadata.flavor)
-        : null;
+    const metadata = readSessionOwnerMetadataView(params.session);
+    const rawFlavor = metadata?.flavor;
+    const flavor = typeof rawFlavor === 'string' && rawFlavor.trim().length > 0
+        ? rawFlavor
+        : resolveAgentIdFromSessionMetadata(metadata);
 
     const executionRuns = deriveExecutionRunSubagents({
         messages: params.messages,

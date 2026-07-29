@@ -63,6 +63,39 @@ describe('LocalVoiceTtsGroup', () => {
     primeWebAudioPlaybackSpy.mockReset();
   });
 
+  it('uses the localized row titles as the accessible names for both switches', async () => {
+    const { LocalVoiceTtsGroup } = await import('./LocalVoiceTtsGroup');
+    const screen = await renderScreen(React.createElement(LocalVoiceTtsGroup, {
+      cfgTts: {
+        provider: 'local_neural',
+        autoSpeakReplies: false,
+        bargeInEnabled: false,
+        localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null, execution: 'auto' },
+        openaiCompat: { baseUrl: null, apiKey: null, model: null, voice: null, format: null },
+        googleCloud: null,
+      } as any,
+      setTts: vi.fn(),
+      networkTimeoutMs: 15000,
+      popoverBoundaryRef: null,
+    }));
+
+    const switchRows = screen.tree.root.findAllByType('Item' as any)
+      .filter((row) => row.props.rightElement?.props?.accessibilityLabel !== undefined);
+    expect(switchRows.map((row) => ({
+      title: row.props.title,
+      accessibilityLabel: row.props.rightElement.props.accessibilityLabel,
+    }))).toEqual([
+      {
+        title: 'settingsVoice.local.autoSpeak',
+        accessibilityLabel: 'settingsVoice.local.autoSpeak',
+      },
+      {
+        title: 'settingsVoice.local.bargeIn',
+        accessibilityLabel: 'settingsVoice.local.bargeIn',
+      },
+    ]);
+  });
+
   it('shows a speaking status while test is running', async () => {
     let resolve!: () => void;
     providerTestSpy.mockImplementationOnce(() => new Promise<void>((r) => { resolve = r; }));

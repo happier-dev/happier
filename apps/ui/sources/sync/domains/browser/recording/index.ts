@@ -1,0 +1,25 @@
+export {
+    applyBrowserRecordingSessionSnapshot,
+    applyBrowserRecordingLifecycleEvent,
+    attachBrowserRecordingToComposer,
+    cleanupExpiredBrowserRecordings,
+    createBrowserRecordingState,
+    finalizeBrowserRecordingSession,
+    resolveBrowserRecordingAvailability,
+    startBrowserRecordingSession,
+} from './state';
+export type {
+    BrowserRecordingAttachResult,
+    BrowserRecordingAvailabilityInput,
+    BrowserRecordingCleanupResult,
+    BrowserRecordingComposerAttachmentRecord,
+    BrowserRecordingFinalizeInput,
+    BrowserRecordingFinalizeResult,
+    BrowserRecordingLifecycleEvent,
+    BrowserRecordingLifecycleResult,
+    BrowserRecordingStartInput,
+    BrowserRecordingStartResult,
+    BrowserRecordingState,
+    BrowserRecordingUnavailableReason,
+    BrowserRecordingUnavailableReasonCode,
+} from './types';

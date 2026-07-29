@@ -1,23 +1,86 @@
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import * as React from 'react';
+import { Pressable } from 'react-native';
 
 import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
-import { getToolViewComponent } from '@/components/tools/renderers/core/_registry';
+import {
+    getToolViewComponent,
+} from '@/components/tools/renderers/core/_registry';
 import { StructuredResultView } from '@/components/tools/renderers/system/StructuredResultView';
 import { knownTools } from '@/components/tools/catalog';
 import { ToolHeaderActionsContext } from '@/components/tools/shell/presentation/ToolHeaderActionsContext';
 import { ToolError } from '@/components/tools/shell/presentation/ToolError';
-import { ToolSectionSpacingProvider, ToolSectionView } from '@/components/tools/shell/presentation/ToolSectionView';
+import {
+    ToolSectionSpacingProvider,
+    ToolSectionView,
+} from '@/components/tools/shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { useSetting } from '@/sync/domains/state/storage';
 import { maybeParseJson } from '@/components/tools/normalization/parse/parseJson';
-import { TextSelectabilityScope } from '@/components/ui/text/Text';
+import { Text, TextSelectabilityScope } from '@/components/ui/text/Text';
 import { parseToolUseError } from '@/utils/errors/toolErrorParser';
-import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import {
+    getAgentCore,
+} from '@/agents/catalog/catalog';
 import { t } from '@/text';
 import { resolveToolPermissionTerminalErrorMessage } from '@/components/tools/shell/permissions/resolveToolPermissionTerminalErrorMessage';
+import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 
 type ToolInlineBodyMode = 'card' | 'timeline';
+type DisplayCode = Readonly<{
+    code: string;
+    truncated: boolean;
+}>;
+
+function serializeToolDisplayValue(value: unknown): string {
+    return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+}
+
+function clampToolDisplayCode(value: unknown, maxChars: number): DisplayCode {
+    const code = serializeToolDisplayValue(value);
+    if (code.length <= maxChars) return { code, truncated: false };
+    return {
+        code: `${code.slice(0, Math.max(0, maxChars))}\n...`,
+        truncated: true,
+    };
+}
+
+function ToolCodeViewWithClamp(props: Readonly<{
+    value: unknown;
+    maxChars: number;
+    sourceId: string;
+}>) {
+    const [expanded, setExpanded] = React.useState(false);
+    const rowLayoutMutation = useTranscriptRowLayoutMutation();
+    const display = React.useMemo(
+        () => clampToolDisplayCode(props.value, props.maxChars),
+        [props.maxChars, props.value],
+    );
+    const fullCode = React.useMemo(() => serializeToolDisplayValue(props.value), [props.value]);
+    const code = expanded ? fullCode : display.code;
+    return (
+        <>
+            <CodeView code={code} />
+            {display.truncated ? (
+                <Pressable
+                    accessibilityRole="button"
+                    onPress={() => {
+                        rowLayoutMutation({
+                            reason: expanded ? 'collapse' : 'expand',
+                            sourceId: props.sourceId,
+                        });
+                        setExpanded(!expanded);
+                    }}
+                >
+                    <Text>{expanded ? t('toolView.showLessContent') : t('toolView.showFullContent')}</Text>
+                </Pressable>
+            ) : null}
+        </>
+    );
+}
 
 export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
     mode: ToolInlineBodyMode;
@@ -38,6 +101,14 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
 }) {
     const { tool, normalizedToolName } = props;
     const sectionSpacing = props.sectionSpacing ?? 'default';
+    const displayMaxBytesSetting = useSetting('filesDiffTokenizationMaxBytes');
+    const displayMaxChars = typeof displayMaxBytesSetting === 'number' && Number.isFinite(displayMaxBytesSetting) && displayMaxBytesSetting > 0
+        ? Math.trunc(displayMaxBytesSetting)
+        : (settingsDefaults.filesDiffTokenizationMaxBytes as number);
+    const headerActionsContextValue = React.useMemo(
+        () => ({ setHeaderActions: props.setHeaderActions }),
+        [props.setHeaderActions],
+    );
 
     const isSubAgentRunLikeErrorResult = React.useMemo(() => {
         const parsed = maybeParseJson(tool.result);
@@ -71,7 +142,7 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
         hideDefaultError = true;
     }
 
-    const agentId = resolveAgentIdFromFlavor(props.metadata?.flavor);
+    const agentId = resolveAgentIdFromSessionMetadata(props.metadata);
     const hideUnknownToolsByDefault = agentId ? getAgentCore(agentId).toolRendering.hideUnknownToolsByDefault : false;
     if (!knownTool && hideUnknownToolsByDefault) {
         minimal = true;
@@ -111,7 +182,7 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
         return (
             <TextSelectabilityScope selectable>
                 <ToolSectionSpacingProvider spacing={sectionSpacing}>
-                    <ToolHeaderActionsContext.Provider value={{ setHeaderActions: props.setHeaderActions }}>
+                    <ToolHeaderActionsContext.Provider value={headerActionsContextValue}>
                         <SpecificToolView
                             tool={tool}
                             metadata={props.metadata}
@@ -187,7 +258,11 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
                 <TextSelectabilityScope selectable>
                     <ToolSectionSpacingProvider spacing={sectionSpacing}>
                         <ToolSectionView title={t('toolView.input')}>
-                            <CodeView code={JSON.stringify(tool.input, null, 2)} />
+                            <ToolCodeViewWithClamp
+                                value={tool.input}
+                                maxChars={displayMaxChars}
+                                sourceId={`tool-code:${props.messageId ?? tool.id}:input`}
+                            />
                         </ToolSectionView>
                     </ToolSectionSpacingProvider>
                 </TextSelectabilityScope>
@@ -201,7 +276,11 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
             <ToolSectionSpacingProvider spacing={sectionSpacing}>
                 {tool.input ? (
                     <ToolSectionView title={t('toolView.input')}>
-                        <CodeView code={JSON.stringify(tool.input, null, 2)} />
+                        <ToolCodeViewWithClamp
+                            value={tool.input}
+                            maxChars={displayMaxChars}
+                            sourceId={`tool-code:${props.messageId ?? tool.id}:input`}
+                        />
                     </ToolSectionView>
                 ) : null}
                 {tool.state === 'running' && tool.result ? (
@@ -214,12 +293,10 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
                 ) : null}
                 {tool.state === 'completed' && tool.result ? (
                     <ToolSectionView title={t('toolView.output')}>
-                        <CodeView
-                            code={
-                                typeof tool.result === 'string'
-                                    ? tool.result
-                                    : JSON.stringify(tool.result, null, 2)
-                            }
+                        <ToolCodeViewWithClamp
+                            value={tool.result}
+                            maxChars={displayMaxChars}
+                            sourceId={`tool-code:${props.messageId ?? tool.id}:output`}
                         />
                     </ToolSectionView>
                 ) : null}

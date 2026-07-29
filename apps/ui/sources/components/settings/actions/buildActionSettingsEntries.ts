@@ -146,10 +146,11 @@ function buildTargetEntries(params: Readonly<{
     actionId: ActionId;
     settings: ActionsSettingsV1;
     availability: ActionSettingsAvailability;
+    targetDefinitions: readonly ActionSettingsTargetDefinition[];
 }>): readonly ActionSettingsTargetEntry[] {
     const actionLevelReasonKey = getActionAvailabilityReasonKey(params.actionId, params.availability);
 
-    return listActionSettingsTargetDefinitions(listActionSpecs().find((spec) => spec.id === params.actionId)!)
+    return params.targetDefinitions
         .map((target) => {
             const selected = getActionSettingsTargetSelected({
                 settings: params.settings,
@@ -181,10 +182,13 @@ export function buildActionSettingsEntries(params: BuildActionSettingsEntriesPar
     const normalizedQuery = normalizeQuery(params.query);
 
     return listActionSpecs()
-        .map((spec) => {
+        .flatMap((spec) => {
             const targetDefinitions = listActionSettingsTargetDefinitions(spec);
+            if (targetDefinitions.length === 0) {
+                return [];
+            }
             const description = spec.description ?? spec.inputHints?.description ?? null;
-            return {
+            return [{
                 actionId: spec.id,
                 title: spec.title,
                 description,
@@ -200,8 +204,9 @@ export function buildActionSettingsEntries(params: BuildActionSettingsEntriesPar
                     actionId: spec.id,
                     settings: params.settings,
                     availability: params.availability,
+                    targetDefinitions,
                 }),
-            };
+            }];
         })
         .filter((entry) => matchesSearchText(entry.searchText, normalizedQuery))
         .sort((left, right) => left.title.localeCompare(right.title))

@@ -2,7 +2,14 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { voiceSettingsDefaults, type VoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import {
+  readLocalConversationVoiceSettings,
+  voiceSettingsDefaults,
+  writeLocalConversationVoiceSettings,
+  type VoiceLocalConversationSettings,
+  type VoiceSettings,
+} from '@/sync/domains/settings/voiceSettings';
 import { renderSettingsView, type SettingsViewHarness } from '@/dev/testkit';
 import { t } from '@/text';
 
@@ -98,7 +105,7 @@ const settingsState: { current: { recentMachinePaths: any[] } } = {
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
     return createPartialStorageModuleMock(importOriginal, {
-    useSettings: () => ({}),
+    useSettings: () => settingsParse({}),
     useSetting: (key: string) => {
       if (key === 'recentMachinePaths') return settingsState.current.recentMachinePaths;
       return null;
@@ -151,10 +158,15 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
 }));
 
-type LocalConversationAdapter = VoiceSettings['adapters']['local_conversation'];
+type LocalConversationAgentOverrides = Partial<VoiceLocalConversationSettings['agent']> & {
+  machineTargetMode?: 'auto' | 'fixed';
+  machineTargetId?: string | null;
+  autoTargetMachineId?: string | null;
+  welcome?: Partial<VoiceSettings['welcome']>;
+};
 
-type LocalConversationAdapterOverrides = Partial<Omit<LocalConversationAdapter, 'agent'>> & {
-  agent?: Partial<LocalConversationAdapter['agent']>;
+type LocalConversationAdapterOverrides = Partial<Omit<VoiceLocalConversationSettings, 'agent'>> & {
+  agent?: LocalConversationAgentOverrides;
 };
 
 function withProvider(voice: VoiceSettings, providerId: VoiceSettings['providerId']): VoiceSettings {
@@ -162,21 +174,26 @@ function withProvider(voice: VoiceSettings, providerId: VoiceSettings['providerI
 }
 
 function createLocalConversationVoice(overrides: LocalConversationAdapterOverrides = {}): VoiceSettings {
-  const defaults = voiceSettingsDefaults.adapters.local_conversation;
-  return {
-    ...voiceSettingsDefaults,
-    providerId: 'local_conversation',
-    adapters: {
-      ...voiceSettingsDefaults.adapters,
-      local_conversation: {
-        ...defaults,
-        ...overrides,
-        agent: {
-          ...defaults.agent,
-          ...overrides.agent,
-        },
-      },
+  const defaults = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+  const next = writeLocalConversationVoiceSettings(voiceSettingsDefaults, {
+    ...defaults,
+    ...overrides,
+    agent: {
+      ...defaults.agent,
+      ...overrides.agent,
     },
+  });
+  return {
+    ...next,
+    providerId: 'local_conversation',
+    executionMachine: {
+      mode: overrides.agent?.machineTargetMode === 'fixed' ? 'fixed' : 'auto',
+      machineId: overrides.agent?.machineTargetId ?? null,
+      autoMachineId: overrides.agent?.autoTargetMachineId ?? null,
+    },
+    welcome: overrides.agent?.welcome
+      ? { ...voiceSettingsDefaults.welcome, ...overrides.agent.welcome }
+      : voiceSettingsDefaults.welcome,
   };
 }
 
@@ -200,6 +217,24 @@ async function loadLocalConversationSection() {
 }
 
 describe('LocalConversationSection', () => {
+  it('renders the shared selected-machine endpoint and credential owners for OpenAI-compatible chat', async () => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        backend: 'openai_compat',
+        openaiCompat: {
+          ...readLocalConversationVoiceSettings(voiceSettingsDefaults).agent.openaiCompat,
+          chatBaseUrl: null,
+        },
+      },
+    });
+
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
+    expect(screen.findAll((node) => String(node.type) === 'Item' && node.props?.title === t('settingsVoice.local.chatBaseUrl'))).toHaveLength(1);
+    expect(screen.findAll((node) => String(node.type) === 'Item' && node.props?.title === t('settingsVoice.local.chatApiKey'))).toHaveLength(1);
+  });
+
   it('does not crash when providerId toggles away from local_conversation', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = () => {};
@@ -382,7 +417,7 @@ describe('LocalConversationSection', () => {
     expect(preflightModelsCallSpy).toHaveBeenCalledWith(expect.objectContaining({ selectedMachineId: 'machine-1' }));
   });
 
-  it('renders a machine dropdown for the voice agent runtime (auto + machines)', async () => {
+  it('does not render a second agent-only execution-machine owner', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();
     const voice = createLocalConversationVoice({
@@ -398,23 +433,70 @@ describe('LocalConversationSection', () => {
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
     const machineDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.agentMachine.title'));
-    expect(machineDropdown?.props.selectedId).toBe('auto');
+    expect(machineDropdown).toBeFalsy();
   });
 
-  it('renders directory policy controls for the voice agent (stayInVoiceHome + teleport)', async () => {
+  it('names every rendered switch and isolates actionable row controls from row activation', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
+    const setVoice = vi.fn();
+    const defaults = readLocalConversationVoiceSettings(voiceSettingsDefaults);
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
+      stt: {
+        ...defaults.stt,
+        provider: 'device',
+      },
       agent: {
+        backend: 'daemon',
+        resumabilityMode: 'provider_resume',
+        transcript: {
+          ...defaults.agent.transcript,
+          persistenceMode: 'persistent',
+        },
         stayInVoiceHome: true,
         teleportEnabled: false,
+        commitIsolation: true,
       },
     });
 
-    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const switchTitles = [
+      t('settingsVoice.local.conversation.handsFree.enableTitle'),
+      t('settingsVoice.local.conversation.providerResumeFallback.title'),
+      t('settingsVoice.local.conversation.prewarm.title'),
+      t('settingsVoice.local.conversation.agentMachine.stayInVoiceHomeTitle'),
+      t('settingsVoice.local.conversation.agentMachine.allowTeleportTitle'),
+      t('settingsVoice.local.conversation.commitIsolation.title'),
+      t('settingsVoice.local.conversation.streaming.enableTitle'),
+      t('settingsVoice.local.conversation.streaming.enableTtsTitle'),
+    ];
 
-    expect(screen.findRowByTitle(t('settingsVoice.local.conversation.agentMachine.stayInVoiceHomeTitle'))).toBeTruthy();
-    expect(screen.findRowByTitle(t('settingsVoice.local.conversation.agentMachine.allowTeleportTitle'))).toBeTruthy();
+    for (const title of switchTitles) {
+      const row = screen.findRowByTitle(title);
+      if (!row) throw new Error(`Expected switch row "${title}"`);
+      expect(row.props.rightElement?.props?.accessibilityLabel).toBe(title);
+    }
+
+    const actionableTitles = [
+      t('settingsVoice.local.conversation.agentMachine.stayInVoiceHomeTitle'),
+      t('settingsVoice.local.conversation.agentMachine.allowTeleportTitle'),
+      t('settingsVoice.local.conversation.commitIsolation.title'),
+    ];
+    for (const title of actionableTitles) {
+      const row = screen.findRowByTitle(title);
+      if (!row) throw new Error(`Expected actionable switch row "${title}"`);
+      expect(row.props.rightElementOutsidePressable).toBe(true);
+
+      setVoice.mockClear();
+      act(() => row.props.onPress());
+      expect(setVoice).toHaveBeenCalledTimes(1);
+
+      setVoice.mockClear();
+      act(() => row.props.rightElement.props.onValueChange(
+        !row.props.rightElement.props.value,
+      ));
+      expect(setVoice).toHaveBeenCalledTimes(1);
+    }
   });
 
   it('renders warm-root policy controls for the voice agent', async () => {

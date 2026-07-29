@@ -1,13 +1,19 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import * as React from 'react';
 import {
-    Ionicons } from '@expo/vector-icons';
-import { View,
-    useWindowDimensions } from 'react-native';
-import { StyleSheet,
-    useUnistyles } from 'react-native-unistyles';
+    Ionicons,
+} from '@expo/vector-icons';
+import {
+    View,
+    useWindowDimensions,
+} from 'react-native';
+import {
+    StyleSheet,
+    useUnistyles,
+} from 'react-native-unistyles';
 
-import { DEFAULT_AGENT_ID,
+import {
+    DEFAULT_AGENT_ID,
 } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { SelectionList, type SelectionListOption, type SelectionListStep } from '@/components/ui/selectionList';
@@ -20,6 +26,7 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { useSessionListIndexByServerId, useSessionListRowRenderablesForItems, useSessions } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { t } from '@/text';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
@@ -138,7 +145,11 @@ function appendSessionListTargets(
 }
 
 function resolveSessionAgentId(session: TranscriptSendToSessionTargetSource) {
-    return resolveAgentIdFromSessionMetadata(session.metadata) ?? DEFAULT_AGENT_ID;
+    return (
+        'agentState' in session
+            ? readSessionPresentationAgentId(session)
+            : resolveAgentIdFromSessionMetadata(session.metadata)
+    ) ?? DEFAULT_AGENT_ID;
 }
 
 const TranscriptSendToSessionRowMeta = React.memo(function TranscriptSendToSessionRowMeta(

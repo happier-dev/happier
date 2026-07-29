@@ -256,6 +256,23 @@ describe('VoiceTranscriptProjector', () => {
         expect(first?.id).not.toBe(second?.id);
     });
 
+    it('assigns monotonic timestamps to local projections created in the same millisecond', async () => {
+        const { createVoiceTranscriptProjector } = await import('./VoiceTranscriptProjector');
+        const projector = createVoiceTranscriptProjector({
+            getState: () => ({
+                applyMessagesLoaded: () => undefined,
+                applyMessages: () => undefined,
+            }),
+            nowMs: () => 100,
+        });
+
+        const first = projector.projectNoteText({ conversationSessionId: 'carrier-s1', text: 'first' });
+        const second = projector.projectNoteText({ conversationSessionId: 'carrier-s1', text: 'second' });
+
+        expect(first?.createdAt).toBe(100);
+        expect(second?.createdAt).toBe(101);
+    });
+
     it('bounds the in-memory unreconciled projection ring and retires reconciled ephemerals', async () => {
         const { createVoiceTranscriptProjector } = await import('./VoiceTranscriptProjector');
         const { VOICE_TRANSCRIPT_UNRECONCILED_EVENT_RING_MAX } = await import('./voiceTranscriptBounds');
@@ -291,27 +308,6 @@ describe('VoiceTranscriptProjector', () => {
             turn: { epoch: 1, role: 'user', ts: 1, voiceAgentId: 'va_1' },
         });
         expect(projector.unreconciledProjectionCount()).toBe(before - 1);
-    });
-
-    it('truncates assistant text to the played boundary, snapping back to a word boundary', async () => {
-        const { createVoiceTranscriptProjector } = await import('./VoiceTranscriptProjector');
-        const projector = createVoiceTranscriptProjector({
-            getState: () => ({ applyMessages: () => {}, applyMessagesLoaded: () => {} }),
-            nowMs: () => 100,
-        });
-
-        // Heard half of a 2000ms utterance -> keep the leading words, drop the tail.
-        expect(
-            projector.truncateToPlayedBoundary({ fullText: 'one two three four', playedMs: 1000, spokenDurationMs: 2000 }),
-        ).toBe('one two');
-        // Fully played -> full text.
-        expect(
-            projector.truncateToPlayedBoundary({ fullText: 'one two three four', playedMs: 2000, spokenDurationMs: 2000 }),
-        ).toBe('one two three four');
-        // Nothing played -> empty.
-        expect(
-            projector.truncateToPlayedBoundary({ fullText: 'one two three four', playedMs: 0, spokenDurationMs: 2000 }),
-        ).toBe('');
     });
 
     it('selects transcript entries from projected session messages in created order', async () => {

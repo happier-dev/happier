@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useMemo, useState } from 'react';
-import { View, FlatList, ScrollView, Platform, Switch } from 'react-native';
+import { View, ScrollView, Platform, Switch } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { UserProfile, getDisplayName } from '@/sync/domains/social/friendTypes';
@@ -153,33 +153,28 @@ export const FriendSelector = memo(function FriendSelector({
                     />
 
                     <View style={styles.friendList}>
-                        <FlatList
-                            data={filteredFriends}
-                            keyExtractor={(item) => item.id}
-                            renderItem={({ item }) => {
-                                const canShare = Boolean(item.contentPublicKey && item.contentPublicKeySig);
-                                const isSelected = selectedUserId === item.id;
-                                return (
-                                    <View style={styles.friendItem}>
-                                        <UserCard
-                                            user={item}
-                                            onPress={canShare ? () => setSelectedUserId(item.id) : undefined}
-                                            disabled={!canShare}
-                                            subtitle={!canShare ? t('session.sharing.recipientMissingKeys') : undefined}
-                                        />
-                                        {isSelected ? <View style={styles.selectedIndicator} /> : null}
-                                    </View>
-                                );
-                            }}
-                            ListEmptyComponent={
-                                <View style={styles.emptyState}>
-                                    <Text style={styles.emptyText}>
-                                        {searchQuery ? t('common.noMatches') : t('friends.noFriendsYet')}
-                                    </Text>
+                        {filteredFriends.map((item) => {
+                            const canShare = Boolean(item.contentPublicKey && item.contentPublicKeySig);
+                            const isSelected = selectedUserId === item.id;
+                            return (
+                                <View key={item.id} style={styles.friendItem}>
+                                    <UserCard
+                                        user={item}
+                                        onPress={canShare ? () => setSelectedUserId(item.id) : undefined}
+                                        disabled={!canShare}
+                                        subtitle={!canShare ? t('session.sharing.recipientMissingKeys') : undefined}
+                                    />
+                                    {isSelected ? <View style={styles.selectedIndicator} /> : null}
                                 </View>
-                            }
-                            scrollEnabled={false}
-                        />
+                            );
+                        })}
+                        {filteredFriends.length === 0 ? (
+                            <View style={styles.emptyState}>
+                                <Text style={styles.emptyText}>
+                                    {searchQuery ? t('common.noMatches') : t('friends.noFriendsYet')}
+                                </Text>
+                            </View>
+                        ) : null}
                     </View>
 
                     {selectedFriend ? (

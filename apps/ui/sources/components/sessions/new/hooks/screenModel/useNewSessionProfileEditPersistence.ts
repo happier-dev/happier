@@ -18,6 +18,7 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
     draftPersistenceEnabled: boolean;
     draftPersistenceGenerationRef: React.MutableRefObject<number>;
     draftTextLength?: number | null;
+    draftChangeKey: string;
 }>): Readonly<{
     openProfileEdit: (args: Readonly<{ profileId?: string; cloneFromProfileId?: string }>) => void;
     handleAddProfile: () => void;
@@ -82,6 +83,7 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
         persistDraftNow,
         persistenceEnabled: params.draftPersistenceEnabled,
         draftTextLength: params.draftTextLength,
+        draftChangeKey: params.draftChangeKey,
         focused: isFocused,
     });
 

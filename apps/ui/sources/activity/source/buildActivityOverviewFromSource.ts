@@ -14,13 +14,18 @@ import {
     resolveSessionListLookupSessionServerScopeFromState,
     type SessionServerLookupStateLike,
 } from '@/sync/domains/session/listing/sessionListLookupState';
-import type { AgentState, Session } from '@/sync/domains/state/storageTypes';
+import type { Session } from '@/sync/domains/state/storageTypes';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
-import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import {
+    buildSessionFromListRenderable,
+    isSessionListRenderableNewerThanSession,
+} from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import {
     createActivitySurfaceSessionRoute,
     createActivitySurfaceSessionTarget,
 } from '@/activity/actions/activitySurfaceTargets';
+import { isVoiceConversationCustodySessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
 
@@ -38,6 +43,29 @@ export const DEFAULT_ACTIVITY_SURFACE_TIMING: ActivitySurfaceTimingBySurface = {
         dwellMs: 90_000,
     },
 };
+
+function isHydratedSessionInActivityCustody(session: Session): boolean {
+    const ownerMetadata = readSessionOwnerMetadataView(session);
+    if (session.metadataLayoutVersion === 1 && ownerMetadata == null) {
+        return false;
+    }
+    return (
+        isUserFacingSession({
+            metadata: ownerMetadata,
+        })
+        || isVoiceConversationCustodySessionMetadata(ownerMetadata)
+    );
+}
+
+function isHydratedSessionUserFacing(session: Session): boolean {
+    const ownerMetadata = readSessionOwnerMetadataView(session);
+    if (session.metadataLayoutVersion === 1 && ownerMetadata == null) {
+        return false;
+    }
+    return isUserFacingSession({
+        metadata: ownerMetadata,
+    });
+}
 
 type ActivitySurfaceTimingInput = Partial<{
     [Surface in keyof ActivitySurfaceTimingBySurface]: Partial<ActivitySurfaceTimingFacts>;
@@ -125,84 +153,28 @@ function collectLookupSessionIds(
         sessionIds.push(sessionId);
     }
 
+    // User-facing indexes intentionally omit hidden system sessions, so the
+    // canonical hydrated session map is the only complete discovery source for
+    // post-Voice permission/result custody. Admit only the bounded Voice-owned
+    // marker family here; unrelated hidden sessions remain excluded.
+    for (const sessionIdKey in source.sessionsById) {
+        if (!Object.prototype.hasOwnProperty.call(source.sessionsById, sessionIdKey)) {
+            continue;
+        }
+        const session = source.sessionsById[sessionIdKey];
+        const sessionId = session?.id?.trim() ?? '';
+        if (
+            !sessionId
+            || seenSessionIds.has(sessionId)
+            || !isHydratedSessionInActivityCustody(session)
+        ) {
+            continue;
+        }
+        seenSessionIds.add(sessionId);
+        sessionIds.push(sessionId);
+    }
+
     return sessionIds;
-}
-
-function buildSessionFromRenderable(
-    renderable: SessionListRenderableSession,
-    serverId?: string | null,
-): Session {
-    const seq = Math.max(0, Math.trunc(renderable.seq ?? 0));
-    const normalizedServerId = typeof serverId === 'string' && serverId.trim() ? serverId.trim() : undefined;
-    const pendingRequestObservedAt = typeof renderable.pendingRequestObservedAt === 'number'
-        && Number.isFinite(renderable.pendingRequestObservedAt)
-        && renderable.pendingRequestObservedAt > 0
-        ? renderable.pendingRequestObservedAt
-        : null;
-    const agentState = buildRenderablePendingAgentState(renderable, pendingRequestObservedAt);
-
-    return {
-        id: renderable.id,
-        serverId: normalizedServerId,
-        seq: renderable.hasUnreadMessages === true ? Math.max(1, seq) : seq,
-        createdAt: renderable.createdAt,
-        updatedAt: renderable.updatedAt,
-        active: renderable.active,
-        activeAt: renderable.activeAt,
-        archivedAt: renderable.archivedAt ?? null,
-        meaningfulActivityAt: renderable.meaningfulActivityAt ?? null,
-        pendingVersion: renderable.pendingVersion,
-        pendingCount: renderable.pendingCount,
-        lastViewedSessionSeq: renderable.hasUnreadMessages === true ? 0 : seq,
-        pendingPermissionRequestCount: renderable.hasPendingPermissionRequests === true ? 1 : 0,
-        pendingUserActionRequestCount: renderable.hasPendingUserActionRequests === true ? 1 : 0,
-        latestReadyEventSeq: renderable.hasUnreadMessages === true ? Math.max(1, seq) : renderable.latestReadyEventSeq,
-        latestTurnStatus: renderable.latestTurnStatus ?? null,
-        latestTurnStatusObservedAt: renderable.latestTurnStatusObservedAt ?? null,
-        lastRuntimeIssue: renderable.lastRuntimeIssue ?? null,
-        lastTurnCompletedAt: renderable.lastTurnCompletedAt ?? null,
-        metadata: renderable.metadata as Session['metadata'],
-        metadataVersion: renderable.metadataVersion,
-        agentState,
-        agentStateVersion: renderable.agentStateVersion,
-        thinking: renderable.thinking,
-        thinkingAt: renderable.thinkingAt,
-        presence: renderable.presence,
-        optimisticThinkingAt: renderable.optimisticThinkingAt,
-        thinkingGraceUntil: renderable.thinkingGraceUntil,
-        owner: renderable.owner,
-        accessLevel: renderable.accessLevel,
-        canApprovePermissions: renderable.canApprovePermissions,
-    };
-}
-
-function buildRenderablePendingAgentState(
-    renderable: SessionListRenderableSession,
-    pendingRequestObservedAt: number | null,
-): AgentState | null {
-    if (pendingRequestObservedAt === null) return null;
-
-    const requests: NonNullable<AgentState['requests']> = {};
-    if (renderable.hasPendingPermissionRequests === true) {
-        requests.permission = {
-            tool: 'PendingPermission',
-            kind: 'permission',
-            arguments: {},
-            createdAt: pendingRequestObservedAt,
-        };
-    }
-    if (renderable.hasPendingUserActionRequests === true) {
-        requests.user_action = {
-            tool: 'PendingUserAction',
-            kind: 'user_action',
-            arguments: {},
-            createdAt: pendingRequestObservedAt,
-        };
-    }
-
-    return Object.keys(requests).length > 0
-        ? { controlledByUser: null, requests }
-        : null;
 }
 
 function collectSourceSessions(
@@ -214,16 +186,33 @@ function collectSourceSessions(
 
     for (const sessionId of collectLookupSessionIds(source, includeWarmSourceWhenNotReady)) {
         const session = source.sessionsById[sessionId];
+        const lookupEntry = findSessionListLookupSession(lookupState, sessionId);
+        const renderable = lookupEntry?.session ?? source.sessionListRenderablesById[sessionId];
         if (session) {
-            if (isUserFacingSession(session)) {
-                sessions.push(session);
+            const projectedSession = renderable
+                && renderable.metadataUnavailable !== true
+                && isSessionListRenderableNewerThanSession(renderable, session)
+                ? buildSessionFromListRenderable(renderable, {
+                    baseSession: session,
+                    serverId: lookupEntry?.serverId ?? session.serverId ?? null,
+                })
+                : session;
+            if (isHydratedSessionInActivityCustody(projectedSession)) {
+                sessions.push(projectedSession);
             }
             continue;
         }
-        const lookupEntry = findSessionListLookupSession(lookupState, sessionId);
-        const renderable = lookupEntry?.session ?? source.sessionListRenderablesById[sessionId];
-        if (renderable && isUserFacingSession(renderable)) {
-            sessions.push(buildSessionFromRenderable(renderable, lookupEntry?.serverId ?? null));
+        if (
+            renderable
+            && renderable.metadataUnavailable !== true
+            && (
+                isUserFacingSession(renderable)
+                || isVoiceConversationCustodySessionMetadata(renderable.metadata)
+            )
+        ) {
+            sessions.push(buildSessionFromListRenderable(renderable, {
+                serverId: lookupEntry?.serverId ?? null,
+            }));
         }
     }
 
@@ -330,6 +319,13 @@ export function buildActivityOverviewFromSource(params: Readonly<{
             sessionOptions: params.sessionOptions,
             nowMs: params.nowMs,
         }))
+        .filter((candidate) => (
+            isHydratedSessionUserFacing(candidate.session)
+            || (
+                isVoiceConversationCustodySessionMetadata(readSessionOwnerMetadataView(candidate.session))
+                && candidate.hasAttention
+            )
+        ))
         .map((candidate) => enrichCandidateWithSourceFacts({
             source: params.source,
             lookupState,
@@ -352,7 +348,7 @@ export function buildActivityOverviewFromSource(params: Readonly<{
     for (const candidate of candidates) {
         if (candidate.reasons.hasUnread) unread += 1;
         if (candidate.reasons.hasPendingPermissionRequests) permissionRequired += 1;
-        if (candidate.reasons.hasPendingUserActionRequests) actionRequired += 1;
+        if (candidate.reasons.hasPendingUserActionRequests || candidate.reasons.hasBlockedPendingDelivery) actionRequired += 1;
         if (candidate.reasons.isThinking) thinking += 1;
         if (candidate.hasAttention) totalAttention += 1;
     }

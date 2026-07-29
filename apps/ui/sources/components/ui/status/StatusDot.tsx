@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { Platform, View, type ViewStyle } from 'react-native';
-import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming } from 'react-native-reanimated';
+import { Animated, Platform, View, type ViewStyle } from 'react-native';
+
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 const WEB_PULSE_TIMING_FUNCTION = 'steps(6, end)';
 
@@ -10,21 +11,43 @@ export interface StatusDotProps {
     size?: number;
     style?: ViewStyle;
     testID?: string;
+    accessibilityLabel?: string;
     /** Keep pulsing state visible while disabling the web CSS animation. */
     animationEnabled?: boolean;
 }
 
 export const StatusDot = React.memo((props: StatusDotProps) => {
+    if (!props.isPulsing || props.animationEnabled === false) {
+        return <StaticStatusDot {...props} />;
+    }
+    return <MotionAwareStatusDot {...props} />;
+});
+
+function MotionAwareStatusDot(props: StatusDotProps) {
+    const reducedMotion = useReducedMotionPreference();
+    if (reducedMotion) {
+        return <StaticStatusDot {...props} />;
+    }
+
     if (Platform.OS === 'web') {
         return <WebStatusDot {...props} />;
     }
-    if (props.isPulsing) {
-        return <PulsingStatusDot {...props} />;
-    }
-    return <StaticStatusDot {...props} />;
-});
+    return <PulsingStatusDot {...props} />;
+}
 
-function WebStatusDot({ color, isPulsing, size = 6, style, testID, animationEnabled = true }: StatusDotProps) {
+function accessibilityProps(accessibilityLabel: string | undefined) {
+    return accessibilityLabel
+        ? {
+            accessibilityRole: 'image' as const,
+            accessibilityLabel,
+        }
+        : {
+            accessibilityElementsHidden: true,
+            importantForAccessibility: 'no-hide-descendants' as const,
+        };
+}
+
+function WebStatusDot({ color, isPulsing, size = 6, style, testID, animationEnabled = true, accessibilityLabel }: StatusDotProps) {
     const baseStyle: ViewStyle = {
         width: size,
         height: size,
@@ -35,6 +58,7 @@ function WebStatusDot({ color, isPulsing, size = 6, style, testID, animationEnab
     return (
         <View
             testID={testID}
+            {...accessibilityProps(accessibilityLabel)}
             style={[
                 baseStyle,
                 isPulsing && animationEnabled ? webPulseStyle : null,
@@ -44,7 +68,7 @@ function WebStatusDot({ color, isPulsing, size = 6, style, testID, animationEnab
     );
 }
 
-function StaticStatusDot({ color, size = 6, style, testID }: StatusDotProps) {
+function StaticStatusDot({ color, size = 6, style, testID, accessibilityLabel }: StatusDotProps) {
     const baseStyle: ViewStyle = {
         width: size,
         height: size,
@@ -55,6 +79,7 @@ function StaticStatusDot({ color, size = 6, style, testID }: StatusDotProps) {
     return (
         <View
             testID={testID}
+            {...accessibilityProps(accessibilityLabel)}
             style={[
                 baseStyle,
                 style
@@ -63,22 +88,29 @@ function StaticStatusDot({ color, size = 6, style, testID }: StatusDotProps) {
     );
 }
 
-function PulsingStatusDot({ color, size = 6, style, testID }: StatusDotProps) {
-    const opacity = useSharedValue(1);
+function PulsingStatusDot({ color, size = 6, style, testID, accessibilityLabel }: StatusDotProps) {
+    const opacity = React.useRef(new Animated.Value(1)).current;
 
     React.useEffect(() => {
-        opacity.value = withRepeat(
-            withTiming(0.3, { duration: 1000 }),
-            -1, // infinite
-            true // reverse
+        const animation = Animated.loop(
+            Animated.sequence([
+                Animated.timing(opacity, {
+                    toValue: 0.3,
+                    duration: 1000,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(opacity, {
+                    toValue: 1,
+                    duration: 1000,
+                    useNativeDriver: true,
+                }),
+            ]),
         );
-    }, []);
-
-    const animatedStyle = useAnimatedStyle(() => {
-        return {
-            opacity: opacity.value,
+        animation.start();
+        return () => {
+            animation.stop();
         };
-    });
+    }, [opacity]);
 
     const baseStyle: ViewStyle = {
         width: size,
@@ -90,9 +122,10 @@ function PulsingStatusDot({ color, size = 6, style, testID }: StatusDotProps) {
     return (
         <Animated.View
             testID={testID}
+            {...accessibilityProps(accessibilityLabel)}
             style={[
                 baseStyle,
-                animatedStyle,
+                { opacity },
                 style
             ]}
         />

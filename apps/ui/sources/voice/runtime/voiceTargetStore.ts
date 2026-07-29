@@ -40,7 +40,7 @@ export const useVoiceTargetStore = create<VoiceTargetState>((set) => ({
   primaryActionSessionId: null,
   trackedSessionIds: [],
   lastFocusedSessionId: null,
-  setScope: (scope) => set(() => ({ scope })),
+  setScope: (scope) => set((state) => state.scope === scope ? state : { scope }),
   setPrimaryActionSessionId: (sessionId) => set(() => ({ primaryActionSessionId: normalizeSessionId(sessionId) })),
   setTrackedSessionIds: (sessionIds) => set(() => ({ trackedSessionIds: normalizeTrackedSessionIds(sessionIds) })),
   addTrackedSessionId: (sessionId) =>

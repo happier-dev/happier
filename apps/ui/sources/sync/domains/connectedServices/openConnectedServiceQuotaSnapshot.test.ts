@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ConnectedServiceQuotaSnapshotV1Schema,
-  sealAccountScopedBlobCiphertext,
 } from '@happier-dev/protocol';
+import { sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext } from '@happier-dev/protocol/testing/accountScopedCipherFixtures';
 
 import { encodeBase64 } from '@/encryption/base64';
 
@@ -29,8 +29,7 @@ describe('openConnectedServiceQuotaSnapshot', () => {
       meters: [],
     });
 
-    const ciphertext = sealAccountScopedBlobCiphertext({
-      kind: 'connected_service_quota_snapshot',
+    const ciphertext = sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext({
       material: { type: 'legacy', secret: secretBytes },
       payload: snapshot,
       randomBytes: fixedRandomBytes(9),
@@ -61,8 +60,7 @@ describe('openConnectedServiceQuotaSnapshot', () => {
       meters: [],
     });
 
-    const ciphertext = sealAccountScopedBlobCiphertext({
-      kind: 'connected_service_quota_snapshot',
+    const ciphertext = sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext({
       material: { type: 'dataKey', machineKey },
       payload: snapshot,
       randomBytes: fixedRandomBytes(4),

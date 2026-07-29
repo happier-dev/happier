@@ -64,14 +64,14 @@ export function resolveEnvVarSubstitution(
  * Used to determine which daemon environment variables need to be queried.
  *
  * @param environmentVariables - Profile's environmentVariables array from AIBackendProfile
- * @returns Array of unique variable names that are referenced (e.g., ['Z_AI_MODEL', 'Z_AI_BASE_URL'])
+ * @returns Array of unique variable names referenced by profile extras
  *
  * @example
  * extractEnvVarReferences([
- *   { name: 'ANTHROPIC_BASE_URL', value: '${Z_AI_BASE_URL}' },
- *   { name: 'ANTHROPIC_MODEL', value: '${Z_AI_MODEL}' },
+ *   { name: 'CUSTOM_TOOL_URL', value: '${CUSTOM_TOOL_URL}' },
+ *   { name: 'CUSTOM_TOOL_MODE', value: '${CUSTOM_TOOL_MODE:-fast}' },
  *   { name: 'API_TIMEOUT_MS', value: '600000' } // Literal, not extracted
- * ]) // Returns: ['Z_AI_BASE_URL', 'Z_AI_MODEL']
+ * ]) // Returns: ['CUSTOM_TOOL_URL', 'CUSTOM_TOOL_MODE']
  */
 export function extractEnvVarReferences(
     environmentVariables: { name: string; value: string }[] | undefined

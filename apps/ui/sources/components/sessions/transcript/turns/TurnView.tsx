@@ -11,7 +11,6 @@ import { MessageView, MessageViewWithSessionCommon } from '@/components/sessions
 import type { TranscriptTurn } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurns';
 import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/TranscriptEnterWrapper';
 import { ToolCallsGroupRow, ToolCallsGroupRowWithSessionCommon } from '@/components/sessions/transcript/toolCalls/ToolCallsGroupRow';
-import * as FlashListCompat from '@/components/ui/lists/flashListCompat/FlashListCompat';
 import { TRANSCRIPT_WEB_MESSAGE_PREPEND_ANCHOR_TEST_ID_PREFIX } from '@/components/sessions/transcript/webTranscriptPrependAnchor';
 import { isMessageRolledBack, type SessionRollbackRangeV1, type TranscriptRollbackAction } from '@/sync/domains/sessionRollback/rollbackUiSupport';
 import type { PersistedSessionMessagePinV1 } from '@/sync/domains/messages/pins/sessionMessagePins';
@@ -119,26 +118,6 @@ const TurnMessageRow = React.memo(function TurnMessageRow(props: {
     );
 });
 
-const fallbackMappingHelper = {
-    getMappingKey: (itemKey: string | number | bigint) => itemKey,
-};
-
-function useFallbackMappingHelper() {
-    return fallbackMappingHelper;
-}
-
-function resolveTranscriptTurnMappingHelper() {
-    try {
-        return typeof FlashListCompat.useMappingHelper === 'function'
-            ? FlashListCompat.useMappingHelper
-            : useFallbackMappingHelper;
-    } catch {
-        return useFallbackMappingHelper;
-    }
-}
-
-const useTranscriptTurnMappingHelper = resolveTranscriptTurnMappingHelper();
-
 function resolveActiveThinkingMessageIdForTurnMessage(messageId: string, activeThinkingMessageId: string | null): string | null {
     return messageId === activeThinkingMessageId ? activeThinkingMessageId : null;
 }
@@ -179,8 +158,6 @@ export const TurnView = React.memo((props: TurnViewProps) => {
 });
 
 export const TurnViewWithSessionCommon = React.memo((props: TurnViewProps & TranscriptSessionCommonProps) => {
-    const { getMappingKey } = useTranscriptTurnMappingHelper();
-
     return (
         <View testID="transcript-turn" style={styles.container}>
             {props.turn.userMessageId ? (
@@ -207,11 +184,11 @@ export const TurnViewWithSessionCommon = React.memo((props: TurnViewProps & Tran
                     toolRouteCommon={props.toolRouteCommon}
                 />
             ) : null}
-            {props.turn.content.map((c, index) => {
+            {props.turn.content.map((c) => {
                 if (c.kind === 'message') {
                     return (
                         <TurnMessageRow
-                            key={getMappingKey(c.messageId, index)}
+                            key={c.messageId}
                             sessionId={props.sessionId}
                             messageId={c.messageId}
                             metadata={props.metadata}
@@ -239,7 +216,7 @@ export const TurnViewWithSessionCommon = React.memo((props: TurnViewProps & Tran
                 const interaction = deriveReadOnlyTranscriptInteraction(props.interaction, origin?.isReadOnlyContext === true);
                 return (
                     <ToolCallsGroupRowWithSessionCommon
-                        key={getMappingKey(c.id, index)}
+                        key={c.id}
                         sessionId={props.sessionId}
                         toolCallsGroupId={c.id}
                         toolMessageIds={c.toolMessageIds}

@@ -294,13 +294,12 @@ export const ACCOUNT_TRANSCRIPT_TOOL_SETTING_DEFINITIONS = defineSettingDefiniti
             serializeCurrent: serializeBucketCount(120_000, 240_000),
         },
     },
-    transcriptListImplementation: {
-        schema: z.enum(['flash_v2', 'flatlist_legacy']),
-        default: 'flash_v2',
-        description: 'Which transcript list implementation to use',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
-    },
+    // `transcriptListImplementation` is intentionally not a dev setting. Stable
+    // ui-web-v0.2.0, preview ui-web-v0.2.2-preview.1775585938.1, and the current
+    // remote-dev predecessor can still persist it for their Flash fallback.
+    // The account parser preserves it only as an opaque unknown field. Remove
+    // that compatibility assertion after those releases are unsupported and
+    // remote-dev no longer writes the key.
     toolViewTimelineChromeMode: {
         schema: z.enum(['cards', 'activity_feed']),
         default: 'activity_feed',
@@ -450,7 +449,7 @@ export const ACCOUNT_TRANSCRIPT_TOOL_SETTING_DEFINITIONS = defineSettingDefiniti
     },
     transcriptScrollJumpToBottomRevealViewportRatio: {
         schema: z.number(),
-        default: 0.75,
+        default: 0.4,
         description: 'Viewport fraction away from the transcript bottom before showing jump-to-bottom button',
         storageScope: 'account',
         analytics: {

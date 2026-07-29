@@ -4,11 +4,23 @@ import type { SessionEncryption } from '@/sync/encryption/sessionEncryption';
 import { readStoredSessionMessage } from '@/sync/runtime/readStoredSessionContent';
 import { markStreamingMessagesAppliedForSessionUiTelemetry } from '@/sync/runtime/performance/sessionUiTelemetry';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
-import type { NormalizedMessage } from '@/sync/typesRaw';
-import { normalizeRawMessage } from '@/sync/typesRaw';
+import type { NormalizedMessage, RawMessageNormalizationSequenceState } from '@/sync/typesRaw';
+import { normalizeRawMessage, normalizeRawMessageInSequence } from '@/sync/typesRaw';
 import { isLegacyMemoryArtifactTranscriptRow } from './legacyMemoryArtifactTranscriptRows';
+import {
+    applyTranscriptStreamSegmentDelta,
+    evictTranscriptStreamSegmentAssembly,
+    isTranscriptStreamSegmentAssemblyReady,
+    noteTranscriptStreamSegmentSnapshot,
+    readTranscriptStreamSegmentText,
+    withTranscriptStreamSegmentText,
+} from './transcriptStreamSegmentAssembly';
 
 export type TranscriptStreamSegmentEphemeralUpdate = Extract<ApiEphemeralUpdate, { type: 'transcript-stream-segment' }>;
+export type TranscriptStreamSegmentDeltaEphemeralUpdate = Extract<ApiEphemeralUpdate, { type: 'transcript-stream-segment-delta' }>;
+export type AnyTranscriptStreamSegmentEphemeralUpdate =
+    | TranscriptStreamSegmentEphemeralUpdate
+    | TranscriptStreamSegmentDeltaEphemeralUpdate;
 
 export type TranscriptStreamSegmentSessionMessageEncryption = Pick<SessionEncryption, 'decryptMessage'>;
 
@@ -20,10 +32,11 @@ type TranscriptStreamSegmentTelemetryFields = Readonly<{
 }>;
 
 type HandleTranscriptStreamSegmentEphemeralUpdateParams = Readonly<{
-    update: TranscriptStreamSegmentEphemeralUpdate;
+    update: AnyTranscriptStreamSegmentEphemeralUpdate;
     getSessionEncryption: (sessionId: string) => TranscriptStreamSegmentSessionMessageEncryption | null;
     getSession: (sessionId: string) => Session | undefined;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+    rawMessageNormalizationState?: RawMessageNormalizationSequenceState;
     isSessionActivelyViewed?: (sessionId: string) => boolean;
     skipWhenHidden?: boolean;
 }>;
@@ -34,8 +47,18 @@ async function applyTranscriptStreamSegmentEphemeralUpdate(
 ): Promise<void> {
     const { update, getSessionEncryption, getSession, applyMessages } = params;
     const sessionId = update.sessionId;
+    const isDelta = update.type === 'transcript-stream-segment-delta';
     const session = getSession(sessionId);
     if (!session) {
+        return;
+    }
+
+    // Deltas can only be chained onto known, in-sync assembly state. Check before decrypting so
+    // undecodable deltas cost nothing; the next full-snapshot checkpoint resyncs the segment.
+    if (isDelta && !isTranscriptStreamSegmentAssemblyReady(sessionId, update.message.localId)) {
+        if (telemetryFields) {
+            syncPerformanceTelemetry.count('sync.sessions.socket.transcriptStreamSegmentDelta.droppedUnchained', telemetryFields);
+        }
         return;
     }
 
@@ -54,6 +77,7 @@ async function applyTranscriptStreamSegmentEphemeralUpdate(
             content: update.message.content,
             createdAt: update.message.createdAt,
             updatedAt: update.message.updatedAt,
+            messageRole: update.message.messageRole ?? undefined,
         },
         decryptMessage: encryption ? (message) => encryption.decryptMessage(message) : undefined,
     });
@@ -75,12 +99,60 @@ async function applyTranscriptStreamSegmentEphemeralUpdate(
         return;
     }
 
-    const normalizeMessage = () => normalizeRawMessage(
-        update.message.localId,
-        decrypted.localId,
-        decrypted.createdAt,
-        decrypted.content,
-    );
+    let contentForNormalize = decrypted.content;
+    if (update.type === 'transcript-stream-segment-delta') {
+        const deltaText = readTranscriptStreamSegmentText(decrypted.content);
+        if (deltaText === null) {
+            // A delta that does not carry chainable text cannot be reconstructed; wait for the
+            // next full snapshot instead of guessing.
+            evictTranscriptStreamSegmentAssembly(sessionId, update.message.localId);
+            return;
+        }
+        const assembledText = applyTranscriptStreamSegmentDelta({
+            sessionId,
+            localId: update.message.localId,
+            deltaText,
+            tick: update.message.tick,
+            baseLength: update.message.baseLength,
+        });
+        if (assembledText === null) {
+            if (telemetryFields) {
+                syncPerformanceTelemetry.count('sync.sessions.socket.transcriptStreamSegmentDelta.droppedUnchained', telemetryFields);
+            }
+            return;
+        }
+        const patched = decrypted.content
+            ? withTranscriptStreamSegmentText(decrypted.content, assembledText)
+            : null;
+        if (!patched) {
+            evictTranscriptStreamSegmentAssembly(sessionId, update.message.localId);
+            return;
+        }
+        contentForNormalize = patched;
+    } else {
+        noteTranscriptStreamSegmentSnapshot({
+            sessionId,
+            localId: update.message.localId,
+            record: decrypted.content,
+            tick: typeof update.message.tick === 'number' ? update.message.tick : null,
+        });
+    }
+
+    const normalizeMessage = () => params.rawMessageNormalizationState
+        ? normalizeRawMessageInSequence({
+            id: update.message.localId,
+            localId: decrypted.localId,
+            createdAt: decrypted.createdAt,
+            raw: contentForNormalize,
+            messageRole: decrypted.messageRole ?? undefined,
+        }, params.rawMessageNormalizationState)
+        : normalizeRawMessage(
+            update.message.localId,
+            decrypted.localId,
+            decrypted.createdAt,
+            contentForNormalize,
+            { messageRole: decrypted.messageRole ?? undefined },
+        );
 
     const normalized = telemetryFields
         ? syncPerformanceTelemetry.measure(

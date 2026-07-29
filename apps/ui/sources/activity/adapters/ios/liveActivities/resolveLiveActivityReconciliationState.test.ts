@@ -21,6 +21,7 @@ describe('resolveLiveActivityReconciliationState', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    pendingRequestObservedAt: 950,
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -35,6 +36,7 @@ describe('resolveLiveActivityReconciliationState', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    pendingRequestObservedAt: 950,
                     metadata: {
                         path: '/Users/tester/project/action',
                         host: 'tester.local',
@@ -59,6 +61,7 @@ describe('resolveLiveActivityReconciliationState', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    pendingRequestObservedAt: 30_950,
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -73,6 +76,7 @@ describe('resolveLiveActivityReconciliationState', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    pendingRequestObservedAt: 30_950,
                     metadata: {
                         path: '/Users/tester/project/action',
                         host: 'tester.local',
@@ -99,6 +103,7 @@ describe('resolveLiveActivityReconciliationState', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    pendingRequestObservedAt: 121_950,
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -113,6 +118,7 @@ describe('resolveLiveActivityReconciliationState', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    pendingRequestObservedAt: 121_950,
                     metadata: {
                         path: '/Users/tester/project/action',
                         host: 'tester.local',
@@ -147,6 +153,7 @@ describe('resolveLiveActivityReconciliationState', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    pendingRequestObservedAt: 950,
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -160,6 +167,7 @@ describe('resolveLiveActivityReconciliationState', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    pendingRequestObservedAt: 950,
                     metadata: {
                         path: '/Users/tester/project/action',
                         host: 'tester.local',
@@ -183,6 +191,7 @@ describe('resolveLiveActivityReconciliationState', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    pendingRequestObservedAt: 950,
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -196,6 +205,7 @@ describe('resolveLiveActivityReconciliationState', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    pendingRequestObservedAt: 950,
                     metadata: {
                         path: '/Users/tester/project/action',
                         host: 'tester.local',
@@ -228,6 +238,7 @@ describe('resolveLiveActivityReconciliationState', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    pendingRequestObservedAt: 950,
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -242,6 +253,7 @@ describe('resolveLiveActivityReconciliationState', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    pendingRequestObservedAt: 950,
                     metadata: {
                         path: '/Users/tester/project/action',
                         host: 'tester.local',
@@ -264,6 +276,7 @@ describe('resolveLiveActivityReconciliationState', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    pendingRequestObservedAt: 1_550,
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -278,6 +291,7 @@ describe('resolveLiveActivityReconciliationState', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    pendingRequestObservedAt: 1_550,
                     metadata: {
                         path: '/Users/tester/project/action',
                         host: 'tester.local',

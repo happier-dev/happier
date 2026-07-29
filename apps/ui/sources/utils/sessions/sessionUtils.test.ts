@@ -1,14 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+    CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+    CLAUDE_LOCAL_PERMISSION_BRIDGE_STOPPED_REASON,
+} from '@happier-dev/plugins-claude/agent/permissions/requestSource';
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { installSessionUtilsCommonModuleMocks } from './sessionUtilsTestHelpers';
-import type { Session } from '@/sync/domains/state/storageTypes';
+import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { StorageState } from '@/sync/store/types';
 
 type StorageModule = typeof import('@/sync/domains/state/storage');
 type MockStorageState = {
     sessionMessages: Record<string, { messages: unknown[]; messagesVersion?: number }>;
+    sessionPending: Record<string, { messages: PendingMessage[]; discarded: []; isLoaded: boolean }>;
     sessions?: Record<string, unknown>;
     machines?: Record<string, unknown>;
     getProjectForSession?: (sessionId: string) => { key?: { machineId?: string; path?: string } } | null;
@@ -16,6 +21,7 @@ type MockStorageState = {
 
 const mockStorageState: MockStorageState = {
     sessionMessages: {},
+    sessionPending: {},
     sessions: {},
     machines: {},
     getProjectForSession: () => null,
@@ -25,6 +31,11 @@ let storageGetStateShouldThrow = false;
 let sessionListWorkingStatusAnimatedTextEnabled: boolean | undefined;
 const useSessionSpy = vi.hoisted(() => vi.fn((id: string) => (mockStorageState.sessions?.[id] as Session | null | undefined) ?? null));
 const useSessionMessagesVersionSpy = vi.hoisted(() => vi.fn((id: string) => mockStorageState.sessionMessages[id]?.messagesVersion ?? 0));
+const useSessionPendingMessagesSpy = vi.hoisted(() => vi.fn((id: string) => mockStorageState.sessionPending[id] ?? {
+    messages: [],
+    discarded: [],
+    isLoaded: false,
+}));
 
 installSessionUtilsCommonModuleMocks({
     text: async () => {
@@ -50,6 +61,7 @@ installSessionUtilsCommonModuleMocks({
             },
             useSession: useSessionSpy,
             useSessionMessagesVersion: useSessionMessagesVersionSpy,
+            useSessionPendingMessages: useSessionPendingMessagesSpy,
             useSetting: ((key: keyof Settings) => {
                 if (key === 'sessionListWorkingStatusAnimatedTextEnabled') {
                     return sessionListWorkingStatusAnimatedTextEnabled;
@@ -85,6 +97,7 @@ afterEach(() => {
 beforeEach(async () => {
     vi.resetModules();
     mockStorageState.sessionMessages = {};
+    mockStorageState.sessionPending = {};
     mockStorageState.sessions = {};
     mockStorageState.machines = {};
     mockStorageState.getProjectForSession = () => null;
@@ -92,6 +105,7 @@ beforeEach(async () => {
     sessionListWorkingStatusAnimatedTextEnabled = undefined;
     useSessionSpy.mockClear();
     useSessionMessagesVersionSpy.mockClear();
+    useSessionPendingMessagesSpy.mockClear();
     const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
     registerStorageStateReader(readMockStorageState);
 });
@@ -115,6 +129,25 @@ function createBaseSession(overrides: Partial<Session> = {}): Session {
     };
 }
 
+function createPendingUserMessage(overrides: Partial<PendingMessage> = {}): PendingMessage {
+    return {
+        id: 'pending-first-turn',
+        localId: 'pending-first-turn',
+        createdAt: 999_000,
+        updatedAt: 999_000,
+        source: 'local_outbound',
+        deliveryStatus: 'queued',
+        text: 'Start here',
+        displayText: 'Start here',
+        rawRecord: {
+            role: 'user',
+            content: { type: 'text', text: 'Start here' },
+            meta: {},
+        },
+        ...overrides,
+    };
+}
+
 describe('getSessionStatus', () => {
     it('returns disconnected when presence is not online', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
@@ -123,6 +156,56 @@ describe('getSessionStatus', () => {
         expect(status.state).toBe('disconnected');
         expect(status.isConnected).toBe(false);
         expect(status.shouldShowStatus).toBe(true);
+    });
+
+    it('surfaces recoverable session-control unserviceability without Runtime Activity state', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const session = createBaseSession({
+            active: false,
+            presence: 123,
+            metadata: {
+                path: '/repo', host: 'local',
+                terminal: {
+                    mode: 'tmux', tmux: { target: 'happy:win-1' },
+                    controlServiceabilityV1: { v: 1, state: 'recoverable_unservable', observedAt: 456 },
+                },
+            },
+        });
+        expect(getSessionStatus(session, 1_000, 0)).toMatchObject({
+            state: 'recoverable_unservable', isConnected: false, shouldShowStatus: true,
+        });
+    });
+
+    it('does not read private terminal control state from layout-v1 shared metadata', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const session = createBaseSession({
+            metadataLayoutVersion: 1,
+            metadata: {
+                v: 1,
+                terminalControlServiceabilityV1: {
+                    v: 1,
+                    state: 'recoverable_unservable',
+                    observedAt: 456,
+                },
+            } as unknown as Session['metadata'],
+            ownerMetadataView: null,
+        });
+
+        expect(getSessionStatus(session, 1_000, 0).state).toBe('waiting');
+    });
+
+    it('formats last-seen without throwing when activeAt is missing or invalid', async () => {
+        const { formatLastSeen } = await import('./sessionUtils');
+
+        // Sessions can reach the disconnected status line without a usable
+        // activeAt; the formatter must degrade instead of rendering garbage
+        // (or crashing once the date formatting path throws on invalid dates).
+        expect(() => formatLastSeen(undefined as unknown as number)).not.toThrow();
+        expect(() => formatLastSeen(Number.NaN)).not.toThrow();
+        expect(() => formatLastSeen(0)).not.toThrow();
+        expect(typeof formatLastSeen(undefined as unknown as number)).toBe('string');
+        expect(formatLastSeen(undefined as unknown as number).length).toBeGreaterThan(0);
+        expect(formatLastSeen(undefined as unknown as number)).not.toContain('Invalid');
     });
 
     it('returns permission_required when the agent has pending requests', async () => {
@@ -413,6 +496,42 @@ describe('getSessionStatus', () => {
         expect(status.state).toBe('waiting');
     });
 
+    it('does not return action_required when a generated local-bridge request is covered by a recent canonical cancellation', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const question = { questions: [{ question: 'How should I proceed?', options: [{ label: 'Continue' }] }] };
+        const session = createBaseSession({
+            thinking: true,
+            thinkingAt: 900,
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    perm_generated: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        arguments: question,
+                        createdAt: 10_500,
+                        source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+                    },
+                },
+                completedRequests: {
+                    toolu_canonical: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        arguments: question,
+                        createdAt: 1_000,
+                        completedAt: 10_000,
+                        status: 'canceled',
+                        reason: CLAUDE_LOCAL_PERMISSION_BRIDGE_STOPPED_REASON,
+                        source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+                    },
+                },
+            },
+        });
+
+        const status = getSessionStatus(session, 1_000, 0);
+        expect(status.state).toBe('thinking');
+    });
+
     it('returns thinking when session.thinking is fresh', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const session = createBaseSession({ thinking: true, thinkingAt: 900 });
@@ -452,6 +571,40 @@ describe('getSessionStatus', () => {
 
         expect(status.statusColor).toBe('#connecting');
         expect(status.statusDotColor).toBe('#connecting');
+    });
+
+    it('uses a neutral color token and distinct label for background activity', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const now = 1_000_000;
+        const session = createBaseSession({
+            thinking: false,
+            thinkingAt: 0,
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: now - 10_000,
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: now - 1_000,
+            runtimeActivityRevision: now + 60_000,
+        });
+
+        const status = getSessionStatus(session, now, {
+            workingTextMode: 'static',
+            statusColors: {
+                connected: '#connected',
+                connecting: '#connecting',
+                actionRequired: '#action',
+                disconnected: '#disconnected',
+                error: '#error',
+                default: '#default',
+            },
+        });
+
+        expect(status.state).toBe('background_active');
+        expect(status.statusText).toBe('status.backgroundActive');
+        expect(status.shouldShowStatus).toBe(true);
+        expect(status.statusColor).toBe('#default');
+        expect(status.statusDotColor).toBe('#default');
+        expect(status.isPulsing).toBe(false);
     });
 
     it('does not return thinking when session.thinking is stale', async () => {
@@ -521,6 +674,79 @@ describe('getSessionStatus', () => {
         expect(status.shouldShowStatus).toBe(false);
     });
 
+    it('does not let sourceClass turn provider runtime activity into foreground work', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const now = 1_000_000;
+        const session = createBaseSession({
+            active: true,
+            presence: 'online',
+            thinking: false,
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: now - 10_000,
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: now - 1_000,
+            runtimeActivityRevision: now + 60_000,
+        });
+
+        const status = getSessionStatus(session, now, 0);
+
+        expect(status.state).toBe('background_active');
+        expect(status.isPulsing).toBe(false);
+    });
+
+    it('keeps offline precedence over provider runtime activity', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const now = 1_000_000;
+
+        expect(getSessionStatus(createBaseSession({
+            active: false,
+            presence: now - 10_000,
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 1,
+        }), now, { workingTextMode: 'static' })).toMatchObject({
+            state: 'disconnected',
+            isConnected: false,
+        });
+    });
+
+    it('suppresses provider runtime activity status for archived sessions', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const now = 1_000_000;
+
+        expect(getSessionStatus(createBaseSession({
+            archivedAt: now - 1,
+            resumingAt: now - 2,
+            pendingUserActionRequestCount: 1,
+            pendingRequestObservedAt: now - 2,
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 1,
+        }), now, { workingTextMode: 'static' })).toMatchObject({
+            state: 'waiting',
+            shouldShowStatus: false,
+        });
+    });
+
+    it('ignores stale provider runtime activity after a completed foreground turn', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const now = 1_000_000;
+        const session = createBaseSession({
+            active: true,
+            presence: 'online',
+            thinking: false,
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: now - 10_000,
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: now - 300_000,
+            runtimeActivityRevision: now - 1,
+        });
+
+        const status = getSessionStatus(session, now, 0);
+
+        expect(status.state).toBe('waiting');
+        expect(status.shouldShowStatus).toBe(false);
+    });
+
     it('does not use legacy thinking after an older completed turn projection', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const session = {
@@ -546,6 +772,19 @@ describe('getSessionStatus', () => {
         expect(status.state).toBe('waiting');
     });
 
+    it('returns thinking when a recent optimistic send still has a pending outbound user message', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const now = 1_000_000;
+        const session = createBaseSession({ optimisticThinkingAt: now - 1_000 });
+        const status = getSessionStatus(session, now, {
+            workingTextMode: 'static',
+            hasPendingUserMessages: true,
+        });
+        expect(status.state).toBe('thinking');
+        expect(status.statusText).toBe('status.working');
+        expect(status.shouldShowStatus).toBe(true);
+    });
+
     it('does not return resuming when an inactive session only has recent optimistic send activity', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const now = 1_000_000;
@@ -558,6 +797,49 @@ describe('getSessionStatus', () => {
         expect(status.state).toBe('disconnected');
         expect(status.shouldShowStatus).toBe(true);
         expect(status.isPulsing).toBeUndefined();
+    });
+
+    it('returns one shared resuming state while the explicit resume lifecycle marker is fresh', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const now = 1_000_000;
+        const status = getSessionStatus(createBaseSession({
+            active: true,
+            presence: 'online',
+            resumingAt: now - 5_000,
+        }), now, 0);
+
+        expect(status).toMatchObject({
+            state: 'resuming',
+            isConnected: true,
+            isPulsing: true,
+        });
+    });
+
+    it('keeps offline precedence over the explicit resuming marker', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const now = 1_000_000;
+        const status = getSessionStatus(createBaseSession({
+            active: false,
+            presence: now - 10_000,
+            resumingAt: now - 5_000,
+        }), now, 0);
+
+        expect(status).toMatchObject({
+            state: 'disconnected',
+            isConnected: false,
+        });
+    });
+
+    it('does not keep the explicit resuming state after its bounded presentation window', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const now = 1_000_000;
+        const status = getSessionStatus(createBaseSession({
+            active: false,
+            presence: now - 10_000,
+            resumingAt: now - 30_001,
+        }), now, 0);
+
+        expect(status.state).toBe('disconnected');
     });
 
     it('does not treat stale optimisticThinkingAt as thinking', async () => {
@@ -1164,6 +1446,163 @@ describe('getSessionStatus', () => {
 });
 
 describe('useSessionStatus', () => {
+    it('uses a fresh local pending message as the optimistic first-turn status after delayed session hydration', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000_000);
+        try {
+            sessionListWorkingStatusAnimatedTextEnabled = false;
+            mockStorageState.sessions = {
+                's-first-turn-late-hydration': createBaseSession({
+                    id: 's-first-turn-late-hydration',
+                    optimisticThinkingAt: null,
+                }),
+            };
+            mockStorageState.sessionPending = {
+                's-first-turn-late-hydration': {
+                    messages: [
+                        createPendingUserMessage({
+                            id: 'pending-first-turn',
+                            localId: 'pending-first-turn',
+                            createdAt: Date.now() - 1_000,
+                            updatedAt: Date.now() - 1_000,
+                            source: 'local_outbound',
+                            deliveryStatus: 'queued',
+                        }),
+                    ],
+                    discarded: [],
+                    isLoaded: false,
+                },
+            };
+
+            const { useSessionStatus } = await import('./sessionUtils');
+            const hook = await renderHook(() => useSessionStatus(createBaseSession({
+                id: 's-first-turn-late-hydration',
+                optimisticThinkingAt: null,
+            })));
+
+            expect(hook.getCurrent()).toMatchObject({
+                state: 'thinking',
+                statusText: 'status.working',
+                shouldShowStatus: true,
+                isPulsing: true,
+            });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('does not use old server pending messages as optimistic working evidence', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000_000);
+        try {
+            mockStorageState.sessions = {
+                's-server-pending': createBaseSession({
+                    id: 's-server-pending',
+                    optimisticThinkingAt: null,
+                }),
+            };
+            mockStorageState.sessionPending = {
+                's-server-pending': {
+                    messages: [
+                        createPendingUserMessage({
+                            id: 'server-pending',
+                            localId: 'server-pending',
+                            createdAt: Date.now() - 1_000,
+                            updatedAt: Date.now() - 1_000,
+                            source: 'server_pending',
+                            deliveryStatus: 'queued',
+                        }),
+                    ],
+                    discarded: [],
+                    isLoaded: true,
+                },
+            };
+
+            const { useSessionStatus } = await import('./sessionUtils');
+            const hook = await renderHook(() => useSessionStatus(createBaseSession({
+                id: 's-server-pending',
+                optimisticThinkingAt: null,
+            })));
+
+            expect(hook.getCurrent().state).toBe('waiting');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('exposes working status for a pending first turn from session pending storage', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000_000);
+        try {
+            sessionListWorkingStatusAnimatedTextEnabled = false;
+            mockStorageState.sessions = {
+                's-first-turn': createBaseSession({
+                    id: 's-first-turn',
+                    optimisticThinkingAt: Date.now() - 1_000,
+                }),
+            };
+            mockStorageState.sessionPending = {
+                's-first-turn': {
+                    messages: [
+                        createPendingUserMessage({
+                            id: 'pending-first-turn',
+                            localId: 'pending-first-turn',
+                            createdAt: Date.now() - 1_000,
+                            updatedAt: Date.now() - 1_000,
+                        }),
+                    ],
+                    discarded: [],
+                    isLoaded: false,
+                },
+            };
+
+            const { useSessionStatus } = await import('./sessionUtils');
+            const hook = await renderHook(() => useSessionStatus(createBaseSession({
+                id: 's-first-turn',
+                optimisticThinkingAt: Date.now() - 1_000,
+            })));
+
+            expect(hook.getCurrent()).toMatchObject({
+                state: 'thinking',
+                statusText: 'status.working',
+                shouldShowStatus: true,
+                isPulsing: true,
+            });
+            expect(useSessionPendingMessagesSpy).toHaveBeenCalledWith('s-first-turn');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('uses pending status-source counts when transcript subscriptions are skipped', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000_000);
+        try {
+            sessionListWorkingStatusAnimatedTextEnabled = false;
+            const { useSessionStatus } = await import('./sessionUtils');
+            const hook = await renderHook(() => useSessionStatus({
+                ...createBaseSession({
+                    id: 's-runtime-source-pending',
+                    optimisticThinkingAt: Date.now() - 1_000,
+                }),
+                pendingCount: 1,
+            } as any, {
+                subscribeToSession: false,
+                subscribeToTranscript: false,
+            }));
+
+            expect(hook.getCurrent()).toMatchObject({
+                state: 'thinking',
+                statusText: 'status.working',
+                shouldShowStatus: true,
+                isPulsing: true,
+            });
+            expect(useSessionPendingMessagesSpy).toHaveBeenCalledWith('');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('refreshes when fresh thinking expires without a storage update', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000_000);
@@ -1185,7 +1624,7 @@ describe('useSessionStatus', () => {
         }
     });
 
-    it('refreshes when a fresh in-progress projection expires without a storage update', async () => {
+    it('does not expire a canonical in-progress projection without a terminal update', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000_000);
         try {
@@ -1201,13 +1640,13 @@ describe('useSessionStatus', () => {
 
             await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 5 });
 
-            expect(hook.getCurrent().state).toBe('waiting');
+            expect(hook.getCurrent().state).toBe('thinking');
         } finally {
             vi.useRealTimers();
         }
     });
 
-    it('refreshes when fresh active heartbeat extends a stale in-progress projection without a storage update', async () => {
+    it('keeps a canonical in-progress projection working regardless of presence heartbeat age', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000_000);
         try {
@@ -1221,16 +1660,12 @@ describe('useSessionStatus', () => {
             })));
 
             expect(hook.getCurrent().state).toBe('thinking');
-
-            await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 5 });
-
-            expect(hook.getCurrent().state).toBe('waiting');
         } finally {
             vi.useRealTimers();
         }
     });
 
-    it('does not show working when only meaningful activity follows a stale in-progress projection', async () => {
+    it('shows working from the canonical in-progress projection without activity freshness', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000_000);
         try {
@@ -1243,13 +1678,13 @@ describe('useSessionStatus', () => {
                 meaningfulActivityAt: Date.now() - 5,
             })));
 
-            expect(hook.getCurrent().state).toBe('waiting');
+            expect(hook.getCurrent().state).toBe('thinking');
         } finally {
             vi.useRealTimers();
         }
     });
 
-    it('refreshes when a fresh pending request expires without a storage update', async () => {
+    it('does not expire an unresolved permission without a storage update', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000_000);
         try {
@@ -1269,6 +1704,68 @@ describe('useSessionStatus', () => {
 
             await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 5 });
 
+            expect(hook.getCurrent().state).toBe('permission_required');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('reschedules optimistic pending expiry when a newer local pending message replaces the previous one', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000_000);
+        try {
+            const { useSessionStatus, OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS } = await import('./sessionUtils');
+            const initialCreatedAt = Date.now() - OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS + 100;
+            const refreshedCreatedAt = Date.now() - OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS + 500;
+            mockStorageState.sessions = {
+                's-replaced-local-pending': createBaseSession({
+                    id: 's-replaced-local-pending',
+                    optimisticThinkingAt: null,
+                }),
+            };
+            mockStorageState.sessionPending = {
+                's-replaced-local-pending': {
+                    messages: [
+                        createPendingUserMessage({
+                            id: 'pending-first-turn',
+                            localId: 'pending-first-turn',
+                            createdAt: initialCreatedAt,
+                            updatedAt: initialCreatedAt,
+                            source: 'local_outbound',
+                        }),
+                    ],
+                    discarded: [],
+                    isLoaded: false,
+                },
+            };
+
+            const hook = await renderHook(() => useSessionStatus(createBaseSession({
+                id: 's-replaced-local-pending',
+                optimisticThinkingAt: null,
+            })));
+            expect(hook.getCurrent().state).toBe('thinking');
+
+            mockStorageState.sessionPending = {
+                's-replaced-local-pending': {
+                    messages: [
+                        createPendingUserMessage({
+                            id: 'pending-replacement',
+                            localId: 'pending-replacement',
+                            createdAt: refreshedCreatedAt,
+                            updatedAt: refreshedCreatedAt,
+                            source: 'local_outbound',
+                        }),
+                    ],
+                    discarded: [],
+                    isLoaded: false,
+                },
+            };
+            await hook.rerender();
+
+            await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 100 });
+            expect(hook.getCurrent().state).toBe('thinking');
+
+            await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 400 });
             expect(hook.getCurrent().state).toBe('waiting');
         } finally {
             vi.useRealTimers();
@@ -1425,6 +1922,11 @@ describe('shouldShowAbortButtonForSessionState', () => {
         const { shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
         expect(shouldShowAbortButtonForSessionState('resuming')).toBe(false);
     });
+
+    it('returns false for background-only activity', async () => {
+        const { shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
+        expect(shouldShowAbortButtonForSessionState('background_active')).toBe(false);
+    });
 });
 
 describe('getSessionName', () => {
@@ -1465,7 +1967,7 @@ describe('getSessionName', () => {
                 path: '/Users/test/workspace/stale-name',
                 homeDir: '/Users/test',
                 host: 'stale.local',
-            } as Session['metadata'],
+            } as never,
         });
 
         mockStorageState.sessions = {
@@ -1498,6 +2000,56 @@ describe('getSessionName', () => {
 });
 
 describe('reachable target session display helpers', () => {
+    it('uses the owner compatibility view for layout-v1 private workspace fallbacks', async () => {
+        const { getSessionAvatarId, getSessionName, getSessionSubtitle } = await import('./sessionUtils');
+        const session = createBaseSession({
+            id: 'layout-v1-session',
+            metadataLayoutVersion: 1,
+            metadata: {
+                v: 1,
+                summary: {
+                    text: 'Shared title',
+                    updatedAt: 1,
+                },
+            } as unknown as Session['metadata'],
+            ownerMetadataView: {
+                name: 'Private name',
+                machineId: 'private-machine',
+                path: '/Users/private/workspace',
+                host: 'private-host',
+                homeDir: '/Users/private',
+            } as Session['metadata'],
+        });
+
+        expect(getSessionName(session)).toBe('Shared title');
+        expect(getSessionSubtitle(session)).toBe('~/workspace');
+        expect(getSessionAvatarId(session)).toBe('private-machine:/Users/private/workspace');
+    });
+
+    it('does not fall back to layout-v1 shared metadata for private workspace display facts', async () => {
+        const { getSessionAvatarId, getSessionName, getSessionSubtitle } = await import('./sessionUtils');
+        const session = createBaseSession({
+            id: 'layout-v1-owner-view-missing',
+            metadataLayoutVersion: 1,
+            metadata: {
+                v: 1,
+                summary: {
+                    text: 'Shared title',
+                    updatedAt: 1,
+                },
+                machineId: 'injected-shared-machine',
+                path: '/injected/shared/private-path',
+                host: 'injected.shared',
+                homeDir: '/injected',
+            } as unknown as Session['metadata'],
+            ownerMetadataView: null,
+        });
+
+        expect(getSessionName(session)).toBe('Shared title');
+        expect(getSessionSubtitle(session)).toBe('status.unknown');
+        expect(getSessionAvatarId(session)).toBe('layout-v1-owner-view-missing');
+    });
+
     it('uses the reachable target base path for session subtitles when metadata is stale after handoff', async () => {
         const { getSessionSubtitle } = await import('./sessionUtils');
 

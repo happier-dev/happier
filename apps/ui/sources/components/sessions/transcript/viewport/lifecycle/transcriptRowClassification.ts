@@ -1,6 +1,5 @@
 import type { TranscriptRowShellItem } from '@/components/sessions/transcript/measurement/transcriptRowShellSignature';
 import type { TranscriptNavigationRole } from '@/components/sessions/transcript/navigation/transcriptNavigationTypes';
-import type { TranscriptViewportTelemetryLiveTailAnchorKind } from '@/components/sessions/transcript/scroll/transcriptViewportTelemetry';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { readStreamSegmentMetaV1 } from '@/sync/reducer/helpers/streamSegmentMeta';
 
@@ -51,7 +50,15 @@ export function transcriptNavigationRoleForMessage(
     return 'unknown';
 }
 
-export type TranscriptLiveTailAnchorReason = TranscriptViewportTelemetryLiveTailAnchorKind;
+/**
+ * Why the live-tail anchor engaged. `turn-floor` = the whole-turn gate (`session.thinking`)
+ * held the anchor across a transition frame where no single row was detectably mid-stream.
+ */
+export type TranscriptLiveTailAnchorReason =
+    | 'streaming-message'
+    | 'streaming-tool'
+    | 'thinking'
+    | 'turn-floor';
 export type TranscriptLiveTailAnchor =
     Readonly<{ messageId: string; reason: TranscriptLiveTailAnchorReason }> | null;
 

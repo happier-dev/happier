@@ -1,3 +1,13 @@
+export type SessionMachineReachability = 'reachable' | 'unreachable' | 'unknown';
+
+export function resolveSessionMachineReachabilityState(opts: Readonly<{
+    machineIsKnown: boolean;
+    machineIsOnline: boolean;
+}>): SessionMachineReachability {
+    if (!opts.machineIsKnown) return 'unknown';
+    return opts.machineIsOnline ? 'reachable' : 'unreachable';
+}
+
 export function resolveSessionMachineReachability(opts: Readonly<{
     machineIsKnown: boolean;
     machineIsOnline: boolean;
@@ -7,7 +17,5 @@ export function resolveSessionMachineReachability(opts: Readonly<{
     // must not fail-closed as "offline: unknown". Let the session attempt
     // proceed and rely on the actual runtime/transport errors if it truly
     // can't resume.
-    if (!opts.machineIsKnown) return true;
-    return opts.machineIsOnline;
+    return resolveSessionMachineReachabilityState(opts) !== 'unreachable';
 }
-

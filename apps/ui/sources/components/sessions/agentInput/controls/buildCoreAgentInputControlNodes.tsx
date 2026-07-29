@@ -14,7 +14,6 @@ import { createPermissionActionChip } from '../definitions/createPermissionActio
 import { createProfileActionChip } from '../definitions/createProfileActionChip';
 import { createResumeActionChip } from '../definitions/createResumeActionChip';
 import { createSessionModeActionChip } from '../definitions/createSessionModeActionChip';
-import { createSourceControlActionChip } from '../definitions/createSourceControlActionChip';
 import type { ShakeInstance } from '@/components/ui/feedback/Shaker';
 
 type ChipStyle = (pressed: boolean) => any;
@@ -191,13 +190,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
         onPress: params.onAbortPress,
     }) : null;
 
-    const sourceControlChip = !params.actionBarIsCollapsed ? createSourceControlActionChip({
-        sessionId: params.sessionId,
-        onPress: params.onFileViewerPress,
-        compact: params.sourceControlCompact,
-        wrapperStyle: params.sourceControlWrapperStyle,
-    }) : null;
-
+    // Git ± moved to the session instrument strip (F-UI-12); no composer-row chip.
     return {
         permission: permissionChip ? [permissionChip] : [],
         actionMenu: actionMenuChip ? [actionMenuChip] : [],
@@ -206,7 +199,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
         profile: profileChip ? [profileChip] : [],
         env: envVarsChip ? [envVarsChip] : [],
         stop: abortButton ? [abortButton] : [],
-        files: sourceControlChip ? [sourceControlChip] : [],
+        files: [],
         ...params.extraControlNodesById,
         machine: machineChip ? [machineChip] : [],
         path: pathChip ? [pathChip] : [],

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { SessionFolderWorkspaceRefV1 } from '@/sync/domains/session/folders';
+
 import {
     SESSION_BULK_ACTION_IDS,
     executeSessionBulkAction,
@@ -9,11 +11,26 @@ import {
 } from './sessionBulkActionExecution';
 import { buildSessionBulkActionResultSummary } from './sessionActionResultMessages';
 
+const workspaceA: SessionFolderWorkspaceRefV1 = {
+    t: 'workspaceRef',
+    serverId: 'server-a',
+    workspaceRefId: 'workspace-a',
+};
+
+const workspaceB: SessionFolderWorkspaceRefV1 = {
+    t: 'workspaceRef',
+    serverId: 'server-a',
+    workspaceRefId: 'workspace-b',
+};
+
 function target(input: Partial<SessionBulkActionTarget> & Pick<SessionBulkActionTarget, 'key' | 'sessionId'>): SessionBulkActionTarget {
     return {
         serverId: 'server-a',
         active: false,
         archived: false,
+        hasAdminAccess: true,
+        canStop: true,
+        canArchive: true,
         pinned: false,
         tags: [],
         readState: undefined,
@@ -34,7 +51,11 @@ describe('executeSessionBulkAction', () => {
             { id: SESSION_BULK_ACTION_IDS.tagsAdd, tags: ['important'] },
             { id: SESSION_BULK_ACTION_IDS.tagsRemove, tags: ['important'] },
             { id: SESSION_BULK_ACTION_IDS.tagsSet, tags: ['important'] },
-            { id: SESSION_BULK_ACTION_IDS.moveToFolder, folderId: 'folder-a' },
+            {
+                id: SESSION_BULK_ACTION_IDS.moveToFolder,
+                folderId: 'folder-a',
+                destinationWorkspace: workspaceA,
+            },
         ];
 
         for (const action of actions) {
@@ -62,8 +83,8 @@ describe('executeSessionBulkAction', () => {
         }
     });
 
-    it('pins selected sessions with one merged settings write', async () => {
-        const setPinnedSessionKeysV1 = vi.fn(async () => undefined);
+    it('pins selected sessions through the organization pin operation', async () => {
+        const setSessionPin = vi.fn(async () => undefined);
 
         const result = await executeSessionBulkAction({
             action: { id: SESSION_BULK_ACTION_IDS.pin },
@@ -72,20 +93,26 @@ describe('executeSessionBulkAction', () => {
                 target({ key: 'server-a:s2', sessionId: 's2', pinned: true }),
             ],
             context: {
-                pinnedSessionKeysV1: ['server-a:s2', 'server-a:s3'],
-                setPinnedSessionKeysV1,
+                setSessionPin,
             },
         });
 
-        expect(setPinnedSessionKeysV1).toHaveBeenCalledTimes(1);
-        expect(setPinnedSessionKeysV1).toHaveBeenCalledWith(['server-a:s2', 'server-a:s3', 'server-a:s1']);
+        expect(setSessionPin).toHaveBeenCalledTimes(2);
+        expect(setSessionPin).toHaveBeenNthCalledWith(1, {
+            target: expect.objectContaining({ key: 'server-a:s1', sessionId: 's1' }),
+            pinned: true,
+        });
+        expect(setSessionPin).toHaveBeenNthCalledWith(2, {
+            target: expect.objectContaining({ key: 'server-a:s2', sessionId: 's2' }),
+            pinned: true,
+        });
         expect(result.succeeded.map((entry) => entry.target.key)).toEqual(['server-a:s1', 'server-a:s2']);
         expect(result.failed).toEqual([]);
         expect(result.remainingSelectedKeys).toEqual([]);
     });
 
-    it('removes tags from selected sessions with one merged settings write and deletes empty tag entries', async () => {
-        const setSessionTagsV1 = vi.fn(async () => undefined);
+    it('removes tags from selected sessions through organization tag assignment operations', async () => {
+        const setSessionTagAssignments = vi.fn(async () => undefined);
 
         const result = await executeSessionBulkAction({
             action: {
@@ -93,23 +120,22 @@ describe('executeSessionBulkAction', () => {
                 tags: ['important', 'later'],
             },
             targets: [
-                target({ key: 'server-a:s1', sessionId: 's1' }),
-                target({ key: 'server-a:s2', sessionId: 's2' }),
+                target({ key: 'server-a:s1', sessionId: 's1', tags: ['important', 'keep'] }),
+                target({ key: 'server-a:s2', sessionId: 's2', tags: ['later'] }),
             ],
             context: {
-                sessionTagsV1: {
-                    'server-a:s1': ['important', 'keep'],
-                    'server-a:s2': ['later'],
-                    'server-a:s3': ['important'],
-                },
-                setSessionTagsV1,
+                setSessionTagAssignments,
             },
         });
 
-        expect(setSessionTagsV1).toHaveBeenCalledTimes(1);
-        expect(setSessionTagsV1).toHaveBeenCalledWith({
-            'server-a:s1': ['keep'],
-            'server-a:s3': ['important'],
+        expect(setSessionTagAssignments).toHaveBeenCalledTimes(2);
+        expect(setSessionTagAssignments).toHaveBeenNthCalledWith(1, {
+            target: expect.objectContaining({ key: 'server-a:s1', sessionId: 's1' }),
+            tags: ['keep'],
+        });
+        expect(setSessionTagAssignments).toHaveBeenNthCalledWith(2, {
+            target: expect.objectContaining({ key: 'server-a:s2', sessionId: 's2' }),
+            tags: [],
         });
         expect(result.succeeded.map((entry) => entry.target.key)).toEqual(['server-a:s1', 'server-a:s2']);
     });
@@ -185,7 +211,11 @@ describe('executeSessionBulkAction', () => {
         const setSessionFolderAssignment = vi.fn(async () => undefined);
 
         const result = await executeSessionBulkAction({
-            action: { id: SESSION_BULK_ACTION_IDS.moveToFolder, folderId: 'folder-a' },
+            action: {
+                id: SESSION_BULK_ACTION_IDS.moveToFolder,
+                folderId: 'folder-a',
+                destinationWorkspace: workspaceA,
+            },
             targets: [
                 target({ key: 'server-a:s1', sessionId: 's1' }),
                 target({ key: 'server-a:s2', sessionId: 's2' }),
@@ -208,10 +238,14 @@ describe('executeSessionBulkAction', () => {
         const setSessionFolderAssignment = vi.fn(async () => undefined);
 
         const result = await executeSessionBulkAction({
-            action: { id: SESSION_BULK_ACTION_IDS.moveToFolder, folderId: 'folder-a' },
+            action: {
+                id: SESSION_BULK_ACTION_IDS.moveToFolder,
+                folderId: 'folder-a',
+                destinationWorkspace: workspaceA,
+            },
             targets: [
-                target({ key: 'server-a:s1', sessionId: 's1' }),
-                target({ key: 'server-b:s2', sessionId: 's2', serverId: 'server-b' }),
+                target({ key: 'server-a:s1', sessionId: 's1', canMoveToFolder: true, workspace: workspaceA }),
+                target({ key: 'server-a:s2', sessionId: 's2', canMoveToFolder: true, workspace: workspaceA }),
             ],
             context: {
                 foldersFeatureDecision: { state: 'enabled' },
@@ -225,10 +259,83 @@ describe('executeSessionBulkAction', () => {
             folderId: 'folder-a',
         });
         expect(setSessionFolderAssignment).toHaveBeenNthCalledWith(2, {
-            target: expect.objectContaining({ sessionId: 's2', serverId: 'server-b' }),
+            target: expect.objectContaining({ sessionId: 's2', serverId: 'server-a' }),
             folderId: 'folder-a',
         });
-        expect(result.succeeded.map((entry) => entry.target.key)).toEqual(['server-a:s1', 'server-b:s2']);
+        expect(result.succeeded.map((entry) => entry.target.key)).toEqual(['server-a:s1', 'server-a:s2']);
+    });
+
+    it('moves only targets admitted by the canonical per-item folder eligibility decision', async () => {
+        const setSessionFolderAssignment = vi.fn(async () => undefined);
+
+        const result = await executeSessionBulkAction({
+            action: {
+                id: SESSION_BULK_ACTION_IDS.moveToFolder,
+                folderId: 'folder-a',
+                destinationWorkspace: workspaceA,
+            },
+            targets: [
+                target({
+                    key: 'server-a:external',
+                    sessionId: 'external',
+                    canMoveToFolder: true,
+                    workspace: workspaceA,
+                }),
+                target({ key: 'server-a:unscoped', sessionId: 'unscoped', canMoveToFolder: false }),
+            ],
+            context: {
+                foldersFeatureDecision: { state: 'enabled' },
+                setSessionFolderAssignment,
+            },
+        });
+
+        expect(setSessionFolderAssignment).toHaveBeenCalledTimes(1);
+        expect(setSessionFolderAssignment).toHaveBeenCalledWith({
+            target: expect.objectContaining({ sessionId: 'external' }),
+            folderId: 'folder-a',
+        });
+        expect(result.succeeded.map((entry) => entry.target.key)).toEqual(['server-a:external']);
+        expect(result.skipped.map((entry) => [entry.target.key, entry.reasonCode])).toEqual([
+            ['server-a:unscoped', 'folder_move_unavailable'],
+        ]);
+    });
+
+    it('preflights every target against the destination workspace before starting bulk folder writes', async () => {
+        const setSessionFolderAssignment = vi.fn(async () => undefined);
+
+        const result = await executeSessionBulkAction({
+            action: {
+                id: SESSION_BULK_ACTION_IDS.moveToFolder,
+                folderId: 'folder-a',
+                destinationWorkspace: workspaceA,
+            },
+            targets: [
+                target({ key: 'server-a:same-1', sessionId: 'same-1', canMoveToFolder: true, workspace: workspaceA }),
+                target({ key: 'server-a:different', sessionId: 'different', canMoveToFolder: true, workspace: workspaceB }),
+                target({ key: 'server-a:same-2', sessionId: 'same-2', canMoveToFolder: true, workspace: workspaceA }),
+            ],
+            context: {
+                foldersFeatureDecision: { state: 'enabled' },
+                setSessionFolderAssignment,
+            },
+        });
+
+        expect(setSessionFolderAssignment).toHaveBeenCalledTimes(2);
+        expect(setSessionFolderAssignment).toHaveBeenNthCalledWith(1, {
+            target: expect.objectContaining({ sessionId: 'same-1' }),
+            folderId: 'folder-a',
+        });
+        expect(setSessionFolderAssignment).toHaveBeenNthCalledWith(2, {
+            target: expect.objectContaining({ sessionId: 'same-2' }),
+            folderId: 'folder-a',
+        });
+        expect(result.succeeded.map((entry) => entry.target.key)).toEqual([
+            'server-a:same-1',
+            'server-a:same-2',
+        ]);
+        expect(result.skipped.map((entry) => [entry.target.key, entry.reasonCode])).toEqual([
+            ['server-a:different', 'folder_destination_scope_mismatch'],
+        ]);
     });
 
     it('cancels queued network work without invoking operations for cancelled targets', async () => {
@@ -344,6 +451,35 @@ describe('executeSessionBulkAction', () => {
         const unarchiveResult = await executeSessionBulkAction({
             action: { id: SESSION_BULK_ACTION_IDS.unarchive },
             targets: [target({ key: 'server-a:archived', sessionId: 'archived', active: false, archived: true, hasAdminAccess: false })],
+            context: { unarchiveSession },
+        });
+
+        expect(stopSession).not.toHaveBeenCalled();
+        expect(archiveSession).not.toHaveBeenCalled();
+        expect(unarchiveSession).not.toHaveBeenCalled();
+        expect(stopResult.skipped.map((entry) => entry.reasonCode)).toEqual(['permission_denied']);
+        expect(archiveResult.skipped.map((entry) => entry.reasonCode)).toEqual(['permission_denied']);
+        expect(unarchiveResult.skipped.map((entry) => entry.reasonCode)).toEqual(['permission_denied']);
+    });
+
+    it('skips lifecycle actions when target permission facts are absent', async () => {
+        const stopSession = vi.fn(async () => ({ success: true }));
+        const archiveSession = vi.fn(async () => ({ success: true }));
+        const unarchiveSession = vi.fn(async () => ({ success: true }));
+
+        const stopResult = await executeSessionBulkAction({
+            action: { id: SESSION_BULK_ACTION_IDS.stop },
+            targets: [target({ key: 'server-a:active', sessionId: 'active', active: true, canStop: undefined })],
+            context: { stopSession },
+        });
+        const archiveResult = await executeSessionBulkAction({
+            action: { id: SESSION_BULK_ACTION_IDS.archive },
+            targets: [target({ key: 'server-a:inactive', sessionId: 'inactive', active: false, archived: false, canArchive: undefined })],
+            context: { archiveSession },
+        });
+        const unarchiveResult = await executeSessionBulkAction({
+            action: { id: SESSION_BULK_ACTION_IDS.unarchive },
+            targets: [target({ key: 'server-a:archived', sessionId: 'archived', active: false, archived: true, hasAdminAccess: undefined })],
             context: { unarchiveSession },
         });
 

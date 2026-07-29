@@ -10,7 +10,6 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSettingMutable } from '@/sync/store/hooks';
 import {
     ConnectedServicesProviderStateSharingSettingsV1Schema,
@@ -235,17 +234,12 @@ export function ConnectedServicesProviderStateSharingBackendGroups(props: Readon
 }
 
 export function ConnectedServicesProviderStateSharingSettingsView() {
-    const connectedServicesEnabled = useFeatureEnabled('connectedServices');
     const [providerStateSharingSettings, setProviderStateSharingSettings] =
         useSettingMutable('connectedServicesProviderStateSharingSettingsV1');
     const normalizedProviderStateSharingSettings = React.useMemo(
         () => ConnectedServicesProviderStateSharingSettingsV1Schema.parse(providerStateSharingSettings),
         [providerStateSharingSettings],
     );
-
-    if (!connectedServicesEnabled) {
-        return null;
-    }
 
     return (
         <ItemList>

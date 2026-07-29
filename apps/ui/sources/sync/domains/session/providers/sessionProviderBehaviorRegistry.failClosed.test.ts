@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/agents/registry/generatedBundledPluginEntries.sessionProviderBehaviors', () => ({
-    BUNDLED_CANONICAL_AGENT_SESSION_PROVIDER_BEHAVIOR_DESCRIPTORS: {},
-    BUNDLED_CANONICAL_AGENT_SESSION_PROVIDER_BEHAVIORS: {
+vi.mock('@/agents/registry/generatedBundledPluginEntries.sessionAgentBehaviors', () => ({
+    BUNDLED_CANONICAL_AGENT_SESSION_BEHAVIOR_DESCRIPTORS: {},
+    BUNDLED_CANONICAL_AGENT_SESSION_BEHAVIORS: {
         claude: {
             participants: {
                 deriveSnapshot: () => {

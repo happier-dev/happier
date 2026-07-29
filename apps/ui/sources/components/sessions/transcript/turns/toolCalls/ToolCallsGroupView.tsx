@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import * as FlashListCompat from '@/components/ui/lists/flashListCompat/FlashListCompat';
 
 import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 import type { PersistedSessionMessagePinV1 } from '@/sync/domains/messages/pins/sessionMessagePins';
@@ -26,36 +25,16 @@ import {
     renderGroupedToolCallRowContent,
     resolveGroupedPreviewSidechainIds,
 } from '@/components/sessions/transcript/toolCalls/units/groupedToolCallRowContent';
-import { ToolCallPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
-import { resolveMessagePinAvailability } from '@/components/sessions/transcript/messageActions/resolveMessagePinAvailability';
+import { resolveToolRowPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
 import {
     ToolCallsGroupExpandMoreChrome,
     ToolCallsGroupHeaderChrome,
+    type ToolCallsGroupStatus,
 } from '@/components/sessions/transcript/toolCalls/units/toolCallsGroupChrome';
-
-const fallbackMappingHelper = {
-    getMappingKey: (itemKey: string | number | bigint) => itemKey,
-};
-
-function useFallbackMappingHelper() {
-    return fallbackMappingHelper;
-}
-
-function resolveToolCallsGroupMappingHelper() {
-    try {
-        return typeof FlashListCompat.useMappingHelper === 'function'
-            ? FlashListCompat.useMappingHelper
-            : useFallbackMappingHelper;
-    } catch {
-        return useFallbackMappingHelper;
-    }
-}
-
-const useToolCallsGroupMappingHelper = resolveToolCallsGroupMappingHelper();
 
 type ToolCallsGroupViewProps = Readonly<{
     id: string;
-    status: 'running' | 'completed' | 'error';
+    status: ToolCallsGroupStatus;
     toolMessages: ToolCallMessage[];
     metadata: Metadata | null;
     sessionId: string;
@@ -119,7 +98,6 @@ export const ToolCallsGroupView = React.memo((props: ToolCallsGroupViewProps) =>
 
 export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsGroupViewWithSessionCommonProps) => {
     const { theme } = useUnistyles();
-    const { getMappingKey } = useToolCallsGroupMappingHelper();
     const {
         toolViewTimelineChromeMode,
         transcriptToolCallsCollapsedPreviewCount,
@@ -134,7 +112,7 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
     const showFeedBackground = normalizedChromeMode === 'activity_feed' && transcriptToolCallsGroupShowBackground === true;
     const feedBackgroundStyle = showFeedBackground
         ? {
-            borderRadius: 14,
+            borderRadius: theme.borderRadius.xl,
             backgroundColor: theme.colors.feed?.card?.background ?? theme.colors.surface.elevated,
             overflow: 'hidden' as const,
             paddingHorizontal: 10,
@@ -174,26 +152,18 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
             reducerState,
         });
     }, [messagesById, props.interaction.disableToolNavigation, reducerState]);
-    const renderToolPinAction = React.useCallback((message: ToolCallMessage, nestedMessageId: string | undefined) => {
-        if (!props.onToggleToolPin) return null;
-        const toolPinAvailability = resolveMessagePinAvailability({
+    const renderToolPinAction = React.useCallback((message: ToolCallMessage, nestedMessageId: string | undefined) => (
+        resolveToolRowPinAction({
             sessionId: props.sessionId,
             seq: message.seq ?? null,
             transcriptBlockIndex: message.transcriptBlockIndex ?? null,
             routeMessageId: nestedMessageId ?? null,
-            role: 'tool',
-            pins: props.messagePins ?? [],
+            pins: props.messagePins,
             readOnlyContext: props.interaction.permissionDisabledReason === 'readOnly',
-        });
-        if (toolPinAvailability.status !== 'available') return null;
-        return (
-            <ToolCallPinAction
-                availability={toolPinAvailability}
-                onTogglePin={props.onToggleToolPin}
-                testID={`transcript-tool-call-pin:${message.id}`}
-            />
-        );
-    }, [props.interaction.permissionDisabledReason, props.messagePins, props.onToggleToolPin, props.sessionId]);
+            onTogglePin: props.onToggleToolPin,
+            testID: `transcript-tool-call-pin:${message.id}`,
+        })
+    ), [props.interaction.permissionDisabledReason, props.messagePins, props.onToggleToolPin, props.sessionId]);
 
     return (
         <View
@@ -223,12 +193,12 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
                             {showExpandButton ? (
                                 <ToolCallsGroupExpandMoreChrome hiddenCount={hiddenCount} onExpand={onExpand} />
                             ) : null}
-                            {showCollapsedPreview ? previewMessages.map((m, index) => {
+                            {showCollapsedPreview ? previewMessages.map((m) => {
                                 const nestedMessageId = resolveToolRouteMessageId(m);
                                 const toolPinAction = renderToolPinAction(m, nestedMessageId);
                                 return (
                                 <View
-                                    key={getMappingKey(`preview:${m.id}`, index)}
+                                    key={`preview:${m.id}`}
                                     testID={`${TRANSCRIPT_WEB_TOOL_CALL_PREPEND_ANCHOR_TEST_ID_PREFIX}${m.id}`}
                                 >
                                     <View
@@ -263,11 +233,11 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
                     {expanded ? (
                         <TranscriptCollapsible id={collapsibleId} createdAt={createdAt} expanded={expanded}>
                             <View style={[styles.body, normalizedChromeMode === 'activity_feed' ? styles.bodyFeed : styles.bodyCards]}>
-                                {props.toolMessages.map((m, index) => {
+                                {props.toolMessages.map((m) => {
                                     const nestedMessageId = resolveToolRouteMessageId(m);
                                     const toolPinAction = renderToolPinAction(m, nestedMessageId);
                                     return (
-                                    <TranscriptEnterWrapper key={getMappingKey(m.id, index)} id={m.id} createdAt={m.createdAt}>
+                                    <TranscriptEnterWrapper key={m.id} id={m.id} createdAt={m.createdAt}>
                                         <View
                                             testID={`${TRANSCRIPT_WEB_TOOL_CALL_PREPEND_ANCHOR_TEST_ID_PREFIX}${m.id}`}
                                         >
@@ -313,7 +283,7 @@ const styles = StyleSheet.create((theme) => ({
         marginBottom: 22,
     },
     containerCards: {
-        borderRadius: 14,
+        borderRadius: theme.borderRadius.xl,
         backgroundColor: theme.colors.surface.inset ?? theme.colors.surface.base,
         overflow: 'hidden',
     },

@@ -4,10 +4,12 @@ import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import {
     clearFocusedSessionId,
     clearRouteAnchorSessionId,
+    getSessionSurfaceVisibilityResetVersion,
     markSessionSurfaceHidden,
     markSessionSurfaceVisible,
     setFocusedSessionId,
     setRouteAnchorSessionId,
+    subscribeSessionSurfaceVisibilityReset,
 } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { registerSessionTranscriptRetentionConsumer } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
@@ -15,6 +17,7 @@ import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 export type UseSessionSurfaceActivationInput = Readonly<{
     sessionId: string;
     serverId?: string | null;
+    onSessionVisible?: (sessionId: string) => void;
     surfaceFocused: boolean;
     /**
      * Whether this mounted surface is still part of the user-reachable surface set.
@@ -35,6 +38,11 @@ export function useSessionSurfaceActivation(
     input: UseSessionSurfaceActivationInput,
 ): UseSessionSurfaceActivationResult {
     const normalizedSessionId = normalizeSessionId(input.sessionId);
+    const visibilityResetVersion = React.useSyncExternalStore(
+        subscribeSessionSurfaceVisibilityReset,
+        getSessionSurfaceVisibilityResetVersion,
+        getSessionSurfaceVisibilityResetVersion,
+    );
 
     React.useLayoutEffect(() => {
         if (!normalizedSessionId) return;
@@ -42,10 +50,17 @@ export function useSessionSurfaceActivation(
             return;
         }
         markSessionSurfaceVisible(normalizedSessionId, input.serverId);
+        input.onSessionVisible?.(normalizedSessionId);
         return () => {
             markSessionSurfaceHidden(normalizedSessionId, input.serverId);
         };
-    }, [input.serverId, input.surfaceVisible, normalizedSessionId]);
+    }, [
+        input.onSessionVisible,
+        input.serverId,
+        input.surfaceVisible,
+        normalizedSessionId,
+        visibilityResetVersion,
+    ]);
 
     React.useLayoutEffect(() => {
         if (!normalizedSessionId) return;
@@ -58,7 +73,12 @@ export function useSessionSurfaceActivation(
         return () => {
             clearFocusedSessionId(normalizedSessionId);
         };
-    }, [input.surfaceFocused, input.surfaceVisible, normalizedSessionId]);
+    }, [
+        input.surfaceFocused,
+        input.surfaceVisible,
+        normalizedSessionId,
+        visibilityResetVersion,
+    ]);
 
     // Transcript retention hold (NOT gated on surfaceVisible by default): a
     // hidden-but-mounted back-stack SessionView still renders its transcript, so the
@@ -79,7 +99,7 @@ export function useSessionSurfaceActivation(
         return () => {
             clearRouteAnchorSessionId(normalizedSessionId);
         };
-    }, [input.routeAnchor, normalizedSessionId]);
+    }, [input.routeAnchor, normalizedSessionId, visibilityResetVersion]);
 
     const hasSessionId = normalizedSessionId.length > 0;
 

@@ -101,11 +101,17 @@ vi.mock('@/encryption/base64', () => ({
     encodeBase64: () => 'x',
 }));
 
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerUrl: () => 'https://stack.example.test',
-    getActiveServerSnapshot: () => ({ serverId: 'srv', serverUrl: 'https://stack.example.test', generation: 0 }),
-    subscribeActiveServer: () => () => {},
-}));
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+    const { createPartialServerProfilesModuleMock } = await import('@/dev/testkit/mocks/serverProfiles');
+    return createPartialServerProfilesModuleMock(importOriginal, {
+        profiles: [{ id: 'srv', serverUrl: 'https://stack.example.test' }],
+        overrides: {
+            getActiveServerUrl: () => 'https://stack.example.test',
+            getActiveServerSnapshot: () => ({ serverId: 'srv', serverUrl: 'https://stack.example.test', generation: 0 }),
+            subscribeActiveServer: () => () => {},
+        },
+    });
+});
 
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     normalizeServerUrl: (s: string) => s,

@@ -6,6 +6,8 @@ export const motionTokens = {
         fast: 140,
         base: 220,
         slow: 320,
+        stageCrossfade: 320,
+        stageCamera: 1000,
     },
     overlay: {
         popover: {
@@ -25,6 +27,7 @@ export const motionTokens = {
     easing: {
         standard: Easing.bezier(0.2, 0, 0, 1),
         emphasized: Easing.bezier(0.2, 0, 0, 1),
+        stageCamera: Easing.bezier(0.22, 0.82, 0.2, 1),
         linear: Easing.linear,
     },
 } as const;

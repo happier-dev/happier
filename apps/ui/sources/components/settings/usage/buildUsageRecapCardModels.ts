@@ -7,8 +7,8 @@ import type {
 } from '@/sync/api/account/usageAnalytics';
 import { formatUsageWeekdayHourLabel } from '@/sync/api/account/formatUsageRhythmLabel';
 import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
+import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
 
-import { formatUsageCurrency } from './formatUsageCurrency';
 import { buildUsageCurrentStreakSubtitle } from './buildUsageCurrentStreakSubtitle';
 import { resolveUsageCostModeLabel } from './resolveUsageCostModeLabel';
 
@@ -47,16 +47,6 @@ export type UsageRecapCardModel = Readonly<{
     visual: UsageRecapCardVisualModel;
 }>;
 
-function formatTokens(value: number): string {
-    if (value >= 1_000_000) {
-        return `${(value / 1_000_000).toFixed(2)}M`;
-    }
-    if (value >= 1_000) {
-        return `${(value / 1_000).toFixed(1)}K`;
-    }
-    return value.toLocaleString();
-}
-
 function resolvePeriodLabel(period: UsageFilterState['period']): string {
     return t(getUsagePeriodDefinition(period).translationKey);
 }
@@ -74,20 +64,17 @@ function formatPeriodUsageValue(viewModel: UsageAnalyticsViewModel, filters: Usa
     const currency = viewModel.costPresentation.currency || 'USD';
 
     if (filters.metric === 'cost') {
-        return formatUsageCurrency(viewModel.overview.totalCost, currency, {
-            minimumFractionDigits: viewModel.overview.totalCost >= 100 ? 0 : viewModel.overview.totalCost >= 10 ? 1 : 2,
-            maximumFractionDigits: viewModel.overview.totalCost >= 100 ? 0 : viewModel.overview.totalCost >= 10 ? 1 : 2,
-        });
+        return formatUsageCost(viewModel.overview.totalCost, currency);
     }
 
-    return formatTokens(viewModel.overview.totalTokens);
+    return formatTokenCount(viewModel.overview.totalTokens);
 }
 
 function buildPeriodUsageSubtitle(viewModel: UsageAnalyticsViewModel, filters: UsageFilterState): string {
     const currency = viewModel.costPresentation.currency || 'USD';
 
     if (filters.metric === 'cost') {
-        return `${formatTokens(viewModel.overview.totalTokens)} ${t('usage.tokens')}`;
+        return `${formatTokenCount(viewModel.overview.totalTokens)} ${t('usage.tokens')}`;
     }
 
     const costModeLabel = resolveUsageCostModeLabel({
@@ -95,10 +82,7 @@ function buildPeriodUsageSubtitle(viewModel: UsageAnalyticsViewModel, filters: U
         mode: viewModel.costPresentation.mode,
     });
 
-    return `${formatUsageCurrency(viewModel.overview.totalCost, currency, {
-        minimumFractionDigits: viewModel.overview.totalCost >= 100 ? 0 : viewModel.overview.totalCost >= 10 ? 1 : 2,
-        maximumFractionDigits: viewModel.overview.totalCost >= 100 ? 0 : viewModel.overview.totalCost >= 10 ? 1 : 2,
-    })} · ${costModeLabel}`;
+    return `${formatUsageCost(viewModel.overview.totalCost, currency)} · ${costModeLabel}`;
 }
 
 function buildRecentActivity(viewModel: UsageAnalyticsViewModel): UsageSummaryActivityPoint[] {
@@ -150,10 +134,10 @@ function resolveTopEngineLabel(viewModel: UsageAnalyticsViewModel, summary: Usag
     if (isKnownUsageLabel(summary.topEngine?.label)) {
         return summary.topEngine.label;
     }
-    if (isKnownUsageLabel(viewModel.leaders.providers[0]?.label)) {
-        return viewModel.leaders.providers[0].label;
+    if (isKnownUsageLabel(viewModel.leaders.agents[0]?.label)) {
+        return viewModel.leaders.agents[0].label;
     }
-    return t('usage.noData');
+    return t('usage.noData.title');
 }
 
 export function buildUsageRecapCardModels(input: Readonly<{
@@ -214,8 +198,8 @@ export function buildUsageRecapCardModels(input: Readonly<{
             label: t('usage.summary.topModel'),
             value: topModel?.label ?? '—',
             subtitle: topModel
-                ? `${formatTokens(viewModel.insights.favoriteModelChangeCount)} ${t('usage.favoriteModelChanges')} · ${topEngineLabel}`
-                : t('usage.noData'),
+                ? `${formatTokenCount(viewModel.insights.favoriteModelChangeCount)} ${t('usage.favoriteModelChanges')} · ${topEngineLabel}`
+                : t('usage.noData.title'),
             valueTone: 'compact',
             accentTone: 'purple',
             visual: {
@@ -229,7 +213,7 @@ export function buildUsageRecapCardModels(input: Readonly<{
             shareTestID: 'usage-recap-share-rhythm',
             label: t('usage.busiestWindow'),
             value: summary.busiestWindowLabel ?? '—',
-            subtitle: viewModel.insights.busiestHour?.label ?? t('usage.noData'),
+            subtitle: viewModel.insights.busiestHour?.label ?? t('usage.noData.title'),
             valueTone: 'compact',
             accentTone: 'green',
             visual: {

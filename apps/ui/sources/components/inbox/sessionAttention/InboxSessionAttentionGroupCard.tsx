@@ -13,7 +13,9 @@ import { UserActionPromptCard } from '@/components/tools/shell/userActions/UserA
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { formatPathRelativeToHome, getSessionName } from '@/utils/sessions/sessionUtils';
+import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
 import { InboxSessionAttentionHeader } from './InboxSessionAttentionHeader';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export const InboxSessionAttentionGroupCard = React.memo(function InboxSessionAttentionGroupCard(props: Readonly<{
     session: Session;
@@ -21,14 +23,15 @@ export const InboxSessionAttentionGroupCard = React.memo(function InboxSessionAt
     userActionRequests: readonly PendingPermissionRequest[];
 }>) {
     const router = useRouter();
+    const ownerMetadata = readSessionOwnerMetadataView(props.session);
     const machineId = readDisplayMachineIdForSession({
         sessionId: props.session.id,
-        metadata: props.session.metadata ?? null,
+        metadata: ownerMetadata,
     });
     const machine = useMachine(machineId);
     const displayPath = readDisplayPathForSession({
         sessionId: props.session.id,
-        metadata: props.session.metadata ?? null,
+        metadata: ownerMetadata,
     });
     const transcriptInteraction = React.useMemo(() => {
         return deriveTranscriptInteractionFromSession({
@@ -51,8 +54,8 @@ export const InboxSessionAttentionGroupCard = React.memo(function InboxSessionAt
             <InboxSessionAttentionHeader
                 sessionTitle={getSessionName(props.session)}
                 machineLabel={getMachineDisplayName(machine)}
-                pathLabel={displayPath ? formatPathRelativeToHome(displayPath, props.session.metadata?.homeDir ?? undefined) : null}
-                onOpenSession={() => router.push(`/session/${props.session.id}`)}
+                pathLabel={displayPath ? formatPathRelativeToHome(displayPath, ownerMetadata?.homeDir ?? undefined) : null}
+                onOpenSession={() => router.push(createActivitySurfaceSessionRoute(props.session.id, props.session.serverId))}
             />
 
             <View style={styles.items}>
@@ -62,7 +65,7 @@ export const InboxSessionAttentionGroupCard = React.memo(function InboxSessionAt
                         request={request}
                         location={null}
                         sessionId={props.session.id}
-                        metadata={props.session.metadata}
+                        metadata={ownerMetadata}
                         canApprovePermissions={transcriptInteraction.canApprovePermissions}
                         disabledReason={transcriptInteraction.permissionDisabledReason}
                     />
@@ -74,7 +77,7 @@ export const InboxSessionAttentionGroupCard = React.memo(function InboxSessionAt
                         request={request}
                         location={null}
                         sessionId={props.session.id}
-                        metadata={props.session.metadata}
+                        metadata={ownerMetadata}
                         canApprovePermissions={transcriptInteraction.canApprovePermissions}
                         disabledReason={transcriptInteraction.permissionDisabledReason}
                     />

@@ -290,6 +290,56 @@ describe('useInboxHasContent', () => {
         expect(latest).toBe(true);
     });
 
+    it('does not rerender for transcript changes outside the Inbox session set', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_000);
+        const trackedMessages = createSessionMessages();
+        storage.setState({
+            friends: {},
+            feedItems: [],
+            sessions: {
+                s1: {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1_000,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                    metadata: null,
+                    metadataVersion: 0,
+                    agentState: null,
+                    agentStateVersion: 0,
+                },
+            },
+            sessionMessages: {
+                s1: trackedMessages,
+            },
+        } as any);
+
+        let renderCount = 0;
+        function Test() {
+            useInboxHasContent();
+            renderCount += 1;
+            return React.createElement('View');
+        }
+
+        tree = (await renderScreen(React.createElement(Test))).tree;
+        const initialRenderCount = renderCount;
+
+        act(() => {
+            storage.setState({
+                sessionMessages: {
+                    s1: trackedMessages,
+                    unrelated: createSessionMessages({ messagesVersion: 2 }),
+                },
+            } as any);
+        });
+
+        expect(renderCount).toBe(initialRenderCount);
+    });
+
     it('returns true when there are unread sessions', async () => {
         storage.setState({
             friends: {},

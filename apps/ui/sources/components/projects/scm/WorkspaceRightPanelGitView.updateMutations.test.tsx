@@ -11,17 +11,34 @@ const beginWorkspaceScmOperationMock = vi.hoisted(() => vi.fn());
 const finishWorkspaceScmOperationMock = vi.hoisted(() => vi.fn(() => true));
 const appendWorkspaceScmOperationMock = vi.hoisted(() => vi.fn());
 const machineScmRemoteAddMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ success: true })));
+const machineScmRemoteSetUrlMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ success: true })));
+const machineScmRemoteRemoveMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ success: true })));
+const machineScmBranchMergeMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ success: true })));
+const machineScmBranchRebaseMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ success: true })));
+const machineScmBranchOperationContinueMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ success: true })));
+const machineScmBranchOperationAbortMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ success: true })));
 const machineScmHostingRepositoryDescribePublishTargetsMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({
     success: false,
     error: 'not configured',
 })));
 const machineScmHostingRepositoryPublishMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ success: true })));
+const machineScmPullRequestOpenComposeMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ success: true, url: 'https://example.com/compare' })));
+const machineScmPullRequestOpenOrReuseMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({
+    success: true,
+    pullRequest: null,
+    reused: false,
+    nextAction: { kind: 'none' },
+})));
+const machineScmRepositoryInitMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ success: true })));
+const machineScmBranchCreateMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ success: true })));
 
 let workspaceSnapshotMock: ScmWorkingSnapshot | null = null;
 let capturedRemotesProps: any = null;
 let capturedPublishProps: any = null;
+let capturedPullRequestProps: any = null;
+let capturedBranchIntegrationProps: any = null;
+let capturedNotRepositoryProps: any = null;
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -83,7 +100,10 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
 });
 
 vi.mock('@/components/workspaces/scm/states', () => ({
-    NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
+    NotSourceControlRepositoryState: (props: any) => {
+        capturedNotRepositoryProps = props;
+        return React.createElement('NotSourceControlRepositoryState', props);
+    },
     SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
 }));
 
@@ -125,8 +145,18 @@ vi.mock('@/components/workspaces/scm/update/SourceControlPublishRepositorySectio
     },
 }));
 
+vi.mock('@/components/workspaces/scm/update/SourceControlPullRequestSection', () => ({
+    SourceControlPullRequestSection: (props: any) => {
+        capturedPullRequestProps = props;
+        return React.createElement('SourceControlPullRequestSection');
+    },
+}));
+
 vi.mock('@/components/workspaces/scm/update/SourceControlBranchIntegrationSection', () => ({
-    SourceControlBranchIntegrationSection: () => React.createElement('SourceControlBranchIntegrationSection'),
+    SourceControlBranchIntegrationSection: (props: any) => {
+        capturedBranchIntegrationProps = props;
+        return React.createElement('SourceControlBranchIntegrationSection');
+    },
 }));
 
 vi.mock('@/components/projects/scm/executeWorkspaceScmRemoteOperation', () => ({
@@ -135,17 +165,18 @@ vi.mock('@/components/projects/scm/executeWorkspaceScmRemoteOperation', () => ({
 
 vi.mock('@/sync/ops/scm/machineScm', () => ({
     machineScmRemoteAdd: (...args: any[]) => machineScmRemoteAddMock(...args),
-    machineScmRemoteSetUrl: vi.fn(async () => ({ success: true })),
-    machineScmRemoteRemove: vi.fn(async () => ({ success: true })),
-    machineScmBranchMerge: vi.fn(async () => ({ success: true })),
-    machineScmBranchRebase: vi.fn(async () => ({ success: true })),
-    machineScmBranchOperationContinue: vi.fn(async () => ({ success: true })),
-    machineScmBranchOperationAbort: vi.fn(async () => ({ success: true })),
+    machineScmRemoteSetUrl: (...args: any[]) => machineScmRemoteSetUrlMock(...args),
+    machineScmRemoteRemove: (...args: any[]) => machineScmRemoteRemoveMock(...args),
+    machineScmBranchMerge: (...args: any[]) => machineScmBranchMergeMock(...args),
+    machineScmBranchRebase: (...args: any[]) => machineScmBranchRebaseMock(...args),
+    machineScmBranchOperationContinue: (...args: any[]) => machineScmBranchOperationContinueMock(...args),
+    machineScmBranchOperationAbort: (...args: any[]) => machineScmBranchOperationAbortMock(...args),
     machineScmHostingRepositoryDescribePublishTargets: (...args: any[]) => machineScmHostingRepositoryDescribePublishTargetsMock(...args),
     machineScmHostingRepositoryPublish: (...args: any[]) => machineScmHostingRepositoryPublishMock(...args),
-    machineScmPullRequestOpenCompose: vi.fn(async () => ({ success: true, url: 'https://example.com/compare' })),
-    machineScmPullRequestOpenOrReuse: vi.fn(async () => ({ success: true, pullRequest: null, reused: false, nextAction: { kind: 'none' } })),
-    machineScmRepositoryInit: vi.fn(async () => ({ success: true })),
+    machineScmPullRequestOpenCompose: (...args: any[]) => machineScmPullRequestOpenComposeMock(...args),
+    machineScmPullRequestOpenOrReuse: (...args: any[]) => machineScmPullRequestOpenOrReuseMock(...args),
+    machineScmRepositoryInit: (...args: any[]) => machineScmRepositoryInitMock(...args),
+    machineScmBranchCreate: (...args: any[]) => machineScmBranchCreateMock(...args),
 }));
 
 function createSnapshot(): ScmWorkingSnapshot {
@@ -193,12 +224,34 @@ describe('WorkspaceRightPanelGitView update mutations', () => {
         workspaceSnapshotMock = createSnapshot();
         capturedRemotesProps = null;
         capturedPublishProps = null;
+        capturedPullRequestProps = null;
+        capturedBranchIntegrationProps = null;
+        capturedNotRepositoryProps = null;
         beginWorkspaceScmOperationMock.mockReset();
+        beginWorkspaceScmOperationMock.mockReturnValue({
+            started: true,
+            operation: {
+                id: 'lock-1',
+                startedAt: 1,
+                sessionId: 'session-1',
+                operation: 'remote_add',
+            },
+        });
         finishWorkspaceScmOperationMock.mockClear();
         appendWorkspaceScmOperationMock.mockClear();
         machineScmRemoteAddMock.mockClear();
+        machineScmRemoteSetUrlMock.mockClear();
+        machineScmRemoteRemoveMock.mockClear();
+        machineScmBranchMergeMock.mockClear();
+        machineScmBranchRebaseMock.mockClear();
+        machineScmBranchOperationContinueMock.mockClear();
+        machineScmBranchOperationAbortMock.mockClear();
         machineScmHostingRepositoryDescribePublishTargetsMock.mockClear();
         machineScmHostingRepositoryPublishMock.mockClear();
+        machineScmPullRequestOpenComposeMock.mockClear();
+        machineScmPullRequestOpenOrReuseMock.mockClear();
+        machineScmRepositoryInitMock.mockClear();
+        machineScmBranchCreateMock.mockClear();
     });
 
     it('routes remote add through the workspace SCM operation lock before invoking the RPC', async () => {
@@ -285,6 +338,137 @@ describe('WorkspaceRightPanelGitView update mutations', () => {
         expect(machineScmHostingRepositoryDescribePublishTargetsMock).toHaveBeenCalledWith('machine-1', {
             cwd: '/repo',
             providerKind: 'gitlab',
+        }, { serverId: 'server-1' });
+    });
+
+    it('passes the workspace server scope to right-panel update RPCs', async () => {
+        const { WorkspaceRightPanelGitView } = await import('./WorkspaceRightPanelGitView');
+        const screen = await renderScreen(
+            <WorkspaceRightPanelGitView
+                serverId="server-1"
+                machineId="machine-1"
+                rootPath="/repo"
+                onOpenFile={() => {}}
+            />,
+        );
+
+        await act(async () => {
+            screen.findByType('WorkspaceScmSubTabsBar').props.onSelectSubTab('update');
         });
+
+        await act(async () => {
+            await capturedRemotesProps.onAddRemote({ name: 'origin', fetchUrl: 'git@example.com:repo.git' });
+            await capturedRemotesProps.onSetRemoteUrl({
+                name: 'origin',
+                fetchUrl: 'https://example.com/repo.git',
+                pushUrl: null,
+            });
+            await capturedRemotesProps.onRemoveRemote('origin');
+            await capturedBranchIntegrationProps.onMerge('origin/main');
+            await capturedBranchIntegrationProps.onRebase('origin/main');
+            await capturedBranchIntegrationProps.onContinue('merge');
+            await capturedBranchIntegrationProps.onAbort('merge');
+            await capturedPullRequestProps.onOpenOrReuse({ base: 'main', head: 'feature' });
+            await capturedPullRequestProps.onOpenCompose({ base: 'main', head: 'feature' });
+            await capturedPullRequestProps.onCreateFeatureBranch({ name: 'feature', checkout: true });
+            await capturedPublishProps.onPublishRepository({
+                providerKind: 'github',
+                owner: 'happier-dev',
+                name: 'happier',
+                visibility: 'private',
+            });
+        });
+
+        expect(machineScmRemoteAddMock).toHaveBeenCalledWith(
+            'machine-1',
+            { cwd: '/repo', name: 'origin', fetchUrl: 'git@example.com:repo.git' },
+            { serverId: 'server-1' },
+        );
+        expect(machineScmRemoteSetUrlMock).toHaveBeenCalledWith(
+            'machine-1',
+            { cwd: '/repo', name: 'origin', fetchUrl: 'https://example.com/repo.git', pushUrl: null },
+            { serverId: 'server-1' },
+        );
+        expect(machineScmRemoteRemoveMock).toHaveBeenCalledWith(
+            'machine-1',
+            { cwd: '/repo', name: 'origin' },
+            { serverId: 'server-1' },
+        );
+        expect(machineScmBranchMergeMock).toHaveBeenCalledWith(
+            'machine-1',
+            { cwd: '/repo', sourceRef: 'origin/main' },
+            { serverId: 'server-1' },
+        );
+        expect(machineScmBranchRebaseMock).toHaveBeenCalledWith(
+            'machine-1',
+            { cwd: '/repo', sourceRef: 'origin/main' },
+            { serverId: 'server-1' },
+        );
+        expect(machineScmBranchOperationContinueMock).toHaveBeenCalledWith(
+            'machine-1',
+            { cwd: '/repo', operation: 'merge' },
+            { serverId: 'server-1' },
+        );
+        expect(machineScmBranchOperationAbortMock).toHaveBeenCalledWith(
+            'machine-1',
+            { cwd: '/repo', operation: 'merge' },
+            { serverId: 'server-1' },
+        );
+        expect(machineScmPullRequestOpenOrReuseMock).toHaveBeenCalledWith(
+            'machine-1',
+            { cwd: '/repo', base: 'main', head: 'feature' },
+            { serverId: 'server-1' },
+        );
+        expect(machineScmPullRequestOpenComposeMock).toHaveBeenCalledWith(
+            'machine-1',
+            { cwd: '/repo', base: 'main', head: 'feature' },
+            { serverId: 'server-1' },
+        );
+        expect(machineScmBranchCreateMock).toHaveBeenCalledWith(
+            'machine-1',
+            { cwd: '/repo', name: 'feature', checkout: true },
+            { serverId: 'server-1' },
+        );
+        expect(machineScmHostingRepositoryPublishMock).toHaveBeenCalledWith(
+            'machine-1',
+            {
+                cwd: '/repo',
+                providerKind: 'github',
+                owner: 'happier-dev',
+                name: 'happier',
+                visibility: 'private',
+            },
+            { serverId: 'server-1' },
+        );
+    });
+
+    it('passes the workspace server scope to repository initialization RPCs', async () => {
+        workspaceSnapshotMock = {
+            ...createSnapshot(),
+            repo: { isRepo: false, rootPath: '/repo', backendId: 'git' } as any,
+            capabilities: {
+                writeRepositoryInit: true,
+            } as any,
+        };
+
+        const { WorkspaceRightPanelGitView } = await import('./WorkspaceRightPanelGitView');
+        await renderScreen(
+            <WorkspaceRightPanelGitView
+                serverId="server-1"
+                machineId="machine-1"
+                rootPath="/repo"
+                onOpenFile={() => {}}
+            />,
+        );
+
+        await act(async () => {
+            await capturedNotRepositoryProps.onInitializeRepository();
+        });
+
+        expect(machineScmRepositoryInitMock).toHaveBeenCalledWith(
+            'machine-1',
+            { cwd: '/repo' },
+            { serverId: 'server-1' },
+        );
     });
 });

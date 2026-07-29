@@ -122,6 +122,7 @@ async function createHarness() {
         isMutableToolCall: () => false,
         applyMessages: () => ({ changed: [], hasReadyEvent: false }),
         applyMessagesLoaded: () => {},
+        evictSessionMessages: () => {},
         resetSessionMessages: () => {},
         sessionListRenderables: { s1: renderable },
         sessionListRowStateByServerId: { server_1: { s1: renderable } },

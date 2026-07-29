@@ -1,9 +1,9 @@
 import * as Haptics from 'expo-haptics';
 
-export function hapticsError() {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+export async function hapticsError(): Promise<void> {
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
 }
 
-export function hapticsLight() {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+export async function hapticsLight(): Promise<void> {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
 }

@@ -18,7 +18,10 @@ import { storage } from '@/sync/domains/state/storageStore';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
-import { invalidateCachedTransferRoutesForServer } from '@/sync/domains/transfers/runtime/transferRouteCache';
+import {
+    invalidateCachedTransferRoutesForMachine,
+    invalidateCachedTransferRoutesForServer,
+} from '@/sync/domains/transfers/runtime/transferRouteCache';
 import type { ConcurrentSessionListCacheEntry } from '@/sync/domains/session/listing/concurrentSessionListCache';
 import { buildMachineDisplayRenderableFromMachine } from '@/sync/domains/machines/machineDisplayRenderable';
 import {
@@ -49,6 +52,9 @@ import {
     type ConcurrentServerSocket,
 } from './concurrentServerConnections/createConcurrentServerSocketTransport';
 import { shouldRefreshConcurrentSessionCacheForUpdate } from './concurrentSessionCacheUpdateClassifier';
+import { startRuntimeActiveGatedInterval } from '@/utils/runtime/isRuntimeActive';
+import { areStoredMachinesEqual, hasMachineDaemonStateAdvanced } from '@/sync/store/domains/areStoredMachinesEqual';
+import { registerExternalSessionStatusDemandTransport } from './externalSessions/externalSessionStatusDemandCoordinator';
 
 type ConcurrentTarget = Readonly<{
     id: string;
@@ -112,7 +118,7 @@ let started = false;
 let storageUnsubscribe: (() => void) | null = null;
 let activeServerUnsubscribe: (() => void) | null = null;
 let networkAllowedUnsubscribe: (() => void) | null = null;
-let periodicRefreshTimer: ReturnType<typeof setInterval> | null = null;
+let periodicRefreshStop: (() => void) | null = null;
 let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
 
 function normalizeServerUrl(url: string): string {
@@ -332,30 +338,7 @@ function areMachineListsEqual(previous: Machine[] | null | undefined, next: Mach
     if (previous.length !== next.length) return false;
 
     for (let index = 0; index < previous.length; index += 1) {
-        const previousMachine = previous[index];
-        const nextMachine = next[index];
-        if (previousMachine.id !== nextMachine.id) return false;
-        if (previousMachine.seq !== nextMachine.seq) return false;
-        if (previousMachine.createdAt !== nextMachine.createdAt) return false;
-        if (previousMachine.updatedAt !== nextMachine.updatedAt) return false;
-        if (previousMachine.active !== nextMachine.active) return false;
-        if (previousMachine.activeAt !== nextMachine.activeAt) return false;
-        if ((previousMachine.revokedAt ?? null) !== (nextMachine.revokedAt ?? null)) return false;
-        if (previousMachine.metadataVersion !== nextMachine.metadataVersion) return false;
-        if ((previousMachine.metadata?.host ?? null) !== (nextMachine.metadata?.host ?? null)) return false;
-        if ((previousMachine.metadata?.platform ?? null) !== (nextMachine.metadata?.platform ?? null)) return false;
-        if ((previousMachine.metadata?.happyCliVersion ?? null) !== (nextMachine.metadata?.happyCliVersion ?? null)) return false;
-        if ((previousMachine.metadata?.happyHomeDir ?? null) !== (nextMachine.metadata?.happyHomeDir ?? null)) return false;
-        if ((previousMachine.metadata?.homeDir ?? null) !== (nextMachine.metadata?.homeDir ?? null)) return false;
-        if ((previousMachine.metadata?.username ?? null) !== (nextMachine.metadata?.username ?? null)) return false;
-        if ((previousMachine.metadata?.arch ?? null) !== (nextMachine.metadata?.arch ?? null)) return false;
-        if ((previousMachine.metadata?.displayName ?? null) !== (nextMachine.metadata?.displayName ?? null)) return false;
-        if ((previousMachine.metadata?.windowsRemoteSessionLaunchMode ?? null) !== (nextMachine.metadata?.windowsRemoteSessionLaunchMode ?? null)) return false;
-        if ((previousMachine.metadata?.windowsRemoteSessionConsole ?? null) !== (nextMachine.metadata?.windowsRemoteSessionConsole ?? null)) return false;
-        if ((previousMachine.metadata?.daemonLastKnownStatus ?? null) !== (nextMachine.metadata?.daemonLastKnownStatus ?? null)) return false;
-        if ((previousMachine.metadata?.daemonLastKnownPid ?? null) !== (nextMachine.metadata?.daemonLastKnownPid ?? null)) return false;
-        if ((previousMachine.metadata?.shutdownRequestedAt ?? null) !== (nextMachine.metadata?.shutdownRequestedAt ?? null)) return false;
-        if ((previousMachine.metadata?.shutdownSource ?? null) !== (nextMachine.metadata?.shutdownSource ?? null)) return false;
+        if (!areStoredMachinesEqual(previous[index], next[index])) return false;
     }
 
     return true;
@@ -401,6 +384,19 @@ function updateConcurrentMachineListCache(input: {
 
             if (previous !== undefined && areMachineListsEqual(previous, nextMachines)) {
                 return state.machineListByServerId;
+            }
+
+            if (Array.isArray(nextMachines)) {
+                const previousMachinesById = new Map(
+                    (Array.isArray(previous) ? previous : []).map((machine) => [machine.id, machine]),
+                );
+                for (const machine of nextMachines) {
+                    if (!hasMachineDaemonStateAdvanced(previousMachinesById.get(machine.id), machine)) continue;
+                    invalidateCachedTransferRoutesForMachine({
+                        serverId,
+                        remoteMachineId: machine.id,
+                    });
+                }
             }
 
             return {
@@ -708,15 +704,27 @@ function createManagedServer(target: ConcurrentTarget, credentials: AuthCredenti
             });
             entry.socket = socket;
             entry.socketTransport = transport;
+            const statusDemandTransport = registerExternalSessionStatusDemandTransport(
+                entry.id,
+                (event, payload) => {
+                    if (socket.connected) {
+                        socket.emit(event, payload);
+                    }
+                },
+            );
             socket.on('update', (raw: unknown) => {
                 if (!shouldRefreshConcurrentSessionCacheForUpdate(raw)) {
                     return;
                 }
                 queueRefresh(entry);
             });
+            socket.on('ephemeral', (raw: unknown) => {
+                statusDemandTransport.observeEphemeral(raw);
+            });
 
             entry.detachSocketTransportListeners = [
                 transport.onConnected(() => {
+                    statusDemandTransport.resend();
                     queueRefresh(entry);
                 }),
                 transport.onDisconnected((event: TransportDisconnectEvent) => {
@@ -726,6 +734,7 @@ function createManagedServer(target: ConcurrentTarget, credentials: AuthCredenti
                 transport.onError((error: unknown) => {
                     reportServerUnreachable(normalizedServerUrl, error);
                 }),
+                () => statusDemandTransport.dispose(),
             ];
         }
 
@@ -885,7 +894,7 @@ export function startConcurrentSessionCacheSync(): void {
         pauseManagedServersForNetworkDisallowed();
     });
 
-    periodicRefreshTimer = setInterval(() => {
+    periodicRefreshStop = startRuntimeActiveGatedInterval(() => {
         for (const entry of managedServers.values()) {
             queueRefresh(entry);
         }
@@ -903,9 +912,9 @@ export function stopConcurrentSessionCacheSync(): void {
         clearTimeout(reconcileTimer);
         reconcileTimer = null;
     }
-    if (periodicRefreshTimer) {
-        clearInterval(periodicRefreshTimer);
-        periodicRefreshTimer = null;
+    if (periodicRefreshStop) {
+        periodicRefreshStop();
+        periodicRefreshStop = null;
     }
     if (storageUnsubscribe) {
         storageUnsubscribe();

@@ -14,6 +14,7 @@ import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domain
 
 import { buildAccountEncryptionMigrateToPlainRequest } from './buildAccountEncryptionMigrateToPlainRequest';
 import { encodeAutomationTemplateForTransport } from '@/sync/domains/automations/automationTemplateTransport';
+import { settingsParse } from '@/sync/domains/settings/settings';
 
 function createLegacyCredentials(): Extract<AuthCredentials, { secret: string }> {
   return {
@@ -57,6 +58,90 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     expect(request.settingsContent?.t).toBe('plain');
     expect(request.connectedServices).toEqual({ action: 'assert_empty' });
     expect(request.automations).toEqual({ action: 'assert_empty' });
+    expect(request).not.toHaveProperty('sessions');
+  });
+
+  it('includes the released legacy Voice adapter projection in plain full-settings migrations', async () => {
+    const credentials = createLegacyCredentials();
+    const recoverySecret = Buffer.from(credentials.secret, 'base64url');
+    const settingsSecretsKey = deriveSettingsSecretsKeyV1(
+      deriveAccountMachineKeyFromRecoverySecret(recoverySecret),
+    );
+    const elevenLabsDefaults = settingsParse({}).voice.providers.realtime_elevenlabs;
+    if (!elevenLabsDefaults) throw new Error('expected ElevenLabs defaults');
+    assertObject(elevenLabsDefaults.config, 'ElevenLabs default config');
+    assertObject(elevenLabsDefaults.config.byo, 'ElevenLabs default BYO config');
+
+    const request = await buildAccountEncryptionMigrateToPlainRequest({
+      credentials,
+      expectedSettingsVersion: 7,
+      settings: settingsParse({
+        secrets: [{
+          id: 'voice-elevenlabs-secret',
+          name: 'Voice ElevenLabs',
+          kind: 'apiKey',
+          encryptedValue: {
+            _isSecretValue: true,
+            encryptedValue: encryptSecretStringV1(
+              'xi_migration_key',
+              settingsSecretsKey,
+              () => new Uint8Array(24).fill(8),
+            ),
+          },
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+        voice: {
+          providerId: 'realtime_elevenlabs',
+          credentialBindings: [{
+            providerId: 'realtime_elevenlabs',
+            credentialBindings: { account: { api_key: 'voice-elevenlabs-secret' } },
+          }],
+          providers: {
+            realtime_elevenlabs: {
+              schemaVersion: 2,
+              config: {
+                ...elevenLabsDefaults.config,
+                billingMode: 'byo',
+                byo: { ...elevenLabsDefaults.config.byo, agentId: 'agent_1' },
+              },
+            },
+          },
+        },
+      }),
+      connectedServiceProfiles: [],
+      automations: [],
+      fetchConnectedServiceCredentialSealed: async () => {
+        throw new Error('unexpected fetchConnectedServiceCredentialSealed');
+      },
+      decryptAutomationTemplateRaw: async () => {
+        throw new Error('unexpected decryptAutomationTemplateRaw');
+      },
+    });
+
+    expect(request.settingsContent?.t).toBe('plain');
+    if (!request.settingsContent || request.settingsContent.t !== 'plain') {
+      throw new Error('expected plain settings content');
+    }
+    assertObject(request.settingsContent.v, 'plain settings');
+    assertObject(request.settingsContent.v.voice, 'legacy voice projection');
+    assertObject(request.settingsContent.v.voice.adapters, 'legacy voice adapters');
+    assertObject(
+      request.settingsContent.v.voice.adapters.realtime_elevenlabs,
+      'legacy ElevenLabs adapter',
+    );
+    assertObject(
+      request.settingsContent.v.voice.adapters.realtime_elevenlabs.byo,
+      'legacy ElevenLabs BYO settings',
+    );
+
+    expect(request.settingsContent.v.voiceSettingsV1).toEqual(
+      expect.objectContaining({ providerId: 'realtime_elevenlabs' }),
+    );
+    expect(request.settingsContent.v.voice.adapters.realtime_elevenlabs.byo.apiKey).toEqual({
+      _isSecretValue: true,
+      value: 'xi_migration_key',
+    });
   });
 
   it('migrates connected service credentials and plaintext-safe automation templates to plain envelopes', async () => {
@@ -161,6 +246,36 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     assertString(safe.templateCiphertext, 'safe automation templateCiphertext');
     const plainEnvelope = JSON.parse(safe.templateCiphertext);
     expect(plainEnvelope.kind).toBe('happier_automation_template_plain_v1');
+  });
+
+  it('rejects a decrypted sealed credential whose embedded binding differs from the requested profile', async () => {
+    const credentials = createLegacyCredentials();
+    const material = resolveAccountScopedCryptoMaterialFromCredentials(credentials);
+    const misboundRecord = buildConnectedServiceCredentialRecord({
+      now: 1,
+      serviceId: 'openai-codex',
+      profileId: 'other',
+      kind: 'token',
+      token: { token: 'tok-foreign', providerAccountId: 'acct-1', providerEmail: null },
+    });
+    const sealedCiphertext = sealConnectedServiceCredentialCiphertext({
+      material,
+      payload: misboundRecord,
+      randomBytes: () => new Uint8Array(24).fill(2),
+    });
+
+    await expect(buildAccountEncryptionMigrateToPlainRequest({
+      credentials,
+      expectedSettingsVersion: 7,
+      settings: { schemaVersion: 2, backendEnabledById: {} } as any,
+      connectedServiceProfiles: [{ serviceId: 'openai-codex', profileId: 'work' }],
+      automations: [],
+      fetchConnectedServiceCredentialSealed: async () => ({
+        sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
+        metadata: { kind: 'token', providerEmail: null, providerAccountId: 'acct-1', expiresAt: null },
+      }),
+      decryptAutomationTemplateRaw: async () => null,
+    })).rejects.toMatchObject({ code: 'connected_service_credential_binding_mismatch' });
   });
 
   it('unseals canonical machine-key-sealed saved secrets when migrating a legacy account to plain storage', async () => {

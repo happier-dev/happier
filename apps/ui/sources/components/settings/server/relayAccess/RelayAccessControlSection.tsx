@@ -437,7 +437,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
                         <Ionicons
                             name={definition.iconName}
                             size={18}
-                            color={selectedProviderId === providerId ? theme.colors.accent.blue : theme.colors.text.secondary}
+                            color={selectedProviderId === providerId ? theme.colors.text.primary : theme.colors.text.secondary}
                         />
                     )}
                     title={t(definition.titleKey)}
@@ -446,7 +446,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
                 />
             );
         })
-    ), [isBusy, isUnavailable, selectedProviderId, theme.colors.accent.blue, theme.colors.text.secondary, visibleProviderIds]);
+    ), [isBusy, isUnavailable, selectedProviderId, theme.colors.text.primary, theme.colors.text.secondary, visibleProviderIds]);
 
     const providerConfigFields = (
         <>

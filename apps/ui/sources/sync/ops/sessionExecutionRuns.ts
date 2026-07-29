@@ -19,6 +19,11 @@ import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR, canUseSessionRpc } from '@/sync/ops/sessionMachineTarget';
+import { storage } from '@/sync/domains/state/storage';
+import {
+    canSendUserMessageToSession,
+    SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE,
+} from '@/sync/domains/session/input/sessionMessageSendEligibility';
 
 export type SessionExecutionRunActionResult =
     | ExecutionRunActionResponse
@@ -54,7 +59,7 @@ function readErrorResponseShape(response: unknown): { ok: false; error: string; 
     };
 }
 
-export function isExecutionRunNotRunningSendError(result: unknown): boolean {
+export function isExecutionRunNotRunningMutationError(result: unknown): boolean {
     if (!result || typeof result !== 'object') return false;
     if ((result as any).ok !== false) return false;
 
@@ -64,6 +69,8 @@ export function isExecutionRunNotRunningSendError(result: unknown): boolean {
     const error = typeof (result as any).error === 'string' ? String((result as any).error).trim().toLowerCase() : '';
     return error.includes('not running') || error.includes('already finished');
 }
+
+export const isExecutionRunNotRunningSendError = isExecutionRunNotRunningMutationError;
 
 function createInactiveSessionRpcUnavailableResult(): { ok: false; error: string; errorCode: string } {
     return {
@@ -76,6 +83,26 @@ function createInactiveSessionRpcUnavailableResult(): { ok: false; error: string
 function ensureExecutionRunMutationAllowed(sessionId: string): { ok: false; error: string; errorCode: string } | null {
     if (canUseSessionRpc(sessionId)) return null;
     return createInactiveSessionRpcUnavailableResult();
+}
+
+function createSessionMessageNotResumableResult(): { ok: false; error: string; errorCode: string } {
+    return {
+        ok: false,
+        error: SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE,
+        errorCode: SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE,
+    };
+}
+
+function ensureExecutionRunUserMessageAllowed(sessionId: string): { ok: false; error: string; errorCode: string } | null {
+    const state = storage.getState();
+    const session = state.sessions[sessionId] ?? null;
+    if (!session) return null;
+    if (canSendUserMessageToSession(session, {
+        resumeCapabilityOptions: { accountSettings: state.settings },
+    })) {
+        return null;
+    }
+    return createSessionMessageNotResumableResult();
 }
 
 function notifyExecutionRunMutationSuccess(
@@ -130,6 +157,8 @@ export async function sessionExecutionRunSend(
     opts?: Readonly<{ serverId?: string | null }>,
 ): Promise<SessionExecutionRunSendResult> {
     try {
+        const sessionMessageResult = ensureExecutionRunUserMessageAllowed(sessionId);
+        if (sessionMessageResult) return sessionMessageResult;
         const serverId = opts?.serverId ?? resolvePreferredServerIdForSessionId(sessionId);
         const payload: ExecutionRunSendRequest =
             request.delivery === undefined
@@ -257,6 +286,8 @@ export async function sessionExecutionRunAction(
     opts?: Readonly<{ serverId?: string | null }>,
 ): Promise<SessionExecutionRunActionResult> {
     try {
+        const sessionMessageResult = ensureExecutionRunUserMessageAllowed(sessionId);
+        if (sessionMessageResult) return sessionMessageResult;
         const serverId = opts?.serverId ?? resolvePreferredServerIdForSessionId(sessionId);
         const response = await sessionRpcWithServerScope<ExecutionRunActionResponse, ExecutionRunActionRequest>({
             sessionId,

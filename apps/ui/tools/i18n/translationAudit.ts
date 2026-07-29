@@ -100,6 +100,8 @@ const ALLOW_SAME_KEY_PREFIXES: ReadonlyArray<string> = [
 
 const ALLOW_SAME_STRING_KEYS = new Set<string>([
     // Literal protocol / command placeholders should remain unchanged.
+    'settingsProviders.authoring.credentialHeaderPlaceholder',
+    'settingsProviders.authoring.modelsPathPlaceholder',
     'settings.mcpServersHeaderKeyPlaceholder',
     'settings.mcpServersArgsPlaceholder',
     'settings.mcpServersFieldCommandLinePlaceholder',
@@ -115,8 +117,8 @@ const ALLOW_SAME_STRING_KEYS = new Set<string>([
     'settings.machineSetupRemoteSshUsernamePlaceholder',
     'settings.machineSetupRemoteSshHostPlaceholder',
     // Debug category identifiers are provider-owned technical names.
-    'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.hooks.title',
-    'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.1p.title',
+    'settingsAgents.plugins.claude.fields.claudeRemoteDebugCategories.options.hooks.title',
+    'settingsAgents.plugins.claude.fields.claudeRemoteDebugCategories.options.1p.title',
     // Technical field labels that are commonly shared across locales.
     'settings.relayAccess.fields.tokenLabel',
     // New Live Activities strategy labels are intentionally shared English placeholders for now.
@@ -137,9 +139,10 @@ const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<stri
     'status.error': new Set(['es']),
     // Catalan: common noun matches English.
     'tabs.sessions': new Set(['ca']),
+    'sessionsList.storageFilterCategory': new Set(['ca']),
     'memorySearchSettings.embeddings.openAi.dimensionsTitle': new Set(['ca']),
     'server.retention.sessions': new Set(['ca']),
-    'settingsProviders.plugins.claude.fields.claudeRemoteSettingSourcesV2.options.local.title': new Set([
+    'settingsAgents.plugins.claude.fields.claudeRemoteSettingSourcesV2.options.local.title': new Set([
         'es',
         'ca',
         'pt',
@@ -154,7 +157,7 @@ const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<stri
 };
 
 function isProviderPluginTitleKey(key: string): boolean {
-    return /^settingsProviders\.plugins\.[^.]+\.title$/.test(key);
+    return /^settingsAgents\.plugins\.[^.]+\.title$/.test(key);
 }
 
 function isUrlLike(value: string): boolean {

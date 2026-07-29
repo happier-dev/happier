@@ -1,5 +1,5 @@
 import React from "react";
-import { ScrollView, useWindowDimensions, View } from 'react-native';
+import { Platform, ScrollView, useWindowDimensions, View } from 'react-native';
 import { StyleSheet } from "react-native-unistyles";
 
 import { Item } from "@/components/ui/lists/Item";
@@ -120,6 +120,10 @@ export function AgentInputChipPickerPanel(
     typeof props.maxHeight === "number"
       ? props.maxHeight
       : AGENT_INPUT_CHIP_PICKER_DETAIL_MIN_HEIGHT;
+  const boundedDetailStyle = props.detailContentOwnsScroll === true
+    && typeof props.maxHeight === "number"
+    ? { height: props.maxHeight, maxHeight: props.maxHeight }
+    : null;
 
   const showCloseButton = props.showCloseButton !== false;
   const shouldRenderTitle = typeof props.title === "string" && props.title.trim().length > 0;
@@ -139,7 +143,10 @@ export function AgentInputChipPickerPanel(
   ) : null;
 
   return (
-    <View testID="agent-input-chip-picker" style={styles.container}>
+    <View
+      testID="agent-input-chip-picker"
+      style={[styles.container, boundedDetailStyle]}
+    >
       {!detailed ? (
         <View style={styles.body}>
           {headerRow}
@@ -214,7 +221,17 @@ export function AgentInputChipPickerPanel(
             ) : null}
             {focusedOption ? (
               <View style={detailContainerStyle}>
-                <View style={[styles.detailPane, detailedLayout === "split" ? styles.detailScrollContent : null]}>
+                <View
+                  style={[
+                    styles.detailPane,
+                    detailedLayout === "split" ? styles.detailScrollContent : null,
+                    Platform.OS === "web"
+                      && detailedLayout === "stacked"
+                      && props.detailContentOwnsScroll === true
+                      ? styles.detailPaneOwnScroll
+                      : null,
+                  ]}
+                >
                   {props.detailPaneHeaderAccessory ? (
                     <View style={styles.detailPaneHeaderAccessoryRow}>
                       {props.detailPaneHeaderAccessory}
@@ -280,9 +297,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     borderBottomColor: theme.colors.border.default,
   },
   bodyDetailedShell: {
+    flex: 1,
+    minHeight: 0,
     backgroundColor: theme.colors.surface.base,
   },
   bodyDetailed: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "stretch",
     minHeight: AGENT_INPUT_CHIP_PICKER_DETAIL_MIN_HEIGHT,
@@ -306,6 +326,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   detailScroll: {
     flex: 1,
+    minHeight: 0,
     backgroundColor: theme.colors.surface.base,
   },
   detailStackedWithSelector: {
@@ -316,7 +337,8 @@ const stylesheet = StyleSheet.create((theme) => ({
   detailScrollContent: {
     paddingHorizontal: 12,
     paddingVertical: 15,
-    flexGrow: 1,
+    flex: 1,
+    minHeight: 0,
   },
   detailPaneHeaderAccessoryRow: {
     position: 'absolute',
@@ -330,5 +352,9 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   detailPane: {
     position: 'relative',
-  }
+  },
+  detailPaneOwnScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
 }));

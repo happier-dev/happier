@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -12,6 +13,13 @@ const platformState = vi.hoisted(() => ({
 
 let timestampDisplayMode = 'hover_web_hidden_mobile';
 let copyButtonsVisible = false;
+
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
+    }
+    return style && typeof style === 'object' ? style as Record<string, unknown> : {};
+}
 
 installMessageViewCommonModuleMocks({
     reactNative: async () => {
@@ -31,14 +39,14 @@ installMessageViewCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'transcriptMessageTimestampDisplayMode') return timestampDisplayMode;
                     if (key === 'sessionThinkingDisplayMode') return 'inline';
                     if (key === 'sessionThinkingInlinePresentation') return 'summary';
                     if (key === 'sessionThinkingInlineChrome') return 'plain';
                     if (key === 'toolViewTimelineChromeMode') return 'cards';
                     return null;
-                },
+                } }),
                 useSessionForkSupportSource: () => null,
                 useSessionWorkspacePath: () => null,
                 useSessionMessagesById: () => ({}),
@@ -57,9 +65,9 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: (props: any) => React.createElement('TextInput', props, props.children),
 }));
 
-vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
-    shouldShowMessageCopyButton: () => copyButtonsVisible,
-    shouldShowMessageSelectButton: () => copyButtonsVisible,
+vi.mock('@/components/sessions/transcript/transcriptRowActionVisibility', () => ({
+    shouldShowTranscriptRowActions: () => copyButtonsVisible,
+    shouldShowTranscriptRowPinAction: () => copyButtonsVisible,
 }));
 
 vi.mock('@/components/sessions/transcript/structured/StructuredMessageBlock', () => ({
@@ -196,7 +204,8 @@ describe('MessageView timestamps', () => {
 
         expect(timestamp?.props.children).toBe('May 19, 2026, 4:30 PM');
         expect(row?.props.style).toEqual(expect.arrayContaining([expect.objectContaining({ flexDirection: 'row-reverse' })]));
-        expect(actionContainer?.props.accessibilityElementsHidden).toBe(true);
+        expect(actionContainer?.props.accessibilityElementsHidden).toBeUndefined();
+        expect(flattenStyle(actionContainer?.props.style).pointerEvents).toBe('none');
     });
 
     it('does not render message timestamps in never mode even when actions are visible', async () => {
@@ -272,6 +281,7 @@ describe('MessageView timestamps', () => {
                     transcriptStreamingPartialOutputEnabled: true,
                     transcriptStreamingSettleDelayMs: 0,
                     transcriptStreamingSmoothingEnabled: false,
+                    debugInformationEnabled: false,
                     workspacePath: null,
                 }}
                 forkCommon={{

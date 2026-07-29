@@ -4,12 +4,13 @@ import type { ExternalSessionActivityV1 } from '@happier-dev/protocol';
 
 import type { ResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
 import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
-import { StatusDot } from '@/components/ui/status/StatusDot';
+import { StatusPill, type StatusPillVariant } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
+import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
 import { Typography } from '@/constants/Typography';
+import { resolveExternalSessionCandidateActivityPresentation } from '@/components/sessions/presentation/externalSessionRuntimePresentation';
 import type { Theme } from '@/theme';
 import { t } from '@/text';
-import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 
 type AppTheme = Theme;
 
@@ -19,6 +20,9 @@ type ExternalSessionBrowseCandidate = Readonly<{
     updatedAtMs: number;
     activity?: ExternalSessionActivityV1;
     details?: Record<string, unknown>;
+    linkedSessionId?: string;
+    imported?: boolean;
+    materializedThrough?: number;
 }>;
 
 export function readExternalSessionBrowseCandidatePath(details: Record<string, unknown> | undefined): string | null {
@@ -56,10 +60,7 @@ function buildExternalSessionBrowseCandidatePrimaryMeta(candidate: ExternalSessi
     }
 
     if (candidate.updatedAtMs > 0) {
-        const shortRelativeTime = formatShortRelativeTime(candidate.updatedAtMs);
-        if (shortRelativeTime) {
-            return shortRelativeTime === 'now' ? 'now' : `${shortRelativeTime} ago`;
-        }
+        return formatRelativeTimeShort(candidate.updatedAtMs, Date.now());
     }
 
     return null;
@@ -69,6 +70,10 @@ export function buildExternalSessionBrowseCandidateSubtitle(
     candidate: ExternalSessionBrowseCandidate,
     theme: AppTheme,
     density: ResolvedItemDensity,
+    context?: Readonly<{
+        agentLabel?: string | null;
+        machineLabel?: string | null;
+    }>,
 ): React.ReactNode {
     const pathLabel = formatExternalSessionBrowseCandidatePathLabel(readExternalSessionBrowseCandidatePath(candidate.details));
     const meaningfulTitle = normalizeCandidateTitle(candidate);
@@ -78,7 +83,12 @@ export function buildExternalSessionBrowseCandidateSubtitle(
         ...subtitleMetrics,
     } as const;
     const primaryMeta = buildExternalSessionBrowseCandidatePrimaryMeta(candidate);
-    const secondaryLine = pathLabel ?? (!meaningfulTitle ? candidate.remoteSessionId : null);
+    const pathOrIdentity = pathLabel ?? (!meaningfulTitle ? candidate.remoteSessionId : null);
+    const secondaryLine = [
+        context?.agentLabel,
+        context?.machineLabel,
+        pathOrIdentity,
+    ].filter(Boolean).join(' · ') || null;
 
     return (
         <Text style={subtitleTextStyle} numberOfLines={1}>
@@ -124,63 +134,51 @@ export function buildExternalSessionBrowseCandidateSubtitle(
 
 export function buildExternalSessionBrowseCandidateRightElement(
     candidate: ExternalSessionBrowseCandidate,
-    theme: AppTheme,
-    density: ResolvedItemDensity,
+    _theme: AppTheme,
+    _density: ResolvedItemDensity,
 ): React.ReactNode {
-    const badge = (() => {
-        switch (candidate.activity) {
-            case 'running':
-                return {
-                    color: theme.colors.state.success.foreground,
-                    label: t('externalSessions.browseActivityRunning'),
-                    pulsing: true,
-                };
-            case 'active_recently':
-                return {
-                    color: theme.colors.accent.orange,
-                    label: t('externalSessions.browseActivityRecent'),
-                    pulsing: false,
-                };
-            case 'idle':
-                return {
-                    color: theme.colors.text.secondary,
-                    label: t('externalSessions.browseActivityIdle'),
-                    pulsing: false,
-                };
-            case 'unknown':
-                return {
-                    color: theme.colors.text.secondary,
-                    label: t('externalSessions.browseActivityUnknown'),
-                    pulsing: false,
-                };
-            default:
-                return null;
-        }
-    })();
-
-    if (!badge) return null;
+    const presentation = resolveExternalSessionCandidateActivityPresentation(candidate.activity);
+    const statusVariant: StatusPillVariant = presentation.tone === 'live' || presentation.tone === 'ready'
+        ? 'success'
+        : presentation.tone === 'attention' || presentation.tone === 'warning'
+            ? 'warning'
+            : 'neutral';
+    const hasStatus = candidate.activity !== undefined;
+    if (!hasStatus && !candidate.linkedSessionId && !candidate.imported) return null;
     return (
         <View
             style={{
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 6,
-                borderRadius: 999,
-                backgroundColor: theme.colors.surface.inset,
-                paddingHorizontal: 7,
-                paddingVertical: 3,
+                flexWrap: 'wrap',
+                justifyContent: 'flex-end',
             }}
         >
-            <StatusDot color={badge.color} isPulsing={badge.pulsing} size={7} />
-            <Text
-                style={{
-                    color: badge.color,
-                    ...Typography.default('semiBold'),
-                    ...ITEM_SUBTITLE_TEXT_METRICS[density],
-                }}
-            >
-                {badge.label}
-            </Text>
+            {hasStatus ? (
+                <StatusPill
+                    variant={statusVariant}
+                    label={t(presentation.labelKey)}
+                    isPulsing={presentation.indicator === 'working'}
+                    testID={`external-session-candidate-status:${candidate.remoteSessionId}`}
+                />
+            ) : null}
+            {candidate.linkedSessionId ? (
+                <StatusPill
+                    variant="neutral"
+                    label={t('externalSessions.browseLinked')}
+                    hideDot
+                    testID={`external-session-candidate-linked:${candidate.remoteSessionId}`}
+                />
+            ) : null}
+            {candidate.imported ? (
+                <StatusPill
+                    variant="info"
+                    label={t('externalSessions.browseImported')}
+                    hideDot
+                    testID={`external-session-candidate-imported:${candidate.remoteSessionId}`}
+                />
+            ) : null}
         </View>
     );
 }

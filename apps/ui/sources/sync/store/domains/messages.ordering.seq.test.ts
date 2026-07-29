@@ -191,7 +191,7 @@ describe('messages domain: ordering', () => {
         expect(get().sessionListRenderables.s1.latestReadyEventSeq).toBe(9);
         expect(get().sessionListRenderables.s1.latestReadyEventAt).toBe(9000);
         expect(get().sessionListRowStateByServerId['server-active'].s1.latestReadyEventSeq).toBe(9);
-        expect(get().sessionListIndexByServerId['server-active']).not.toBe(initialIndex);
+        expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
 
         const nextIndex = get().sessionListIndexByServerId['server-active'];
         const duplicateResult = domain.applyMessages('s1', [
@@ -257,6 +257,302 @@ describe('messages domain: ordering', () => {
         expect(second?.kind).toBe('user-text');
         expect(second?.seq).toBe(2);
         expect(second?.text).toBe('second');
+    });
+
+    it('clears matching local optimistic pending rows but keeps unresolved server pending rows when a transcript message commits with the same localId', () => {
+        const { get, domain } = createHarness({
+            sessions: {
+                s1: {
+                    id: 's1',
+                    createdAt: 1,
+                    active: false,
+                    activeAt: 1,
+                    metadataVersion: 1,
+                    metadata: null,
+                    permissionMode: null,
+                    permissionModeUpdatedAt: 0,
+                    agentState: null,
+                },
+            },
+            sessionPending: {
+                s1: {
+                    isLoaded: true,
+                    discarded: [],
+                    messages: [
+                        {
+                            id: 'pending-server-local-1',
+                            localId: 'local-1',
+                            source: 'server_pending',
+                            pendingDeliveryStatus: 'server_delivering',
+                            createdAt: 1_000,
+                            updatedAt: 1_000,
+                            text: 'accepted provider-owned prompt',
+                            rawRecord: { role: 'user', content: { type: 'text', text: 'accepted provider-owned prompt' } },
+                        },
+                        {
+                            id: 'pending-local-local-1',
+                            localId: 'local-1',
+                            source: 'local_outbound',
+                            createdAt: 1_000,
+                            updatedAt: 1_000,
+                            text: 'local optimistic duplicate',
+                            rawRecord: { role: 'user', content: { type: 'text', text: 'local optimistic duplicate' } },
+                        },
+                    ],
+                },
+            },
+        });
+
+        domain.applyMessages('s1', [
+            {
+                id: 'm1',
+                seq: 1,
+                localId: 'local-1',
+                createdAt: 2_000,
+                isSidechain: false,
+                role: 'user',
+                content: { type: 'text', text: 'committed elsewhere' },
+            } as any,
+        ]);
+
+        expect(get().sessionPending.s1.messages.map((message: any) => message.id)).toEqual(['pending-server-local-1']);
+    });
+
+    it('stores recovered chronology without retiring a matching optimistic pending row', () => {
+        const { get, domain } = createHarness({
+            sessions: {
+                s1: { id: 's1', createdAt: 1, active: false, activeAt: 1, metadataVersion: 1, metadata: null },
+            },
+            sessionPending: {
+                s1: {
+                    isLoaded: true,
+                    discarded: [],
+                    messages: [{
+                        id: 'pending-local-1', localId: 'local-1', source: 'local_outbound',
+                        createdAt: 1_000, updatedAt: 1_000, text: 'live pending',
+                        rawRecord: { role: 'user', content: { type: 'text', text: 'live pending' } },
+                    }],
+                },
+            },
+        });
+
+        domain.applyMessages('s1', [{
+            id: 'history-user', seq: 2, localId: 'local-1', createdAt: 9_000,
+            sourceCreatedAt: 100, sourceUpdatedAt: 200,
+            transcriptObservationProvenance: { kind: 'non_dependent', source: 'history' },
+            isSidechain: false, role: 'user', content: { type: 'text', text: 'recovered' },
+        } as any]);
+
+        expect(get().sessionPending.s1.messages.map((message: any) => message.id)).toEqual(['pending-local-1']);
+        const stored = Object.values(get().sessionMessages.s1.messagesById)[0] as any;
+        expect(stored).toMatchObject({
+            createdAt: 9_000,
+            sourceCreatedAt: 100,
+            sourceUpdatedAt: 200,
+            transcriptObservationProvenance: { kind: 'non_dependent', source: 'history' },
+        });
+    });
+
+    it('does not surface ready notification state from recovered history while a live ready event still does', () => {
+        const { domain } = createHarness({
+            sessions: {
+                s1: { id: 's1', createdAt: 1, active: false, activeAt: 1, metadataVersion: 1, metadata: null },
+            },
+        });
+
+        const recovered = domain.applyMessages('s1', [{
+            id: 'history-ready', seq: 2, localId: null, createdAt: 2_000, sourceCreatedAt: 100,
+            transcriptObservationProvenance: { kind: 'non_dependent', source: 'history' },
+            isSidechain: false, role: 'event', content: { type: 'ready' },
+        } as any]);
+        const live = domain.applyMessages('s1', [{
+            id: 'live-ready', seq: 3, localId: null, createdAt: 3_000,
+            isSidechain: false, role: 'event', content: { type: 'ready' },
+        } as any]);
+
+        expect(recovered).toMatchObject({ changed: [], hasReadyEvent: false });
+        expect(live).toMatchObject({ changed: [], hasReadyEvent: true, latestReadyEventSeq: 3 });
+    });
+
+    it('orders an agent-state permission placeholder by the matching transcript tool call once it arrives', () => {
+        const { get, domain } = createHarness({
+            sessions: {
+                s1: {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    lastViewedSessionSeq: 1,
+                    metadataVersion: 1,
+                    agentStateVersion: 2,
+                    metadata: null,
+                    agentState: {
+                        controlledByUser: null,
+                        requests: {
+                            ask1: {
+                                tool: 'AskUserQuestion',
+                                kind: 'user_action',
+                                arguments: { questions: [{ question: 'Choose a path' }] },
+                                createdAt: 1_000,
+                            },
+                        },
+                        completedRequests: null,
+                    },
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                    permissionMode: null,
+                    permissionModeUpdatedAt: 0,
+                },
+            },
+            sessionMessages: {
+                s1: {
+                    reducerState: undefined,
+                    messageIdsOldestFirst: [],
+                    messagesById: {},
+                    messagesMap: {},
+                    latestThinkingMessageId: null,
+                    latestThinkingMessageActivityAtMs: null,
+                    latestReadyEventSeq: null,
+                    latestReadyEventAt: null,
+                    messagesVersion: 0,
+                    lastAppliedAgentStateVersion: 1,
+                    isLoaded: true,
+                },
+            },
+            sessionListRenderables: {},
+        });
+
+        domain.applyMessages('s1', []);
+
+        const placeholderIds = get().sessionMessages.s1.messageIdsOldestFirst;
+        expect(placeholderIds).toHaveLength(1);
+        const placeholder = get().sessionMessages.s1.messagesById[placeholderIds[0]!] as any;
+        expect(placeholder.kind).toBe('tool-call');
+        expect(placeholder.seq).toBeUndefined();
+
+        domain.applyMessages('s1', [
+            {
+                id: 'assistant-text',
+                seq: 10,
+                localId: null,
+                createdAt: 2_000,
+                isSidechain: false,
+                role: 'agent',
+                content: [{ type: 'text', text: 'Here is the rationale before the question.' }],
+            } as any,
+            {
+                id: 'assistant-tool',
+                seq: 11,
+                localId: null,
+                createdAt: 2_100,
+                isSidechain: false,
+                role: 'agent',
+                content: [{
+                    type: 'tool-call',
+                    id: 'ask1',
+                    name: 'AskUserQuestion',
+                    input: { questions: [{ question: 'Choose a path' }] },
+                    description: null,
+                    uuid: 'tool-uuid',
+                    parentUUID: null,
+                }],
+            } as any,
+        ]);
+
+        const messages = get().sessionMessages.s1.messageIdsOldestFirst
+            .map((id: string) => get().sessionMessages.s1.messagesById[id]);
+
+        expect(messages.map((message: any) => message.kind)).toEqual(['agent-text', 'tool-call']);
+        expect((messages[0] as any).text).toBe('Here is the rationale before the question.');
+        expect((messages[1] as any).tool.id).toBe('ask1');
+        expect((messages[1] as any).seq).toBe(11);
+    });
+
+    it('orders blocks from the same transcript message by provider content order', () => {
+        const { get, domain } = createHarness({
+            sessions: {
+                s1: {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    lastViewedSessionSeq: 1,
+                    metadataVersion: 1,
+                    agentStateVersion: 1,
+                    metadata: null,
+                    agentState: null,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                    permissionMode: null,
+                    permissionModeUpdatedAt: 0,
+                },
+            },
+            sessionMessages: {
+                s1: {
+                    reducerState: undefined,
+                    messageIdsOldestFirst: [],
+                    messagesById: {},
+                    messagesMap: {},
+                    latestThinkingMessageId: null,
+                    latestThinkingMessageActivityAtMs: null,
+                    latestReadyEventSeq: null,
+                    latestReadyEventAt: null,
+                    messagesVersion: 0,
+                    lastAppliedAgentStateVersion: 1,
+                    isLoaded: true,
+                },
+            },
+            sessionListRenderables: {},
+        });
+
+        const randomSpy = vi.spyOn(Math, 'random')
+            .mockReturnValueOnce(0.9)
+            .mockReturnValueOnce(0.1);
+
+        try {
+            domain.applyMessages('s1', [
+                {
+                    id: 'assistant-message',
+                    seq: 10,
+                    localId: null,
+                    createdAt: 2_000,
+                    isSidechain: false,
+                    role: 'agent',
+                    content: [
+                        {
+                            type: 'text',
+                            text: 'Text before the tool call.',
+                            uuid: 'text-uuid',
+                            parentUUID: null,
+                        },
+                        {
+                            type: 'tool-call',
+                            id: 'tool1',
+                            name: 'AskUserQuestion',
+                            input: { questions: [{ question: 'Choose a path' }] },
+                            description: null,
+                            uuid: 'tool-uuid',
+                            parentUUID: null,
+                        },
+                    ],
+                } as any,
+            ]);
+        } finally {
+            randomSpy.mockRestore();
+        }
+
+        const messages = get().sessionMessages.s1.messageIdsOldestFirst
+            .map((id: string) => get().sessionMessages.s1.messagesById[id]);
+
+        expect(messages.map((message: any) => message.kind)).toEqual(['agent-text', 'tool-call']);
+        expect((messages[0] as any).text).toBe('Text before the tool call.');
+        expect((messages[1] as any).tool.id).toBe('tool1');
     });
 
     it('tracks latest thinking activity time only when a thinking message changes', () => {
@@ -703,5 +999,46 @@ describe('messages domain: ordering', () => {
         expect(get().sessionMessages.s1.messagesById).toBe(previousMessagesById);
         expect(get().sessionMessages.s1.messagesVersion).toBe(previousMessagesVersion);
         expect(get().sessionMessages.s1.reducerVersion).toBe(previousReducerVersion);
+    });
+
+    it('renders recovered thinking and context-reset history without replacing live thinking or usage state', () => {
+        const { get, domain } = createHarness({
+            sessions: {
+                s1: {
+                    id: 's1', seq: 0, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+                    metadataVersion: 1, agentStateVersion: 1, metadata: null, agentState: null,
+                    thinking: false, thinkingAt: 0, presence: 'online',
+                },
+            },
+        });
+
+        domain.applyMessages('s1', [{
+            id: 'live-thinking', seq: 1, localId: null, createdAt: 1_000, isSidechain: false,
+            role: 'agent',
+            usage: { input_tokens: 5, output_tokens: 3, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+            content: [{ type: 'thinking', thinking: 'live', uuid: 'live-thinking', parentUUID: null }],
+        } as any]);
+        const liveThinkingId = get().sessionMessages.s1.latestThinkingMessageId;
+        const liveThinkingActivityAt = get().sessionMessages.s1.latestThinkingMessageActivityAtMs;
+
+        domain.applyMessages('s1', [
+            {
+                id: 'history-thinking', seq: 2, localId: null, createdAt: 9_000, sourceCreatedAt: 100,
+                transcriptObservationProvenance: { kind: 'non_dependent', source: 'history' },
+                isSidechain: false, role: 'agent',
+                content: [{ type: 'thinking', thinking: 'old', uuid: 'history-thinking', parentUUID: null }],
+            } as any,
+            {
+                id: 'history-reset', seq: 3, localId: null, createdAt: 10_000, sourceCreatedAt: 200,
+                transcriptObservationProvenance: { kind: 'non_dependent', source: 'history' },
+                isSidechain: false, role: 'event',
+                content: { type: 'message', message: 'Context was reset' },
+            } as any,
+        ]);
+
+        expect(get().sessionMessages.s1.messageIdsOldestFirst).toHaveLength(3);
+        expect(get().sessionMessages.s1.latestThinkingMessageId).toBe(liveThinkingId);
+        expect(get().sessionMessages.s1.latestThinkingMessageActivityAtMs).toBe(liveThinkingActivityAt);
+        expect(get().sessions.s1.latestUsage).toMatchObject({ inputTokens: 5, outputTokens: 3 });
     });
 });

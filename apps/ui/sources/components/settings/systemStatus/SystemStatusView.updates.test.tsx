@@ -174,7 +174,7 @@ describe('SystemStatusView OTA section', () => {
         const screen = await renderScreen(<SystemStatusView />);
 
         expect(screen.findAllByProps({ title: 'updateBanner.checkNowTitle' }).length).toBeGreaterThan(0);
-        expect(screen.findAllByProps({ title: 'settingsProviders.authentication.checkNowTitle' })).toHaveLength(0);
+        expect(screen.findAllByProps({ title: 'settingsAgents.authentication.checkNowTitle' })).toHaveLength(0);
     });
 
     it('shows an apply action and reloads when an OTA update is pending', async () => {

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { FlatList, Platform, Pressable, View, useWindowDimensions } from 'react-native';
+import { Platform, Pressable, View, useWindowDimensions } from 'react-native';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -7,6 +7,7 @@ import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { FilesystemBrowser } from '@/components/ui/filesystemBrowser/FilesystemBrowser';
 import type { FilesystemBrowserNode } from '@/components/ui/filesystemBrowser/filesystemBrowserTypes';
+import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -303,7 +304,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     const { theme } = useUnistyles();
     const insets = useChromeSafeAreaInsets();
     const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-    const browserListRef = React.useRef<FlatList<FilesystemBrowserNode> | null>(null);
+    const browserListRef = React.useRef<VirtualizedListRef | null>(null);
     const lastScrolledSelectionRef = React.useRef<string | null>(null);
     const shouldAutoScrollInitialSelectionRef = React.useRef(false);
     const rootDirectoryPath = React.useMemo(() => normalizeAbsolutePath(props.rootDirectoryPath ?? null) ?? '', [props.rootDirectoryPath]);

@@ -12,7 +12,6 @@ import { installAccountSettingsRouteModuleMocks } from './accountSettingsRouteTe
 
 let windowDimensions: { width: number; height: number } = { width: 1440, height: 900 };
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');

@@ -7,19 +7,27 @@ const EAGER_MOVEMENT_EPSILON_PX = 1;
 
 export type WebScrollMovementStreak = Readonly<{ direction: -1 | 1; count: number }>;
 
-export type WebGenuineScrollMovementResult = Readonly<{
+export type WebScrollMovementFact = Readonly<{
+    /**
+     * Semantic cause for an at-end publication produced from this exact observation.
+     * Layout/state-listener observations that have no movement fact remain layout-owned.
+     */
+    atEndPublicationCause: 'user' | 'layout' | 'command';
     /** scrollTop changed since the last observation (vs the self-write/echo case where it did not). */
     movedSinceLastObservation: boolean;
     /** -1 = toward the visual top (older), +1 = toward the visual bottom (newer); null when there was no movement. */
     direction: -1 | 1 | null;
-    /** The streak to persist for the next frame (same direction increments, direction flip / churn resets). */
-    nextStreak: WebScrollMovementStreak | null;
     /** TRUE only for a GENUINE non-programmatic user scroll that should carry release/intent authority. */
     isGenuineUserMovement: boolean;
     /** Genuine upward (toward older) intent — releases bottom-follow. */
     upwardIntent: boolean;
     /** Genuine downward (toward newer) intent. */
     downwardIntent: boolean;
+}>;
+
+export type WebGenuineScrollMovementResult = WebScrollMovementFact & Readonly<{
+    /** The streak to persist for the next frame (same direction increments, direction flip / churn resets). */
+    nextStreak: WebScrollMovementStreak | null;
 }>;
 
 /**
@@ -83,6 +91,7 @@ export function resolveWebGenuineScrollMovement(params: Readonly<{
         scrollTop === previousObservedScrollTop
     ) {
         return {
+            atEndPublicationCause: 'layout',
             movedSinceLastObservation: false,
             direction: null,
             nextStreak: previousStreak,
@@ -123,11 +132,13 @@ export function resolveWebGenuineScrollMovement(params: Readonly<{
     const upwardIntent = direction === -1 && (eagerTrustedRelease || sustainedMovement);
     const downwardIntent = direction === 1 && beyondPinThreshold && sustainedMovement;
 
+    const isGenuineUserMovement = upwardIntent || downwardIntent;
     return {
+        atEndPublicationCause: isGenuineUserMovement ? 'user' : 'layout',
         movedSinceLastObservation: true,
         direction,
         nextStreak,
-        isGenuineUserMovement: upwardIntent || downwardIntent,
+        isGenuineUserMovement,
         upwardIntent,
         downwardIntent,
     };

@@ -1,6 +1,5 @@
 import { storage } from '@/sync/domains/state/storage';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
-import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { readDisplayMachineIdForSession, readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
@@ -8,6 +7,7 @@ import { buildSafeWorkspaceLabel, buildSafeWorkspaceLabels } from '@/utils/workt
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { resolveCanonicalMachineId } from '@/sync/domains/machines/identity/resolveCanonicalMachineId';
 import { normalizeNonEmptyString, resolveVoiceMachineLabel } from './shared';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
 function resolveDefaultMachineId(state: any): string | null {
   const machines = Object.values(state?.machines ?? {}) as Array<{ id: string; replacedByMachineId?: string | null; replacedAt?: unknown }>;
@@ -19,10 +19,11 @@ function resolveDefaultMachineId(state: any): string | null {
 
   for (const sid of candidates) {
     const s = sessionsObj?.[sid] ?? null;
+    const ownerMetadata = readVoiceSessionOwnerMetadataFromState(state, sid);
     const machineId = readDisplayMachineIdForSession({
       sessionId: sid,
-      metadata: s?.metadata ?? null,
-    }) || normalizeNonEmptyString(s?.metadata?.machineId);
+      metadata: ownerMetadata,
+    }) || normalizeNonEmptyString(ownerMetadata?.machineId);
     if (machineId) return machineId;
   }
 
@@ -40,7 +41,10 @@ export async function listRecentPathsForVoiceTool(params: Readonly<{ machineId?:
   }
   const shareFilePaths = voicePrivacy.shareFilePaths;
   const sessionsById: Record<string, Session> = state?.sessions ?? {};
-  const sessions = Object.values(sessionsById);
+  const sessions = Object.values(sessionsById).map((session) => ({
+    ...session,
+    metadata: readVoiceSessionOwnerMetadataFromState(state, session.id),
+  }));
   const recentMachinePaths = Array.isArray(state?.settings?.recentMachinePaths)
     ? (state.settings.recentMachinePaths as any[])
     : [];
@@ -70,22 +74,20 @@ export async function listRecentPathsForVoiceTool(params: Readonly<{ machineId?:
       for (const s of sessions as any[]) {
         if (!s || typeof s !== 'object') continue;
         const sessionId = typeof s.id === 'string' ? s.id : '';
-        const lookupSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, sessionId);
+        const ownerMetadata = readVoiceSessionOwnerMetadataFromState(state, sessionId);
         const sessionMachineId =
           readDisplayMachineIdForSession({
             sessionId,
-            metadata: lookupSessionMetadata ?? s?.metadata ?? null,
+            metadata: ownerMetadata,
           })
-          ?? normalizeNonEmptyString(lookupSessionMetadata?.machineId)
-          ?? normalizeNonEmptyString(s?.metadata?.machineId);
+          ?? normalizeNonEmptyString(ownerMetadata?.machineId);
         if (sessionMachineId !== targetMachineId) continue;
         const sessionPath =
           readDisplayPathForSession({
             sessionId,
-            metadata: lookupSessionMetadata ?? s?.metadata ?? null,
+            metadata: ownerMetadata,
           })
-          || normalizeNonEmptyString(lookupSessionMetadata?.path)
-          || normalizeNonEmptyString(s?.metadata?.path);
+          || normalizeNonEmptyString(ownerMetadata?.path);
         if (sessionPath !== path) continue;
         const updatedAtRaw = Number(s?.updatedAt ?? 0);
         const updatedAt = Number.isFinite(updatedAtRaw) ? Math.floor(updatedAtRaw) : 0;

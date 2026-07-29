@@ -8,6 +8,7 @@ import {
     normalizeSessionListOrderingModeV1,
     resolveEffectiveSessionListFolderSortMode,
 } from '@/sync/domains/session/listing/sessionListOrderingRules';
+import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 
 import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
 
@@ -24,6 +25,8 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
     showFolderViewMode: boolean;
     folderViewMode: 'off' | 'tree';
     folderSortMode: 'foldersFirst' | 'mixed';
+    showStorageFilter: boolean;
+    storageFilter: SessionListStorageFilter;
     actionIconColor: string;
 }>): ReadonlyArray<DropdownMenuItem> {
     const cacheKey = [
@@ -36,6 +39,8 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
         input.showFolderViewMode ? '1' : '0',
         input.folderViewMode,
         input.folderSortMode,
+        input.showStorageFilter ? '1' : '0',
+        input.storageFilter,
         input.actionIconColor,
     ].join('|');
     const cached = SESSIONS_LIST_HEADER_MENU_ITEMS_CACHE.get(cacheKey);
@@ -52,6 +57,31 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
     const isDateOrderingMode = orderingMode !== 'custom';
 
     const next: DropdownMenuItem[] = [
+        ...(input.showStorageFilter ? [{
+            id: 'sessionListStorageFilterAll',
+            testID: 'session-list-storage-filter-all',
+            title: t('sessionsList.storageAllFilter'),
+            category: t('sessionsList.storageFilterCategory'),
+            rightElement: input.storageFilter === 'all'
+                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                : undefined,
+        } satisfies DropdownMenuItem, {
+            id: 'sessionListStorageFilterPersisted',
+            testID: 'session-list-storage-filter-persisted',
+            title: t('sessionsList.storagePersistedTab'),
+            category: t('sessionsList.storageFilterCategory'),
+            rightElement: input.storageFilter === 'persisted'
+                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                : undefined,
+        } satisfies DropdownMenuItem, {
+            id: 'sessionListStorageFilterDirect',
+            testID: 'session-list-storage-filter-direct',
+            title: t('sessionsList.storageExternalFilter'),
+            category: t('sessionsList.storageFilterCategory'),
+            rightElement: input.storageFilter === 'direct'
+                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                : undefined,
+        } satisfies DropdownMenuItem] : []),
         {
             id: 'custom',
             testID: 'session-list-ordering-mode-custom',

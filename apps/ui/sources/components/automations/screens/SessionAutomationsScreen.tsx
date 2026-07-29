@@ -13,7 +13,7 @@ import { Modal } from '@/modal';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { useAutomations, useSession, useSettings } from '@/sync/domains/state/storage';
 import { resolveExistingSessionAutomationAvailability } from '@/sync/domains/automations/existingSessionAutomationAvailability';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { sync } from '@/sync/sync';
 import { filterAutomationsLinkedToSession } from '@/sync/domains/automations/automationSessionLink';
 import { AutomationListGroup } from '@/components/automations/list/AutomationListGroup';
@@ -75,7 +75,7 @@ export function SessionAutomationsScreen(props: {
     const linked = React.useMemo(() => {
         return filterAutomationsLinkedToSession(automations, props.sessionId);
     }, [automations, props.sessionId]);
-    const machineIdOverride = readMachineTargetForSession(props.sessionId)?.machineId ?? null;
+    const machineIdOverride = readMachineControlTargetForSession(props.sessionId)?.machineId ?? null;
     const availability = React.useMemo(() => resolveExistingSessionAutomationAvailability({
         sessionHydrated,
         session,

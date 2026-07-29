@@ -9,7 +9,10 @@ import { buildProjectPaneScopeId } from '@/components/projects/detail/projectPan
 import { useProjectRouteActions } from '@/components/projects/detail/useProjectRouteActions';
 import { useProjectRouteHeaderOptions } from '@/components/projects/detail/useProjectRouteHeaderOptions';
 import { ProjectWorktreeRecoveryToast } from '@/components/projects/detail/ProjectWorktreeRecoveryToast';
-import { readProjectRouteStringParam } from '@/components/projects/detail/projectRouteState';
+import {
+    readProjectRouteStringParam,
+    resolveProjectRouteSelectionQuery,
+} from '@/components/projects/detail/projectRouteState';
 import { useProjectMobileRoutePersistence } from '@/components/projects/detail/useProjectMobileRoutePersistence';
 import { ProjectTerminalSurface } from '@/components/projects/detail/surfaces/ProjectTerminalSurface';
 import { useWorkspaceRefById } from '@/components/projects/detail/useWorkspaceRefById';
@@ -21,29 +24,41 @@ import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit
 import { resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { t } from '@/text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+
+type ProjectTerminalRouteParams = {
+    workspaceRefId?: string | string[];
+    worktreeId?: string | string[];
+    activeRootPath?: string | string[];
+};
 
 export default function ProjectTerminalScreenRoute() {
-    const { theme } = useUnistyles();
-    const isFocused = useIsFocused();
-    const params = useLocalSearchParams<{
-        workspaceRefId?: string | string[];
-        worktreeId?: string | string[];
-        activeRootPath?: string | string[];
-    }>();
+    const params = useLocalSearchParams<ProjectTerminalRouteParams>();
     const workspaceRefId = readProjectRouteStringParam(params.workspaceRefId) ?? '';
-    const {
-        cockpitEnabled,
-        showWorkspaceExperienceToggle,
-        workspaceExperienceToggleLabelKey,
-        toggleWorkspaceExperience,
-    } = useMobileWorkspaceExperienceState();
-
     const workspaceRef = useWorkspaceRefById(workspaceRefId);
 
     if (!workspaceRef) {
         return <ProjectDetailScreen workspaceRefId={workspaceRefId} activeRootPath={readProjectRouteStringParam(params.activeRootPath)} />;
     }
 
+    return <ResolvedProjectTerminalScreenRoute params={params} workspaceRef={workspaceRef} />;
+}
+
+function ResolvedProjectTerminalScreenRoute({
+    params,
+    workspaceRef,
+}: {
+    params: ProjectTerminalRouteParams;
+    workspaceRef: WorkspaceRefV1;
+}) {
+    const { theme } = useUnistyles();
+    const isFocused = useIsFocused();
+    const {
+        cockpitEnabled,
+        showWorkspaceExperienceToggle,
+        workspaceExperienceToggleLabelKey,
+        toggleWorkspaceExperience,
+    } = useMobileWorkspaceExperienceState();
     const scopeId = buildProjectPaneScopeId(workspaceRef.id);
     const pane = useAppPaneScope(scopeId);
     const detailsState = pane.scopeState?.details ?? null;
@@ -57,15 +72,21 @@ export default function ProjectTerminalScreenRoute() {
         resolvedActiveRootPath,
         resolvedActiveWorktreeId,
         recoveryToastKey,
+        setRouteActiveRootPath,
     } = useProjectMobileRoutePersistence({
         workspaceRef,
+        isFocused,
         rawWorktreeId: params.worktreeId,
         rawActiveRootPath: params.activeRootPath,
         persistedSurface: 'terminal',
         resolveRouteHref: ({ activeRootPath, activeWorktreeId }) => resolveProjectRoutePathForSurface({
             workspaceRefId: workspaceRef.id,
             surface: 'terminal',
-            rawWorktreeId: activeRootPath === workspaceRef.rootPath ? '@root' : activeWorktreeId,
+            ...resolveProjectRouteSelectionQuery({
+                activeRootPath,
+                defaultRootPath: workspaceRef.rootPath,
+                activeWorktreeId,
+            }),
         }),
     });
 
@@ -73,10 +94,12 @@ export default function ProjectTerminalScreenRoute() {
         workspaceRef,
         activeRootPath: resolvedActiveRootPath,
         activeWorktreeId: resolvedActiveWorktreeId,
+        sourceSurface: 'terminal',
         pane,
     });
     const openWorktreesInDetails = routeActions.openWorktreesInDetails;
     const openTerminal = routeActions.openTerminal;
+    const navigateToSegment = routeActions.navigateToSegment;
     const handleOpenWorktrees = React.useCallback(() => {
         openWorktreesInDetails('push');
     }, [openWorktreesInDetails]);
@@ -85,8 +108,8 @@ export default function ProjectTerminalScreenRoute() {
     }, [openTerminal]);
 
     const handleNavigateToDetails = React.useCallback(() => {
-        routeActions.navigateToSegment({ segment: 'details', method: 'push' });
-    }, [routeActions]);
+        navigateToSegment({ segment: 'details', method: 'push', sourceSurface: 'terminal' });
+    }, [navigateToSegment]);
 
     useFullscreenDetailsRouteAutoRedirect({
         resetKey: workspaceRef.id,
@@ -124,7 +147,8 @@ export default function ProjectTerminalScreenRoute() {
                         activeRootPath={resolvedActiveRootPath}
                         activeWorktreeId={resolvedActiveWorktreeId}
                         surface="terminal"
-                        onSelectRootPath={() => {}}
+                        isFocused={isFocused}
+                        onSelectRootPath={setRouteActiveRootPath}
                     />
                 ) : (
                     <ProjectTerminalSurface

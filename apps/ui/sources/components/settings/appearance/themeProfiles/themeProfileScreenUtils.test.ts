@@ -15,8 +15,13 @@ const baseProfile = (id: string, overrides: ThemeProfileV1['overrides'] = { ligh
 });
 
 const maxProfileState = (): ThemeProfilesLocalStateV1 => ({
-    activeProfileId: null,
+    activeProfileIds: { light: null, dark: null },
     profiles: Array.from({ length: THEME_PROFILE_MAX_PROFILES }, (_, index) => baseProfile(`theme_${index}`)),
+});
+
+const emptyThemeProfiles = (): ThemeProfilesLocalStateV1 => ({
+    activeProfileIds: { light: null, dark: null },
+    profiles: [],
 });
 
 describe('theme profile screen utilities', () => {
@@ -39,7 +44,7 @@ describe('theme profile screen utilities', () => {
     });
 
     it('does not persist invalid editable profile state', () => {
-        const state: ThemeProfilesLocalStateV1 = { activeProfileId: null, profiles: [] };
+        const state = emptyThemeProfiles();
 
         const result = upsertThemeProfile(state, {
             ...baseProfile('theme_invalid'),
@@ -51,7 +56,7 @@ describe('theme profile screen utilities', () => {
     });
 
     it('does not persist route-unsafe profile ids from editable state', () => {
-        const state: ThemeProfilesLocalStateV1 = { activeProfileId: null, profiles: [] };
+        const state = emptyThemeProfiles();
 
         const result = upsertThemeProfile(state, baseProfile('../bad/profile?x=1'));
 
@@ -59,7 +64,7 @@ describe('theme profile screen utilities', () => {
     });
 
     it('does not persist profile ids reserved for base themes from editable state', () => {
-        const state: ThemeProfilesLocalStateV1 = { activeProfileId: null, profiles: [] };
+        const state = emptyThemeProfiles();
 
         const result = upsertThemeProfile(state, baseProfile('light'));
 
@@ -67,7 +72,7 @@ describe('theme profile screen utilities', () => {
     });
 
     it('does not persist the editor route id from editable state', () => {
-        const state: ThemeProfilesLocalStateV1 = { activeProfileId: null, profiles: [] };
+        const state = emptyThemeProfiles();
 
         const result = upsertThemeProfile(state, baseProfile('new'));
 

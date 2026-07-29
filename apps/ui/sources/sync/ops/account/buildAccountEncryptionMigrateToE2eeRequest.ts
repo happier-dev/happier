@@ -2,11 +2,17 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { stripLocalOnlyAccountSettings } from '@/sync/domains/settings/localOnlyAccountSettings';
 import type { Settings } from '@/sync/domains/settings/settings';
+import { normalizeVoiceSettingsServerDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import {
   ConnectedServiceCredentialRecordV1Schema,
+  assertConnectedServiceCredentialRecordBinding,
   sealAccountScopedBlobCiphertext,
   sealConnectedServiceCredentialCiphertext,
   type ConnectedServiceId,
+  type QualifiedConnectedAccountConfigurationSnapshotV4,
+  type QualifiedConnectedAccountCredentialSnapshotV4,
+  type QualifiedConnectedAccountProfileV4,
+  type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
 
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -22,6 +28,10 @@ import {
   AccountEncryptionMigrateRequestSchema,
   type AccountEncryptionMigrateRequest,
 } from '@/sync/api/account/apiAccountEncryptionMigrate';
+import {
+  qualifiedConnectedAccountLegacyProjectionKeys,
+  resealQualifiedConnectedAccountMigrationCredentials,
+} from './resealQualifiedConnectedAccountMigrationCredentials';
 
 type ConnectedServiceCredentialMetadataInput = Readonly<{
   kind: 'oauth' | 'token';
@@ -32,14 +42,22 @@ type ConnectedServiceCredentialMetadataInput = Readonly<{
 
 export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonly<{
   credentials: AuthCredentials;
+  keyProof: NonNullable<AccountEncryptionMigrateRequest['keyProof']>;
   expectedSettingsVersion: number;
   settings: Settings;
   connectedServiceProfiles: ReadonlyArray<Readonly<{ serviceId: ConnectedServiceId; profileId: string }>>;
+  qualifiedConnectedAccounts?: readonly QualifiedConnectedAccountProfileV4[];
   automations: ReadonlyArray<Readonly<{ id: string; templateCiphertext: string }>>;
   fetchConnectedServiceCredentialPlain: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<Readonly<{
     content: Readonly<{ t: 'plain'; v: unknown }>;
     metadata?: ConnectedServiceCredentialMetadataInput;
   }>>;
+  fetchQualifiedConnectedAccountCredential?: (
+    ref: QualifiedConnectedAccountRef,
+  ) => Promise<QualifiedConnectedAccountCredentialSnapshotV4>;
+  fetchQualifiedConnectedAccountConfiguration?: (
+    ref: QualifiedConnectedAccountRef,
+  ) => Promise<QualifiedConnectedAccountConfigurationSnapshotV4>;
 }>): Promise<AccountEncryptionMigrateRequest> {
   if (!isLegacyAuthCredentials(params.credentials)) {
     throw new Error('Legacy credentials are required to migrate to e2ee');
@@ -50,7 +68,9 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
     throw new Error('Legacy crypto material is required to migrate to e2ee');
   }
 
-  const settingsForServer = stripLocalOnlyAccountSettings(params.settings);
+  const settingsForServer = normalizeVoiceSettingsServerDelta(
+    stripLocalOnlyAccountSettings(params.settings),
+  );
   const settingsCiphertext = sealAccountScopedBlobCiphertext({
     kind: 'account_settings',
     material,
@@ -59,12 +79,25 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
   });
 
   const connectedServices = await (async () => {
-    if (params.connectedServiceProfiles.length === 0) {
+    const qualifiedAccounts = params.qualifiedConnectedAccounts ?? [];
+    const qualifiedLegacyKeys =
+      qualifiedConnectedAccountLegacyProjectionKeys(qualifiedAccounts);
+    if (
+      params.connectedServiceProfiles.length === 0
+      && qualifiedAccounts.length === 0
+    ) {
       return { action: 'assert_empty' as const };
     }
 
     const credentials: any[] = [];
     for (const profile of params.connectedServiceProfiles) {
+      if (
+        qualifiedLegacyKeys.has(
+          JSON.stringify([profile.serviceId, profile.profileId]),
+        )
+      ) {
+        continue;
+      }
       const fetched = await params.fetchConnectedServiceCredentialPlain({
         serviceId: profile.serviceId,
         profileId: profile.profileId,
@@ -76,7 +109,10 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
       if (!recordParsed.success) {
         throw new Error(`Failed to parse connected service credential record (${profile.serviceId}/${profile.profileId})`);
       }
-      const record = recordParsed.data;
+      const record = assertConnectedServiceCredentialRecordBinding({
+        binding: profile,
+        record: recordParsed.data,
+      });
       const sealedCiphertext = sealConnectedServiceCredentialCiphertext({
         material,
         payload: record,
@@ -99,7 +135,37 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
         },
       });
     }
-    return { action: 'migrate' as const, credentials };
+    let qualifiedCredentials: Awaited<
+      ReturnType<
+        typeof resealQualifiedConnectedAccountMigrationCredentials
+      >
+    > = [];
+    if (qualifiedAccounts.length > 0) {
+      if (
+        !params.fetchQualifiedConnectedAccountCredential
+        || !params.fetchQualifiedConnectedAccountConfiguration
+      ) {
+        throw new Error(
+          'Qualified connected-account migration readers are unavailable',
+        );
+      }
+      qualifiedCredentials =
+        await resealQualifiedConnectedAccountMigrationCredentials({
+          toMode: 'e2ee',
+          material,
+          accounts: qualifiedAccounts,
+          fetchCredential:
+            params.fetchQualifiedConnectedAccountCredential,
+          fetchConfiguration:
+            params.fetchQualifiedConnectedAccountConfiguration,
+          randomBytes: getRandomBytes,
+        });
+    }
+    return {
+      action: 'migrate' as const,
+      credentials,
+      qualifiedCredentials,
+    };
   })();
 
   const automations = await (async () => {
@@ -136,12 +202,12 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
     }
     return { action: 'migrate' as const, templates };
   })();
-
   return AccountEncryptionMigrateRequestSchema.parse({
     toMode: 'e2ee',
     expectedSettingsVersion: params.expectedSettingsVersion,
     settingsContent: { t: 'encrypted', c: settingsCiphertext },
     connectedServices,
     automations,
+    keyProof: params.keyProof,
   });
 }

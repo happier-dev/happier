@@ -31,6 +31,10 @@ export function isConnectedServiceCredentialReferencedByGroupError(error: unknow
     return readConnectedServiceSettingsErrorCode(error) === 'connect_credential_referenced_by_group';
 }
 
+export function isConnectedServiceCredentialMutationSupersededError(error: unknown): boolean {
+    return readConnectedServiceSettingsErrorCode(error) === 'connect_credential_mutation_superseded';
+}
+
 export function readConnectedServiceRuntimeCooldownResetAtMs(error: unknown): number | null {
     const value = asErrorLike(error).resetAtMs;
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -48,9 +52,13 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown): str
     switch (code) {
         case 'connect_credential_referenced_by_group':
             return t('connectedServices.errors.credentialReferencedByGroup');
+        case 'connect_credential_mutation_superseded':
+            return t('connectedServices.errors.generic');
         case 'connect_group_profile_runtime_cooldown':
             return t('connectedServices.errors.runtimeCooldown', { time: formatResetAt(error) });
         case 'connect_group_generation_conflict':
+        case 'connect_group_runtime_state_revision_conflict':
+        case 'connect_group_source_revision_conflict':
             return typeof errorLike.generation === 'number'
                 ? t('connectedServices.errors.generationConflictWithGeneration', { generation: errorLike.generation })
                 : t('connectedServices.errors.generationConflict');

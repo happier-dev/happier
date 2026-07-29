@@ -1,42 +1,115 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { Pressable, useWindowDimensions, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, Pressable, StyleSheet, useWindowDimensions, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { COMPOSER_SURFACE_RADIUS } from '@/components/sessions/agentInput/composerContentInset';
+import { ITEM_SUBTITLE_TEXT_METRICS, ITEM_TITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { Text } from '@/components/ui/text/Text';
 
-export type WarningActionBannerProps = Readonly<{
-    actionAccessibilityLabel: string;
-    actionLabel: string;
-    actionTestID: string;
-    body: string;
+export type SessionBannerTone = 'warning' | 'neutral';
+
+type SessionBannerAction = Readonly<{
+    key: string;
+    accessibilityLabel: string;
+    label: string;
+    onPress: () => void | Promise<void>;
+    testID: string;
     disabled?: boolean;
-    onActionPress: () => void | Promise<void>;
-    secondaryActions?: ReadonlyArray<{
-        key: string;
-        accessibilityLabel: string;
-        label: string;
-        onPress: () => void | Promise<void>;
-        testID: string;
-        disabled?: boolean;
-    }>;
+}>;
+
+export type WarningActionBannerProps = Readonly<{
+    /** `neutral` covers informational notices; `warning` (default) covers actionable problems. */
+    tone?: SessionBannerTone;
+    iconName?: React.ComponentProps<typeof Ionicons>['name'] | null;
+    title?: string;
+    body?: string;
+    /** Primary action. Omitted for notice-style banners that carry no action. */
+    actionAccessibilityLabel?: string;
+    actionLabel?: string;
+    actionTestID?: string;
+    onActionPress?: () => void | Promise<void>;
+    disabled?: boolean;
+    /** Announced to assistive tech while the primary action's work is in flight. */
+    actionBusy?: boolean;
+    secondaryActions?: ReadonlyArray<SessionBannerAction>;
     style?: StyleProp<ViewStyle>;
     testID: string;
-    title: string;
 }>;
 
 const INLINE_ACTIONS_MIN_WIDTH = 720;
+
+/**
+ * Share of the banner an inline action block may occupy. The block wraps within that share instead
+ * of growing, so a long action run forms a right-aligned grid beside the copy rather than either
+ * squeezing the message into a narrow column or dropping below it and leaving the row half empty.
+ */
+const INLINE_ACTIONS_MAX_WIDTH = '50%';
+
+const BANNER_PADDING_HORIZONTAL = 14;
+const BANNER_PADDING_VERTICAL = 10;
+
+/**
+ * Visual control height. Deliberately compact: banners sit in the composer stack where a
+ * full-height button would out-weigh the copy it belongs to. The tappable area is extended to the
+ * platform minimum through `hitSlop` instead, so pointer devices keep a refined control and touch
+ * devices still get a forgiving target.
+ */
+const ACTION_HEIGHT = 28;
+const ACTION_TOUCH_TARGET = Platform.OS === 'android' ? 48 : 44;
+const ACTION_HIT_SLOP_VERTICAL = Math.round((ACTION_TOUCH_TARGET - ACTION_HEIGHT) / 2);
+const ACTION_HIT_SLOP = {
+    top: ACTION_HIT_SLOP_VERTICAL,
+    bottom: ACTION_HIT_SLOP_VERTICAL,
+    left: 4,
+    right: 4,
+} as const;
+
+// Concentric with the banner surface: inner radius = outer radius - the inset between them.
+const ACTION_RADIUS = COMPOSER_SURFACE_RADIUS - BANNER_PADDING_VERTICAL;
+
+const actionBaseStyle = {
+    flexShrink: 0,
+    maxWidth: '100%',
+    height: ACTION_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    borderRadius: ACTION_RADIUS,
+} as const satisfies ViewStyle;
 
 export function WarningActionBanner(props: WarningActionBannerProps): React.ReactElement {
     const { theme } = useUnistyles();
     const { width } = useWindowDimensions();
     const [measuredWidth, setMeasuredWidth] = React.useState<number | null>(null);
     const availableWidth = typeof measuredWidth === 'number' && measuredWidth > 0 ? measuredWidth : width;
-    const inlineActions = availableWidth >= INLINE_ACTIONS_MIN_WIDTH;
     const handleLayout = React.useCallback((event: LayoutChangeEvent) => {
         const nextWidth = Math.max(0, Math.round(event.nativeEvent.layout.width));
         setMeasuredWidth((current) => current === nextWidth ? current : nextWidth);
     }, []);
+
+    const tone = props.tone ?? 'warning';
+    // The tinted fill and the icon carry the state; the copy stays in normal text roles so the
+    // banner reads as a sentence with a status, not as a block of coloured text.
+    const toneTokens = tone === 'neutral'
+        ? {
+            background: theme.colors.state.neutral.background,
+            icon: theme.colors.state.neutral.foreground,
+        }
+        : {
+            background: theme.colors.state.warning.background,
+            icon: theme.colors.state.warning.foreground,
+        };
+    const iconName = props.iconName === null
+        ? null
+        : props.iconName ?? (tone === 'neutral' ? 'information-circle-outline' : 'warning-outline');
+
+    const hasPrimaryAction = typeof props.onActionPress === 'function'
+        && typeof props.actionLabel === 'string'
+        && typeof props.actionTestID === 'string';
+    const secondaryActions = props.secondaryActions ?? [];
+    const hasActions = hasPrimaryAction || secondaryActions.length > 0;
+    const inlineActions = availableWidth >= INLINE_ACTIONS_MIN_WIDTH;
 
     return (
         <View
@@ -46,13 +119,16 @@ export function WarningActionBanner(props: WarningActionBannerProps): React.Reac
                 {
                     flexDirection: inlineActions ? 'row' : 'column',
                     alignItems: inlineActions ? 'center' : 'stretch',
-                    paddingHorizontal: 12,
-                    paddingVertical: 8,
-                    backgroundColor: theme.colors.state.warning.background,
-                    borderWidth: 1,
-                    borderColor: theme.colors.state.warning.border,
-                    borderRadius: 10,
-                    gap: inlineActions ? 12 : 8,
+                    paddingHorizontal: BANNER_PADDING_HORIZONTAL,
+                    paddingVertical: BANNER_PADDING_VERTICAL,
+                    backgroundColor: toneTokens.background,
+                    borderRadius: COMPOSER_SURFACE_RADIUS,
+                    // Bounded exactly like the composer panel below it: hairline surface border,
+                    // no cast shadow. The panel deliberately carries no drop shadow outside glass
+                    // mode, so a shadow here would make the banner float off its own stack.
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: theme.colors.border.surface,
+                    gap: hasActions ? (inlineActions ? 12 : 8) : 0,
                 },
                 props.style,
             ]}
@@ -61,80 +137,115 @@ export function WarningActionBanner(props: WarningActionBannerProps): React.Reac
                 testID={`${props.testID}-copy-row`}
                 style={{
                     flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 8,
+                    // Anchored to the first line rather than the block's centre, so the icon stays
+                    // beside the title as the body wraps to two or three lines.
+                    alignItems: 'flex-start',
+                    gap: 9,
                     flex: inlineActions ? 1 : undefined,
                     minWidth: 0,
                     width: inlineActions ? undefined : '100%',
                 }}
             >
-                <Ionicons name="warning-outline" size={16} color={theme.colors.state.warning.foreground} />
-                <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={{ fontSize: 13, color: theme.colors.state.warning.foreground, fontWeight: '700' }}>
-                        {props.title}
-                    </Text>
-                    <Text style={{ fontSize: 12, color: theme.colors.state.warning.foreground, lineHeight: 16 }}>
-                        {props.body}
-                    </Text>
+                {iconName ? (
+                    // Optical nudge: the glyph's ink sits above its box centre next to the title.
+                    <Ionicons name={iconName} size={16} color={toneTokens.icon} style={{ marginTop: 1 }} />
+                ) : null}
+                {/* Title/body separation matches `Item`: iOS needs a hair of space under the
+                    title, elsewhere the subtitle line-height already provides it. */}
+                <View style={{ flex: 1, minWidth: 0, gap: Platform.select({ ios: 2, default: 0 }) }}>
+                    {props.title ? (
+                        <Text
+                            selectable
+                            style={{
+                                ...ITEM_TITLE_TEXT_METRICS.compact,
+                                color: theme.colors.text.primary,
+                                // The one deliberate departure from a list row: an `Item` title is
+                                // regular because its row position carries the hierarchy, whereas a
+                                // banner headline has to hold attention against a tinted field and
+                                // separate itself from the explanation directly beneath it.
+                                fontWeight: '600',
+                            }}
+                        >
+                            {props.title}
+                        </Text>
+                    ) : null}
+                    {props.body ? (
+                        <Text
+                            selectable
+                            style={{
+                                ...ITEM_SUBTITLE_TEXT_METRICS.compact,
+                                color: theme.colors.text.secondary,
+                                // Quotas, reset times, and countdowns live in this copy; tabular
+                                // figures keep it from twitching as they tick.
+                                fontVariant: ['tabular-nums'],
+                            }}
+                        >
+                            {props.body}
+                        </Text>
+                    ) : null}
                 </View>
             </View>
-            <View
-                testID={`${props.testID}-actions-row`}
-                style={{
-                    flexDirection: 'row',
-                    flexWrap: 'wrap',
-                    flexShrink: 0,
-                    gap: 6,
-                    justifyContent: 'flex-end',
-                    maxWidth: '100%',
-                    width: inlineActions ? undefined : '100%',
-                }}
-            >
-                {props.secondaryActions?.map((action) => (
-                    <Pressable
-                        key={action.key}
-                        testID={action.testID}
-                        accessibilityRole="button"
-                        accessibilityLabel={action.accessibilityLabel}
-                        disabled={action.disabled}
-                        onPress={action.onPress}
-                        style={({ pressed }) => ({
-                            flexShrink: 0,
-                            maxWidth: '100%',
-                            paddingHorizontal: 10,
-                            paddingVertical: 6,
-                            borderRadius: 8,
-                            borderWidth: 1,
-                            borderColor: theme.colors.state.warning.border,
-                            opacity: pressed || action.disabled ? 0.7 : 1,
-                        })}
-                    >
-                        <Text style={{ fontSize: 12, color: theme.colors.state.warning.foreground, fontWeight: '700' }}>
-                            {action.label}
-                        </Text>
-                    </Pressable>
-                ))}
-                <Pressable
-                    testID={props.actionTestID}
-                    accessibilityRole="button"
-                    accessibilityLabel={props.actionAccessibilityLabel}
-                    disabled={props.disabled}
-                    onPress={props.onActionPress}
-                    style={({ pressed }) => ({
-                        flexShrink: 0,
-                        maxWidth: '100%',
-                        paddingHorizontal: 10,
-                        paddingVertical: 6,
-                        borderRadius: 8,
-                        backgroundColor: theme.colors.button.primary.background,
-                        opacity: pressed || props.disabled ? 0.7 : 1,
-                    })}
+            {hasActions ? (
+                <View
+                    testID={`${props.testID}-actions-row`}
+                    style={{
+                        flexDirection: 'row',
+                        flexWrap: 'wrap',
+                        // Shrinkable so the block wraps within its share instead of winning the
+                        // contested width and starving the copy into a narrow multi-line column.
+                        flexShrink: 1,
+                        alignItems: 'center',
+                        columnGap: 4,
+                        // Wrapped action lines need more separation than neighbours on one line.
+                        rowGap: 6,
+                        justifyContent: 'flex-end',
+                        maxWidth: inlineActions ? INLINE_ACTIONS_MAX_WIDTH : '100%',
+                        width: inlineActions ? undefined : '100%',
+                    }}
                 >
-                    <Text style={{ fontSize: 12, color: theme.colors.button.primary.tint, fontWeight: '700' }}>
-                        {props.actionLabel}
-                    </Text>
-                </Pressable>
-            </View>
+                    {secondaryActions.map((action) => (
+                        <Pressable
+                            key={action.key}
+                            testID={action.testID}
+                            accessibilityRole="button"
+                            accessibilityLabel={action.accessibilityLabel}
+                            disabled={action.disabled}
+                            hitSlop={ACTION_HIT_SLOP}
+                            onPress={action.disabled ? undefined : action.onPress}
+                            style={({ pressed }) => ({
+                                ...actionBaseStyle,
+                                paddingHorizontal: 10,
+                                backgroundColor: theme.colors.button.secondary.background,
+                                opacity: action.disabled ? 0.45 : pressed ? 0.6 : 1,
+                            })}
+                        >
+                            <Text style={{ fontSize: 12, color: theme.colors.button.secondary.tint, fontWeight: '600' }}>
+                                {action.label}
+                            </Text>
+                        </Pressable>
+                    ))}
+                    {hasPrimaryAction ? (
+                        <Pressable
+                            testID={props.actionTestID}
+                            accessibilityRole="button"
+                            accessibilityLabel={props.actionAccessibilityLabel ?? props.actionLabel}
+                            accessibilityState={{ busy: props.actionBusy, disabled: props.disabled }}
+                            disabled={props.disabled}
+                            hitSlop={ACTION_HIT_SLOP}
+                            onPress={props.disabled ? undefined : props.onActionPress}
+                            style={({ pressed }) => ({
+                                ...actionBaseStyle,
+                                backgroundColor: theme.colors.button.primary.background,
+                                opacity: props.disabled ? 0.45 : pressed ? 0.8 : 1,
+                            })}
+                        >
+                            <Text style={{ fontSize: 12, color: theme.colors.button.primary.tint, fontWeight: '600' }}>
+                                {props.actionLabel}
+                            </Text>
+                        </Pressable>
+                    ) : null}
+                </View>
+            ) : null}
         </View>
     );
 }

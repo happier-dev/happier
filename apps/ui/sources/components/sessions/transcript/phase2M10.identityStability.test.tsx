@@ -2,10 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
 
-import { createTranscriptMeasurementHost } from '@/components/sessions/transcript/measurement/transcriptMeasurementHost';
 import { useTranscriptMeasurementHostWiring } from '@/components/sessions/transcript/measurement/useTranscriptMeasurementHostWiring';
 import { useTranscriptExpansionState } from '@/components/sessions/transcript/rowHost/useTranscriptExpansionState';
-import { useNativeInvertedFactSource } from '@/components/sessions/transcript/viewport/driver/useNativeInvertedFactSource';
+import { useNativeFactSource } from '@/components/sessions/transcript/viewport/driver/useNativeFactSource';
 import { useTranscriptViewportCommandHostWiring } from '@/components/sessions/transcript/viewport/driver/useTranscriptViewportCommandHostWiring';
 import type { TranscriptViewportDriverDeps } from '@/components/sessions/transcript/viewport/driver/types';
 import { useTranscriptNativeEntryRestorePaintRelease } from '@/components/sessions/transcript/viewport/entryRestore/host/useTranscriptNativeEntryRestorePaintRelease';
@@ -24,13 +23,10 @@ describe('phase2 M10 hook identity stability', () => {
     it('keeps measurement host wiring callbacks stable across fresh params identities', async () => {
         const members = {
             getItemType: vi.fn(() => 'message:agent'),
-            hasOpenEntryRestoreTransactionForSession: vi.fn(() => false),
-            hasOpenNativePrependTransactionForSession: vi.fn(() => false),
             listData: [],
             listDataRef: createRef([]),
             listLayoutHeightRef: createRef(0),
             listRef: createRef(null),
-            measurementHost: createTranscriptMeasurementHost(),
             recordViewportTelemetryEvent: vi.fn(),
             resolveViewportTelemetryMode: vi.fn(() => 'follow-bottom'),
             sessionId: 's1',
@@ -46,17 +42,15 @@ describe('phase2 M10 hook identity stability', () => {
         await hook.rerender(buildParams());
         const second = hook.getCurrent();
 
-        expect(second.handleRowLayoutMutation).toBe(first.handleRowLayoutMutation);
         expect(second.handleRowShellMeasured).toBe(first.handleRowShellMeasured);
-        expect(second.recordOffsetCorrectionTelemetry).toBe(first.recordOffsetCorrectionTelemetry);
 
         await hook.unmount();
     });
 
     it('keeps expansion callbacks stable when expansion state is unchanged', async () => {
         const members = {
-            deferAutoPinAfterLocalTranscriptInteraction: vi.fn(),
-            prepareWebToolGroupLocalHeightChange: vi.fn(() => 'none' as const),
+            recordLocalTranscriptInteractionIntent: vi.fn(),
+            prepareLocalHeightChange: vi.fn(() => 'none' as const),
         };
         const buildParams = () => ({ ...members });
         const hook = await renderHook(
@@ -77,7 +71,7 @@ describe('phase2 M10 hook identity stability', () => {
         await hook.unmount();
     });
 
-    it('keeps native inverted fact readers stable across fresh params identities', async () => {
+    it('keeps native fact readers stable across fresh params identities', async () => {
         const members = {
             canonicalWindowedItemsRef: createRef([]),
             listContentHeightRef: createRef(1200),
@@ -87,10 +81,10 @@ describe('phase2 M10 hook identity stability', () => {
             platformOS: 'web',
             renderWindowIndexMapRef: createRef(null),
         };
-        const buildParams = () => ({ ...members }) as Parameters<typeof useNativeInvertedFactSource>[0];
+        const buildParams = () => ({ ...members }) as Parameters<typeof useNativeFactSource>[0];
         const hook = await renderHook(
-            (params: Parameters<typeof useNativeInvertedFactSource>[0]) =>
-                useNativeInvertedFactSource(params),
+            (params: Parameters<typeof useNativeFactSource>[0]) =>
+                useNativeFactSource(params),
             { initialProps: buildParams() },
         );
         const first = hook.getCurrent();
@@ -119,14 +113,8 @@ describe('phase2 M10 hook identity stability', () => {
         };
         const driverDeps = {} as unknown as TranscriptViewportDriverDeps;
         const members = {
-            clearWebPrependRestoreWindow: vi.fn(),
             commandHostRef,
             driverDeps,
-            expandedToolCallsAnchorMessageIds: new Set<string>(),
-            hasWebPrependRestoreWindow: vi.fn(() => false),
-            listContentHeight: 0,
-            listDataLength: 0,
-            pendingWebLocalHeightChangeAnchorRef: createRef(null),
             platformOS: 'native',
             sessionId: 's1',
             viewportCommandController: controller,
@@ -211,9 +199,6 @@ describe('phase2 M10 hook identity stability', () => {
             anchorLookupLoadCountRef: createRef(0),
             applyEntryRestoreOwnerEffectsRef: createRef(vi.fn()),
             applySessionOpenLatchEffectsRef: createRef(vi.fn()),
-            cancelScheduledPinToBottom: vi.fn(),
-            clearNativePaintReleaseTimeoutsForSessionEntry: vi.fn(),
-            clearWebPrependRestoreWindow: vi.fn(),
             closeEntryViewportOwnership: vi.fn(),
             commitBottomFollowModeState: vi.fn(),
             commitJumpToBottomDistanceForVisibility: vi.fn(),
@@ -223,7 +208,6 @@ describe('phase2 M10 hook identity stability', () => {
             emitViewportChange: vi.fn(() => true),
             entryRestoreDeadlineTimeoutRef: createRef(null),
             entryRestoreOwner: { resetForSession: vi.fn(() => []) },
-            entrySliceWindowRef: createRef(null),
             flushViewportAnchorCaptureRef: createRef(vi.fn()),
             getItemCount: vi.fn(() => 0),
             hideOlderLoadSpinner: vi.fn(),
@@ -233,14 +217,12 @@ describe('phase2 M10 hook identity stability', () => {
             isLoaded: true,
             isPinnedRef: createRef(true),
             jumpToSeq: null,
-            lastAutoRepinAtMsRef: createRef(Number.NEGATIVE_INFINITY),
             lastExplicitWebScrollIntentAtMsRef: createRef(Number.NEGATIVE_INFINITY),
             lastNativeRestoreIndexCommandRef: createRef(null),
             lastPinOffsetForIntentRef: createRef(null),
             lastRouteJumpProtectionClearingWebMovementAtMsRef: createRef(Number.NEGATIVE_INFINITY),
             lastScrollOffsetForIntentRef: createRef(null),
             lastUserScrollIntentAtMsRef: createRef(Number.NEGATIVE_INFINITY),
-            latestCommittedActivityKey: null,
             lifecycleHost,
             listContentHeightRef: createRef(0),
             listLayoutHeightRef: createRef(0),
@@ -249,22 +231,15 @@ describe('phase2 M10 hook identity stability', () => {
             nativeEntryRestorePaintReleaseTimeoutRef: createRef(null),
             nativeFirstPaintFallbackReleaseTimeoutRef: createRef(null),
             nativeMomentumScrollActiveRef: createRef(false),
-            nativeMountSettleAutoPinSuppressedRef: createRef(false),
-            pendingNativeMountSettleBottomPinHostRef: createRef(null),
-            resetBottomFollowPinRecordsForSessionEntry: vi.fn(),
-            resetBottomFollowPinStateForSessionOpenArm: vi.fn(),
-            resetInitialFillForSessionEntry: vi.fn(),
             resetNativeMountSettleFlagsForSessionEntry: vi.fn(),
             resetNativeSessionViewportLifecycle: vi.fn(),
             resetOlderPaginationForSessionEntry: vi.fn(),
-            resetTransientSessionEntryUiState: vi.fn(),
             resetViewportAnchorCaptureForSessionEntry: vi.fn(),
-            scheduleFirstSessionOpenWebInitialPinRetryRef: createRef(null),
+            sameSessionHandoffClaimedViewportRef: createRef(null),
+            sameSessionHandoffViewportForRender: null,
             sessionEntryViewportRef: createRef(null),
             sessionId: 's1',
             sessionOpenLatch,
-            sessionOpenWebInitialPinRetryArmAtMsRef: createRef(0),
-            setEntrySliceWindow: vi.fn(),
             setExpandedToolCallsAnchorMessageIds: vi.fn(),
             setListContentHeight: vi.fn(),
             viewportCommandController: { resetForSession: vi.fn() },
@@ -293,7 +268,6 @@ describe('phase2 M10 hook identity stability', () => {
         const members = {
             closeEntryViewportOwnership: vi.fn(),
             composerInsetHeightRef: createRef(0),
-            flushPendingNativeMountSettleBottomPin: vi.fn(),
             jumpToSeqActive: false,
             lastPinOffsetForIntentRef: createRef(null),
             lifecycleHost: {
@@ -302,16 +276,13 @@ describe('phase2 M10 hook identity stability', () => {
             },
             listContentHeightRef: createRef(0),
             listLayoutHeightRef: createRef(0),
-            nativeMountSettleAutoPinSuppressedRef: createRef(false),
             nativeMountSettleDeadlineReachedRef: createRef(false),
-            pendingNativeMountSettleBottomPinHostRef: createRef(null),
             platformOS: 'web',
             scheduleNativePaintReleaseForEntryRestore: vi.fn(),
             sessionId: 's1',
             sessionOpenLatch: { initialFillStatus: vi.fn(() => 'done') },
             setNativeMountSettleDeadlineReached: vi.fn(),
             setNativeMountSettleStable: vi.fn(),
-            usesNativeFlashListBottomMaintenance: false,
         } as unknown as Parameters<typeof useTranscriptNativeMountSettleLifecycle>[0];
         const buildParams = () => ({ ...members });
         const hook = await renderHook(
@@ -336,7 +307,6 @@ describe('phase2 M10 hook identity stability', () => {
             closeEntryViewportOwnership: vi.fn(),
             consumedSessionEntryViewportRef: createRef(null),
             entryRestoreOwner: { hasOpenTransaction: vi.fn(() => false) },
-            entrySliceWindowRef: createRef(null),
             lifecycleHost: {
                 armNativeEntrySettleConfirmation: vi.fn(),
                 planNativeUserScrollTakeover: vi.fn(() => ({
@@ -346,8 +316,6 @@ describe('phase2 M10 hook identity stability', () => {
             lastUserScrollIntentAtMsRef: createRef(Number.NEGATIVE_INFINITY),
             measurementHost: { hasNativeContentMeasurementForSession: vi.fn(() => false) },
             nativeInitialViewportPendingObservationRef: createRef(false),
-            nativeMountSettleAutoPinSuppressedRef: createRef(false),
-            pendingNativeMountSettleBottomPinHostRef: createRef(null),
             platformOS: 'web',
             preemptEntryRestoreTransaction: vi.fn(),
             sessionEntryViewportRef: createRef(null),
@@ -357,7 +325,6 @@ describe('phase2 M10 hook identity stability', () => {
                 markNativeInitialViewportApplied: vi.fn(() => ({ wasApplied: false })),
                 resetNativeInitialViewport: vi.fn(),
             },
-            setEntrySliceWindow: vi.fn(),
             setNativeInitialViewportPendingObservation: vi.fn(),
         } as unknown as Parameters<typeof useTranscriptNativeViewportLifecycle>[0];
         const buildParams = () => ({ ...members });
@@ -386,24 +353,11 @@ describe('phase2 M10 hook identity stability', () => {
 
     it('keeps main transcript renderer frame stable across fresh params identities', async () => {
         const members = {
-            autoFollowWhenPinned: true,
-            bottomFollowModeRevision: 0,
-            bottomFollowModeStateRef: createRef({ dragSession: null, mode: 'following' }),
             chatListNativeId: 'chat-list:s1',
-            configuredFlashListDrawDistance: 800,
-            hasOpenEntryRestoreTransactionForSession: vi.fn(() => false),
-            hasOpenNativePrependTransactionForSession: vi.fn(() => false),
             layoutHeight: 600,
-            nativeEntryShouldUseBottomMaintenance: true,
-            nativeFlashListMvcpPolicyRef: createRef('none'),
-            nativeFlashListPauseOffsetCorrectionRef: createRef(false),
-            nativeInitialViewportPendingObservation: false,
-            nativePrependTransactionRevision: 0,
-            pinEnabled: true,
             pinThresholdPx: 72,
             platformOS: 'web',
-            shouldUseNativeHotColdSplit: false,
-            targetWindowActive: false,
+            sessionEntryShouldFollowBottom: true,
         } as unknown as Parameters<typeof useMainTranscriptRendererFrameHost>[0];
         const buildParams = () => ({ ...members });
         const hook = await renderHook(
@@ -434,30 +388,17 @@ describe('phase2 M10 hook identity stability', () => {
             listLayoutHeightRef: createRef(0),
             listOrientation: 'normal',
             listRef: createRef(null),
-            nativeFlashListMvcpPolicyRef: createRef('none'),
-            nativeFlashListPauseOffsetCorrectionRef: createRef(false),
-            nativeHotEdgeVisibleRowsRef: createRef(null),
             nativeMomentumScrollActiveRef: createRef(false),
             nativePrependTelemetryStateRef: createRef(() => 'none'),
             nativeVisibleWindowSnapshotRef: createRef(null),
-            pinThresholdPxRef: createRef(72),
             platformOS: 'web',
-            readCurrentNativeDistanceFromBottom: vi.fn(() => null),
             readViewportVisibleSourceRange: vi.fn(() => null),
             resolveNativeObservedScrollOffset: vi.fn(() => null),
-            resolveWebPrependTelemetryFactsRef: createRef(vi.fn(() => ({
-                pendingWebPrependAnchorId: undefined,
-                pendingWebPrependAnchorIndex: undefined,
-                pendingWebPrependAnchorKind: 'none',
-            }))),
             resolveWebScrollMetrics: vi.fn(() => null),
             resolveWebViewportTelemetryDiagnostics: vi.fn(() => ({})),
             runtimeAnchorsRef: createRef([]),
             sessionId: 's1',
-            shouldUseNativeHotColdSplit: false,
-            transcriptHotColdSegments: { coldCount: 0, hotCount: 0 },
             wantsPinnedRef: createRef(true),
-            webHotColdCountsRef: createRef({ coldCount: 0, hotCount: 0 }),
         } as unknown as Parameters<typeof useTranscriptViewportTelemetryEvents>[0];
         const buildParams = () => ({ ...members });
         const hook = await renderHook(
@@ -487,17 +428,10 @@ describe('phase2 M10 hook identity stability', () => {
     it('keeps web viewport diagnostics callbacks stable across fresh params identities', async () => {
         const members = {
             chatListNativeId: 'chat-list:s1',
-            itemsRef: createRef([]),
             listContentHeightRef: createRef(0),
             listLayoutHeightRef: createRef(0),
             olderPaginationSnapshotRef: createRef({ phase: 'idle', suspendedReasons: [] }),
-            resolveWebPrependTelemetryFactsRef: createRef(vi.fn(() => ({
-                pendingWebPrependAnchorId: undefined,
-                pendingWebPrependAnchorIndex: undefined,
-                pendingWebPrependAnchorKind: 'none',
-            }))),
             transcriptNavigationRuntimeAnchorsRef: createRef([]),
-            webHotColdCountsRef: createRef({ coldCount: 0, hotCount: 0 }),
             webScrollContainerRef: createRef(null),
         } as unknown as Parameters<typeof useTranscriptWebViewportTelemetryDiagnostics>[0];
         const buildParams = () => ({ ...members });

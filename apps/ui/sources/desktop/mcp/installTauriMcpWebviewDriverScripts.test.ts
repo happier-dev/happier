@@ -1,9 +1,34 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { installTauriMcpWebviewDriverScripts } from './installTauriMcpWebviewDriverScripts';
 import { maybeInstallTauriMcpBridge } from './maybeInstallTauriMcpBridge';
 
+const ensureSessionVisibleForMessageRouteMock = vi.hoisted(() => vi.fn());
+const legacyEnsureSessionVisibleForMessageRouteMock = vi.hoisted(() => vi.fn());
+const getSyncSingletonMock = vi.hoisted(() => vi.fn());
+
+vi.mock('@/sync/runtime/getSyncSingleton', () => ({
+    getSyncSingleton: getSyncSingletonMock,
+}));
+
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSessionVisibleForMessageRoute: legacyEnsureSessionVisibleForMessageRouteMock,
+    },
+}));
+
 describe('installTauriMcpWebviewDriverScripts', () => {
+    beforeEach(() => {
+        ensureSessionVisibleForMessageRouteMock.mockReset();
+        legacyEnsureSessionVisibleForMessageRouteMock.mockReset();
+        getSyncSingletonMock.mockReset();
+        getSyncSingletonMock.mockReturnValue({
+            ensureSessionVisibleForMessageRoute: ensureSessionVisibleForMessageRouteMock,
+        });
+        ensureSessionVisibleForMessageRouteMock.mockResolvedValue(true);
+        legacyEnsureSessionVisibleForMessageRouteMock.mockResolvedValue(true);
+    });
+
     afterEach(() => {
         vi.useRealTimers();
     });
@@ -203,6 +228,41 @@ describe('installTauriMcpWebviewDriverScripts', () => {
                 options: { forceRefresh: true },
             },
         ]);
+    });
+
+    it('uses the runtime sync singleton for the default session-visibility helper', async () => {
+        const windowObj = {
+            __MCP__: {},
+        } as unknown as typeof globalThis;
+        const documentObj = {
+            querySelector: () => null,
+            querySelectorAll: () => [],
+            evaluate: () => ({ singleNodeValue: null, snapshotLength: 0, snapshotItem: () => null }),
+        } as unknown as Document;
+
+        installTauriMcpWebviewDriverScripts({
+            windowObj,
+            documentObj,
+        });
+
+        const result = await (
+            windowObj as unknown as {
+                __MCP__?: {
+                    ensureHappierSessionVisible?: (
+                        sessionId: unknown,
+                        options?: { forceRefresh?: boolean },
+                    ) => Promise<{ ok: boolean; sessionId?: string }>;
+                };
+            }
+        ).__MCP__?.ensureHappierSessionVisible?.('sess_overlay', { forceRefresh: true });
+
+        expect(result).toEqual({
+            ok: true,
+            sessionId: 'sess_overlay',
+        });
+        expect(getSyncSingletonMock).toHaveBeenCalledTimes(1);
+        expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenCalledWith('sess_overlay', { forceRefresh: true });
+        expect(legacyEnsureSessionVisibleForMessageRouteMock).not.toHaveBeenCalled();
     });
 
     it('installs a deterministic desktop-overlay QA seed helper for canonical proof states', async () => {

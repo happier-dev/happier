@@ -322,10 +322,11 @@ export function resolveActivityInteractionCommand(params: Readonly<{
         }
         return {
             kind: 'executeAction',
-            actionId: 'approval.request.decide' as ActionId,
+            actionId: 'session.permission.respond' as ActionId,
             payload: {
-                ...parsed.permissionAction,
-                serverId: identity?.serverId ?? target.serverId ?? '',
+                sessionId: parsed.permissionAction.sessionId,
+                requestId: parsed.permissionAction.requestId,
+                decision: parsed.permissionAction.action,
             },
             defaultSessionId: identity?.sessionId ?? parsed.permissionAction.sessionId,
             target,

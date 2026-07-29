@@ -154,7 +154,7 @@ describe('RelayHostLocalChecklistStep', () => {
             throw new Error('Expected install relay runtime status slot');
         }
         const flattenedStyle = flattenStyle(installStatusSlot.props.style);
-        expect(flattenedStyle.borderWidth ?? 0).toBe(0);
+        expect(flattenedStyle.borderWidth).toBe(1);
         expect(Number(flattenedStyle.width)).toBeGreaterThan(26);
         expect(Number(flattenedStyle.height)).toBeGreaterThan(26);
         expect(primaryState.label).toBe('common.continue');

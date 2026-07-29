@@ -11,7 +11,6 @@ type SessionRowAttentionState =
     | 'unread'
     | 'pending'
     | 'working'
-    | 'backgroundActive'
     | 'ready'
     | 'failed'
     | 'permission_required'
@@ -23,8 +22,9 @@ type ResolveSessionRowPresentation = (input: Readonly<{
     requestedSecondaryLineMode: 'status' | 'path';
     hasPathSubtitle: boolean;
     workingRetained?: boolean;
+    backgroundActive?: boolean;
 }>) => Readonly<{
-    attentionIndicator: 'none' | 'working' | 'background' | 'ready' | 'failed' | 'unread' | 'pending' | 'permission' | 'action';
+    attentionIndicator: 'none' | 'working' | 'ready' | 'failed' | 'unread' | 'pending' | 'permission' | 'action';
     titleTone: 'quiet' | 'normal' | 'emphasized';
     secondaryLine: 'none' | 'path' | 'status';
     statusTextKey?: 'status.readyForReview' | 'status.error' | 'status.workingRetained' | 'status.backgroundActive';
@@ -171,19 +171,94 @@ describe('resolveSessionRowPresentation', () => {
         }).statusTextKey).toBeUndefined();
     });
 
-    it('uses a distinct working-colored indicator and label for background work', async () => {
+    it('uses the normal working spinner and precise background copy without replacing actionable indicators', async () => {
         const resolveSessionRowPresentation = await loadRowPresentationResolver();
 
         expect(resolveSessionRowPresentation({
-            attentionState: 'backgroundActive',
+            attentionState: 'unread',
+            backgroundActive: true,
             density: 'default',
             requestedSecondaryLineMode: 'path',
             hasPathSubtitle: true,
         })).toEqual({
-            attentionIndicator: 'background',
+            attentionIndicator: 'working',
             titleTone: 'emphasized',
             secondaryLine: 'status',
             statusTextKey: 'status.backgroundActive',
+        });
+        expect(resolveSessionRowPresentation({
+            attentionState: 'ready',
+            backgroundActive: true,
+            density: 'default',
+            requestedSecondaryLineMode: 'status',
+            hasPathSubtitle: false,
+        })).toEqual({
+            attentionIndicator: 'working',
+            titleTone: 'emphasized',
+            secondaryLine: 'status',
+            statusTextKey: 'status.backgroundActive',
+        });
+        expect(resolveSessionRowPresentation({
+            attentionState: 'pending',
+            backgroundActive: true,
+            density: 'default',
+            requestedSecondaryLineMode: 'status',
+            hasPathSubtitle: false,
+        })).toEqual({
+            attentionIndicator: 'working',
+            titleTone: 'emphasized',
+            secondaryLine: 'status',
+            statusTextKey: 'status.backgroundActive',
+        });
+        expect(resolveSessionRowPresentation({
+            attentionState: 'permission_required',
+            backgroundActive: true,
+            density: 'default',
+            requestedSecondaryLineMode: 'status',
+            hasPathSubtitle: false,
+        })).toEqual({
+            attentionIndicator: 'permission',
+            titleTone: 'emphasized',
+            secondaryLine: 'status',
+        });
+        expect(resolveSessionRowPresentation({
+            attentionState: 'action_required',
+            backgroundActive: true,
+            density: 'default',
+            requestedSecondaryLineMode: 'status',
+            hasPathSubtitle: false,
+        })).toEqual({
+            attentionIndicator: 'action',
+            titleTone: 'emphasized',
+            secondaryLine: 'status',
+        });
+        expect(resolveSessionRowPresentation({
+            attentionState: 'failed',
+            backgroundActive: true,
+            density: 'default',
+            requestedSecondaryLineMode: 'status',
+            hasPathSubtitle: false,
+        })).toEqual({
+            attentionIndicator: 'failed',
+            titleTone: 'emphasized',
+            secondaryLine: 'status',
+            statusTextKey: 'status.error',
+        });
+    });
+
+    it('uses the working spinner for background activity in minimal rows', async () => {
+        const resolveSessionRowPresentation = await loadRowPresentationResolver();
+
+        expect(resolveSessionRowPresentation({
+            attentionState: 'quiet',
+            backgroundActive: true,
+            density: 'minimal',
+            requestedSecondaryLineMode: 'status',
+            hasPathSubtitle: false,
+        })).toEqual({
+            attentionIndicator: 'working',
+            titleTone: 'quiet',
+            secondaryLine: 'none',
         });
     });
 

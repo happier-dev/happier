@@ -79,7 +79,7 @@ export function useLazyDirectoryTree(input: {
     rootDirectoryPath: string;
     expandedPaths?: readonly string[];
     onExpandedPathsChange?: (paths: string[]) => void;
-    reloadToken?: number;
+    reloadToken?: string | number | null;
     getCachedEntries: (directoryPath: string) => LazyDirectoryTreeEntry[] | null;
     getCachedDirectoryMetadata?: (directoryPath: string) => Readonly<{ truncated?: boolean }> | null;
     loadDirectoryEntries: (directoryPath: string) => Promise<LazyDirectoryTreeLoadResult>;

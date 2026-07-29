@@ -115,7 +115,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
             flavor: 'opencode',
             acpSessionModesV1: {
               v: 1,
-              provider: 'opencode',
+              agentId: 'opencode',
               updatedAt: 1,
               currentModeId: 'build',
               availableModes: [
@@ -133,7 +133,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
             flavor: 'codex',
             sessionModesV1: {
               v: 1,
-              provider: 'codex',
+              agentId: 'codex',
               updatedAt: 1,
               currentModeId: 'plan',
               availableModes: [
@@ -208,14 +208,25 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     const executor = createDefaultActionExecutor();
     const result = await executor.execute(
       'session.spawn_new',
-      { backendTargetKey: 'acpBackend:review-bot', path: '/tmp/project' },
+      {
+        backendTargetKey: 'acpBackend:review-bot',
+        machineId: 'machine-explicit',
+        path: '/tmp/project',
+        modelId: 'model-a',
+        providerConnectionId: 'pc_openrouter',
+        serverId: 'server-b',
+      },
       { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
     );
 
     expect(result.ok).toBe(true);
     expect(spawnSessionForVoiceTool).toHaveBeenCalledWith(expect.objectContaining({
       backendTargetKey: 'acpBackend:review-bot',
+      machineId: 'machine-explicit',
       path: '/tmp/project',
+      modelId: 'model-a',
+      providerConnectionId: 'pc_openrouter',
+      serverId: 'server-b',
     }));
   });
 
@@ -226,14 +237,49 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     const executor = createDefaultActionExecutor();
     const result = await executor.execute(
       'session.spawn_picker',
-      { backendTargetKey: 'acpBackend:review-bot' },
+      {
+        backendTargetKey: 'acpBackend:review-bot',
+        modelId: 'model-a',
+        providerConnectionId: 'pc_openrouter',
+      },
       { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
     );
 
     expect(result.ok).toBe(true);
     expect(spawnSessionWithPickerForVoiceTool).toHaveBeenCalledWith(expect.objectContaining({
       backendTargetKey: 'acpBackend:review-bot',
+      modelId: 'model-a',
+      providerConnectionId: 'pc_openrouter',
     }));
+  });
+
+  it('routes terminal composer clear through the scoped session RPC with expected state', async () => {
+    const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+
+    vi.mocked(sessionRpcWithServerScope).mockResolvedValueOnce({
+      ok: true,
+      status: 'cleared',
+      sessionId: 's1',
+    } as any);
+
+    const executor = createDefaultActionExecutor({
+      resolveServerIdForSessionId: (sessionId) => (sessionId === 's1' ? 'server-1' : null),
+    });
+    const result = await executor.execute(
+      'session.terminalComposer.clear',
+      { sessionId: 's1', expectedStateAtMs: 1234 },
+      { defaultSessionId: 's1', surface: 'ui', placement: 'pending_messages' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
+      sessionId: 's1',
+      serverId: 'server-1',
+      method: SESSION_RPC_METHODS.SESSION_TERMINAL_COMPOSER_CLEAR,
+      payload: { sessionId: 's1', expectedStateAtMs: 1234 },
+    });
   });
 
   it('does not publish a session-mode override when starting a planner subagent run', async () => {
@@ -262,7 +308,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s1', expect.any(Function));
+    expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s1', expect.any(Function), undefined);
     const updater = patchSessionMetadataWithRetry.mock.calls[0]?.[1];
     const next = updater({ path: '/tmp/project', host: 'localhost' });
     expect(next.acpSessionModeOverrideV1).toEqual(
@@ -299,7 +345,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s_acp', expect.any(Function));
+    expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s_acp', expect.any(Function), undefined);
     const updater = patchSessionMetadataWithRetry.mock.calls[0]?.[1];
     const next = updater({
       path: '/tmp/project',
@@ -342,7 +388,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
         flavor: 'codex',
         sessionModesV1: {
           v: 1,
-          provider: 'codex',
+          agentId: 'codex',
           updatedAt: 1,
           currentModeId: 'plan',
           availableModes: [
@@ -363,7 +409,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s_codex', expect.any(Function));
+    expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s_codex', expect.any(Function), undefined);
     const updater = patchSessionMetadataWithRetry.mock.calls[0]?.[1];
     const next = updater({
       path: '/tmp/project',
@@ -384,7 +430,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
         host: 'localhost',
         agentRuntimeDescriptorV1: {
           v: 1,
-          providerId: 'opencode',
+          agentId: 'opencode',
           provider: {
             backendMode: 'server',
             providerSessionId: 'oc_1',
@@ -394,7 +440,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
         },
         acpSessionModesV1: {
           v: 1,
-          provider: 'opencode',
+          agentId: 'opencode',
           updatedAt: 1,
           currentModeId: 'build',
           availableModes: [

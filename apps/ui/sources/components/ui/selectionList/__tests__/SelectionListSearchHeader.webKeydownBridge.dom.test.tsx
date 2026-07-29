@@ -194,4 +194,162 @@ describe('SelectionListSearchHeader web keydown bridge', () => {
             container.remove();
         }
     });
+
+    it('preserves native DOM Tab traversal for a populated search until Arrow navigation focuses a row', async () => {
+        const { SelectionListSearchHeader } = await import('../SelectionListSearchHeader');
+        const { createSelectionListKeyPressHandler } = await import('../SelectionListKeyboardInput');
+        const { useSelectionListKeyboardNav } = await import('../useSelectionListKeyboardNav');
+        const container = document.createElement('div');
+        document.body.append(container);
+        const root = createRoot(container);
+        const onActivate = vi.fn();
+
+        function Harness(props: Readonly<{
+            inputValue: string;
+            visibleOptionIds: ReadonlyArray<string>;
+        }>): React.ReactElement {
+            const keyboard = useSelectionListKeyboardNav({
+                flatVisibleOptionIds: props.visibleOptionIds,
+                onActivate,
+                canPopStep: false,
+                onPopStep: () => {},
+                inputValue: props.inputValue,
+                onClearInput: () => {},
+                inputMode: 'search',
+                ghostSuffixPresent: false,
+            });
+            const handleKeyPress = React.useMemo(
+                () => createSelectionListKeyPressHandler({
+                    keyboard,
+                    isComposing: false,
+                    focusedOptionId: null,
+                    onActivate,
+                    canPopStep: false,
+                    inputValue: props.inputValue,
+                    onRequestClose: () => {},
+                }),
+                [keyboard, props.inputValue],
+            );
+            return (
+                <SelectionListSearchHeader
+                    value={props.inputValue}
+                    onChangeText={() => {}}
+                    placeholder="Search models"
+                    canPop={false}
+                    onKeyPress={handleKeyPress}
+                    testID="search"
+                />
+            );
+        }
+
+        try {
+            await act(async () => {
+                root.render(
+                    <Harness
+                        inputValue="filtered"
+                        visibleOptionIds={['filtered-row-a', 'filtered-row-b']}
+                    />,
+                );
+            });
+
+            const input = container.querySelector('[data-testid="search:input"]');
+            expect(input).toBeInstanceOf(HTMLInputElement);
+
+            const initialTab = new KeyboardEvent('keydown', {
+                key: 'Tab',
+                code: 'Tab',
+                bubbles: true,
+                cancelable: true,
+            });
+            await act(async () => {
+                input!.dispatchEvent(initialTab);
+            });
+            expect(initialTab.defaultPrevented).toBe(false);
+            expect(onActivate).not.toHaveBeenCalled();
+
+            const initialShiftTab = new KeyboardEvent('keydown', {
+                key: 'Tab',
+                code: 'Tab',
+                shiftKey: true,
+                bubbles: true,
+                cancelable: true,
+            });
+            await act(async () => {
+                input!.dispatchEvent(initialShiftTab);
+            });
+            expect(initialShiftTab.defaultPrevented).toBe(false);
+            expect(onActivate).not.toHaveBeenCalled();
+
+            const arrowDown = new KeyboardEvent('keydown', {
+                key: 'ArrowDown',
+                code: 'ArrowDown',
+                bubbles: true,
+                cancelable: true,
+            });
+            await act(async () => {
+                input!.dispatchEvent(arrowDown);
+            });
+            expect(arrowDown.defaultPrevented).toBe(true);
+
+            const explicitTab = new KeyboardEvent('keydown', {
+                key: 'Tab',
+                code: 'Tab',
+                bubbles: true,
+                cancelable: true,
+            });
+            await act(async () => {
+                input!.dispatchEvent(explicitTab);
+            });
+            expect(explicitTab.defaultPrevented).toBe(true);
+            expect(onActivate).toHaveBeenCalledOnce();
+            expect(onActivate).toHaveBeenCalledWith('filtered-row-b');
+
+            await act(async () => {
+                root.render(
+                    <Harness
+                        inputValue="refined"
+                        visibleOptionIds={['refined-row-a', 'refined-row-b']}
+                    />,
+                );
+            });
+            const postFilterTab = new KeyboardEvent('keydown', {
+                key: 'Tab',
+                code: 'Tab',
+                bubbles: true,
+                cancelable: true,
+            });
+            await act(async () => {
+                input!.dispatchEvent(postFilterTab);
+            });
+            expect(postFilterTab.defaultPrevented).toBe(false);
+            expect(onActivate).toHaveBeenCalledOnce();
+
+            const refinedArrowDown = new KeyboardEvent('keydown', {
+                key: 'ArrowDown',
+                code: 'ArrowDown',
+                bubbles: true,
+                cancelable: true,
+            });
+            await act(async () => {
+                input!.dispatchEvent(refinedArrowDown);
+            });
+            const refinedExplicitTab = new KeyboardEvent('keydown', {
+                key: 'Tab',
+                code: 'Tab',
+                bubbles: true,
+                cancelable: true,
+            });
+            await act(async () => {
+                input!.dispatchEvent(refinedExplicitTab);
+            });
+            expect(refinedExplicitTab.defaultPrevented).toBe(true);
+            expect(onActivate).toHaveBeenCalledTimes(2);
+            expect(onActivate).toHaveBeenLastCalledWith('refined-row-b');
+        } finally {
+            await act(async () => {
+                root.unmount();
+            });
+            container.remove();
+        }
+    });
 });

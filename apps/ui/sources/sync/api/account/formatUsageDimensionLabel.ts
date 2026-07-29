@@ -12,14 +12,10 @@ const usageTokenLabels = new Map<string, string>([
     ['anthropic', 'Anthropic'],
     ['app', 'App'],
     ['appserver', 'App Server'],
-    ['claude', 'Claude'],
-    ['codex', 'Codex'],
-    ['gemini', 'Gemini'],
     ['google', 'Google'],
     ['local', 'Local'],
     ['mcp', 'MCP'],
     ['openai', 'OpenAI'],
-    ['opencode', 'OpenCode'],
     ['remote', 'Remote'],
     ['sdk', 'SDK'],
     ['server', 'Server'],
@@ -42,6 +38,9 @@ function titleCaseUsageToken(token: string): string {
     const known = usageTokenLabels.get(lower);
     if (known) {
         return known;
+    }
+    if (lower.startsWith('open') && lower.length > 'open'.length) {
+        return `Open${lower.charAt(4).toUpperCase()}${lower.slice(5)}`;
     }
     return lower.charAt(0).toUpperCase() + lower.slice(1);
 }

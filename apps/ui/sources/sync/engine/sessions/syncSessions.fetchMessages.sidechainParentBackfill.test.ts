@@ -54,7 +54,7 @@ describe('fetchAndApplyMessages (sidechain parent backfill)', () => {
               role: 'agent',
               content: {
                 type: 'acp',
-                provider: 'claude',
+                agentId: 'claude',
                 data: {
                   type: 'tool-call',
                   callId: 'tool_task_1',
@@ -75,7 +75,7 @@ describe('fetchAndApplyMessages (sidechain parent backfill)', () => {
             role: 'agent',
             content: {
               type: 'acp',
-              provider: 'claude',
+              agentId: 'claude',
               data: {
                 type: 'message',
                 message: 'child',
@@ -149,7 +149,7 @@ describe('fetchAndApplyMessages (sidechain parent backfill)', () => {
               role: 'agent',
               content: {
                 type: 'acp',
-                provider: 'claude',
+                agentId: 'claude',
                 data: {
                   type: 'tool-call',
                   callId: 'tool_task_1',
@@ -171,7 +171,7 @@ describe('fetchAndApplyMessages (sidechain parent backfill)', () => {
               role: 'agent',
               content: {
                 type: 'acp',
-                provider: 'claude',
+                agentId: 'claude',
                 data: {
                   type: 'message',
                   message: 'root',
@@ -189,7 +189,7 @@ describe('fetchAndApplyMessages (sidechain parent backfill)', () => {
             role: 'agent',
             content: {
               type: 'acp',
-              provider: 'claude',
+              agentId: 'claude',
               data: {
                 type: 'message',
                 message: 'child',

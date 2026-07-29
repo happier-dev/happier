@@ -96,16 +96,6 @@ export const UI_FEATURE_REGISTRY = {
             icon: { ioniconName: 'hardware-chip-outline', color: '#34C759' },
         },
     },
-    connectedServices: {
-        settingsToggle: {
-            showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: false,
-            titleKey: 'settingsFeatures.expConnectedServices',
-            subtitleKey: 'settingsFeatures.expConnectedServicesSubtitle',
-            icon: { ioniconName: 'link-outline', color: '#007AFF' },
-        },
-    },
     'connectedServices.quotas': {
         settingsToggle: {
             showInSettings: true,
@@ -155,6 +145,9 @@ export const UI_FEATURE_REGISTRY = {
         settingsToggle: undefined,
     },
     'sharing.pendingQueueV2': {
+        settingsToggle: undefined,
+    },
+    'sharing.pendingDeliveryState': {
         settingsToggle: undefined,
     },
     sessions: {
@@ -213,6 +206,12 @@ export const UI_FEATURE_REGISTRY = {
     'machines.rpc.directPeer': {
         settingsToggle: undefined,
     },
+    'machines.peerMediation': {
+        settingsToggle: undefined,
+    },
+    'machines.peerMediation.observability': {
+        settingsToggle: undefined,
+    },
     localServices: {
         settingsToggle: undefined,
     },
@@ -220,6 +219,15 @@ export const UI_FEATURE_REGISTRY = {
         settingsToggle: undefined,
     },
     'localServices.managed': {
+        settingsToggle: undefined,
+    },
+    'localServices.launcher': {
+        settingsToggle: undefined,
+    },
+    'localServices.actions': {
+        settingsToggle: undefined,
+    },
+    'localServices.actions.terminate': {
         settingsToggle: undefined,
     },
     'localServices.preview': {
@@ -238,6 +246,45 @@ export const UI_FEATURE_REGISTRY = {
         settingsToggle: undefined,
     },
     'browser.sidecar': {
+        settingsToggle: undefined,
+    },
+    'browser.diagnostics': {
+        settingsToggle: undefined,
+    },
+    'browser.context': {
+        settingsToggle: undefined,
+    },
+    'browser.automation': {
+        settingsToggle: undefined,
+    },
+    'browser.automation.injectedPage': {
+        settingsToggle: undefined,
+    },
+    'browser.automation.eval': {
+        settingsToggle: undefined,
+    },
+    'browser.recording': {
+        settingsToggle: undefined,
+    },
+    'browser.recording.attachments': {
+        settingsToggle: undefined,
+    },
+    plugins: {
+        settingsToggle: undefined,
+    },
+    'plugins.ui': {
+        settingsToggle: undefined,
+    },
+    'plugins.ui.hostedWeb': {
+        settingsToggle: undefined,
+    },
+    'plugins.ui.structuredMessages': {
+        settingsToggle: undefined,
+    },
+    'plugins.ui.reactNativeBundles': {
+        settingsToggle: undefined,
+    },
+    'plugins.ui.reactNativeBundles.devHotReload': {
         settingsToggle: undefined,
     },
     devices: {
@@ -282,22 +329,34 @@ export const UI_FEATURE_REGISTRY = {
             icon: { ioniconName: 'albums-outline', color: '#34C759' },
         },
     },
-    'providers.claude.unifiedTerminal': {
+    providers: {
         settingsToggle: undefined,
     },
-    'providers.claude.unifiedTerminal.tuiRuntimeControl': {
+    'providers.localDiscovery': {
         settingsToggle: undefined,
     },
-    'providers.codex.appServer.goals': {
+    'providers.localModelManagement': {
         settingsToggle: undefined,
     },
-    'providers.codex.appServer.plugins': {
+    'agents.claude.unifiedTerminal': {
         settingsToggle: undefined,
     },
-    'providers.codex.appServer.structuredInput': {
+    'agents.claude.unifiedTerminal.tuiRuntimeControl': {
         settingsToggle: undefined,
     },
-    'providers.codex.appServer.permissionProfiles': {
+    'agents.goals': {
+        settingsToggle: undefined,
+    },
+    'agents.codex.appServer.goals': {
+        settingsToggle: undefined,
+    },
+    'agents.codex.appServer.plugins': {
+        settingsToggle: undefined,
+    },
+    'agents.codex.appServer.structuredInput': {
+        settingsToggle: undefined,
+    },
+    'agents.codex.appServer.permissionProfiles': {
         settingsToggle: undefined,
     },
     'auth.recovery.providerReset': {
@@ -336,7 +395,11 @@ export const UI_FEATURE_REGISTRY = {
     'app.ui.releaseNotes': {
         settingsToggle: undefined,
     },
+    // Deprecated first-launch showcase flag retained for compatibility with old feature payloads.
     'app.ui.onboardingShowcase': {
+        settingsToggle: undefined,
+    },
+    'app.ui.onboardingTour': {
         settingsToggle: undefined,
     },
     'app.ui.liveActivities': {
@@ -431,6 +494,18 @@ export const UI_FEATURE_REGISTRY = {
             subtitleKey: 'settingsFeatures.expEmbeddedTerminalSubtitle',
             icon: { ioniconName: 'terminal-outline', color: '#AF52DE' },
         },
+    },
+    'terminal.transport.byteStream': {
+        settingsToggle: undefined,
+    },
+    'terminal.renderer.native': {
+        settingsToggle: undefined,
+    },
+    'terminal.renderer.iosGhostty': {
+        settingsToggle: undefined,
+    },
+    'terminal.renderer.androidTermux': {
+        settingsToggle: undefined,
     },
     'mcp.servers': {
         settingsToggle: undefined,

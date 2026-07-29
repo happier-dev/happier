@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Redirect, Stack, type Href, useLocalSearchParams, useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
+import { Redirect, Stack, type Href, useLocalSearchParams } from 'expo-router';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { ProjectDetailScreen } from '@/components/projects/ProjectDetailScreen';
@@ -11,6 +12,7 @@ import {
     buildProjectRouteHref,
     readProjectRouteStringParam,
     readProjectRouteWorktreeSelection,
+    resolveProjectRouteSelectionQuery,
     resolveProjectRouteSegment,
     replaceProjectRouteSelection,
 } from '@/components/projects/detail/projectRouteState';
@@ -19,15 +21,33 @@ import { ProjectCockpitShell } from '@/components/workspaceCockpit/project/Proje
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
 import {
     migrateProjectRouteSegmentToMobileSurface,
+    type ProjectMobileSurface,
     resolveProjectMobileSurfaceIntent,
     resolveProjectRoutePathForSurface,
 } from '@/components/workspaceCockpit/project/projectCockpitState';
+import { useProjectRouteRouterRef } from '@/components/projects/detail/useProjectRouteRouterRef';
 import { useResolvedRepoWorktreeSelection } from '@/components/workspaces/scm/worktrees/useResolvedRepoWorktreeSelection';
+import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
+type ClassicProjectHostedSurface = Extract<ProjectMobileSurface, 'browser' | 'services'>;
+
+function resolveClassicProjectHostedSurface(surface: ProjectMobileSurface): ClassicProjectHostedSurface | null {
+    return surface === 'browser' || surface === 'services' ? surface : null;
+}
+
+function appendClassicProjectHostedSurfaceHint(href: string, surface: ClassicProjectHostedSurface): string {
+    const [pathname = href, queryString = ''] = href.split('?', 2);
+    const searchParams = new URLSearchParams(queryString);
+    searchParams.set('mobileSurface', surface);
+    const query = searchParams.toString();
+    return query ? `${pathname}?${query}` : pathname;
+}
+
 export default React.memo(() => {
-    const router = useRouter();
+    const routerRef = useProjectRouteRouterRef();
+    const isFocused = useIsFocused();
     const params = useLocalSearchParams<{
         workspaceRefId?: string | string[];
         mobileSurface?: string | string[];
@@ -86,30 +106,32 @@ export default React.memo(() => {
 
     const handleSelectRootPath = React.useCallback((path: string) => {
         if (!workspaceRef) return;
-        const nextWorktreeId = path === workspaceRef.rootPath
+        const trimmedPath = path.trim();
+        if (!trimmedPath) return;
+        const nextWorktreeId = trimmedPath === workspaceRef.rootPath
             ? null
-            : (availableWorktrees?.find((worktree) => worktree.isPrunable !== true && worktree.path === path)?.id ?? null);
+            : (findVisibleRepoWorktreeByPath(availableWorktrees, trimmedPath)?.id ?? null);
         replaceProjectRouteSelection({
-            router,
+            router: routerRef.current,
             workspaceRefId: workspaceRef.id,
-            activeRootPath: path,
+            activeRootPath: trimmedPath,
             defaultRootPath: workspaceRef.rootPath,
             activeWorktreeId: nextWorktreeId,
             showWorktrees,
         });
-    }, [availableWorktrees, router, showWorktrees, workspaceRef]);
+    }, [availableWorktrees, routerRef, showWorktrees, workspaceRef]);
 
     const handleSetShowWorktrees = React.useCallback((nextValue: boolean) => {
         if (!workspaceRef) return;
         replaceProjectRouteSelection({
-            router,
+            router: routerRef.current,
             workspaceRefId: workspaceRef.id,
             activeRootPath: activeRootPath ?? fallbackRootPath,
             defaultRootPath: workspaceRef.rootPath,
             activeWorktreeId,
             showWorktrees: nextValue,
         });
-    }, [activeRootPath, activeWorktreeId, fallbackRootPath, router, workspaceRef]);
+    }, [activeRootPath, activeWorktreeId, fallbackRootPath, routerRef, workspaceRef]);
 
     const routeActions = useProjectRouteActions({
         workspaceRef,
@@ -153,11 +175,17 @@ export default React.memo(() => {
         explicitSurfaceHint: explicitMobileSurfaceHint,
     });
     const canonicalActiveRootPath = activeRootPath ?? fallbackRootPath;
-    const canonicalWorktreeQueryValue = workspaceRef && canonicalActiveRootPath === workspaceRef.rootPath
-        ? PROJECT_ROUTE_ROOT_SENTINEL
-        : (activeWorktreeId ?? null);
+    const canonicalRouteSelectionQuery = workspaceRef
+        ? resolveProjectRouteSelectionQuery({
+            activeRootPath: canonicalActiveRootPath,
+            defaultRootPath: workspaceRef.rootPath,
+            activeWorktreeId,
+        })
+        : { rawWorktreeId: null, rawActiveRootPath: null };
+    const canonicalWorktreeQueryValue = canonicalRouteSelectionQuery.rawWorktreeId;
     const shouldCanonicalizeCockpitIndexRoute = Boolean(
-        workspaceRef
+        isFocused
+        && workspaceRef
         && cockpitEnabled
         && (
             rootMobileSurface !== 'overview'
@@ -169,11 +197,29 @@ export default React.memo(() => {
         ? resolveProjectRoutePathForSurface({
             workspaceRefId: workspaceRef.id,
             surface: rootMobileSurface,
-            rawWorktreeId: canonicalWorktreeQueryValue,
+            ...canonicalRouteSelectionQuery,
         })
         : null;
+    const handleSelectCockpitRootPath = React.useCallback((path: string) => {
+        if (!workspaceRef) return;
+        const trimmedPath = path.trim();
+        if (!trimmedPath) return;
+        const nextWorktreeId = trimmedPath === workspaceRef.rootPath
+            ? null
+            : (findVisibleRepoWorktreeByPath(availableWorktrees, trimmedPath)?.id ?? null);
+        routerRef.current.replace(resolveProjectRoutePathForSurface({
+            workspaceRefId: workspaceRef.id,
+            surface: 'overview',
+            ...resolveProjectRouteSelectionQuery({
+                activeRootPath: trimmedPath,
+                defaultRootPath: workspaceRef.rootPath,
+                activeWorktreeId: nextWorktreeId,
+            }),
+        }));
+    }, [availableWorktrees, routerRef, workspaceRef]);
 
     React.useEffect(() => {
+        if (!isFocused) return;
         if (!workspaceRefId) return;
         if (lastMobileSurfaceByWorkspaceRefId?.[workspaceRefId] === rootMobileSurface) return;
         setLastMobileSurfaceByWorkspaceRefId({
@@ -181,6 +227,7 @@ export default React.memo(() => {
             [workspaceRefId]: rootMobileSurface,
         });
     }, [
+        isFocused,
         lastMobileSurfaceByWorkspaceRefId,
         rootMobileSurface,
         setLastMobileSurfaceByWorkspaceRefId,
@@ -188,6 +235,7 @@ export default React.memo(() => {
     ]);
 
     React.useEffect(() => {
+        if (!isFocused) return;
         if (!workspaceRefId) return;
         if (!canonicalActiveRootPath) return;
         const nextStoredWorktreeId = canonicalWorktreeQueryValue ?? PROJECT_ROUTE_ROOT_SENTINEL;
@@ -205,6 +253,7 @@ export default React.memo(() => {
     }, [
         canonicalActiveRootPath,
         canonicalWorktreeQueryValue,
+        isFocused,
         lastActiveRootPathByWorkspaceRefId,
         lastActiveWorktreeIdByWorkspaceRefId,
         setLastActiveRootPathByWorkspaceRefId,
@@ -229,23 +278,15 @@ export default React.memo(() => {
                     activeRootPath={canonicalActiveRootPath}
                     activeWorktreeId={activeWorktreeId}
                     surface={rootMobileSurface}
-                    onSelectRootPath={(path) => {
-                        if (!workspaceRef) return;
-                        const nextWorktreeId = path === workspaceRef.rootPath
-                            ? PROJECT_ROUTE_ROOT_SENTINEL
-                            : (availableWorktrees?.find((worktree) => worktree.isPrunable !== true && worktree.path === path)?.id ?? null);
-                        router.replace(resolveProjectRoutePathForSurface({
-                            workspaceRefId: workspaceRef.id,
-                            surface: 'overview',
-                            rawWorktreeId: nextWorktreeId,
-                        }));
-                    }}
+                    isFocused={isFocused}
+                    onSelectRootPath={handleSelectCockpitRootPath}
                 />
             </>
         );
     }
 
-    if (workspaceRefId && showWorkspaceExperienceToggle) {
+    if (isFocused && workspaceRefId && showWorkspaceExperienceToggle) {
+        const classicHostedSurface = resolveClassicProjectHostedSurface(rootMobileSurface);
         if (!workspaceRef) {
             const href = (
                 cockpitEnabled
@@ -277,27 +318,35 @@ export default React.memo(() => {
             } else if (rawLegacyActiveRootPath) {
                 queryParams.set('activeRootPath', rawLegacyActiveRootPath);
             }
+            if (classicHostedSurface) {
+                queryParams.set('mobileSurface', classicHostedSurface);
+            }
             const query = queryParams.toString();
             const legacyHref = (
                 query
-                    ? `/projects/${encodeURIComponent(workspaceRefId)}/${legacySegment}?${query}`
-                    : `/projects/${encodeURIComponent(workspaceRefId)}/${legacySegment}`
+                    ? `/projects/${encodeURIComponent(workspaceRefId)}/${classicHostedSurface ? 'files' : legacySegment}?${query}`
+                    : `/projects/${encodeURIComponent(workspaceRefId)}/${classicHostedSurface ? 'files' : legacySegment}`
             ) as Href;
             return <Redirect href={legacyHref} />;
         }
         const href = buildProjectRouteHref({
             workspaceRefId,
-            segment: resolveProjectRouteSegment(
-                pane.scopeState?.right?.activeTabId,
-                typeof lastMobileSurfaceByWorkspaceRefId?.[workspaceRefId] === 'string'
-                    ? lastMobileSurfaceByWorkspaceRefId[workspaceRefId]
-                    : null,
-            ),
+            segment: classicHostedSurface
+                ? 'files'
+                : resolveProjectRouteSegment(
+                    pane.scopeState?.right?.activeTabId,
+                    typeof lastMobileSurfaceByWorkspaceRefId?.[workspaceRefId] === 'string'
+                        ? lastMobileSurfaceByWorkspaceRefId[workspaceRefId]
+                        : null,
+                ),
             activeRootPath: activeRootPath ?? fallbackRootPath,
             defaultRootPath: workspaceRef?.rootPath ?? '',
             activeWorktreeId,
-        }) as Href;
-        return <Redirect href={href} />;
+        });
+        const redirectHref = classicHostedSurface
+            ? appendClassicProjectHostedSurfaceHint(href, classicHostedSurface)
+            : href;
+        return <Redirect href={redirectHref as Href} />;
     }
 
     return (
@@ -306,6 +355,7 @@ export default React.memo(() => {
             <ProjectDetailScreen
                 workspaceRefId={workspaceRefId}
                 activeRootPath={activeRootPath}
+                isFocused={isFocused}
                 showWorktrees={showWorktrees}
                 onSelectRootPath={handleSelectRootPath}
                 onSetShowWorktrees={handleSetShowWorktrees}

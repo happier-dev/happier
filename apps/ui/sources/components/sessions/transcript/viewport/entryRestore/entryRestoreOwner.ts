@@ -6,7 +6,6 @@ import type {
     TranscriptViewportAnchorIdentity,
     TranscriptViewportControllerInput,
     TranscriptViewportMode,
-    TranscriptViewportScrollReason,
 } from '../transcriptViewportTypes';
 import type { TranscriptViewportTransactionOutcome } from '../transcriptViewportOwnership';
 import { nativeEntryRestoreObservationMatches } from '../nativeEntryRestoreObservationPolicy';
@@ -25,7 +24,6 @@ import {
     resolveEntryRestoreTarget,
     type EntryRestoreAnchorSnapshot,
     type EntryRestoreFinalNoneReason,
-    type EntryRestoreSliceTarget,
 } from './resolveEntryRestoreTarget';
 
 export type EntryRestoreOwnerPlatform = 'native' | 'web';
@@ -43,21 +41,14 @@ type EntryRestoreOwnerWriteContext = Readonly<{
     issuedContentHeight: number;
     issuedLayoutHeight: number;
     itemIndex: number | null;
-    kind: 'anchor' | 'distance' | 'bottom' | 'slice-anchor';
+    kind: 'anchor' | 'distance';
     sessionId: string;
     targetOffsetY: number | null;
     targetOffsetYWasClamped: boolean;
 }>;
 
-type WebBottomSettleConfirmation = Readonly<{
-    context: EntryRestoreOwnerWriteContext;
-    spent: boolean;
-}>;
-
-const WEB_BOTTOM_ENTRY_CONFIRMATION_EPSILON_PX = 1;
-
 export type EntryRestoreOwnerCommandInput =
-    | Extract<TranscriptViewportControllerInput, { type: 'restore-anchor' | 'restore-distance' | 'first-paint' }>
+    | Extract<TranscriptViewportControllerInput, { type: 'restore-anchor' | 'restore-distance' }>
     | Readonly<{
         anchor: EntryRestoreOwnerAnchor;
         itemIndex: number;
@@ -84,14 +75,7 @@ export type EntryRestoreOwnerEffect =
         type: 'set-native-initial-viewport-pending-observation';
     }>
     | Readonly<{
-        anchorRowId: string;
-        sessionId: string;
-        type: 'set-entry-slice-window';
-    }>
-    | Readonly<{
-        type: 'clear-entry-slice-window';
-    }>
-    | Readonly<{
+        targetSeq: number | null;
         type: 'request-bounded-materialization';
     }>
     | Readonly<{
@@ -119,15 +103,6 @@ export type EntryRestoreOwnerEffect =
     | Readonly<{
         force: true;
         type: 'schedule-native-entry-paint-release';
-    }>
-    | Readonly<{
-        type: 'reveal-entry-slice-window';
-    }>
-    | Readonly<{
-        reason: TranscriptViewportScrollReason;
-        sessionId: string;
-        type: 'request-bottom-follow-write';
-        writer: 'settle-reconfirm';
     }>;
 
 export type EntryRestoreOwnerAttemptInput<TItem> = Readonly<{
@@ -152,20 +127,8 @@ export type EntryRestoreOwnerAttemptInput<TItem> = Readonly<{
         sessionId: string;
         shouldFollowBottom: boolean;
     }> | null;
-    slice: EntryRestoreOwnerSliceInput;
     userScrollObserved: boolean;
 }>;
-
-export type EntryRestoreOwnerSliceInput =
-    | Readonly<{ capable: false }>
-    | Readonly<{
-        anchorRowId?: string | null;
-        capable: true;
-        renderedAnchor?: EntryRestoreOwnerAnchor | null;
-        renderedAnchorIndex?: number | null;
-        target?: EntryRestoreSliceTarget | null;
-        writeFree: boolean;
-    }>;
 
 export type EntryRestoreOwnerObservationInput = Readonly<{
     contentHeight: number;
@@ -183,31 +146,29 @@ export type EntryRestoreOwnerWebHostFactsInput = Readonly<{
     resolveAnchorObservation(anchor: EntryRestoreOwnerAnchor): EntryRestoreTransactionObservation | null;
     sessionId: string;
     tolerancePx: number;
-    wantsPinned?: boolean;
 }>;
 
 export type EntryRestoreOwnerNativeHostFactsInput = Readonly<{
     contentHeight: number;
     distanceFromBottom: number;
     layoutHeight: number;
+    /**
+     * True once the native mount-settle window declared row measurements quiescent.
+     * Distance restores judged below the issued content height stay withheld until
+     * this flips — then alignment is judged against the SETTLED geometry so the
+     * transaction's single correction lands at the real position instead of the
+     * estimate-space one (live clamp-to-tail defect, 2026-07-13).
+     */
+    mountSettleStable?: boolean;
     nowMs: number;
     observedOffsetY: number;
     resolveAnchorObservation(anchor: EntryRestoreOwnerAnchor): EntryRestoreTransactionObservation | null;
-    resolveSliceObservation(anchor: EntryRestoreOwnerAnchor): EntryRestoreTransactionObservation | null;
     sessionId: string;
-    targetKind?: 'slice-anchor';
     tolerancePx: number;
 }>;
 
 export type EntryRestoreOwner = Readonly<{
     attempt<TItem>(params: EntryRestoreOwnerAttemptInput<TItem>): readonly EntryRestoreOwnerEffect[];
-    beginWebBottom(params: Readonly<{
-        contentHeight: number;
-        deadlineMs: number;
-        layoutHeight: number;
-        nowMs: number;
-        sessionId: string;
-    }>): readonly EntryRestoreOwnerEffect[];
     disposeForExit(params: Readonly<{ currentSessionId: string }>): readonly EntryRestoreOwnerEffect[];
     hasOpenTransaction(sessionId: string): boolean;
     matchesNativePaintReleaseHandle(params: Readonly<{ issuedAtMs: number; sessionId: string }>): boolean;
@@ -232,7 +193,6 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
     let writeContext: EntryRestoreOwnerWriteContext | null = null;
     let suppressedSessionId: string | null = null;
     let lastClosedSessionId: string | null = null;
-    let webBottomSettleConfirmation: WebBottomSettleConfirmation | null = null;
 
     function attempt<TItem>(params: EntryRestoreOwnerAttemptInput<TItem>): readonly EntryRestoreOwnerEffect[] {
         const entryViewport = params.restoredViewport;
@@ -248,17 +208,6 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
 
         const rememberedDistanceFromBottom = normalizeDistance(entryViewport.offsetY);
         const distanceFromBottom = rememberedDistanceFromBottom ?? 0;
-        if (params.platform === 'native' && params.slice.capable && params.slice.target?.kind === 'slice') {
-            const sliceEffects = attemptSlice({
-                ...params,
-                distanceFromBottom,
-                restoredAnchor: entryViewport.anchor,
-                slice: params.slice,
-            });
-            if (sliceEffects !== null) return sliceEffects;
-            suppressedSessionId = null;
-        }
-
         const target = resolveEntryRestoreTarget({
             snapshot: {
                 anchor: toResolverAnchor(entryViewport.anchor),
@@ -283,8 +232,7 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
         // loop). Treating `empty-transcript` as FINAL at this point sets
         // lastClosedSessionId and permanently blocks all subsequent retries.
         // Treat it as a wait verdict until the fill settles so the owner retries
-        // once content arrives. Native is excluded: the slice path owns initial
-        // materialization there and does not share this timing race.
+        // once content arrives.
         if (
             params.platform === 'web' &&
             target.kind === 'none' &&
@@ -294,14 +242,20 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
             return [];
         }
         if (target.kind === 'materialize-then-anchor') {
-            return materializeEffects('missing-anchor', 'restore-anchor', distanceFromBottom, params);
+            return materializeEffects(
+                'missing-anchor',
+                'restore-anchor',
+                distanceFromBottom,
+                target.anchorSeqHint,
+                params,
+            );
         }
         if (
             target.kind === 'distance-oneshot' &&
             distanceFromBottom > Math.max(0, Math.trunc(params.contentHeight - params.layoutHeight)) &&
             params.canMaterializeOlder
         ) {
-            return materializeEffects('not-ready', 'restore-distance', distanceFromBottom, params);
+            return materializeEffects('not-ready', 'restore-distance', distanceFromBottom, null, params);
         }
 
         if (target.kind === 'none') {
@@ -315,6 +269,9 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
             });
             return closeEffects(params.currentSessionId, params.platform);
         }
+        // Follow-bottom entry placement belongs to the fixed Legend renderer. The
+        // entry-restore owner only accepts detached anchor/distance targets.
+        if (target.kind === 'bottom') return [];
 
         if (target.kind === 'distance-oneshot' && rememberedDistanceFromBottom == null) {
             return [restoreDecisionEffect('skipped', 'restore-distance', undefined, params)];
@@ -327,9 +284,7 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
             itemIndex: target.kind === 'anchor' ? target.index : null,
             kind: target.kind === 'anchor'
                 ? 'anchor'
-                : target.kind === 'bottom'
-                    ? 'bottom'
-                    : 'distance',
+                : 'distance',
             layoutHeight: params.layoutHeight,
             nowMs: params.nowMs,
             sessionId: params.currentSessionId,
@@ -359,20 +314,9 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
                 return [restoreDecisionEffect('not-ready', 'restore-anchor', distanceFromBottom, params)];
             }
             effects.push({ command, type: 'execute-command' });
-        } else if (target.kind === 'distance-oneshot') {
-            effects.push({
-                command: buildDistanceCommand(params.currentSessionId, distanceFromBottom, params.contentHeight),
-                type: 'execute-command',
-            });
         } else {
             effects.push({
-                command: {
-                    entrySnapshot: null,
-                    jumpToSeq: null,
-                    sessionId: params.currentSessionId,
-                    shouldFollowBottom: true,
-                    type: 'first-paint',
-                },
+                command: buildDistanceCommand(params.currentSessionId, distanceFromBottom, params.contentHeight),
                 type: 'execute-command',
             });
         }
@@ -386,41 +330,12 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
         return effects;
     }
 
-    function beginWebBottom(params: Readonly<{
-        contentHeight: number;
-        deadlineMs: number;
-        layoutHeight: number;
-        nowMs: number;
-        sessionId: string;
-    }>): readonly EntryRestoreOwnerEffect[] {
-        if (transaction != null) return [];
-        if (lastClosedSessionId === params.sessionId) return [];
-        return openTransaction({
-            context: buildWriteContext({
-                anchor: null,
-                contentHeight: params.contentHeight,
-                distanceFromBottom: 0,
-                kind: 'bottom',
-                layoutHeight: params.layoutHeight,
-                nowMs: params.nowMs,
-                sessionId: params.sessionId,
-                targetOffsetY: null,
-                targetOffsetYWasClamped: false,
-            }),
-            deadlineMs: params.deadlineMs,
-            nowMs: params.nowMs,
-            sessionId: params.sessionId,
-            target: { kind: 'bottom' },
-        });
-    }
-
     function observeNative(params: EntryRestoreOwnerObservationInput): readonly EntryRestoreOwnerEffect[] {
         return observe(params, 'native');
     }
 
     function observeNativeHostFacts(params: EntryRestoreOwnerNativeHostFactsInput): readonly EntryRestoreOwnerEffect[] {
         if (!transaction || transaction.isClosed() || transaction.sessionId !== params.sessionId || !writeContext) return [];
-        if (params.targetKind === 'slice-anchor' && writeContext.kind !== 'slice-anchor') return [];
         const observation = resolveNativeHostObservation(writeContext, params);
         if (observation == null) return [];
         return observeNative({
@@ -437,9 +352,7 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
     }
 
     function observeWebHostFacts(params: EntryRestoreOwnerWebHostFactsInput): readonly EntryRestoreOwnerEffect[] {
-        if (!transaction || transaction.isClosed() || transaction.sessionId !== params.sessionId || !writeContext) {
-            return observeClosedWebBottomSettle(params);
-        }
+        if (!transaction || transaction.isClosed() || transaction.sessionId !== params.sessionId || !writeContext) return [];
         const observation = resolveWebHostObservation(writeContext, params);
         if (observation == null) return [];
         return observeWeb({
@@ -466,9 +379,6 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
 
     function preempt(params: Readonly<{ reason: 'jump' | 'prepend' | 'trusted-scroll'; sessionId: string }>): readonly EntryRestoreOwnerEffect[] {
         void params.reason;
-        if (webBottomSettleConfirmation?.context.sessionId === params.sessionId) {
-            webBottomSettleConfirmation = null;
-        }
         if (transaction && !transaction.isClosed() && transaction.sessionId === params.sessionId) {
             transaction.onTrustedUserScroll();
             return closeEffects(params.sessionId, 'native');
@@ -505,12 +415,9 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
     function resetForSession(params: Readonly<{ sessionId: string }>): readonly EntryRestoreOwnerEffect[] {
         void params;
         clearTransaction();
-        webBottomSettleConfirmation = null;
         lastClosedSessionId = null;
         suppressedSessionId = null;
-        return [
-            { type: 'clear-entry-slice-window' },
-        ];
+        return [];
     }
 
     function markInitialCommandFailed(params: Readonly<{ sessionId: string }>): readonly EntryRestoreOwnerEffect[] {
@@ -522,7 +429,7 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
             {
                 contentHeight: context?.issuedContentHeight,
                 layoutHeight: context?.issuedLayoutHeight,
-                mode: context?.kind === 'anchor' || context?.kind === 'slice-anchor' ? 'restore-anchor' : 'restore-distance',
+                mode: context?.kind === 'anchor' ? 'restore-anchor' : 'restore-distance',
                 offsetY: context?.distanceFromBottom,
                 reason: 'not-ready',
                 type: 'record-restore-decision',
@@ -566,101 +473,25 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
         );
     }
 
-    function attemptSlice<TItem>(params: EntryRestoreOwnerAttemptInput<TItem> & Readonly<{
-        distanceFromBottom: number;
-        restoredAnchor: EntryRestoreOwnerAnchor | null;
-        slice: Extract<EntryRestoreOwnerSliceInput, { capable: true }>;
-    }>): readonly EntryRestoreOwnerEffect[] | null {
-        const renderedAnchor = params.slice.renderedAnchor ?? null;
-        const sliceIndex = params.slice.renderedAnchorIndex ?? null;
-        if (renderedAnchor == null || sliceIndex == null) {
-            if (params.canMaterializeOlder && params.restoredViewport?.anchorSeqLoaded !== true) {
-                return materializeEffects('missing-anchor', 'restore-anchor', params.distanceFromBottom, params);
-            }
-            return null;
-        }
-        if (!params.slice.writeFree) {
-            const target: EntryRestoreTransactionTarget = {
-                kind: 'anchor',
-                index: sliceIndex,
-                itemOffsetPx: params.slice.target?.anchorItemOffsetPx ?? renderedAnchor.itemOffsetPx,
-            };
-            const command = buildAnchorCommand(params.currentSessionId, renderedAnchor, target.itemOffsetPx);
-            if (!command) return [restoreDecisionEffect('not-ready', 'restore-anchor', params.distanceFromBottom, params)];
-            const opened = openTransaction({
-                context: buildWriteContext({
-                    anchor: renderedAnchor,
-                    contentHeight: params.contentHeight,
-                    distanceFromBottom: params.distanceFromBottom,
-                    kind: 'anchor',
-                    layoutHeight: params.layoutHeight,
-                    nowMs: params.nowMs,
-                    sessionId: params.currentSessionId,
-                    targetOffsetY: null,
-                    targetOffsetYWasClamped: false,
-                }),
-                deadlineMs: params.deadlineMs,
-                nowMs: params.nowMs,
-                sessionId: params.currentSessionId,
-                target,
-            });
-            return [
-                { command, type: 'execute-command' },
-                ...opened,
-                restoreDecisionEffect('pending', 'restore-anchor', params.distanceFromBottom, params),
-            ];
-        }
-        const anchorRowId = params.slice.anchorRowId;
-        if (typeof anchorRowId !== 'string' || anchorRowId.length === 0) return null;
-        const opened = openTransaction({
-            context: buildWriteContext({
-                anchor: renderedAnchor,
-                contentHeight: params.contentHeight,
-                distanceFromBottom: params.distanceFromBottom,
-                kind: 'slice-anchor',
-                layoutHeight: params.layoutHeight,
-                nowMs: params.nowMs,
-                sessionId: params.currentSessionId,
-                targetOffsetY: null,
-                targetOffsetYWasClamped: false,
-            }),
-            deadlineMs: params.deadlineMs,
-            nowMs: params.nowMs,
-            sessionId: params.currentSessionId,
-            target: { kind: 'anchor', index: 0, itemOffsetPx: 0 },
-            writePolicy: 'observe-only',
-        });
-        return [
-            { anchorRowId, sessionId: params.currentSessionId, type: 'set-entry-slice-window' },
-            ...opened,
-            restoreDecisionEffect('pending', 'restore-anchor', params.distanceFromBottom, params),
-        ];
-    }
-
     function openTransaction(params: Readonly<{
         context: EntryRestoreOwnerWriteContext | null;
         deadlineMs: number;
         nowMs: number;
         sessionId: string;
         target: EntryRestoreTransactionTarget;
-        writePolicy?: 'issue-initial-write' | 'observe-only';
     }>): readonly EntryRestoreOwnerEffect[] {
-        webBottomSettleConfirmation = null;
         transaction = createEntryRestoreTransaction({
             sessionId: params.sessionId,
             target: params.target,
             nowMs: params.nowMs,
             deadlineMs: params.deadlineMs,
-            writePolicy: params.writePolicy,
         });
         writeContext = params.context;
         lastClosedSessionId = null;
         const effects: EntryRestoreOwnerEffect[] = [
             { deadlineMs: params.deadlineMs, sessionId: params.sessionId, type: 'schedule-entry-deadline' },
         ];
-        if (params.context?.kind !== 'bottom') {
-            effects.push({ pending: true, type: 'set-native-initial-viewport-pending-observation' });
-        }
+        effects.push({ pending: true, type: 'set-native-initial-viewport-pending-observation' });
         return effects;
     }
 
@@ -668,12 +499,6 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
         if (!transaction || !transaction.isClosed()) return [];
         const sessionId = transaction.sessionId;
         const outcome = transaction.outcome();
-        const settledBottomContext =
-            platform === 'web' &&
-            outcome === 'confirmed' &&
-            writeContext?.kind === 'bottom'
-                ? writeContext
-                : null;
         const effects = [
             { sessionId, type: 'clear-entry-deadline' } as const,
             ...mapCloseEffects(resolveEntryRestoreCloseEffects({
@@ -685,9 +510,6 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
             })),
         ];
         clearTransaction({ closedSessionId: sessionId });
-        webBottomSettleConfirmation = settledBottomContext
-            ? { context: settledBottomContext, spent: false }
-            : null;
         return effects;
     }
 
@@ -696,7 +518,6 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
         params: EntryRestoreOwnerObservationInput,
         platform: EntryRestoreOwnerPlatform,
     ): readonly EntryRestoreOwnerEffect[] {
-        if (context.kind === 'slice-anchor') return [];
         if (context.kind === 'anchor' && context.anchor) {
             const command = buildEntryAnchorCommand({
                 anchor: context.anchor,
@@ -708,7 +529,7 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
             });
             return command ? [{ command, type: 'execute-command' }] : [];
         }
-        const distance = context.kind === 'bottom' ? 0 : context.distanceFromBottom;
+        const distance = context.distanceFromBottom;
         const issuedContentHeight = Math.max(0, Math.trunc(params.contentHeight));
         if (context.kind === 'distance') {
             const maxOffsetY = Math.max(0, Math.trunc(issuedContentHeight - params.layoutHeight));
@@ -733,26 +554,8 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
         writeContext = null;
     }
 
-    function observeClosedWebBottomSettle(
-        params: EntryRestoreOwnerWebHostFactsInput,
-    ): readonly EntryRestoreOwnerEffect[] {
-        const confirmation = webBottomSettleConfirmation;
-        if (!confirmation || confirmation.spent || confirmation.context.sessionId !== params.sessionId) return [];
-        if (params.wantsPinned !== true) return [];
-        const observation = resolveWebHostObservation(confirmation.context, params);
-        if (observation == null || observation.status !== 'misaligned') return [];
-        webBottomSettleConfirmation = { ...confirmation, spent: true };
-        return [{
-            reason: 'mount-settle',
-            sessionId: params.sessionId,
-            type: 'request-bottom-follow-write',
-            writer: 'settle-reconfirm',
-        }];
-    }
-
     return {
         attempt,
-        beginWebBottom,
         disposeForExit,
         hasOpenTransaction,
         matchesNativePaintReleaseHandle,
@@ -774,14 +577,10 @@ function resolveWebHostObservation(
     context: EntryRestoreOwnerWriteContext,
     params: EntryRestoreOwnerWebHostFactsInput,
 ): EntryRestoreTransactionObservation | null {
-    if ((context.kind === 'anchor' || context.kind === 'slice-anchor') && context.anchor) {
+    if (context.kind === 'anchor' && context.anchor) {
         return params.resolveAnchorObservation(context.anchor);
     }
-    const distanceTarget = context.kind === 'bottom' ? 0 : context.distanceFromBottom;
-    const alignmentTolerancePx = context.kind === 'bottom'
-        ? WEB_BOTTOM_ENTRY_CONFIRMATION_EPSILON_PX
-        : params.tolerancePx;
-    if (Math.abs(params.distanceFromBottom - distanceTarget) <= alignmentTolerancePx) {
+    if (Math.abs(params.distanceFromBottom - context.distanceFromBottom) <= params.tolerancePx) {
         return { status: 'aligned' };
     }
     if (params.contentHeight + params.tolerancePx >= context.issuedContentHeight) {
@@ -794,9 +593,6 @@ function resolveNativeHostObservation(
     context: EntryRestoreOwnerWriteContext,
     params: EntryRestoreOwnerNativeHostFactsInput,
 ): EntryRestoreTransactionObservation | null {
-    if (context.kind === 'slice-anchor' && context.anchor) {
-        return params.resolveSliceObservation(context.anchor);
-    }
     if (context.kind === 'anchor' && context.anchor) {
         return params.resolveAnchorObservation(context.anchor);
     }
@@ -817,7 +613,13 @@ function resolveNativeHostObservation(
     });
     if (matches) return { status: 'aligned' };
     if (params.contentHeight + params.tolerancePx < context.issuedContentHeight) {
-        return null;
+        // Content below the issued height is normally mid-churn (rows still
+        // measuring): withhold judgment. But once mount settle declares the
+        // geometry quiescent, "below issued" means the issue-time height was
+        // estimate-INFLATED and will never be reached again — withholding
+        // forever leaves the clamped viewport at the tail with the correction
+        // budget unspent. Judge the settled geometry instead.
+        return params.mountSettleStable === true ? { status: 'misaligned' } : null;
     }
     return { status: 'misaligned' };
 }
@@ -942,12 +744,22 @@ function materializeEffects<TItem>(
     reason: TranscriptViewportTelemetryObservationReason,
     mode: Extract<TranscriptViewportMode, 'restore-anchor' | 'restore-distance'>,
     distanceFromBottom: number,
+    targetSeq: number | null,
     params: EntryRestoreOwnerAttemptInput<TItem>,
 ): readonly EntryRestoreOwnerEffect[] {
     return [
-        { type: 'request-bounded-materialization' },
+        {
+            targetSeq: normalizeMaterializationTargetSeq(targetSeq),
+            type: 'request-bounded-materialization',
+        },
         restoreDecisionEffect(reason, mode, distanceFromBottom, params),
     ];
+}
+
+function normalizeMaterializationTargetSeq(value: number | null): number | null {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+    const seq = Math.trunc(value);
+    return seq > 0 ? seq : null;
 }
 
 function restoreDecisionEffect<TItem>(
@@ -979,8 +791,6 @@ function mapCloseEffects(effects: readonly EntryRestoreCloseEffect[]): readonly 
                 return effect;
             case 'release-native-entry-paint':
                 return { force: true, type: 'schedule-native-entry-paint-release' };
-            case 'reveal-entry-slice-window':
-                return effect;
         }
     });
 }

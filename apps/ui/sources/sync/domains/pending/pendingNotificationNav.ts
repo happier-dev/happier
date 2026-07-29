@@ -2,7 +2,12 @@ import { MMKV } from 'react-native-mmkv';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopedStorageKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
-import { isPendingServerUrlActive, normalizePendingServerUrl } from './pendingServerScopedKeys';
+import {
+    getActivePendingServerUrl,
+    isPendingServerUrlActive,
+    normalizePendingServerUrl,
+    pendingServerScopedKey,
+} from './pendingServerScopedKeys';
 
 export type PendingNotificationNav = Readonly<{
     serverUrl: string;
@@ -14,6 +19,7 @@ const scope = isWebRuntime ? null : readStorageScopeFromEnv();
 const storage = new MMKV({ id: scopedStorageId('pending-notification-nav', scope) });
 
 const KEY_RECORD_PREFIX = 'record:v2';
+const KEY_SERVER_RECORD_PREFIX = 'record:server:v1';
 const KEY_SERVER_URL = 'serverUrl';
 const KEY_ROUTE = 'route';
 
@@ -50,22 +56,37 @@ function readScopedPendingNotificationNav(key: string): PendingNotificationNav |
     return null;
 }
 
+function resolveActiveServerScopedKey(): string | null {
+    const activeServerUrl = getActivePendingServerUrl();
+    return activeServerUrl ? pendingServerScopedKey(KEY_SERVER_RECORD_PREFIX, activeServerUrl) : null;
+}
+
 export function setPendingNotificationNav(value: PendingNotificationNav): void {
     const serverUrl = normalizeUrl(value?.serverUrl ?? '');
     const route = String(value?.route ?? '').trim();
     const activeScope = getActiveServerAccountScope();
-    if (!serverUrl || !route || !activeScope || !isPendingServerUrlActive(serverUrl)) return;
-    storage.set(
-        serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope),
-        JSON.stringify({ serverUrl, route } satisfies PendingNotificationNav),
-    );
+    if (!serverUrl || !route) return;
+    const record = JSON.stringify({ serverUrl, route } satisfies PendingNotificationNav);
+    if (activeScope && isPendingServerUrlActive(serverUrl)) {
+        storage.set(serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope), record);
+        const serverScopedKey = resolveActiveServerScopedKey();
+        if (serverScopedKey) storage.delete(serverScopedKey);
+        return;
+    }
+    storage.set(pendingServerScopedKey(KEY_SERVER_RECORD_PREFIX, serverUrl), record);
 }
 
 export function getPendingNotificationNav(): PendingNotificationNav | null {
     const activeScope = getActiveServerAccountScope();
-    if (!activeScope) return null;
-    const scoped = readScopedPendingNotificationNav(serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope));
-    if (scoped) return scoped;
+    const serverScopedKey = resolveActiveServerScopedKey();
+    if (activeScope) {
+        const scopedKey = serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope);
+        const scoped = readScopedPendingNotificationNav(scopedKey);
+        if (scoped) return scoped;
+    } else if (serverScopedKey) {
+        const serverScoped = readScopedPendingNotificationNav(serverScopedKey);
+        if (serverScoped) return serverScoped;
+    }
 
     const legacy = readLegacyPendingNotificationNav();
     if (!legacy) return null;
@@ -79,6 +100,10 @@ export function clearPendingNotificationNav(): void {
     const activeScope = getActiveServerAccountScope();
     if (activeScope) {
         storage.delete(serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope));
+    }
+    const serverScopedKey = resolveActiveServerScopedKey();
+    if (serverScopedKey) {
+        storage.delete(serverScopedKey);
     }
     const legacy = readLegacyPendingNotificationNav();
     if (!legacy || isPendingServerUrlActive(legacy.serverUrl)) {

@@ -74,21 +74,23 @@ export function AppUpdateStatusTag(props: AppUpdateStatusTagProps) {
                     {props.labelVariant === 'short' ? t('updateBanner.updateShort') : model.label}
                 </Text>
             </Pressable>
-            <AppUpdateStatusPopover
-                anchorRef={anchorRef}
-                model={model}
-                onPrimaryAction={async () => {
-                    await runPrimaryAction();
-                    setOpen(false);
-                }}
-                onDismiss={model.dismissLabel ? () => {
-                    dismiss();
-                    setOpen(false);
-                } : undefined}
-                onRequestClose={() => setOpen(false)}
-                open={open}
-                testID="app-update-status-popover"
-            />
+            {open ? (
+                <AppUpdateStatusPopover
+                    anchorRef={anchorRef}
+                    model={model}
+                    onPrimaryAction={async () => {
+                        await runPrimaryAction();
+                        setOpen(false);
+                    }}
+                    onDismiss={model.dismissLabel ? () => {
+                        dismiss();
+                        setOpen(false);
+                    } : undefined}
+                    onRequestClose={() => setOpen(false)}
+                    open={open}
+                    testID="app-update-status-popover"
+                />
+            ) : null}
         </>
     );
 }

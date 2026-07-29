@@ -16,7 +16,7 @@ export function resolveMobileBottomChromeModel(input: Readonly<{
     }
 
     const pathname = typeof input.pathname === 'string' ? input.pathname.trim() : '';
-    if (pathname === '/') {
+    if (pathname === '/' || isSettingsRoutePathname(pathname)) {
         return { kind: 'mainAppTabs' };
     }
 
@@ -53,6 +53,10 @@ export function resolveMobileBottomChromeModel(input: Readonly<{
     }
 
     return { kind: 'hidden' };
+}
+
+function isSettingsRoutePathname(pathname: string): boolean {
+    return pathname === '/settings' || pathname.startsWith('/settings/');
 }
 
 function resolvePersistedProjectSurface(

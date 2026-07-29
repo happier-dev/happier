@@ -32,6 +32,10 @@ const settingsState = vi.hoisted(() => ({
 const externalSessionBrowseSupportState = vi.hoisted(() => ({
     supportedByProviderId: {} as Record<string, boolean>,
 }));
+const featureDecisionState = vi.hoisted(() => ({
+    state: 'enabled' as 'enabled' | 'disabled' | 'unknown' | null,
+}));
+const featureDecisionSpy = vi.hoisted(() => vi.fn());
 const machineContributionRegistryProjectionDescribeMock = vi.hoisted(() =>
     vi.fn<(...args: unknown[]) => Promise<any>>(async () => ({ supported: false, reason: 'not-supported' })),
 );
@@ -49,6 +53,7 @@ installPickerCommonModuleMocks({
             Platform: { OS: 'ios' },
         }),
     reactNavigationNative: async () => ({
+        ...(await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock(),
         CommonActions: {
             setParams: (params: Record<string, unknown>) => ({ type: 'SET_PARAMS', payload: { params } }),
         },
@@ -70,12 +75,9 @@ installPickerCommonModuleMocks({
             }).module,
             useNavigation: () => navigationMock,
         }),
-    storage: async (importOriginal) =>
-        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSettings: () => settingsState.value as any,
-            },
+    storage: async () =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleStub({
+            useSettings: () => settingsState.value as any,
         }),
 });
 
@@ -92,12 +94,23 @@ vi.mock('@/components/sessions/external/browse/resolveExternalSessionBrowseLocke
         (externalSessionBrowseSupportState.supportedByProviderId[params.providerId] ?? true) ? { kind: 'test' } : null,
 }));
 
+vi.mock('@/hooks/server/useFeatureDecision', () => ({
+    useFeatureDecision: (...args: unknown[]) => {
+        featureDecisionSpy(...args);
+        return featureDecisionState.state === null
+            ? null
+            : { state: featureDecisionState.state };
+    },
+}));
+
 vi.mock('@/sync/store/hooks', () => ({
     useProfile: () => ({ id: 'account-1' }),
 }));
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     machineContributionRegistryProjectionDescribe: (...args: any[]) => machineContributionRegistryProjectionDescribeMock(...args),
+    getMachineContributionRegistryProjectionRevision: () => 0,
+    subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
 }));
 
 vi.mock('@/utils/sessions/tempDataStore', () => ({
@@ -114,6 +127,8 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
         };
         settingsState.value = {};
         externalSessionBrowseSupportState.supportedByProviderId = {};
+        featureDecisionState.state = 'enabled';
+        featureDecisionSpy.mockReset();
         browseScreenPropsRef.current = null;
         routerMock.push.mockClear();
         routerMock.back.mockClear();
@@ -138,6 +153,25 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
 
     afterEach(() => {
         standardCleanup();
+    });
+
+    it.each([
+        ['disabled', 'disabled'],
+        ['unknown', 'unknown'],
+        ['missing', null],
+    ] as const)('fails closed for a %s sessions.direct decision before resolving daemon projection or mounting Browse', async (_label, state) => {
+        featureDecisionState.state = state;
+        const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
+
+        const screen = await renderScreen(React.createElement(ResumeBrowsePickerScreen));
+
+        expect(screen.tree.toJSON()).toBeNull();
+        expect(featureDecisionSpy).toHaveBeenCalledWith('sessions.direct', {
+            scopeKind: 'spawn',
+            serverId: 'server-2',
+        });
+        expect(machineContributionRegistryProjectionDescribeMock).not.toHaveBeenCalled();
+        expect(browseScreenPropsRef.current).toBeNull();
     });
 
     it('preserves the new-session context when the browse picker has to replace back to /new', async () => {
@@ -290,7 +324,7 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
                         subtitle: 'plugin provider',
                         channel: 'plugin',
                         isBuiltIn: false,
-                        providerAgentId: 'claude',
+                        catalogAgentId: 'claude',
                         iconAgentId: 'claude',
                     },
                 },
@@ -300,7 +334,7 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
                         providerId: 'plugin:review-bot',
                         title: 'Review Bot (plugin)',
                         subtitle: 'plugin backend',
-                        providerAgentId: 'claude',
+                        catalogAgentId: 'claude',
                         iconAgentId: 'claude',
                     },
                 },
@@ -356,7 +390,7 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
                                 subtitle: 'plugin provider',
                                 channel: 'plugin',
                                 isBuiltIn: false,
-                                providerAgentId: 'claude',
+                                catalogAgentId: 'claude',
                                 iconAgentId: 'claude',
                             },
                         },
@@ -366,7 +400,7 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
                                 providerId: 'plugin:review-bot',
                                 title: 'Review Bot (plugin)',
                                 subtitle: 'plugin backend',
-                                providerAgentId: 'claude',
+                                catalogAgentId: 'claude',
                                 iconAgentId: 'claude',
                             },
                         },

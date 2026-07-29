@@ -53,6 +53,15 @@ const setSessionFoldersV1 = vi.fn();
 const recoveryBannerMountSpy = vi.fn();
 const recoveryBannerUnmountSpy = vi.fn();
 const getCredentialsForServerUrlSpy = vi.hoisted(() => vi.fn(async () => ({ token: 'folder-token', secret: 'folder-secret' })));
+const resolveSessionOrganizationMutationScopeSpy = vi.hoisted(() => vi.fn(async (serverId: string) => ({
+    ok: true as const,
+    scope: {
+        credentials: { token: 'folder-token', secret: 'folder-secret' },
+        serverId,
+        serverIdAliases: [] as string[],
+        serverUrl: 'https://server-a.example.test',
+    },
+})));
 const setSessionFolderAssignmentSpy = vi.hoisted(() => vi.fn(async () => {}));
 
 let pinnedSessionKeysV1: string[] = [];
@@ -248,7 +257,16 @@ vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
 });
 
 vi.mock('@/sync/ops/sessionOrganization', () => ({
-    setSessionFolderAssignment: setSessionFolderAssignmentSpy,
+    resolveSessionOrganizationMutationScope: resolveSessionOrganizationMutationScopeSpy,
+    writeSessionOrganizationFolderAssignment: setSessionFolderAssignmentSpy,
+    writeSessionOrganizationFolders: vi.fn(async () => undefined),
+    writeSessionOrganizationGroupOrder: vi.fn(async () => undefined),
+    writeSessionOrganizationPin: vi.fn(async () => undefined),
+    writeSessionOrganizationPinForSessionKey: vi.fn(async () => undefined),
+    writeSessionOrganizationTagLabels: vi.fn(async () => undefined),
+    writeSessionOrganizationTagLabelsForSessionKey: vi.fn(async () => undefined),
+    writeSessionOrganizationWorkspaceLabels: vi.fn(async () => undefined),
+    writeSessionOrganizationWorkspaceOrder: vi.fn(async () => undefined),
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -374,6 +392,7 @@ describe('SessionsList (inline reorder)', () => {
         setSessionTagsV1.mockClear();
         setSessionFoldersV1.mockClear();
         getCredentialsForServerUrlSpy.mockClear();
+        resolveSessionOrganizationMutationScopeSpy.mockClear();
         setSessionFolderAssignmentSpy.mockClear();
         recoveryBannerMountSpy.mockClear();
         recoveryBannerUnmountSpy.mockClear();
@@ -587,11 +606,14 @@ describe('SessionsList (inline reorder)', () => {
             await items[0].props.onMoveToSessionFolder('folder-a');
         });
 
-        expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith('https://server-a.example.test', { serverId: 'server_a' });
+        expect(resolveSessionOrganizationMutationScopeSpy).toHaveBeenCalledWith('server_a');
         expect(setSessionFolderAssignmentSpy).toHaveBeenCalledWith({
-            credentials: { token: 'folder-token', secret: 'folder-secret' },
-            serverId: 'server_a',
-            serverUrl: 'https://server-a.example.test',
+            scope: {
+                credentials: { token: 'folder-token', secret: 'folder-secret' },
+                serverId: 'server_a',
+                serverIdAliases: [],
+                serverUrl: 'https://server-a.example.test',
+            },
             sessionId: 'sess_a',
             folderId: 'folder-a',
         });

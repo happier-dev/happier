@@ -10,7 +10,7 @@ import {
   sherpaStreamingCreate,
   sherpaStreamingFinish,
   sherpaStreamingPushFrame,
-  sendMessage,
+  submitMessage,
   setPlatformOs,
 } from './localVoiceEngine.testHarness';
 
@@ -26,10 +26,10 @@ describe('local voice engine local neural STT (streaming)', () => {
         voice: {
           ...storage.getState().settings.voice,
           providerId: 'local_direct',
-          adapters: {
-            ...storage.getState().settings.voice.adapters,
-            local_direct: {
-              ...storage.getState().settings.voice.adapters.local_direct,
+          providers: {
+            ...storage.getState().settings.voice.providers,
+            local_direct: { schemaVersion: 1, config: {
+              ...storage.getState().settings.voice.providers.local_direct.config,
               stt: {
                 provider: 'local_neural',
                 openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
@@ -37,10 +37,10 @@ describe('local voice engine local neural STT (streaming)', () => {
                 localNeural: { assetId: 'dummy-pack', language: 'en', execution: 'auto' },
               },
               tts: {
-                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                 autoSpeakReplies: false,
               },
-            },
+            } },
           },
         },
       },
@@ -74,10 +74,10 @@ describe('local voice engine local neural STT (streaming)', () => {
         voice: {
           ...storage.getState().settings.voice,
           providerId: 'local_direct',
-          adapters: {
-            ...storage.getState().settings.voice.adapters,
-            local_direct: {
-              ...storage.getState().settings.voice.adapters.local_direct,
+          providers: {
+            ...storage.getState().settings.voice.providers,
+            local_direct: { schemaVersion: 1, config: {
+              ...storage.getState().settings.voice.providers.local_direct.config,
               stt: {
                 provider: 'local_neural',
                 openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
@@ -85,10 +85,10 @@ describe('local voice engine local neural STT (streaming)', () => {
                 localNeural: { assetId: 'dummy-pack', language: 'en' },
               },
               tts: {
-                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                 autoSpeakReplies: false,
               },
-            },
+            } },
           },
         },
       },
@@ -113,10 +113,10 @@ describe('local voice engine local neural STT (streaming)', () => {
         voice: {
           ...storage.getState().settings.voice,
           providerId: 'local_direct',
-          adapters: {
-            ...storage.getState().settings.voice.adapters,
-            local_direct: {
-              ...storage.getState().settings.voice.adapters.local_direct,
+          providers: {
+            ...storage.getState().settings.voice.providers,
+            local_direct: { schemaVersion: 1, config: {
+              ...storage.getState().settings.voice.providers.local_direct.config,
               stt: {
                 provider: 'local_neural',
                 openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
@@ -124,14 +124,14 @@ describe('local voice engine local neural STT (streaming)', () => {
                 localNeural: { assetId: 'dummy-pack', language: 'en' },
               },
               tts: {
-                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                 autoSpeakReplies: false,
               },
               handsFree: {
-                ...storage.getState().settings.voice.adapters.local_direct.handsFree,
+                ...storage.getState().settings.voice.providers.local_direct.config.handsFree,
                 enabled: false,
               },
-            },
+            } },
           },
         },
       },
@@ -158,8 +158,65 @@ describe('local voice engine local neural STT (streaming)', () => {
     const stopPromise = toggleLocalVoiceTurn('s1');
     await stopPromise;
 
-    expect(sendMessage).toHaveBeenCalledWith('s1', 'hello sherpa', undefined, undefined, {
-      bypassPendingQueueReason: 'voice_turn',
+    expect(submitMessage).toHaveBeenCalledWith('s1', 'hello sherpa', undefined, undefined, {
+      callerSurface: 'voice_turn',
+      forceImmediate: true,
+    });
+  });
+
+  it('does not submit the latest provisional Sherpa partial when finalization fails', async () => {
+    const storage = await getStorage();
+    storage.__setState({
+      settings: {
+        ...storage.getState().settings,
+        voice: {
+          ...storage.getState().settings.voice,
+          providerId: 'local_direct',
+          providers: {
+            ...storage.getState().settings.voice.providers,
+            local_direct: { schemaVersion: 1, config: {
+              ...storage.getState().settings.voice.providers.local_direct.config,
+              stt: {
+                provider: 'local_neural',
+                openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
+                googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
+                localNeural: { assetId: 'dummy-pack', language: 'en' },
+              },
+              tts: {
+                ...storage.getState().settings.voice.providers.local_direct.config.tts,
+                autoSpeakReplies: false,
+              },
+              handsFree: {
+                ...storage.getState().settings.voice.providers.local_direct.config.handsFree,
+                enabled: false,
+              },
+            } },
+          },
+        },
+      },
+    });
+    sherpaStreamingPushFrame.mockResolvedValueOnce({ text: 'provisional command', isEndpoint: false });
+    sherpaStreamingFinish.mockRejectedValueOnce(new Error('recognizer_finalization_failed'));
+
+    const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
+    await toggleLocalVoiceTurn('s-finalization-failure');
+    emitAudioStreamEvent('audioFrame', {
+      streamId: 'audio-stream-1',
+      pcm16leBase64: 'AA==',
+      sampleRate: 16000,
+      channels: 1,
+    });
+    await vi.waitFor(() => {
+      expect(sherpaStreamingPushFrame).toHaveBeenCalledTimes(1);
+    });
+
+    await toggleLocalVoiceTurn('s-finalization-failure');
+
+    expect(submitMessage).not.toHaveBeenCalled();
+    expect(getLocalVoiceState()).toMatchObject({
+      status: 'idle',
+      sessionId: 's-finalization-failure',
+      error: 'local_neural_stt_finalization_failed',
     });
   });
 
@@ -171,10 +228,10 @@ describe('local voice engine local neural STT (streaming)', () => {
         voice: {
           ...storage.getState().settings.voice,
           providerId: 'local_direct',
-          adapters: {
-            ...storage.getState().settings.voice.adapters,
-            local_direct: {
-              ...storage.getState().settings.voice.adapters.local_direct,
+          providers: {
+            ...storage.getState().settings.voice.providers,
+            local_direct: { schemaVersion: 1, config: {
+              ...storage.getState().settings.voice.providers.local_direct.config,
               stt: {
                 provider: 'local_neural',
                 openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
@@ -182,14 +239,14 @@ describe('local voice engine local neural STT (streaming)', () => {
                 localNeural: { assetId: 'dummy-pack', language: 'en' },
               },
               tts: {
-                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                 autoSpeakReplies: false,
               },
               handsFree: {
-                ...storage.getState().settings.voice.adapters.local_direct.handsFree,
+                ...storage.getState().settings.voice.providers.local_direct.config.handsFree,
                 enabled: true,
               },
-            },
+            } },
           },
         },
       },
@@ -211,8 +268,9 @@ describe('local voice engine local neural STT (streaming)', () => {
     });
 
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith('s1', 'hands free sherpa', undefined, undefined, {
-        bypassPendingQueueReason: 'voice_turn',
+      expect(submitMessage).toHaveBeenCalledWith('s1', 'hands free sherpa', undefined, undefined, {
+        callerSurface: 'voice_turn',
+        forceImmediate: true,
       });
     });
     await vi.waitFor(() => {
@@ -229,10 +287,10 @@ describe('local voice engine local neural STT (streaming)', () => {
         voice: {
           ...storage.getState().settings.voice,
           providerId: 'local_direct',
-          adapters: {
-            ...storage.getState().settings.voice.adapters,
-            local_direct: {
-              ...storage.getState().settings.voice.adapters.local_direct,
+          providers: {
+            ...storage.getState().settings.voice.providers,
+            local_direct: { schemaVersion: 1, config: {
+              ...storage.getState().settings.voice.providers.local_direct.config,
               stt: {
                 provider: 'local_neural',
                 openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
@@ -240,14 +298,14 @@ describe('local voice engine local neural STT (streaming)', () => {
                 localNeural: { assetId: null, language: 'en' },
               },
               tts: {
-                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                 autoSpeakReplies: false,
               },
               handsFree: {
-                ...storage.getState().settings.voice.adapters.local_direct.handsFree,
+                ...storage.getState().settings.voice.providers.local_direct.config.handsFree,
                 enabled: false,
               },
-            },
+            } },
           },
         },
       },
@@ -308,10 +366,10 @@ describe('local voice engine local neural STT (streaming)', () => {
         voice: {
           ...storage.getState().settings.voice,
           providerId: 'local_direct',
-          adapters: {
-            ...storage.getState().settings.voice.adapters,
-            local_direct: {
-              ...storage.getState().settings.voice.adapters.local_direct,
+          providers: {
+            ...storage.getState().settings.voice.providers,
+            local_direct: { schemaVersion: 1, config: {
+              ...storage.getState().settings.voice.providers.local_direct.config,
               stt: {
                 provider: 'local_neural',
                 openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
@@ -319,10 +377,10 @@ describe('local voice engine local neural STT (streaming)', () => {
                 localNeural: { assetId: 'dummy-pack', language: 'en' },
               },
               tts: {
-                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                 autoSpeakReplies: false,
               },
-            },
+            } },
           },
         },
       },

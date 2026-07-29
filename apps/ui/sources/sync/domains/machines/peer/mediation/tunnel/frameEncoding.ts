@@ -177,6 +177,29 @@ export function encodePeerTcpTunnelSubstreamFrameV2(input: Readonly<{
     });
 }
 
+export function encodePeerTcpTunnelSubstreamDataFrameV2(input: Readonly<{
+    substreamId: string;
+    frame: Readonly<{
+        tunnelId: string;
+        direction: Extract<PeerTcpTunnelFrameV1, { kind: 'data' }>['direction'];
+        sequence: number;
+        payloadBytes: Uint8Array;
+    }>;
+}>): Uint8Array {
+    return encodePeerTcpTunnelBinaryFrameV2({
+        header: {
+            version: 2,
+            kind: 'data',
+            tunnelId: input.frame.tunnelId,
+            substreamId: input.substreamId,
+            direction: input.frame.direction,
+            sequence: input.frame.sequence,
+            payloadLength: input.frame.payloadBytes.byteLength,
+        },
+        payload: input.frame.payloadBytes,
+    });
+}
+
 function decodeBinaryFrame(input: Readonly<{
     payload: unknown;
     maxFrameBytes: number;

@@ -18,21 +18,17 @@ import { Modal } from '@/modal';
 import { useMultiClick } from '@/hooks/ui/useMultiClick';
 import { useUnistyles } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
-import { useHappyAction } from '@/hooks/ui/useHappyAction';
-import { disconnectVendorToken } from '@/sync/api/account/apiVendorTokens';
 import { getDisplayName, getAvatarUrl, getBio } from '@/sync/domains/profiles/profile';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { t } from '@/text';
 import { canRequestReview } from '@/utils/system/requestReview';
-import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromConnectedServiceId } from '@/agents/catalog/catalog';
-import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { resolveSupportUsAction } from '@/components/settings/supportUsBehavior';
 import { recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { SettingsUsageSummaryStrip } from '@/components/settings/usage/SettingsUsageSummaryStrip';
-import { useUsageAnalyticsSummary } from '@/components/settings/usage/useUsageAnalyticsSummary';
+import { useUsageBannerModel } from '@/components/settings/usage/useUsageBannerModel';
 import type { FeatureId } from '@happier-dev/protocol';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { isRunningOnMac } from '@/utils/platform/platform';
@@ -42,9 +38,10 @@ import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { SettingsBelowFoldSections } from '@/components/settings/SettingsBelowFoldSections';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { useScannedAuthUrlProcessor } from '@/hooks/auth/useScannedAuthUrlProcessor';
-import { resolveConnectedServiceDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
+import { AppPluginSurfacePlacementStack } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 
 const Ionicons = SafeIonicons;
 
@@ -63,7 +60,7 @@ export const SettingsView = React.memo(function SettingsView() {
     const isPro = __DEV__ || voiceEntitlement;
     const usageReportingEnabled = useFeatureEnabled('usage.reporting');
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
-    const connectedServicesEnabled = useFeatureEnabled('connectedServices');
+    const externalSessionsEnabled = useFeatureEnabled('sessions.direct');
     const memorySearchEnabled = useFeatureEnabled('memory.search');
     const voiceEnabled = useFeatureEnabled('voice');
     const sourceControlEnabled = useFeatureEnabled('scm.writeOperations');
@@ -84,7 +81,7 @@ export const SettingsView = React.memo(function SettingsView() {
     const displayName = getDisplayName(profile);
     const avatarUrl = getAvatarUrl(profile);
     const bio = getBio(profile);
-    const usageSummary = useUsageAnalyticsSummary(auth.credentials, usageReportingEnabled);
+    const usageBanner = useUsageBannerModel(auth.credentials, usageReportingEnabled);
     const pushRoute = React.useCallback((route: Parameters<typeof router.push>[0]) => {
         deferOnWeb(() => {
             navigateWithBlurOnWeb(() => {
@@ -92,17 +89,6 @@ export const SettingsView = React.memo(function SettingsView() {
             });
         });
     }, [router]);
-
-    const anthropicAgentId = resolveAgentIdFromConnectedServiceId('anthropic') ?? DEFAULT_AGENT_ID;
-    const anthropicAgentCore = getAgentCore(anthropicAgentId);
-    const anthropicConnectedService = anthropicAgentCore.uiConnectedService ?? null;
-    const anthropicServiceLabel = React.useMemo(() => {
-        const serviceId = anthropicConnectedService?.serviceId;
-        if (serviceId) {
-            return resolveConnectedServiceDisplayName(serviceId, t);
-        }
-        return anthropicConnectedService?.label ?? resolveConnectedServiceDisplayName('anthropic', t);
-    }, [anthropicConnectedService?.label, anthropicConnectedService?.serviceId]);
 
     const showHiddenSettingsButtons = devModeEnabled;
     const showDesktopSettings = isTauriDesktop();
@@ -187,7 +173,7 @@ export const SettingsView = React.memo(function SettingsView() {
                 return;
             }
         }
-        pushRoute('/(app)/settings/report-issue');
+        pushRoute(SETTINGS_ROUTES.reportIssue);
     };
 
     const handleSubscribe = async () => {
@@ -221,49 +207,20 @@ export const SettingsView = React.memo(function SettingsView() {
         resetTimeout: 2000,
     });
 
-    // Connection status
-    const isAnthropicConnected = profile.connectedServices?.includes('anthropic') || false;
-
-    // Anthropic connection
-    const [connectingAnthropic, connectAnthropic] = useHappyAction(async () => {
-        const route = anthropicConnectedService?.connectRoute;
-        if (route) {
-            pushRoute(route);
-        }
-    });
-
-    // Anthropic disconnection
-      const [disconnectingAnthropic, handleDisconnectAnthropic] = useHappyAction(async () => {
-          const serviceName = anthropicServiceLabel;
-          const confirmed = await Modal.confirm(
-              t('modals.disconnectService', { service: serviceName }),
-            t('modals.disconnectServiceConfirm', { service: serviceName }),
-            { confirmText: t('modals.disconnect'), destructive: true }
-          );
-          if (confirmed) {
-              if (!auth.credentials) {
-                  Modal.alert(t('common.error'), t('errors.unknownError'), [{ text: t('common.ok') }]);
-                  return;
-              }
-              await disconnectVendorToken(auth.credentials, 'anthropic');
-              await sync.refreshProfile();
-          }
-      });
-
     const profileAndAccountSection = React.useMemo(() => (
         <ItemGroup title={t('settings.profileAndAccount')}>
             <Item
                 title={t('settings.account')}
                 subtitle={t('settings.accountSubtitle')}
                 icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.accent.blue} />}
-                onPress={() => router.push('/(app)/settings/account')}
+                onPress={() => router.push(SETTINGS_ROUTES.account)}
             />
             {useProfiles ? (
                 <Item
                     title={t('settings.secrets')}
                     subtitle={t('settings.secretsSubtitle')}
                     icon={<Ionicons name="key-outline" size={29} color={theme.colors.accent.purple} />}
-                    onPress={() => router.push('/(app)/settings/secrets')}
+                    onPress={() => router.push(SETTINGS_ROUTES.secrets)}
                 />
             ) : null}
             {usageReportingEnabled ? (
@@ -271,19 +228,19 @@ export const SettingsView = React.memo(function SettingsView() {
                     title={t('settings.usage')}
                     subtitle={t('settings.usageSubtitle')}
                     icon={<Ionicons name="analytics-outline" size={29} color={theme.colors.accent.blue} />}
-                    onPress={() => router.push('/(app)/settings/usage')}
+                    onPress={() => router.push(SETTINGS_ROUTES.usage)}
                 />
             ) : null}
             <Item
                 title={t('settings.machines')}
                 icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.accent.orange} />}
-                onPress={() => pushRoute('/(app)/settings/machines')}
+                onPress={() => pushRoute(SETTINGS_ROUTES.machines)}
             />
             {showDesktopSettings && remoteHostsManagementEnabled ? (
                 <Item
                     title={t('settings.remoteHostsTitle')}
                     icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.orange} />}
-                    onPress={() => pushRoute('/(app)/settings/remote-hosts')}
+                    onPress={() => pushRoute(SETTINGS_ROUTES.remoteHosts)}
                 />
             ) : null}
         </ItemGroup>
@@ -305,7 +262,7 @@ export const SettingsView = React.memo(function SettingsView() {
                 title={t('settings.appearance')}
                 subtitle={t('settings.appearanceSubtitle')}
                 icon={<Ionicons name="color-palette-outline" size={29} color={theme.colors.accent.indigo} />}
-                onPress={() => pushRoute('/(app)/settings/appearance')}
+                onPress={() => pushRoute(SETTINGS_ROUTES.appearance)}
             />
             {petsCompanionEnabled ? (
                 <Item
@@ -313,14 +270,14 @@ export const SettingsView = React.memo(function SettingsView() {
                     title={t('settings.pets')}
                     subtitle={t('settings.petsSubtitle')}
                     icon={<Ionicons name="paw-outline" size={29} color={theme.colors.accent.green} />}
-                    onPress={() => pushRoute('/(app)/settings/pets')}
+                    onPress={() => pushRoute(SETTINGS_ROUTES.pets)}
                 />
             ) : null}
             <Item
                 title={t('settings.featuresTitle')}
                 subtitle={t('settings.featuresSubtitle')}
                 icon={<Ionicons name="flask-outline" size={29} color={theme.colors.accent.orange} />}
-                onPress={() => pushRoute('/(app)/settings/features')}
+                onPress={() => pushRoute(SETTINGS_ROUTES.features)}
             />
         </ItemGroup>
     ), [
@@ -371,12 +328,17 @@ export const SettingsView = React.memo(function SettingsView() {
 
             {usageReportingEnabled ? (
                 <SettingsUsageSummaryStrip
-                    summary={usageSummary.summary}
-                    isLoading={usageSummary.isLoading}
-                    errorMessage={usageSummary.errorMessage}
+                    viewModel={usageBanner.viewModel}
+                    isLoading={usageBanner.isLoading}
+                    errorMessage={usageBanner.errorMessage}
                     onOpenUsage={(target) => pushRoute(target)}
                 />
             ) : null}
+
+            <AppPluginSurfacePlacementStack
+                placement="app.settingsPage"
+                testID="settings-plugin-surface-placement-stack"
+            />
 
             {/* Add your phone (desktop/web only) */}
             {(isRunningOnMac() || (Platform.OS === 'web' && !isPhoneSizedWeb)) &&
@@ -427,34 +389,15 @@ export const SettingsView = React.memo(function SettingsView() {
 
             {/* Hidden / unfinished buttons (toggle via Developer Mode) */}
             {showHiddenSettingsButtons && (
-                <>
-                    {/* Support Us */}
-                    <ItemGroup>
-                        <Item
-                            title={t('settings.supportUs')}
-                            subtitle={isPro ? t('settings.supportUsSubtitlePro') : t('settings.supportUsSubtitle')}
-                            icon={<Ionicons name="heart" size={29} color={theme.colors.state.danger.foreground} />}
-                            showChevron={false}
-                            onPress={handleSupportUs}
-                        />
-                    </ItemGroup>
-
-                    <ItemGroup title={t('settings.connectedAccounts')}>
-                        <Item
-                            title={anthropicServiceLabel}
-                            subtitle={isAnthropicConnected
-                                ? t('settingsAccount.statusActive')
-                                : t('settings.connectAccount')
-                            }
-                            icon={
-                                <AgentIcon agentId={anthropicAgentId} size={29} />
-                            }
-                            onPress={isAnthropicConnected ? handleDisconnectAnthropic : connectAnthropic}
-                            loading={connectingAnthropic || disconnectingAnthropic}
-                            showChevron={false}
-                        />
-                    </ItemGroup>
-                </>
+                <ItemGroup>
+                    <Item
+                        title={t('settings.supportUs')}
+                        subtitle={isPro ? t('settings.supportUsSubtitlePro') : t('settings.supportUsSubtitle')}
+                        icon={<Ionicons name="heart" size={29} color={theme.colors.state.danger.foreground} />}
+                        showChevron={false}
+                        onPress={handleSupportUs}
+                    />
+                </ItemGroup>
             )}
 
             {/* Social */}
@@ -478,9 +421,9 @@ export const SettingsView = React.memo(function SettingsView() {
                     appVersion={appVersion}
                     attachmentsUploadsEnabled={attachmentsUploadsEnabled}
                     automationsNeedLocalEnablement={automationsNeedLocalEnablement}
-                    connectedServicesEnabled={connectedServicesEnabled}
                     devModeEnabled={devModeEnabled}
                     executionRunsEnabled={executionRunsEnabled}
+                    externalSessionsEnabled={externalSessionsEnabled}
                     handleGitHub={handleGitHub}
                     handleReportIssue={handleReportIssue}
                     handleVersionClick={handleVersionClick}

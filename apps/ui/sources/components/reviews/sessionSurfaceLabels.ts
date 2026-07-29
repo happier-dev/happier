@@ -7,8 +7,6 @@ export type ReviewCommentsPanelLabels = ReviewCommentLabels & Readonly<{ filters
 export function buildReviewCommentLabels(): ReviewCommentsPanelLabels {
     return {
         empty: t('files.reviewComments.durable.empty'),
-        directWriteGranted: t('files.reviewComments.durable.directWriteGranted'),
-        directWriteMissing: t('files.reviewComments.durable.directWriteMissing'),
         engine: t('files.reviewComments.durable.engine'),
         stale: t('files.reviewComments.durable.stale'),
         outdated: t('files.reviewComments.durable.outdated'),

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,7 +14,7 @@ installMessageViewCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => key === 'transcriptMessageSelectionEnabled' ? true : null,
+                useSetting: createUseSettingMock({ fallback: (key) => key === 'transcriptMessageSelectionEnabled' ? true : null }),
                 useSession: () => null,
             },
         });
@@ -71,7 +72,21 @@ function findAncestor(instance: any, predicate: (node: any) => boolean) {
     return null;
 }
 
-describe('MessageView (copy button hitSlop, web)', () => {
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.filter(Boolean).map(flattenStyle));
+    }
+    return style && typeof style === 'object' ? style as Record<string, unknown> : {};
+}
+
+function readRevealOpacity(style: unknown): number | undefined {
+    const opacity = flattenStyle(style).opacity;
+    if (typeof opacity === 'number') return opacity;
+    const animated = opacity as { __getValue?: () => number } | undefined;
+    return typeof animated?.__getValue === 'function' ? animated.__getValue() : undefined;
+}
+
+describe('MessageView (copy button target, web)', () => {
     afterEach(() => {
         standardCleanup();
     });
@@ -117,7 +132,8 @@ describe('MessageView (copy button hitSlop, web)', () => {
         expect(secondSelect).not.toBeNull();
         expect(secondSelect!.props.accessibilityRole).toBe('checkbox');
         expect(secondSelect!.props.accessibilityState).toEqual({ checked: false });
-        expect(screen.findByTestId('transcript-message-actions:m2')?.props.accessibilityElementsHidden).toBe(false);
+        // Selection mode reveals every eligible row's actions, not just the hovered one.
+        expect(readRevealOpacity(screen.findByTestId('transcript-message-actions:m2')?.props.style)).toBe(1);
     });
 
     it('does not use hitSlop on web (avoids overlapping hit targets for sibling actions)', async () => {
@@ -140,6 +156,11 @@ describe('MessageView (copy button hitSlop, web)', () => {
             (node: any) => node.type === 'Pressable' && node.props.accessibilityLabel === 'common.copy',
         );
         expect(copyPressables).toHaveLength(1);
+        const copyStyle = typeof copyPressables[0].props.style === 'function'
+            ? copyPressables[0].props.style({ pressed: false })
+            : copyPressables[0].props.style;
+        expect(flattenStyle(copyStyle).minWidth).toBeGreaterThanOrEqual(44);
+        expect(flattenStyle(copyStyle).minHeight).toBeGreaterThanOrEqual(44);
         expect(copyPressables[0].props.hitSlop).toBeUndefined();
     });
 });

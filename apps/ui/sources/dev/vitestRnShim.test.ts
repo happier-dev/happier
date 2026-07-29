@@ -24,4 +24,16 @@ describe('vitestRnShim', () => {
         expect(typeof posthogModule.default).toBe('function');
         expect(typeof posthogModule.PostHogProvider).toBe('function');
     });
+
+    it('stubs lazy Expo notification and task-manager requires in the Node test runtime', () => {
+        const notifications = (globalThis as any).require('expo-notifications') as {
+            registerTaskAsync?: unknown;
+        };
+        const taskManager = (globalThis as any).require('expo-task-manager') as {
+            isTaskRegisteredAsync?: unknown;
+        };
+
+        expect(typeof notifications.registerTaskAsync).toBe('function');
+        expect(typeof taskManager.isTaskRegisteredAsync).toBe('function');
+    });
 });

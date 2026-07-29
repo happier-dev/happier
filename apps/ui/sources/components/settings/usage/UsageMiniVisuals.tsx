@@ -3,9 +3,11 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ChartTooltip, resolveHeatmapColor } from '@/components/ui/charts';
+import { RippleGrid } from '@/components/instrument';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import type { UsageMetric, UsageSummaryActivityPoint, UsageTrendPoint } from '@/sync/api/account/usageAnalytics';
+import { useEntrancesEnabled } from './sections/EntranceView';
 
 type UsageRankBarRow = Readonly<{
     label: string;
@@ -13,13 +15,6 @@ type UsageRankBarRow = Readonly<{
 }>;
 
 const styles = StyleSheet.create((theme) => ({
-    activityRowStack: {
-        gap: 7,
-    },
-    activityRow: {
-        flexDirection: 'row',
-        gap: 7,
-    },
     activitySquare: {
         width: 16,
         height: 16,
@@ -100,13 +95,17 @@ export function UsageActivitySquareMatrix({
     squareCount = 14,
     rowSize = 7,
     color,
+    interactive = true,
 }: Readonly<{
     activity: readonly UsageSummaryActivityPoint[];
     squareCount?: number;
     rowSize?: number;
     color: string;
+    interactive?: boolean;
 }>) {
     const { theme } = useUnistyles();
+    // Single guard source (R-L6 F1): no ripple replay on a revisit remount.
+    const entrancesEnabled = useEntrancesEnabled();
     const trimmedPoints = activity.slice(-squareCount);
     const fillerCount = Math.max(0, squareCount - trimmedPoints.length);
     const points = [
@@ -129,33 +128,50 @@ export function UsageActivitySquareMatrix({
         });
     }
 
+    // Cells ripple in radially once on mount (RippleGrid, kit choreography);
+    // testIDs keep the historical row/column addressing.
+    const cells = chunkActivity(points, rowSize).flatMap((row, rowIndex) => row.map((point, pointIndex) => {
+        if (!interactive) {
+            return (
+                <View
+                    key={`${point.timestamp}-${rowIndex}-${pointIndex}`}
+                    testID={`usage-activity-square-${rowIndex}-${pointIndex}`}
+                    style={[
+                        styles.activitySquare,
+                        {
+                            backgroundColor: resolveActivityColor(point),
+                        },
+                    ]}
+                />
+            );
+        }
+
+        return (
+            <ChartTooltip
+                key={`${point.timestamp}-${rowIndex}-${pointIndex}`}
+                triggerTestID={`usage-activity-square-${rowIndex}-${pointIndex}`}
+                title={point.active ? new Date(point.timestamp).toLocaleDateString() : '—'}
+                subtitle={point.active ? undefined : t('usage.noData.title')}
+                value={point.active ? point.tokens.toLocaleString() : '0'}
+                accentColor={color}
+                disabled={!point.active}
+            >
+                <View
+                    style={[
+                        styles.activitySquare,
+                        {
+                            backgroundColor: resolveActivityColor(point),
+                        },
+                    ]}
+                />
+            </ChartTooltip>
+        );
+    }));
+
     return (
-        <View style={styles.activityRowStack}>
-            {chunkActivity(points, rowSize).map((row, rowIndex) => (
-                <View key={`row-${rowIndex}`} style={styles.activityRow}>
-                    {row.map((point, pointIndex) => (
-                        <ChartTooltip
-                            key={`${point.timestamp}-${pointIndex}`}
-                            triggerTestID={`usage-activity-square-${rowIndex}-${pointIndex}`}
-                            title={point.active ? new Date(point.timestamp).toLocaleDateString() : '—'}
-                            subtitle={point.active ? undefined : t('usage.noData')}
-                            value={point.active ? point.tokens.toLocaleString() : '0'}
-                            accentColor={color}
-                            disabled={!point.active}
-                        >
-                            <View
-                                style={[
-                                    styles.activitySquare,
-                                    {
-                                        backgroundColor: resolveActivityColor(point),
-                                    },
-                                ]}
-                            />
-                        </ChartTooltip>
-                    ))}
-                </View>
-            ))}
-        </View>
+        <RippleGrid columns={rowSize} cellSize={16} gap={7} animateOnMount={entrancesEnabled}>
+            {cells}
+        </RippleGrid>
     );
 }
 

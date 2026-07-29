@@ -7,10 +7,52 @@
  * the renderer must derive its identity from the fields it actually uses, not from
  * the containing object.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const resumeOperationSpy = vi.hoisted(() => vi.fn());
+const retryOperationSpy = vi.hoisted(() => vi.fn());
+const useMachineSpy = vi.hoisted(() => vi.fn());
+const onlineMachine = vi.hoisted(() => ({
+    id: 'machine-1',
+    active: true,
+    activeAt: Date.now(),
+}));
+
+vi.mock('@/modal', () => ({
+    Modal: { alert: vi.fn() },
+}));
+vi.mock('@/components/ui/feedback/ShimmerView', () => ({
+    ShimmerView: ({ children }: { children?: unknown }) => children ?? null,
+}));
+vi.mock('@/sync/ops/machineExternalSessions', () => ({
+    machineExternalSessionOperationCancel: vi.fn(),
+    machineExternalSessionOperationDiscard: vi.fn(),
+    machineExternalSessionOperationResume: resumeOperationSpy,
+    machineExternalSessionOperationRetry: retryOperationSpy,
+}));
+vi.mock('@/sync/store/hooks', () => ({
+    useMachine: (...args: unknown[]) => {
+        useMachineSpy(...args);
+        return onlineMachine;
+    },
+}));
+vi.mock('@/components/sessions/external/progress/externalSessionOperationRowCapabilities', () => ({
+    resolveExternalSessionOperationRowCapabilities: () => ({
+        originAvailability: 'online',
+        canInvokeOwnerActions: true,
+    }),
+}));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
+    usePreferredServerIdForSession: () => 'server-1',
+}));
 
 import { renderHook } from '@/dev/testkit';
 
+import { TranscriptRowShell } from '@/components/sessions/transcript/ChatListRows';
+import { TranscriptWindowGapRow } from '@/components/sessions/transcript/viewport/window/TranscriptWindowGapRow';
+import { ExternalSessionOperationSharedCard } from '@/components/sessions/external/progress/ExternalSessionOperationSharedCard';
+import { TranscriptLiveMessagesRowShell } from './TranscriptLiveMessagesRowShell';
 import { useTranscriptItemRenderer, type TranscriptItemRendererDeps } from './useTranscriptRowHost';
 
 function createRef<T>(current: T): { current: T } {
@@ -29,6 +71,9 @@ function createRendererProps(overrides?: Partial<Record<string, unknown>>): Tran
         messagePins: [],
         onToggleMessagePin: vi.fn(),
         onEditPendingMessage: vi.fn(),
+        onDismissExternalSessionOperation: vi.fn(),
+        onExternalSessionOperationActionResult: vi.fn(),
+        externalSessionOperationOwnerTarget: null,
         forkCommon: { forkNoticesByMessageId: {} },
         messageDisplayCommon: {},
         toolChromeCommon: {},
@@ -47,28 +92,40 @@ function createRendererDeps(props: TranscriptItemRendererDeps['props']): Transcr
         buildRowShellSignature: vi.fn(() => ({ kind: 'message' } as never)),
         expandedToolCallsAnchorMessageIds: new Set<string>(),
         getMessageById: vi.fn(() => null),
-        getMessageOrigin: undefined,
         getMessageRevisionById: vi.fn(() => 1),
         handleRowLayoutMutation: vi.fn(),
         handleRowShellMeasured: vi.fn(),
         itemsRef: createRef(items),
-        listDataRef: createRef(items),
+        listData: items,
         listOrientation: 'top-down' as never,
         measurementReconciler: {} as never,
         props,
-        resolveCreatedAtForMessageId: vi.fn(() => null),
         resolveKindForMessageId: vi.fn(() => null),
-        resolveRollbackActionForMessage: vi.fn(() => null),
         resolveThinkingExpanded: vi.fn(() => false),
         resolveToolCallMessagesForIds: vi.fn(() => []),
         setThinkingExpanded: vi.fn(),
         setToolCallsGroupExpanded: vi.fn(),
         toolTimelineChromeMode: 'cards',
-        toolRouteCommonRef: createRef(undefined as never),
+        toolRouteCommon: undefined as never,
     };
 }
 
 describe('useTranscriptItemRenderer identity stability', () => {
+    beforeEach(() => {
+        resumeOperationSpy.mockReset();
+        retryOperationSpy.mockReset();
+        useMachineSpy.mockClear();
+    });
+
+    it('does not create a second machine subscription inside the row renderer', async () => {
+        const hook = await renderHook(() => useTranscriptItemRenderer(
+            createRendererDeps(createRendererProps()),
+        ));
+
+        expect(useMachineSpy).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
     it('keeps renderItem identity when a fresh props object carries unchanged fields', async () => {
         const stableFieldValues = createRendererProps();
         const baseDeps = createRendererDeps(stableFieldValues);
@@ -102,5 +159,398 @@ describe('useTranscriptItemRenderer identity stability', () => {
         const second = hook.getCurrent().renderItem;
 
         expect(second).not.toBe(first);
+    });
+
+    it('keeps a synthetic gap in recycler geometry without publishing a viewport-anchor shell', async () => {
+        const hook = await renderHook(() => useTranscriptItemRenderer(
+            createRendererDeps(createRendererProps()),
+        ));
+        const row = hook.getCurrent().renderItem({
+            item: {
+                direction: 'older',
+                id: 'transcript-window-gap:window-1:older',
+                kind: 'transcript-window-gap',
+            },
+            index: 0,
+        }) as { type: unknown; props: { gap?: unknown } };
+
+        expect(row.type).toBe(TranscriptWindowGapRow);
+        expect(row.type).not.toBe(TranscriptRowShell);
+        expect(row.props.gap).toMatchObject({
+            direction: 'older',
+            id: 'transcript-window-gap:window-1:older',
+        });
+    });
+
+    it('routes a forked tool group row subscription to each message origin session', async () => {
+        const props = createRendererProps({
+            forkedTranscriptEnabled: true,
+            forkMessageMetadataById: {
+                'tool-a': { originSessionId: 'origin-a', isReadOnlyContext: true },
+                'tool-b': { originSessionId: 'origin-b', isReadOnlyContext: true },
+            },
+        });
+        const hook = await renderHook(() => useTranscriptItemRenderer(createRendererDeps(props)));
+        const row = hook.getCurrent().renderItem({
+            item: {
+                kind: 'tool-group-header',
+                id: 'group-1#header',
+                groupId: 'group-1',
+                toolMessageIds: ['tool-a', 'tool-b'],
+                expanded: false,
+                hiddenCount: 0,
+                createdAt: 1,
+            },
+            index: 0,
+        }) as { type: unknown; props: { messageRefs: unknown } };
+
+        expect(row.type).toBe(TranscriptLiveMessagesRowShell);
+        expect(row.props.messageRefs).toEqual([
+            { sessionId: 'origin-a', messageId: 'tool-a' },
+            { sessionId: 'origin-b', messageId: 'tool-b' },
+        ]);
+    });
+
+    it('keeps pushed progress authoritative while a successful action waits for metadata publication', async () => {
+        const onExternalSessionOperationActionResult = vi.fn();
+        const initialProgress = {
+            v: 1 as const,
+            operationId: 'operation-1',
+            revision: 1,
+            request: {
+                plan: 'takeover' as const,
+                targetStorageMode: 'persisted' as const,
+                targetRuntimeMode: 'terminal' as const,
+            },
+            status: 'awaiting_user_resume' as const,
+            phase: 'validating' as const,
+            timeline: [
+                'validating',
+                'quiescing',
+                'staging',
+                'importing',
+                'final_catch_up',
+                'admitting',
+                'spawning',
+                'finalizing',
+            ] as const,
+            updatedAtMs: 1,
+            priorStableStorage: { state: 'machine_only' as const },
+            currentStorageState: 'machine_only' as const,
+            checkpoint: {
+                sourcePagesRead: 0,
+                stagedItemCount: 0,
+                importedItemCount: 0,
+                requiredItemFailures: {
+                    total: 0,
+                    record: 0,
+                    media: 0,
+                    conversion: 0,
+                    diagnosticsTruncated: false,
+                },
+            },
+            fence: { kind: 'none' as const },
+            retryTargetPhase: 'validating' as const,
+        };
+        const nextProgress = {
+            ...initialProgress,
+            revision: 2,
+            updatedAtMs: 2,
+        };
+        resumeOperationSpy.mockResolvedValue({
+            ok: true,
+            progress: nextProgress,
+        });
+        const hook = await renderHook(() => useTranscriptItemRenderer(
+            createRendererDeps(createRendererProps({
+                metadata: { machineId: 'machine-1' },
+                externalSessionOperationOwnerTarget: {
+                    machineId: 'machine-1',
+                    machineOnline: true,
+                    machineStatusKnown: true,
+                    serverId: 'server-1',
+                },
+                onExternalSessionOperationActionResult,
+            })),
+        ));
+        const item = {
+            kind: 'external-session-operation' as const,
+            id: 'external-session-operation:operation-1',
+            presentation: {
+                v: 1 as const,
+                operationId: 'operation-1',
+                revision: 1,
+                kind: 'takeover_persisted' as const,
+                status: 'awaiting_user_resume' as const,
+                phase: 'validating' as const,
+            },
+            progress: initialProgress,
+            createdAt: 1,
+        };
+
+        const firstRow = hook.getCurrent().renderItem({ item, index: 0 }) as {
+            props: { children: { props: { children: { props: Record<string, unknown> } } } };
+        };
+        const firstCard = firstRow.props.children.props.children;
+        await act(async () => {
+            await (firstCard.props.onResume as (
+                ref: { operationId: string; revision: number },
+            ) => Promise<void>)({
+                operationId: 'operation-1',
+                revision: 1,
+            });
+        });
+
+        const nextRow = hook.getCurrent().renderItem({ item, index: 0 }) as {
+            props: { children: { props: { children: { props: Record<string, unknown> } } } };
+        };
+        const nextCard = nextRow.props.children.props.children;
+        expect(resumeOperationSpy).toHaveBeenCalledWith({
+            machineId: 'machine-1',
+            sessionId: 's1',
+            operationId: 'operation-1',
+            revision: 1,
+        }, { serverId: 'server-1' });
+        expect(nextCard.props.progress).toMatchObject({
+            operationId: 'operation-1',
+            revision: 1,
+        });
+        expect(nextCard.props.observationContext).toBe('hydrated');
+        expect(onExternalSessionOperationActionResult).toHaveBeenCalledWith(nextProgress);
+
+        const publishedRow = hook.getCurrent().renderItem({
+            item: {
+                ...item,
+                presentation: {
+                    ...item.presentation,
+                    revision: 2,
+                },
+                progress: nextProgress,
+            },
+            index: 0,
+        }) as {
+            props: { children: { props: { children: { props: Record<string, unknown> } } } };
+        };
+        expect(publishedRow.props.children.props.children.props.progress)
+            .toMatchObject({ operationId: 'operation-1', revision: 2 });
+        await hook.unmount();
+    });
+
+    it('delegates terminal-card dismissal to the mounted transcript owner with the exact revision', async () => {
+        const onDismissExternalSessionOperation = vi.fn();
+        const progress = {
+            v: 1 as const,
+            operationId: 'operation-terminal',
+            revision: 7,
+            request: {
+                plan: 'materialize' as const,
+                targetStorageMode: 'external-linked' as const,
+                targetRuntimeMode: null,
+            },
+            status: 'completed' as const,
+            phase: 'publishing' as const,
+            timeline: [
+                'validating',
+                'staging',
+                'importing',
+                'publishing',
+            ] as const,
+            updatedAtMs: 1,
+            priorStableStorage: { state: 'machine_only' as const },
+            currentStorageState: 'snapshot_complete' as const,
+            checkpoint: {
+                sourcePagesRead: 1,
+                stagedItemCount: 1,
+                importedItemCount: 1,
+                totalItemEstimate: 1,
+                requiredItemFailures: {
+                    total: 0,
+                    record: 0,
+                    media: 0,
+                    conversion: 0,
+                    diagnosticsTruncated: false,
+                },
+            },
+            fence: { kind: 'none' as const },
+            publication: {
+                materializationPublicationId: 'publication-1',
+                materializedThroughSourceAt: 1,
+                publishedThroughServerSeq: 1,
+            },
+        };
+        const hook = await renderHook(() => useTranscriptItemRenderer(
+            createRendererDeps(createRendererProps({
+                metadata: { machineId: 'machine-1' },
+                onDismissExternalSessionOperation,
+            })),
+        ));
+        const row = hook.getCurrent().renderItem({
+            item: {
+                kind: 'external-session-operation',
+                id: `external-session-operation:${progress.operationId}`,
+                presentation: {
+                    v: 1,
+                    operationId: progress.operationId,
+                    revision: progress.revision,
+                    kind: 'materialize',
+                    status: progress.status,
+                    phase: progress.phase,
+                },
+                progress,
+                createdAt: 1,
+            },
+            index: 0,
+        }) as {
+            props: { children: { props: { children: { props: Record<string, unknown> } } } };
+        };
+        const card = row.props.children.props.children;
+
+        await (card.props.onDismiss as (
+            ref: { operationId: string; revision: number },
+        ) => void)({
+            operationId: progress.operationId,
+            revision: progress.revision,
+        });
+
+        expect(onDismissExternalSessionOperation).toHaveBeenCalledWith({
+            operationId: progress.operationId,
+            revision: progress.revision,
+        });
+        await hook.unmount();
+    });
+
+    it('routes materialize validating recovery through Retry with the exact current revision', async () => {
+        const progress = {
+            v: 1 as const,
+            operationId: 'operation-materialize-validating',
+            revision: 4,
+            request: {
+                plan: 'materialize' as const,
+                targetStorageMode: 'external-linked' as const,
+                targetRuntimeMode: null,
+            },
+            status: 'awaiting_user_resume' as const,
+            phase: 'validating' as const,
+            timeline: [
+                'validating',
+                'staging',
+                'importing',
+                'finalizing',
+                'publishing',
+            ] as const,
+            updatedAtMs: 1,
+            priorStableStorage: { state: 'machine_only' as const },
+            currentStorageState: 'machine_only' as const,
+            checkpoint: {
+                sourcePagesRead: 0,
+                stagedItemCount: 0,
+                importedItemCount: 0,
+                requiredItemFailures: {
+                    total: 0,
+                    record: 0,
+                    media: 0,
+                    conversion: 0,
+                    diagnosticsTruncated: false,
+                },
+            },
+            fence: { kind: 'none' as const },
+            retryTargetPhase: 'validating' as const,
+        };
+        retryOperationSpy.mockResolvedValue({
+            ok: true,
+            progress: { ...progress, revision: 5, updatedAtMs: 2 },
+        });
+        const hook = await renderHook(() => useTranscriptItemRenderer(
+            createRendererDeps(createRendererProps({
+                metadata: { machineId: 'machine-1' },
+                externalSessionOperationOwnerTarget: {
+                    machineId: 'machine-1',
+                    machineOnline: true,
+                    machineStatusKnown: true,
+                    serverId: 'server-1',
+                },
+            })),
+        ));
+        const row = hook.getCurrent().renderItem({
+            item: {
+                kind: 'external-session-operation',
+                id: `external-session-operation:${progress.operationId}`,
+                presentation: {
+                    v: 1,
+                    operationId: progress.operationId,
+                    revision: progress.revision,
+                    kind: 'materialize',
+                    status: progress.status,
+                    phase: progress.phase,
+                },
+                progress,
+                createdAt: 1,
+            },
+            index: 0,
+        }) as {
+            props: { children: { props: { children: { props: Record<string, unknown> } } } };
+        };
+        const card = row.props.children.props.children;
+
+        await act(async () => {
+            await (card.props.onRetry as (
+                ref: { operationId: string; revision: number },
+            ) => Promise<void>)({
+                operationId: progress.operationId,
+                revision: progress.revision,
+            });
+        });
+
+        expect(retryOperationSpy).toHaveBeenCalledWith({
+            machineId: 'machine-1',
+            sessionId: 's1',
+            operationId: progress.operationId,
+            revision: progress.revision,
+        }, { serverId: 'server-1' });
+        expect(resumeOperationSpy).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
+    it('renders a generic read-only card when complete owner progress is unavailable', async () => {
+        const hook = await renderHook(() => useTranscriptItemRenderer(
+            createRendererDeps(createRendererProps({
+                metadata: { machineId: 'machine-1' },
+            })),
+        ));
+        const row = hook.getCurrent().renderItem({
+            item: {
+                kind: 'external-session-operation',
+                id: 'external-session-operation:operation-1',
+                presentation: {
+                    v: 1,
+                    operationId: 'operation-1',
+                    revision: 4,
+                    kind: 'materialize',
+                    status: 'running',
+                    phase: 'importing',
+                },
+                progress: null,
+                createdAt: 0,
+            },
+            index: 0,
+        }) as {
+            props: { children: { props: { children: { type: unknown; props: Record<string, unknown> } } } };
+        };
+        const card = row.props.children.props.children;
+
+        expect(card.type).toBe(ExternalSessionOperationSharedCard);
+        expect(card.props).toEqual({
+            presentation: {
+                v: 1,
+                operationId: 'operation-1',
+                revision: 4,
+                kind: 'materialize',
+                status: 'running',
+                phase: 'importing',
+            },
+        });
+        expect(resumeOperationSpy).not.toHaveBeenCalled();
+        expect(retryOperationSpy).not.toHaveBeenCalled();
+        await hook.unmount();
     });
 });

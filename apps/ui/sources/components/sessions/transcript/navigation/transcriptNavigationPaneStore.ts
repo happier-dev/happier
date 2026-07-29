@@ -1,11 +1,16 @@
-import * as React from 'react';
+import type { TranscriptNavigationEntryPressHandler } from './transcriptNavigationTypes';
 
-import type { TranscriptNavigationEntry, TranscriptNavigationEntryPressHandler } from './transcriptNavigationTypes';
-
+/**
+ * Registry of the transcript host's jump handler, keyed by session.
+ *
+ * It deliberately carries nothing else: navigation entries come from the session-scoped
+ * derivation owner (`useSessionTranscriptNavigationEntries`) and the reader's current
+ * position comes from the navigation visibility store, so both work with no transcript
+ * mounted. Publishing either of them here again would re-create the split-brain those
+ * owners removed.
+ */
 export type TranscriptNavigationPaneSnapshot = Readonly<{
     sessionId: string;
-    entries: readonly TranscriptNavigationEntry[];
-    activeEntryId: string | null;
     onEntryPress: TranscriptNavigationEntryPressHandler | null;
 }>;
 
@@ -14,20 +19,22 @@ export type TranscriptNavigationPaneStore = Readonly<{
     set: (
         sessionId: string,
         next: Readonly<{
-            entries: readonly TranscriptNavigationEntry[];
-            activeEntryId: string | null;
             onEntryPress: TranscriptNavigationEntryPressHandler;
         }> | null,
     ) => void;
     subscribe: (sessionId: string, listener: () => void) => () => void;
-    /** True while at least one pane consumer (e.g. the navigation panel) is mounted for the session. */
-    hasSubscribers: (sessionId: string) => boolean;
-    /** Notifies when the session's subscriber presence may have changed (panel opened/closed). */
-    subscribeSubscriberPresence: (sessionId: string, listener: () => void) => () => void;
 }>;
 
-const EMPTY_ENTRIES: readonly TranscriptNavigationEntry[] = Object.freeze([]);
 const emptySnapshotsBySessionId = new Map<string, TranscriptNavigationPaneSnapshot>();
+
+/**
+ * How long a reveal-then-jump press waits for the transcript host to register its jump
+ * handler. The host publishes from a layout effect, and React tears layout effects down
+ * inside a hidden/frozen scene, so on the mobile right-panel route the handler is genuinely
+ * absent until the transcript screen is revealed again. Past this budget the press reports
+ * `not-found`, which renders the inline retry affordance instead of hanging silently.
+ */
+export const TRANSCRIPT_NAVIGATION_JUMP_HANDLER_WAIT_TIMEOUT_MS = 4_000;
 
 function normalizeSessionId(sessionId: string): string {
     return sessionId.trim();
@@ -38,8 +45,6 @@ export function createEmptyTranscriptNavigationPaneSnapshot(sessionId: string): 
     const existing = emptySnapshotsBySessionId.get(normalizedSessionId);
     if (existing) return existing;
     const snapshot = {
-        activeEntryId: null,
-        entries: EMPTY_ENTRIES,
         onEntryPress: null,
         sessionId: normalizedSessionId,
     };
@@ -54,10 +59,6 @@ function normalizeSnapshot(
     const normalizedSessionId = normalizeSessionId(sessionId);
     if (!next) return createEmptyTranscriptNavigationPaneSnapshot(normalizedSessionId);
     return {
-        activeEntryId: typeof next.activeEntryId === 'string' && next.activeEntryId.length > 0
-            ? next.activeEntryId
-            : null,
-        entries: next.entries,
         onEntryPress: next.onEntryPress,
         sessionId: normalizedSessionId,
     };
@@ -65,24 +66,15 @@ function normalizeSnapshot(
 
 function snapshotsEqual(left: TranscriptNavigationPaneSnapshot, right: TranscriptNavigationPaneSnapshot): boolean {
     return left.sessionId === right.sessionId
-        && left.activeEntryId === right.activeEntryId
-        && left.entries === right.entries
         && left.onEntryPress === right.onEntryPress;
 }
 
 export function createTranscriptNavigationPaneStore(): TranscriptNavigationPaneStore {
     const snapshotsBySessionId = new Map<string, TranscriptNavigationPaneSnapshot>();
     const listenersBySessionId = new Map<string, Set<() => void>>();
-    const presenceListenersBySessionId = new Map<string, Set<() => void>>();
 
     function notify(sessionId: string) {
         for (const listener of listenersBySessionId.get(sessionId) ?? []) {
-            listener();
-        }
-    }
-
-    function notifyPresence(sessionId: string) {
-        for (const listener of presenceListenersBySessionId.get(sessionId) ?? []) {
             listener();
         }
     }
@@ -114,34 +106,12 @@ export function createTranscriptNavigationPaneStore(): TranscriptNavigationPaneS
                 listenersBySessionId.set(normalizedSessionId, listeners);
             }
             listeners.add(listener);
-            notifyPresence(normalizedSessionId);
             return () => {
                 const current = listenersBySessionId.get(normalizedSessionId);
                 if (!current) return;
                 current.delete(listener);
                 if (current.size === 0) {
                     listenersBySessionId.delete(normalizedSessionId);
-                }
-                notifyPresence(normalizedSessionId);
-            };
-        },
-        hasSubscribers(sessionId) {
-            return (listenersBySessionId.get(normalizeSessionId(sessionId))?.size ?? 0) > 0;
-        },
-        subscribeSubscriberPresence(sessionId, listener) {
-            const normalizedSessionId = normalizeSessionId(sessionId);
-            let listeners = presenceListenersBySessionId.get(normalizedSessionId);
-            if (!listeners) {
-                listeners = new Set();
-                presenceListenersBySessionId.set(normalizedSessionId, listeners);
-            }
-            listeners.add(listener);
-            return () => {
-                const current = presenceListenersBySessionId.get(normalizedSessionId);
-                if (!current) return;
-                current.delete(listener);
-                if (current.size === 0) {
-                    presenceListenersBySessionId.delete(normalizedSessionId);
                 }
             };
         },
@@ -150,22 +120,50 @@ export function createTranscriptNavigationPaneStore(): TranscriptNavigationPaneS
 
 export const transcriptNavigationPaneStore = createTranscriptNavigationPaneStore();
 
-/**
- * True while the transcript navigation pane/panel is mounted for the session.
- * Lets hosts keep visibility observation alive in panel-only mode (rail hidden).
- */
-export function useTranscriptNavigationPaneOpen(sessionId: string): boolean {
-    return React.useSyncExternalStore(
-        React.useCallback((listener) => transcriptNavigationPaneStore.subscribeSubscriberPresence(sessionId, listener), [sessionId]),
-        React.useCallback(() => transcriptNavigationPaneStore.hasSubscribers(sessionId), [sessionId]),
-        () => false,
-    );
+export function readTranscriptNavigationJumpHandler(sessionId: string): TranscriptNavigationEntryPressHandler | null {
+    return transcriptNavigationPaneStore.get(sessionId).onEntryPress;
 }
 
-export function useTranscriptNavigationPaneSnapshot(sessionId: string): TranscriptNavigationPaneSnapshot {
-    return React.useSyncExternalStore(
-        React.useCallback((listener) => transcriptNavigationPaneStore.subscribe(sessionId, listener), [sessionId]),
-        React.useCallback(() => transcriptNavigationPaneStore.get(sessionId), [sessionId]),
-        React.useCallback(() => createEmptyTranscriptNavigationPaneSnapshot(sessionId), [sessionId]),
-    );
+/**
+ * Resolves the session's transcript jump handler *after* the caller's reveal has had a
+ * chance to commit.
+ *
+ * Ordering matters: a navigation press first asks its host to reveal the transcript
+ * (navigate back to the transcript route). Calling the currently-registered handler
+ * synchronously would scroll a scene that is still hidden, and on a frozen scene there is
+ * usually no handler registered at all until the transcript screen un-freezes and re-runs
+ * the host's layout effect. So: always yield a task first, then take the handler,
+ * otherwise wait for the host to publish one.
+ */
+export function awaitTranscriptNavigationJumpHandler(
+    sessionId: string,
+    options: Readonly<{ timeoutMs?: number }> = {},
+): Promise<TranscriptNavigationEntryPressHandler | null> {
+    const timeoutMs = typeof options.timeoutMs === 'number' && Number.isFinite(options.timeoutMs)
+        ? Math.max(0, Math.trunc(options.timeoutMs))
+        : TRANSCRIPT_NAVIGATION_JUMP_HANDLER_WAIT_TIMEOUT_MS;
+
+    return new Promise<TranscriptNavigationEntryPressHandler | null>((resolve) => {
+        let settled = false;
+        let unsubscribe: (() => void) | null = null;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+        const settle = (handler: TranscriptNavigationEntryPressHandler | null) => {
+            if (settled) return;
+            settled = true;
+            unsubscribe?.();
+            if (timeoutId !== null) clearTimeout(timeoutId);
+            resolve(handler);
+        };
+
+        unsubscribe = transcriptNavigationPaneStore.subscribe(sessionId, () => {
+            const handler = readTranscriptNavigationJumpHandler(sessionId);
+            if (handler) settle(handler);
+        });
+        timeoutId = setTimeout(() => settle(readTranscriptNavigationJumpHandler(sessionId)), timeoutMs);
+        setTimeout(() => {
+            const handler = readTranscriptNavigationJumpHandler(sessionId);
+            if (handler) settle(handler);
+        }, 0);
+    });
 }

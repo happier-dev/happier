@@ -1,7 +1,5 @@
 import * as React from 'react';
 import { Linking, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -12,6 +10,11 @@ import { isTauriDesktop, invokeTauri } from '@/utils/platform/tauri';
 import type { SystemTaskRunState } from './types';
 import { resolveSystemTaskStepLabel } from './resolveSystemTaskStepLabel';
 import { readLatestSystemTaskPrompt } from './prompts/readLatestSystemTaskPrompt';
+import {
+    ProgressChecklist,
+    type ProgressChecklistStep,
+    type ProgressChecklistStepStatus,
+} from './ProgressChecklist';
 
 function translateStatus(snapshot: SystemTaskRunState): string {
     if (snapshot.awaitingInput) {
@@ -32,24 +35,14 @@ function translateStatus(snapshot: SystemTaskRunState): string {
 }
 
 function renderValue(value: string | null): string {
-    return value ?? t('settingsProviders.notAvailable');
+    return value ?? t('settingsAgents.notAvailable');
 }
-
-type ChecklistStepStatus = 'pending' | 'active' | 'waiting' | 'done' | 'failed' | 'canceled';
 
 type ChecklistStep = Readonly<{
     stepId: string;
     message: string | null;
-    status: ChecklistStepStatus;
+    status: ProgressChecklistStepStatus;
 }>;
-
-function encodeStepIdForTestId(stepId: string): string {
-    return String(stepId ?? '')
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '') || 'unknown';
-}
 
 function buildChecklistSteps(snapshot: SystemTaskRunState): readonly ChecklistStep[] {
     const byStepId = new Map<string, { firstTs: number; lastTs: number; message: string | null }>();
@@ -177,7 +170,6 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
     showStepMessages?: boolean;
     showOpenLogs?: boolean;
 }>) {
-    const { theme } = useUnistyles();
     const variant = props.variant ?? 'detailed';
     const showStepMessages = props.showStepMessages ?? true;
     const showOpenLogs = props.showOpenLogs ?? true;
@@ -185,6 +177,12 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
     const stepLabel = resolveSystemTaskStepLabel(props.snapshot.currentStepId);
     const latestMessage = props.snapshot.latestMessage;
     const checklistSteps = React.useMemo(() => buildChecklistSteps(props.snapshot), [props.snapshot]);
+    const presentedChecklistSteps = React.useMemo<readonly ProgressChecklistStep[]>(() => (
+        checklistSteps.map((step) => ({
+            ...step,
+            title: renderValue(resolveSystemTaskStepLabel(step.stepId)),
+        }))
+    ), [checklistSteps]);
     const promptAction = React.useMemo(() => resolvePromptAction(props.snapshot), [props.snapshot]);
     const canOpenLogs = showOpenLogs && isTauriDesktop();
     const handleOpenLogs = React.useCallback(async () => {
@@ -237,46 +235,11 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
                         />
                     </>
                 ) : null}
-                {checklistSteps.map((step) => {
-                    const testId = `system-task-progress-checklist-step-${step.status}-${encodeStepIdForTestId(step.stepId)}`;
-                    const showSpinner = step.status === 'active' && props.snapshot.status !== 'failed' && props.snapshot.status !== 'succeeded';
-                    const iconName = step.status === 'done'
-                        ? 'checkmark-circle'
-                        : step.status === 'failed'
-                            ? 'close-circle'
-                            : step.status === 'canceled'
-                                ? 'remove-circle'
-                                : step.status === 'waiting'
-                                    ? 'help-circle'
-                                    : step.status === 'active'
-                                        ? 'ellipse'
-                                        : 'ellipse-outline';
-                    const iconColor = step.status === 'done'
-                        ? theme.colors.state.success.foreground
-                        : step.status === 'failed'
-                            ? theme.colors.state.danger.foreground
-                            : step.status === 'active' || step.status === 'waiting'
-                                ? theme.colors.accent.blue
-                                : theme.colors.text.tertiary;
-
-                    const title = renderValue(resolveSystemTaskStepLabel(step.stepId));
-                    const subtitle = showStepMessages && (typeof step.message === 'string' && step.message.trim())
-                        ? step.message.trim()
-                        : null;
-
-                    return (
-                        <Item
-                            key={step.stepId}
-                            testID={testId}
-                            title={title}
-                            subtitle={subtitle}
-                            icon={<Ionicons name={iconName} size={18} color={iconColor} />}
-                            loading={showSpinner}
-                            showChevron={false}
-                            mode="info"
-                        />
-                    );
-                })}
+                <ProgressChecklist
+                    steps={presentedChecklistSteps}
+                    testIDPrefix="system-task-progress-checklist-step"
+                    showStepMessages={showStepMessages}
+                />
                 {canOpenLogs ? (
                     <Item
                         testID="system-task-progress-open-logs"

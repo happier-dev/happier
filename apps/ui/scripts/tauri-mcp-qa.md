@@ -104,7 +104,7 @@ This script:
 - assumes the stack-owned `tauri:qa --serve` launcher (or another Tauri dev run) is already running,
 - ensures internal `@happier-dev/*` workspace packages have their `dist/` outputs built (so the wizard can render reliably in Metro/Tauri),
 - opens a Tauri driver session,
-- if the pre-auth landing surface is not available, uses the dev-only wizard deep-link `/?happier_wizard_step=relay_select` to capture relay selection deterministically,
+- captures the pre-auth landing surface through the standard onboarding root path,
 - captures the current wizard steps in order:
   - `onboarding-wizard` / welcome
   - relay selection (`onboarding-wizard-relay:*`)

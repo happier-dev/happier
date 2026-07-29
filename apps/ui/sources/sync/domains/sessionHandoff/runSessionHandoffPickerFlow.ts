@@ -1,4 +1,4 @@
-import type { ActionExecutorContext, ActionUiPlacement } from '@happier-dev/protocol';
+import type { ActionExecuteResult, ActionExecutorContext, ActionUiPlacement } from '@happier-dev/protocol';
 
 import { openSessionHandoffPicker } from '@/components/sessions/handoff/openSessionHandoffPicker';
 import { Modal } from '@/modal';
@@ -7,7 +7,11 @@ import { t } from '@/text';
 import { readSessionHandoffSessionActivity } from './readSessionHandoffSessionActivity';
 import { runSessionHandoffUiFlow, type RunSessionHandoffUiFlowResult } from './runSessionHandoffUiFlow';
 
-type ExecuteAction = (actionId: 'session.handoff', input: unknown, context?: ActionExecutorContext) => Promise<unknown>;
+type ExecuteAction = (
+    actionId: 'session.handoff' | 'session.handoff.prepare_target.resume',
+    input: unknown,
+    context?: ActionExecutorContext,
+) => Promise<ActionExecuteResult>;
 
 async function confirmActiveSessionHandoff(sessionId: string): Promise<boolean> {
     if (readSessionHandoffSessionActivity(sessionId)?.active !== true) {

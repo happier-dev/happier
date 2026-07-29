@@ -15,23 +15,6 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/agents/registry/registryUiBehavior', () => ({
-    buildResumeCapabilityOptionsFromUiState: () => ({}),
-    buildNewSessionOptionsFromUiState: () => ({}),
-    canSelectAgentWithoutDetectedCli: () => false,
-    getNewSessionAgentInputExtraActionChips: () => [],
-    buildSpawnEnvironmentVariablesFromUiState: () => ({}),
-    buildResumeSessionExtrasFromUiState: () => null,
-    buildSpawnSessionExtrasFromUiState: () => null,
-    buildWakeResumeExtras: () => null,
-    getAgentResumeExperimentsFromSettings: () => null,
-    getNewSessionPreflightIssues: () => [],
-    getNewSessionRelevantInstallableDepKeys: () => [],
-    resolveAgentUiBehavior: () => ({}),
-    resolveAgentUiBehaviorFromFlavor: () => ({}),
-    supportsDetectedMcpConfigScan: () => false,
-    supportsEditableSessionGoals: () => false,
-}));
 vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
     getResolvedBackendCatalogEntries: () => [],
 }));
@@ -186,7 +169,6 @@ installSessionShellCommonModuleMocks({
     },
 });
 
-vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
     LinearGradient: 'LinearGradient',
 }));
@@ -276,11 +258,14 @@ vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => (
 vi.mock(
     '@/components/sessions/model/useSessionMachineReachability',
     async (importOriginal) => {
-        const { createSessionMachineReachabilityModuleMock } = await import('@/dev/testkit/mocks/sessionMachineReachability');
+        const {
+            createReachableSessionMachineReachability,
+            createSessionMachineReachabilityModuleMock,
+        } = await import('@/dev/testkit/mocks/sessionMachineReachability');
         return createSessionMachineReachabilityModuleMock({
             importOriginal,
             overrides: {
-                useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
+                useSessionMachineReachability: createReachableSessionMachineReachability,
                 useSessionReachableMachineTarget: () => ({ machineId: 'm1', basePath: '/tmp' }),
             },
         });

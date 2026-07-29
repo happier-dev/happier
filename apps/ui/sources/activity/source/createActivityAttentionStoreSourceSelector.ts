@@ -1,12 +1,20 @@
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
+import { serializeExternalSessionSourceForComparison } from '@/sync/domains/session/external/serializeExternalSessionSourceForComparison';
 import type { ConcurrentSessionListCacheByServerId } from '@/sync/domains/session/listing/concurrentSessionListCache';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { StorageState } from '@/sync/store/types';
+import { readSessionDisplayTitleField } from '@/sync/state/selectors';
+import {
+    readPendingAgentStateCompletedRequestSignature,
+    readPendingAgentStateRequestSignature,
+} from '@/sync/domains/session/pending/listPendingSessionRequests';
+import { isVoiceConversationCustodySessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
 import { collectRecordIds, forEachRecordValue } from './recordIteration';
@@ -49,33 +57,6 @@ function joinSignatureParts(parts: readonly unknown[]): string {
     }).join('');
 }
 
-function readRequestSignature(value: unknown): string {
-    const requests = readObjectRecord(value);
-    if (!requests) return '';
-    return joinSignatureParts(collectRecordIds(requests).sort().map((requestId) => {
-        const request = readObjectRecord(requests[requestId]);
-        return joinSignatureParts([
-            requestId,
-            readString(request?.tool),
-            readString(request?.kind),
-            readNumber(request?.createdAt) ?? '',
-        ]);
-    }));
-}
-
-function readCompletedRequestSignature(value: unknown): string {
-    const completedRequests = readObjectRecord(value);
-    if (!completedRequests) return '';
-    return joinSignatureParts(collectRecordIds(completedRequests).sort().map((requestId) => {
-        const request = readObjectRecord(completedRequests[requestId]);
-        return joinSignatureParts([
-            requestId,
-            readNumber(request?.createdAt) ?? '',
-            readNumber(request?.completedAt) ?? '',
-        ]);
-    }));
-}
-
 function readRuntimeIssueSignature(issue: SessionRuntimeIssueV1 | null | undefined): string {
     if (!issue) return '';
     return joinSignatureParts([
@@ -86,8 +67,8 @@ function readRuntimeIssueSignature(issue: SessionRuntimeIssueV1 | null | undefin
         issue.source,
         readNumber(issue.occurredAt) ?? '',
         readNumber(issue.sessionSeq) ?? '',
-        readString(issue.provider),
-        readString(issue.providerTurnId),
+        readString(issue.agentId),
+        readString(issue.agentTurnId),
         readString(issue.sanitizedPreview),
     ]);
 }
@@ -97,10 +78,10 @@ function readLinkedExternalSessionSignature(metadata: unknown): string {
     if (!link) return '';
     return joinSignatureParts([
         link.v,
-        link.providerId,
+        link.agentId,
         link.machineId,
         link.remoteSessionId,
-        link.source,
+        serializeExternalSessionSourceForComparison(link.source),
         readNumber(link.lastKnownActivityAtMs) ?? '',
         link.codexBackendMode ?? '',
     ]);
@@ -121,10 +102,15 @@ function readExternalSessionAttentionSignature(metadata: unknown): string {
 function readSessionMetadataActivitySignature(metadata: unknown): string {
     const record = readObjectRecord(metadata);
     const readState = readObjectRecord(record?.readStateV1);
+    const displayTitle = readSessionDisplayTitleField({ metadata });
     return joinSignatureParts([
         readString(record?.path),
         readString(record?.host),
+        readString(record?.homeDir),
+        readString(record?.machineId),
         readString(record?.name),
+        displayTitle.value ?? '',
+        displayTitle.updatedAt ?? '',
         readNumber(readState?.sessionSeq) ?? '',
         readNumber(readState?.pendingActivityAt) ?? '',
         readLinkedExternalSessionSignature(metadata),
@@ -156,10 +142,19 @@ function buildHiddenSessionSignature(session: Readonly<{
 }
 
 function buildSessionActivitySignature(session: Session): string {
-    if (!isUserFacingSession(session)) {
-        return buildHiddenSessionSignature(session);
+    const ownerMetadata = readSessionOwnerMetadataView(session);
+    const visibilitySession = {
+        id: session.id,
+        serverId: session.serverId,
+        metadata: ownerMetadata,
+        metadataUnavailable: session.metadataLayoutVersion === 1 && ownerMetadata == null,
+    };
+    if (
+        !isUserFacingSession(visibilitySession)
+        && !isVoiceConversationCustodySessionMetadata(ownerMetadata)
+    ) {
+        return buildHiddenSessionSignature(visibilitySession);
     }
-
     const agentState = session.agentState;
     return joinSignatureParts([
         session.id,
@@ -169,6 +164,7 @@ function buildSessionActivitySignature(session: Session): string {
         session.presence,
         session.thinking === true ? 1 : 0,
         readNumber(session.thinkingAt) ?? '',
+        readNumber(session.optimisticThinkingAt) ?? '',
         session.latestTurnStatus ?? '',
         readNumber(session.latestTurnStatusObservedAt) ?? '',
         readNumber(session.meaningfulActivityAt) ?? '',
@@ -179,14 +175,15 @@ function buildSessionActivitySignature(session: Session): string {
         readNumber(session.lastViewedSessionSeq) ?? '',
         readNumber(session.pendingVersion) ?? '',
         readNumber(session.pendingCount) ?? '',
+        readNumber(session.pendingBlockedCount) ?? '',
         hasProjectedPendingRequestCounts(session) ? readNumber(session.updatedAt) ?? '' : '',
         readNumber(session.pendingPermissionRequestCount) ?? '',
         readNumber(session.pendingUserActionRequestCount) ?? '',
         readNumber(session.pendingRequestObservedAt) ?? '',
         readNumber(session.agentStateVersion) ?? '',
-        readRequestSignature(agentState?.requests),
-        readCompletedRequestSignature(agentState?.completedRequests),
-        readSessionMetadataActivitySignature(session.metadata),
+        readPendingAgentStateRequestSignature(agentState),
+        readPendingAgentStateCompletedRequestSignature(agentState),
+        readSessionMetadataActivitySignature(ownerMetadata),
     ]);
 }
 
@@ -199,7 +196,10 @@ function buildHiddenRenderableSignature(renderable: SessionListRenderableSession
 }
 
 function buildRenderableActivitySignature(renderable: SessionListRenderableSession): string {
-    if (!isUserFacingSession(renderable)) {
+    if (
+        !isUserFacingSession(renderable)
+        && !isVoiceConversationCustodySessionMetadata(renderable.metadata)
+    ) {
         return buildHiddenRenderableSignature(renderable);
     }
 
@@ -213,6 +213,7 @@ function buildRenderableActivitySignature(renderable: SessionListRenderableSessi
         renderable.presence,
         renderable.thinking === true ? 1 : 0,
         readNumber(renderable.thinkingAt) ?? '',
+        readNumber(renderable.optimisticThinkingAt) ?? '',
         renderable.latestTurnStatus ?? '',
         readNumber(renderable.latestTurnStatusObservedAt) ?? '',
         readNumber(renderable.meaningfulActivityAt) ?? '',
@@ -221,6 +222,7 @@ function buildRenderableActivitySignature(renderable: SessionListRenderableSessi
         readNumber(renderable.latestReadyEventSeq) ?? '',
         readNumber(renderable.pendingVersion) ?? '',
         readNumber(renderable.pendingCount) ?? '',
+        readNumber(renderable.pendingBlockedCount) ?? '',
         hasRenderablePendingRequestProjection(renderable) ? readNumber(renderable.updatedAt) ?? '' : '',
         renderable.hasPendingPermissionRequests === true ? 1 : 0,
         renderable.hasPendingUserActionRequests === true ? 1 : 0,

@@ -248,7 +248,19 @@ async function getServerFeaturesSnapshotWithRetry(
                 }
 
                 const value: ServerFeaturesSnapshot = { status: 'ready', features: parsed };
-                cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
+                const ttlMs = getCacheTtlMs(value);
+                cache.setSuccess(cacheKey, value, { ttlMs });
+                // Learning a stable server identity can synchronously change
+                // the active/profile scope key. Publish the same observed
+                // snapshot under that canonical key before returning so an
+                // immediate identity-scoped consumer cannot miss the ready
+                // result and fail closed on a transient null cache entry.
+                // Keep the captured key until its TTL expires: deleting it
+                // here would also remove this still-running dedupe entry.
+                const canonicalCacheKey = getCacheKey(params?.serverId);
+                if (canonicalCacheKey !== cacheKey) {
+                    cache.setSuccess(canonicalCacheKey, value, { ttlMs });
+                }
                 return value;
             } finally {
                 clearTimeout(timer);
@@ -269,6 +281,32 @@ export function getCachedServerFeaturesSnapshot(params?: { serverId?: string }):
     const cacheKey = getCacheKey(params?.serverId);
     const cached = cache.get(cacheKey);
     return cached?.kind === 'success' ? cached.value : null;
+}
+
+export function getServerFeaturesSnapshotRetryDelayMs(params: {
+    serverId?: string;
+    snapshot: ServerFeaturesSnapshot;
+}): number | null {
+    if (params.snapshot.status !== 'error') return null;
+    const cached = cache.get(getCacheKey(params.serverId));
+    if (cached?.kind !== 'success' || cached.value !== params.snapshot) {
+        return getCacheTtlMs(params.snapshot);
+    }
+    return Math.max(0, cached.expiresAt - Date.now());
+}
+
+export function primeServerFeaturesSnapshot(params: {
+    serverId?: string;
+    snapshot: ServerFeaturesSnapshot;
+    ttlMs?: number;
+}): void {
+    cache.setSuccess(getCacheKey(params.serverId), params.snapshot, {
+        ttlMs: params.ttlMs ?? getCacheTtlMs(params.snapshot),
+    });
+}
+
+export function deleteServerFeaturesSnapshot(params?: { serverId?: string }): void {
+    cache.delete(getCacheKey(params?.serverId));
 }
 
 export function resetServerFeaturesClientForTests(): void {

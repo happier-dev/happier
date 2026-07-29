@@ -11,6 +11,8 @@ export type DeriveSessionAttentionStateInput = Readonly<{
     presence?: unknown;
     thinking?: boolean | null;
     thinkingAt?: number | null;
+    optimisticThinkingAt?: number | null;
+    hasPendingUserMessages?: boolean | null;
     latestTurnStatus?: PrimaryTurnStatusV1 | null;
     latestTurnStatusObservedAt?: number | null;
     meaningfulActivityAt?: number | null;

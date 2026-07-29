@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import type { VoiceSession } from '@/realtime/types';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
 import { setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
+import { registerVoiceAdapters, resetVoiceAdapterRegistryForTests } from '@/voice/session/voiceAdapterRegistry';
+import { createLocalConversationVoiceAdapter } from '@/voice/adapters/localConversation/localConversationAdapter';
 
 const { realtimeState, appendLocalVoiceAgentContextUpdate, sendLocalVoiceAgentTextUpdate, announceLocalVoiceAgentAssistantText, isLocalVoiceAgentActive, resolveVoiceBindingByControlSessionId } = vi.hoisted(() => ({
   realtimeState: {
@@ -18,13 +21,6 @@ const { realtimeState, appendLocalVoiceAgentContextUpdate, sendLocalVoiceAgentTe
   announceLocalVoiceAgentAssistantText: vi.fn<(sessionId: string, text: string) => void>(),
   isLocalVoiceAgentActive: vi.fn<(sessionId: string) => boolean>((_sessionId: string) => true),
   resolveVoiceBindingByControlSessionId: vi.fn<(controlSessionId: string) => VoiceSessionBinding | null>(() => null),
-}));
-
-vi.mock('@/voice/runtime/realtime/RealtimeTransport', () => ({
-  realtimeTransport: {
-    getVoiceSession: () => realtimeState.session,
-    isVoiceSessionStarted: () => realtimeState.started,
-  },
 }));
 
 vi.mock('@/voice/local/localVoiceRuntimeController', () => ({
@@ -50,6 +46,26 @@ import { voiceHooks } from './voiceHooks';
 
 describe('voiceHooks sink routing', () => {
   beforeEach(() => {
+    resetVoiceAdapterRegistryForTests();
+    registerVoiceAdapters([{
+      id: 'realtime_elevenlabs',
+      engineKind: 'realtime',
+      start: async () => {},
+      stop: async () => {},
+      toggle: async () => {},
+      interrupt: async () => {},
+      setMuted: async () => {},
+      sendContextUpdate: ({ update }) => realtimeState.session?.sendContextualUpdate(update),
+      sendContextText: ({ text }) => realtimeState.session?.sendTextMessage(text),
+      resolveContextChannel: () => realtimeState.session ? {
+        sendContextualUpdate: (update) => realtimeState.session?.sendContextualUpdate(update),
+        sendTextMessage: (text) => realtimeState.session?.sendTextMessage(text),
+      } : null,
+      getSnapshot: () => ({
+        adapterId: 'realtime_elevenlabs', sessionId: 'realtime-s1',
+        status: realtimeState.started ? 'connected' : 'disconnected', mode: 'idle', canStop: realtimeState.started,
+      }),
+    }, createLocalConversationVoiceAdapter()]);
     appendLocalVoiceAgentContextUpdate.mockReset();
     sendLocalVoiceAgentTextUpdate.mockReset();
     announceLocalVoiceAgentAssistantText.mockReset();
@@ -70,6 +86,7 @@ describe('voiceHooks sink routing', () => {
       canStop: false,
     });
 
+    const localConversationDefaults = readLocalConversationVoiceSettings(settingsDefaults.voice);
     storage.setState((state: any) => ({
       ...state,
       settings: {
@@ -77,11 +94,24 @@ describe('voiceHooks sink routing', () => {
         voice: {
           ...settingsDefaults.voice,
           providerId: 'local_conversation',
-          adapters: {
-            ...settingsDefaults.voice.adapters,
+          privacy: {
+            shareSessionSummary: true,
+            shareRecentMessages: true,
+            recentMessagesCount: 3,
+            shareToolNames: true,
+            sharePermissionRequests: true,
+            shareDeviceInventory: true,
+            shareFilePaths: false,
+            shareToolArgs: false,
+          },
+          providers: {
+            ...settingsDefaults.voice.providers,
             local_conversation: {
-              ...settingsDefaults.voice.adapters.local_conversation,
-              conversationMode: 'agent',
+              schemaVersion: 1,
+              config: {
+                ...localConversationDefaults,
+                conversationMode: 'agent',
+              },
             },
           },
         },

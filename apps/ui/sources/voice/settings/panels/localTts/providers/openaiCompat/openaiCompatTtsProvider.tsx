@@ -6,11 +6,11 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Item } from '@/components/ui/lists/Item';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Modal } from '@/modal';
-import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { speakOpenAiCompatText } from '@/voice/output/TtsController';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { normalizeSecretStringPromptInput } from '@/utils/secrets/normalizeSecretStringPromptInput';
+import { OpenAiCompatCredentialItem } from '@/voice/local/openaiCompat/CredentialItem';
+import { OpenAiCompatEndpointItem } from '@/voice/local/openaiCompat/EndpointItem';
 
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import type { LocalTtsProviderSpec } from '../_types';
@@ -29,18 +29,14 @@ const OpenAiCompatTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
 
   return (
     <>
-      <Item
+      <OpenAiCompatEndpointItem
         title={t('settingsVoice.local.ttsBaseUrl')}
-        detail={cfg.openaiCompat.baseUrl ? String(cfg.openaiCompat.baseUrl) : t('settingsVoice.local.notSet')}
-        onPress={() => {
-          fireAndForget((async () => {
-            const raw = await Modal.prompt(t('settingsVoice.local.ttsBaseUrlTitle'), t('settingsVoice.local.ttsBaseUrlDescription'), {
-              placeholder: cfg.openaiCompat.baseUrl ?? '',
-            });
-            if (raw === null) return;
-            setOpenAiCompat({ baseUrl: String(raw).trim() || null });
-          })(), { tag: 'OpenAiCompatTtsSettings.prompt.baseUrl' });
-        }}
+        promptTitle={t('settingsVoice.local.ttsBaseUrlTitle')}
+        promptDescription={t('settingsVoice.local.ttsBaseUrlDescription')}
+        baseUrl={cfg.openaiCompat.baseUrl}
+        insecureLocalOriginConsent={cfg.openaiCompat.insecureLocalOriginConsent}
+        insecureLocalConsentMachineId={cfg.openaiCompat.insecureLocalConsentMachineId}
+        onChange={setOpenAiCompat}
       />
       <Item
         title={t('settingsVoice.local.ttsModel')}
@@ -111,18 +107,12 @@ const OpenAiCompatTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
         }}
       />
 
-      <Item
+      <OpenAiCompatCredentialItem
         title={t('settingsVoice.local.ttsApiKey')}
-        detail={cfg.openaiCompat.apiKey ? t('settingsVoice.local.apiKeySet') : t('settingsVoice.local.apiKeyNotSet')}
-        onPress={() => {
-          fireAndForget((async () => {
-            const raw = await Modal.prompt(t('settingsVoice.local.ttsApiKeyTitle'), t('settingsVoice.local.ttsApiKeyDescription'), {
-              inputType: 'secure-text',
-            });
-            if (raw === null) return;
-            setOpenAiCompat({ apiKey: normalizeSecretStringPromptInput(raw) });
-          })(), { tag: 'OpenAiCompatTtsSettings.prompt.apiKey' });
-        }}
+        promptTitle={t('settingsVoice.local.ttsApiKeyTitle')}
+        promptDescription={t('settingsVoice.local.ttsApiKeyDescription')}
+        credentialKind="tts_api_key"
+        legacySecretValue={cfg.openaiCompat.apiKey}
       />
     </>
   );
@@ -135,7 +125,7 @@ export const openaiCompatTtsProviderSpec: LocalTtsProviderSpec = {
   iconName: 'cloud-outline',
   detail: t('settingsVoice.local.openaiCompatTts.provider.detail'),
   Settings: OpenAiCompatTtsSettings,
-  test: async ({ cfgTts, networkTimeoutMs, sample }) => {
+  test: async ({ cfgTts, sample }) => {
     const baseUrl = String(cfgTts.openaiCompat.baseUrl ?? '').trim();
     if (!baseUrl) {
       fireAndForget((async () => {
@@ -146,15 +136,15 @@ export const openaiCompatTtsProviderSpec: LocalTtsProviderSpec = {
       return;
     }
 
-    const apiKey = cfgTts.openaiCompat.apiKey ? (sync.decryptSecretValue(cfgTts.openaiCompat.apiKey) ?? null) : null;
     await speakOpenAiCompatText({
       baseUrl,
-      apiKey,
+      insecureLocalOriginConsent: cfgTts.openaiCompat.insecureLocalOriginConsent,
+      insecureLocalConsentMachineId: cfgTts.openaiCompat.insecureLocalConsentMachineId,
+      credentialKind: 'tts_api_key',
       model: cfgTts.openaiCompat.model,
       voice: cfgTts.openaiCompat.voice,
       format: cfgTts.openaiCompat.format,
       input: sample,
-      timeoutMs: networkTimeoutMs,
       registerPlaybackStopper: (_stopPlayback) => () => {},
     });
   },

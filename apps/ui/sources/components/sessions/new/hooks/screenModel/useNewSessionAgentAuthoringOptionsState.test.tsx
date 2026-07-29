@@ -1,13 +1,72 @@
 import { describe, expect, it } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderHook } from '@/dev/testkit';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import { SessionModelSelectionV1Schema, type BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { useNewSessionAgentAuthoringOptionsState } from './useNewSessionAgentAuthoringOptionsState';
 
+function nativeSelection(agentTargetKey: string, modelId: string, updatedAt: number) {
+    return SessionModelSelectionV1Schema.parse({
+        v: 1,
+        updatedAt,
+        ref: { agentTargetKey, providerConnectionId: null, modelId },
+    });
+}
+
 describe('useNewSessionAgentAuthoringOptionsState', () => {
+    it('preserves a provider-bound draft selection instead of reconstructing it as native', async () => {
+        const modelSelection = SessionModelSelectionV1Schema.parse({
+            v: 1,
+            updatedAt: 123,
+            ref: {
+                agentTargetKey: 'backend:claude',
+                providerConnectionId: 'pc_01J00000000000000000000000',
+                modelId: 'provider/claude-sonnet',
+            },
+        });
+        const hook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
+            agentType: 'claude',
+            backendTargetKey: 'backend:claude',
+            hydratedTempAuthoringDraft: null,
+            hydratedPersistedAuthoringDraft: {
+                backendTarget: { kind: 'backend', backendId: 'claude' },
+                modelSelection,
+            },
+            rememberedEngineSelection: null,
+        }));
+
+        expect(hook.getCurrent().modelMode).toBe('provider/claude-sonnet');
+        expect(hook.getCurrent().modelSelection).toEqual(modelSelection);
+    });
+
+    it('preserves a provider-bound model literally named default instead of treating it as Automatic', async () => {
+        const modelSelection = SessionModelSelectionV1Schema.parse({
+            v: 1,
+            updatedAt: 123,
+            ref: {
+                agentTargetKey: 'backend:opencode',
+                providerConnectionId: 'pc_01J00000000000000000000000',
+                modelId: 'default',
+            },
+        });
+        const hook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
+            agentType: 'opencode',
+            backendTargetKey: 'backend:opencode',
+            hydratedTempAuthoringDraft: null,
+            hydratedPersistedAuthoringDraft: {
+                backendTarget: { kind: 'backend', backendId: 'opencode' },
+                modelSelection,
+            },
+            rememberedEngineSelection: null,
+        }));
+
+        expect(hook.getCurrent().modelMode).toBe('default');
+        expect(hook.getCurrent().modelSelection).toEqual(modelSelection);
+    });
+
     it('seeds model, session mode, and config options from a remembered engine selection when no draft exists', async () => {
         const hook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
             agentType: 'claude',
@@ -15,7 +74,7 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
             hydratedPersistedAuthoringDraft: null,
             rememberedEngineSelection: {
                 v: 1,
-                modelId: 'claude-sonnet-4-5',
+                modelSelection: nativeSelection('backend:claude', 'claude-sonnet-4-5', 123),
                 acpSessionModeId: 'plan',
                 sessionConfigOptionOverrides: {
                     v: 1,
@@ -52,7 +111,7 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
             hydratedPersistedAuthoringDraft: null,
             rememberedEngineSelection: {
                 v: 1,
-                modelId: 'gpt-5.5',
+                modelSelection: nativeSelection('backend:codex', 'gpt-5.5', 123),
                 acpSessionModeId: null,
                 sessionConfigOptionOverrides: null,
                 updatedAt: 123,
@@ -102,7 +161,7 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
             },
             rememberedEngineSelection: {
                 v: 1,
-                modelId: 'remembered-model',
+                modelSelection: nativeSelection('backend:claude', 'remembered-model', 123),
                 acpSessionModeId: 'remembered-mode',
                 sessionConfigOptionOverrides: {
                     v: 1,
@@ -132,6 +191,72 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
         });
     });
 
+    it('uses implicit profile model intent after explicit drafts but before remembered selection', async () => {
+        const profileSelection = SessionModelSelectionV1Schema.parse({
+            v: 1, updatedAt: 200,
+            ref: { agentTargetKey: 'backend:claude', providerConnectionId: 'pc_profile', modelId: 'profile-model' },
+        });
+        const implicitHook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
+            agentType: 'claude', backendTargetKey: 'backend:claude',
+            hydratedTempAuthoringDraft: null,
+            hydratedPersistedAuthoringDraft: null,
+            implicitProfileModelSelection: profileSelection,
+            rememberedEngineSelection: {
+                v: 1, modelSelection: nativeSelection('backend:claude', 'remembered-model', 100),
+                acpSessionModeId: null, sessionConfigOptionOverrides: null, updatedAt: 100,
+            },
+        }));
+        expect(implicitHook.getCurrent().modelSelection).toEqual(profileSelection);
+
+        const explicitSelection = nativeSelection('backend:claude', 'draft-model', 300);
+        const explicitHook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
+            agentType: 'claude', backendTargetKey: 'backend:claude',
+            hydratedTempAuthoringDraft: {
+                backendTarget: { kind: 'backend', backendId: 'claude' },
+                modelSelection: explicitSelection,
+            },
+            hydratedPersistedAuthoringDraft: null,
+            implicitProfileModelSelection: profileSelection,
+            rememberedEngineSelection: null,
+        }));
+        expect(explicitHook.getCurrent().modelSelection).toEqual(explicitSelection);
+    });
+
+    it('can stage an exact provider selection for a profile-preferred backend before that backend renders', async () => {
+        type Props = Parameters<typeof useNewSessionAgentAuthoringOptionsState>[0];
+        const claudeTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' });
+        const codexTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
+        const profileSelection = SessionModelSelectionV1Schema.parse({
+            v: 1,
+            updatedAt: 200,
+            ref: {
+                agentTargetKey: claudeTargetKey,
+                providerConnectionId: 'pc_profile',
+                modelId: 'profile-model',
+            },
+        });
+        const buildProps = (agentType: AgentId): Props => ({
+            agentType,
+            backendTargetKey: resolveBackendTargetKeyV2({ kind: 'backend', backendId: agentType }),
+            hydratedTempAuthoringDraft: null,
+            hydratedPersistedAuthoringDraft: null,
+            rememberedEngineSelection: null,
+        });
+        const hook = await renderHook(
+            (props: Props) => useNewSessionAgentAuthoringOptionsState(props),
+            { initialProps: buildProps('codex') },
+        );
+
+        await act(async () => {
+            hook.getCurrent().setModelSelectionForBackendTarget(claudeTargetKey, profileSelection);
+        });
+        await hook.rerender(buildProps('claude'));
+
+        expect(hook.getCurrent().modelSelection).toEqual(profileSelection);
+        expect(hook.getCurrent().modelMode).toBe('profile-model');
+        expect(codexTargetKey).not.toBe(claudeTargetKey);
+    });
+
     it('reconciles model and config state when the selected backend changes without picker setters', async () => {
         type Props = Parameters<typeof useNewSessionAgentAuthoringOptionsState>[0];
         const buildProps = (
@@ -150,7 +275,15 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
             {
                 initialProps: buildProps('codex', {
                     v: 1,
-                    modelId: 'gpt-5.5',
+                    modelSelection: SessionModelSelectionV1Schema.parse({
+                        v: 1,
+                        updatedAt: 123,
+                        ref: {
+                            agentTargetKey: 'backend:codex',
+                            providerConnectionId: null,
+                            modelId: 'gpt-5.5',
+                        },
+                    }),
                     acpSessionModeId: 'plan',
                     sessionConfigOptionOverrides: {
                         v: 1,
@@ -265,7 +398,15 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
             hydratedPersistedAuthoringDraft: legacyCodexDraft,
             rememberedEngineSelection: {
                 v: 1,
-                modelId: 'gemini-2.5-pro',
+                modelSelection: SessionModelSelectionV1Schema.parse({
+                    v: 1,
+                    updatedAt: 456,
+                    ref: {
+                        agentTargetKey: 'backend:gemini',
+                        providerConnectionId: null,
+                        modelId: 'gemini-2.5-pro',
+                    },
+                }),
                 acpSessionModeId: null,
                 sessionConfigOptionOverrides: null,
                 updatedAt: 456,

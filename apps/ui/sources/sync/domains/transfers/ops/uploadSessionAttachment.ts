@@ -2,6 +2,11 @@ import type { AttachmentsUploadFileSource } from '@/sync/domains/attachments/att
 import { openLocalUploadSourceReader, resolveLocalUploadSourceSizeBytes } from '@/sync/runtime/files/localUploadSourceReader';
 import { uploadDaemonSessionAttachmentFromReader } from '@/sync/domains/transfers/runtime/transferRuntime';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
+import {
+    isTransferFinalizeRecoveryFailure,
+    type TransferFinalizeRecoveryFailure,
+} from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/directTransferFinalizeRecovery';
+import type { SessionAttachmentsUploadFinalizeResponse } from '@/sync/domains/transfers/runtime/transferRuntime/families/sessionAttachmentTransfers';
 
 export type AttachmentsUploadLocation = 'workspace' | 'os_temp';
 export type VcsIgnoreStrategy = 'git_info_exclude' | 'gitignore' | 'none';
@@ -21,7 +26,8 @@ export type AttachmentsUploadProgress = Readonly<{
 
 export type SessionAttachmentsUploadFileResult =
     | Readonly<{ success: true; path: string; sizeBytes: number; sha256: string }>
-    | Readonly<{ success: false; error: string; errorCode?: string }>;
+    | Readonly<{ success: false; error: string; errorCode?: string }>
+    | TransferFinalizeRecoveryFailure<SessionAttachmentsUploadFinalizeResponse>;
 
 function parseOptionalPositiveInt(value: unknown): number | undefined {
     const raw = String(value ?? '').trim();
@@ -157,6 +163,9 @@ export async function sessionAttachmentsUploadFile(args: Readonly<{
             });
 
             if (bulkUpload.success !== true) {
+                if (isTransferFinalizeRecoveryFailure<SessionAttachmentsUploadFinalizeResponse>(bulkUpload)) {
+                    return bulkUpload;
+                }
                 return { success: false, error: bulkUpload.error ?? 'Upload failed', errorCode: bulkUpload.errorCode };
             }
 

@@ -6,6 +6,7 @@ export async function sessionRpcWithPreferredSessionScope<R, A>(params: Readonly
     method: string;
     payload: A;
     timeoutMs?: number;
+    onIssued?: () => void;
 }>): Promise<R> {
     return await sessionRpcWithServerScope<R, A>({
         sessionId: params.sessionId,
@@ -13,5 +14,6 @@ export async function sessionRpcWithPreferredSessionScope<R, A>(params: Readonly
         method: params.method,
         payload: params.payload,
         timeoutMs: params.timeoutMs,
+        onIssued: params.onIssued,
     });
 }

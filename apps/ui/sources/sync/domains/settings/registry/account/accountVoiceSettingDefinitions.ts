@@ -1,7 +1,21 @@
-import { defineSettingDefinitions } from '@happier-dev/protocol';
+import {
+    VoiceSpeechDiagnosticsSettingsV1Schema,
+    defineSettingDefinitions,
+} from '@happier-dev/protocol';
 
-import { DEFAULT_ELEVENLABS_VOICE_ID } from '@/realtime/elevenlabs/defaults';
-import { VoiceSettingsSchema, voiceSettingsDefaults, type VoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import {
+    VoiceSettingsSchema,
+    readLocalConversationVoiceSettings,
+    readLocalDirectVoiceSettings,
+    voiceSettingsDefaults,
+    type VoiceSettings,
+} from '@/sync/domains/settings/voiceSettings';
+import {
+    VoiceSettingsPersistenceV1Schema,
+    voiceSettingsPersistenceV1Defaults,
+} from '@/sync/domains/settings/voiceSettingsPersistence';
+import { BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES } from '@/voice/registry/generatedBundledVoiceEntries';
+import { createVoiceProviderSettingsCatalog } from '@/voice/settings/providerSettings';
 
 function hasNonEmptyString(value: unknown): value is string {
     return typeof value === 'string' && value.length > 0;
@@ -53,29 +67,18 @@ function bucketTurnStreamTimeoutMs(value: number | null): 'none' | 'small' | 'me
     return 'large';
 }
 
-function bucketUnitInterval(value: number | null): 'default' | 'low' | 'medium' | 'high' {
-    if (value == null) return 'default';
-    if (value < 0.33) return 'low';
-    if (value < 0.67) return 'medium';
-    return 'high';
-}
-
-function bucketSpeed(value: number | null): 'default' | 'slow' | 'normal' | 'fast' {
-    if (value == null) return 'default';
-    if (value < 0.9) return 'slow';
-    if (value <= 1.2) return 'normal';
-    return 'fast';
-}
+const providerSettingsCatalog = createVoiceProviderSettingsCatalog({
+    bundledEntries: BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES,
+});
 
 function buildVoiceSummaryProperties(rawValue: VoiceSettings): Record<string, boolean | string> {
     const value = rawValue ?? voiceSettingsDefaults;
-    const elevenlabs = value.adapters.realtime_elevenlabs;
-    const localDirect = value.adapters.local_direct;
-    const localConversation = value.adapters.local_conversation;
+    const localDirect = readLocalDirectVoiceSettings(value);
+    const localConversation = readLocalConversationVoiceSettings(value);
     const localAgent = localConversation.agent;
 
     return {
-        providerId: value.providerId,
+        providerId: value.providerId ?? 'off',
         uiScopeDefault: value.ui.scopeDefault,
         uiSurfaceLocation: value.ui.surfaceLocation,
         uiActivityFeedEnabled: value.ui.activityFeedEnabled,
@@ -93,22 +96,12 @@ function buildVoiceSummaryProperties(rawValue: VoiceSettings): Record<string, bo
         privacySharePermissionRequests: value.privacy.sharePermissionRequests,
         privacyShareDeviceInventory: value.privacy.shareDeviceInventory,
 
-        realtimeElevenLabsBillingMode: elevenlabs.billingMode,
-        realtimeElevenLabsAssistantLanguageConfigured: hasNonEmptyString(elevenlabs.assistantLanguage),
-        realtimeElevenLabsWelcomeEnabled: elevenlabs.welcome.enabled,
-        realtimeElevenLabsWelcomeMode: elevenlabs.welcome.mode,
-        realtimeElevenLabsWelcomeTemplateConfigured: hasNonEmptyString(elevenlabs.welcome.templateId),
-        realtimeElevenLabsTtsVoiceIdKind: elevenlabs.tts.voiceId === DEFAULT_ELEVENLABS_VOICE_ID ? 'default' : 'custom',
-        realtimeElevenLabsTtsModelIdKind: hasNonEmptyString(elevenlabs.tts.modelId) ? 'custom' : 'default',
-        realtimeElevenLabsTtsStabilityBucket: bucketUnitInterval(elevenlabs.tts.voiceSettings.stability),
-        realtimeElevenLabsTtsSimilarityBoostBucket: bucketUnitInterval(elevenlabs.tts.voiceSettings.similarityBoost),
-        realtimeElevenLabsTtsStyleBucket: bucketUnitInterval(elevenlabs.tts.voiceSettings.style),
-        realtimeElevenLabsTtsUseSpeakerBoostState: elevenlabs.tts.voiceSettings.useSpeakerBoost == null
-            ? 'default'
-            : elevenlabs.tts.voiceSettings.useSpeakerBoost ? 'enabled' : 'disabled',
-        realtimeElevenLabsTtsSpeedBucket: bucketSpeed(elevenlabs.tts.voiceSettings.speed),
-        realtimeElevenLabsByoAgentConfigured: hasNonEmptyString(elevenlabs.byo.agentId),
-        realtimeElevenLabsByoApiKeyConfigured: hasSecretValue(elevenlabs.byo.apiKey),
+        assistantLanguageConfigured: hasNonEmptyString(value.assistantLanguage),
+        welcomeEnabled: value.welcome.enabled,
+        welcomeMode: value.welcome.mode,
+        welcomeTemplateConfigured: hasNonEmptyString(value.welcome.templateId),
+
+        ...providerSettingsCatalog.projectAnalytics(value.providers),
 
         localDirectNetworkTimeoutBucket: bucketTimeoutMs(localDirect.networkTimeoutMs),
         localDirectHandsFreeEnabled: localDirect.handsFree.enabled,
@@ -122,23 +115,21 @@ function buildVoiceSummaryProperties(rawValue: VoiceSettings): Record<string, bo
         localConversationHandsFreeMinSpeechBucket: bucketEndpointingMs(localConversation.handsFree.endpointing.minSpeechMs),
         localConversationAgentBackend: localAgent.backend,
         localConversationAgentAgentSource: localAgent.agentSource,
-        localConversationAgentMachineTargetMode: localAgent.machineTargetMode,
-        localConversationAgentFixedMachineConfigured: hasNonEmptyString(localAgent.machineTargetId),
+        localConversationAgentMachineTargetMode: value.executionMachine.mode,
+        localConversationAgentFixedMachineConfigured: hasNonEmptyString(value.executionMachine.machineId),
         localConversationAgentStayInVoiceHome: localAgent.stayInVoiceHome,
         localConversationAgentTeleportEnabled: localAgent.teleportEnabled,
         localConversationAgentRootSessionPolicy: localAgent.rootSessionPolicy,
         localConversationAgentMaxWarmRootsBucket: bucketCount(localAgent.maxWarmRoots, 3, 5),
         localConversationAgentCustomVoiceHomeConfigured:
-            localAgent.voiceHomeSubdirName !== voiceSettingsDefaults.adapters.local_conversation.agent.voiceHomeSubdirName,
-        localConversationAgentPermissionPolicy: localAgent.permissionPolicy,
+            localAgent.voiceHomeSubdirName !== readLocalConversationVoiceSettings(voiceSettingsDefaults).agent.voiceHomeSubdirName,
+        localConversationAgentPermissionPolicy: localAgent.permissionIntent,
         localConversationAgentIdleTtlBucket: bucketCount(localAgent.idleTtlSeconds, 1800, 7200),
         localConversationAgentPrewarmOnConnect: localAgent.prewarmOnConnect,
         localConversationAgentResumabilityMode: localAgent.resumabilityMode,
         localConversationAgentProviderResumeFallbackToReplay: localAgent.providerResume.fallbackToReplay,
         localConversationAgentReplayStrategy: localAgent.replay.strategy,
         localConversationAgentReplayRecentMessagesBucket: bucketCount(localAgent.replay.recentMessagesCount, 16, 32),
-        localConversationAgentWelcomeEnabled: localAgent.welcome.enabled,
-        localConversationAgentWelcomeMode: localAgent.welcome.mode,
         localConversationAgentCommitIsolation: localAgent.commitIsolation,
         localConversationAgentTranscriptPersistenceMode: localAgent.transcript.persistenceMode,
         localConversationAgentChatModelSource: localAgent.chatModelSource,
@@ -162,6 +153,18 @@ function buildVoiceSummaryProperties(rawValue: VoiceSettings): Record<string, bo
 }
 
 export const ACCOUNT_VOICE_SETTING_DEFINITIONS = defineSettingDefinitions({
+    voiceSettingsV1: {
+        schema: VoiceSettingsPersistenceV1Schema,
+        default: voiceSettingsPersistenceV1Defaults,
+        description: 'Canonical persisted Voice settings',
+        storageScope: 'account',
+    },
+    voiceDiagnosticsV1: {
+        schema: VoiceSpeechDiagnosticsSettingsV1Schema,
+        default: VoiceSpeechDiagnosticsSettingsV1Schema.parse({}),
+        description: 'Local speech diagnostics policy',
+        storageScope: 'account',
+    },
     voice: {
         schema: VoiceSettingsSchema,
         default: voiceSettingsDefaults,

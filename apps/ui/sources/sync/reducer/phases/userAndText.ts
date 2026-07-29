@@ -1,12 +1,15 @@
 import type { TracedMessage } from '../reducerTracer';
 import type { UsageData } from '../../typesRaw';
 import type { ReducerState } from '../reducer';
-import type { ToolCall } from '../../domains/messages/messageTypes';
 import { clearAllMainMergeCursors, setStreamMergeCursor, setThinkingMergeCursor } from '../helpers/mergeCursors';
 import { mergeThinkingText, normalizeThinkingChunk } from '../helpers/thinkingText';
 import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
 import { readStreamSegmentMetaV1 } from '../helpers/streamSegmentMeta';
 import { upsertStreamSegmentSnapshotMessage } from '../helpers/upsertStreamSegmentSnapshotMessage';
+import { hasSyntheticNoResponseMeta } from '../../domains/messages/syntheticNoResponseMessageMeta';
+import { normalizeTranscriptSeq, transcriptBlockIndexFromContentIndex } from '../../domains/messages/transcriptOrdering';
+import { createTranscriptToolCallProjection } from '../helpers/toolCallProjection';
+import { isRecoveredHistoryTranscriptObservation } from '../../domains/messages/transcriptObservationProvenance';
 
 export function runUserAndTextPhase(params: Readonly<{
     state: ReducerState;
@@ -31,20 +34,21 @@ export function runUserAndTextPhase(params: Readonly<{
     let lastMainThinkingMessageId = params.lastMainThinkingMessageId;
     let lastMainStreamMessageId: string | null = params.lastMainStreamMessageId;
     let lastMainStreamKey: string | null = params.lastMainStreamKey;
+    let isolateRecoveredHistory = false;
 
     const setThinkingCursor = (next: string | null, reason: string) => {
-        setThinkingMergeCursor(state, next, reason);
+        if (!isolateRecoveredHistory) setThinkingMergeCursor(state, next, reason);
         lastMainThinkingMessageId = next;
     };
 
     const setStreamCursor = (next: { messageId: string; streamKey: string } | null, reason: string) => {
-        setStreamMergeCursor(state, next, reason);
+        if (!isolateRecoveredHistory) setStreamMergeCursor(state, next, reason);
         lastMainStreamMessageId = next?.messageId ?? null;
         lastMainStreamKey = next?.streamKey ?? null;
     };
 
     const clearAllCursors = (reason: string) => {
-        clearAllMainMergeCursors(state, reason);
+        if (!isolateRecoveredHistory) clearAllMainMergeCursors(state, reason);
         lastMainThinkingMessageId = null;
         lastMainStreamMessageId = null;
         lastMainStreamKey = null;
@@ -55,13 +59,32 @@ export function runUserAndTextPhase(params: Readonly<{
     //
 
     for (let msg of nonSidechainMessages) {
+        const isRecoveredHistory = isRecoveredHistoryTranscriptObservation(msg);
+        const retainedThinkingMessageId = lastMainThinkingMessageId;
+        const retainedStreamMessageId = lastMainStreamMessageId;
+        const retainedStreamKey = lastMainStreamKey;
+        isolateRecoveredHistory = isRecoveredHistory;
+        if (isRecoveredHistory) {
+            lastMainThinkingMessageId = null;
+            lastMainStreamMessageId = null;
+            lastMainStreamKey = null;
+        }
+        const restoreLiveMergeCursors = () => {
+            if (!isRecoveredHistory) return;
+            lastMainThinkingMessageId = retainedThinkingMessageId;
+            lastMainStreamMessageId = retainedStreamMessageId;
+            lastMainStreamKey = retainedStreamKey;
+            isolateRecoveredHistory = false;
+        };
         if (msg.role === 'user') {
             // Check if we've seen this localId before
-            if (msg.localId && state.localIds.has(msg.localId)) {
+            if (!isRecoveredHistory && msg.localId && state.localIds.has(msg.localId)) {
+                restoreLiveMergeCursors();
                 continue;
             }
             // Check if we've seen this message ID before
             if (state.messageIds.has(msg.id)) {
+                restoreLiveMergeCursors();
                 continue;
             }
 
@@ -70,7 +93,7 @@ export function runUserAndTextPhase(params: Readonly<{
             state.messages.set(mid, {
                 id: mid,
                 realID: msg.id,
-                seq: typeof msg.seq === 'number' ? msg.seq : null,
+                seq: normalizeTranscriptSeq(msg.seq),
                 localId: msg.localId ?? null,
                 role: 'user',
                 createdAt: msg.createdAt,
@@ -81,7 +104,7 @@ export function runUserAndTextPhase(params: Readonly<{
             });
 
             // Track both localId and messageId
-            if (msg.localId) {
+            if (msg.localId && !isRecoveredHistory) {
                 state.localIds.set(msg.localId, mid);
             }
             state.messageIds.set(msg.id, mid);
@@ -90,25 +113,32 @@ export function runUserAndTextPhase(params: Readonly<{
             clearAllCursors('user-message');
         } else if (msg.role === 'agent') {
             // Process usage data if present
-            if (msg.usage) {
+            if (msg.usage && !isRecoveredHistory) {
                 processUsageData(state, msg.usage, msg.createdAt);
             }
 
 	            // Process text and thinking content (tool calls handled in Phase 2)
                 let thinkingRunIndex = 0;
                 let isThinkingRunOpen = false;
-	            for (let c of msg.content) {
+	            for (let contentIndex = 0; contentIndex < msg.content.length; contentIndex += 1) {
+                    const c = msg.content[contentIndex]!;
+                    const transcriptBlockIndex = transcriptBlockIndexFromContentIndex(contentIndex);
                     if (c.type !== 'thinking' && isThinkingRunOpen) {
                         thinkingRunIndex += 1;
                         isThinkingRunOpen = false;
                     }
 
 	                if (c.type === 'text') {
+                    const text = String(c.text ?? '');
+                    if (hasSyntheticNoResponseMeta(msg.meta)) {
+                        clearAllCursors('synthetic-no-response');
+                        continue;
+                    }
 	                    const streamSegmentMeta = readStreamSegmentMetaV1(msg.meta);
 	                    const streamSegmentKind = streamSegmentMeta?.segmentKind ?? null;
 	                    const streamSegmentLocalId = streamSegmentMeta?.segmentLocalId ?? msg.localId;
 	                    if (streamSegmentKind === 'assistant' && streamSegmentLocalId) {
-                        const nextText = String(c.text ?? '');
+                        const nextText = text;
                         const hasVisibleText = nextText.trim().length > 0;
                         const upsert = upsertStreamSegmentSnapshotMessage({
                             state,
@@ -117,6 +147,7 @@ export function runUserAndTextPhase(params: Readonly<{
                             realID: msg.id,
                             createdAt: msg.createdAt,
                             seq: msg.seq,
+                            transcriptBlockIndex,
                             isThinking: false,
                             text: nextText,
                             meta: msg.meta,
@@ -156,11 +187,9 @@ export function runUserAndTextPhase(params: Readonly<{
                         const prev = state.messages.get(lastMainStreamMessageId!);
                         if (prev && typeof prev.text === 'string') {
                             prev.text = prev.text + String(c.text ?? '');
-                            if (typeof msg.seq === 'number') {
-                                const nextSeq = Math.trunc(msg.seq);
-                                if (prev.seq === null || nextSeq > prev.seq) {
-                                    prev.seq = nextSeq;
-                                }
+                            const nextSeq = normalizeTranscriptSeq(msg.seq);
+                            if (nextSeq !== null && (prev.seq === null || nextSeq > prev.seq)) {
+                                prev.seq = nextSeq;
                             }
                             changed.add(lastMainStreamMessageId!);
                         }
@@ -176,7 +205,8 @@ export function runUserAndTextPhase(params: Readonly<{
                     state.messages.set(mid, {
                         id: mid,
                         realID: msg.id,
-                        seq: typeof msg.seq === 'number' ? msg.seq : null,
+                        seq: normalizeTranscriptSeq(msg.seq),
+                        transcriptBlockIndex,
                         localId: msg.localId ?? null,
                         role: 'agent',
                         createdAt: msg.createdAt,
@@ -205,6 +235,7 @@ export function runUserAndTextPhase(params: Readonly<{
                             realID: msg.id,
                             createdAt: msg.createdAt,
                             seq: msg.seq,
+                            transcriptBlockIndex,
                             isThinking: true,
                             text: nextText,
                             meta: msg.meta,
@@ -242,11 +273,9 @@ export function runUserAndTextPhase(params: Readonly<{
                             const mapped = state.messages.get(mappedId) ?? null;
                             if (mapped && mapped.role === 'agent' && mapped.isThinking && typeof mapped.text === 'string') {
                                 mapped.text = mergeThinkingText(mapped.text, chunk);
-                                if (typeof msg.seq === 'number') {
-                                    const nextSeq = Math.trunc(msg.seq);
-                                    if (mapped.seq === null || nextSeq > mapped.seq) {
-                                        mapped.seq = nextSeq;
-                                    }
+                                const nextSeq = normalizeTranscriptSeq(msg.seq);
+                                if (nextSeq !== null && (mapped.seq === null || nextSeq > mapped.seq)) {
+                                    mapped.seq = nextSeq;
                                 }
                                 changed.add(mappedId);
                                 setThinkingCursor(mappedId, 'agent-thinking-uuid-merge');
@@ -269,11 +298,9 @@ export function runUserAndTextPhase(params: Readonly<{
                           const prev = prevThinkingId ? state.messages.get(prevThinkingId) : null;
                           if (prev && typeof prev.text === 'string') {
                               prev.text = mergeThinkingText(prev.text, chunk);
-                            if (typeof msg.seq === 'number') {
-                                const nextSeq = Math.trunc(msg.seq);
-                                if (prev.seq === null || nextSeq > prev.seq) {
-                                    prev.seq = nextSeq;
-                                }
+                            const nextSeq = normalizeTranscriptSeq(msg.seq);
+                            if (nextSeq !== null && (prev.seq === null || nextSeq > prev.seq)) {
+                                prev.seq = nextSeq;
                             }
                             changed.add(prevThinkingId!);
                         }
@@ -286,7 +313,8 @@ export function runUserAndTextPhase(params: Readonly<{
                         state.messages.set(mid, {
                             id: mid,
                             realID: msg.id,
-                            seq: typeof msg.seq === 'number' ? msg.seq : null,
+                            seq: normalizeTranscriptSeq(msg.seq),
+                            transcriptBlockIndex,
                             localId: msg.localId ?? null,
                             role: 'agent',
                             createdAt: msg.createdAt,
@@ -314,44 +342,21 @@ export function runUserAndTextPhase(params: Readonly<{
                     }
 
                     const permission = state.permissions.get(c.id);
-                    const toolInput = permission ? permission.arguments : c.input;
-                    const toolCreatedAt = permission ? permission.createdAt : msg.createdAt;
-                    const pendingPermission = !permission && isPermissionRequestToolCall(c.id, toolInput);
-
-                    let toolCall: ToolCall = {
-                        id: c.id,
-                        name: c.name,
-                        state: 'running' as const,
-                        input: toolInput,
-                        createdAt: toolCreatedAt,
-                        startedAt: pendingPermission ? null : msg.createdAt,
-                        completedAt: null,
+                    const projection = createTranscriptToolCallProjection({
+                        toolId: c.id,
+                        toolName: c.name,
+                        toolInput: c.input,
                         description: c.description,
-                        result: undefined,
-                    };
+                        messageCreatedAt: msg.createdAt,
+                        permission,
+                        isPendingPermissionRequest: !permission && isPermissionRequestToolCall(c.id, c.input),
+                    });
+                    const toolCall = projection.toolCall;
 
-                    if (permission) {
-                        toolCall.permission = {
-                            id: c.id,
-                            status: permission.status,
-                            reason: permission.reason,
-                            mode: permission.mode,
-                            allowedTools: permission.allowedTools ?? permission.allowTools,
-                            decision: permission.decision,
-                        };
-
-                        if (permission.status !== 'approved') {
-                            toolCall.state = 'error';
-                            toolCall.completedAt = permission.completedAt || msg.createdAt;
-                            if (permission.reason) {
-                                toolCall.result = { error: permission.reason };
-                            }
-                        }
-                    } else if (pendingPermission) {
-                        toolCall.permission = { id: c.id, status: 'pending' };
+                    if (projection.shouldStorePendingPermission) {
                         state.permissions.set(c.id, {
                             tool: c.name,
-                            arguments: toolInput,
+                            arguments: c.input,
                             createdAt: msg.createdAt,
                             status: 'pending',
                         });
@@ -361,7 +366,8 @@ export function runUserAndTextPhase(params: Readonly<{
                     state.messages.set(mid, {
                         id: mid,
                         realID: msg.id,
-                        seq: typeof msg.seq === 'number' ? msg.seq : null,
+                        seq: normalizeTranscriptSeq(msg.seq),
+                        transcriptBlockIndex,
                         localId: msg.localId ?? null,
                         role: 'agent',
                         createdAt: msg.createdAt,
@@ -383,5 +389,6 @@ export function runUserAndTextPhase(params: Readonly<{
                 }
             }
         }
+        restoreLiveMergeCursors();
     }
 }

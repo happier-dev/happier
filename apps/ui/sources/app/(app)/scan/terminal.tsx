@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useNavigation, useRouter } from 'expo-router';
 
-import { WizardModalShell } from '@/components/onboarding';
+import { WizardModalShell } from '@/components/onboarding/ui/WizardModalShell';
 import { ScanAuthQrScreen } from '@/components/qr/ScanAuthQrScreen';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';

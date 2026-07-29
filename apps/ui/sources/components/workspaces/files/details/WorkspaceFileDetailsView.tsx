@@ -50,6 +50,7 @@ import { useWorkspaceFileScmStageActions } from '@/hooks/workspaces/scm/useWorks
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useCodeLinesSyntaxHighlighting } from '@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting';
 import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveFileDetailsDisplayMode } from './workspaceFileDetails/resolveFileDetailsDisplayMode';
 import { resolveFileDetailsRenderableDiff } from './workspaceFileDetails/resolveFileDetailsRenderableDiff';
 import { useSessionImagePreview } from '@/components/sessions/files/content/imagePreview/useSessionImagePreview';
@@ -104,9 +105,10 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
 
     const sessionId = (props.sessionIdForAugmentation ?? '').trim();
     const session = useSession(sessionId);
+    const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
     const project = useProjectForSession(sessionId);
     const sessionPath = resolveSessionWorkspacePath({
-        sessionPath: session?.metadata?.path ?? null,
+        sessionPath: ownerMetadata?.path ?? null,
         projectPath: project?.key?.rootPath ?? (scope?.rootPath ?? null),
     });
     const downloadActionsAvailable = Boolean(scope);
@@ -792,7 +794,6 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                             theme={theme}
                             filePath={filePath}
                             imagePreviewUri={imagePreviewUri}
-                            imagePreviewSvgXml={imagePreview.status === 'loaded' ? imagePreview.svgXml : null}
                         />
                     </ScrollView>
                 ) : (

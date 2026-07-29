@@ -43,6 +43,35 @@ describe('useSelectionListKeyboardNav (base)', () => {
         expect(harness.getCurrent().focusedIndex).toBe(0);
     });
 
+    it('initializes focusedIndex from the preferred option when it is visible', async () => {
+        const harness = await renderHook(() => useSelectionListKeyboardNav(makeParams({
+            preferredFocusedOptionId: 'b',
+        })));
+        expect(harness.getCurrent().focusedIndex).toBe(1);
+    });
+
+    it('keeps explicit keyboard row focus in value mode after seeding from a preferred option', async () => {
+        const onActivate = vi.fn();
+        const onCommitInputValue = vi.fn();
+        const harness = await renderHook(() => useSelectionListKeyboardNav(makeParams({
+            inputMode: 'value',
+            preferredFocusedOptionId: 'b',
+            onActivate,
+            onCommitInputValue,
+        })));
+
+        await act(async () => {
+            harness.getCurrent().handleKey(makeKeyEvent({ key: 'ArrowDown' }).event);
+        });
+        await act(async () => {
+            harness.getCurrent().handleKey(makeKeyEvent({ key: 'Enter' }).event);
+        });
+
+        expect(harness.getCurrent().focusedIndex).toBe(2);
+        expect(onActivate).toHaveBeenCalledWith('c');
+        expect(onCommitInputValue).not.toHaveBeenCalled();
+    });
+
     it('initializes focusedIndex to -1 when there are no visible options', async () => {
         const harness = await renderHook(() => useSelectionListKeyboardNav(makeParams({ flatVisibleOptionIds: [] })));
         expect(harness.getCurrent().focusedIndex).toBe(-1);

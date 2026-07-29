@@ -3,11 +3,22 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { NormalizedMessage } from '@/sync/typesRaw';
 import { handleMessageUpdatedSocketUpdate } from './sessionSocketUpdate';
 
+type TestAttentionImpact = {
+    affectsUnread: boolean;
+    affectsMeaningfulActivity: boolean;
+};
+
+const userAttentionImpact = {
+    affectsUnread: true,
+    affectsMeaningfulActivity: true,
+} satisfies TestAttentionImpact;
+
 function buildUpdate(params: {
     sid?: string;
     messageId: string;
     messageSeq: number;
     content?: { t: 'encrypted'; c: string } | { t: 'plain'; v: unknown };
+    attentionImpact?: TestAttentionImpact;
     updateCreatedAt?: number;
     messageCreatedAt?: number;
     messageUpdatedAt?: number;
@@ -22,6 +33,7 @@ function buildUpdate(params: {
             id: string;
             seq: number;
                 content: { t: 'encrypted'; c: string } | { t: 'plain'; v: unknown };
+            attentionImpact?: TestAttentionImpact;
             localId: null;
             sidechainId: null;
             createdAt: number;
@@ -40,6 +52,7 @@ function buildUpdate(params: {
                 id: params.messageId,
                 seq: params.messageSeq,
                 content: params.content ?? { t: 'encrypted', c: 'x' },
+                ...(params.attentionImpact ? { attentionImpact: params.attentionImpact } : {}),
                 localId: null,
                 sidechainId: null,
                 createdAt: params.messageCreatedAt ?? 1_000,
@@ -198,6 +211,12 @@ describe('handleMessageUpdatedSocketUpdate', () => {
         const markSessionKnownRemoteSeq = vi.fn();
         const markSessionTranscriptStale = vi.fn();
         const { params, applyMessages, applySessions, markSessionMaterializedMaxSeq } = buildHarness({
+            updateData: buildUpdate({
+                sid: 's1',
+                messageId: 'm2',
+                messageSeq: 2,
+                attentionImpact: userAttentionImpact,
+            }),
             getSessionEncryption: () => ({ decryptMessage }),
             getSession: () => ({
                 ...buildSession('s1'),
@@ -282,7 +301,12 @@ describe('handleMessageUpdatedSocketUpdate', () => {
         const markSessionKnownRemoteSeq = vi.fn();
         const markSessionTranscriptStale = vi.fn();
         const { params, applyMessages, applySessions, markSessionMaterializedMaxSeq } = buildHarness({
-            updateData: buildUpdate({ sid: 's1', messageId: 'm2', messageSeq: 2 }),
+            updateData: buildUpdate({
+                sid: 's1',
+                messageId: 'm2',
+                messageSeq: 2,
+                attentionImpact: userAttentionImpact,
+            }),
             getSession: () => ({
                 ...buildSession('s1'),
                 latestTurnStatus: 'in_progress',

@@ -105,6 +105,8 @@ function createSnapshot() {
                 id: 'primary',
                 active: true,
                 presence: 'online',
+                pendingPermissionRequestCount: 1,
+                pendingRequestObservedAt: 950,
                 metadata: {
                     path: '/Users/tester/project/primary',
                     host: 'tester.local',
@@ -115,6 +117,9 @@ function createSnapshot() {
             }),
             createSessionFixture({
                 id: 'secondary',
+                seq: 2,
+                latestReadyEventSeq: 2,
+                lastViewedSessionSeq: 1,
                 metadata: {
                     path: '/Users/tester/project/secondary',
                     host: 'tester.local',

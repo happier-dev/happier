@@ -2,6 +2,8 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { parseMarkdown } from '../../../node_modules/react-native-enriched-markdown/src/web/parseMarkdown';
+import type { ASTNode } from '../../../node_modules/react-native-enriched-markdown/src/web/types';
 import { installMarkdownCommonModuleMocks } from './markdownTestHelpers';
 
 declare global {
@@ -31,6 +33,15 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     return {};
 }
 
+function findFirstNode(root: ASTNode, type: ASTNode['type']): ASTNode | null {
+    if (root.type === type) return root;
+    for (const child of root.children ?? []) {
+        const match = findFirstNode(child, type);
+        if (match) return match;
+    }
+    return null;
+}
+
 describe('MarkdownView (enriched renderer)', () => {
     it('renders package-safe prose as one selectable enriched markdown run', async () => {
         const { MarkdownView } = await import('./MarkdownView');
@@ -54,7 +65,7 @@ describe('MarkdownView (enriched renderer)', () => {
         expect(enrichedRuns[0]!.props.md4cFlags).toEqual({ latexMath: true });
         expect(enrichedRuns[0]!.props.testID).toBeUndefined();
         expect(enrichedRuns[0]!.props['data-testid']).toBe('markdown-enriched-run');
-        expect(enrichedRuns[0]!.props.renderRawFallback).toBe('hidden');
+        expect(enrichedRuns[0]!.props.renderRawFallback).toBeUndefined();
         expect(enrichedRuns[0]!.props.enableLinkPreview).toBeUndefined();
         expect(enrichedRuns[0]!.props.allowFontScaling).toBeUndefined();
         expect(enrichedRuns[0]!.props.streamingAnimation).toBeUndefined();
@@ -99,6 +110,63 @@ describe('MarkdownView (enriched renderer)', () => {
         enrichedRun.props.onLinkPress({ url: 'http://localhost:18829/repo/src/index.ts:8' });
 
         expect(onLinkPress).toHaveBeenCalledWith('http://localhost:18829/repo/src/index.ts:8');
+    });
+
+    it.each([
+        { raw: 'javascript:alert(1)', rendered: 'target' },
+        { raw: 'data:text/html,hello', rendered: 'target' },
+        { raw: 'README.md', rendered: 'target' },
+        { raw: './README.md', rendered: '[target](./README.md)' },
+        { raw: 'mailto:test@example.com', rendered: '[target](mailto:test@example.com)' },
+        { raw: 'https://example.com/path', rendered: '[target](https://example.com/path)' },
+        { raw: 'http://example.com/path', rendered: '[target](http://example.com/path)' },
+    ])('validates $raw before exposing it to the renderer', async ({ raw, rendered }) => {
+        const { MarkdownView } = await import('./MarkdownView');
+        const screen = await renderScreen(
+            <MarkdownView markdown={`[target](${raw})`} profile="transcript" />,
+        );
+
+        expect(screen.findByType('EnrichedMarkdownText').props.markdown).toBe(rendered);
+    });
+
+    it.each([
+        { definition: 'javascript:alert(1)', parserUrl: 'javascript:alert(1)' },
+        { definition: 'data:text/html,hello', parserUrl: 'data:text/html,hello' },
+        { definition: 'javascript&#58;alert(1)', parserUrl: 'javascript&#58;alert(1)' },
+    ])('does not expose an invalid reference destination to a custom callback: $definition', async ({ definition, parserUrl }) => {
+        const { MarkdownView } = await import('./MarkdownView');
+        const onLinkPress = vi.fn();
+        const markdown = `[target][unsafe]\n\n[unsafe]: ${definition}`;
+        const parsedLink = findFirstNode(await parseMarkdown(markdown), 'Link');
+        expect(parsedLink?.attributes?.url).toBe(parserUrl);
+        const screen = await renderScreen(
+            <MarkdownView
+                markdown={markdown}
+                onLinkPress={onLinkPress}
+                profile="transcript"
+            />,
+        );
+        const enrichedRun = screen.findByType('EnrichedMarkdownText');
+
+        enrichedRun.props.onLinkPress({ url: parsedLink!.attributes!.url });
+
+        expect(onLinkPress).not.toHaveBeenCalled();
+    });
+
+    it('fails inline and reference Markdown images closed before rendering', async () => {
+        const { MarkdownView } = await import('./MarkdownView');
+        const trackingPixel = 'https://tracker.example/pixel.gif';
+        const screen = await renderScreen(
+            <MarkdownView
+                markdown={`before ![inline](${trackingPixel}) ![reference][pixel] ![shortcut] after\n\n[pixel]: ${trackingPixel}\n[shortcut]: ${trackingPixel}`}
+                profile="transcript"
+            />,
+        );
+        const rendered = screen.findByType('EnrichedMarkdownText').props.markdown as string;
+
+        expect(rendered).not.toContain('![');
+        expect(rendered).not.toContain(`](${trackingPixel})`);
+        expect(rendered).toContain('before inline reference shortcut after');
     });
 
     it('lets callers handle markdown source ranges without centering markdown content', async () => {

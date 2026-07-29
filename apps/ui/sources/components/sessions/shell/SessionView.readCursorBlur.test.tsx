@@ -23,7 +23,6 @@ const sessionState = vi.hoisted(() => ({
         agentState: {},
     } as any,
 }));
-vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
     LinearGradient: 'LinearGradient',
 }));
@@ -226,7 +225,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     buildResumeSessionExtrasFromUiState: () => null,
     getAgentCore: () => ({
         cli: { detectKey: 'codex' },
-        uiConnectedService: { serviceId: null, label: 'Codex', connectRoute: null },
+        uiConnectedService: { serviceId: null, labelKey: 'agentInput.agent.codex', connectRoute: null },
         model: { defaultMode: 'default' },
         resume: { vendorResumeIdField: null },
         sessionModes: { kind: 'none' },

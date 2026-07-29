@@ -22,7 +22,7 @@ import {
 } from '@/utils/sessions/useStableRecentPathsForMachine';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
 import { Text } from '@/components/ui/text/Text';
-import { resolveMachineExactSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness';
+import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
 import {
   resolveDirectoryFavoriteComparisonKey,
@@ -145,13 +145,13 @@ export function VoiceSessionSpawnPickerModal(props: Props) {
   const canCreate = Boolean(
     selectedMachineId
     && selectedMachine
-    && resolveMachineExactSpawnReadiness(selectedMachine, selectedMachineId).status === 'ready'
+    && resolveMachineSpawnReadiness({ machine: selectedMachine, selectedMachineId }).status === 'ready'
     && (selectedPath.trim() || selectedMachine?.metadata?.homeDir),
   );
 
   const handleCreate = React.useCallback(() => {
     if (!selectedMachineId) return;
-    if (resolveMachineExactSpawnReadiness(selectedMachine, selectedMachineId).status !== 'ready') return;
+    if (resolveMachineSpawnReadiness({ machine: selectedMachine, selectedMachineId }).status !== 'ready') return;
     const directory = selectedPath.trim() || selectedMachine?.metadata?.homeDir || '/home';
     onResolve({ machineId: selectedMachineId, directory });
     onClose();

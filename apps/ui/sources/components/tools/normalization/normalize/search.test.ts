@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeCodeSearchResultForRendering } from './search';
+import {
+    normalizeCodeSearchResultForRendering,
+    normalizeGrepResultForRendering,
+} from './search';
 
 describe('normalizeCodeSearchResultForRendering', () => {
     it('normalizes grouped line search text into structured matches', () => {
@@ -28,5 +31,24 @@ describe('normalizeCodeSearchResultForRendering', () => {
                 { excerpt: 'plain result two' },
             ],
         });
+    });
+
+    it('upgrades only the exact cli-v0.2.1 CodeSearch aggregate shape', () => {
+        // Immutable provenance:
+        // cli-v0.2.1@b1d15a8a9c241737d1ca9b167459901e6259173a
+        // normalizeCodeSearchResult preserved aggregate fields and always added matches: [].
+        expect(normalizeCodeSearchResultForRendering({
+            matches: [],
+            totalMatches: 4,
+            truncated: false,
+        })).toEqual({
+            matches: [],
+            totalMatches: 4,
+            truncated: false,
+            detailsUnavailable: true,
+        });
+        expect(normalizeCodeSearchResultForRendering({ matches: [], totalMatches: 0 })).toBeNull();
+        expect(normalizeCodeSearchResultForRendering({ totalMatches: 4 })).toBeNull();
+        expect(normalizeGrepResultForRendering({ matches: [], totalMatches: 4 })).toBeNull();
     });
 });

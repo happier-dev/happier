@@ -31,11 +31,11 @@ vi.mock('@/components/ui/lists/Item', () => ({
 }));
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
-    useEnabledAgentIds: () => ['claude', 'codex'],
+    useEnabledAgentIds: () => ['claude', 'codex', 'antigravity'],
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['claude', 'codex'],
+    AGENT_IDS: ['claude', 'codex', 'antigravity'],
     DEFAULT_AGENT_ID: 'claude',
     getAgentCore: (agentId: string) => {
         if (agentId === 'claude') {
@@ -43,6 +43,9 @@ vi.mock('@/agents/catalog/catalog', () => ({
         }
         if (agentId === 'codex') {
             return { displayNameKey: 'agentInput.agent.codex', cli: { detectKey: 'codex' } };
+        }
+        if (agentId === 'antigravity') {
+            return { displayNameKey: 'agentInput.agent.antigravity', cli: { detectKey: 'agy' } };
         }
         return { displayNameKey: `agent.${agentId}`, cli: { detectKey: agentId } };
     },
@@ -140,5 +143,22 @@ describe('DetectedClisList', () => {
         expect(tmuxItem).toBeTruthy();
         expect(subtitleContainsText(codexItem?.props.subtitle, 'machine.detectedCliUnknown')).toBe(true);
         expect(subtitleContainsText(tmuxItem?.props.subtitle, 'machine.detectedCliNotDetected')).toBe(true);
+    });
+
+    it('reads provider capability ids when the binary detect key differs', async () => {
+        const tree = await renderList(buildState({
+            status: 'loaded',
+            results: {
+                'cli.claude': buildOkResult({ available: false }),
+                'cli.codex': buildOkResult({ available: false }),
+                'cli.antigravity': buildOkResult({ available: true, version: '1.2.3', resolvedPath: '/usr/bin/agy' }),
+                'tool.tmux': buildOkResult({ available: false }),
+            },
+        }));
+
+        const antigravityItem = findItemByTitle(tree, 'agentInput.agent.antigravity');
+
+        expect(antigravityItem).toBeTruthy();
+        expect(subtitleContainsText(antigravityItem?.props.subtitle, '1.2.3')).toBe(true);
     });
 });

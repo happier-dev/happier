@@ -480,14 +480,6 @@ export default React.memo(function SessionSettingsScreen() {
                 title={t('settingsSession.rootGroups.listOrganization.title')}
                 footer={t('settingsSession.rootGroups.listOrganization.footer')}
             >
-                <Item
-                    title={t('settingsSession.sessionList.tagsTitle')}
-                    subtitle={sessionTagsEnabled ? t('settingsSession.sessionList.tagsEnabledSubtitle') : t('settingsSession.sessionList.tagsDisabledSubtitle')}
-                    icon={<Ionicons name="pricetag-outline" size={29} color={theme.colors.accent.blue} />}
-                    rightElement={<Switch value={Boolean(sessionTagsEnabled)} onValueChange={setSessionTagsEnabled} />}
-                    showChevron={false}
-                    onPress={() => setSessionTagsEnabled(!sessionTagsEnabled)}
-                />
                 <DropdownMenu
                     open={openSessionListDensityMenu}
                     onOpenChange={setOpenSessionListDensityMenu}
@@ -508,54 +500,6 @@ export default React.memo(function SessionSettingsScreen() {
                     }}
                     items={sessionListDensityItems}
                     onSelect={handleSessionListDensitySelect}
-                />
-            </ItemGroup>
-
-            <ItemGroup
-                title={t('settingsSession.rootGroups.rowDetails.title')}
-                footer={t('settingsSession.rootGroups.rowDetails.footer')}
-            >
-                <DropdownMenu
-                    open={openSessionListIdentityDisplayMenu}
-                    onOpenChange={setOpenSessionListIdentityDisplayMenu}
-                    variant="selectable"
-                    search={false}
-                    selectedId={normalizedSessionListIdentityDisplay}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    rowKind="item"
-                    popoverBoundaryRef={popoverBoundaryRef}
-                    itemTrigger={{
-                        title: t('settingsSession.sessionList.identityDisplayTitle'),
-                        subtitle: t('settingsSession.sessionList.identityDisplaySubtitle'),
-                        icon: <Ionicons name="person-circle-outline" size={29} color={theme.colors.accent.blue} />,
-                        showSelectedSubtitle: false,
-                        itemProps: { testID: 'settings-session-sessionListIdentityDisplay-trigger' },
-                    }}
-                    items={sessionListIdentityDisplayItems}
-                    onSelect={handleSessionListIdentityDisplaySelect}
-                />
-                <DropdownMenu
-                    open={openSessionListActiveColorModeMenu}
-                    onOpenChange={setOpenSessionListActiveColorModeMenu}
-                    variant="selectable"
-                    search={false}
-                    selectedId={normalizedSessionListActiveColorMode}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    rowKind="item"
-                    popoverBoundaryRef={popoverBoundaryRef}
-                    itemTrigger={{
-                        title: t('settingsSession.sessionList.activeColorTitle'),
-                        subtitle: t('settingsSession.sessionList.activeColorSubtitle'),
-                        icon: <Ionicons name="color-palette-outline" size={29} color={theme.colors.accent.purple} />,
-                        showSelectedSubtitle: false,
-                        itemProps: { testID: 'settings-session-sessionListActiveColorMode-trigger' },
-                    }}
-                    items={sessionListActiveColorModeItems}
-                    onSelect={handleSessionListActiveColorModeSelect}
                 />
                 <DropdownMenu
                     open={openSessionListOrderingModeMenu}
@@ -598,158 +542,6 @@ export default React.memo(function SessionSettingsScreen() {
                     }}
                     items={sessionListFolderSortModeItems}
                     onSelect={handleSessionListFolderSortModeSelect}
-                />
-            </ItemGroup>
-
-            <ItemGroup
-                title={t('settingsSession.rootGroups.activitySignals.title')}
-                footer={t('settingsSession.rootGroups.activitySignals.footer')}
-            >
-                <DropdownMenu
-                    open={openSessionListAttentionPromotionModeMenu}
-                    onOpenChange={setOpenSessionListAttentionPromotionModeMenu}
-                    variant="selectable"
-                    search={false}
-                    selectedId={normalizedSessionListAttentionPromotionMode}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    rowKind="item"
-                    popoverBoundaryRef={popoverBoundaryRef}
-                    itemTrigger={{
-                        title: t('settingsSession.sessionList.attentionPromotionModeTitle'),
-                        subtitle: t('settingsSession.sessionList.attentionPromotionModeSubtitle'),
-                        icon: <Ionicons name="alert-circle-outline" size={29} color={theme.colors.state.warning.foreground} />,
-                        showSelectedSubtitle: false,
-                        itemProps: { testID: 'settings-session-attentionPromotionMode-trigger' },
-                    }}
-                    items={sessionListAttentionPromotionModeItems}
-                    onSelect={handleSessionListAttentionPromotionModeSelect}
-                />
-                <DropdownMenu
-                    open={openSessionListWorkingPlacementModeMenu}
-                    onOpenChange={setOpenSessionListWorkingPlacementModeMenu}
-                    variant="selectable"
-                    search={false}
-                    selectedId={normalizedSessionListWorkingPlacementMode}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    rowKind="item"
-                    popoverBoundaryRef={popoverBoundaryRef}
-                    itemTrigger={{
-                        title: t('settingsSession.sessionList.workingPlacementModeTitle'),
-                        subtitle: t('settingsSession.sessionList.workingPlacementModeSubtitle'),
-                        icon: <Ionicons name="play-circle-outline" size={29} color={theme.colors.accent.blue} />,
-                        showSelectedSubtitle: false,
-                        itemProps: { testID: 'settings-session-workingPlacementMode-trigger' },
-                    }}
-                    items={sessionListWorkingPlacementModeItems}
-                    onSelect={handleSessionListWorkingPlacementModeSelect}
-                />
-                <Item
-                    testID="settings-session-workingStatusAnimatedText-item"
-                    title={t('settingsSession.sessionList.workingStatusAnimatedTextTitle')}
-                    subtitle={sessionListWorkingStatusAnimatedTextEnabled !== false
-                        ? t('settingsSession.sessionList.workingStatusAnimatedTextEnabledSubtitle')
-                        : t('settingsSession.sessionList.workingStatusAnimatedTextDisabledSubtitle')}
-                    icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.accent.blue} />}
-                    rightElement={
-                        <Switch
-                            testID="settings-session-workingStatusAnimatedText-toggle"
-                            value={sessionListWorkingStatusAnimatedTextEnabled !== false}
-                            onValueChange={(next) => setSessionListWorkingStatusAnimatedTextEnabled(Boolean(next))}
-                        />
-                    }
-                    showChevron={false}
-                    onPress={() => setSessionListWorkingStatusAnimatedTextEnabled(sessionListWorkingStatusAnimatedTextEnabled === false)}
-                />
-                <DropdownMenu
-                    open={openWorkspacePathDisplayMenu}
-                    onOpenChange={setOpenWorkspacePathDisplayMenu}
-                    variant="selectable"
-                    search={false}
-                    selectedId={workspacePathDisplayMode}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    rowKind="item"
-                    popoverBoundaryRef={popoverBoundaryRef}
-                    itemTrigger={{
-                        title: t('settingsSession.sessionList.workspacePathDisplayTitle'),
-                        subtitle: workspacePathDisplayMode === 'path'
-                            ? t('settingsSession.sessionList.workspacePathDisplayPathSelectedSubtitle')
-                            : t('settingsSession.sessionList.workspacePathDisplayNameSelectedSubtitle'),
-                        icon: <Ionicons name="folder-open-outline" size={29} color={theme.colors.accent.blue} />,
-                        showSelectedSubtitle: false,
-                        itemProps: { testID: 'settings-session-workspacePathDisplay-trigger' },
-                    }}
-                    items={workspacePathDisplayItems}
-                    onSelect={handleWorkspacePathDisplaySelect}
-                />
-                <Item
-                    testID="settings-session-workspaceFavicons-item"
-                    title={t('settingsSession.sessionList.workspaceFaviconsTitle')}
-                    subtitle={workspaceFaviconsEnabled !== false
-                        ? t('settingsSession.sessionList.workspaceFaviconsEnabledSubtitle')
-                        : t('settingsSession.sessionList.workspaceFaviconsDisabledSubtitle')}
-                    icon={<Ionicons name="image-outline" size={29} color={theme.colors.accent.indigo} />}
-                    rightElement={
-                        <Switch
-                            testID="settings-session-workspaceFavicons-toggle"
-                            value={workspaceFaviconsEnabled !== false}
-                            onValueChange={(next) => setWorkspaceFaviconsEnabled(Boolean(next))}
-                        />
-                    }
-                    showChevron={false}
-                    onPress={() => setWorkspaceFaviconsEnabled(workspaceFaviconsEnabled === false)}
-                />
-                <Item
-                    testID="settings-session-workspaceMachineSubtitles-item"
-                    title={t('settingsSession.sessionList.workspaceMachineSubtitlesTitle')}
-                    subtitle={workspaceMachineSubtitlesEnabled !== false
-                        ? t('settingsSession.sessionList.workspaceMachineSubtitlesEnabledSubtitle')
-                        : t('settingsSession.sessionList.workspaceMachineSubtitlesDisabledSubtitle')}
-                    icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.accent.indigo} />}
-                    rightElement={
-                        <Switch
-                            testID="settings-session-workspaceMachineSubtitles-toggle"
-                            value={workspaceMachineSubtitlesEnabled !== false}
-                            onValueChange={(next) => setWorkspaceMachineSubtitlesEnabled(Boolean(next))}
-                        />
-                    }
-                    showChevron={false}
-                    onPress={() => setWorkspaceMachineSubtitlesEnabled(workspaceMachineSubtitlesEnabled === false)}
-                />
-                <DropdownMenu
-                    open={openWorkingIndicatorMenu}
-                    onOpenChange={setOpenWorkingIndicatorMenu}
-                    variant="selectable"
-                    search={false}
-                    selectedId={workingIndicatorStyle}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    rowKind="item"
-                    popoverBoundaryRef={popoverBoundaryRef}
-                    itemTrigger={{
-                        title: t('settingsSession.sessionList.workingIndicatorTitle'),
-                        subtitle: workingIndicatorStyle === 'pulse'
-                            ? t('settingsSession.sessionList.workingIndicatorPulseSelectedSubtitle')
-                            : t('settingsSession.sessionList.workingIndicatorSpinnerSelectedSubtitle'),
-                        icon: <Ionicons name={workingIndicatorStyle === 'pulse' ? 'radio-button-on-outline' : 'sync-outline'} size={29} color={theme.colors.accent.blue} />,
-                        showSelectedSubtitle: false,
-                        itemProps: { testID: 'settings-session-workingIndicator-trigger' },
-                    }}
-                    items={workingIndicatorItems}
-                    onSelect={handleWorkingIndicatorSelect}
-                />
-                <Item
-                    title={t('settingsFeatures.hideInactiveSessions')}
-                    subtitle={t('settingsFeatures.hideInactiveSessionsSubtitle')}
-                    icon={<Ionicons name="eye-off-outline" size={29} color={theme.colors.accent.orange} />}
-                    rightElement={<Switch value={hideInactiveSessions} onValueChange={setHideInactiveSessions} />}
-                    showChevron={false}
                 />
                 <DropdownMenu
                     open={openSessionListSectionModeMenu}
@@ -813,6 +605,13 @@ export default React.memo(function SessionSettingsScreen() {
                     onSelect={(itemId) => selectGrouping(itemId, 'inactive')}
                 />
                 <Item
+                    title={t('settingsFeatures.hideInactiveSessions')}
+                    subtitle={t('settingsFeatures.hideInactiveSessionsSubtitle')}
+                    icon={<Ionicons name="eye-off-outline" size={29} color={theme.colors.accent.orange} />}
+                    rightElement={<Switch value={hideInactiveSessions} onValueChange={setHideInactiveSessions} />}
+                    showChevron={false}
+                />
+                <Item
                     title={t('settingsAppearance.sessionsRightPaneDefaultOpen')}
                     subtitle={t('settingsAppearance.sessionsRightPaneDefaultOpenDescription')}
                     icon={<Ionicons name="documents-outline" size={29} color={theme.colors.accent.blue} />}
@@ -825,6 +624,207 @@ export default React.memo(function SessionSettingsScreen() {
                     }
                     disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
                     showChevron={false}
+                />
+            </ItemGroup>
+
+            <ItemGroup
+                title={t('settingsSession.rootGroups.rowDetails.title')}
+                footer={t('settingsSession.rootGroups.rowDetails.footer')}
+            >
+                <Item
+                    title={t('settingsSession.sessionList.tagsTitle')}
+                    subtitle={sessionTagsEnabled ? t('settingsSession.sessionList.tagsEnabledSubtitle') : t('settingsSession.sessionList.tagsDisabledSubtitle')}
+                    icon={<Ionicons name="pricetag-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={<Switch value={Boolean(sessionTagsEnabled)} onValueChange={setSessionTagsEnabled} />}
+                    showChevron={false}
+                    onPress={() => setSessionTagsEnabled(!sessionTagsEnabled)}
+                />
+                <DropdownMenu
+                    open={openSessionListIdentityDisplayMenu}
+                    onOpenChange={setOpenSessionListIdentityDisplayMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={normalizedSessionListIdentityDisplay}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.sessionList.identityDisplayTitle'),
+                        subtitle: t('settingsSession.sessionList.identityDisplaySubtitle'),
+                        icon: <Ionicons name="person-circle-outline" size={29} color={theme.colors.accent.blue} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'settings-session-sessionListIdentityDisplay-trigger' },
+                    }}
+                    items={sessionListIdentityDisplayItems}
+                    onSelect={handleSessionListIdentityDisplaySelect}
+                />
+                <DropdownMenu
+                    open={openSessionListActiveColorModeMenu}
+                    onOpenChange={setOpenSessionListActiveColorModeMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={normalizedSessionListActiveColorMode}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.sessionList.activeColorTitle'),
+                        subtitle: t('settingsSession.sessionList.activeColorSubtitle'),
+                        icon: <Ionicons name="color-palette-outline" size={29} color={theme.colors.accent.purple} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'settings-session-sessionListActiveColorMode-trigger' },
+                    }}
+                    items={sessionListActiveColorModeItems}
+                    onSelect={handleSessionListActiveColorModeSelect}
+                />
+                <DropdownMenu
+                    open={openWorkspacePathDisplayMenu}
+                    onOpenChange={setOpenWorkspacePathDisplayMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={workspacePathDisplayMode}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.sessionList.workspacePathDisplayTitle'),
+                        subtitle: workspacePathDisplayMode === 'path'
+                            ? t('settingsSession.sessionList.workspacePathDisplayPathSelectedSubtitle')
+                            : t('settingsSession.sessionList.workspacePathDisplayNameSelectedSubtitle'),
+                        icon: <Ionicons name="folder-open-outline" size={29} color={theme.colors.accent.blue} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'settings-session-workspacePathDisplay-trigger' },
+                    }}
+                    items={workspacePathDisplayItems}
+                    onSelect={handleWorkspacePathDisplaySelect}
+                />
+                <Item
+                    testID="settings-session-workspaceFavicons-item"
+                    title={t('settingsSession.sessionList.workspaceFaviconsTitle')}
+                    subtitle={workspaceFaviconsEnabled !== false
+                        ? t('settingsSession.sessionList.workspaceFaviconsEnabledSubtitle')
+                        : t('settingsSession.sessionList.workspaceFaviconsDisabledSubtitle')}
+                    icon={<Ionicons name="image-outline" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-session-workspaceFavicons-toggle"
+                            value={workspaceFaviconsEnabled !== false}
+                            onValueChange={(next) => setWorkspaceFaviconsEnabled(Boolean(next))}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setWorkspaceFaviconsEnabled(workspaceFaviconsEnabled === false)}
+                />
+                <Item
+                    testID="settings-session-workspaceMachineSubtitles-item"
+                    title={t('settingsSession.sessionList.workspaceMachineSubtitlesTitle')}
+                    subtitle={workspaceMachineSubtitlesEnabled !== false
+                        ? t('settingsSession.sessionList.workspaceMachineSubtitlesEnabledSubtitle')
+                        : t('settingsSession.sessionList.workspaceMachineSubtitlesDisabledSubtitle')}
+                    icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-session-workspaceMachineSubtitles-toggle"
+                            value={workspaceMachineSubtitlesEnabled !== false}
+                            onValueChange={(next) => setWorkspaceMachineSubtitlesEnabled(Boolean(next))}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setWorkspaceMachineSubtitlesEnabled(workspaceMachineSubtitlesEnabled === false)}
+                />
+            </ItemGroup>
+
+            <ItemGroup
+                title={t('settingsSession.rootGroups.activitySignals.title')}
+                footer={t('settingsSession.rootGroups.activitySignals.footer')}
+            >
+                <Item
+                    testID="settings-session-workingStatusAnimatedText-item"
+                    title={t('settingsSession.sessionList.workingStatusAnimatedTextTitle')}
+                    subtitle={sessionListWorkingStatusAnimatedTextEnabled !== false
+                        ? t('settingsSession.sessionList.workingStatusAnimatedTextEnabledSubtitle')
+                        : t('settingsSession.sessionList.workingStatusAnimatedTextDisabledSubtitle')}
+                    icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-session-workingStatusAnimatedText-toggle"
+                            value={sessionListWorkingStatusAnimatedTextEnabled !== false}
+                            onValueChange={(next) => setSessionListWorkingStatusAnimatedTextEnabled(Boolean(next))}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setSessionListWorkingStatusAnimatedTextEnabled(sessionListWorkingStatusAnimatedTextEnabled === false)}
+                />
+                <DropdownMenu
+                    open={openSessionListAttentionPromotionModeMenu}
+                    onOpenChange={setOpenSessionListAttentionPromotionModeMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={normalizedSessionListAttentionPromotionMode}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.sessionList.attentionPromotionModeTitle'),
+                        subtitle: t('settingsSession.sessionList.attentionPromotionModeSubtitle'),
+                        icon: <Ionicons name="alert-circle-outline" size={29} color={theme.colors.state.warning.foreground} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'settings-session-attentionPromotionMode-trigger' },
+                    }}
+                    items={sessionListAttentionPromotionModeItems}
+                    onSelect={handleSessionListAttentionPromotionModeSelect}
+                />
+                <DropdownMenu
+                    open={openSessionListWorkingPlacementModeMenu}
+                    onOpenChange={setOpenSessionListWorkingPlacementModeMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={normalizedSessionListWorkingPlacementMode}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.sessionList.workingPlacementModeTitle'),
+                        subtitle: t('settingsSession.sessionList.workingPlacementModeSubtitle'),
+                        icon: <Ionicons name="play-circle-outline" size={29} color={theme.colors.accent.blue} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'settings-session-workingPlacementMode-trigger' },
+                    }}
+                    items={sessionListWorkingPlacementModeItems}
+                    onSelect={handleSessionListWorkingPlacementModeSelect}
+                />
+                <DropdownMenu
+                    open={openWorkingIndicatorMenu}
+                    onOpenChange={setOpenWorkingIndicatorMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={workingIndicatorStyle}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.sessionList.workingIndicatorTitle'),
+                        subtitle: workingIndicatorStyle === 'pulse'
+                            ? t('settingsSession.sessionList.workingIndicatorPulseSelectedSubtitle')
+                            : t('settingsSession.sessionList.workingIndicatorSpinnerSelectedSubtitle'),
+                        icon: <Ionicons name={workingIndicatorStyle === 'pulse' ? 'radio-button-on-outline' : 'sync-outline'} size={29} color={theme.colors.accent.blue} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'settings-session-workingIndicator-trigger' },
+                    }}
+                    items={workingIndicatorItems}
+                    onSelect={handleWorkingIndicatorSelect}
                 />
             </ItemGroup>
 

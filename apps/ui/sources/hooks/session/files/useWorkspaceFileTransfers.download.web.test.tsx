@@ -25,7 +25,12 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
         vi.unstubAllGlobals();
     });
 
-    it('delays blob URL revocation until after the download is triggered', async () => {
+    it('streams into OPFS and delays disk-backed URL cleanup until after the download is triggered', async () => {
+        const diskFile = { name: 'report.txt', size: 4 } as File;
+        const write = vi.fn(async (_bytes: Uint8Array) => {});
+        const close = vi.fn(async () => {});
+        const abort = vi.fn(async () => {});
+        const removeEntry = vi.fn(async () => {});
         const createObjectURL = vi.fn(() => 'blob:test-download');
         const revokeObjectURL = vi.fn();
         const click = vi.fn();
@@ -41,8 +46,21 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
 
         vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
         vi.stubGlobal('document', { createElement, body: { appendChild } });
+        vi.stubGlobal('navigator', {
+            storage: {
+                getDirectory: async () => ({
+                    getFileHandle: async () => ({
+                        createWritable: async () => ({ write, close, abort }),
+                        getFile: async () => diskFile,
+                    }),
+                    removeEntry,
+                }),
+            },
+        });
         vi.stubGlobal('Blob', class Blob {
-            constructor(_parts?: unknown[], _options?: Record<string, unknown>) {}
+            constructor() {
+                throw new Error('whole-payload Blob must not be constructed for OPFS downloads');
+            }
         });
 
         downloadDaemonWorkspaceFileToDestinationMock.mockImplementation(async (params: {
@@ -94,7 +112,11 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
 
         expect(appendChild).toHaveBeenCalledTimes(1);
         expect(click).toHaveBeenCalledTimes(1);
+        expect(write).toHaveBeenCalledTimes(1);
+        expect(close).toHaveBeenCalledTimes(1);
+        expect(createObjectURL).toHaveBeenCalledWith(diskFile);
         expect(remove).toHaveBeenCalledTimes(0);
+        expect(removeEntry).toHaveBeenCalledTimes(0);
         expect(revokeObjectURL).not.toHaveBeenCalled();
         expect(downloadDaemonWorkspaceFileToDestinationMock).toHaveBeenCalledTimes(1);
 
@@ -104,6 +126,8 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
 
         expect(remove).toHaveBeenCalledTimes(1);
         expect(revokeObjectURL).toHaveBeenCalledWith('blob:test-download');
+        expect(removeEntry).toHaveBeenCalledTimes(1);
+        expect(abort).not.toHaveBeenCalled();
     });
 
     it('fails when downloaded bytes exceed the configured web max bytes (even if init under-reports)', async () => {

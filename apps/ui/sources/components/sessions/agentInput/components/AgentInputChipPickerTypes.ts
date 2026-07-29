@@ -17,6 +17,10 @@ export type AgentInputChipPickerOptionRailAction = Readonly<{
 
 export const AGENT_INPUT_CHIP_PICKER_DETAIL_MIN_HEIGHT = 272;
 
+export type AgentInputChipPickerDetailRenderContext = Readonly<{
+    onRequestClose: () => void;
+}>;
+
 export type AgentInputChipPickerOption = Readonly<{
     id: string;
     label: string;
@@ -33,7 +37,7 @@ export type AgentInputChipPickerOption = Readonly<{
     detailDescription?: string;
     detailBullets?: ReadonlyArray<string>;
     detailContent?: React.ReactNode;
-    renderDetailContent?: () => React.ReactNode;
+    renderDetailContent?: (context: AgentInputChipPickerDetailRenderContext) => React.ReactNode;
     /**
      * Defers expensive custom detail rendering until after native interactions
      * so the popover shell can become visible without waiting on model/config UI.
@@ -67,6 +71,7 @@ export type AgentInputChipPickerPanelProps = Readonly<{
     railMaxWidth?: number | `${number}%`;
     detailPaneHeaderAccessory?: React.ReactNode;
     maxHeight?: number | null;
+    detailContentOwnsScroll?: boolean;
 }>;
 
 export type AgentInputChipPickerOptionSection = Readonly<{

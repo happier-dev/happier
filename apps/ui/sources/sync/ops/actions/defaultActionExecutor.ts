@@ -1,14 +1,26 @@
 import {
   ApprovalRequestV1Schema,
   ActionsSettingsV1Schema,
+  buildBackendTargetKeyV2,
   createActionExecutor,
   isActionEnabledByActionsSettings,
   isApprovalRequiredByActionsSettings,
+  normalizeSpawnSessionErrorDetail,
+  readSessionProviderBindingMetadataV1,
+  SessionModelTransitionRequestV1Schema,
+  SessionModelTransitionResultV1Schema,
   type ActionExecutorDeps,
   type ActionId,
   type ApprovalRequestV1,
+  type SessionModelTransitionRequestV1,
+  type SessionModelTransitionResultV1,
 } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { resolveModelSelectionIntentFromSessionMetadata } from '@happier-dev/agents';
+import {
+  createModelIntentMetadataCasCandidate,
+  runModelIntentAtAuthoritativeDisposition,
+} from '@happier-dev/agents/session/state/metadataWriters';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { publishDisplayTitleToMetadata } from '@/sync/state/displayTitlePublish';
 import {
@@ -55,7 +67,10 @@ import { updateSkillPromptBundle } from '@/sync/ops/promptLibrary/promptBundles'
 import { writePromptLibraryArtifactToExternalAsset } from '@/sync/ops/promptLibrary/exportPromptLibraryArtifact';
 import { installPromptRegistryItem } from '@/sync/ops/promptLibrary/installPromptRegistryItem';
 import { canRollbackConversation } from '@/sync/domains/sessionRollback/rollbackUiSupport';
+import { completeSessionForkNavigation } from '@/sync/domains/sessionFork/completeSessionForkNavigation';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import { getSessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
 import {
   isRequestedSessionModeSupported,
   isSessionModeActionAvailable,
@@ -63,11 +78,31 @@ import {
   resolveSessionModeActionControl,
   serializeSessionModeActionOptions,
 } from './sessionModeActionSupport';
+import {
+  createDefaultRuntimeActionExecutor,
+  type CreateDefaultRuntimeActionExecutorInput,
+} from './defaultRuntimeActionExecutor';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+
+function preserveSpawnErrorDetailForActionResult(result: unknown): unknown {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+  const record = result as Record<string, unknown>;
+  const errorDetail = normalizeSpawnSessionErrorDetail(record.errorDetail);
+  if (!errorDetail) return result;
+
+  return {
+    ...record,
+    details: { errorDetail },
+  };
+}
+
+  type OpenSessionOptions = Readonly<{ serverId?: string | null }>;
 
   export function createDefaultActionExecutor(opts?: Readonly<{
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
   resolveServerNameForSessionId?: (sessionId: string) => string | null;
-  openSession?: (sessionId: string) => void | Promise<void>;
+  openSession?: (sessionId: string, options?: OpenSessionOptions) => void | Promise<void>;
+  runtimeActions?: CreateDefaultRuntimeActionExecutorInput;
   }>): ReturnType<typeof createActionExecutor> {
     type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>;
     type AgentsModelsListArgs = Readonly<{ agentId?: string; machineId?: string; limit?: number; backendTargetKey?: string }>;
@@ -100,15 +135,7 @@ import {
           return false;
         }
         if (actionId !== 'session.mode.set') {
-          if (actionId !== 'session.rollback') {
-            return true;
-          }
-          const sessionId = typeof ctx.defaultSessionId === 'string' ? ctx.defaultSessionId.trim() : '';
-          if (!sessionId) {
-            return false;
-          }
-          const session = (storage.getState() as any)?.sessions?.[sessionId] ?? null;
-          return canRollbackConversation({ session });
+          return true;
         }
         const sessionId = typeof ctx.defaultSessionId === 'string' ? ctx.defaultSessionId.trim() : '';
         if (!sessionId) {
@@ -128,22 +155,32 @@ import {
     executionRunStop: sessionExecutionRunStop,
     executionRunAction: sessionExecutionRunAction,
     executionRunWait: async () => ({ ok: false, error: 'unsupported_action:execution.run.wait', errorCode: 'unsupported_action' }),
+    runtimeActionExecute: createDefaultRuntimeActionExecutor(opts?.runtimeActions),
 
-    sessionOpen: async ({ sessionId }) =>
+    sessionOpen: async ({ sessionId, serverId }) =>
       opts?.openSession
-        ? (await opts.openSession(sessionId), { ok: true, status: 'opened', sessionId } as const)
+        ? (
+          serverId
+            ? await opts.openSession(sessionId, { serverId })
+            : await opts.openSession(sessionId),
+          { ok: true, status: 'opened', sessionId } as const
+        )
         : await openSessionForVoiceTool({
           sessionId,
-          resolveServerIdForSessionId: opts?.resolveServerIdForSessionId,
+          resolveServerIdForSessionId: serverId
+            ? (targetSessionId) => targetSessionId === sessionId ? serverId : opts?.resolveServerIdForSessionId?.(targetSessionId) ?? null
+            : opts?.resolveServerIdForSessionId,
           resolveServerNameForSessionId: opts?.resolveServerNameForSessionId,
         }),
 
     sessionFork: async ({ sessionId, serverId }) => {
       const sid = String(sessionId ?? '').trim();
       if (!sid) return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
+      const resolvedServerId = String(serverId ?? opts?.resolveServerIdForSessionId?.(sid) ?? '').trim();
       const stateAny: any = storage.getState();
       const session = stateAny?.sessions?.[sid] ?? null;
-      const machineId = resolveSessionMachineId(sid, session?.metadata ?? null);
+      const metadata = session ? readSessionOwnerMetadataView(session) : null;
+      const machineId = resolveSessionMachineId(sid, metadata);
 
       const settings = stateAny?.settings ?? null;
       const replaySummaryRunner =
@@ -154,7 +191,7 @@ import {
 
       const result = await forkSessionOp({
         ...(machineId ? { machineId } : {}),
-        serverId,
+        serverId: resolvedServerId || undefined,
         parentSessionId: sid,
         forkPoint: { type: 'latest' },
         ...(typeof replayMaxSeedChars === 'number' ? { replayMaxSeedChars } : {}),
@@ -164,29 +201,77 @@ import {
 
       const childSessionId = String((result as any).childSessionId ?? '').trim();
       if (childSessionId) {
-        if (opts?.openSession) {
-          await opts.openSession(childSessionId);
-        } else {
-          await openSessionForVoiceTool({
-            sessionId: childSessionId,
-            resolveServerIdForSessionId: opts?.resolveServerIdForSessionId,
-            resolveServerNameForSessionId: opts?.resolveServerNameForSessionId,
-          });
-        }
-        }
+        await completeSessionForkNavigation({
+          childSessionId,
+          parentSessionId: sid,
+          ...(resolvedServerId ? { serverId: resolvedServerId } : {}),
+          navigate: async (targetSessionId, navigationOptions) => {
+            const navigationServerId = navigationOptions?.serverId ?? resolvedServerId;
+            if (opts?.openSession) {
+              if (navigationServerId) {
+                await opts.openSession(targetSessionId, { serverId: navigationServerId });
+              } else {
+                await opts.openSession(targetSessionId);
+              }
+              return;
+            }
+            await openSessionForVoiceTool({
+              sessionId: targetSessionId,
+              resolveServerIdForSessionId: navigationServerId
+                ? (candidateSessionId) => candidateSessionId === targetSessionId
+                  ? navigationServerId
+                  : opts?.resolveServerIdForSessionId?.(candidateSessionId) ?? null
+                : opts?.resolveServerIdForSessionId,
+              resolveServerNameForSessionId: opts?.resolveServerNameForSessionId,
+            });
+          },
+        });
+      }
       return { ok: true, status: 'forked', parentSessionId: sid, childSessionId };
     },
 
     sessionStop: async ({ sessionId, serverId }) =>
       await sessionStopWithServerScope(sessionId, { serverId }),
 
+    sessionTerminalComposerClear: async ({ sessionId, expectedStateAtMs, serverId }) =>
+      await sessionRpcWithServerScope({
+        sessionId,
+        serverId,
+        method: SESSION_RPC_METHODS.SESSION_TERMINAL_COMPOSER_CLEAR,
+        payload: {
+          sessionId,
+          ...(typeof expectedStateAtMs === 'number' && Number.isFinite(expectedStateAtMs)
+            ? { expectedStateAtMs }
+            : {}),
+        },
+      }),
+
+    sessionPendingInputInterruptAndRun: async ({ sessionId, localId, expectedStateAtMs, serverId }) =>
+      await sessionRpcWithServerScope({
+        sessionId,
+        serverId,
+        method: SESSION_RPC_METHODS.SESSION_PENDING_INPUT_INTERRUPT_AND_RUN,
+        payload: {
+          sessionId,
+          localId,
+          ...(typeof expectedStateAtMs === 'number' && Number.isFinite(expectedStateAtMs)
+            ? { expectedStateAtMs }
+            : {}),
+        },
+      }),
+
     sessionRollback: async ({ sessionId, serverId, target }) => {
       const sid = String(sessionId ?? '').trim();
       if (!sid) return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
+      const resolvedTarget = target ?? { type: 'latest_turn' };
+      const session = (storage.getState() as any)?.sessions?.[sid] ?? null;
+      if (!canRollbackConversation({ session, target: resolvedTarget })) {
+        return { ok: false, errorCode: 'action_disabled', errorMessage: 'action_disabled' };
+      }
       return await rollbackSessionConversationOp({
         sessionId: sid,
         serverId,
-        target: target ?? { type: 'latest_turn' },
+        target: resolvedTarget,
       });
     },
 
@@ -200,9 +285,9 @@ import {
 
       const stateAny: any = storage.getState();
       const session = stateAny?.sessions?.[sid] ?? null;
-      const metadata = session?.metadata ?? null;
+      const metadata = session ? readSessionOwnerMetadataView(session) : null;
       const sourceMachineId = resolveSessionMachineId(sid, metadata);
-      const sessionStorageMode = metadata?.externalSessionV1 ? 'direct' : 'persisted';
+      const sessionStorageMode = getSessionStorageKind(session);
 
       return await completeSessionHandoffOp({
         sessionId: sid,
@@ -217,17 +302,35 @@ import {
             ignoredIncludeGlobs: [...workspaceTransfer.ignoredIncludeGlobs],
           },
         } : {}),
-        sourceMetadata: metadata ?? {},
+        sourceMetadata: metadata ?? { path: '', host: '' },
         serverId,
       });
     },
 
-    sessionSpawnNew: async ({ tag, agentId, modelId, backendTargetKey, path, host, initialMessage }) => {
-      return await spawnSessionForVoiceTool({ tag, agentId, modelId, backendTargetKey, path, host, initialMessage });
+    sessionSpawnNew: async ({ tag, agentId, modelId, providerConnectionId, backendTargetKey, machineId, serverId, path, host, initialMessage }) => {
+      return preserveSpawnErrorDetailForActionResult(await spawnSessionForVoiceTool({
+        tag,
+        agentId,
+        modelId,
+        providerConnectionId,
+        backendTargetKey,
+        machineId,
+        serverId,
+        path,
+        host,
+        initialMessage,
+      }));
     },
 
-    sessionSpawnPicker: async ({ tag, agentId, modelId, backendTargetKey, initialMessage }) => {
-      return await spawnSessionWithPickerForVoiceTool({ tag, agentId, modelId, backendTargetKey, initialMessage });
+    sessionSpawnPicker: async ({ tag, agentId, modelId, providerConnectionId, backendTargetKey, initialMessage }) => {
+      return preserveSpawnErrorDetailForActionResult(await spawnSessionWithPickerForVoiceTool({
+        tag,
+        agentId,
+        modelId,
+        providerConnectionId,
+        backendTargetKey,
+        initialMessage,
+      }));
     },
 
     pathsListRecent: async ({ machineId, limit }) => await listRecentPathsForVoiceTool({ machineId, limit }),
@@ -288,7 +391,7 @@ import {
       return await sessionRpcWithServerScope({
         sessionId,
         serverId,
-        method: 'permission',
+        method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
         payload: request,
       });
     },
@@ -297,15 +400,13 @@ import {
       if (!reqId) {
         return { ok: false, errorCode: 'permission_request_not_found', errorMessage: 'permission_request_not_found', sessionId };
       }
-      const normalizedAnswers = Object.fromEntries(
-        (Array.isArray(answers) ? answers : [])
-          .map((entry: any) => ({
-            question: String(entry?.question ?? '').trim(),
-            answer: String(entry?.answer ?? '').trim(),
-          }))
-          .filter((entry) => entry.question.length > 0 && entry.answer.length > 0)
-          .map((entry) => [entry.question, entry.answer] as const),
-      );
+      const normalizedAnswers = Object.create(null) as Record<string, readonly string[]>;
+      for (const entry of Array.isArray(answers) ? answers : []) {
+        const question = String(entry?.question ?? '');
+        if (question.trim().length > 0 && entry.values.length > 0) {
+          normalizedAnswers[question] = [...entry.values];
+        }
+      }
       if (!decision && Object.keys(normalizedAnswers).length === 0) {
         return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters', sessionId };
       }
@@ -313,7 +414,7 @@ import {
       return await sessionRpcWithServerScope({
         sessionId,
         serverId,
-        method: 'permission',
+        method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
         payload: {
           id: reqId,
           approved,
@@ -337,6 +438,197 @@ import {
         updateSessionMetadataWithRetry: sync.patchSessionMetadataWithRetry,
       });
       return { ok: true, sessionId, modeId: normalizedModeId };
+    },
+    sessionModelSet: async (args) => {
+      const { sessionId, modelId, providerConnectionId, serverId } = args;
+      const normalizedSessionId = String(sessionId ?? '').trim();
+      const normalizedModelId = String(modelId ?? '').trim();
+      if (!normalizedSessionId || !normalizedModelId) {
+        return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      }
+
+      const session = storage.getState().sessions[normalizedSessionId] ?? null;
+      if (!session) {
+        return { ok: false, errorCode: 'session_not_found', error: 'session_not_found' };
+      }
+      const hasExplicitProviderConnectionId = Object.prototype.hasOwnProperty.call(
+        args,
+        'providerConnectionId',
+      );
+      const resolveRequest = (candidateSession: typeof session) => {
+        const backend = resolveSessionActionDefaultBackend({
+          session: candidateSession,
+        });
+        if (!backend) return null;
+        const agentTargetKey =
+          buildBackendTargetKeyV2(backend.backendTarget);
+        const ownerMetadata = readSessionOwnerMetadataView(candidateSession);
+        const currentIntent = resolveModelSelectionIntentFromSessionMetadata(
+          ownerMetadata,
+          agentTargetKey,
+        );
+        const parsed = SessionModelTransitionRequestV1Schema.safeParse({
+          v: 1,
+          selection: {
+            agentTargetKey,
+            providerConnectionId: hasExplicitProviderConnectionId
+              ? providerConnectionId ?? null
+              : candidateSession.active === true
+                ? readSessionProviderBindingMetadataV1(ownerMetadata)
+                  ?.connectionId ?? null
+                : currentIntent?.selection?.providerConnectionId ?? null,
+            modelId: normalizedModelId,
+          },
+        });
+        return parsed.success
+          ? {
+            request: parsed.data,
+            currentIntent,
+            agentTargetKey,
+          }
+          : null;
+      };
+      const initialRequest = resolveRequest(session);
+      if (!initialRequest) {
+        return {
+          ok: false,
+          errorCode: 'model_selection_agent_target_unknown',
+          error: 'model_selection_agent_target_unknown',
+        };
+      }
+
+      const invokeActiveOwner = async (
+        request: SessionModelTransitionRequestV1,
+      ) => {
+        let transition: SessionModelTransitionResultV1;
+        try {
+          const result = await sessionRpcWithServerScope<
+            SessionModelTransitionResultV1,
+            SessionModelTransitionRequestV1
+          >({
+            sessionId: normalizedSessionId,
+            serverId,
+            method: SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
+            payload: request,
+          });
+          transition = SessionModelTransitionResultV1Schema.parse(result);
+        } catch (error) {
+          transition = SessionModelTransitionResultV1Schema.parse({
+            ok: false,
+            status: 'owner_unavailable',
+            activeSelection: null,
+            requestedSelection: request.selection,
+            reason: error instanceof Error
+              ? error.message.slice(0, 512)
+                || 'session_model_transition_owner_unavailable'
+              : 'session_model_transition_owner_unavailable',
+          });
+        }
+        if (!transition.ok) {
+          return {
+            ok: false,
+            errorCode: transition.status,
+            error: transition.status,
+            details: {
+              status: transition.status,
+              activeSelection: transition.activeSelection,
+              requestedSelection: transition.requestedSelection,
+              ...(transition.reason ? { reason: transition.reason } : {}),
+            },
+          };
+        }
+        return {
+          ...transition,
+          sessionId: normalizedSessionId,
+          modelId: transition.activeSelection.modelId,
+        };
+      };
+
+      return await runModelIntentAtAuthoritativeDisposition({
+        observedActive: session.active === true,
+        invokeObservedActiveOwner: async () =>
+          await invokeActiveOwner(initialRequest.request),
+        updateInactiveIntent: async () => {
+          const candidate = createModelIntentMetadataCasCandidate({
+            selection: initialRequest.request.selection,
+          });
+          await sync.patchSessionMetadataWithRetry(
+            normalizedSessionId,
+            candidate.update,
+            {
+              serverId:
+                typeof serverId === 'string'
+                && serverId.trim().length > 0
+                  ? serverId.trim()
+                  : null,
+              sessionExpectation: { kind: 'inactive_model_intent' },
+            },
+          );
+          const candidateState = candidate.readState();
+          if (
+            !candidateState.accepted
+            || candidateState.updatedAt === null
+          ) {
+            return {
+              ok: false,
+              errorCode: 'superseded',
+              error: 'superseded',
+              details: {
+                status: 'superseded',
+                activeSelection:
+                  initialRequest.currentIntent?.selection ?? {
+                    agentTargetKey: initialRequest.agentTargetKey,
+                    providerConnectionId: null,
+                    modelId: 'default',
+                  },
+                requestedSelection: initialRequest.request.selection,
+                reason: 'accepted_intent_was_superseded',
+              },
+            };
+          }
+          return {
+            ok: true,
+            status: 'intent_updated',
+            sessionId: normalizedSessionId,
+            modelId: initialRequest.request.selection.modelId,
+            selection: initialRequest.request.selection,
+            updatedAt: candidateState.updatedAt,
+          };
+        },
+        resolveAndInvokeActiveOwnerAfterConflict: async () => {
+          const currentSession =
+            storage.getState().sessions[normalizedSessionId] ?? null;
+          if (!currentSession || currentSession.active !== true) {
+            return {
+              ok: false,
+              errorCode: 'owner_unavailable',
+              error: 'owner_unavailable',
+              details: {
+                status: 'owner_unavailable',
+                activeSelection: null,
+                requestedSelection: initialRequest.request.selection,
+                reason: 'session_model_transition_owner_unproven',
+              },
+            };
+          }
+          const currentRequest = resolveRequest(currentSession);
+          if (!currentRequest) {
+            return {
+              ok: false,
+              errorCode: 'owner_unavailable',
+              error: 'owner_unavailable',
+              details: {
+                status: 'owner_unavailable',
+                activeSelection: null,
+                requestedSelection: initialRequest.request.selection,
+                reason:
+                  'session_model_transition_owner_metadata_unavailable',
+              },
+            };
+          }
+          return await invokeActiveOwner(currentRequest.request);
+        },
+      });
     },
     sessionModesList: async ({ sessionId }) => {
       const session = (storage.getState() as any)?.sessions?.[sessionId] ?? null;

@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import Svg, { Path } from 'react-native-svg';
 
 import { resolveDesktopOverlayMatchedGeometryStyle } from '../motion/useDesktopOverlayMatchedGeometry';
+import { DESKTOP_ACTIVITY_OVERLAY_CHROME_BASE_COLOR } from './DesktopActivityOverlayChrome';
 import type { DesktopActivityOverlayVisualMode } from './DesktopActivityOverlayVisualMode';
 import { useDesktopActivityOverlayMotionProgress } from './DesktopActivityOverlayMotionFrame';
 
@@ -16,7 +17,7 @@ export function DesktopActivityOverlayBrandMark(props: Readonly<{
     const markFill = props.visualMode === 'notch_integrated'
         ? theme.colors.accent.orange
         : theme.colors.overlay.foreground;
-    const smileCutout = theme.colors.overlay.scrimStrong;
+    const smileCutout = DESKTOP_ACTIVITY_OVERLAY_CHROME_BASE_COLOR;
 
     const matchedGeometryStyle = resolveDesktopOverlayMatchedGeometryStyle({
         progress: openProgress,

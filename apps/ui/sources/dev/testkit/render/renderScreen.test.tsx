@@ -30,6 +30,25 @@ describe('UI testkit render helpers', () => {
         expect(onPress).toHaveBeenCalledTimes(1);
     });
 
+    it('matches raw web data-testid props through the test id helpers', async () => {
+        const { renderScreen } = await import('./renderScreen');
+
+        const onClick = vi.fn();
+        const screen = await renderScreen(
+            React.createElement(
+                'View',
+                null,
+                React.createElement('button', { 'data-testid': 'settings.raw-web-button', onClick }),
+            ),
+        );
+
+        expect(screen.findByTestId('settings.raw-web-button')?.type).toBe('button');
+        expect(screen.findAllByTestId('settings.raw-web-button')).toHaveLength(1);
+
+        screen.pressByTestId('settings.raw-web-button');
+        expect(onClick).toHaveBeenCalledTimes(1);
+    });
+
     it('awaits async press handlers through the screen helper', async () => {
         const { renderScreen } = await import('./renderScreen');
 

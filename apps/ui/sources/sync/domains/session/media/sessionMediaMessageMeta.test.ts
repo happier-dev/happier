@@ -102,4 +102,63 @@ describe('parseSessionMediaMessageMeta', () => {
             path: '../outside.png',
         }))).toBeNull();
     });
+
+    it('keeps video media entries as inline media references without treating them as images', async () => {
+        const { parseSessionMediaMessageMeta } = await import('./sessionMediaMessageMeta');
+
+        const parsed = parseSessionMediaMessageMeta({
+            kind: 'session_media.v1',
+            payload: {
+                media: [
+                    {
+                        id: 'recording-1',
+                        role: 'output',
+                        category: 'tool-artifact',
+                        mediaKind: 'video',
+                        mimeType: 'video/webm',
+                        name: 'recording.webm',
+                        path: '.happier/uploads/artifacts/session-1/message-1/recording.webm',
+                        sizeBytes: 2048,
+                        origin: { source: 'tool-output' },
+                    },
+                    {
+                        id: 'image-1',
+                        role: 'output',
+                        category: 'generated',
+                        mediaKind: 'image',
+                        mimeType: 'image/png',
+                        name: 'generated.png',
+                        path: '.happier/uploads/generated/session-1/message-1/generated.png',
+                        sizeBytes: 42,
+                        origin: { source: 'provider-generated' },
+                    },
+                ],
+            },
+        });
+
+        expect(parsed?.inlineMedia).toEqual([
+            {
+                id: 'recording-1',
+                mediaKind: 'video',
+                status: 'available',
+                name: 'recording.webm',
+                path: '.happier/uploads/artifacts/session-1/message-1/recording.webm',
+                mimeType: 'video/webm',
+                sizeBytes: 2048,
+                category: 'tool-artifact',
+                role: 'output',
+            },
+            {
+                id: 'image-1',
+                mediaKind: 'image',
+                status: 'available',
+                name: 'generated.png',
+                path: '.happier/uploads/generated/session-1/message-1/generated.png',
+                mimeType: 'image/png',
+                sizeBytes: 42,
+                category: 'generated',
+                role: 'output',
+            },
+        ]);
+    });
 });

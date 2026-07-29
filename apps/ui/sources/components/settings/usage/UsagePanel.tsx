@@ -1,11 +1,9 @@
 import React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Text } from '@/components/ui/text/Text';
+import { StyleSheet } from 'react-native-unistyles';
 import { useAuth } from '@/auth/context/AuthContext';
 import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
-import { getUsageForPeriod, type UsageResponse } from '@/sync/api/account/apiUsage';
 import { useConnectedServiceQuotaSummaries } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
 import { buildConnectedServiceQuotaSummaryCards } from '@/components/settings/connectedServices/buildConnectedServiceQuotaSummaryCards';
 import {
@@ -17,12 +15,15 @@ import {
 } from '@/sync/api/account/usageAnalytics';
 import { UsageAnalyticsDashboard } from './UsageAnalyticsDashboard';
 import { SessionUsageDrilldownFrame } from './SessionUsageDrilldownFrame';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { UsageLoadingSkeleton } from './sections';
+import { useUsageAnalyticsQuery } from '@/sync/api/account/useUsageAnalyticsQuery';
 
 type UsagePanelProps = {
     sessionId?: string;
     initialFilters?: UsageFilterState;
     onFiltersChange?: (filters: UsageFilterState) => void;
+    /** Extra bottom padding for the full-page route (floating-nav clearance, D-R2-10). */
+    contentBottomInset?: number;
 };
 
 type ConnectedServiceQuotaCards = ReturnType<typeof buildConnectedServiceQuotaSummaryCards>;
@@ -56,30 +57,17 @@ function areUsageFiltersEqual(left: UsageFilterState, right: UsageFilterState): 
 const styles = StyleSheet.create((theme) => ({
     loadingContainer: {
         flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 32,
         backgroundColor: theme.colors.background.canvas,
-    },
-    loadingText: {
-        marginTop: 12,
-        fontSize: 14,
-        color: theme.colors.text.secondary,
-        fontWeight: '600',
     },
 }));
 
-export const UsagePanel: React.FC<UsagePanelProps> = ({ sessionId, initialFilters, onFiltersChange }) => {
-    const { theme } = useUnistyles();
+export const UsagePanel: React.FC<UsagePanelProps> = ({ sessionId, initialFilters, onFiltersChange, contentBottomInset }) => {
     const auth = useAuth();
     const resolvedInitialFilters = React.useMemo(() => resolveInitialFilters(initialFilters), [initialFilters]);
     const [period, setPeriod] = React.useState<UsageFilterState['period']>(resolvedInitialFilters.period);
     const [metric, setMetric] = React.useState<UsageMetric>(resolvedInitialFilters.metric);
     const [costMode, setCostMode] = React.useState<UsageCostMode>(resolvedInitialFilters.costMode);
     const [focus, setFocus] = React.useState<UsageFocus | null>(resolvedInitialFilters.focus);
-    const [usageData, setUsageData] = React.useState<UsageResponse | null>(null);
-    const [loading, setLoading] = React.useState(true);
-    const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
     const [reloadToken, setReloadToken] = React.useState(0);
     const hasPublishedFiltersRef = React.useRef(false);
     const lastAppliedInitialFiltersRef = React.useRef<UsageFilterState>(resolvedInitialFilters);
@@ -89,6 +77,22 @@ export const UsagePanel: React.FC<UsagePanelProps> = ({ sessionId, initialFilter
         isRefreshing: connectedServiceQuotaSummariesRefreshing,
         hasConnectedProfiles: hasConnectedServiceQuotaProfiles,
     } = useConnectedServiceQuotaSummaries();
+    const usageQuery = useUsageAnalyticsQuery({
+        credentials: auth.credentials,
+        enabled: auth.credentials != null,
+        period,
+        sessionId,
+        focus,
+        costMode,
+        reloadToken,
+    });
+    const usageData = usageQuery.data;
+    const loading = usageQuery.isLoading;
+    const errorMessage = usageQuery.error instanceof HappyError
+        ? usageQuery.error.message
+        : usageQuery.error != null || !auth.credentials
+            ? t('errors.unknownError')
+            : null;
 
     React.useEffect(() => {
         latestOnFiltersChangeRef.current = onFiltersChange;
@@ -123,61 +127,15 @@ export const UsagePanel: React.FC<UsagePanelProps> = ({ sessionId, initialFilter
     }, [period, metric, costMode, focus]);
 
     React.useEffect(() => {
-        let cancelled = false;
-
-        async function loadUsageData() {
-            if (!auth.credentials) {
-                if (!cancelled) {
-                    setUsageData(null);
-                    setErrorMessage(t('errors.unknownError'));
-                    setLoading(false);
-                }
-                return;
-            }
-
-            setLoading(true);
-
-            try {
-                const response = await getUsageForPeriod(auth.credentials, period, sessionId, focus, costMode);
-                if (cancelled) {
-                    return;
-                }
-
-                const nextViewModel = buildUsageAnalyticsViewModel(response, {
-                    period,
-                    metric,
-                    costMode,
-                    focus,
-                });
-
-                setUsageData(response);
-                setErrorMessage(null);
-                if (focus && nextViewModel.filteredUsageCount === 0) {
-                    setFocus(null);
-                }
-            } catch (error) {
-                if (cancelled) {
-                    return;
-                }
-
-                if (error instanceof HappyError) {
-                    setErrorMessage(error.message);
-                } else {
-                    setErrorMessage(t('errors.unknownError'));
-                }
-            } finally {
-                if (!cancelled) {
-                    setLoading(false);
-                }
-            }
-        }
-
-        void loadUsageData();
-
-        return () => {
-            cancelled = true;
-        };
-    }, [auth.credentials, period, sessionId, focus, costMode, reloadToken]);
+        if (!focus || !usageData) return;
+        const nextViewModel = buildUsageAnalyticsViewModel(usageData, {
+            period,
+            metric,
+            costMode,
+            focus,
+        });
+        if (nextViewModel.filteredUsageCount === 0) setFocus(null);
+    }, [costMode, focus, metric, period, usageData]);
 
     const viewModel = React.useMemo(() => {
         return buildUsageAnalyticsViewModel(usageData ?? [], {
@@ -193,10 +151,11 @@ export const UsagePanel: React.FC<UsagePanelProps> = ({ sessionId, initialFilter
     );
 
     if (loading && usageData == null) {
+        // Skeletons that echo sections 1–3 while the first response is in
+        // flight — never a spinner (L6 loading contract).
         return (
             <View style={styles.loadingContainer}>
-                <ActivitySpinner size="large" color={theme.colors.accent.blue} />
-                <Text style={styles.loadingText}>{t('common.loading')}</Text>
+                <UsageLoadingSkeleton />
             </View>
         );
     }
@@ -213,6 +172,7 @@ export const UsagePanel: React.FC<UsagePanelProps> = ({ sessionId, initialFilter
                 showConnectedServiceQuotaSectionWhenEmpty={hasConnectedServiceQuotaProfiles}
                 filters={{ period, metric, costMode, focus }}
                 sessionId={sessionId}
+                contentBottomInset={contentBottomInset}
                 isRefreshing={loading && usageData != null}
                 errorMessage={errorMessage}
                 onPeriodChange={(nextPeriod) => {

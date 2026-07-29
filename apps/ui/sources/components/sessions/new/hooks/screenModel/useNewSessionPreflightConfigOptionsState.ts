@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol';
 
-import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { isAgentId } from '@/agents/catalog/catalog';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
@@ -75,7 +75,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
         }
         // For built-in backends the backend id is already a canonical agent id.
         // For plugin-contributed backends the provider may still override it.
-        return resolveProviderAgentIdForBackendTarget(backendTargetForProbe)
+        return resolveCatalogAgentIdForBackendTarget(backendTargetForProbe)
             ?? (isAgentId(backendTargetForProbe.backendId) ? backendTargetForProbe.backendId : null);
     }, [backendTargetForProbe, params.runtimeCarrierAgentId]);
     const probeContextKey = buildNewSessionCapabilityProbeContextKey(params.probeContext);

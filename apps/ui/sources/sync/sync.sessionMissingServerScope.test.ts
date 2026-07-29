@@ -44,6 +44,7 @@ const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
 const createEncryptionFromAuthCredentialsMock = vi.hoisted(() => vi.fn());
 const machineExternalSessionTranscriptPageMock = vi.hoisted(() => vi.fn());
 const machineExternalSessionTranscriptReadAfterMock = vi.hoisted(() => vi.fn());
+const machineExternalSessionTranscriptRefreshReadAfterMock = vi.hoisted(() => vi.fn());
 const resolvePreferredServerIdForSessionIdMock = vi.hoisted(() => vi.fn());
 const sessionRpcWithPreferredSessionScopeMock = vi.hoisted(() => vi.fn());
 const emitSessionMetadataUpdateWithServerScopeMock = vi.hoisted(() => vi.fn());
@@ -52,6 +53,7 @@ const notifyActivityReadyMock = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/ops/machineExternalSessions', () => ({
     machineExternalSessionTranscriptPage: machineExternalSessionTranscriptPageMock,
     machineExternalSessionTranscriptReadAfter: machineExternalSessionTranscriptReadAfterMock,
+    machineExternalSessionTranscriptRefreshReadAfter: machineExternalSessionTranscriptRefreshReadAfterMock,
 }));
 vi.mock('@/sync/api/session/apiSocket', () => ({
     apiSocket: {
@@ -68,11 +70,18 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: runtimeFetchMock,
 }));
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    TokenStorage: {
-        getCredentialsForServerUrl: getCredentialsForServerUrlMock,
-    },
-}));
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
+    const actual = await importOriginal<
+        typeof import('@/auth/storage/tokenStorage')
+    >();
+    return {
+        ...actual,
+        TokenStorage: {
+            ...actual.TokenStorage,
+            getCredentialsForServerUrl: getCredentialsForServerUrlMock,
+        },
+    };
+});
 vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
     createEncryptionFromAuthCredentials: createEncryptionFromAuthCredentialsMock,
 }));
@@ -94,16 +103,52 @@ vi.mock('@/activity/notifications/runtime/activityLocalNotificationBus', async (
 });
 
 import { storage } from './domains/state/storage';
-import { setActiveServerId, upsertServerProfile } from './domains/server/serverProfiles';
+import {
+    clearTabActiveServerId,
+    getActiveServerSnapshot,
+    setActiveServerId,
+    upsertServerProfile,
+} from './domains/server/serverProfiles';
+import {
+    markSessionSurfaceVisible,
+    resetSessionSurfaceVisibilityForTests,
+} from '@/sync/domains/session/sessionSurfaceVisibility';
 import { saveAccountSettings, savePendingAccountSettings } from './domains/state/accountSettingsPersistence';
+import { loadPendingOutboxForSession } from './domains/state/pendingOutboxPersistence';
 import { createAccountSettingsScope } from './domains/settings/scope/accountSettingsScope';
 import { settingsDefaults } from './domains/settings/settings';
 import { encodeBase64 } from '@/encryption/base64';
 import { encodeUTF8 } from '@/encryption/text';
 import type { Machine, Session } from './domains/state/storageTypes';
 import type { SessionListRenderableSession } from './domains/session/listing/sessionListRenderable';
+import { enterDemoMode, resetDemoModeDepthForTests } from '@/demoMode/runtime/enterExitDemoMode';
+import {
+    projectSessionSharedMetadataV1,
+    SessionOwnerMetadataV1Schema,
+    sealSessionOwnerMetadataV1,
+    type ExternalSessionTranscriptRawMessageV1,
+} from '@happier-dev/protocol';
 
 const initialStorageState = storage.getState();
+
+function currentPendingInputFeaturesResponse(): Response {
+    return Response.json({
+        features: {},
+        capabilities: {
+            compatibility: {
+                v: 1,
+                sessionSync: {
+                    v: 1,
+                    enforcement: 'observe',
+                    minimumSessionSyncProtocolVersion: 2,
+                    currentSessionSyncProtocolVersion: 2,
+                    declarationTransport: 'headers-v1',
+                },
+                pendingInput: { currentPendingInputProtocolVersion: 1 },
+            },
+        },
+    });
+}
 
 function createSession(sessionId: string): Session {
     const now = Date.now();
@@ -146,6 +191,7 @@ function createExternalSession(sessionId: string): Session {
     const now = Date.now();
     return {
         ...createSession(sessionId),
+        currentStorageState: 'machine_only',
         createdAt: now,
         updatedAt: now,
         metadata: {
@@ -154,11 +200,40 @@ function createExternalSession(sessionId: string): Session {
             machineId: 'machine-1',
             externalSessionV1: {
                 v: 1,
-                providerId: 'codex',
+                agentId: 'codex',
                 machineId: 'machine-1',
                 remoteSessionId: 'vendor-session-1',
                 source: { kind: 'codexHome', home: 'user' },
+                linkedAtMs: 1,
+                qualifiedIdentity: {
+                    v: 1,
+                    agent: { pluginId: 'happier.codex', localId: 'codex' },
+                    source: { kind: 'codexHome', contractVersion: 1 },
+                },
             },
+        },
+    };
+}
+
+function createTranscriptInvalidation(sessionId: string, _cursor: string) {
+    return {
+        v: 1 as const,
+        type: 'external-session-transcript-invalidated' as const,
+        binding: {
+            v: 1 as const,
+            machineId: 'machine-1',
+            sessionId,
+            link: { generation: '1', remoteSessionId: 'vendor-session-1' },
+            source: {
+                qualifiedIdentity: {
+                    v: 1 as const,
+                    agent: { pluginId: 'happier.codex', localId: 'codex' },
+                    source: { kind: 'codexHome', contractVersion: 1 as const },
+                },
+                generation: 'source-1',
+            },
+            contributionGeneration: 'contribution-1',
+            cursorIdentity: `external_session_cursor_binding_v1:${'a'.repeat(64)}`,
         },
     };
 }
@@ -173,6 +248,27 @@ function findRuntimeFetchCall(url: string) {
     return call;
 }
 
+function expectRuntimeFetchMessagePageCall(
+    call: unknown[] | undefined,
+    params: { baseUrl: string; sessionId: string; beforeSeq: string; limit: string },
+): void {
+    expect(call).toBeDefined();
+    if (!call) {
+        throw new Error(`Expected runtimeFetch message page call for ${params.sessionId}`);
+    }
+    const [url, init] = call;
+    const requestUrl = new URL(String(url));
+    expect(`${requestUrl.origin}${requestUrl.pathname}`).toBe(
+        `${params.baseUrl}/v1/sessions/${encodeURIComponent(params.sessionId)}/messages`,
+    );
+    expect(requestUrl.searchParams.get('scope')).toBe('main');
+    expect(requestUrl.searchParams.get('beforeSeq')).toBe(params.beforeSeq);
+    expect(requestUrl.searchParams.get('limit')).toBe(params.limit);
+    expect(requestUrl.searchParams.has('afterSeq')).toBe(false);
+    expect(requestUrl.searchParams.has('sidechainId')).toBe(false);
+    expect(init).toEqual(expect.objectContaining({ method: 'GET' }));
+}
+
 function buildTokenWithSub(sub: string): string {
     const payload = encodeBase64(encodeUTF8(JSON.stringify({ sub })), 'base64');
     return `hdr.${payload}.sig`;
@@ -182,21 +278,50 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
         kvStore.clear();
+        clearTabActiveServerId();
         requestMock.mockReset();
         runtimeFetchMock.mockReset();
         getCredentialsForServerUrlMock.mockReset();
         createEncryptionFromAuthCredentialsMock.mockReset();
         machineExternalSessionTranscriptPageMock.mockReset();
         machineExternalSessionTranscriptReadAfterMock.mockReset();
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockReset();
         resolvePreferredServerIdForSessionIdMock.mockReset();
         sessionRpcWithPreferredSessionScopeMock.mockReset();
         emitSessionMetadataUpdateWithServerScopeMock.mockReset();
         notifyActivityReadyMock.mockReset();
         resolvePreferredServerIdForSessionIdMock.mockReturnValue(undefined);
+        resetSessionSurfaceVisibilityForTests();
     });
 
     afterEach(() => {
+        resetDemoModeDepthForTests();
+        resetSessionSurfaceVisibilityForTests();
         vi.clearAllMocks();
+    });
+
+    it('resets malformed or oversized cached external-session cursors and preserves a valid carrier', async () => {
+        const { sync } = await import('./sync');
+        const malformedSessionId = 'malformed-cached-external-cursor';
+        const oversizedSessionId = 'oversized-cached-external-cursor';
+        const validSessionId = 'valid-cached-external-cursor';
+        const validCursor = 'happier_external_cursor_v1:Y3Vyc29yLTE';
+
+        (sync as any).externalSessionTailCursorBySessionId.set(
+            malformedSessionId,
+            'source-native-cursor',
+        );
+        (sync as any).externalSessionTailCursorBySessionId.set(
+            oversizedSessionId,
+            `happier_external_cursor_v1:${'a'.repeat(4_096)}`,
+        );
+        (sync as any).externalSessionTailCursorBySessionId.set(validSessionId, validCursor);
+
+        expect(sync.getAcceptedExternalSessionTailCursor(malformedSessionId)).toBeNull();
+        expect(sync.getAcceptedExternalSessionTailCursor(oversizedSessionId)).toBeNull();
+        expect(sync.getAcceptedExternalSessionTailCursor(validSessionId)).toBe(validCursor);
+        expect((sync as any).externalSessionTailCursorBySessionId.get(malformedSessionId)).toBeNull();
+        expect((sync as any).externalSessionTailCursorBySessionId.get(oversizedSessionId)).toBeNull();
     });
 
     it('does not delete local session when snapshot is loaded and session is absent on active server', async () => {
@@ -263,6 +388,10 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         }));
 
         const { sync } = await import('./sync');
+        (sync as any).externalSessionOlderCursorBySessionId.set(activeSession.id, 'stale-older');
+        (sync as any).externalSessionHasMoreOlderBySessionId.set(activeSession.id, true);
+        (sync as any).externalSessionTailCursorBySessionId.set(activeSession.id, 'stale-tail');
+        (sync as any).transcriptAuthorityKeyBySessionId.set(activeSession.id, 'live_agent:stale-source');
 
         (sync as any).resetServerScopedRuntimeState();
 
@@ -278,6 +407,10 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(storage.getState().sessionListIndexByServerId).toEqual({
             [sideServer.id]: [{ type: 'session', sessionId: sideSession.id, serverId: sideServer.id }],
         });
+        expect((sync as any).externalSessionOlderCursorBySessionId.size).toBe(0);
+        expect((sync as any).externalSessionHasMoreOlderBySessionId.size).toBe(0);
+        expect((sync as any).externalSessionTailCursorBySessionId.size).toBe(0);
+        expect((sync as any).transcriptAuthorityKeyBySessionId.size).toBe(0);
     });
 
     it('clears only the active server machine-list cache entry when runtime state resets', async () => {
@@ -550,12 +683,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
-            providerId: 'codex',
+            agentId: 'codex',
             remoteSessionId: 'vendor-session-1',
             direction: 'older',
         }), { serverId: 'server-owned' });
         expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
+            agentId: 'codex',
             remoteSessionId: 'vendor-session-1',
             cursor: 'tail',
         }), { serverId: 'server-owned' });
@@ -609,18 +743,714 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
-            providerId: 'codex',
+            agentId: 'codex',
             remoteSessionId: 'vendor-session-1',
             direction: 'older',
         }), { serverId: undefined });
         expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
+            agentId: 'codex',
             remoteSessionId: 'vendor-session-1',
             cursor: 'tail',
         }), { serverId: undefined });
         expect(storage.getState().sessionMessages[sessionId]?.isLoaded).toBe(true);
         const messagesById = storage.getState().sessionMessages[sessionId]?.messagesById ?? {};
         expect(Object.values(messagesById).some((message) => message.kind === 'user-text' && message.text === 'hello direct snapshotless')).toBe(true);
+    });
+
+    it('hydrates only the pushed operation-accepted server prefix for an offline initial partial import', async () => {
+        const sessionId = 'external_session_initial_partial_hydration';
+        const acceptedLocalId = 'direct-import:v1:codex:aaaaaaaaaaaaaaaaaaaaaaaa';
+        const stagedLocalId = 'direct-import:v1:codex:bbbbbbbbbbbbbbbbbbbbbbbb';
+        const session = createExternalSession(sessionId);
+        session.encryptionMode = 'plain';
+        session.currentStorageState = 'server_partial';
+        session.acceptedThroughServerSeq = 4;
+        session.metadata = {
+            ...session.metadata!,
+            externalSessionOperationV1: {
+                v: 1,
+                progress: {
+                    v: 1,
+                    operationId: 'operation-initial-partial',
+                    revision: 4,
+                    request: {
+                        plan: 'materialize',
+                        targetStorageMode: 'external-linked',
+                        targetRuntimeMode: null,
+                    },
+                    status: 'awaiting_user_resume',
+                    phase: 'importing',
+                    timeline: ['validating', 'staging', 'importing', 'publishing'],
+                    updatedAtMs: 1_700_000_000_000,
+                    priorStableStorage: { state: 'machine_only' },
+                    currentStorageState: 'server_partial',
+                    checkpoint: {
+                        sourcePagesRead: 1,
+                        stagedItemCount: 5,
+                        importedItemCount: 4,
+                        requiredItemFailures: {
+                            total: 0,
+                            record: 0,
+                            media: 0,
+                            conversion: 0,
+                            diagnosticsTruncated: false,
+                        },
+                        acceptedThroughServerSeq: 4,
+                    },
+                    fence: {
+                        kind: 'initial_server_partial',
+                        acceptedThroughServerSeq: 4,
+                    },
+                    retryTargetPhase: 'importing',
+                },
+            },
+        };
+        const offlineMachine = createMachine('machine-1');
+        offlineMachine.revokedAt = 1;
+        storage.getState().applyMachines([offlineMachine], false);
+        storage.getState().applySessions([session]);
+        requestMock.mockResolvedValueOnce(Response.json({
+            messages: [
+                {
+                    id: 'server-row-5',
+                    seq: 5,
+                    localId: stagedLocalId,
+                    sidechainId: null,
+                    content: {
+                        t: 'plain',
+                        v: {
+                            role: 'user',
+                            content: { type: 'text', text: 'staged beyond accepted prefix' },
+                        },
+                    },
+                    createdAt: 1_005,
+                    updatedAt: 1_005,
+                },
+                {
+                    id: 'server-row-4',
+                    seq: 4,
+                    localId: acceptedLocalId,
+                    sidechainId: null,
+                    content: {
+                        t: 'plain',
+                        v: {
+                            role: 'user',
+                            content: { type: 'text', text: 'accepted partial row' },
+                        },
+                    },
+                    createdAt: 1_004,
+                    updatedAt: 1_004,
+                },
+            ],
+            hasMore: false,
+            nextBeforeSeq: null,
+        }));
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+
+        expect(requestMock).toHaveBeenCalledWith(
+            `/v1/sessions/${sessionId}/messages?scope=main`,
+            expect.objectContaining({ method: 'GET' }),
+        );
+        const messages = storage.getState().sessionMessages[sessionId];
+        expect(messages?.messageIdsOldestFirst).toHaveLength(1);
+        const acceptedMessageId = messages?.messageIdsOldestFirst[0];
+        expect(acceptedMessageId).toBeDefined();
+        expect(messages?.messagesById[acceptedMessageId!]).toMatchObject({
+            realID: acceptedLocalId,
+            localId: acceptedLocalId,
+            seq: 4,
+            kind: 'user-text',
+            text: 'accepted partial row',
+        });
+        expect(Object.values(messages?.messagesById ?? {}).some(
+            (message) => message.realID === stagedLocalId
+                || ('localId' in message && message.localId === stagedLocalId),
+        )).toBe(false);
+    });
+
+    it('chooses authority before apply and replaces peer rows across live to accepted-prefix to live switches', async () => {
+        const sessionId = 'external_session_authority_switch_replacement';
+        const acceptedLocalId = 'direct-import:v1:codex:cccccccccccccccccccccccc';
+        const stagedLocalId = 'direct-import:v1:codex:dddddddddddddddddddddddd';
+        const initial = createExternalSession(sessionId);
+        initial.encryptionMode = 'plain';
+        storage.getState().applyMachines([createMachine('machine-1')], false);
+        storage.getState().applySessions([initial]);
+        machineExternalSessionTranscriptPageMock
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [{
+                    id: 'live-before-switch',
+                    createdAtMs: 1,
+                    raw: { role: 'user', content: { type: 'text', text: 'live before switch' } },
+                }],
+                nextCursor: null,
+                tailCursor: null,
+                hasMore: false,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [{
+                    id: 'live-after-switch',
+                    createdAtMs: 3,
+                    raw: { role: 'user', content: { type: 'text', text: 'live after switch' } },
+                }],
+                nextCursor: null,
+                tailCursor: null,
+                hasMore: false,
+            });
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValue({
+            ok: true,
+            items: [],
+            nextCursor: null,
+            truncated: false,
+        });
+
+        const partial = createExternalSession(sessionId);
+        partial.encryptionMode = 'plain';
+        partial.currentStorageState = 'server_partial';
+        partial.acceptedThroughServerSeq = 4;
+        partial.metadata = {
+            ...partial.metadata!,
+            externalSessionOperationV1: {
+                v: 1,
+                progress: {
+                    v: 1,
+                    operationId: 'operation-authority-switch',
+                    revision: 4,
+                    request: {
+                        plan: 'materialize',
+                        targetStorageMode: 'external-linked',
+                        targetRuntimeMode: null,
+                    },
+                    status: 'awaiting_user_resume',
+                    phase: 'importing',
+                    timeline: ['validating', 'staging', 'importing', 'publishing'],
+                    updatedAtMs: 1_700_000_000_000,
+                    priorStableStorage: { state: 'machine_only' },
+                    currentStorageState: 'server_partial',
+                    checkpoint: {
+                        sourcePagesRead: 1,
+                        stagedItemCount: 5,
+                        importedItemCount: 4,
+                        requiredItemFailures: {
+                            total: 0,
+                            record: 0,
+                            media: 0,
+                            conversion: 0,
+                            diagnosticsTruncated: false,
+                        },
+                        acceptedThroughServerSeq: 4,
+                    },
+                    fence: {
+                        kind: 'initial_server_partial',
+                        acceptedThroughServerSeq: 4,
+                    },
+                    retryTargetPhase: 'importing',
+                },
+            },
+        };
+        const serverPage = () => Response.json({
+            messages: [
+                {
+                    id: 'server-row-5',
+                    seq: 5,
+                    localId: stagedLocalId,
+                    sidechainId: null,
+                    content: {
+                        t: 'plain',
+                        v: {
+                            role: 'user',
+                            content: { type: 'text', text: 'staged beyond accepted prefix' },
+                        },
+                    },
+                    createdAt: 1_005,
+                    updatedAt: 1_005,
+                },
+                {
+                    id: 'server-row-4',
+                    seq: 4,
+                    localId: acceptedLocalId,
+                    sidechainId: null,
+                    content: {
+                        t: 'plain',
+                        v: {
+                            role: 'user',
+                            content: { type: 'text', text: 'accepted server prefix' },
+                        },
+                    },
+                    createdAt: 1_004,
+                    updatedAt: 1_004,
+                },
+            ],
+            hasMore: false,
+            nextBeforeSeq: null,
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+
+        storage.setState((state) => ({
+            ...state,
+            sessions: { ...state.sessions, [sessionId]: partial },
+            machines: {
+                ...state.machines,
+                'machine-1': { ...createMachine('machine-1'), revokedAt: 1 },
+            },
+        }));
+        let releaseStaleServerPage!: (response: Response) => void;
+        const staleServerPage = new Promise<Response>((resolve) => {
+            releaseStaleServerPage = resolve;
+        });
+        let markStaleServerReadStarted!: () => void;
+        const staleServerReadStarted = new Promise<void>((resolve) => {
+            markStaleServerReadStarted = resolve;
+        });
+        requestMock.mockImplementationOnce(async () => {
+            markStaleServerReadStarted();
+            return await staleServerPage;
+        });
+
+        const staleServerFetch = (sync as any).fetchMessages(sessionId);
+        await staleServerReadStarted;
+        storage.setState((state) => ({
+            ...state,
+            machines: {
+                ...state.machines,
+                'machine-1': createMachine('machine-1'),
+            },
+        }));
+        releaseStaleServerPage(serverPage());
+        await staleServerFetch;
+
+        const readTexts = () => Object.values(
+            storage.getState().sessionMessages[sessionId]?.messagesById ?? {},
+        )
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(readTexts()).toEqual(['live before switch']);
+
+        storage.setState((state) => ({
+            ...state,
+            machines: {
+                ...state.machines,
+                'machine-1': { ...createMachine('machine-1'), revokedAt: 1 },
+            },
+        }));
+        requestMock.mockResolvedValueOnce(serverPage());
+        await (sync as any).fetchMessages(sessionId);
+
+        expect(readTexts()).toEqual(['accepted server prefix']);
+        expect(Object.values(storage.getState().sessionMessages[sessionId]?.messagesById ?? {}).some(
+            (message) => message.realID === stagedLocalId
+                || ('localId' in message && message.localId === stagedLocalId),
+        )).toBe(false);
+
+        storage.setState((state) => ({
+            ...state,
+            machines: {
+                ...state.machines,
+                'machine-1': createMachine('machine-1'),
+            },
+        }));
+        await (sync as any).fetchMessages(sessionId);
+
+        expect(readTexts()).toEqual(['live after switch']);
+        expect(Object.values(storage.getState().sessionMessages[sessionId]?.messagesById ?? {}).some(
+            (message) => message.realID === acceptedLocalId
+                || ('localId' in message && message.localId === acceptedLocalId),
+        )).toBe(false);
+        expect(requestMock).toHaveBeenCalledTimes(2);
+        expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('retains hosted authority when an older linked transcript read resolves after link retirement', async () => {
+        const sessionId = 'external_session_late_linked_read_after_hosted_cutover';
+        const linked = createExternalSession(sessionId);
+        linked.encryptionMode = 'plain';
+        storage.getState().applyMachines([createMachine('machine-1')], false);
+        storage.getState().applySessions([linked]);
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [{
+                id: 'linked-before-hosted',
+                createdAtMs: 1,
+                raw: { role: 'user', content: { type: 'text', text: 'linked before hosted' } },
+            }],
+            nextCursor: null,
+            tailCursor: null,
+            hasMore: false,
+        });
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+            ok: true,
+            items: [],
+            nextCursor: 'happier_external_cursor_v1:aW5pdGlhbC1saW5rZWQ',
+            truncated: false,
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+
+        let releaseLateLinkedRead!: (result: {
+            ok: true;
+            items: ExternalSessionTranscriptRawMessageV1[];
+            nextCursor: string;
+            truncated: false;
+        }) => void;
+        const lateLinkedRead = new Promise<{
+            ok: true;
+            items: ExternalSessionTranscriptRawMessageV1[];
+            nextCursor: string;
+            truncated: false;
+        }>((resolve) => {
+            releaseLateLinkedRead = resolve;
+        });
+        let markLateLinkedReadStarted!: () => void;
+        const lateLinkedReadStarted = new Promise<void>((resolve) => {
+            markLateLinkedReadStarted = resolve;
+        });
+        machineExternalSessionTranscriptReadAfterMock.mockImplementationOnce(async () => {
+            markLateLinkedReadStarted();
+            return await lateLinkedRead;
+        });
+
+        const staleLinkedFetch = (sync as any).fetchMessages(sessionId);
+        await lateLinkedReadStarted;
+
+        const hosted = createSession(sessionId);
+        hosted.seq = 1;
+        hosted.encryptionMode = 'plain';
+        hosted.currentStorageState = 'hosted';
+        hosted.metadata = {
+            path: '',
+            host: '',
+            machineId: 'machine-1',
+        };
+        storage.setState((state) => ({
+            ...state,
+            sessions: { ...state.sessions, [sessionId]: hosted },
+        }));
+        requestMock.mockResolvedValueOnce(Response.json({
+            messages: [{
+                id: 'hosted-row-1',
+                seq: 1,
+                localId: 'hosted-local-1',
+                sidechainId: null,
+                content: {
+                    t: 'plain',
+                    v: {
+                        role: 'user',
+                        content: { type: 'text', text: 'hosted authority row' },
+                    },
+                },
+                createdAt: 2,
+                updatedAt: 2,
+            }],
+            hasMore: false,
+            nextBeforeSeq: null,
+        }));
+
+        await (sync as any).fetchMessages(sessionId);
+        releaseLateLinkedRead({
+            ok: true,
+            items: [{
+                id: 'late-linked-after-hosted',
+                createdAtMs: 3,
+                raw: { role: 'assistant', content: { type: 'text', text: 'late linked row' } },
+            }],
+            nextCursor: 'happier_external_cursor_v1:bGF0ZS1saW5rZWQ',
+            truncated: false,
+        });
+        await staleLinkedFetch;
+
+        const appliedMessages = Object.values(
+            storage.getState().sessionMessages[sessionId]?.messagesById ?? {},
+        ).filter((message): message is NonNullable<typeof message> => Boolean(message));
+        const texts = appliedMessages
+            .filter((message) => message.kind === 'user-text' || message.kind === 'agent-text')
+            .map((message) => message.text);
+        expect(appliedMessages).toHaveLength(1);
+        expect(texts).toEqual(['hosted authority row']);
+        expect((sync as any).transcriptAuthorityKeyBySessionId.get(sessionId)).toBe('hosted');
+        expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenCalledTimes(2);
+        expect(requestMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('atomically replaces an accepted partial bound with a finalized snapshot and rejects the late old-bound response', async () => {
+        const sessionId = 'external_session_partial_to_finalized_snapshot';
+        const partialAcceptedLocalId = 'direct-import:v1:codex:111111111111111111111111';
+        const partialStagedLocalId = 'direct-import:v1:codex:222222222222222222222222';
+        const latePartialLocalId = 'direct-import:v1:codex:333333333333333333333333';
+        const finalizedAcceptedLocalId = 'direct-import:v1:codex:444444444444444444444444';
+        const finalizedTailLocalId = 'direct-import:v1:codex:555555555555555555555555';
+        const finalizedStagedLocalId = 'direct-import:v1:codex:666666666666666666666666';
+        const materializedThroughSourceAt = 1_700_000_000_100;
+        const serverRow = (params: {
+            id: string;
+            seq: number;
+            localId: string;
+            text: string;
+        }) => ({
+            id: params.id,
+            seq: params.seq,
+            localId: params.localId,
+            sidechainId: null,
+            content: {
+                t: 'plain' as const,
+                v: {
+                    role: 'user' as const,
+                    content: { type: 'text' as const, text: params.text },
+                },
+            },
+            createdAt: 1_000 + params.seq,
+            updatedAt: 1_000 + params.seq,
+        });
+        const serverPage = (messages: ReturnType<typeof serverRow>[]) => Response.json({
+            messages,
+            hasMore: false,
+            nextBeforeSeq: null,
+        });
+
+        const partial = createExternalSession(sessionId);
+        partial.encryptionMode = 'plain';
+        partial.currentStorageState = 'server_partial';
+        partial.acceptedThroughServerSeq = 4;
+        partial.metadata = {
+            ...partial.metadata!,
+            externalSessionOperationV1: {
+                v: 1,
+                progress: {
+                    v: 1,
+                    operationId: 'operation-partial-to-finalized',
+                    revision: 4,
+                    request: {
+                        plan: 'materialize',
+                        targetStorageMode: 'external-linked',
+                        targetRuntimeMode: null,
+                    },
+                    status: 'awaiting_user_resume',
+                    phase: 'importing',
+                    timeline: ['validating', 'staging', 'importing', 'publishing'],
+                    updatedAtMs: 1_700_000_000_000,
+                    priorStableStorage: { state: 'machine_only' },
+                    currentStorageState: 'server_partial',
+                    checkpoint: {
+                        sourcePagesRead: 1,
+                        stagedItemCount: 5,
+                        importedItemCount: 4,
+                        requiredItemFailures: {
+                            total: 0,
+                            record: 0,
+                            media: 0,
+                            conversion: 0,
+                            diagnosticsTruncated: false,
+                        },
+                        acceptedThroughServerSeq: 4,
+                    },
+                    fence: {
+                        kind: 'initial_server_partial',
+                        acceptedThroughServerSeq: 4,
+                    },
+                    retryTargetPhase: 'importing',
+                },
+            },
+        };
+        const offlineMachine = createMachine('machine-1');
+        offlineMachine.revokedAt = 1;
+        storage.getState().applyMachines([offlineMachine], false);
+        storage.getState().applySessions([partial]);
+
+        requestMock.mockResolvedValueOnce(serverPage([
+            serverRow({
+                id: 'partial-staged-row-5',
+                seq: 5,
+                localId: partialStagedLocalId,
+                text: 'partial staged beyond old bound',
+            }),
+            serverRow({
+                id: 'partial-accepted-row-4',
+                seq: 4,
+                localId: partialAcceptedLocalId,
+                text: 'partial accepted through old bound',
+            }),
+        ]));
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+
+        const readTexts = () => Object.values(
+            storage.getState().sessionMessages[sessionId]?.messagesById ?? {},
+        )
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(readTexts()).toEqual(['partial accepted through old bound']);
+        expect((sync as any).transcriptAuthorityKeyBySessionId.get(sessionId)).toBe(
+            'server_partial:4',
+        );
+
+        let releaseLatePartialPage!: (response: Response) => void;
+        const latePartialPage = new Promise<Response>((resolve) => {
+            releaseLatePartialPage = resolve;
+        });
+        let markLatePartialReadStarted!: () => void;
+        const latePartialReadStarted = new Promise<void>((resolve) => {
+            markLatePartialReadStarted = resolve;
+        });
+        requestMock.mockImplementationOnce(async () => {
+            markLatePartialReadStarted();
+            return await latePartialPage;
+        });
+        // Model a source-composed reload of the still-current accepted prefix so
+        // the old authority owns a real in-flight server read at finalization.
+        (sync as any).transcriptAuthorityKeyBySessionId.delete(sessionId);
+        const latePartialFetch = (sync as any).fetchMessages(sessionId);
+        await latePartialReadStarted;
+
+        const finalizedPage = serverPage([
+            serverRow({
+                id: 'finalized-staged-row-9',
+                seq: 9,
+                localId: finalizedStagedLocalId,
+                text: 'staged beyond finalized bound',
+            }),
+            serverRow({
+                id: 'finalized-tail-row-8',
+                seq: 8,
+                localId: finalizedTailLocalId,
+                text: 'finalized tail at new bound',
+            }),
+            serverRow({
+                id: 'finalized-accepted-row-4',
+                seq: 4,
+                localId: finalizedAcceptedLocalId,
+                text: 'finalized snapshot prefix',
+            }),
+        ]);
+        let releaseFinalizedPage!: (response: Response) => void;
+        const pendingFinalizedPage = new Promise<Response>((resolve) => {
+            releaseFinalizedPage = resolve;
+        });
+        let markFinalizedReadStarted!: () => void;
+        const finalizedReadStarted = new Promise<void>((resolve) => {
+            markFinalizedReadStarted = resolve;
+        });
+        requestMock.mockImplementationOnce(async () => {
+            markFinalizedReadStarted();
+            return await pendingFinalizedPage;
+        });
+        const finalized = {
+            ...partial,
+            currentStorageState: 'snapshot_complete' as const,
+            acceptedThroughServerSeq: 8,
+            publishedThroughServerSeq: 8,
+            materializedThroughSourceAt,
+            metadata: {
+                ...partial.metadata!,
+                externalSessionOperationV1: {
+                    v: 1 as const,
+                    progress: {
+                        v: 1 as const,
+                        operationId: 'operation-partial-to-finalized',
+                        revision: 5,
+                        request: {
+                            plan: 'materialize' as const,
+                            targetStorageMode: 'external-linked' as const,
+                            targetRuntimeMode: null,
+                        },
+                        status: 'completed' as const,
+                        phase: 'publishing' as const,
+                        timeline: ['validating', 'staging', 'importing', 'publishing'] as const,
+                        updatedAtMs: materializedThroughSourceAt,
+                        priorStableStorage: { state: 'machine_only' as const },
+                        currentStorageState: 'snapshot_complete' as const,
+                        checkpoint: {
+                            sourcePagesRead: 2,
+                            stagedItemCount: 8,
+                            importedItemCount: 8,
+                            requiredItemFailures: {
+                                total: 0,
+                                record: 0,
+                                media: 0,
+                                conversion: 0,
+                                diagnosticsTruncated: false,
+                            },
+                            acceptedThroughServerSeq: 8,
+                        },
+                        fence: { kind: 'none' as const },
+                        publication: {
+                            materializationPublicationId: 'publication-finalized',
+                            materializedThroughSourceAt,
+                            publishedThroughServerSeq: 8,
+                        },
+                    },
+                },
+            },
+        };
+        storage.getState().applySessions([finalized]);
+        const finalizedFetch = (sync as any).fetchMessages(sessionId);
+        await finalizedReadStarted;
+
+        expect(readTexts()).toEqual(['partial accepted through old bound']);
+
+        releaseFinalizedPage(finalizedPage);
+        await finalizedFetch;
+
+        expect(readTexts()).toEqual([
+            'finalized snapshot prefix',
+            'finalized tail at new bound',
+        ]);
+        expect((sync as any).transcriptAuthorityKeyBySessionId.get(sessionId)).toBe(
+            `server_snapshot:8:${materializedThroughSourceAt}`,
+        );
+
+        releaseLatePartialPage(serverPage([
+            serverRow({
+                id: 'late-partial-row-4',
+                seq: 4,
+                localId: latePartialLocalId,
+                text: 'late old-bound response',
+            }),
+        ]));
+        await latePartialFetch;
+
+        expect(readTexts()).toEqual([
+            'finalized snapshot prefix',
+            'finalized tail at new bound',
+        ]);
+        expect(readTexts()).not.toContain('late old-bound response');
+        expect((sync as any).transcriptAuthorityKeyBySessionId.get(sessionId)).toBe(
+            `server_snapshot:8:${materializedThroughSourceAt}`,
+        );
+        expect(requestMock).toHaveBeenCalledTimes(3);
     });
 
     it('fetches persisted session messages through the preferred owner server when the owner is not active', async () => {
@@ -632,7 +1462,8 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         storage.getState().applySessions([createSession(sessionId)]);
 
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'owner-token', secret: 'owner-secret' });
+        const ownerToken = buildTokenWithSub('owner-account');
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
         runtimeFetchMock.mockResolvedValue(
             new Response(
@@ -685,7 +1516,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             }),
         );
         const ownerMessagesCall = findRuntimeFetchCall(`https://owner.example/v1/sessions/${sessionId}/messages?scope=main`);
-        expectHeaderValue(ownerMessagesCall?.[1]?.headers, 'Authorization', 'Bearer owner-token');
+        expectHeaderValue(ownerMessagesCall?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
         const messagesById = storage.getState().sessionMessages[sessionId]?.messagesById ?? {};
         expect(Object.values(messagesById).some((message) => message.kind === 'user-text' && message.text === 'hello scoped')).toBe(true);
     });
@@ -699,7 +1530,8 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         storage.getState().applySessions([createSession(sessionId)]);
 
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'owner-token', secret: 'owner-secret' });
+        const ownerToken = buildTokenWithSub('owner-account');
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
         runtimeFetchMock
             .mockResolvedValueOnce(
@@ -767,14 +1599,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         expect(result).toEqual({ loaded: 1, hasMore: false, status: 'no_more' });
         expect(requestMock).not.toHaveBeenCalled();
-        expect(runtimeFetchMock).toHaveBeenNthCalledWith(
-            2,
-            `https://owner.example/v1/sessions/${sessionId}/messages?beforeSeq=2&limit=150&scope=main`,
-            expect.objectContaining({
-                method: 'GET',
-            }),
-        );
-        expectHeaderValue(runtimeFetchMock.mock.calls[1]?.[1]?.headers, 'Authorization', 'Bearer owner-token');
+        expectRuntimeFetchMessagePageCall(runtimeFetchMock.mock.calls[1], {
+            baseUrl: 'https://owner.example',
+            sessionId,
+            beforeSeq: '2',
+            limit: '150',
+        });
+        expectHeaderValue(runtimeFetchMock.mock.calls[1]?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
     });
 
     it('fetches pending messages through the preferred owner server when the owner is not active', async () => {
@@ -789,11 +1620,14 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             encryptionMode: 'plain',
         } as Session]);
 
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'owner-token', secret: 'owner-secret' });
+        const ownerToken = buildTokenWithSub('owner-account');
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
-        runtimeFetchMock.mockResolvedValue(
-            new Response(
-                JSON.stringify({
+        runtimeFetchMock.mockImplementation(async (input) => {
+            if (String(input).endsWith('/v1/features')) {
+                return currentPendingInputFeaturesResponse();
+            }
+            return Response.json({
                     pending: [
                         {
                             localId: 'pending-1',
@@ -813,10 +1647,8 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                             authorAccountId: null,
                         },
                     ],
-                }),
-                { status: 200, headers: { 'Content-Type': 'application/json' } },
-            ),
-        );
+            });
+        });
 
         const { sync } = await import('./sync');
 
@@ -830,8 +1662,20 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             }),
         );
         const ownerPendingCall = findRuntimeFetchCall(`https://owner.example/v2/sessions/${sessionId}/pending?includeDiscarded=1`);
-        expectHeaderValue(ownerPendingCall?.[1]?.headers, 'Authorization', 'Bearer owner-token');
+        expectHeaderValue(ownerPendingCall?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
         expect(storage.getState().sessionPending[sessionId]?.messages.map((message) => message.text)).toEqual(['queued remotely']);
+    });
+
+    it('does not fetch pending messages or require a server-account scope in demo mode', async () => {
+        const sessionId = 'demo_external_session';
+        storage.getState().applySessions([createExternalSession(sessionId)]);
+        enterDemoMode();
+
+        const { sync } = await import('./sync');
+
+        await expect((sync as any).fetchPendingMessages(sessionId)).resolves.toBeUndefined();
+        expect(requestMock).not.toHaveBeenCalled();
+        expect(runtimeFetchMock).not.toHaveBeenCalled();
     });
 
     it('enqueues pending messages through the preferred owner server when the owner is not active', async () => {
@@ -846,16 +1690,33 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             encryptionMode: 'plain',
         } as Session]);
 
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'owner-token', secret: 'owner-secret' });
+        const ownerToken = buildTokenWithSub('owner-account');
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
-        runtimeFetchMock.mockResolvedValue(new Response(null, { status: 200 }));
+        runtimeFetchMock.mockImplementation(async (input) =>
+            String(input).endsWith('/v1/features')
+                ? currentPendingInputFeaturesResponse()
+                : Response.json({}));
 
         const { sync } = await import('./sync');
         (sync as any).encryption = {
             getSessionEncryption: () => null,
         };
 
-        await expect((sync as any).enqueuePendingMessage(sessionId, 'hello pending')).resolves.toBeUndefined();
+        const enqueueResult = await (sync as any).enqueuePendingMessage(
+            sessionId,
+            'hello pending',
+            undefined,
+            undefined,
+            {
+                localId: 'owner-local-id',
+                requestedAction: { v: 1, kind: 'send_now' },
+            },
+        );
+        expect(enqueueResult).toEqual({
+            localId: 'owner-local-id',
+            accepted: true,
+        });
 
         expect(requestMock).not.toHaveBeenCalled();
         expect(runtimeFetchMock).toHaveBeenCalledWith(
@@ -865,9 +1726,176 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             }),
         );
         const ownerPendingCall = findRuntimeFetchCall(`https://owner.example/v2/sessions/${sessionId}/pending`);
-        expectHeaderValue(ownerPendingCall?.[1]?.headers, 'Authorization', 'Bearer owner-token');
+        expectHeaderValue(ownerPendingCall?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
         expectHeaderValue(ownerPendingCall?.[1]?.headers, 'Content-Type', 'application/json');
-        expect(storage.getState().sessionPending[sessionId]?.messages.map((message) => message.text)).toEqual(['hello pending']);
+        expect(JSON.parse(String(ownerPendingCall?.[1]?.body))).toMatchObject({
+            requestedAction: { v: 1, kind: 'send_now' },
+        });
+        const pendingMessages = storage.getState().sessionPending[sessionId]?.messages ?? [];
+        expect(pendingMessages.map((message) => message.text)).toEqual(['hello pending']);
+        expect(pendingMessages[0]?.localId).toBe(enqueueResult.localId);
+    });
+
+    it.each(['before transport', 'after response'] as const)(
+        'fences the captured active server-account scope %s for dynamic apiSocket requests',
+        async (crossing) => {
+            const sessionId = `active_pending_scope_fence_${crossing.replace(' ', '_')}`;
+            const server = upsertServerProfile({ serverUrl: 'https://active-scope.example', name: 'Active scope' });
+            setActiveServerId(server.id, { scope: 'device' });
+            const { sync } = await import('./sync');
+            const activate = (accountId: string) => (sync as any).activateAccountSettingsScopeForCredentials({
+                token: buildTokenWithSub(accountId),
+                secret: encodeBase64(new Uint8Array(32).fill(3), 'base64url'),
+            });
+            activate('captured-account');
+            const owner = await (sync as any).resolvePendingQueueOwnerContext(sessionId) as Readonly<{
+                request: (path: string, init?: RequestInit) => Promise<Response>;
+            }>;
+            if (crossing === 'before transport') {
+                activate('switched-account');
+                requestMock.mockResolvedValue(new Response(null, { status: 204 }));
+            } else {
+                requestMock.mockImplementation(async () => {
+                    activate('switched-account');
+                    return new Response(null, { status: 204 });
+                });
+            }
+
+            await expect(owner.request('/v2/sessions/s/pending', { method: 'POST' }))
+                .rejects.toThrow('Pending owner server-account scope changed');
+            expect(requestMock).toHaveBeenCalledTimes(crossing === 'before transport' ? 0 : 1);
+        },
+    );
+
+    it('retains exact enqueue custody when the active-owner postflight fence rejects after a possible commit', async () => {
+        const sessionId = 'active_pending_postflight_custody';
+        const localId = 'postflight-local';
+        const server = upsertServerProfile({ serverUrl: 'https://active-postflight.example', name: 'Active postflight' });
+        setActiveServerId(server.id, { scope: 'device' });
+        storage.getState().applySessions([{ ...createSession(sessionId), encryptionMode: 'plain' } as Session]);
+        storage.getState().activateProfileScope({ serverId: server.id, accountId: 'captured-account' });
+        const { sync } = await import('./sync');
+        requestMock.mockImplementation(async () => {
+            storage.getState().activateProfileScope({ serverId: server.id, accountId: 'switched-account' });
+            return Response.json({});
+        });
+
+        await expect((sync as any).enqueuePendingMessage(
+            sessionId,
+            'retain exact custody',
+            undefined,
+            undefined,
+            { localId },
+        )).resolves.toEqual({ localId, accepted: false });
+
+        expect(loadPendingOutboxForSession(sessionId, {
+            serverId: server.id,
+            accountId: 'captured-account',
+        })).toEqual([
+            expect.objectContaining({ localId, operation: 'enqueue' }),
+        ]);
+        expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+            expect.objectContaining({ localId, sendState: 'unconfirmed' }),
+        ]);
+    });
+
+    it('routes a pending update through the preferred owner server when it is not active', async () => {
+        const sessionId = 'persisted_session_remote_pending_update';
+        const pendingId = 'remote-pending-update';
+        const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
+        const ownerServer = upsertServerProfile({ serverUrl: 'https://owner.example', name: 'Owner' });
+        setActiveServerId(activeServer.id, { scope: 'device' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue(ownerServer.id);
+        storage.getState().applySessions([{ ...createSession(sessionId), encryptionMode: 'plain' } as Session]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: pendingId, localId: pendingId, createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted', text: 'before update',
+            rawRecord: { role: 'user', content: { type: 'text', text: 'before update' }, meta: {} },
+        });
+        const ownerToken = buildTokenWithSub('owner-account');
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
+        createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
+        runtimeFetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+
+        const { sync } = await import('./sync');
+        const pendingUpdater = sync as unknown as Readonly<{
+            updatePendingMessage: (targetSessionId: string, targetPendingId: string, text: string) => Promise<void>;
+        }>;
+        await expect(pendingUpdater.updatePendingMessage(sessionId, pendingId, 'after update')).resolves.toBeUndefined();
+
+        expect(requestMock).not.toHaveBeenCalled();
+        const call = findRuntimeFetchCall(`https://owner.example/v2/sessions/${sessionId}/pending/${pendingId}`);
+        expect(call?.[1]).toEqual(expect.objectContaining({ method: 'PATCH' }));
+        expectHeaderValue(call?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
+        expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+            expect.objectContaining({ localId: pendingId, text: 'after update' }),
+        ]);
+    });
+
+    it.each([false, true])(
+        'applies remote mutation refresh only while the full owner account scope remains current (crossed=%s)',
+        async (crossed) => {
+            const sessionId = `persisted_session_remote_refresh_${crossed}`;
+            const pendingId = 'remote-refresh-row';
+            const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
+            const ownerServer = upsertServerProfile({ serverUrl: 'https://owner.example', name: 'Owner' });
+            setActiveServerId(activeServer.id, { scope: 'device' });
+            resolvePreferredServerIdForSessionIdMock.mockReturnValue(ownerServer.id);
+            storage.getState().applySessions([{ ...createSession(sessionId), encryptionMode: 'plain' } as Session]);
+            storage.getState().upsertPendingMessage(sessionId, {
+                id: pendingId, localId: pendingId, createdAt: 1, updatedAt: 1,
+                source: 'server_pending', deliveryStatus: 'accepted', text: 'before refresh',
+                rawRecord: { role: 'user', content: { type: 'text', text: 'before refresh' }, meta: {} },
+            });
+            const ownerToken = buildTokenWithSub('owner-account');
+            const crossedToken = buildTokenWithSub('crossed-account');
+            getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
+            createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
+            runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+                const url = String(input);
+                if (url.endsWith(`/pending/${pendingId}/delivery/send-as-new`)) {
+                    if (crossed) {
+                        getCredentialsForServerUrlMock.mockResolvedValue({ token: crossedToken, secret: 'crossed-secret' });
+                    }
+                    return new Response(null, { status: 204 });
+                }
+                if (url.includes('/pending?includeDiscarded=1')) {
+                    return Response.json({ pending: [{
+                        localId: pendingId,
+                        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'after refresh' }, meta: {} } },
+                        status: 'queued', position: 0, createdAt: 1, updatedAt: 2,
+                        discardedAt: null, discardedReason: null,
+                    }] });
+                }
+                return new Response(null, { status: 204 });
+            });
+
+            const { sync } = await import('./sync');
+            const pendingMutator = sync as unknown as Readonly<{
+                sendPendingDeliveryAsNew: (targetSessionId: string, targetPendingId: string) => Promise<string>;
+            }>;
+            await pendingMutator.sendPendingDeliveryAsNew(sessionId, pendingId);
+
+            expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+                expect.objectContaining({ localId: pendingId, text: crossed ? 'before refresh' : 'after refresh' }),
+            ]);
+        },
+    );
+
+    it.each(['.', '..'])('rejects requested-action dot segment %j before owner resolution or request', async (localId) => {
+        const { sync } = await import('./sync');
+        const actionMutator = sync as unknown as Readonly<{
+            updatePendingRequestedAction: (
+                targetSessionId: string,
+                targetLocalId: string,
+                requestedAction: { v: 1; kind: 'send_now' },
+            ) => Promise<void>;
+        }>;
+
+        await expect(actionMutator.updatePendingRequestedAction('session', localId, { v: 1, kind: 'send_now' }))
+            .rejects.toThrow('Pending message ID is invalid');
+        expect(requestMock).not.toHaveBeenCalled();
+        expect(runtimeFetchMock).not.toHaveBeenCalled();
     });
 
     it('routes abortSession through the preferred owner server scope', async () => {
@@ -886,28 +1914,76 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         });
     });
 
-    it('routes patchSessionMetadataWithRetry through the scoped metadata updater', async () => {
+
+    it('keeps a cached linked layout-0 owner on the scoped legacy writer', async () => {
         const sessionId = 'plain_metadata_session';
+        const sourceMetadata = {
+            path: '/tmp/repo',
+            host: 'test-host',
+            externalSessionV1: {
+                v: 1 as const,
+                agentId: 'codex',
+                machineId: 'machine-layout0-owner',
+                remoteSessionId: 'native-layout0-owner',
+                source: {
+                    kind: 'codexHome' as const,
+                    home: 'user' as const,
+                },
+            },
+        };
         storage.getState().applySessions([{
             ...createSession(sessionId),
             encryptionMode: 'plain',
             metadataVersion: 2,
-            metadata: {
-                path: '/tmp/repo',
-                host: 'test-host',
-            },
+            metadata: sourceMetadata,
         } as Session]);
+        requestMock.mockResolvedValueOnce(Response.json({
+            session: {
+                id: sessionId,
+                seq: 1,
+                createdAt: 1_000,
+                updatedAt: 1_000,
+                active: true,
+                activeAt: 1_000,
+                encryptionMode: 'plain',
+                dataEncryptionKey: null,
+                metadataLayoutVersion: 0,
+                metadataVersion: 2,
+                metadata: JSON.stringify(sourceMetadata),
+                agentStateVersion: 0,
+                agentState: null,
+                share: null,
+            },
+        }));
+        const updatedMetadata = {
+            ...sourceMetadata,
+            summary: { text: 'Renamed session', updatedAt: 123 },
+        };
         emitSessionMetadataUpdateWithServerScopeMock.mockResolvedValue({
             result: 'success',
             version: 3,
-            metadata: JSON.stringify({
-                path: '/tmp/repo',
-                host: 'test-host',
-                summary: { text: 'Renamed session', updatedAt: 123 },
-            }),
+            metadata: JSON.stringify(updatedMetadata),
         });
 
         const { sync } = await import('./sync');
+        (sync as any).credentials = {
+            token: 'active-token',
+            encryption: {
+                publicKey: encodeBase64(
+                    new Uint8Array(32).fill(24),
+                    'base64',
+                ),
+                machineKey: encodeBase64(
+                    new Uint8Array(32).fill(23),
+                    'base64',
+                ),
+            },
+        };
+        (sync as any).encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => undefined),
+            getSessionEncryption: vi.fn(() => null),
+        };
 
         await expect(
             sync.patchSessionMetadataWithRetry(sessionId, (metadata) => ({
@@ -919,38 +1995,313 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(emitSessionMetadataUpdateWithServerScopeMock).toHaveBeenCalledWith({
             sessionId,
             expectedVersion: 2,
-            metadata: JSON.stringify({
-                path: '/tmp/repo',
-                host: 'test-host',
-                summary: { text: 'Renamed session', updatedAt: 123 },
-            }),
+            metadata: JSON.stringify(updatedMetadata),
         });
+        expect(storage.getState().sessions[sessionId]?.metadataLayoutVersion).toBe(0);
         expect(storage.getState().sessions[sessionId]?.metadataVersion).toBe(3);
         expect((storage.getState().sessions[sessionId]?.metadata as any)?.summary?.text).toBe('Renamed session');
     });
 
+    it('routes layout-1 title updates as strict shared-editor tuple patches', async () => {
+        const sessionId = 'plain_shared_metadata_session';
+        const initialSharedMetadata = {
+            v: 1,
+            summary: { text: 'Before', updatedAt: 100 },
+        };
+        storage.getState().applySessions([{
+            ...createSession(sessionId),
+            encryptionMode: 'plain',
+            metadataLayoutVersion: 1,
+            metadataVersion: 2,
+            metadata: initialSharedMetadata,
+        } as unknown as Session]);
+        requestMock.mockResolvedValueOnce(new Response(JSON.stringify({
+            session: {
+                id: sessionId,
+                seq: 1,
+                createdAt: 1_000,
+                updatedAt: 1_000,
+                active: true,
+                activeAt: 1_000,
+                encryptionMode: 'plain',
+                dataEncryptionKey: null,
+                metadataLayoutVersion: 1,
+                metadataVersion: 2,
+                metadata: JSON.stringify(initialSharedMetadata),
+                agentStateVersion: 0,
+                agentState: null,
+                share: {
+                    accessLevel: 'edit',
+                    canApprovePermissions: false,
+                },
+            },
+        }), { status: 200 }));
+        emitSessionMetadataUpdateWithServerScopeMock.mockResolvedValue({
+            result: 'success',
+            metadataLayoutVersion: 1,
+            version: 3,
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = {
+            token: 'active-token',
+            encryption: {
+                publicKey: encodeBase64(
+                    new Uint8Array(32).fill(24),
+                    'base64',
+                ),
+                machineKey: encodeBase64(
+                    new Uint8Array(32).fill(23),
+                    'base64',
+                ),
+            },
+        };
+        (sync as any).encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => undefined),
+            getSessionEncryption: vi.fn(() => null),
+        };
+
+        await expect(
+            sync.patchSessionMetadataWithRetry(sessionId, (metadata) => ({
+                ...metadata,
+                summary: { text: 'Renamed session', updatedAt: 123 },
+            })),
+        ).resolves.toBeUndefined();
+
+        expect(emitSessionMetadataUpdateWithServerScopeMock).toHaveBeenCalledWith({
+            sessionId,
+            patch: {
+                mode: 'shared_editor',
+                metadataLayoutVersion: 1,
+                sharedMetadata: {
+                    ciphertext: JSON.stringify({
+                        v: 1,
+                        summary: { text: 'Renamed session', updatedAt: 123 },
+                    }),
+                    expectedVersion: 2,
+                },
+            },
+        });
+        expect(storage.getState().sessions[sessionId]).toEqual(expect.objectContaining({
+            metadataLayoutVersion: 1,
+            metadataVersion: 3,
+            metadata: {
+                v: 1,
+                summary: { text: 'Renamed session', updatedAt: 123 },
+            },
+        }));
+        expect(requestMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('hydrates and mutates a cold layout-1 owner with one authoritative by-id read', async () => {
+        const sessionId = 'plain_cold_owner_metadata_session';
+        const machineKey = new Uint8Array(32).fill(23);
+        const credentials = {
+            token: 'active-token',
+            encryption: {
+                publicKey: encodeBase64(
+                    new Uint8Array(32).fill(24),
+                    'base64',
+                ),
+                machineKey: encodeBase64(machineKey, 'base64'),
+            },
+        } as const;
+        const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
+            v: 1,
+            workspace: {
+                path: '/private/repo',
+                host: 'owner-host',
+            },
+        });
+        const ownerMetadataCiphertext = sealSessionOwnerMetadataV1({
+            material: { type: 'dataKey', machineKey },
+            ownerMetadata,
+            randomBytes: (length) =>
+                new Uint8Array(length).fill(7),
+        });
+        const sharedMetadata = projectSessionSharedMetadataV1({
+            metadata: {
+                path: '/private/repo',
+                host: 'owner-host',
+                summary: { text: 'Before', updatedAt: 100 },
+            },
+            agentState: { requests: {} },
+        });
+        requestMock.mockResolvedValueOnce(new Response(JSON.stringify({
+            session: {
+                id: sessionId,
+                seq: 1,
+                createdAt: 1_000,
+                updatedAt: 1_000,
+                active: true,
+                activeAt: 1_000,
+                encryptionMode: 'plain',
+                dataEncryptionKey: null,
+                metadataLayoutVersion: 1,
+                metadataVersion: 2,
+                metadata: JSON.stringify(sharedMetadata),
+                ownerMetadata: ownerMetadataCiphertext,
+                agentStateVersion: 4,
+                agentState: JSON.stringify({ requests: {} }),
+                share: null,
+            },
+        }), { status: 200 }));
+        emitSessionMetadataUpdateWithServerScopeMock.mockResolvedValue({
+            result: 'success',
+            metadataLayoutVersion: 1,
+            version: 3,
+            agentStateVersion: 5,
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = credentials;
+        (sync as any).encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => undefined),
+            getSessionEncryption: vi.fn(() => null),
+        };
+
+        await expect(
+            sync.patchSessionMetadataWithRetry(
+                sessionId,
+                (metadata) => ({
+                    ...metadata,
+                    summary: {
+                        text: 'Renamed owner session',
+                        updatedAt: 123,
+                    },
+                }),
+            ),
+        ).resolves.toBeUndefined();
+
+        expect(requestMock).toHaveBeenCalledTimes(1);
+        expect(requestMock).toHaveBeenCalledWith(
+            `/v2/sessions/${sessionId}`,
+            expect.objectContaining({ method: 'GET' }),
+        );
+        expect(
+            emitSessionMetadataUpdateWithServerScopeMock,
+        ).toHaveBeenCalledWith({
+            sessionId,
+            patch: {
+                mode: 'owner',
+                metadataLayoutVersion: 1,
+                expectedOwnerMetadataCiphertext:
+                    ownerMetadataCiphertext,
+                sharedMetadata: {
+                    ciphertext: JSON.stringify({
+                        ...sharedMetadata,
+                        summary: {
+                            text: 'Renamed owner session',
+                            updatedAt: 123,
+                        },
+                    }),
+                    expectedVersion: 2,
+                },
+                ownerMetadata: {
+                    ciphertext: ownerMetadataCiphertext,
+                },
+                agentState: {
+                    ciphertext: JSON.stringify({ requests: {} }),
+                    expectedVersion: 4,
+                },
+            },
+        });
+        expect(
+            storage.getState().sessions[sessionId],
+        ).toEqual(expect.objectContaining({
+            metadataLayoutVersion: 1,
+            metadataVersion: 3,
+            agentStateVersion: 5,
+            ownerMetadataView: expect.objectContaining({
+                path: '/private/repo',
+                host: 'owner-host',
+                summary: {
+                    text: 'Renamed owner session',
+                    updatedAt: 123,
+                },
+            }),
+        }));
+        expect(
+            storage.getState().sessions[sessionId],
+        ).not.toHaveProperty('ownerMetadata');
+    });
+
     it('supports overriding the server scope used by patchSessionMetadataWithRetry', async () => {
         const sessionId = 'plain_metadata_session_override';
+        const activeServer = upsertServerProfile({
+            serverUrl: 'https://active-metadata.example',
+            name: 'Active metadata',
+        });
+        setActiveServerId(activeServer.id, { scope: 'device' });
+        const sourceMetadata = {
+            path: '/tmp/repo',
+            host: 'test-host',
+            externalSessionV1: {
+                v: 1 as const,
+                agentId: 'codex',
+                machineId: 'machine-layout0-override',
+                remoteSessionId: 'native-layout0-override',
+                source: {
+                    kind: 'codexHome' as const,
+                    home: 'user' as const,
+                },
+            },
+        };
         storage.getState().applySessions([{
             ...createSession(sessionId),
             encryptionMode: 'plain',
             metadataVersion: 2,
-            metadata: {
-                path: '/tmp/repo',
-                host: 'test-host',
-            },
+            metadata: sourceMetadata,
         } as Session]);
+        requestMock.mockResolvedValueOnce(Response.json({
+            session: {
+                id: sessionId,
+                seq: 1,
+                createdAt: 1_000,
+                updatedAt: 1_000,
+                active: true,
+                activeAt: 1_000,
+                encryptionMode: 'plain',
+                dataEncryptionKey: null,
+                metadataLayoutVersion: 0,
+                metadataVersion: 2,
+                metadata: JSON.stringify(sourceMetadata),
+                agentStateVersion: 0,
+                agentState: null,
+                share: null,
+            },
+        }));
+        const updatedMetadata = {
+            ...sourceMetadata,
+            summary: { text: 'Renamed session', updatedAt: 123 },
+        };
         emitSessionMetadataUpdateWithServerScopeMock.mockResolvedValue({
             result: 'success',
             version: 3,
-            metadata: JSON.stringify({
-                path: '/tmp/repo',
-                host: 'test-host',
-                summary: { text: 'Renamed session', updatedAt: 123 },
-            }),
+            metadata: JSON.stringify(updatedMetadata),
         });
 
         const { sync } = await import('./sync');
+        (sync as any).credentials = {
+            token: 'active-token',
+            encryption: {
+                publicKey: encodeBase64(
+                    new Uint8Array(32).fill(24),
+                    'base64',
+                ),
+                machineKey: encodeBase64(
+                    new Uint8Array(32).fill(23),
+                    'base64',
+                ),
+            },
+        };
+        (sync as any).encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => undefined),
+            getSessionEncryption: vi.fn(() => null),
+        };
 
         await expect(
             sync.patchSessionMetadataWithRetry(
@@ -959,24 +2310,34 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                     ...metadata,
                     summary: { text: 'Renamed session', updatedAt: 123 },
                 }),
-                { serverId: 'server_override' },
+                { serverId: activeServer.id },
             ),
         ).resolves.toBeUndefined();
 
         expect(emitSessionMetadataUpdateWithServerScopeMock).toHaveBeenCalledWith({
             sessionId,
             expectedVersion: 2,
-            metadata: JSON.stringify({
-                path: '/tmp/repo',
-                host: 'test-host',
-                summary: { text: 'Renamed session', updatedAt: 123 },
-            }),
-            serverId: 'server_override',
+            metadata: JSON.stringify(updatedMetadata),
+            serverId: activeServer.id,
         });
     });
 
     it('hydrates lightweight session rows before patching metadata', async () => {
         const sessionId = 'plain_metadata_lightweight_row';
+        const sourceMetadata = {
+            path: '/tmp/repo',
+            host: 'test-host',
+            externalSessionV1: {
+                v: 1 as const,
+                agentId: 'codex',
+                machineId: 'machine-layout0-lightweight',
+                remoteSessionId: 'native-layout0-lightweight',
+                source: {
+                    kind: 'codexHome' as const,
+                    home: 'user' as const,
+                },
+            },
+        };
         requestMock.mockResolvedValueOnce(
             new Response(
                 JSON.stringify({
@@ -990,10 +2351,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                         encryptionMode: 'plain',
                         dataEncryptionKey: null,
                         metadataVersion: 2,
-                        metadata: JSON.stringify({
-                            path: '/tmp/repo',
-                            host: 'test-host',
-                        }),
+                        metadata: JSON.stringify(sourceMetadata),
                         agentStateVersion: 1,
                         agentState: JSON.stringify({ controlledByUser: true }),
                         share: null,
@@ -1002,18 +2360,21 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 { status: 200, headers: { 'Content-Type': 'application/json' } },
             ),
         );
+        const updatedMetadata = {
+            ...sourceMetadata,
+            summary: { text: 'Renamed session', updatedAt: 123 },
+        };
         emitSessionMetadataUpdateWithServerScopeMock.mockResolvedValue({
             result: 'success',
             version: 3,
-            metadata: JSON.stringify({
-                path: '/tmp/repo',
-                host: 'test-host',
-                summary: { text: 'Renamed session', updatedAt: 123 },
-            }),
+            metadata: JSON.stringify(updatedMetadata),
         });
 
         const { sync } = await import('./sync');
-        (sync as any).credentials = { token: 'active-token', secret: 'active-secret' };
+        (sync as any).credentials = {
+            token: 'active-token',
+            secret: encodeBase64(new Uint8Array(32).fill(9), 'base64'),
+        };
         (sync as any).encryption = {
             decryptEncryptionKey: vi.fn(async () => null),
             initializeSessions: vi.fn(async () => undefined),
@@ -1036,11 +2397,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(emitSessionMetadataUpdateWithServerScopeMock).toHaveBeenCalledWith({
             sessionId,
             expectedVersion: 2,
-            metadata: JSON.stringify({
-                path: '/tmp/repo',
-                host: 'test-host',
-                summary: { text: 'Renamed session', updatedAt: 123 },
-            }),
+            metadata: JSON.stringify(updatedMetadata),
         });
         expect((storage.getState().sessions[sessionId]?.metadata as any)?.summary?.text).toBe('Renamed session');
     });
@@ -1178,6 +2535,395 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(orderedTexts).toEqual(['older', 'latest']);
     });
 
+    it('replaces the live transcript without reusing the losing link generation cursor after relink', async () => {
+        const sessionId = 'direct_session_relink_authority';
+        storage.getState().applySessions([createExternalSession(sessionId)]);
+        machineExternalSessionTranscriptPageMock
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [{
+                    id: 'old-link-message',
+                    createdAtMs: 1,
+                    raw: { role: 'user', content: { type: 'text', text: 'old link' } },
+                }],
+                nextCursor: null,
+                tailCursor: 'happier_external_cursor_v1:b2xk',
+                hasMore: false,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [{
+                    id: 'new-link-message',
+                    createdAtMs: 2,
+                    raw: { role: 'user', content: { type: 'text', text: 'new link' } },
+                }],
+                nextCursor: null,
+                tailCursor: 'happier_external_cursor_v1:bmV3',
+                hasMore: false,
+            });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+
+        const relinked = createExternalSession(sessionId);
+        const relinkedMetadata = relinked.metadata as NonNullable<Session['metadata']>;
+        relinked.metadata = {
+            ...relinkedMetadata,
+            externalSessionV1: {
+                ...relinkedMetadata.externalSessionV1!,
+                remoteSessionId: 'vendor-session-2',
+                linkedAtMs: 2,
+            },
+        };
+        storage.setState((state) => ({
+            ...state,
+            sessions: { ...state.sessions, [sessionId]: relinked },
+        }));
+
+        await (sync as any).fetchMessages(sessionId);
+
+        expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledTimes(2);
+        expect(machineExternalSessionTranscriptPageMock).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({
+                remoteSessionId: 'vendor-session-2',
+                direction: 'older',
+            }),
+            expect.anything(),
+        );
+        expect(machineExternalSessionTranscriptReadAfterMock).not.toHaveBeenCalled();
+        const texts = Object.values(storage.getState().sessionMessages[sessionId]?.messagesById ?? {})
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(texts).toEqual(['new link']);
+    });
+
+    it('preserves the last accepted row when a canonical live source relink cannot load', async () => {
+        const sessionId = 'direct_session_relink_failure';
+        const initial = createExternalSession(sessionId);
+        const initialMetadata = initial.metadata as NonNullable<Session['metadata']>;
+        initial.metadata = {
+            ...initialMetadata,
+            externalSessionV1: {
+                ...initialMetadata.externalSessionV1!,
+                linkData: { workspaceRoot: '/workspace/a' },
+            },
+        };
+        storage.getState().applySessions([initial]);
+        machineExternalSessionTranscriptPageMock
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [{
+                    id: 'same-native-message-id',
+                    createdAtMs: 1,
+                    raw: { role: 'user', content: { type: 'text', text: 'losing source row' } },
+                }],
+                nextCursor: null,
+                tailCursor: 'happier_external_cursor_v1:b2xkLXNvdXJjZQ',
+                hasMore: false,
+            })
+            .mockResolvedValueOnce({
+                ok: false,
+                error: 'replacement source unavailable',
+            });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+
+        const relinked = createExternalSession(sessionId);
+        const relinkedMetadata = relinked.metadata as NonNullable<Session['metadata']>;
+        relinked.metadata = {
+            ...relinkedMetadata,
+            externalSessionV1: {
+                ...relinkedMetadata.externalSessionV1!,
+                // The native id and linkedAtMs intentionally remain identical. The
+                // canonical link-data carrier is what selects a new live authority.
+                linkData: { workspaceRoot: '/workspace/b' },
+            },
+        };
+        storage.setState((state) => ({
+            ...state,
+            sessions: { ...state.sessions, [sessionId]: relinked },
+        }));
+
+        await expect((sync as any).fetchMessages(sessionId)).rejects.toThrow(
+            'replacement source unavailable',
+        );
+
+        expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledTimes(2);
+        expect(machineExternalSessionTranscriptReadAfterMock).not.toHaveBeenCalled();
+        expect(storage.getState().sessionMessages[sessionId]?.isLoaded).toBe(true);
+        const texts = Object.values(storage.getState().sessionMessages[sessionId]?.messagesById ?? {})
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(texts).toEqual(['losing source row']);
+    });
+
+    it('does not apply a later staged replacement page after relink during progress publication', async () => {
+        const sessionId = 'direct_session_relink_between_staged_pages';
+        storage.getState().applySessions([createExternalSession(sessionId)]);
+        machineExternalSessionTranscriptPageMock
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [{
+                    id: 'accepted-old-message',
+                    createdAtMs: 1,
+                    raw: { role: 'user', content: { type: 'text', text: 'accepted old authority' } },
+                }],
+                nextCursor: null,
+                tailCursor: 'happier_external_cursor_v1:b2xk',
+                hasMore: false,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [{
+                    id: 'replacement-page-1',
+                    createdAtMs: 2,
+                    raw: { role: 'user', content: { type: 'text', text: 'replacement page one' } },
+                }],
+                nextCursor: null,
+                tailCursor: null,
+                hasMore: false,
+            });
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+            ok: true,
+            items: [{
+                id: 'replacement-page-2',
+                createdAtMs: 3,
+                raw: { role: 'user', content: { type: 'text', text: 'replacement page two' } },
+            }],
+            nextCursor: 'happier_external_cursor_v1:cmVwbGFjZW1lbnQ',
+            truncated: false,
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+        const acceptedAuthorityKey = (sync as any).transcriptAuthorityKeyBySessionId.get(sessionId);
+
+        const replacement = createExternalSession(sessionId);
+        const replacementMetadata = replacement.metadata as NonNullable<Session['metadata']>;
+        replacement.metadata = {
+            ...replacementMetadata,
+            externalSessionV1: {
+                ...replacementMetadata.externalSessionV1!,
+                remoteSessionId: 'vendor-session-2',
+                linkedAtMs: 2,
+            },
+        };
+        storage.setState((state) => ({
+            ...state,
+            sessions: { ...state.sessions, [sessionId]: replacement },
+        }));
+
+        const observedProgressOwner = sync as unknown as {
+            publishExternalSessionObservedProgress: (
+                publishedSessionId: string,
+                items: ReadonlyArray<ExternalSessionTranscriptRawMessageV1>,
+            ) => Promise<void>;
+        };
+        const originalPublishObservedProgress =
+            observedProgressOwner.publishExternalSessionObservedProgress.bind(observedProgressOwner);
+        let releaseFirstPageProgress!: () => void;
+        const firstPageProgressReleased = new Promise<void>((resolve) => {
+            releaseFirstPageProgress = resolve;
+        });
+        let markFirstPageProgressStarted!: () => void;
+        const firstPageProgressStarted = new Promise<void>((resolve) => {
+            markFirstPageProgressStarted = resolve;
+        });
+        vi.spyOn(observedProgressOwner, 'publishExternalSessionObservedProgress')
+            .mockImplementationOnce(async (publishedSessionId, items) => {
+                await originalPublishObservedProgress(publishedSessionId, items);
+                markFirstPageProgressStarted();
+                await firstPageProgressReleased;
+            });
+
+        const replacementFetch = (sync as any).fetchMessages(sessionId);
+        await firstPageProgressStarted;
+        const acceptedReplacementPageIds = [
+            ...(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst ?? []),
+        ];
+
+        const relinkedAgain = createExternalSession(sessionId);
+        const relinkedAgainMetadata = relinkedAgain.metadata as NonNullable<Session['metadata']>;
+        relinkedAgain.metadata = {
+            ...relinkedAgainMetadata,
+            externalSessionV1: {
+                ...relinkedAgainMetadata.externalSessionV1!,
+                remoteSessionId: 'vendor-session-3',
+                linkedAtMs: 3,
+            },
+        };
+        storage.setState((state) => ({
+            ...state,
+            sessions: { ...state.sessions, [sessionId]: relinkedAgain },
+        }));
+        releaseFirstPageProgress();
+        await replacementFetch;
+
+        const texts = Object.values(storage.getState().sessionMessages[sessionId]?.messagesById ?? {})
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(texts).toEqual(['replacement page one']);
+        expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst).toEqual(
+            acceptedReplacementPageIds,
+        );
+        expect((sync as any).transcriptAuthorityKeyBySessionId.get(sessionId)).toBe(acceptedAuthorityKey);
+        expect((sync as any).getExternalSessionTailCursor(sessionId)).not.toBe(
+            'happier_external_cursor_v1:cmVwbGFjZW1lbnQ',
+        );
+    });
+
+    it('catches up a missed direct transcript invalidation from the accepted UI tail on socket reconnect', async () => {
+        const sessionId = 'direct_session_missed_invalidation_reconnect';
+        storage.getState().applySessions([createExternalSession(sessionId)]);
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [{
+                id: 'direct-msg-1',
+                createdAtMs: 1,
+                raw: { role: 'user', content: { type: 'text', text: 'accepted before disconnect' } },
+            }],
+            nextCursor: null,
+            tailCursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
+            hasMore: false,
+        });
+
+        let resolveCatchUp!: (value: {
+            ok: true;
+            items: Array<{
+                id: string;
+                createdAtMs: number;
+                raw: { role: string; content: { type: string; text: string } };
+            }>;
+            nextCursor: string;
+            truncated: false;
+        }) => void;
+        const catchUpResponse = new Promise<Parameters<typeof resolveCatchUp>[0]>((resolve) => {
+            resolveCatchUp = resolve;
+        });
+        let markCatchUpStarted!: () => void;
+        const catchUpStarted = new Promise<void>((resolve) => {
+            markCatchUpStarted = resolve;
+        });
+        machineExternalSessionTranscriptReadAfterMock
+            .mockImplementationOnce(async () => {
+                markCatchUpStarted();
+                return await catchUpResponse;
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [],
+                nextCursor: 'happier_external_cursor_v1:Y3Vyc29yLTI',
+                truncated: false,
+            });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+        const acceptedMessageIds = [
+            ...(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst ?? []),
+        ];
+
+        storage.setState((state) => ({
+            ...state,
+            profile: { ...(state.profile ?? {}), id: 'reconnect-account' } as any,
+        }), true);
+        (sync as any).credentials = {
+            token: buildTokenWithSub('reconnect-account'),
+            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
+        };
+        (sync as any).isForeground = true;
+        (sync as any).resumeInFlight = null;
+        const resumeViaChangesSpy = vi.spyOn(sync as any, 'resumeViaChanges').mockResolvedValue('success');
+        const resumeUnits = [
+            (sync as any).sessionsSync,
+            (sync as any).machinesSync,
+            (sync as any).purchasesSync,
+            (sync as any).pushTokenSync,
+            (sync as any).nativeUpdateSync,
+        ];
+        for (const unit of resumeUnits) {
+            vi.spyOn(unit, 'invalidateCoalesced').mockImplementation(() => undefined);
+            vi.spyOn(unit, 'awaitQueue').mockResolvedValue(undefined);
+        }
+
+        const firstResume = (sync as any).resumeSync('socket-reconnect');
+        await catchUpStarted;
+
+        expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenNthCalledWith(
+            1,
+            expect.objectContaining({
+                machineId: 'machine-1',
+                remoteSessionId: 'vendor-session-1',
+                cursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
+            }),
+            expect.anything(),
+        );
+        expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst).toEqual(acceptedMessageIds);
+
+        resolveCatchUp({
+            ok: true,
+            items: [{
+                id: 'direct-msg-2',
+                createdAtMs: 2,
+                raw: { role: 'user', content: { type: 'text', text: 'missed while disconnected' } },
+            }],
+            nextCursor: 'happier_external_cursor_v1:Y3Vyc29yLTI',
+            truncated: false,
+        });
+        await firstResume;
+        await (sync as any).resumeSync('socket-reconnect');
+
+        expect(resumeViaChangesSpy).toHaveBeenCalledTimes(2);
+        expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({
+                cursor: 'happier_external_cursor_v1:Y3Vyc29yLTI',
+            }),
+            expect.anything(),
+        );
+        expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledTimes(1);
+        expect(machineExternalSessionTranscriptRefreshReadAfterMock).not.toHaveBeenCalled();
+        expect(requestMock.mock.calls.some(([path]) => String(path).includes('/messages'))).toBe(false);
+
+        const orderedTexts = (storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst ?? [])
+            .map((id) => storage.getState().sessionMessages[sessionId]?.messagesById[id])
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(orderedTexts).toEqual([
+            'accepted before disconnect',
+            'missed while disconnected',
+        ]);
+    });
+
     it('refreshes loaded direct session transcripts through the shared messages invalidation path', async () => {
         const sessionId = 'direct_session_refresh';
         storage.getState().applySessions([createExternalSession(sessionId)]);
@@ -1196,8 +2942,26 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 },
             ],
             nextCursor: 'older-cursor-1',
-            tailCursor: 'page-tail-cursor-1',
+            tailCursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
             hasMore: false,
+        });
+        const firstInvalidation = createTranscriptInvalidation(
+            sessionId,
+            'happier_external_cursor_v1:Y3Vyc29yLTE',
+        );
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockResolvedValueOnce({
+            v: 1,
+            binding: firstInvalidation.binding,
+            result: {
+                outcome: 'advanced',
+                items: [{
+                    id: 'direct-msg-2',
+                    createdAtMs: 2,
+                    raw: { role: 'user', content: { type: 'text', text: 'followed direct' } },
+                }],
+                nextCursor: 'happier_external_cursor_v1:Y3Vyc29yLTI',
+                boundary: '2:direct-msg-2',
+            },
         });
         machineExternalSessionTranscriptReadAfterMock
             .mockResolvedValueOnce({
@@ -1227,7 +2991,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
             machineId: 'machine-1',
             remoteSessionId: 'vendor-session-1',
-            cursor: 'page-tail-cursor-1',
+            cursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
         }), expect.anything());
         expect((storage.getState().sessions[sessionId]?.metadata as any)?.externalSessionAttentionV1).toEqual({
             v: 1,
@@ -1244,9 +3008,569 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(orderedTexts).toEqual(['hello direct', 'followed direct']);
     });
 
-    it('applies pushed direct-session transcript deltas and advances the tail cursor for fallback paging', async () => {
+    it('hydrates the source-scoped linked session before applying a pre-hydration transcript invalidation', async () => {
+        const sessionId = 'direct_session_push_delta_before_session_hydration';
+        const sourceServer = upsertServerProfile({
+            serverUrl: 'https://external-invalidation-source.example',
+            name: 'External invalidation source',
+        });
+        setActiveServerId(sourceServer.id, { scope: 'device' });
+        expect(getActiveServerSnapshot().serverId).toBe(sourceServer.id);
+        resolvePreferredServerIdForSessionIdMock.mockImplementation(
+            (candidateSessionId) => candidateSessionId === sessionId
+                ? sourceServer.id
+                : undefined,
+        );
+        const hydratedSession = createExternalSession(sessionId);
+        const initialCursor = 'happier_external_cursor_v1:Y3Vyc29yLTE';
+        const invalidation = createTranscriptInvalidation(sessionId, initialCursor);
+
+        requestMock.mockResolvedValueOnce(Response.json({
+            session: {
+                ...hydratedSession,
+                encryptionMode: 'plain',
+                dataEncryptionKey: null,
+                metadataLayoutVersion: 0,
+                metadata: JSON.stringify(hydratedSession.metadata),
+                agentState: null,
+                share: null,
+            },
+        }));
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockResolvedValueOnce({
+            v: 1,
+            binding: invalidation.binding,
+            result: { outcome: 'already_current' },
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = {
+            token: 'active-token',
+            secret: encodeBase64(new Uint8Array(32).fill(9), 'base64'),
+        };
+        (sync as any).encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => undefined),
+            getSessionEncryption: vi.fn(() => null),
+        };
+        (sync as any).externalSessionTailCursorBySessionId.set(sessionId, initialCursor);
+
+        (sync as any).handleEphemeralUpdate(invalidation);
+        await vi.waitFor(() => {
+            expect(machineExternalSessionTranscriptRefreshReadAfterMock).toHaveBeenCalledTimes(1);
+        });
+
+        expect(requestMock).toHaveBeenCalledWith(
+            `/v2/sessions/${sessionId}`,
+            expect.objectContaining({ method: 'GET' }),
+        );
+        expect(storage.getState().sessions[sessionId]).toEqual(expect.objectContaining({
+            id: sessionId,
+            serverId: sourceServer.id,
+        }));
+        expect(machineExternalSessionTranscriptRefreshReadAfterMock).toHaveBeenCalledWith({
+            v: 1,
+            binding: invalidation.binding,
+            cursor: initialCursor,
+        }, { serverId: sourceServer.id });
+    });
+
+    it('hydrates an existing stale linked-session row before accepting the newer invalidation binding', async () => {
+        const sessionId = 'direct_session_push_delta_after_link_generation_race';
+        const sourceServer = upsertServerProfile({
+            serverUrl: 'https://external-invalidation-link-race.example',
+            name: 'External invalidation link race',
+        });
+        setActiveServerId(sourceServer.id, { scope: 'device' });
+        expect(getActiveServerSnapshot().serverId).toBe(sourceServer.id);
+        resolvePreferredServerIdForSessionIdMock.mockImplementation(
+            (candidateSessionId) => candidateSessionId === sessionId
+                ? sourceServer.id
+                : undefined,
+        );
+        const currentSession = createExternalSession(sessionId);
+        const currentMetadata = currentSession.metadata!;
+        storage.getState().applySessions([{
+            ...currentSession,
+            serverId: sourceServer.id,
+            metadata: {
+                ...currentMetadata,
+                externalSessionV1: {
+                    ...currentMetadata.externalSessionV1!,
+                    remoteSessionId: 'stale-vendor-session',
+                    linkedAtMs: 0,
+                },
+            },
+        }]);
+        const hydratedSession = createExternalSession(sessionId);
+        const initialCursor = 'happier_external_cursor_v1:Y3Vyc29yLTE';
+        const invalidation = createTranscriptInvalidation(sessionId, initialCursor);
+        requestMock.mockResolvedValueOnce(Response.json({
+            session: {
+                ...hydratedSession,
+                encryptionMode: 'plain',
+                dataEncryptionKey: null,
+                metadataLayoutVersion: 0,
+                metadataVersion: 1,
+                metadata: JSON.stringify(hydratedSession.metadata),
+                agentState: null,
+                share: null,
+            },
+        }));
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockResolvedValueOnce({
+            v: 1,
+            binding: invalidation.binding,
+            result: { outcome: 'already_current' },
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = {
+            token: 'active-token',
+            secret: encodeBase64(new Uint8Array(32).fill(9), 'base64'),
+        };
+        (sync as any).encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => undefined),
+            getSessionEncryption: vi.fn(() => null),
+        };
+        (sync as any).externalSessionTailCursorBySessionId.set(sessionId, initialCursor);
+
+        await (sync as any).handleExternalSessionTranscriptEphemeralUpdate(
+            invalidation,
+            { sourceServerId: sourceServer.id, shouldContinue: () => true },
+        );
+
+        expect(requestMock).toHaveBeenCalledWith(
+            `/v2/sessions/${sessionId}`,
+            expect.objectContaining({ method: 'GET' }),
+        );
+        expect(
+            (storage.getState().sessions[sessionId]?.metadata as any)?.externalSessionV1,
+        ).toEqual(expect.objectContaining({
+            remoteSessionId: 'vendor-session-1',
+            linkedAtMs: 1,
+        }));
+        expect((sync as any).getExternalSessionTailCursor(sessionId)).toBe(initialCursor);
+        expect(machineExternalSessionTranscriptRefreshReadAfterMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not secure-refresh when exact hydration still cannot prove the invalidation binding', async () => {
+        const sessionId = 'direct_session_push_delta_stale_event';
+        const sourceServer = upsertServerProfile({
+            serverUrl: 'https://external-invalidation-stale-event.example',
+            name: 'External invalidation stale event',
+        });
+        setActiveServerId(sourceServer.id, { scope: 'device' });
+        expect(getActiveServerSnapshot().serverId).toBe(sourceServer.id);
+        resolvePreferredServerIdForSessionIdMock.mockImplementation(
+            (candidateSessionId) => candidateSessionId === sessionId
+                ? sourceServer.id
+                : undefined,
+        );
+        const currentSession = createExternalSession(sessionId);
+        const currentMetadata = currentSession.metadata!;
+        const stillMismatchedSession = {
+            ...currentSession,
+            metadata: {
+                ...currentMetadata,
+                externalSessionV1: {
+                    ...currentMetadata.externalSessionV1!,
+                    remoteSessionId: 'replacement-vendor-session',
+                    linkedAtMs: 2,
+                },
+            },
+        };
+        storage.getState().applySessions([{
+            ...stillMismatchedSession,
+            serverId: sourceServer.id,
+        }]);
+        const invalidation = createTranscriptInvalidation(
+            sessionId,
+            'happier_external_cursor_v1:Y3Vyc29yLTE',
+        );
+        requestMock.mockResolvedValueOnce(Response.json({
+            session: {
+                ...stillMismatchedSession,
+                encryptionMode: 'plain',
+                dataEncryptionKey: null,
+                metadataLayoutVersion: 0,
+                metadataVersion: 1,
+                metadata: JSON.stringify(stillMismatchedSession.metadata),
+                agentState: null,
+                share: null,
+            },
+        }));
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = {
+            token: 'active-token',
+            secret: encodeBase64(new Uint8Array(32).fill(9), 'base64'),
+        };
+        (sync as any).encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => undefined),
+            getSessionEncryption: vi.fn(() => null),
+        };
+        (sync as any).externalSessionTailCursorBySessionId.set(
+            sessionId,
+            'happier_external_cursor_v1:Y3Vyc29yLTE',
+        );
+
+        await (sync as any).handleExternalSessionTranscriptEphemeralUpdate(
+            invalidation,
+            { sourceServerId: sourceServer.id, shouldContinue: () => true },
+        );
+
+        expect(requestMock).toHaveBeenCalledWith(
+            `/v2/sessions/${sessionId}`,
+            expect.objectContaining({ method: 'GET' }),
+        );
+        expect(machineExternalSessionTranscriptRefreshReadAfterMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['unscoped', undefined],
+        ['wrong-server', 'different-server'],
+    ])('does not trust a %s local link as proof of the invalidation source server', async (
+        _caseName,
+        localServerId,
+    ) => {
+        const sessionId = `direct_session_push_delta_${_caseName}_local_link`;
+        const sourceServer = upsertServerProfile({
+            serverUrl: 'https://external-invalidation-unscoped.example',
+            name: 'External invalidation unscoped source',
+        });
+        setActiveServerId(sourceServer.id, { scope: 'device' });
+        expect(getActiveServerSnapshot().serverId).toBe(sourceServer.id);
+        resolvePreferredServerIdForSessionIdMock.mockImplementation(
+            (candidateSessionId) => candidateSessionId === sessionId
+                ? sourceServer.id
+                : undefined,
+        );
+        storage.getState().applySessions([{
+            ...createExternalSession(sessionId),
+            serverId: localServerId,
+        }]);
+        requestMock.mockResolvedValueOnce(Response.json(
+            { error: 'session_not_found' },
+            { status: 404 },
+        ));
+        const invalidation = createTranscriptInvalidation(
+            sessionId,
+            'happier_external_cursor_v1:Y3Vyc29yLTE',
+        );
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockResolvedValueOnce({
+            v: 1,
+            binding: invalidation.binding,
+            result: { outcome: 'already_current' },
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = {
+            token: 'active-token',
+            secret: encodeBase64(new Uint8Array(32).fill(9), 'base64'),
+        };
+        (sync as any).encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => undefined),
+            getSessionEncryption: vi.fn(() => null),
+        };
+        (sync as any).externalSessionTailCursorBySessionId.set(
+            sessionId,
+            'happier_external_cursor_v1:Y3Vyc29yLTE',
+        );
+
+        await (sync as any).handleExternalSessionTranscriptEphemeralUpdate(
+            invalidation,
+            { sourceServerId: sourceServer.id, shouldContinue: () => true },
+        );
+
+        expect(requestMock).toHaveBeenCalledWith(
+            `/v2/sessions/${sessionId}`,
+            expect.objectContaining({ method: 'GET' }),
+        );
+        expect(machineExternalSessionTranscriptRefreshReadAfterMock).not.toHaveBeenCalled();
+    });
+
+    it('cancels a pre-hydration invalidation when its captured server scope changes', async () => {
+        const sessionId = 'direct_session_push_delta_scope_changes_during_hydration';
+        const sourceServer = upsertServerProfile({
+            serverUrl: 'https://external-invalidation-cancelled.example',
+            name: 'External invalidation cancelled source',
+        });
+        setActiveServerId(sourceServer.id, { scope: 'device' });
+        expect(getActiveServerSnapshot().serverId).toBe(sourceServer.id);
+        resolvePreferredServerIdForSessionIdMock.mockImplementation(
+            (candidateSessionId) => candidateSessionId === sessionId
+                ? sourceServer.id
+                : undefined,
+        );
+        const hydratedSession = createExternalSession(sessionId);
+        let resolveHydration!: (response: Response) => void;
+        requestMock.mockImplementationOnce(
+            () => new Promise<Response>((resolve) => {
+                resolveHydration = resolve;
+            }),
+        );
+        const invalidation = createTranscriptInvalidation(
+            sessionId,
+            'happier_external_cursor_v1:Y3Vyc29yLTE',
+        );
+        let scopeIsCurrent = true;
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = {
+            token: 'active-token',
+            secret: encodeBase64(new Uint8Array(32).fill(9), 'base64'),
+        };
+        (sync as any).encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => undefined),
+            getSessionEncryption: vi.fn(() => null),
+        };
+        (sync as any).externalSessionTailCursorBySessionId.set(
+            sessionId,
+            'happier_external_cursor_v1:Y3Vyc29yLTE',
+        );
+
+        const refresh = (sync as any).handleExternalSessionTranscriptEphemeralUpdate(
+            invalidation,
+            {
+                sourceServerId: sourceServer.id,
+                shouldContinue: () => scopeIsCurrent,
+            },
+        );
+        await vi.waitFor(() => {
+            expect(requestMock).toHaveBeenCalledTimes(1);
+        });
+        scopeIsCurrent = false;
+        resolveHydration(Response.json({
+            session: {
+                ...hydratedSession,
+                encryptionMode: 'plain',
+                dataEncryptionKey: null,
+                metadataLayoutVersion: 0,
+                metadata: JSON.stringify(hydratedSession.metadata),
+                agentState: null,
+                share: null,
+            },
+        }));
+        await refresh;
+
+        expect(machineExternalSessionTranscriptRefreshReadAfterMock).not.toHaveBeenCalled();
+    });
+
+    it('drops a secure-refresh response when the accepted tail cursor changes in flight', async () => {
+        const sessionId = 'direct_session_push_delta_cursor_changes_inflight';
+        const sourceServer = upsertServerProfile({
+            serverUrl: 'https://external-invalidation-cursor-race.example',
+            name: 'External invalidation cursor race',
+        });
+        setActiveServerId(sourceServer.id, { scope: 'device' });
+        expect(getActiveServerSnapshot().serverId).toBe(sourceServer.id);
+        storage.getState().applySessions([{
+            ...createExternalSession(sessionId),
+            serverId: sourceServer.id,
+        }]);
+        const initialCursor = 'happier_external_cursor_v1:Y3Vyc29yLTE';
+        const newerCursor = 'happier_external_cursor_v1:Y3Vyc29yLTI';
+        const invalidation = createTranscriptInvalidation(sessionId, initialCursor);
+        let releaseRefresh!: () => void;
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockImplementationOnce(
+            async () => {
+                await new Promise<void>((resolve) => {
+                    releaseRefresh = resolve;
+                });
+                return {
+                    v: 1,
+                    binding: invalidation.binding,
+                    result: {
+                        outcome: 'advanced',
+                        items: [{
+                            id: 'direct-msg-stale-cursor',
+                            createdAtMs: 2,
+                            raw: {
+                                role: 'user',
+                                content: { type: 'text', text: 'stale cursor row' },
+                            },
+                        }],
+                        nextCursor: 'happier_external_cursor_v1:Y3Vyc29yLTM',
+                        boundary: '2:direct-msg-stale-cursor',
+                    },
+                };
+            },
+        );
+
+        const { sync } = await import('./sync');
+        (sync as any).externalSessionTailCursorBySessionId.set(sessionId, initialCursor);
+        const refresh = (sync as any).handleExternalSessionTranscriptEphemeralUpdate(
+            invalidation,
+            { sourceServerId: sourceServer.id, shouldContinue: () => true },
+        );
+        await vi.waitFor(() => {
+            expect(machineExternalSessionTranscriptRefreshReadAfterMock).toHaveBeenCalledTimes(1);
+        });
+        (sync as any).setExternalSessionTailCursor(sessionId, newerCursor);
+        releaseRefresh();
+        await refresh;
+
+        expect((sync as any).getExternalSessionTailCursor(sessionId)).toBe(newerCursor);
+        expect(storage.getState().sessionMessages[sessionId]).toBeUndefined();
+    });
+
+    it('drops a secure-refresh response whose full binding differs from the invalidation', async () => {
+        const sessionId = 'direct_session_push_delta_response_binding_mismatch';
+        const sourceServer = upsertServerProfile({
+            serverUrl: 'https://external-invalidation-response-mismatch.example',
+            name: 'External invalidation response mismatch',
+        });
+        setActiveServerId(sourceServer.id, { scope: 'device' });
+        expect(getActiveServerSnapshot().serverId).toBe(sourceServer.id);
+        storage.getState().applySessions([{
+            ...createExternalSession(sessionId),
+            serverId: sourceServer.id,
+        }]);
+        const initialCursor = 'happier_external_cursor_v1:Y3Vyc29yLTE';
+        const invalidation = createTranscriptInvalidation(sessionId, initialCursor);
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockResolvedValueOnce({
+            v: 1,
+            binding: {
+                ...invalidation.binding,
+                contributionGeneration: 'different-contribution',
+            },
+            result: {
+                outcome: 'advanced',
+                items: [{
+                    id: 'direct-msg-wrong-binding',
+                    createdAtMs: 2,
+                    raw: {
+                        role: 'user',
+                        content: { type: 'text', text: 'wrong binding row' },
+                    },
+                }],
+                nextCursor: 'happier_external_cursor_v1:Y3Vyc29yLTI',
+                boundary: '2:direct-msg-wrong-binding',
+            },
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).externalSessionTailCursorBySessionId.set(sessionId, initialCursor);
+        await (sync as any).handleExternalSessionTranscriptEphemeralUpdate(
+            invalidation,
+            { sourceServerId: sourceServer.id, shouldContinue: () => true },
+        );
+
+        expect((sync as any).getExternalSessionTailCursor(sessionId)).toBe(initialCursor);
+        expect(storage.getState().sessionMessages[sessionId]).toBeUndefined();
+    });
+
+    it('coalesces duplicate pre-hydration reads and applies their shared cursor transition once', async () => {
+        const sessionId = 'direct_session_push_delta_duplicate_before_hydration';
+        const sourceServer = upsertServerProfile({
+            serverUrl: 'https://external-invalidation-duplicate.example',
+            name: 'External invalidation duplicate source',
+        });
+        setActiveServerId(sourceServer.id, { scope: 'device' });
+        expect(getActiveServerSnapshot().serverId).toBe(sourceServer.id);
+        resolvePreferredServerIdForSessionIdMock.mockImplementation(
+            (candidateSessionId) => candidateSessionId === sessionId
+                ? sourceServer.id
+                : undefined,
+        );
+        const hydratedSession = createExternalSession(sessionId);
+        const initialCursor = 'happier_external_cursor_v1:Y3Vyc29yLTE';
+        const invalidation = createTranscriptInvalidation(sessionId, initialCursor);
+        let resolveHydration!: (response: Response) => void;
+        requestMock.mockImplementationOnce(
+            () => new Promise<Response>((resolve) => {
+                resolveHydration = resolve;
+            }),
+        );
+        let releaseRefreshes!: () => void;
+        const refreshGate = new Promise<void>((resolve) => {
+            releaseRefreshes = resolve;
+        });
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockImplementation(
+            async () => {
+                await refreshGate;
+                return {
+                    v: 1,
+                    binding: invalidation.binding,
+                    result: {
+                        outcome: 'advanced',
+                        items: [{
+                            id: 'direct-msg-from-duplicate-invalidation',
+                            createdAtMs: 2,
+                            raw: {
+                                role: 'user',
+                                content: { type: 'text', text: 'one visible row' },
+                            },
+                        }],
+                        nextCursor: 'happier_external_cursor_v1:Y3Vyc29yLTI',
+                        boundary: '2:direct-msg-from-duplicate-invalidation',
+                    },
+                };
+            },
+        );
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = {
+            token: 'active-token',
+            secret: encodeBase64(new Uint8Array(32).fill(9), 'base64'),
+        };
+        (sync as any).encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => undefined),
+            getSessionEncryption: vi.fn(() => null),
+        };
+        (sync as any).externalSessionTailCursorBySessionId.set(sessionId, initialCursor);
+        const applyItemsSpy = vi.spyOn(
+            sync as any,
+            'applyExternalSessionTranscriptItems',
+        );
+
+        const refreshes = [
+            (sync as any).handleExternalSessionTranscriptEphemeralUpdate(
+                invalidation,
+                { sourceServerId: sourceServer.id, shouldContinue: () => true },
+            ),
+            (sync as any).handleExternalSessionTranscriptEphemeralUpdate(
+                invalidation,
+                { sourceServerId: sourceServer.id, shouldContinue: () => true },
+            ),
+        ];
+        await vi.waitFor(() => {
+            expect(requestMock).toHaveBeenCalledTimes(1);
+        });
+        resolveHydration(Response.json({
+            session: {
+                ...hydratedSession,
+                encryptionMode: 'plain',
+                dataEncryptionKey: null,
+                metadataLayoutVersion: 0,
+                metadata: JSON.stringify(hydratedSession.metadata),
+                agentState: null,
+                share: null,
+            },
+        }));
+        await vi.waitFor(() => {
+            expect(machineExternalSessionTranscriptRefreshReadAfterMock).toHaveBeenCalledTimes(2);
+        });
+        releaseRefreshes();
+        await Promise.all(refreshes);
+
+        expect(requestMock).toHaveBeenCalledTimes(1);
+        expect(applyItemsSpy).toHaveBeenCalledTimes(1);
+        expect((sync as any).getExternalSessionTailCursor(sessionId)).toBe(
+            'happier_external_cursor_v1:Y3Vyc29yLTI',
+        );
+    });
+
+    it('applies authoritative secure-refresh items and advances the tail cursor for fallback paging', async () => {
         const sessionId = 'direct_session_push_delta';
-        storage.getState().applySessions([createExternalSession(sessionId)]);
+        storage.getState().applySessions([{
+            ...createExternalSession(sessionId),
+            serverId: getActiveServerSnapshot().serverId,
+        }]);
         emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ expectedVersion, metadata }: any) => ({
             result: 'success',
             version: Number(expectedVersion ?? 0) + 1,
@@ -1262,8 +3586,26 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 },
             ],
             nextCursor: 'older-cursor-1',
-            tailCursor: 'page-tail-cursor-1',
+            tailCursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
             hasMore: false,
+        });
+        const firstInvalidation = createTranscriptInvalidation(
+            sessionId,
+            'happier_external_cursor_v1:Y3Vyc29yLTE',
+        );
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockResolvedValueOnce({
+            v: 1,
+            binding: firstInvalidation.binding,
+            result: {
+                outcome: 'advanced',
+                items: [{
+                    id: 'direct-msg-2',
+                    createdAtMs: 2,
+                    raw: { role: 'user', content: { type: 'text', text: 'followed direct' } },
+                }],
+                nextCursor: 'happier_external_cursor_v1:Y3Vyc29yLTI',
+                boundary: '2:direct-msg-2',
+            },
         });
         machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
             ok: true,
@@ -1291,19 +3633,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             item => item.type === 'session' && item.sessionId === sessionId && (item.storageKind ?? 'persisted') === 'direct',
         )).toBe(true);
 
-        await (sync as any).handleEphemeralUpdate({
-            type: 'direct-session-transcript-delta',
-            sessionId,
-            items: [
-                {
-                    id: 'direct-msg-2',
-                    createdAtMs: 2,
-                    raw: { role: 'user', content: { type: 'text', text: 'followed direct' } },
-                },
-            ],
-            nextCursor: 'tail-cursor-2',
-            truncated: false,
-        });
+        await (sync as any).handleEphemeralUpdate(firstInvalidation);
 
         expect((storage.getState().sessions[sessionId]?.metadata as any)?.externalSessionAttentionV1).toEqual({
             v: 1,
@@ -1331,13 +3661,91 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
             remoteSessionId: 'vendor-session-1',
-            cursor: 'tail-cursor-2',
+            cursor: 'happier_external_cursor_v1:Y3Vyc29yLTI',
         }), expect.anything());
     });
 
-    it('reuses ready local notifications for direct-session assistant push deltas', async () => {
-        const sessionId = 'direct_session_notify_delta';
+    it('meets a deterministic 120ms secure-refresh baseline with one bounded read and a stable accepted anchor', async () => {
+        const sessionId = 'direct_session_secure_refresh_latency_baseline';
         storage.getState().applySessions([createExternalSession(sessionId)]);
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [{
+                id: 'direct-msg-1',
+                createdAtMs: 1,
+                raw: { role: 'user', content: { type: 'text', text: 'accepted anchor' } },
+            }],
+            nextCursor: null,
+            tailCursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
+            hasMore: false,
+        });
+        const invalidation = createTranscriptInvalidation(
+            sessionId,
+            'happier_external_cursor_v1:Y3Vyc29yLTE',
+        );
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+        await (sync as any).fetchMessages(sessionId);
+        const readOrderedUserTexts = () => (
+            storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst ?? []
+        )
+            .map((id) => storage.getState().sessionMessages[sessionId]?.messagesById[id])
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+
+        vi.useFakeTimers();
+        try {
+            machineExternalSessionTranscriptRefreshReadAfterMock.mockImplementationOnce(
+                async () => await new Promise((resolve) => {
+                    setTimeout(() => resolve({
+                        v: 1,
+                        binding: invalidation.binding,
+                        result: {
+                            outcome: 'advanced',
+                            items: [{
+                                id: 'direct-msg-2',
+                                createdAtMs: 2,
+                                raw: { role: 'user', content: { type: 'text', text: 'eligible live item' } },
+                            }],
+                            nextCursor: 'happier_external_cursor_v1:Y3Vyc29yLTI',
+                            boundary: '2:direct-msg-2',
+                        },
+                    }), 120);
+                }),
+            );
+
+            const startedAtMs = Date.now();
+            const refresh = (sync as any).handleExternalSessionTranscriptEphemeralUpdate(invalidation);
+            await vi.advanceTimersByTimeAsync(119);
+            expect(machineExternalSessionTranscriptRefreshReadAfterMock).toHaveBeenCalledTimes(1);
+            expect(readOrderedUserTexts()).toEqual(['accepted anchor']);
+
+            await vi.advanceTimersByTimeAsync(1);
+            await refresh;
+
+            expect(Date.now() - startedAtMs).toBe(120);
+            expect(machineExternalSessionTranscriptRefreshReadAfterMock).toHaveBeenCalledTimes(1);
+            expect(readOrderedUserTexts()).toEqual(['accepted anchor', 'eligible live item']);
+            expect((sync as any).getExternalSessionTailCursor(sessionId)).toBe(
+                'happier_external_cursor_v1:Y3Vyc29yLTI',
+            );
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('sends the current local cursor and applies zero items when the daemon rejects a stale cursor identity', async () => {
+        const sessionId = 'direct_session_push_delta_gap';
+        storage.getState().applySessions([{
+            ...createExternalSession(sessionId),
+            serverId: getActiveServerSnapshot().serverId,
+        }]);
         emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ expectedVersion, metadata }: any) => ({
             result: 'success',
             version: Number(expectedVersion ?? 0) + 1,
@@ -1345,10 +3753,37 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         }));
         machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
             ok: true,
-            items: [],
-            nextCursor: null,
-            tailCursor: 'notify-tail-cursor-1',
+            items: [
+                {
+                    id: 'direct-msg-1',
+                    createdAtMs: 1,
+                    raw: { role: 'user', content: { type: 'text', text: 'hello direct' } },
+                },
+            ],
+            nextCursor: 'older-cursor-1',
+            tailCursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
             hasMore: false,
+        });
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+            ok: true,
+            items: [
+                {
+                    id: 'direct-msg-2',
+                    createdAtMs: 2,
+                    raw: { role: 'user', content: { type: 'text', text: 'missed direct' } },
+                },
+            ],
+            nextCursor: 'tail-cursor-2',
+            truncated: false,
+        });
+        const staleInvalidation = createTranscriptInvalidation(
+            sessionId,
+            'happier_external_cursor_v1:c3RhbGU',
+        );
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockResolvedValueOnce({
+            v: 1,
+            binding: staleInvalidation.binding,
+            result: { outcome: 'source_replaced' },
         });
 
         const { sync } = await import('./sync');
@@ -1359,38 +3794,236 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
 
         await (sync as any).fetchMessages(sessionId);
-        await (sync as any).handleEphemeralUpdate({
-            type: 'direct-session-transcript-delta',
+        await (sync as any).handleEphemeralUpdate(staleInvalidation);
+
+        await (sync as any).refreshSessionMessages(sessionId);
+
+        expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenCalledTimes(1);
+        expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            remoteSessionId: 'vendor-session-1',
+            cursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
+        }), expect.anything());
+
+        const sessionMessages = storage.getState().sessionMessages[sessionId];
+        const orderedTexts = (sessionMessages?.messageIdsOldestFirst ?? [])
+            .map((id) => sessionMessages?.messagesById[id])
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(orderedTexts).toEqual(['hello direct', 'missed direct']);
+        expect(machineExternalSessionTranscriptRefreshReadAfterMock).toHaveBeenCalledWith({
+            v: 1,
+            binding: staleInvalidation.binding,
+            cursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
+        }, expect.anything());
+    });
+
+    it('applies zero secure-refresh items when a layout-v1 owner link changes in flight', async () => {
+        const sessionId = 'direct_session_refresh_relinked_inflight';
+        const initial = createExternalSession(sessionId);
+        const initialMetadata = initial.metadata as NonNullable<Session['metadata']>;
+        initial.metadataLayoutVersion = 1;
+        initial.metadata = {
+            v: 1,
+            summary: {
+                text: 'Shared external session',
+                updatedAt: 1,
+            },
+            // Deliberately retain the old private-looking link in the shared
+            // payload so this test distinguishes the owner view from a shared
+            // metadata continuation guard.
+            externalSessionV1: {
+                ...initialMetadata.externalSessionV1!,
+                linkData: { workspaceRoot: '/workspace/a' },
+            },
+        } as unknown as Session['metadata'];
+        initial.ownerMetadataView = {
+            ...initialMetadata,
+            externalSessionV1: {
+                ...initialMetadata.externalSessionV1!,
+                linkData: { workspaceRoot: '/workspace/a' },
+            },
+        };
+        storage.getState().applySessions([initial]);
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [{
+                id: 'direct-msg-1',
+                createdAtMs: 1,
+                raw: { role: 'user', content: { type: 'text', text: 'accepted current row' } },
+            }],
+            nextCursor: null,
+            tailCursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
+            hasMore: false,
+        });
+        const invalidation = createTranscriptInvalidation(
             sessionId,
-            items: [
-                {
+            'happier_external_cursor_v1:Y3Vyc29yLTE',
+        );
+        let resolveRefresh!: (value: {
+            v: 1;
+            binding: ReturnType<typeof createTranscriptInvalidation>['binding'];
+            result: {
+                outcome: 'advanced';
+                items: Array<{
+                    id: string;
+                    createdAtMs: number;
+                    raw: { role: string; content: { type: string; text: string } };
+                }>;
+                nextCursor: string;
+                boundary: string;
+            };
+        }) => void;
+        const refreshResponse = new Promise<Parameters<typeof resolveRefresh>[0]>((resolve) => {
+            resolveRefresh = resolve;
+        });
+        let markRefreshStarted!: () => void;
+        const refreshStarted = new Promise<void>((resolve) => {
+            markRefreshStarted = resolve;
+        });
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockImplementationOnce(async () => {
+            markRefreshStarted();
+            return await refreshResponse;
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+        const refresh = (sync as any).handleExternalSessionTranscriptEphemeralUpdate(invalidation);
+        await refreshStarted;
+
+        const current = storage.getState().sessions[sessionId]!;
+        const currentOwnerMetadata = current.ownerMetadataView as NonNullable<Session['ownerMetadataView']>;
+        storage.setState((state) => ({
+            ...state,
+            sessions: {
+                ...state.sessions,
+                [sessionId]: {
+                    ...current,
+                    ownerMetadataView: {
+                        ...currentOwnerMetadata,
+                        externalSessionV1: {
+                            ...currentOwnerMetadata.externalSessionV1!,
+                            linkData: { workspaceRoot: '/workspace/b' },
+                        },
+                    },
+                },
+            },
+        }));
+        resolveRefresh({
+            v: 1,
+            binding: invalidation.binding,
+            result: {
+                outcome: 'advanced',
+                items: [{
+                    id: 'direct-msg-stale',
+                    createdAtMs: 2,
+                    raw: { role: 'user', content: { type: 'text', text: 'stale old source row' } },
+                }],
+                nextCursor: 'happier_external_cursor_v1:Y3Vyc29yLTI',
+                boundary: '2:direct-msg-stale',
+            },
+        });
+        await refresh;
+
+        const texts = Object.values(storage.getState().sessionMessages[sessionId]?.messagesById ?? {})
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(texts).toEqual(['accepted current row']);
+        expect((sync as any).getExternalSessionTailCursor(sessionId)).toBe(
+            'happier_external_cursor_v1:Y3Vyc29yLTE',
+        );
+    });
+
+    it('does not synthesize ready notifications from markerless authoritative secure-refresh Agent text', async () => {
+        const sessionId = 'direct_session_notify_delta';
+        storage.getState().applySessions([{
+            ...createExternalSession(sessionId),
+            serverId: getActiveServerSnapshot().serverId,
+        }]);
+        emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ expectedVersion, metadata }: any) => ({
+            result: 'success',
+            version: Number(expectedVersion ?? 0) + 1,
+            metadata,
+        }));
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [],
+            nextCursor: null,
+            tailCursor: 'happier_external_cursor_v1:bm90aWZ5LTE',
+            hasMore: false,
+        });
+        const notificationInvalidation = createTranscriptInvalidation(
+            sessionId,
+            'happier_external_cursor_v1:bm90aWZ5LTE',
+        );
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockResolvedValueOnce({
+            v: 1,
+            binding: notificationInvalidation.binding,
+            result: {
+                outcome: 'advanced',
+                items: [{
                     id: 'direct-agent-msg-1',
                     createdAtMs: 2,
                     raw: {
                         role: 'agent',
                         content: {
                             type: 'codex',
-                            data: {
-                                type: 'message',
-                                message: 'followed direct reply',
-                            },
+                            data: { type: 'message', message: 'followed direct reply' },
                         },
                     },
-                },
-            ],
-            nextCursor: 'notify-tail-cursor-2',
-            truncated: false,
+                }],
+                nextCursor: 'happier_external_cursor_v1:bm90aWZ5LTI',
+                boundary: '2:direct-agent-msg-1',
+            },
         });
 
-        expect(notifyActivityReadyMock).toHaveBeenCalledWith(
-            sessionId,
-            expect.any(Array),
-        );
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+        await (sync as any).handleEphemeralUpdate(notificationInvalidation);
+
+        const messagesById = storage.getState().sessionMessages[sessionId]?.messagesById ?? {};
+        expect(Object.values(messagesById).some(
+            (message) => message.kind === 'agent-text' && message.text === 'followed direct reply',
+        )).toBe(true);
+        expect((storage.getState().sessions[sessionId]?.metadata as any)?.externalSessionAttentionV1).toEqual({
+            v: 1,
+            observedProgressToken: '2:direct-agent-msg-1',
+            observedAtMs: 2,
+        });
+        expect(notifyActivityReadyMock).not.toHaveBeenCalled();
     });
 
-    it('refetches direct-session transcript state when a push delta is truncated', async () => {
+    it('preserves accepted items while a gap result performs one bounded authoritative refetch', async () => {
         const sessionId = 'direct_session_truncated_delta';
         storage.getState().applySessions([createExternalSession(sessionId)]);
+        let resolveRefetchPage!: (value: {
+            ok: true;
+            items: Array<{
+                id: string;
+                createdAtMs: number;
+                raw: { role: string; content: { type: string; text: string } };
+            }>;
+            nextCursor: null;
+            tailCursor: string;
+            hasMore: false;
+        }) => void;
+        const refetchPage = new Promise<Parameters<typeof resolveRefetchPage>[0]>((resolve) => {
+            resolveRefetchPage = resolve;
+        });
         machineExternalSessionTranscriptPageMock
             .mockResolvedValueOnce({
                 ok: true,
@@ -1402,27 +4035,19 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                     },
                 ],
                 nextCursor: null,
-                tailCursor: 'tail-cursor-1',
+                tailCursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
                 hasMore: false,
             })
-            .mockResolvedValueOnce({
-                ok: true,
-                items: [
-                    {
-                        id: 'direct-msg-1',
-                        createdAtMs: 1,
-                        raw: { role: 'user', content: { type: 'text', text: 'hello direct' } },
-                    },
-                    {
-                        id: 'direct-msg-2',
-                        createdAtMs: 2,
-                        raw: { role: 'user', content: { type: 'text', text: 'reloaded direct' } },
-                    },
-                ],
-                nextCursor: null,
-                tailCursor: 'tail-cursor-2',
-                hasMore: false,
-            });
+            .mockImplementationOnce(async () => await refetchPage);
+        const gapInvalidation = createTranscriptInvalidation(
+            sessionId,
+            'happier_external_cursor_v1:Y3Vyc29yLTE',
+        );
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockResolvedValueOnce({
+            v: 1,
+            binding: gapInvalidation.binding,
+            result: { outcome: 'gap_or_cursor_expired' },
+        });
 
         const { sync } = await import('./sync');
         (sync as any).encryption = {
@@ -1432,21 +4057,38 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
 
         await (sync as any).fetchMessages(sessionId);
-        await (sync as any).handleEphemeralUpdate({
-            type: 'direct-session-transcript-delta',
-            sessionId,
+        const refresh = (sync as any).handleExternalSessionTranscriptEphemeralUpdate(gapInvalidation);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const textsWhileRefetching = Object.values(
+            storage.getState().sessionMessages[sessionId]?.messagesById ?? {},
+        )
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(textsWhileRefetching).toEqual(['hello direct']);
+
+        resolveRefetchPage({
+            ok: true,
             items: [
+                {
+                    id: 'direct-msg-1',
+                    createdAtMs: 1,
+                    raw: { role: 'user', content: { type: 'text', text: 'hello direct' } },
+                },
                 {
                     id: 'direct-msg-2',
                     createdAtMs: 2,
-                    raw: { role: 'user', content: { type: 'text', text: 'partial direct' } },
+                    raw: { role: 'user', content: { type: 'text', text: 'reloaded direct' } },
                 },
             ],
-            nextCursor: 'tail-cursor-2',
-            truncated: true,
+            nextCursor: null,
+            tailCursor: 'happier_external_cursor_v1:Y3Vyc29yLTI',
+            hasMore: false,
         });
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await refresh;
 
+        expect(machineExternalSessionTranscriptRefreshReadAfterMock).toHaveBeenCalledTimes(1);
         expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledTimes(2);
         expect(machineExternalSessionTranscriptPageMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
             machineId: 'machine-1',
@@ -1472,7 +4114,8 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 transcriptStreamingCoalesceEnabled: false,
             },
         }));
-        storage.getState().applySessions([createSession(sessionId)]);
+        storage.getState().applySessions([{ ...createSession(sessionId), encryptionMode: 'plain' } as Session]);
+        markSessionSurfaceVisible(sessionId);
 
         const { sync } = await import('./sync');
         (sync as any).encryption = {
@@ -1494,9 +4137,8 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                     v: {
                         role: 'agent',
                         content: {
-                            type: 'acp',
-                            provider: 'codex',
-                            data: { type: 'message', message: 'Hello there' },
+                            type: 'text',
+                            text: 'Hello there',
                         },
                         meta: {
                             happierStreamSegmentV1: {

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useRouter } from 'expo-router';
 
 import { LostAccessEmbedded } from '@/components/onboarding/restore/LostAccessEmbedded';
-import { WizardModalShell } from '@/components/onboarding';
+import { WizardModalShell } from '@/components/onboarding/ui/WizardModalShell';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { t } from '@/text';
 

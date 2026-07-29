@@ -14,8 +14,11 @@ function createLifecycleControllerStub(
   },
 ): VoiceSessionLifecycleController {
   return {
-    dispose: vi.fn(() => {}),
+    dispose: vi.fn(async () => {}),
+    getConfiguredProviderId: vi.fn(() => 'local_direct'),
+    rearmAfterCredentialAuthorityChange: vi.fn(() => {}),
     getSnapshot: vi.fn(() => snapshot),
+    bargeIn: vi.fn(async () => {}),
     interrupt: vi.fn(async () => {}),
     sendContextUpdate: vi.fn(() => {}),
     setConfiguredProviderId: vi.fn(() => {}),
@@ -46,12 +49,14 @@ describe('voiceSessionManager', () => {
     await mgr.toggle('toggle-session');
     await mgr.stop('stop-session');
     await mgr.interrupt('interrupt-session');
+    await mgr.bargeIn('barge-session');
     await mgr.setMuted('mute-session', true);
     mgr.sendContextUpdate('context-session', 'hello');
 
     expect(lifecycleController.toggle).toHaveBeenCalledWith('toggle-session');
     expect(lifecycleController.stop).toHaveBeenCalledWith('stop-session');
     expect(lifecycleController.interrupt).toHaveBeenCalledWith('interrupt-session');
+    expect(lifecycleController.bargeIn).toHaveBeenCalledWith('barge-session');
     expect(lifecycleController.setMuted).toHaveBeenCalledWith('mute-session', true);
     expect(lifecycleController.sendContextUpdate).toHaveBeenCalledWith('context-session', 'hello');
   });
@@ -80,6 +85,7 @@ describe('voiceSessionManager', () => {
     await mgr.toggle('s1');
     await mgr.stop('s1');
     await mgr.interrupt('s1');
+    await mgr.bargeIn('s1');
     await mgr.setMuted('s1', true);
     mgr.sendContextUpdate('s1', 'hello');
 

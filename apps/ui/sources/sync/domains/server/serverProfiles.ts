@@ -195,6 +195,60 @@ function getPersistedStateStorage(): PersistedStateStorage {
     return persistedStateStorage;
 }
 
+// Demo-scoped persistence firewall. While demo mode is active the onboarding
+// journey seeds a demo relay server into the active-server state; those writes
+// must never reach durable storage, or a hard exit (tab close / crash / mid-seed
+// navigation) would strand the real profile pointed at the dead demo server on the
+// next boot. This mirrors the runtimeFetch demo firewall: on suspend we swap the
+// live backend for an in-memory scratch seeded with the current durable value so
+// reads stay coherent for the demo world while every write is redirected away from
+// the real store; on resume we restore the untouched durable backend. Graceful
+// teardown behavior is unchanged (the real store was already correct).
+let demoPersistenceSuspendDepth = 0;
+let durablePersistedStateStorageDuringDemo: PersistedStateStorage | null = null;
+
+function createInMemoryPersistedStateStorage(seed: string | undefined): PersistedStateStorage {
+    const values = new Map<string, string>();
+    if (seed !== undefined) values.set(STATE_KEY, seed);
+    return {
+        getString: (key: string) => values.get(key),
+        set: (key: string, value: string) => {
+            values.set(key, value);
+        },
+    };
+}
+
+export function suspendServerProfilePersistenceForDemo(): void {
+    demoPersistenceSuspendDepth += 1;
+    if (demoPersistenceSuspendDepth !== 1) return;
+    const durable = getPersistedStateStorage();
+    durablePersistedStateStorageDuringDemo = durable;
+    persistedStateStorage = createInMemoryPersistedStateStorage(durable.getString(STATE_KEY));
+    persistedStateParseCache = null;
+}
+
+export function resumeServerProfilePersistenceForDemo(): void {
+    if (demoPersistenceSuspendDepth === 0) return;
+    demoPersistenceSuspendDepth -= 1;
+    if (demoPersistenceSuspendDepth !== 0) return;
+    persistedStateStorage = durablePersistedStateStorageDuringDemo;
+    durablePersistedStateStorageDuringDemo = null;
+    persistedStateParseCache = null;
+}
+
+export function isServerProfilePersistenceSuspendedForDemo(): boolean {
+    return demoPersistenceSuspendDepth > 0;
+}
+
+export function resetServerProfilePersistenceSuspendForTests(): void {
+    if (demoPersistenceSuspendDepth > 0 && durablePersistedStateStorageDuringDemo) {
+        persistedStateStorage = durablePersistedStateStorageDuringDemo;
+        persistedStateParseCache = null;
+    }
+    demoPersistenceSuspendDepth = 0;
+    durablePersistedStateStorageDuringDemo = null;
+}
+
 function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
     const entries: PreconfiguredServer[] = [];
     const seenUrlKeys = new Set<string>();
@@ -590,6 +644,12 @@ function dedupeIdentityProfiles(params: Readonly<{
     return { servers: next, idRewrite, changed };
 }
 
+// Parse cache keyed by the raw persisted string: readPersistedState sits on hot selector
+// paths and re-parsing the whole blob per call costs CPU and breaks referential stability.
+// Keying by the raw value (re-read every call) stays correct for cross-tab and self-heal
+// writes without invalidation wiring; local writes clear it explicitly.
+let persistedStateParseCache: { raw: string; state: Required<PersistedServerState> } | null = null;
+
 function readPersistedState(): Required<PersistedServerState> {
     const raw = getPersistedStateStorage().getString(STATE_KEY);
     if (!raw) {
@@ -599,6 +659,9 @@ function readPersistedState(): Required<PersistedServerState> {
             activeServerId: resolvePrimaryActiveServerId(seeded, null),
             servers: seeded,
         };
+    }
+    if (persistedStateParseCache && persistedStateParseCache.raw === raw) {
+        return persistedStateParseCache.state;
     }
 
     try {
@@ -644,6 +707,7 @@ function readPersistedState(): Required<PersistedServerState> {
             writePersistedState(state);
         }
 
+        persistedStateParseCache = { raw, state };
         return state;
     } catch {
         const seeded = applyRuntimeSeedPolicy({});
@@ -657,6 +721,9 @@ function readPersistedState(): Required<PersistedServerState> {
 
 function writePersistedState(state: Required<PersistedServerState>): void {
     getPersistedStateStorage().set(STATE_KEY, JSON.stringify(state));
+    // Invalidate rather than prime: the next read re-parses so the parse path stays the
+    // single canonicalization owner for cached state shapes.
+    persistedStateParseCache = null;
 }
 
 function readTabActiveServerId(): string | null {

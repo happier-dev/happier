@@ -1,9 +1,8 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
-import type { Settings } from '@/sync/domains/settings/settings';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
 import {
     installSessionSettingsEntryModuleMocks,
     resetSessionSettingsEntryState,
@@ -12,14 +11,8 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-type SessionSettingsState = Pick<Settings, 'sessionsRightPaneDefaultOpen' | 'uiMultiPanePanelsEnabled'>;
-
 const localSettingsState: LocalSettings = { ...localSettingsDefaults };
 let executionRunsEnabled = false;
-
-function isSessionSettingsKey(key: keyof Settings): key is keyof SessionSettingsState {
-    return key === 'sessionsRightPaneDefaultOpen' || key === 'uiMultiPanePanelsEnabled';
-}
 
 installSessionSettingsEntryModuleMocks({
     storageModule: async (importOriginal) => {
@@ -27,27 +20,15 @@ installSessionSettingsEntryModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettingMutable: <K extends keyof Settings>(key: K) => [
-                    (isSessionSettingsKey(key) ? sessionSettingsEntryState.settingsState[key] : settingsDefaults[key]) as Settings[K],
-                    (next: Settings[K]) => {
-                        if (isSessionSettingsKey(key)) {
-                            sessionSettingsEntryState.settingsState[key] = next;
-                        }
-                    },
-                ] as const,
                 useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [
                     localSettingsState[key],
                     (next: LocalSettings[K]) => {
                         localSettingsState[key] = next;
                     },
                 ] as const,
-                useSetting: <K extends keyof Settings>(key: K) => {
-                    if (key === 'recentMachinePaths') return [];
-                    if (isSessionSettingsKey(key)) {
-                        return sessionSettingsEntryState.settingsState[key] as Settings[K];
-                    }
-                    return settingsDefaults[key];
-                },
+                useSetting: createUseSettingMock({
+                    values: { recentMachinePaths: [] },
+                }),
             },
         });
     },

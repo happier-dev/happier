@@ -28,18 +28,23 @@ installPickerCommonModuleMocks({
             Platform: { OS: 'ios' },
             Pressable: 'Pressable',
         }),
-    storage: async (importOriginal) =>
-        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+    storage: async (importOriginal) => {
+        const {
+            createStorageModuleMock,
+            createUseSettingMutableMockFromReader,
+        } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettingMutable: <K extends keyof Settings>(name: K): [Settings[K], (value: Settings[K]) => void] => {
+                useSettingMutable: createUseSettingMutableMockFromReader((name) => {
                     if (name !== 'secrets') {
                         throw new Error(`Unexpected setting key in secret picker test: ${String(name)}`);
                     }
-                    return React.useState<Settings['secrets']>([]) as [Settings[K], (value: Settings[K]) => void];
-                },
+                    return React.useState<Settings['secrets']>([]);
+                }),
             },
-        }),
+        });
+    },
     unistyles: async () =>
         (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
             theme: { colors: { chrome: PICKER_THEME_COLORS.chrome } },

@@ -4,7 +4,6 @@ export type ExplicitJumpTakeoverApplyEffect = Extract<
     TranscriptViewportLifecycleEffect,
     {
         type:
-            | 'explicit-jump-cancel-native-mount-settle-bottom-pin'
             | 'explicit-jump-suppress-entry-restore'
             | 'explicit-jump-preempt-entry-restore'
             | 'explicit-jump-clear-native-entry-restore-paint-release-timeout'
@@ -23,7 +22,6 @@ export function resolveExplicitJumpTakeoverApplyEffects(params: Readonly<{
     ): effect is ExplicitJumpTakeoverApplyEffect => (
         effect.sessionId === params.sessionId &&
         (
-            effect.type === 'explicit-jump-cancel-native-mount-settle-bottom-pin' ||
             effect.type === 'explicit-jump-suppress-entry-restore' ||
             effect.type === 'explicit-jump-preempt-entry-restore' ||
             effect.type === 'explicit-jump-clear-native-entry-restore-paint-release-timeout' ||

@@ -1,4 +1,8 @@
-import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import {
+    applySessionListRenderablePatch,
+    isSessionListRenderablePatchNoop,
+    type SessionListRenderableSession,
+} from '@/sync/domains/session/listing/sessionListRenderable';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
 type SessionListRenderablePatch = Readonly<{
@@ -87,14 +91,10 @@ export function createSessionListRenderableProjectionPatchCoalescer<Payload>(par
                     ...(finalPatch ?? {}),
                     ...patch,
                 };
-                simulatedRenderable = {
-                    ...simulatedRenderable,
-                    ...patch,
-                    id: simulatedRenderable.id,
-                };
+                simulatedRenderable = applySessionListRenderablePatch(simulatedRenderable, patch);
             }
 
-            if (finalPatch) {
+            if (finalPatch && !isSessionListRenderablePatchNoop(renderable, finalPatch)) {
                 patches.push({ sessionId, patch: finalPatch });
             }
         }

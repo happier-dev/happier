@@ -6,6 +6,7 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { buildWakeResumeExtras } from '@/agents/catalog/catalog';
 import { buildResumeCapabilityOptionsFromUiState } from '@/agents/registry/registryUiBehavior';
 import { storage } from '@/sync/domains/state/storage';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session/resume/resumeSessionBase';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -174,7 +175,7 @@ async function resumeInactiveSessionWithInitialGoal(
         return { ok: false, error: t('session.workState.goal.errorCannotResume') };
     }
 
-    const agentId = resolveAgentIdFromSessionMetadata(session.metadata);
+    const agentId = resolveAgentIdFromSessionMetadata(readSessionOwnerMetadataView(session));
     const resumeExtras = agentId
         ? buildWakeResumeExtras({ agentId, resumeCapabilityOptions, session })
         : {};

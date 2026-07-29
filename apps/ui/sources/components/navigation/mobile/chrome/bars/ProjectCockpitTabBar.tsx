@@ -21,6 +21,8 @@ export const ProjectCockpitTabBar = React.memo((props: ProjectCockpitTabBarProps
         { id: 'browse', label: t('common.files'), icon: 'folder-outline' },
         { id: 'git', label: t('session.rightPanel.tabs.git'), icon: 'git-branch-outline' },
         { id: 'tabs', label: t('common.tabs'), icon: 'albums-outline' },
+        { id: 'browser', label: t('browserSurface.title'), icon: 'globe-outline' },
+        { id: 'services', label: t('localServices.inventory.title'), icon: 'server-outline' },
         { id: 'terminal', label: t('settings.terminal'), icon: 'terminal-outline' },
     ];
 

@@ -2,6 +2,8 @@ import type { AgentEvent, NormalizedMessage } from '../../typesRaw';
 import type { ReducerState } from '../reducer';
 import { parseMessageAsEvent } from '../messageToEvent';
 import { setThinkingMergeCursor } from '../helpers/mergeCursors';
+import { normalizeTranscriptSeq } from '../../domains/messages/transcriptOrdering';
+import { isRecoveredHistoryTranscriptObservation } from '../../domains/messages/transcriptObservationProvenance';
 
 export function runMessageToEventConversion({
   state,
@@ -40,8 +42,9 @@ export function runMessageToEventConversion({
   let latestReadyEventAt: number | null = null;
 
   for (const msg of nonSidechainMessages) {
+    const isRecoveredHistory = isRecoveredHistoryTranscriptObservation(msg);
     // Check if we've already processed this message
-    if (msg.role === 'user' && msg.localId && state.localIds.has(msg.localId)) {
+    if (!isRecoveredHistory && msg.role === 'user' && msg.localId && state.localIds.has(msg.localId)) {
       continue;
     }
     if (state.messageIds.has(msg.id)) {
@@ -52,18 +55,21 @@ export function runMessageToEventConversion({
     if (msg.role === 'event' && msg.content.type === 'ready') {
       // Mark as processed to prevent duplication but don't add to messages
       state.messageIds.set(msg.id, msg.id);
-      hasReadyEvent = true;
-      readyAt = readyAt === null ? msg.createdAt : Math.max(readyAt, msg.createdAt);
-      latestReadyEventAt = latestReadyEventAt === null ? msg.createdAt : Math.max(latestReadyEventAt, msg.createdAt);
-      if (typeof msg.seq === 'number' && Number.isFinite(msg.seq)) {
-        const seq = Math.trunc(msg.seq);
-        latestReadyEventSeq = latestReadyEventSeq === null ? seq : Math.max(latestReadyEventSeq, seq);
+      if (!isRecoveredHistory) {
+        hasReadyEvent = true;
+        readyAt = readyAt === null ? msg.createdAt : Math.max(readyAt, msg.createdAt);
+        latestReadyEventAt = latestReadyEventAt === null ? msg.createdAt : Math.max(latestReadyEventAt, msg.createdAt);
+        const seq = normalizeTranscriptSeq(msg.seq);
+        if (seq !== null) {
+          latestReadyEventSeq = latestReadyEventSeq === null ? seq : Math.max(latestReadyEventSeq, seq);
+        }
       }
       continue;
     }
 
     // Handle context reset events - reset state and let the message be shown
     if (
+      !isRecoveredHistory &&
       msg.role === 'event' &&
       msg.content.type === 'message' &&
       msg.content.message === 'Context was reset'
@@ -79,6 +85,19 @@ export function runMessageToEventConversion({
         cacheCreation: 0,
         cacheRead: 0,
         contextSize: 0,
+        contextSnapshot: {
+          v: 1,
+          modelId: null,
+          usedTokens: 0,
+          windowTokens: null,
+          totalProcessedTokens: null,
+          baselineTokens: null,
+          isAutoCompactEnabled: null,
+          categories: null,
+          observedAtMs: msg.createdAt,
+          source: 'derived_estimate',
+        },
+        contextSnapshotStale: false,
         timestamp: msg.createdAt, // Use message timestamp to avoid blocking older usage data
       };
       // Don't continue - let the event be processed normally to create a message
@@ -86,6 +105,7 @@ export function runMessageToEventConversion({
 
     // Handle compaction completed events - reset context but keep todos
     if (
+      !isRecoveredHistory &&
       msg.role === 'event' &&
       msg.content.type === 'message' &&
       msg.content.message === 'Compaction completed'
@@ -97,6 +117,19 @@ export function runMessageToEventConversion({
         cacheCreation: 0,
         cacheRead: 0,
         contextSize: 0,
+        contextSnapshot: {
+          v: 1,
+          modelId: null,
+          usedTokens: 0,
+          windowTokens: null,
+          totalProcessedTokens: null,
+          baselineTokens: null,
+          isAutoCompactEnabled: null,
+          categories: null,
+          observedAtMs: msg.createdAt,
+          source: 'derived_estimate',
+        },
+        contextSnapshotStale: false,
         timestamp: msg.createdAt, // Use message timestamp to avoid blocking older usage data
       };
       // Don't continue - let the event be processed normally to create a message
@@ -111,7 +144,7 @@ export function runMessageToEventConversion({
       convertedEvents.push({ message: msg, event });
       // Mark as processed to prevent duplication
       state.messageIds.set(msg.id, msg.id);
-      if (msg.role === 'user' && msg.localId) {
+      if (!isRecoveredHistory && msg.role === 'user' && msg.localId) {
         state.localIds.set(msg.localId, msg.id);
       }
     } else {
@@ -125,7 +158,7 @@ export function runMessageToEventConversion({
 		    state.messages.set(mid, {
 		      id: mid,
 		      realID: message.id,
-	      seq: typeof message.seq === 'number' ? message.seq : null,
+	      seq: normalizeTranscriptSeq(message.seq),
 	      localId: message.localId ?? null,
 	      role: 'agent',
 	      createdAt: message.createdAt,
@@ -134,7 +167,9 @@ export function runMessageToEventConversion({
       text: null,
 	      meta: message.meta,
 	    });
-	    setThinkingMergeCursor(state, null, 'message-to-event');
+	    if (!isRecoveredHistoryTranscriptObservation(message)) {
+	      setThinkingMergeCursor(state, null, 'message-to-event');
+	    }
 	    changed.add(mid);
 	  }
 

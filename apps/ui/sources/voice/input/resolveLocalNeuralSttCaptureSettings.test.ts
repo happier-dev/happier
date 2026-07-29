@@ -7,8 +7,8 @@ describe('resolveLocalNeuralSttCaptureSettings', () => {
     expect(resolveLocalNeuralSttCaptureSettings({
       voice: {
         providerId: 'local_conversation',
-        adapters: {
-          local_conversation: {
+        providers: {
+          local_conversation: { schemaVersion: 1, config: {
             stt: {
               provider: 'local_neural',
               localNeural: {
@@ -17,7 +17,7 @@ describe('resolveLocalNeuralSttCaptureSettings', () => {
                 execution: 'daemon',
               },
             },
-          },
+          } },
         },
       },
     })).toEqual({
@@ -30,15 +30,15 @@ describe('resolveLocalNeuralSttCaptureSettings', () => {
     expect(resolveLocalNeuralSttCaptureSettings({
       voice: {
         providerId: 'local_direct',
-        adapters: {
-          local_direct: {
+        providers: {
+          local_direct: { schemaVersion: 1, config: {
             stt: {
               localNeural: {
                 assetId: '',
                 language: '   ',
               },
             },
-          },
+          } },
         },
       },
     })).toEqual({

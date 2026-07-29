@@ -11,7 +11,6 @@ export type LocalSttProviderSettingsProps = {
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
 };
-
 export type LocalSttProviderSpec = {
   id: LocalSttProviderId;
   title: string;

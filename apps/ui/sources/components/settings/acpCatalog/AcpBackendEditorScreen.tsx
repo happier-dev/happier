@@ -20,6 +20,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { SettingsActionFooter } from '@/components/ui/settingsSurface/SettingsActionFooter';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
+import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 import { t } from '@/text';
 import { normalizeAcpCatalogSettingsV1 } from '@/sync/domains/acpCatalog/normalizeAcpCatalogSettingsV1';
 import { upsertAcpBackendDefinitionV1 } from '@/sync/domains/acpCatalog/acpCatalogCrud';
@@ -68,6 +69,11 @@ const styles = StyleSheet.create((theme) => ({
         paddingVertical: 10,
         ...SETTINGS_TEXT_INPUT_METRICS,
     },
+    validationText: {
+        color: theme.colors.state.danger.foreground,
+        fontSize: 13,
+        fontWeight: '600',
+    },
 }));
 
 function withUpdatedAt<T extends Record<string, unknown>>(draft: T): T & Readonly<{ updatedAt: number }> {
@@ -79,13 +85,15 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
     const router = useRouter();
     const { backendId } = useLocalSearchParams<{ backendId?: string }>();
     const [settingsRaw, setSettings] = useSettingMutable('acpCatalogSettingsV1');
-    const [secrets, setSecrets] = useSettingMutable('secrets');
+    const [secrets, setSecrets] = useSavedSecretsMutable();
     const settings = React.useMemo(() => normalizeAcpCatalogSettingsV1(settingsRaw), [settingsRaw]);
     const existing = React.useMemo(() => settings.backends.find((entry) => entry.id === backendId) ?? null, [backendId, settings.backends]);
     const [draft, setDraft] = React.useState<AcpBackendDefinitionV1>(() => existing ?? createDraftAcpBackend());
+    const [validationErrorVisible, setValidationErrorVisible] = React.useState(false);
 
     React.useEffect(() => {
         setDraft(existing ?? createDraftAcpBackend());
+        setValidationErrorVisible(false);
     }, [existing]);
 
     const [authSupportMenuOpen, setAuthSupportMenuOpen] = React.useState(false);
@@ -96,6 +104,7 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
     const [promptImageSupportMenuOpen, setPromptImageSupportMenuOpen] = React.useState(false);
 
     const updateDraft = React.useCallback((updater: (current: AcpBackendDefinitionV1) => AcpBackendDefinitionV1) => {
+        setValidationErrorVisible(false);
         setDraft((current) => updater(current));
     }, []);
 
@@ -128,9 +137,11 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
                 : undefined,
         });
         if (!parsed.success) {
+            setValidationErrorVisible(true);
             Modal.alert(t('common.error'), t('settings.acpCatalogValidationFailed'));
             return;
         }
+        setValidationErrorVisible(false);
         try {
             setSettings(upsertAcpBackendDefinitionV1(settings, parsed.data));
             router.back();
@@ -162,6 +173,16 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
             <ItemList keyboardShouldPersistTaps="handled">
                 <ItemGroup title={t('settings.acpCatalogBasics')}>
                     <View style={styles.sectionContent}>
+                        {validationErrorVisible ? (
+                            <Text
+                                accessibilityRole="alert"
+                                accessibilityLiveRegion="polite"
+                                testID="settings.acpCatalog.backendEditor.validationError"
+                                style={styles.validationText}
+                            >
+                                {t('settings.acpCatalogValidationFailed')}
+                            </Text>
+                        ) : null}
                         <Text style={styles.fieldLabel}>{t('settings.acpCatalogFieldId')}</Text>
                         <TextInput testID="settings.acpCatalog.backendEditor.id" style={styles.textInput} value={draft.id} autoCapitalize="none" autoCorrect={false} onChangeText={(text) => updateDraft((current) => withUpdatedAt({ ...current, id: text }))} />
                         <Text style={styles.fieldLabel}>{t('settings.acpCatalogFieldName')}</Text>

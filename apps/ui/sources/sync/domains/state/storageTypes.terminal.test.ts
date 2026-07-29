@@ -9,8 +9,8 @@ describe('MetadataSchema', () => {
             host: 'host',
             agentRuntimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
-                provider: {
+                agentId: 'codex',
+                agent: {
                     backendMode: 'appServer',
                     providerSessionId: 'thread-1',
                 },
@@ -19,8 +19,8 @@ describe('MetadataSchema', () => {
 
         expect((parsed as any).runtimeDescriptorV1).toEqual({
             v: 1,
-            providerId: 'codex',
-            provider: {
+            agentId: 'codex',
+            agent: {
                 backendMode: 'appServer',
                 providerSessionId: 'thread-1',
             },
@@ -49,8 +49,8 @@ describe('MetadataSchema', () => {
             },
             agentRuntimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
-                provider: {
+                agentId: 'codex',
+                agent: {
                     backendMode: 'appServer',
                     providerSessionId: 'thread-legacy',
                 },
@@ -59,8 +59,8 @@ describe('MetadataSchema', () => {
 
         expect((parsed as any).runtimeDescriptorV1).toEqual({
             v: 1,
-            providerId: 'codex',
-            provider: {
+            agentId: 'codex',
+            agent: {
                 backendMode: 'appServer',
                 providerSessionId: 'thread-legacy',
             },
@@ -122,6 +122,26 @@ describe('MetadataSchema', () => {
         } as any);
 
         expect((parsed as any).kimiSessionId).toBe('kimi-session-1');
+    });
+
+    it('should preserve Grok vendor session metadata when present', () => {
+        const parsed = MetadataSchema.parse({
+            path: '/tmp',
+            host: 'host',
+            grokSessionId: 'grok-session-1',
+        });
+
+        expect(parsed.grokSessionId).toBe('grok-session-1');
+    });
+
+    it('should preserve Antigravity vendor session metadata when present', () => {
+        const parsed = MetadataSchema.parse({
+            path: '/tmp',
+            host: 'host',
+            antigravitySessionId: 'antigravity-conversation-1',
+        });
+
+        expect(parsed.antigravitySessionId).toBe('antigravity-conversation-1');
     });
 
     it('should preserve sessionLogPath when present', () => {

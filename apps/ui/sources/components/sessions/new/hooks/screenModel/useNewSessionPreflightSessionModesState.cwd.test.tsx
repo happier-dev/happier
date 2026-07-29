@@ -21,7 +21,7 @@ vi.mock('@/sync/ops/capabilities', () => ({
 }));
 
 vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
-  resolveProviderAgentIdForBackendTarget: (backendTarget: { kind: string; agentId?: string }) =>
+  resolveCatalogAgentIdForBackendTarget: (backendTarget: { kind: string; agentId?: string }) =>
     backendTarget.kind === 'builtInAgent' ? (backendTarget.agentId ?? null) : null,
 }));
 

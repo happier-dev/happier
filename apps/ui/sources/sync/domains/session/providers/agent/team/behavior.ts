@@ -9,12 +9,14 @@ import { deriveAgentTeamSidechainIds } from './sidechains';
 import { deriveAgentTeamSubagents } from './subagents';
 import { readAgentTeamIgnoredLifecycleEventType } from './lifecycleEvents';
 import { hasAgentTeamFlavor, messagesContainAgentTeamToolSignal } from './descriptor';
+import { resolveAgentTeamSessionFlavor } from './sessionFlavor';
 import type {
     AgentTeamMessage,
     AgentTeamSessionParticipantTarget,
     AgentTeamSessionProviderBehavior,
     AgentTeamSessionProviderDescriptor,
 } from './types';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 function isAgentTeamProviderSession(params: Readonly<{
     descriptor: AgentTeamSessionProviderDescriptor;
@@ -63,7 +65,11 @@ export function createAgentTeamSessionProviderBehavior(
                     : []
             ),
             deriveTargets: ({ session, messages, currentTargets }) => {
-                const flavor = typeof session.metadata?.flavor === 'string' ? session.metadata.flavor : null;
+                const flavor = resolveAgentTeamSessionFlavor(readSessionOwnerMetadataView({
+                    metadataLayoutVersion: session.metadataLayoutVersion,
+                    metadata: session.metadata ?? null,
+                    ownerMetadataView: session.ownerMetadataView,
+                }));
                 const target = deriveAgentTeamBroadcastTarget({
                     descriptor,
                     flavor,

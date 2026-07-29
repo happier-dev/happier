@@ -10,15 +10,13 @@ import {
 import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 import { createReducer } from '@/sync/reducer/reducer';
 import { installToolCallsGroupViewCommonModuleMocks } from './toolCallsGroupViewTestHelpers';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let collapsedPreviewCount: number | null = 1;
 const stableMessagesById = {};
 const stableReducerState = createReducer();
-const flashListCompatMockState = vi.hoisted(() => ({
-    mappingKeyCalls: [] as Array<Readonly<{ index: number; itemKey: string | number | bigint }>>,
-}));
 const storageHookCalls = vi.hoisted(() => [] as string[]);
 const messageViewMockState = vi.hoisted(() => ({
     messageViewCalls: [] as Array<Record<string, unknown>>,
@@ -56,12 +54,12 @@ installToolCallsGroupViewCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     storageHookCalls.push(`useSetting:${key}`);
                     if (key === 'toolViewTimelineChromeMode') return 'activity_feed';
                     if (key === 'transcriptToolCallsCollapsedPreviewCount') return collapsedPreviewCount;
                     return null;
-                },
+                } }),
                 useSessionMessagesById: () => {
                     storageHookCalls.push('useSessionMessagesById');
                     return stableMessagesById;
@@ -99,7 +97,10 @@ vi.mock('@/components/tools/shell/views/timeline/ToolTimelinePreviewRow', () => 
 }));
 
 vi.mock('@/components/sessions/transcript/motion/TranscriptEnterWrapper', () => ({
-    TranscriptEnterWrapper: (props: any) => React.createElement('TranscriptEnterWrapper', props, props.children),
+    TranscriptEnterWrapper: (props: any) => {
+        const initialId = React.useRef(props.id).current;
+        return React.createElement('TranscriptEnterWrapper', { ...props, initialId }, props.children);
+    },
 }));
 
 vi.mock('@/components/sessions/transcript/motion/TranscriptCollapsible', () => ({
@@ -110,18 +111,8 @@ vi.mock('@/components/sessions/transcript/motion/TranscriptCollapsible', () => (
     ),
 }));
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
-    useMappingHelper: () => ({
-        getMappingKey: (itemKey: string | number | bigint, index: number) => {
-            flashListCompatMockState.mappingKeyCalls.push({ itemKey, index });
-            return index;
-        },
-    }),
-}));
-
 describe('ToolCallsGroupView (collapsed preview)', () => {
     beforeEach(() => {
-        flashListCompatMockState.mappingKeyCalls = [];
         storageHookCalls.length = 0;
         messageViewMockState.messageViewCalls = [];
         messageViewMockState.messageViewWithCommonCalls = [];
@@ -129,7 +120,7 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
 
     afterEach(standardCleanup);
 
-    it('routes only visible preview rows through the FlashList mapping helper while collapsed', async () => {
+    it('renders only the configured visible preview rows while collapsed', async () => {
         collapsedPreviewCount = 2;
 
         const toolMessages = [
@@ -138,16 +129,13 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
             createToolCallMessageFixture({ id: 'm3', createdAt: 3 }),
         ];
 
-        await renderToolCallsGroupView({
+        const screen = await renderToolCallsGroupView({
             toolMessages,
             expanded: false,
             setExpanded: vi.fn(),
         });
 
-        expect(flashListCompatMockState.mappingKeyCalls).toEqual([
-            { itemKey: 'preview:m2', index: 0 },
-            { itemKey: 'preview:m3', index: 1 },
-        ]);
+        expect(screen.findAllByTestId('transcript-tool-calls-preview-row')).toHaveLength(2);
     });
 
     it('does not allocate hidden body rows for large collapsed tool groups', async () => {
@@ -165,14 +153,9 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
 
         expect(screen.findAllByTestId('transcript-tool-calls-preview-row')).toHaveLength(3);
         expect(screen.findAllByTestId('transcript-tool-calls-tool-row')).toHaveLength(0);
-        expect(flashListCompatMockState.mappingKeyCalls).toEqual([
-            { itemKey: 'preview:tool-198', index: 0 },
-            { itemKey: 'preview:tool-199', index: 1 },
-            { itemKey: 'preview:tool-200', index: 2 },
-        ]);
     });
 
-    it('routes every body tool row through the FlashList mapping helper while expanded', async () => {
+    it('keeps expanded child identity attached to the logical tool when rows reorder', async () => {
         collapsedPreviewCount = 2;
 
         const toolMessages = [
@@ -181,16 +164,31 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
             createToolCallMessageFixture({ id: 'm3', createdAt: 3 }),
         ];
 
-        await renderToolCallsGroupView({
+        const screen = await renderToolCallsGroupView({
             toolMessages,
             expanded: true,
             setExpanded: vi.fn(),
         });
 
-        expect(flashListCompatMockState.mappingKeyCalls).toEqual([
-            { itemKey: 'm1', index: 0 },
-            { itemKey: 'm2', index: 1 },
-            { itemKey: 'm3', index: 2 },
+        const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
+        await screen.update(React.createElement(ToolCallsGroupView, {
+            id: 'toolCalls:1',
+            status: 'running',
+            toolMessages: [toolMessages[2]!, toolMessages[1]!, toolMessages[0]!],
+            metadata: null,
+            sessionId: 's1',
+            expanded: true,
+            setExpanded: vi.fn(),
+            interaction: { canSendMessages: true, canApprovePermissions: true },
+        }));
+
+        expect(screen.findAllByType('TranscriptEnterWrapper').map((node) => ({
+            current: node.props.id,
+            initial: node.props.initialId,
+        }))).toEqual([
+            { current: 'm3', initial: 'm3' },
+            { current: 'm2', initial: 'm2' },
+            { current: 'm1', initial: 'm1' },
         ]);
     });
 
@@ -228,6 +226,7 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
             transcriptStreamingSmoothingEnabled: true,
             transcriptMessageSelectionEnabled: true,
             transcriptMessageSendToSessionEnabled: false,
+            debugInformationEnabled: false,
             workspacePath: null,
         } as const;
         const toolChromeCommon = {

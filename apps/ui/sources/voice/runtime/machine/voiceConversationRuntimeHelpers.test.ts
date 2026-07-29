@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { voiceConversationRuntimeMachine } from './VoiceConversationRuntimeMachine';
+import { createVoiceMachineError } from './voiceMachineError';
 
 describe('voiceConversationRuntimeHelpers', () => {
     beforeEach(() => {
@@ -60,11 +61,7 @@ describe('voiceConversationRuntimeHelpers', () => {
 
         voiceConversationRuntimeMachine.setError({
             controlSessionId: 's1',
-            error: {
-                kind: 'stt_timeout',
-                reason: 'listening_start_timeout',
-                recoverable: true,
-            },
+            error: createVoiceMachineError({ kind: 'stt_timeout', reason: 'listening_start_timeout' }),
         });
 
         confirmVoiceCaptureStarted('s1');

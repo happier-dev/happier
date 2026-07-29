@@ -4,7 +4,7 @@ import {
   isConnectedServiceProfileOptionSelectable,
   isConnectedServiceProfileStatusSelectable,
   resolveAgentSupportedConnectedServiceIds,
-  resolveConnectedServiceDefaultProfileId,
+  resolveConnectedServiceSessionSelection,
   type ConnectedServiceId,
   type ConnectedServicesAccountGroupOptionsByServiceId,
   type ConnectedServicesProfileOption,
@@ -51,10 +51,6 @@ function buildConnectedServiceProfileOptionsByServiceId(
   });
 }
 
-function readString(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
 export function buildConnectedServicesBindingsPayload(params: Readonly<{
   supportedConnectedServiceIds: ReadonlyArray<ConnectedServiceId>;
   connectedServiceProfileOptionsByServiceId: ConnectedServicesProfileOptionsByServiceId;
@@ -70,65 +66,24 @@ export function buildConnectedServicesBindingsPayload(params: Readonly<{
 
   for (const serviceId of params.supportedConnectedServiceIds) {
     const options = params.connectedServiceProfileOptionsByServiceId[serviceId] ?? [];
-    const connected = options.filter(isConnectedServiceProfileOptionSelectable);
     const binding = params.connectedServicesBindingsByServiceId[serviceId];
-    const mode = binding?.source === 'connected' ? 'connected' : 'native';
+    const resolution = resolveConnectedServiceSessionSelection({
+      serviceId,
+      binding: binding ?? { source: 'native' },
+      availability: {
+        kind: 'known',
+        profileOptions: options,
+        groupOptions: params.connectedServiceAccountGroupOptionsByServiceId?.[serviceId] ?? [],
+        accountGroupsEnabled: params.accountGroupsFeatureEnabled !== false,
+      },
+      defaultProfileByServiceId: params.defaultProfileByServiceId,
+    });
 
-    if (mode === 'connected') {
-      if (connected.length === 0) {
-        bindingsByServiceId[serviceId] = { source: 'native' };
-        continue;
-      }
-      const connectedProfileIds = connected.map((o) => o.profileId);
-      if (binding?.selection === 'group') {
-        if (params.accountGroupsFeatureEnabled === false) {
-          bindingsByServiceId[serviceId] = { source: 'native' };
-          continue;
-        }
-
-        const groupId = readString(binding.groupId);
-        const selectedGroup = (params.connectedServiceAccountGroupOptionsByServiceId?.[serviceId] ?? [])
-          .find((group) => group.groupId === groupId);
-        const activeProfileId = readString(selectedGroup?.activeProfileId);
-        if (
-          selectedGroup
-          && selectedGroup.status === 'ready'
-          && activeProfileId
-          && connectedProfileIds.includes(activeProfileId)
-        ) {
-          bindingsByServiceId[serviceId] = {
-            source: 'connected',
-            selection: 'group',
-            groupId,
-          };
-          connectedCount += 1;
-          continue;
-        }
-
-        bindingsByServiceId[serviceId] = { source: 'native' };
-        continue;
-      }
-
-      const explicit = binding?.source === 'connected' && binding.selection === 'profile'
-        ? readString(binding.profileId)
-        : '';
-      if (explicit && !connectedProfileIds.includes(explicit)) {
-        bindingsByServiceId[serviceId] = { source: 'native' };
-        continue;
-      }
-      const selected =
-        explicit
-          ? explicit
-          : resolveConnectedServiceDefaultProfileId({
-            serviceId,
-            connectedProfileIds,
-            defaultProfileByServiceId: params.defaultProfileByServiceId,
-          }) ?? connected[0]!.profileId;
-      if (!selected) {
-        bindingsByServiceId[serviceId] = { source: 'native' };
-        continue;
-      }
-      bindingsByServiceId[serviceId] = { source: 'connected', selection: 'profile', profileId: selected };
+    if (resolution.status !== 'no_selection') {
+      bindingsByServiceId[serviceId] = {
+        source: 'connected',
+        ...resolution.selection,
+      };
       connectedCount += 1;
       continue;
     }

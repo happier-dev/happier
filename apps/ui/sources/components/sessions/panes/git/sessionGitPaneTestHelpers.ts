@@ -55,6 +55,37 @@ export function installSessionGitPaneCommonModuleMocks(
         return createReactNativeWebMock();
     });
 
+    vi.mock('@legendapp/list/react-native', async () => {
+        const ReactModule = await import('react');
+        const renderSlot = (slot: unknown) => {
+            if (!slot) return null;
+            return ReactModule.isValidElement(slot)
+                ? slot
+                : ReactModule.createElement(slot as React.ComponentType);
+        };
+        return {
+            LegendList: ReactModule.forwardRef<any, any>((props, ref) => {
+                ReactModule.useImperativeHandle(ref, () => ({
+                    scrollToIndex: () => Promise.resolve(),
+                    scrollToOffset: () => Promise.resolve(),
+                }));
+                const rows = (props.data ?? []).map((item: any, index: number) => ReactModule.createElement(
+                    ReactModule.Fragment,
+                    { key: props.keyExtractor?.(item, index) ?? String(index) },
+                    props.renderItem?.({ item, index }),
+                ));
+                return ReactModule.createElement(
+                    'FlatList',
+                    props,
+                    renderSlot(props.ListHeaderComponent),
+                    ...rows,
+                    renderSlot(props.ListEmptyComponent),
+                    renderSlot(props.ListFooterComponent),
+                );
+            }),
+        };
+    });
+
     vi.mock('@expo/vector-icons', async () => {
         const activeOptions = sessionGitPaneModuleState.options;
         if (activeOptions.icons) {

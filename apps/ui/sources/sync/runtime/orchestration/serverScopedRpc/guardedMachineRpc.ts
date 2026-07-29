@@ -12,6 +12,7 @@ export async function callGuardedMachineRpcWithPolicy<R, A>(params: Readonly<{
     method: string;
     payload: A;
     timeoutMs?: number;
+    signal?: AbortSignal;
     preferScoped?: boolean;
 }>): Promise<R> {
     const guarded = isGuardedMachineRpcMethod(params.method);
@@ -26,6 +27,7 @@ export async function callGuardedMachineRpcWithPolicy<R, A>(params: Readonly<{
         method: params.method,
         payload: params.payload,
         timeoutMs: params.timeoutMs,
+        signal: params.signal,
         skipTransferPolicyEvaluation: guarded,
         ...(preferScoped ? { preferScoped: true } : null),
     });

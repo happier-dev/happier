@@ -156,6 +156,59 @@ describe('resolveTranscriptTargetWindowDisplay', () => {
         expect(result.items.map((item) => item.id)).toEqual(['msg-330', 'tool-331', 'tool-333', 'msg-335']);
     });
 
+    it('keeps a gap larger than the legacy scan cap contiguous when the window owner covers the range', () => {
+        const items = [
+            { id: 'msg-100', seq: 100 },
+            { id: 'msg-900', seq: 900 },
+        ] as const;
+
+        const result = resolveTranscriptTargetWindowDisplay({
+            items,
+            isSeqRangeLoaded: (fromInclusive, toInclusive) => (
+                fromInclusive >= 100 && toInclusive <= 900
+            ),
+            windowState: {
+                ...activeWindow,
+                hasMoreNewer: false,
+                hasMoreOlder: false,
+                targetSeq: 100,
+                windowMinSeq: 100,
+                windowMaxSeq: 900,
+            },
+        });
+
+        expect(result.targetPresent).toBe(true);
+        expect(result.items).toEqual(items);
+    });
+
+    it('bounds the per-seq fallback and still splits an uncovered gap larger than 512', () => {
+        const items = [
+            { id: 'msg-100', seq: 100 },
+            { id: 'msg-900', seq: 900 },
+        ] as const;
+        let perSeqCalls = 0;
+
+        const result = resolveTranscriptTargetWindowDisplay({
+            items,
+            isSeqRangeLoaded: () => false,
+            isSeqLoaded: () => {
+                perSeqCalls += 1;
+                return true;
+            },
+            windowState: {
+                ...activeWindow,
+                hasMoreNewer: false,
+                hasMoreOlder: false,
+                targetSeq: 100,
+                windowMinSeq: 100,
+                windowMaxSeq: 900,
+            },
+        });
+
+        expect(result.items).toEqual([items[0]]);
+        expect(perSeqCalls).toBe(0);
+    });
+
     it('still breaks contiguity across gaps whose intermediate seqs are NOT loaded', () => {
         const items = [
             { id: 'msg-100', seq: 100 },
@@ -176,6 +229,54 @@ describe('resolveTranscriptTargetWindowDisplay', () => {
 
         expect(result.targetPresent).toBe(true);
         expect(result.items.map((item) => item.id)).toEqual(['msg-100', 'msg-101']);
+    });
+
+    it('resolves an ABSORBED target seq to its containing contiguous group instead of a blank window (S-H)', () => {
+        // Live S-H capture (2026-07-11, SGM lane): a target-window jump to a tool-result/meta
+        // seq (absorbed: renders inside its owning row, never itemizes) found no item with
+        // seq === targetSeq and returned items: [] even though the window's content was fully
+        // loaded — the transcript rendered a persistent blank (37 mounted rows -> 0 live).
+        const items = [
+            { id: 'msg-39998', seq: 39_998 },
+            { id: 'msg-40002', seq: 40_002 },
+        ] as const;
+
+        const result = resolveTranscriptTargetWindowDisplay({
+            items,
+            windowState: {
+                ...activeWindow,
+                targetSeq: 40_000,
+                windowMinSeq: 39_990,
+                windowMaxSeq: 40_010,
+            },
+            isSeqLoaded: (seq) => seq >= 39_990 && seq <= 40_010,
+        });
+
+        expect(result.mode).toBe('window');
+        expect(result.items).toEqual(items);
+        expect(result.targetPresent).toBe(true);
+    });
+
+    it('resolves an absorbed target seq adjacent to a group edge when the gap is loaded (S-H)', () => {
+        const items = [
+            { id: 'msg-100', seq: 100 },
+            { id: 'msg-101', seq: 101 },
+        ] as const;
+
+        const result = resolveTranscriptTargetWindowDisplay({
+            items,
+            windowState: {
+                ...activeWindow,
+                targetSeq: 103,
+                windowMinSeq: 100,
+                windowMaxSeq: 105,
+            },
+            isSeqLoaded: (seq) => seq >= 100 && seq <= 105,
+        });
+
+        expect(result.mode).toBe('window');
+        expect(result.items).toEqual(items);
+        expect(result.targetPresent).toBe(true);
     });
 
     it('returns an explicit absent-target window result instead of rendering the nearest group', () => {

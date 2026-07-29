@@ -51,7 +51,13 @@ describe('handoffUiSupport', () => {
                     metadata: {
                         flavor: 'opencode',
                         machineId: 'machine_1',
-                        externalSessionV1: { source: 'opencode' },
+                        externalSessionV1: {
+                            v: 1,
+                            agentId: 'opencode',
+                            machineId: 'machine_1',
+                            remoteSessionId: 'opencode_session_1',
+                            source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:1234' },
+                        },
                         opencodeSessionId: 'opencode_session_1',
                     },
                 },
@@ -66,7 +72,13 @@ describe('handoffUiSupport', () => {
                 session: {
                     metadata: {
                         flavor: 'opencode',
-                        externalSessionV1: { v: 1, providerId: 'opencode', machineId: 'machine_1', remoteSessionId: 'remote_1', source: 'opencode' },
+                        externalSessionV1: {
+                            v: 1,
+                            agentId: 'opencode',
+                            machineId: 'machine_1',
+                            remoteSessionId: 'remote_1',
+                            source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:1234' },
+                        },
                         opencodeSessionId: 'opencode_session_1',
                     },
                 },
@@ -129,6 +141,82 @@ describe('handoffUiSupport', () => {
                     metadata: {
                         flavor: 'codex',
                         machineId: 'machine_1',
+                    },
+                },
+            }),
+        ).toBe(false);
+    });
+
+    it('returns false for a codex session whose persisted runtime mode does not support handoff', () => {
+        expect(
+            canHandoffConversation({
+                sessionId: 'sess_1',
+                session: {
+                    metadata: {
+                        flavor: 'codex',
+                        machineId: 'machine_1',
+                        codexSessionId: 'codex_session_1',
+                        codexRuntimeDescriptorV1: { v: 1, backendMode: 'mcp' },
+                    },
+                },
+            }),
+        ).toBe(false);
+    });
+
+    it('returns false for a direct opencode session whose persisted runtime mode does not support direct handoff', () => {
+        expect(
+            canHandoffConversation({
+                sessionId: 'sess_1',
+                session: {
+                    metadata: {
+                        flavor: 'opencode',
+                        machineId: 'machine_1',
+                        opencodeSessionId: 'opencode_session_1',
+                        externalSessionV1: {
+                            v: 1,
+                            agentId: 'opencode',
+                            machineId: 'machine_1',
+                            remoteSessionId: 'opencode_session_1',
+                            source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:1234' },
+                        },
+                        agentRuntimeDescriptorV1: {
+                            v: 1,
+                            agentId: 'opencode',
+                            provider: {
+                                backendMode: 'acp',
+                                providerSessionId: 'opencode_session_1',
+                            },
+                        },
+                    },
+                },
+            }),
+        ).toBe(false);
+    });
+
+    it('recognizes released directSessionV1 metadata when evaluating direct handoff support', () => {
+        expect(
+            canHandoffConversation({
+                sessionId: 'sess_1',
+                session: {
+                    metadata: {
+                        flavor: 'opencode',
+                        machineId: 'machine_1',
+                        opencodeSessionId: 'opencode_session_1',
+                        directSessionV1: {
+                            v: 1,
+                            providerId: 'opencode',
+                            machineId: 'machine_1',
+                            remoteSessionId: 'opencode_session_1',
+                            source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:1234' },
+                        },
+                        agentRuntimeDescriptorV1: {
+                            v: 1,
+                            agentId: 'opencode',
+                            provider: {
+                                backendMode: 'acp',
+                                providerSessionId: 'opencode_session_1',
+                            },
+                        },
                     },
                 },
             }),

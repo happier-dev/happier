@@ -22,6 +22,7 @@ import { HappyError } from '@/utils/errors/errors';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { isSafeBadgeUrl } from '@/utils/url/urlSafety';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 const USERNAME_PREFIX = '@';
 
@@ -243,7 +244,7 @@ export default function UserProfileScreen() {
                         sharedSessions.map((session) => (
                             <Item
                                 key={session.id}
-                                title={session.metadata?.name || session.metadata?.path || t('sessionHistory.title')}
+                                title={getSessionName(session)}
                                 subtitle={t('session.sharing.viewOnly')}
                                 icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.accent.blue} />}
                                 onPress={() => router.push(`/session/${session.id}`)}

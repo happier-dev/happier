@@ -293,6 +293,32 @@ describe('ProjectDetailScreen active worktree selection', () => {
         expect(onSelectRootPath).toHaveBeenCalledWith('/repo');
     });
 
+    it('does not repair or persist route-backed worktree state while unfocused', async () => {
+        setPaneScopeState({
+            right: { isOpen: true, activeTabId: 'git' },
+            details: { isOpen: false, tabs: [] },
+        });
+        localSettingsMock = {};
+        setLocalSettingSpy.mockClear();
+        projectRightPanelSpy.mockClear();
+        projectDetailsMainPanelSpy.mockClear();
+        workspaceScmSnapshotControllerSpy.mockClear();
+        const onSelectRootPath = vi.fn();
+        const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
+
+        await renderScreen(
+            React.createElement(ProjectDetailScreen as React.ComponentType<any>, {
+                workspaceRefId: 'wr_1',
+                activeRootPath: '/repo/.worktrees/deleted-worktree',
+                isFocused: false,
+                onSelectRootPath,
+            }),
+        );
+
+        expect(onSelectRootPath).not.toHaveBeenCalled();
+        expect(setLocalSettingSpy).not.toHaveBeenCalled();
+    });
+
     it('adopts a persisted active worktree path when local settings hydrate after mount', async () => {
         setPaneScopeState({
             right: { isOpen: true, activeTabId: 'git' },

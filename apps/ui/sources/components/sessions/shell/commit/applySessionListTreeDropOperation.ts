@@ -46,6 +46,7 @@ export type ApplySessionListTreeDropOperationContext = Readonly<{
     sessionListFolderSortModeV1?: SessionListFolderSortModeV1;
     sessionListOrderingModeV1?: SessionListOrderingModeV1;
     sessionListSectionModeV1?: SessionListOrderingSectionMode;
+    isFolderOrganizationEnabled?: () => boolean;
     now: () => number;
     setSessionFoldersV1: (next: SessionFoldersV1) => void;
     setSessionListGroupOrderV1: (next: Record<string, string[]>) => void;
@@ -368,6 +369,15 @@ export async function applySessionListTreeDropOperation(params: Readonly<{
         destination,
         currentParentFolderId,
     });
+    const requiresFolderOrganization = operationKind === 'sessionContainerContainmentMove'
+        || operationKind === 'folderSiblingReorder'
+        || operationKind === 'folderNestingMove';
+    if (
+        requiresFolderOrganization
+        && params.context.isFolderOrganizationEnabled?.() === false
+    ) {
+        return { ok: false, reason: 'feature-disabled' };
+    }
 
     if (params.source.metadata.kind === 'session') {
         const effectiveOrderingMode = resolveEffectiveOrderingModeForSessionSource({

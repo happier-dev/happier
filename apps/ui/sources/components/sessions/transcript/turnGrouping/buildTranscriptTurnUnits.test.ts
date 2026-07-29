@@ -162,6 +162,107 @@ describe('buildTranscriptTurnUnits', () => {
         ]);
     });
 
+    it('places a synthetic user-action row inside its chronological turn position', () => {
+        const messagesById = indexMessages([
+            userMessage('u1', 100, 10),
+            agentMessage('intent', 200, 11),
+            toolMessage('use-tool', 300, 12),
+            agentMessage('final', 500, 13),
+        ]);
+        const pendingUserAction: ChatListItem = {
+            kind: 'pending-user-action',
+            id: 'pending-user-action:request-1',
+            request: {
+                id: 'request-1',
+                tool: 'AskUserQuestion',
+                kind: 'user_action',
+                arguments: { question: 'Continue?' },
+                createdAt: 400,
+            },
+            createdAt: 400,
+        };
+
+        const result = buildTranscriptTurnUnits({
+            items: [
+                turnItem({
+                    id: 'turn:u1',
+                    userMessageId: 'u1',
+                    content: [
+                        { kind: 'message', messageId: 'intent' },
+                        { kind: 'tool_calls', id: 'toolCalls:turn:u1:use-tool', toolMessageIds: ['use-tool'] },
+                        { kind: 'message', messageId: 'final' },
+                    ],
+                }),
+                pendingUserAction,
+            ],
+            getMessageById: lookupIn(messagesById),
+            isGroupExpanded: expandedAlways,
+            collapsedPreviewCount: 0,
+        });
+
+        expect(result.map((item) => item.id)).toEqual([
+            'msg:u1',
+            'msg:intent',
+            'toolCalls:turn:u1:use-tool#header',
+            'toolCalls:turn:u1:use-tool#tool:use-tool',
+            'toolCalls:turn:u1:use-tool#footer',
+            'pending-user-action:request-1',
+            'msg:final',
+        ]);
+    });
+
+    it('places a synthetic user-action row between later tool units in one group', () => {
+        const messagesById = indexMessages([
+            userMessage('u1', 100, 10),
+            toolMessage('first-tool', 200, 11),
+            toolMessage('second-tool', 400, 12),
+            agentMessage('final', 500, 13),
+        ]);
+        const pendingUserAction: ChatListItem = {
+            kind: 'pending-user-action',
+            id: 'pending-user-action:request-1',
+            request: {
+                id: 'request-1',
+                tool: 'AskUserQuestion',
+                kind: 'user_action',
+                arguments: { question: 'Continue?' },
+                createdAt: 300,
+            },
+            createdAt: 300,
+        };
+
+        const result = buildTranscriptTurnUnits({
+            items: [
+                turnItem({
+                    id: 'turn:u1',
+                    userMessageId: 'u1',
+                    content: [
+                        {
+                            kind: 'tool_calls',
+                            id: 'toolCalls:turn:u1:first-tool',
+                            toolMessageIds: ['first-tool', 'second-tool'],
+                        },
+                        { kind: 'message', messageId: 'final' },
+                    ],
+                }),
+                pendingUserAction,
+            ],
+            getMessageById: lookupIn(messagesById),
+            isGroupExpanded: expandedAlways,
+            collapsedPreviewCount: 0,
+        });
+
+        expect(result.map((item) => item.id)).toEqual([
+            'msg:u1',
+            'toolCalls:turn:u1:first-tool#header',
+            'toolCalls:turn:u1:first-tool#tool:first-tool',
+            'pending-user-action:request-1',
+            'toolCalls:turn:u1:first-tool#tool:second-tool',
+            'toolCalls:turn:u1:first-tool#footer',
+            'msg:final',
+        ]);
+    });
+
     it('builds message items exactly like the splitter: msg ids, createdAt/seq normalization, 0/null fallbacks', () => {
         const messagesById = indexMessages([
             userMessage('u1', 9, 4.9),

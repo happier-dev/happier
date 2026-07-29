@@ -148,6 +148,8 @@ async function installProfileSecretRequirementModuleMocks() {
     }));
 
     vi.doMock('@/sync/ops/machineContributionRegistryProjection', () => ({
+        getMachineContributionRegistryProjectionRevision: () => 0,
+        subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
         machineContributionRegistryProjectionDescribe: (...args: Parameters<MachineContributionRegistryProjectionDescribeFn>) =>
             machineContributionRegistryProjectionDescribe(...args),
     }));
@@ -335,10 +337,9 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
             supported: true,
             projection: {
                 v: 1,
-                providersById: {
+                agentsById: {
                     'acme.review.provider': {
                         id: 'acme.review.provider',
-                        providerId: 'acme.review.provider',
                         title: 'Acme Review Provider',
                         channel: 'plugin',
                         isBuiltIn: false,
@@ -349,7 +350,7 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
                     'acme.review.backend': {
                         id: 'acme.review.backend',
                         backendId: 'acme.review.backend',
-                        providerId: 'acme.review.provider',
+                        agentId: 'acme.review.provider',
                         title: 'Acme Review Backend',
                     },
                 },

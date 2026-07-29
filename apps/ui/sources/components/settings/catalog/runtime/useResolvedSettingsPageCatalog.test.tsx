@@ -103,6 +103,38 @@ describe('useResolvedSettingsPageCatalog', () => {
         await hook.unmount();
     });
 
+    it('uses the canonical providers feature decision for navigation and search', async () => {
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+
+        featureGateState.enabled = (featureId: string) => featureId === 'providers';
+        const enabledHook = await renderHook(() => useResolvedSettingsPageCatalog());
+        expect(flattenIds(enabledHook.getCurrent().tree)).toContain('providers');
+        expect(enabledHook.getCurrent().search('openrouter').some((result: any) => result.id === 'providers')).toBe(true);
+        await enabledHook.unmount();
+
+        featureGateState.enabled = () => false;
+        const disabledHook = await renderHook(() => useResolvedSettingsPageCatalog());
+        expect(flattenIds(disabledHook.getCurrent().tree)).not.toContain('providers');
+        expect(disabledHook.getCurrent().search('openrouter').some((result: any) => result.id === 'providers')).toBe(false);
+        await disabledHook.unmount();
+    });
+
+    it('uses the canonical external-sessions feature decision for navigation and search', async () => {
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+
+        featureGateState.enabled = (featureId: string) => featureId === 'sessions.direct';
+        const enabledHook = await renderHook(() => useResolvedSettingsPageCatalog());
+        expect(flattenIds(enabledHook.getCurrent().tree)).toContain('externalSessions');
+        expect(enabledHook.getCurrent().search('external sessions').some((result: any) => result.id === 'externalSessions')).toBe(true);
+        await enabledHook.unmount();
+
+        featureGateState.enabled = () => false;
+        const disabledHook = await renderHook(() => useResolvedSettingsPageCatalog());
+        expect(flattenIds(disabledHook.getCurrent().tree)).not.toContain('externalSessions');
+        expect(disabledHook.getCurrent().search('external sessions').some((result: any) => result.id === 'externalSessions')).toBe(false);
+        await disabledHook.unmount();
+    });
+
     it('resolves active page id from the current pathname', async () => {
         pathnameState.value = '/settings/notifications';
 

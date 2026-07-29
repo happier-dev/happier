@@ -112,6 +112,38 @@ describe('BashView', () => {
         expect(lastCallProps.stderr == null || lastCallProps.stderr === '').toBe(true);
     });
 
+    it('renders camelCase command execution aggregatedOutput as stdout', async () => {
+        commandViewSpy.mockClear();
+        codeViewSpy.mockClear();
+        const { BashView } = await import('./BashView');
+
+        const tool = makeToolCall({
+            name: 'Bash',
+            state: 'completed',
+            input: { cmd: 'pwd' },
+            result: {
+                type: 'commandExecution',
+                command: '/bin/zsh -lc pwd',
+                aggregatedOutput: '/Users/leeroy/Documents/Development/happier/dev\n',
+                exitCode: 0,
+            },
+        });
+
+        await renderScreen(React.createElement(BashView, makeToolViewProps(tool)));
+
+        expect(commandViewSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                command: 'pwd',
+                stdout: '/Users/leeroy/Documents/Development/happier/dev\n',
+            }),
+        );
+        expect(codeViewSpy).not.toHaveBeenCalledWith(
+            expect.objectContaining({
+                code: expect.stringContaining('aggregatedOutput'),
+            }),
+        );
+    });
+
     it('strips a leading unset prelude (Claude auth scrub) from the displayed command', async () => {
         commandViewSpy.mockClear();
         codeViewSpy.mockClear();

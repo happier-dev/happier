@@ -1,7 +1,8 @@
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
-import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { getAgentCore } from '@/agents/catalog/catalog';
 import { t } from '@/text';
 
 export function resolveToolPermissionTerminalErrorMessage(params: Readonly<{
@@ -16,7 +17,7 @@ export function resolveToolPermissionTerminalErrorMessage(params: Readonly<{
     if (permission.status === 'denied') {
         const canBlameReadOnlyMode = (() => {
             if (params.metadata?.permissionMode !== 'read-only') return false;
-            const agentId = resolveAgentIdFromFlavor(params.metadata?.flavor);
+            const agentId = resolveAgentIdFromSessionMetadata(params.metadata);
             if (!agentId) return false;
             const core = getAgentCore(agentId);
             return core.permissions?.modeGroup === 'codexLike';

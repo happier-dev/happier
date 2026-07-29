@@ -5,7 +5,7 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
 
 import type { SessionListRowViewModel } from './sessionListRowViewModels';
-import { SessionListRow } from './sessionListRow';
+import { SessionListRow, type SessionListRowProps } from './sessionListRow';
 import type {
     UseSessionInlineDragCancelEvent,
     UseSessionInlineDragDropResultEvent,
@@ -50,6 +50,7 @@ type SessionListSessionItemProps = Readonly<{
     onMoveToWorkspaceRoot?: () => void;
     onMoveUp?: () => void;
     onMoveDown?: () => void;
+    measurementTarget?: SessionListRowProps['measurementTarget'];
 }>;
 
 function applySessionListItemAttentionFlags(
@@ -110,6 +111,7 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             overlayShared={props.overlayShared}
             onRegisterTreeRowBounds={props.onRegisterTreeRowBounds}
             onUnregisterTreeRowBounds={props.onUnregisterTreeRowBounds}
+            measurementTarget={props.measurementTarget}
             rowViewModel={rowViewModel}
             session={session}
             selectionKey={sessionKey}

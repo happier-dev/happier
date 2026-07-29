@@ -136,18 +136,22 @@ function tryFinalize(messageId: string, pending: PendingChunks): WebViewBridgeEn
  * - null if more chunks are needed or the message is invalid
  */
 export function decodeChunkedEnvelope(params: Readonly<{
-    message: WebViewBridgeMessageV1;
+    message: unknown;
     nowMs?: number;
     pendingTtlMs?: number;
     maxPendingMessages?: number;
 }>): WebViewBridgeEnvelopeV1 | null {
     const message = params.message;
+    if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        return null;
+    }
 
-    if (message.type !== 'chunk') {
+    const bridgeMessage = message as Partial<WebViewBridgeMessageV1>;
+    if (bridgeMessage.type !== 'chunk') {
         return isValidEnvelopeV1(message) ? message : null;
     }
 
-    const payload = (message as any).payload as { messageId?: unknown; index?: unknown; total?: unknown; data?: unknown } | undefined;
+    const payload = bridgeMessage.payload as { messageId?: unknown; index?: unknown; total?: unknown; data?: unknown } | undefined;
     if (!payload || typeof payload !== 'object') return null;
 
     const messageId = typeof payload.messageId === 'string' ? payload.messageId : null;

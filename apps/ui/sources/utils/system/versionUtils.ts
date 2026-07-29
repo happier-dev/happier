@@ -13,15 +13,18 @@ export const MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION = '0.1.0-dev.0';
 // Minimum CLI version that accepts the backendTarget-based spawn payload contract.
 // The protocol landed during 0.1.0 dev builds, before the 0.2.0 release line.
 export const MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION = '0.1.0-dev.0';
-
 function normalizeComparableVersion(version: string): {
     baseParts: number[];
     prereleaseChannel: 'dev' | 'preview' | null;
     prereleaseNumbers: number[];
 } {
     const trimmed = String(version ?? '').trim();
+    if (!trimmed) throw new Error('Invalid version');
     const [baseVersion, rawSuffix = ''] = trimmed.split('-', 2);
     const baseParts = baseVersion.split('.').map(Number);
+    if (baseParts.length === 0 || baseParts.some((part) => !Number.isInteger(part) || part < 0)) {
+        throw new Error('Invalid version');
+    }
 
     if (!rawSuffix) {
         return {
@@ -34,20 +37,17 @@ function normalizeComparableVersion(version: string): {
     const suffixParts = rawSuffix.split('.');
     const channel = suffixParts[0];
     if (channel !== 'dev' && channel !== 'preview') {
-        return {
-            baseParts,
-            prereleaseChannel: null,
-            prereleaseNumbers: [],
-        };
+        throw new Error('Unsupported prerelease channel');
+    }
+    const prereleaseNumbers = suffixParts.slice(1).map(Number);
+    if (prereleaseNumbers.length === 0 || prereleaseNumbers.some((part) => !Number.isInteger(part) || part < 0)) {
+        throw new Error('Invalid prerelease version');
     }
 
     return {
         baseParts,
         prereleaseChannel: channel,
-        prereleaseNumbers: suffixParts
-        .slice(1)
-        .map(Number)
-        .filter((part) => Number.isFinite(part)),
+        prereleaseNumbers,
     };
 }
 

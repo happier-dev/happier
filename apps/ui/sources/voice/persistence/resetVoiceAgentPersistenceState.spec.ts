@@ -6,15 +6,15 @@ const stateRef = {
     current: {
         settings: {
             voice: {
-                adapters: {
-                    local_conversation: {
+                providers: {
+                    local_conversation: { schemaVersion: 1, config: {
                         agent: {
                             transcript: {
                                 persistenceMode: 'ephemeral',
                                 epoch: 1,
                             },
                         },
-                    },
+                    } },
                 },
             },
         },
@@ -87,15 +87,15 @@ describe('resetVoiceAgentPersistenceState', () => {
         stateRef.current = {
             settings: {
                 voice: {
-                    adapters: {
-                        local_conversation: {
+                    providers: {
+                        local_conversation: { schemaVersion: 1, config: {
                             agent: {
                                 transcript: {
                                     persistenceMode: 'ephemeral',
                                     epoch: 1,
                                 },
                             },
-                        },
+                        } },
                     },
                 },
             },

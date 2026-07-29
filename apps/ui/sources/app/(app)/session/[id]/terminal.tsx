@@ -41,6 +41,7 @@ export default function TerminalScreenRoute() {
     const openRight = pane.openRight;
     const closeRight = pane.closeRight;
     const setRightTab = pane.setRightTab;
+    const initializedRightPaneSessionRef = React.useRef<string | null>(null);
 
     const { cockpitEnabled } = useMobileWorkspaceExperienceState();
     const { sidebarTabAvailable: terminalTabAvailable } = useSessionTerminalAvailability();
@@ -67,9 +68,13 @@ export default function TerminalScreenRoute() {
         if (!isFocused) return;
         if (!sessionId) return;
         if (!terminalTabAvailable) return;
+        if (initializedRightPaneSessionRef.current === sessionId) return;
+        initializedRightPaneSessionRef.current = sessionId;
         openRight({ tabId: 'terminal' });
-        setRightTab('terminal');
-    }, [isFocused, openRight, sessionId, setRightTab, terminalTabAvailable]);
+        if (pane.scopeState?.right?.activeTabId !== 'terminal') {
+            setRightTab('terminal');
+        }
+    }, [isFocused, openRight, pane.scopeState?.right?.activeTabId, sessionId, setRightTab, terminalTabAvailable]);
 
     const handleNavigateToDetails = React.useCallback((key: string) => {
         const targetQuery = buildSessionDetailsRouteQuery(

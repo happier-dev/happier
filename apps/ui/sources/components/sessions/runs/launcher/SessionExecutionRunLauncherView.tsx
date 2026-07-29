@@ -39,6 +39,12 @@ import { t } from '@/text';
 import { resolveActionInputValidationError } from '@/sync/domains/actions/resolveActionInputValidationError';
 import { resolveExecutionRunLauncherContainerStyle } from './resolveExecutionRunLauncherContainerStyle';
 import { resolveExecutionRunLauncherBackendChoices } from './resolveExecutionRunLauncherBackendChoices';
+import { extractExecutionRunProfilesFromMachineCapabilitiesState } from '@/sync/domains/executionRuns/extractExecutionRunsBackendsFromMachineCapabilities';
+import {
+    doesExecutionRunProfileMatchSelectedBackends,
+    resolveExecutionRunLauncherProfileChoices,
+} from './resolveExecutionRunLauncherProfileChoices';
+import { ExecutionRunProfilePicker } from './ExecutionRunProfilePicker';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { normalizeActionInputPatch } from '@/sync/domains/actions/normalizeActionInputPatch';
 import { resolveExecutionRunActionDefaultPermissionMode } from '@/sync/domains/actions/resolveExecutionRunActionDefaultPermissionMode';
@@ -152,7 +158,7 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
         machineId,
         enabled: Boolean(machineId),
         ...(sessionServerId ? { serverId: sessionServerId } : {}),
-        request: { requests: [{ id: 'tool.executionRuns' }] } as any,
+        request: { requests: [{ id: 'tool.executionRuns', params: { sessionId: props.sessionId } }] } as any,
     });
 
     const initialIntent = props.initialIntent ?? 'review';
@@ -199,6 +205,19 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
         settings,
     ]);
 
+    const executionRunProfiles = React.useMemo(
+        () => extractExecutionRunProfilesFromMachineCapabilitiesState(machineCapabilitiesState),
+        [machineCapabilitiesState],
+    );
+    const profileChoices = React.useMemo(
+        () => resolveExecutionRunLauncherProfileChoices({
+            intent,
+            profiles: executionRunProfiles,
+            backendChoices,
+        }),
+        [backendChoices, executionRunProfiles, intent],
+    );
+
     const initialBackendTargetKey = React.useMemo(() => {
         if (!initialBackendTarget) return null;
         const targetKey = buildBackendTargetKey(convertBackendTargetRefV2ToV1(initialBackendTarget) as any);
@@ -220,6 +239,13 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
     }, [initialBackendTarget, initialDefaultBackendId, props.sessionId]);
 
     const [actionInput, setActionInput] = React.useState<Record<string, unknown>>(() => buildSeedInput(initialIntent));
+    const selectedProfileId = typeof actionInput.profileId === 'string' ? actionInput.profileId : '';
+    const selectedProfileGenerationId = typeof actionInput.profileGenerationId === 'string'
+        ? actionInput.profileGenerationId
+        : '';
+    const selectedProfileChoice = profileChoices.find((choice) => (
+        choice.id === selectedProfileId && choice.generationId === selectedProfileGenerationId
+    )) ?? null;
     const actionId = resolveExecutionRunLauncherActionId(intent);
     const actionSpec = React.useMemo(() => getActionSpec(actionId as any), [actionId]);
     const fields = React.useMemo(
@@ -268,6 +294,10 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
             : [];
         return backendChoices.filter((choice) => selectedValues.includes(choice.targetKey) || selectedValues.includes(choice.backendId));
     }, [actionInput, backendChoices, intent]);
+    const selectedProfileMatchesSelectedBackend = !selectedProfileChoice || doesExecutionRunProfileMatchSelectedBackends(
+        selectedProfileChoice,
+        selectedBackendChoices.map((choice) => choice.backendId),
+    );
 
     const permissionModeOptions = React.useMemo(() => {
         const rawAgentType = selectedBackendChoices[0] && isAgentId(selectedBackendChoices[0].backendId)
@@ -329,6 +359,21 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
     }, [actionInput, fields, initialBackendTargetKey, resolveFieldOptions]);
 
     React.useEffect(() => {
+        if (!selectedProfileId) return;
+        if (
+            selectedProfileChoice
+            && selectedProfileChoice.disabled !== true
+            && selectedProfileMatchesSelectedBackend
+        ) return;
+        setActionInput((previous) => {
+            const next = { ...previous };
+            delete next.profileId;
+            delete next.profileGenerationId;
+            return next;
+        });
+    }, [selectedProfileChoice, selectedProfileId, selectedProfileMatchesSelectedBackend]);
+
+    React.useEffect(() => {
         if (!allowedPermissionModes || allowedPermissionModes.length === 0) {
             return;
         }
@@ -384,7 +429,31 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
         }),
         [actionInput, actionSpec, fields, props.sessionId],
     );
-    const canStart = validationError === null && !isStarting;
+    const canStart = validationError === null
+        && !isStarting
+        && (!selectedProfileId || (
+            selectedProfileChoice?.disabled === false && selectedProfileMatchesSelectedBackend
+        ));
+
+    const onSelectProfile = React.useCallback((choice: (typeof profileChoices)[number]) => {
+        if (!choice.compatibleAgentId) return;
+        const backendChoice = backendChoices.find((backend) => backend.backendId === choice.compatibleAgentId);
+        if (!backendChoice || backendChoice.disabled) return;
+        const backendField = intent === 'review' ? 'engineIds' : 'backendTargetKeys';
+        const backendValue = intent === 'review' ? backendChoice.backendId : backendChoice.targetKey;
+        setStartError(null);
+        setActionInput((previous) => ({
+            ...previous,
+            profileId: choice.id,
+            profileGenerationId: choice.generationId,
+            ...setValueAtTopLevelPatch(previous, backendField, [backendValue]),
+        }));
+    }, [backendChoices, intent]);
+
+    const resolveProfileAccessibilityLabel = React.useCallback(
+        (title: string) => t('executionRuns.newRun.a11y.selectProfile', { profile: title }),
+        [],
+    );
 
     const onSelectIntent = React.useCallback((nextIntent: ExecutionRunIntent) => {
         setStartError(null);
@@ -539,6 +608,15 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
                     })}
                 </View>
             </View>
+
+            <ExecutionRunProfilePicker
+                choices={profileChoices}
+                selectedId={selectedProfileId}
+                selectedGenerationId={selectedProfileGenerationId}
+                sectionLabel={t('executionRuns.newRun.sections.profiles')}
+                resolveAccessibilityLabel={resolveProfileAccessibilityLabel}
+                onSelect={onSelectProfile}
+            />
 
             {showPermissionModeSection ? (
                 <View style={styles.section}>

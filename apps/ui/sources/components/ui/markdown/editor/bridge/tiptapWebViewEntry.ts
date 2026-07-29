@@ -145,6 +145,13 @@ function createRuntime(params: Readonly<{
         }
     };
 
+    const cancelPendingDocChange = () => {
+        if (docChangeTimer) {
+            clearTimeout(docChangeTimer);
+            docChangeTimer = null;
+        }
+    };
+
     const emitSelectionState = (editor: Editor) => {
         const next = readSelectionState(editor);
         if (lastSelectionState && selectionStatesEqual(lastSelectionState, next)) {
@@ -249,7 +256,10 @@ function createRuntime(params: Readonly<{
             if (docChangeTimer) {
                 clearTimeout(docChangeTimer);
             }
-            docChangeTimer = setTimeout(() => emitDocChanged(editor), config.changeDebounceMs);
+            docChangeTimer = setTimeout(() => {
+                docChangeTimer = null;
+                emitDocChanged(editor);
+            }, config.changeDebounceMs);
         },
         onSelectionUpdate: () => {
             if (selectionTimer) {
@@ -268,6 +278,16 @@ function createRuntime(params: Readonly<{
     const setDoc = (nextDoc: string) => {
         const current = editor.getMarkdown();
         if (current === nextDoc) {
+            // Editor and host agree; any still-pending change is a settled echo.
+            cancelPendingDocChange();
+            return;
+        }
+        if (docChangeTimer) {
+            // Unflushed local edits: the incoming doc is stale relative to the editor.
+            // Replacing the document would reset the cursor and drop in-flight keystrokes.
+            // Local text wins; flush it upward so the host state converges instead.
+            cancelPendingDocChange();
+            emitDocChanged(editor);
             return;
         }
         applyingRemote = true;
@@ -275,7 +295,7 @@ function createRuntime(params: Readonly<{
             // Encode-on-input via the shared seed helper so the risky-markdown
             // pre-pass runs on this seed boundary too (raw HTML / comments →
             // byte-verbatim atoms).
-            seedMarkdown(editor, nextDoc);
+            seedMarkdown(editor, nextDoc, { preserveViewState: true });
         } finally {
             applyingRemote = false;
         }
@@ -294,6 +314,7 @@ function createRuntime(params: Readonly<{
         if (envelope.type === 'init') {
             const doc = typeof payload.doc === 'string' ? payload.doc : '';
             const readOnly = payload.readOnly === true;
+            cancelPendingDocChange();
             editor.setEditable(!readOnly);
             applyingRemote = true;
             try {
@@ -361,9 +382,7 @@ function createRuntime(params: Readonly<{
     };
 
     const destroy = () => {
-        if (docChangeTimer) {
-            clearTimeout(docChangeTimer);
-        }
+        cancelPendingDocChange();
         if (selectionTimer) {
             clearTimeout(selectionTimer);
         }

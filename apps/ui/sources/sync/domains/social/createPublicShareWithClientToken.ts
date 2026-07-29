@@ -17,7 +17,6 @@ export type CreatePublicShareApi<CredentialsT> = Readonly<{
       isConsentRequired: boolean;
     }>,
   ) => Promise<PublicSessionShare>;
-  getPublicShare: (credentials: CredentialsT, sessionId: string) => Promise<PublicSessionShare | null>;
 }>;
 
 export async function createPublicShareWithClientToken<CredentialsT>(params: Readonly<{
@@ -33,26 +32,25 @@ export async function createPublicShareWithClientToken<CredentialsT>(params: Rea
   encryptDataKeyForPublicShare?: (dataKey: Uint8Array, token: string) => Promise<string>;
   api: CreatePublicShareApi<CredentialsT>;
 }>): Promise<PublicSessionShare> {
-  const token = params.generateTokenHex().trim();
-  if (!token) {
-    throw new Error("createPublicShareWithClientToken: token is required");
-  }
-  params.tokenCache.set(token);
-  const expiresAt = params.expiresInDays ? Date.now() + params.expiresInDays * 24 * 60 * 60 * 1000 : undefined;
-
-  const encryptedDataKey = await (async () => {
-    if (params.sessionEncryptionMode !== "e2ee") return undefined;
-    const dataKey = params.getSessionDataKey?.(params.sessionId) ?? null;
-    if (!dataKey) {
-      throw new Error("Session data key is required for e2ee public shares");
-    }
-    if (!params.encryptDataKeyForPublicShare) {
-      throw new Error("encryptDataKeyForPublicShare is required for e2ee public shares");
-    }
-    return await params.encryptDataKeyForPublicShare(dataKey, token);
-  })();
-
   try {
+    const token = params.generateTokenHex().trim();
+    if (!token) {
+      throw new Error("createPublicShareWithClientToken: token is required");
+    }
+    const expiresAt = params.expiresInDays ? Date.now() + params.expiresInDays * 24 * 60 * 60 * 1000 : undefined;
+
+    const encryptedDataKey = await (async () => {
+      if (params.sessionEncryptionMode !== "e2ee") return undefined;
+      const dataKey = params.getSessionDataKey?.(params.sessionId) ?? null;
+      if (!dataKey) {
+        throw new Error("Session data key is required for e2ee public shares");
+      }
+      if (!params.encryptDataKeyForPublicShare) {
+        throw new Error("encryptDataKeyForPublicShare is required for e2ee public shares");
+      }
+      return await params.encryptDataKeyForPublicShare(dataKey, token);
+    })();
+
     const created = await params.api.createPublicShare(params.credentials, params.sessionId, {
       token,
       ...(encryptedDataKey ? { encryptedDataKey } : {}),
@@ -61,16 +59,11 @@ export async function createPublicShareWithClientToken<CredentialsT>(params: Rea
       isConsentRequired: params.isConsentRequired,
     });
 
-    return { ...created, token };
+    const committed = { ...created, token };
+    params.tokenCache.set(token);
+    return committed;
   } catch (error) {
-    try {
-      const existing = await params.api.getPublicShare(params.credentials, params.sessionId);
-      if (existing) {
-        return { ...existing, token };
-      }
-    } catch {
-      // ignore
-    }
+    params.tokenCache.set(null);
     throw error;
   }
 }

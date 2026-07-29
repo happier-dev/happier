@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import * as Clipboard from 'expo-clipboard';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Modal } from '@/modal';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { useRemoteSshBootstrapTask } from '@/components/systemTasks/remoteSshBootstrap/useRemoteSshBootstrapTask';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
@@ -541,11 +541,11 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         resolveRemoteSshFormStateForExecution,
     ]);
 
-    const handleCopyDiagnostics = React.useCallback(async (itemId: string) => {
+    const handleCopyDiagnostics = React.useCallback(async (itemId: string): Promise<boolean> => {
         const item = items.find((entry) => entry.id === itemId);
         const execution = checklist.executionById[itemId];
         if (!item || !execution) {
-            return;
+            return false;
         }
 
         const lines = [
@@ -557,11 +557,12 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
             execution.error?.message ? `Error: ${execution.error.message}` : null,
         ].filter((line): line is string => Boolean(line && line.trim().length > 0));
 
-        try {
-            await Clipboard.setStringAsync(lines.join('\n'));
-        } catch (error) {
-            await Modal.alert(t('common.error'), error instanceof Error ? error.message : t('textSelection.failedToCopy'));
+        const copied = await setClipboardStringSafe(lines.join('\n'));
+        if (!copied) {
+            await Modal.alert(t('common.error'), t('textSelection.failedToCopy'));
+            return false;
         }
+        return true;
     }, [checklist.executionById, items, props.mode]);
 
     const promptBlock = prompt ? (
@@ -782,7 +783,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
             selectedIds={checklist.selectedIds}
             expandedIds={checklist.expandedIds}
             onToggleExpanded={checklist.toggleExpanded}
-            onCopyDiagnostics={(item) => void handleCopyDiagnostics(item.id)}
+            onCopyDiagnostics={(item) => handleCopyDiagnostics(item.id)}
             promptBlock={promptBlock}
             startErrorMessage={startErrorMessage}
             activeTaskSnapshot={activeTaskSnapshot}

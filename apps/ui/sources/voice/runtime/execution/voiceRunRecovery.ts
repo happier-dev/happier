@@ -13,6 +13,7 @@ import {
     persistVoiceAgentRunMetadata,
     resolveVoiceRunMetadataSessionId,
 } from '@/voice/agent/voiceAgentRunState';
+import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
 
 function resolveExecutionRunBackendId(run: Readonly<Record<string, unknown>> | null | undefined): string | null {
     const backendIdRaw = typeof run?.backendId === 'string' ? run.backendId.trim() : '';
@@ -90,7 +91,6 @@ export function createVoiceRunRecovery(args: Readonly<{
     voiceAgentBySessionId: Map<string, VoiceAgentHandle>;
     voiceAgentInitBySessionId: Map<string, Promise<VoiceAgentHandle>>;
     voiceAgentPendingContextBySessionId: Map<string, string[]>;
-    voiceAgentTurnBarrierBySessionId: Map<string, Promise<void>>;
 }>): Readonly<{
     appendContextUpdate: (sessionId: string, update: string) => void;
     commit: (sessionId: string) => Promise<string>;
@@ -170,7 +170,7 @@ export function createVoiceRunRecovery(args: Readonly<{
     };
 
     const stop = async (sessionId: string): Promise<void> => {
-        const agentCfg = storage.getState().settings?.voice?.adapters?.local_conversation?.agent ?? null;
+        const agentCfg = readLocalConversationSettingsFromAccountSettings(storage.getState().settings).agent;
         const requestedBackend = (agentCfg?.backend ?? 'daemon') as 'daemon' | 'openai_compat';
         const persistedRuntimeState =
             requestedBackend === 'daemon'
@@ -194,7 +194,6 @@ export function createVoiceRunRecovery(args: Readonly<{
 
         args.voiceAgentBySessionId.delete(sessionId);
         args.voiceAgentPendingContextBySessionId.delete(sessionId);
-        args.voiceAgentTurnBarrierBySessionId.delete(sessionId);
 
         const fallbackRpcSessionId =
             sessionId === VOICE_AGENT_GLOBAL_SESSION_ID

@@ -41,6 +41,20 @@ describe('sessionListKeyNormalization', () => {
         });
     });
 
+    it('builds row-scope keys without reusing the tag key separator', async () => {
+        const {
+            buildSessionListRowScopeKey,
+            buildSessionListServerScopedRowKey,
+            normalizeSessionListKeyParts,
+        } = await import('./sessionListKeyNormalization');
+
+        expect(normalizeSessionListKeyParts(' server-a ', ' session-1 ').sessionKey).toBe('server-a:session-1');
+        expect(buildSessionListServerScopedRowKey(' server-a ', ' session-1 ')).toBe('server-a\u0000session-1');
+        expect(buildSessionListRowScopeKey(' server-a ', ' session-1 ')).toBe('server-a\u0000session-1');
+        expect(buildSessionListServerScopedRowKey(null, ' session-1 ')).toBeNull();
+        expect(buildSessionListRowScopeKey(null, ' session-1 ')).toBe('session-1');
+    });
+
     it('bounds the normalized key parts cache via LRU eviction', async () => {
         vi.stubEnv('EXPO_PUBLIC_HAPPIER_SESSION_LIST_KEY_PARTS_CACHE_MAX', '2');
         vi.resetModules();

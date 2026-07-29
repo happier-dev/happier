@@ -34,6 +34,7 @@ import {
     resolveWarmCacheAccountScope,
     saveMachineDisplayWarmCacheEntries,
     saveSessionListWarmCacheEntries,
+    scheduleWarmCacheBootHydration,
     setWarmCacheAccountScope,
 } from './warmCachePersistence';
 
@@ -85,6 +86,40 @@ describe('warmCachePersistence', () => {
         });
         expect(loadSessionListWarmCacheEntries('server-b', 'account-a')).toEqual({});
         expect(loadSessionListWarmCacheEntries('server-a', 'account-b')).toEqual({});
+    });
+
+    it('persists canonical external-session agent identity without providerId', () => {
+        store.set(
+            'session-list-warm-cache-v1:server-a:account-a',
+            JSON.stringify({
+                s1: {
+                sessionId: 's1',
+                metadataVersion: 2,
+                agentStateVersion: 3,
+                updatedAt: 20,
+                createdAt: 10,
+                active: true,
+                activeAt: 20,
+                archivedAt: null,
+                path: '/home/u/repo',
+                externalSessionV1: {
+                    v: 1,
+                    agentId: 'codex',
+                    machineId: 'machine-1',
+                    remoteSessionId: 'remote-1',
+                    source: { kind: 'codexHome', home: 'user' },
+                },
+                },
+            }),
+        );
+
+        expect(loadSessionListWarmCacheEntries('server-a', 'account-a').s1?.externalSessionV1).toEqual({
+            v: 1,
+            agentId: 'codex',
+            machineId: 'machine-1',
+            remoteSessionId: 'remote-1',
+            source: { kind: 'codexHome', home: 'user' },
+        });
     });
 
     it('rehydrates rollback eligibility from persisted session list entries', () => {
@@ -349,5 +384,52 @@ describe('warmCachePersistence', () => {
                 displayName: 'Work Mac',
             }),
         });
+    });
+
+    it('defers boot hydration work and completes through the deterministic fallback', async () => {
+        vi.useFakeTimers();
+        const previousRequestIdleCallback = globalThis.requestIdleCallback;
+        const previousCancelIdleCallback = globalThis.cancelIdleCallback;
+        const idleCallbacks: Array<() => void> = [];
+        const cancelIdleCallback = vi.fn();
+        Object.defineProperty(globalThis, 'requestIdleCallback', {
+            configurable: true,
+            value: vi.fn((callback: () => void) => {
+                idleCallbacks.push(callback);
+                return 7;
+            }),
+        });
+        Object.defineProperty(globalThis, 'cancelIdleCallback', {
+            configurable: true,
+            value: cancelIdleCallback,
+        });
+
+        try {
+            const task = vi.fn();
+            const scheduled = scheduleWarmCacheBootHydration(task, { fallbackDelayMs: 50 });
+
+            expect(task).not.toHaveBeenCalled();
+            expect(idleCallbacks).toHaveLength(1);
+
+            await Promise.resolve();
+            vi.advanceTimersByTime(49);
+            expect(task).not.toHaveBeenCalled();
+
+            vi.advanceTimersByTime(1);
+            await scheduled.done;
+
+            expect(task).toHaveBeenCalledTimes(1);
+            expect(cancelIdleCallback).toHaveBeenCalledWith(7);
+        } finally {
+            Object.defineProperty(globalThis, 'requestIdleCallback', {
+                configurable: true,
+                value: previousRequestIdleCallback,
+            });
+            Object.defineProperty(globalThis, 'cancelIdleCallback', {
+                configurable: true,
+                value: previousCancelIdleCallback,
+            });
+            vi.useRealTimers();
+        }
     });
 });

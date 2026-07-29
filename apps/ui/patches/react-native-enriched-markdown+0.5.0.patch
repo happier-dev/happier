@@ -13,7 +13,7 @@ index 9feea24..7c5d540 100644
 @@ -14,58 +15,124 @@ class TailFadeInAnimator(
  ) {
    private val viewRef = WeakReference(textView)
-
+ 
 -  private val activeAnimations = mutableMapOf<FadeInSpan, ValueAnimator>()
 +  private data class ActiveFadeRange(
 +    val start: Int,
@@ -24,7 +24,7 @@ index 9feea24..7c5d540 100644
 +  private val activeRanges = mutableListOf<ActiveFadeRange>()
 +  private val activeSpans = mutableListOf<FadeInSpan>()
 +  private var frameAnimator: ValueAnimator? = null
-
+ 
    fun animate(
      tailStart: Int,
      tailEnd: Int,
@@ -33,7 +33,7 @@ index 9feea24..7c5d540 100644
 +    val textView = viewRef.get() ?: return
 +    val spannable = textView.text as? Spannable ?: return
 +    val nowMs = AnimationUtils.currentAnimationTimeMillis()
-
+ 
 +    pruneCompletedRanges(nowMs, spannable.length)
 +    if (tailEnd > tailStart && tailEnd <= spannable.length) {
 +      activeRanges += ActiveFadeRange(
@@ -50,7 +50,7 @@ index 9feea24..7c5d540 100644
 +  private fun applyActiveRanges(nowMs: Long) {
      val textView = viewRef.get() ?: return
      val spannable = textView.text as? Spannable ?: return
-
+ 
 -    val fadeSpan = FadeInSpan().apply { alpha = 0f }
 -    spannable.setSpan(fadeSpan, tailStart, tailEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
 +    activeSpans.forEach { spannable.removeSpan(it) }
@@ -67,7 +67,7 @@ index 9feea24..7c5d540 100644
 +
 +    textView.invalidate()
 +  }
-
+ 
 -    val animator =
 +  private fun pruneCompletedRanges(
 +    nowMs: Long,
@@ -97,7 +97,7 @@ index 9feea24..7c5d540 100644
 -        duration = FADE_DURATION_MS
 +        duration = remainingMs.coerceAtLeast(1L)
          interpolator = LinearInterpolator()
-
+ 
 -        addUpdateListener { anim ->
 -          fadeSpan.alpha = anim.animatedValue as Float
 -          viewRef.get()?.invalidate()
@@ -106,7 +106,7 @@ index 9feea24..7c5d540 100644
 +          pruneCompletedRanges(frameNowMs, (viewRef.get()?.text as? Spannable)?.length ?: 0)
 +          applyActiveRanges(frameNowMs)
          }
-
+ 
          addListener(
            object : AnimatorListenerAdapter() {
              override fun onAnimationEnd(animation: Animator) {
@@ -133,7 +133,7 @@ index 9feea24..7c5d540 100644
 -    animator.start()
 +    frameAnimator?.start()
    }
-
+ 
 -  private fun cleanup(span: FadeInSpan) {
 -    activeAnimations.remove(span)
 -    val spannable = viewRef.get()?.text as? Spannable ?: return
@@ -146,7 +146,7 @@ index 9feea24..7c5d540 100644
 +    }
 +    activeSpans.clear()
    }
-
+ 
    fun cancelAll() {
 -    val spans = activeAnimations.keys.toList()
 -    spans.forEach { activeAnimations[it]?.cancel() }
@@ -158,7 +158,7 @@ index 9feea24..7c5d540 100644
 +    activeRanges.clear()
 +    cleanupSpans()
    }
-
+ 
    companion object {
 diff --git a/node_modules/react-native-enriched-markdown/cpp/wasm/build.sh b/node_modules/react-native-enriched-markdown/cpp/wasm/build.sh
 index e60ff0d..0a14c68 100755
@@ -180,14 +180,14 @@ index e60ff0d..0a14c68 100755
 +  -s EXPORT_ES6=1 \
    -s EXPORT_NAME='createMd4cModule' \
    -o "$OUT_DIR/md4c.js"
-
+ 
 +# Metro transforms the ES module into its own module wrapper before execution.
 +# SINGLE_FILE=1 means md4c.js never needs to resolve its script URL, so remove
 +# import.meta.url to keep the generated parser parseable inside that wrapper.
 +perl -0pi -e 's/var _scriptName=import\.meta\.url;/var _scriptName="";/' "$OUT_DIR/md4c.js"
 +
  rm "$OUT_DIR/md4c.o"
-
+ 
  echo "Done → $OUT_DIR/md4c.js"
 diff --git a/node_modules/react-native-enriched-markdown/ios/utils/ENRMTailFadeInAnimator.m b/node_modules/react-native-enriched-markdown/ios/utils/ENRMTailFadeInAnimator.m
 index e3630fb..4175787 100644
@@ -199,7 +199,7 @@ index e3630fb..4175787 100644
    __unsafe_unretained RCTUIColor *color;
 +  CFTimeInterval startTime;
  } ENRMColorEntry;
-
+ 
 +@interface ENRMActiveFadeRange : NSObject
 +@property (nonatomic, assign) NSRange range;
 +@property (nonatomic, assign) CFTimeInterval startTime;
@@ -214,7 +214,7 @@ index e3630fb..4175787 100644
    CADisplayLink *_displayLink;
  #endif
 -  CFTimeInterval _startTime;
-
+ 
 +  NSMutableArray<ENRMActiveFadeRange *> *_activeRanges;
    NSArray<RCTUIColor *> *_retainedColors;
    ENRMColorEntry *_colorEntries;
@@ -228,7 +228,7 @@ index e3630fb..4175787 100644
    return self;
  }
 @@ -41,29 +51,40 @@ - (void)dealloc
-
+ 
  - (void)animateFrom:(NSUInteger)tailStart to:(NSUInteger)tailEnd
  {
 -  [self cancel];
@@ -237,11 +237,11 @@ index e3630fb..4175787 100644
 -  if (!storage || tailEnd <= tailStart || tailEnd > storage.length)
 +  if (!storage)
      return;
-
+ 
 -  NSRange range = NSMakeRange(tailStart, tailEnd - tailStart);
 +  CFTimeInterval now = CACurrentMediaTime();
 +  [self pruneCompletedRangesAtTime:now textLength:storage.length];
-
+ 
 -  [self snapshotColorsInRange:range storage:storage];
 -  [self updateAlpha:0.0];
 +  if (tailEnd > tailStart && tailEnd <= storage.length) {
@@ -256,7 +256,7 @@ index e3630fb..4175787 100644
 +
 +  [self snapshotColorsForActiveRangesInStorage:storage];
 +  [self updateAlphaAtTime:now];
-
+ 
  #if !TARGET_OS_OSX
 -  _startTime = CACurrentMediaTime();
 -  _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(step:)];
@@ -288,13 +288,13 @@ index e3630fb..4175787 100644
 -  CGFloat progress = fmin(elapsed / kFadeDuration, 1.0);
 +  CFTimeInterval now = CACurrentMediaTime();
 +  [self updateAlphaAtTime:now];
-
+ 
 -  CGFloat eased = 1.0 - (1.0 - progress) * (1.0 - progress);
 -
 -  [self updateAlpha:eased];
 +  NSTextStorage *storage = _textView.textStorage;
 +  [self pruneCompletedRangesAtTime:now textLength:storage.length];
-
+ 
 -  if (progress >= 1.0) {
 -    [self cancel];
 +  if (_activeRanges.count == 0) {
@@ -304,7 +304,7 @@ index e3630fb..4175787 100644
    }
  }
  #endif
-
+ 
 -- (void)updateAlpha:(CGFloat)alpha
 +- (void)updateAlphaAtTime:(CFTimeInterval)now
  {
@@ -324,12 +324,12 @@ index e3630fb..4175787 100644
    }
    [storage endEditing];
  }
-
+ 
 -- (void)snapshotColorsInRange:(NSRange)range storage:(NSTextStorage *)storage
 +- (void)snapshotColorsForActiveRangesInStorage:(NSTextStorage *)storage
  {
    [self cleanupEntries];
-
+ 
    NSMutableArray<RCTUIColor *> *colors = [NSMutableArray array];
    NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
 -  [storage enumerateAttribute:NSForegroundColorAttributeName
@@ -354,7 +354,7 @@ index e3630fb..4175787 100644
 +                       [startTimes addObject:@(activeRange.startTime)];
 +                     }];
 +  }
-
+ 
    _entriesCount = colors.count;
    _retainedColors = [colors copy];
 @@ -122,6 +155,22 @@ - (void)snapshotColorsInRange:(NSRange)range storage:(NSTextStorage *)storage
@@ -379,10 +379,10 @@ index e3630fb..4175787 100644
 +    }
    }
  }
-
+ 
 @@ -133,9 +182,11 @@ - (void)cancel
  #endif
-
+ 
    if (_entriesCount > 0) {
 -    [self updateAlpha:1.0];
 +    [self updateAlphaAtTime:CACurrentMediaTime() + kFadeDuration];
@@ -391,7 +391,7 @@ index e3630fb..4175787 100644
 +
 +  [_activeRanges removeAllObjects];
  }
-
+ 
  - (void)cleanupEntries
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/index.web.js b/node_modules/react-native-enriched-markdown/lib/module/index.web.js
 index d8308e6..98e32e6 100644
@@ -399,18 +399,18 @@ index d8308e6..98e32e6 100644
 +++ b/node_modules/react-native-enriched-markdown/lib/module/index.web.js
 @@ -1,4 +1,5 @@
  "use strict";
-
+ 
  export { EnrichedMarkdownText, default } from "./web/EnrichedMarkdownText.js";
 +export { preloadMarkdownRuntime } from "./web/parseMarkdown.js";
  //# sourceMappingURL=index.web.js.map
 \ No newline at end of file
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js b/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js
-index c6c73b0..7e3f0c7 100644
+index c6c73b0..397b78a 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js
 @@ -1,13 +1,22 @@
  "use strict";
-
+ 
 -import { useState, useEffect, useMemo } from 'react';
 +import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
  import { normalizeMarkdownStyle } from "../normalizeMarkdownStyle.web.js";
@@ -477,7 +477,7 @@ index c6c73b0..7e3f0c7 100644
        }
      }).catch(error => {
        if (!cancelled) {
-@@ -57,14 +73,61 @@ export const EnrichedMarkdownText = ({
+@@ -57,14 +73,66 @@ export const EnrichedMarkdownText = ({
        cancelled = true;
      };
    }, [markdown, underline, latexMath]);
@@ -488,6 +488,7 @@ index c6c73b0..7e3f0c7 100644
      onTaskListItemPress
    }), [onLinkPress, onLinkLongPress, onTaskListItemPress]);
 +  const previousComparisonTextRef = useRef('');
++  const previousSourceLengthRef = useRef(0);
 +  const activeRevealRangesRef = useRef([]);
 +  const revealCleanupTimerRef = useRef(null);
 +  const [revealCleanupRevision, setRevealCleanupRevision] = useState(0);
@@ -497,8 +498,10 @@ index c6c73b0..7e3f0c7 100644
 +    previousComparisonText: previousComparisonTextRef.current,
 +    currentComparisonText,
 +    nowMs: Date.now(),
-+    ttlMs: STREAMING_REVEAL_RANGE_TTL_MS
-+  }) : [], [currentComparisonText, revealCleanupRevision, streamingAnimation]);
++    ttlMs: STREAMING_REVEAL_RANGE_TTL_MS,
++    previousSourceLength: previousSourceLengthRef.current,
++    currentSourceLength: markdown.length
++  }) : [], [currentComparisonText, markdown, revealCleanupRevision, streamingAnimation]);
 +  const streamingReveal = createStreamingRevealState({
 +    enabled: streamingAnimation,
 +    activeRanges: activeRevealRanges
@@ -507,11 +510,13 @@ index c6c73b0..7e3f0c7 100644
 +    if (!streamingAnimation) {
 +      activeRevealRangesRef.current = [];
 +      previousComparisonTextRef.current = currentComparisonText;
++      previousSourceLengthRef.current = markdown.length;
 +      return;
 +    }
 +    activeRevealRangesRef.current = activeRevealRanges;
 +    previousComparisonTextRef.current = currentComparisonText;
-+  }, [activeRevealRanges, currentComparisonText, streamingAnimation]);
++    previousSourceLengthRef.current = markdown.length;
++  }, [activeRevealRanges, currentComparisonText, markdown, streamingAnimation]);
 +  useEffect(() => {
 +    if (revealCleanupTimerRef.current) {
 +      clearTimeout(revealCleanupTimerRef.current);
@@ -541,7 +546,7 @@ index c6c73b0..7e3f0c7 100644
    const lastChildStyle = useMemo(() => allowTrailingMargin ? normalizedStyle : zeroTrailingMargins(normalizedStyle), [normalizedStyle, allowTrailingMargin]);
    const styles = useMemo(() => buildStyles(normalizedStyle), [normalizedStyle]);
    const lastChildStyles = useMemo(() => buildStyles(lastChildStyle), [lastChildStyle]);
-@@ -81,14 +144,41 @@ export const EnrichedMarkdownText = ({
+@@ -81,14 +149,41 @@ export const EnrichedMarkdownText = ({
        style: wrapperStyle,
        dir: dir,
        ...rest,
@@ -588,10 +593,13 @@ index c6c73b0..7e3f0c7 100644
    return /*#__PURE__*/_jsx("div", {
      style: wrapperStyle,
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js b/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
-index 7604c13..3d0bb0a 100644
+index 7604c13..1240bdf 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
-@@ -3,30 +3,168 @@
+@@ -1,32 +1,171 @@
+ "use strict";
+ 
++import createMd4cModule from './wasm/md4c.js';
  // Caching the Promise (not the resolved value) means concurrent callers share
  // a single WASM initialization — no duplicate loading.
  let parserPromise = null;
@@ -611,14 +619,15 @@ index 7604c13..3d0bb0a 100644
 +  }
 +  return resolveMd4cModuleFactory(value.default);
 +}
-
+ 
  // SINGLE_FILE=1 inlines the WASM binary as base64 inside md4c.js, so no
- // network fetch is needed — only a one-time decode + compile on first call.
+-// network fetch is needed — only a one-time decode + compile on first call.
++// runtime fetch is needed — only a one-time decode + compile on first call.
  function initializeParser() {
    if (!parserPromise) {
 -    parserPromise = import('./wasm/md4c').then(module => module.default()).then(wasmModule => wasmModule.cwrap('parseMarkdown', 'string', ['string', 'number', 'number'])).catch(error => {
-+    parserPromise = import('./wasm/md4c.js').then(module => {
-+      const factory = resolveMd4cModuleFactory(module);
++    parserPromise = Promise.resolve().then(() => {
++      const factory = resolveMd4cModuleFactory(createMd4cModule);
 +      if (!factory) {
 +        throw new Error(WASM_FACTORY_UNAVAILABLE_MESSAGE);
 +      }
@@ -766,6 +775,7 @@ index 7604c13..3d0bb0a 100644
 +  return JSON.parse(JSON.stringify(ast));
  }
  //# sourceMappingURL=parseMarkdown.js.map
+\ No newline at end of file
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js
 index 5bdaee9..ab8bc37 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js
@@ -802,7 +812,7 @@ index 7c31c2b..5bc65a7 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/InlineRenderers.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/InlineRenderers.js
 @@ -2,12 +2,20 @@
-
+ 
  import { extractNodeText } from "../utils.js";
  import { KaTeXRenderer } from "./KaTeXRenderer.js";
 +import { renderStreamingRevealText, shouldRevealTextForParent } from "../streamingReveal.js";
@@ -902,12 +912,19 @@ index 17a8464..3190264 100644
      callbacks: callbacks,
      capabilities: capabilities,
      renderChildren: renderChildren
+diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/streamingReveal.d.ts b/node_modules/react-native-enriched-markdown/lib/module/web/streamingReveal.d.ts
+new file mode 100644
+index 0000000..74504cf
+--- /dev/null
++++ b/node_modules/react-native-enriched-markdown/lib/module/web/streamingReveal.d.ts
+@@ -0,0 +1 @@
++export * from '../../typescript/src/web/streamingReveal';
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/streamingReveal.js b/node_modules/react-native-enriched-markdown/lib/module/web/streamingReveal.js
 new file mode 100644
-index 0000000..ea71e63
+index 0000000..b502339
 --- /dev/null
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/streamingReveal.js
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,154 @@
 +"use strict";
 +
 +import { createElement } from 'react';
@@ -980,33 +997,54 @@ index 0000000..ea71e63
 +  }
 +  return merged;
 +}
++const STREAMING_REVEAL_SOURCE_WINDOW_SLACK = 16;
++function resolveStreamingRevealFloor(params) {
++  const hasSourceLengths = typeof params.previousSourceLength === 'number' && Number.isFinite(params.previousSourceLength) && typeof params.currentSourceLength === 'number' && Number.isFinite(params.currentSourceLength);
++  if (!hasSourceLengths) return params.commonPrefixLength;
++
++  // The rendered comparison text is NOT append-only while markdown streams:
++  // completing inline syntax (`**bo` rendered literally, then closing `**` renders
++  // bold `bo`) rewrites the rendered prefix, collapsing the common prefix far
++  // upstream of the tail. Without a bound, every formatting completion re-classified
++  // the whole downstream region as new and replayed the reveal animation each chunk
++  // (constant text flicker on large streaming markdown). The SOURCE markdown IS
++  // append-only during streaming, so genuinely new content is bounded by the appended
++  // source length (with slack for rendered expansion). A pure re-parse with no
++  // appended source reveals nothing new.
++  const appendedSourceLength = Math.max(0, params.currentSourceLength - params.previousSourceLength);
++  if (appendedSourceLength === 0) return params.currentComparisonTextLength;
++  const revealWindow = appendedSourceLength * 2 + STREAMING_REVEAL_SOURCE_WINDOW_SLACK;
++  return Math.max(params.commonPrefixLength, params.currentComparisonTextLength - revealWindow);
++}
 +export function updateStreamingRevealRanges(params) {
 +  const retainedRanges = params.activeRanges.filter(range => range.expiresAtMs > params.nowMs && range.start < params.currentComparisonText.length).map(range => ({
 +    ...range,
 +    end: Math.min(range.end, params.currentComparisonText.length)
 +  }));
 +  const commonPrefixLength = readCommonPrefixLength(params.previousComparisonText, params.currentComparisonText);
-+  if (commonPrefixLength >= params.currentComparisonText.length) {
++  const revealFloor = resolveStreamingRevealFloor({
++    commonPrefixLength,
++    currentComparisonTextLength: params.currentComparisonText.length,
++    previousSourceLength: params.previousSourceLength,
++    currentSourceLength: params.currentSourceLength
++  });
++  if (revealFloor >= params.currentComparisonText.length) {
 +    return mergeRevealRanges(retainedRanges);
 +  }
 +  return mergeRevealRanges([...retainedRanges, ...readRevealWordRanges({
-+    text: params.currentComparisonText.slice(commonPrefixLength),
-+    startOffset: commonPrefixLength,
++    text: params.currentComparisonText.slice(revealFloor),
++    startOffset: revealFloor,
 +    expiresAtMs: params.nowMs + params.ttlMs
 +  })]);
 +}
 +export function shouldRevealTextForParent(parentType) {
 +  return parentType ? !NON_REVEALED_PARENT_TYPES.has(parentType) : true;
 +}
-+export function renderStreamingRevealText(params) {
-+  const reveal = params.capabilities.streamingReveal;
-+  if (!reveal || !params.revealable) {
-+    return params.text;
-+  }
++export function splitStreamingRevealTextParts(params) {
 +  let cursor = params.startOffset;
 +  let rangeIndex = 0;
-+  const activeRanges = reveal.activeRanges;
-+  const rendered = params.text.split(/(\s+)/).filter(part => part.length > 0).map((part, index) => {
++  const activeRanges = params.activeRanges;
++  return params.text.split(/(\s+)/).filter(part => part.length > 0).map(part => {
 +    const start = cursor;
 +    const end = start + part.length;
 +    cursor = end;
@@ -1014,15 +1052,31 @@ index 0000000..ea71e63
 +      rangeIndex++;
 +    }
 +    const isActiveRevealRange = rangeIndex < activeRanges.length && activeRanges[rangeIndex].start < end;
-+    if (/^\s+$/.test(part) || !isActiveRevealRange) {
-+      return part;
++    return {
++      text: part,
++      animated: !/^\s+$/.test(part) && isActiveRevealRange,
++      startOffset: start
++    };
++  });
++}
++export function renderStreamingRevealText(params) {
++  const reveal = params.capabilities.streamingReveal;
++  if (!reveal || !params.revealable) {
++    return params.text;
++  }
++  return splitStreamingRevealTextParts({
++    text: params.text,
++    startOffset: params.startOffset,
++    activeRanges: reveal.activeRanges
++  }).map((part, index) => {
++    if (!part.animated) {
++      return part.text;
 +    }
 +    return createElement('span', {
-+      key: `${start}:${index}`,
++      key: `${part.startOffset}:${index}`,
 +      'data-happier-enriched-markdown-reveal': 'text'
-+    }, part);
++    }, part.text);
 +  });
-+  return rendered;
 +}
 +//# sourceMappingURL=streamingReveal.js.map
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/styles.js b/node_modules/react-native-enriched-markdown/lib/module/web/styles.js
@@ -1068,7 +1122,7 @@ index 3513fc6..cc06a72 100644
  export type { MarkdownStyle, Md4cFlags } from './types/MarkdownStyle';
  export type { LinkPressEvent, LinkLongPressEvent, TaskListItemPressEvent, } from './types/events';
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownTextProps.web.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownTextProps.web.d.ts
-index 609252d..94d5df3 100644
+index 609252d..3e6bc94 100644
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownTextProps.web.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownTextProps.web.d.ts
 @@ -59,6 +59,23 @@ export interface EnrichedMarkdownTextProps extends Omit<HTMLAttributes<HTMLDivEl
@@ -1096,7 +1150,7 @@ index 609252d..94d5df3 100644
       * When false (default), removes trailing margin from the last element to
       * eliminate bottom spacing.
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/parseMarkdown.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/parseMarkdown.d.ts
-index 4643d20..ac0f571 100644
+index 4643d20..8f43e3b 100644
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/parseMarkdown.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/parseMarkdown.d.ts
 @@ -1,4 +1,6 @@
@@ -1106,12 +1160,13 @@ index 4643d20..ac0f571 100644
  export declare function parseMarkdown(markdown: string, { underline, latexMath }?: Md4cFlags): Promise<ASTNode>;
 +export declare function parseMarkdownSyncIfReady(markdown: string, { underline, latexMath }?: Md4cFlags): ASTNode | null;
  //# sourceMappingURL=parseMarkdown.d.ts.map
+\ No newline at end of file
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/streamingReveal.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/streamingReveal.d.ts
 new file mode 100644
-index 0000000..1249338
+index 0000000..a2236c2
 --- /dev/null
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/streamingReveal.d.ts
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,45 @@
 +import type { ReactNode } from 'react';
 +import type { ASTNode, NodeType, RenderCapabilities } from './types';
 +export interface StreamingRevealState {
@@ -1137,8 +1192,20 @@ index 0000000..1249338
 +    currentComparisonText: string;
 +    nowMs: number;
 +    ttlMs: number;
++    previousSourceLength?: number;
++    currentSourceLength?: number;
 +}>): readonly StreamingRevealRange[];
 +export declare function shouldRevealTextForParent(parentType?: NodeType): boolean;
++export interface StreamingRevealTextPart {
++    text: string;
++    animated: boolean;
++    startOffset: number;
++}
++export declare function splitStreamingRevealTextParts(params: Readonly<{
++    text: string;
++    startOffset: number;
++    activeRanges: readonly StreamingRevealRange[];
++}>): StreamingRevealTextPart[];
 +export declare function renderStreamingRevealText(params: Readonly<{
 +    capabilities: RenderCapabilities;
 +    text: string;
@@ -1235,7 +1302,7 @@ index fa9d401..90d9e21 100644
     * When false (default), removes trailing margin from the last element to
     * eliminate bottom spacing.
 diff --git a/node_modules/react-native-enriched-markdown/src/web/EnrichedMarkdownText.tsx b/node_modules/react-native-enriched-markdown/src/web/EnrichedMarkdownText.tsx
-index 70eb3a4..aa2b7b7 100644
+index 70eb3a4..7bcdecb 100644
 --- a/node_modules/react-native-enriched-markdown/src/web/EnrichedMarkdownText.tsx
 +++ b/node_modules/react-native-enriched-markdown/src/web/EnrichedMarkdownText.tsx
 @@ -1,17 +1,40 @@
@@ -1279,7 +1346,7 @@ index 70eb3a4..aa2b7b7 100644
 +  markStreamingRevealOffsets(ast);
 +  return ast;
 +}
-
+ 
  export const EnrichedMarkdownText = ({
    markdown,
 @@ -23,6 +46,8 @@ export const EnrichedMarkdownText = ({
@@ -1296,7 +1363,7 @@ index 70eb3a4..aa2b7b7 100644
      [markdownStyle]
    );
 +  const { underline = false, latexMath = true } = md4cFlags;
-
+ 
 -  const [ast, setAst] = useState<ASTNode | null>(null);
 +  const syncAst = useMemo(() => {
 +    const parsed = parseMarkdownSyncIfReady(markdown, { underline, latexMath });
@@ -1305,12 +1372,12 @@ index 70eb3a4..aa2b7b7 100644
 +  const [ast, setAst] = useState<ASTNode | null>(syncAst);
    const [katex, setKatex] = useState<KaTeXInstance | null>(null);
    const [parseError, setParseError] = useState<boolean>(false);
-
+ 
 -  const { underline = false, latexMath = true } = md4cFlags;
 -
    useEffect(() => {
      let cancelled = false;
-
+ 
 @@ -48,12 +76,9 @@ export const EnrichedMarkdownText = ({
      ])
        .then(([result, katexInstance]) => {
@@ -1325,19 +1392,20 @@ index 70eb3a4..aa2b7b7 100644
          }
        })
        .catch((error) => {
-@@ -73,12 +98,86 @@ export const EnrichedMarkdownText = ({
+@@ -73,12 +98,91 @@ export const EnrichedMarkdownText = ({
      };
    }, [markdown, underline, latexMath]);
-
+ 
 +  const renderedAst = syncAst ?? ast;
 +
    const callbacks = useMemo<RendererCallbacks>(
      () => ({ onLinkPress, onLinkLongPress, onTaskListItemPress }),
      [onLinkPress, onLinkLongPress, onTaskListItemPress]
    );
-
+ 
 -  const capabilities = useMemo<RenderCapabilities>(() => ({ katex }), [katex]);
 +  const previousComparisonTextRef = useRef('');
++  const previousSourceLengthRef = useRef(0);
 +  const activeRevealRangesRef = useRef<readonly StreamingRevealRange[]>([]);
 +  const revealCleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
 +    null
@@ -1356,9 +1424,11 @@ index 70eb3a4..aa2b7b7 100644
 +            currentComparisonText,
 +            nowMs: Date.now(),
 +            ttlMs: STREAMING_REVEAL_RANGE_TTL_MS,
++            previousSourceLength: previousSourceLengthRef.current,
++            currentSourceLength: markdown.length,
 +          })
 +        : [],
-+    [currentComparisonText, revealCleanupRevision, streamingAnimation]
++    [currentComparisonText, markdown, revealCleanupRevision, streamingAnimation]
 +  );
 +  const streamingReveal = createStreamingRevealState({
 +    enabled: streamingAnimation,
@@ -1369,12 +1439,14 @@ index 70eb3a4..aa2b7b7 100644
 +    if (!streamingAnimation) {
 +      activeRevealRangesRef.current = [];
 +      previousComparisonTextRef.current = currentComparisonText;
++      previousSourceLengthRef.current = markdown.length;
 +      return;
 +    }
 +
 +    activeRevealRangesRef.current = activeRevealRanges;
 +    previousComparisonTextRef.current = currentComparisonText;
-+  }, [activeRevealRanges, currentComparisonText, streamingAnimation]);
++    previousSourceLengthRef.current = markdown.length;
++  }, [activeRevealRanges, currentComparisonText, markdown, streamingAnimation]);
 +
 +  useEffect(() => {
 +    if (revealCleanupTimerRef.current) {
@@ -1410,10 +1482,10 @@ index 70eb3a4..aa2b7b7 100644
 +    () => ({ katex, streamingReveal }),
 +    [katex, streamingReveal]
 +  );
-
+ 
    const lastChildStyle = useMemo(
      () =>
-@@ -108,14 +207,39 @@ export const EnrichedMarkdownText = ({
+@@ -108,14 +212,39 @@ export const EnrichedMarkdownText = ({
    if (parseError) {
      return (
        <div style={wrapperStyle} dir={dir} {...rest}>
@@ -1429,7 +1501,7 @@ index 70eb3a4..aa2b7b7 100644
        </div>
      );
    }
-
+ 
 -  if (!ast) return null;
 +  if (!renderedAst) {
 +    const fallbackParagraphStyle = {
@@ -1450,19 +1522,20 @@ index 70eb3a4..aa2b7b7 100644
 +      </div>
 +    );
 +  }
-
+ 
 -  const children = ast.children ?? [];
 +  const children = renderedAst.children ?? [];
    const lastIdx = children.length - 1;
-
+ 
    return (
 diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts b/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts
 index 911e3f1..6da0772 100644
 --- a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts
 +++ b/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts
-@@ -2,36 +2,100 @@ import type { ASTNode } from './types';
+@@ -2,36 +2,101 @@ import type { ASTNode } from './types';
  import type { Md4cFlags } from '../types/MarkdownStyle';
-
++import createMd4cModule from './wasm/md4c.js';
+ 
  type ParseFn = (
 -  markdown: string,
 +  markdownPointer: number,
@@ -1481,7 +1554,7 @@ index 911e3f1..6da0772 100644
 +  parse: ParseFn;
 +  wasmModule: Md4cModule;
 +}>;
-
+ 
  // Caching the Promise (not the resolved value) means concurrent callers share
  // a single WASM initialization — no duplicate loading.
 -let parserPromise: Promise<ParseFn> | null = null;
@@ -1509,9 +1582,10 @@ index 911e3f1..6da0772 100644
 +    (value as { default?: unknown }).default
 +  );
 +}
-
+ 
  // SINGLE_FILE=1 inlines the WASM binary as base64 inside md4c.js, so no
- // network fetch is needed — only a one-time decode + compile on first call.
+-// network fetch is needed — only a one-time decode + compile on first call.
++// runtime fetch is needed — only a one-time decode + compile on first call.
 -function initializeParser(): Promise<ParseFn> {
 +function initializeParser(): Promise<ParserRuntime> {
    if (!parserPromise) {
@@ -1520,9 +1594,9 @@ index 911e3f1..6da0772 100644
 -      .then((wasmModule) =>
 -        wasmModule.cwrap('parseMarkdown', 'string', [
 -          'string',
-+    parserPromise = import('./wasm/md4c.js')
-+      .then((module) => {
-+        const factory = resolveMd4cModuleFactory(module);
++    parserPromise = Promise.resolve()
++      .then(() => {
++        const factory = resolveMd4cModuleFactory(createMd4cModule);
 +        if (!factory) {
 +          throw new Error(WASM_FACTORY_UNAVAILABLE_MESSAGE);
 +        }
@@ -1552,7 +1626,7 @@ index 911e3f1..6da0772 100644
    }
    return parserPromise;
  }
-
+ 
 +export async function preloadMarkdownRuntime(): Promise<void> {
 +  try {
 +    await initializeParser();
@@ -1575,7 +1649,7 @@ index 911e3f1..6da0772 100644
 @@ -41,19 +105,145 @@ function isASTNode(value: unknown): value is ASTNode {
    );
  }
-
+ 
 +function shouldCacheParseResult(markdown: string): boolean {
 +  return markdown.length <= PARSE_CACHE_MAX_MARKDOWN_CHARS;
 +}
@@ -1641,7 +1715,7 @@ index 911e3f1..6da0772 100644
 +  const cacheKey = buildCacheKey(markdown, underline, latexMath);
 +  const cachedResult = readCachedParsedResult(cacheKey);
 +  if (cachedResult) return cachedResult;
-
+ 
 -  const result: unknown = JSON.parse(
 -    parse(markdown, underline ? 1 : 0, latexMath ? 1 : 0)
 -  );
@@ -1662,7 +1736,7 @@ index 911e3f1..6da0772 100644
 +    if (!isASTNode(result)) {
 +      throw new Error('WASM parser returned invalid AST');
 +    }
-
+ 
 -  if (!isASTNode(result)) {
 -    throw new Error('WASM parser returned invalid AST');
 +    rememberParsedResult(cacheKey, result);
@@ -1720,7 +1794,7 @@ index 911e3f1..6da0772 100644
 +    return null;
    }
 +}
-
+ 
 -  return result;
 +function cloneAst(ast: ASTNode): ASTNode {
 +  return JSON.parse(JSON.stringify(ast)) as ASTNode;
@@ -1741,7 +1815,7 @@ index 28c5386..f620023 100644
    const isImageOnly =
 @@ -18,7 +21,19 @@ function ParagraphRenderer({
    }
-
+ 
    if (parentType === 'ListItem') {
 -    return <span>{renderChildren(node)}</span>;
 +    if (parentAttributes?.isTask === 'true') {
@@ -1758,7 +1832,7 @@ index 28c5386..f620023 100644
 +
 +    return <p style={paragraphStyle}>{renderChildren(node)}</p>;
    }
-
+ 
    return <p style={styles.paragraph}>{renderChildren(node)}</p>;
 diff --git a/node_modules/react-native-enriched-markdown/src/web/renderers/InlineRenderers.tsx b/node_modules/react-native-enriched-markdown/src/web/renderers/InlineRenderers.tsx
 index f25cb2a..b6c021e 100644
@@ -1772,7 +1846,7 @@ index f25cb2a..b6c021e 100644
 +  renderStreamingRevealText,
 +  shouldRevealTextForParent,
 +} from '../streamingReveal';
-
+ 
 -function TextRenderer({ node }: RendererProps) {
 -  return <>{node.content ?? ''}</>;
 +function TextRenderer({ node, parentType, capabilities }: RendererProps) {
@@ -1787,11 +1861,11 @@ index f25cb2a..b6c021e 100644
 +    </>
 +  );
  }
-
+ 
  function LineBreakRenderer(_props: RendererProps) {
 @@ -32,8 +45,12 @@ function UnderlineRenderer({ node, styles, renderChildren }: RendererProps) {
  }
-
+ 
  function CodeRenderer({ node, styles, renderChildren }: RendererProps) {
 +  if (node.content != null) {
 +    return <code style={styles.code}>{node.content}</code>;
@@ -1802,7 +1876,7 @@ index f25cb2a..b6c021e 100644
 +    <code style={styles.code}>{renderChildren(node)}</code>
    );
  }
-
+ 
 diff --git a/node_modules/react-native-enriched-markdown/src/web/renderers/ListRenderers.tsx b/node_modules/react-native-enriched-markdown/src/web/renderers/ListRenderers.tsx
 index dfe69cb..4d4e7c2 100644
 --- a/node_modules/react-native-enriched-markdown/src/web/renderers/ListRenderers.tsx
@@ -1810,7 +1884,7 @@ index dfe69cb..4d4e7c2 100644
 @@ -84,18 +84,25 @@ function ListItemRenderer({
      ? { ...node, children: node.children?.filter(isNestedList) }
      : null;
-
+ 
 +  if (!isTask) {
 +    return (
 +      <li style={listItemStyle(false)}>
@@ -1866,7 +1940,7 @@ index dca24cf..e6662ba 100644
 +        siblingCount={childNode.children?.length ?? 0}
        />
      )) ?? null;
-
+ 
 @@ -67,6 +73,9 @@ export function RenderNode({
        style={style}
        styles={styles}
@@ -1879,10 +1953,10 @@ index dca24cf..e6662ba 100644
        renderChildren={renderChildren}
 diff --git a/node_modules/react-native-enriched-markdown/src/web/streamingReveal.ts b/node_modules/react-native-enriched-markdown/src/web/streamingReveal.ts
 new file mode 100644
-index 0000000..94d3d26
+index 0000000..ebfce6e
 --- /dev/null
 +++ b/node_modules/react-native-enriched-markdown/src/web/streamingReveal.ts
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,277 @@
 +import { createElement, type ReactNode } from 'react';
 +import type { ASTNode, NodeType, RenderCapabilities } from './types';
 +
@@ -2002,12 +2076,50 @@ index 0000000..94d3d26
 +  return merged;
 +}
 +
++const STREAMING_REVEAL_SOURCE_WINDOW_SLACK = 16;
++
++function resolveStreamingRevealFloor(params: Readonly<{
++  commonPrefixLength: number;
++  currentComparisonTextLength: number;
++  previousSourceLength?: number;
++  currentSourceLength?: number;
++}>): number {
++  const hasSourceLengths =
++    typeof params.previousSourceLength === 'number' &&
++    Number.isFinite(params.previousSourceLength) &&
++    typeof params.currentSourceLength === 'number' &&
++    Number.isFinite(params.currentSourceLength);
++  if (!hasSourceLengths) return params.commonPrefixLength;
++
++  // The rendered comparison text is NOT append-only while markdown streams:
++  // completing inline syntax (`**bo` rendered literally, then closing `**` renders
++  // bold `bo`) rewrites the rendered prefix, collapsing the common prefix far
++  // upstream of the tail. Without a bound, every formatting completion re-classified
++  // the whole downstream region as new and replayed the reveal animation each chunk
++  // (constant text flicker on large streaming markdown). The SOURCE markdown IS
++  // append-only during streaming, so genuinely new content is bounded by the appended
++  // source length (with slack for rendered expansion). A pure re-parse with no
++  // appended source reveals nothing new.
++  const appendedSourceLength = Math.max(
++    0,
++    (params.currentSourceLength as number) - (params.previousSourceLength as number)
++  );
++  if (appendedSourceLength === 0) return params.currentComparisonTextLength;
++  const revealWindow = appendedSourceLength * 2 + STREAMING_REVEAL_SOURCE_WINDOW_SLACK;
++  return Math.max(
++    params.commonPrefixLength,
++    params.currentComparisonTextLength - revealWindow
++  );
++}
++
 +export function updateStreamingRevealRanges(params: Readonly<{
 +  activeRanges: readonly StreamingRevealRange[];
 +  previousComparisonText: string;
 +  currentComparisonText: string;
 +  nowMs: number;
 +  ttlMs: number;
++  previousSourceLength?: number;
++  currentSourceLength?: number;
 +}>): readonly StreamingRevealRange[] {
 +  const retainedRanges = params.activeRanges.filter((range) =>
 +    range.expiresAtMs > params.nowMs &&
@@ -2021,15 +2133,21 @@ index 0000000..94d3d26
 +    params.previousComparisonText,
 +    params.currentComparisonText
 +  );
-+  if (commonPrefixLength >= params.currentComparisonText.length) {
++  const revealFloor = resolveStreamingRevealFloor({
++    commonPrefixLength,
++    currentComparisonTextLength: params.currentComparisonText.length,
++    previousSourceLength: params.previousSourceLength,
++    currentSourceLength: params.currentSourceLength,
++  });
++  if (revealFloor >= params.currentComparisonText.length) {
 +    return mergeRevealRanges(retainedRanges);
 +  }
 +
 +  return mergeRevealRanges([
 +    ...retainedRanges,
 +    ...readRevealWordRanges({
-+      text: params.currentComparisonText.slice(commonPrefixLength),
-+      startOffset: commonPrefixLength,
++      text: params.currentComparisonText.slice(revealFloor),
++      startOffset: revealFloor,
 +      expiresAtMs: params.nowMs + params.ttlMs,
 +    }),
 +  ]);
@@ -2039,24 +2157,31 @@ index 0000000..94d3d26
 +  return parentType ? !NON_REVEALED_PARENT_TYPES.has(parentType) : true;
 +}
 +
-+export function renderStreamingRevealText(params: Readonly<{
-+  capabilities: RenderCapabilities;
++export interface StreamingRevealTextPart {
 +  text: string;
-+  revealable: boolean;
++  animated: boolean;
 +  startOffset: number;
-+}>): ReactNode {
-+  const reveal = params.capabilities.streamingReveal;
-+  if (!reveal || !params.revealable) {
-+    return params.text;
-+  }
++}
 +
++/**
++ * SHARED word classifier for streaming text reveal — the single owner of the
++ * "which words of this text animate in" decision. Consumed by the enriched AST
++ * renderer below (range-driven) and by the host app's plain-text
++ * `StreamingTextReveal` (single appended-suffix range), so the two streaming
++ * surfaces cannot drift apart in word semantics.
++ */
++export function splitStreamingRevealTextParts(params: Readonly<{
++  text: string;
++  startOffset: number;
++  activeRanges: readonly StreamingRevealRange[];
++}>): StreamingRevealTextPart[] {
 +  let cursor = params.startOffset;
 +  let rangeIndex = 0;
-+  const activeRanges = reveal.activeRanges;
-+  const rendered = params.text
++  const activeRanges = params.activeRanges;
++  return params.text
 +    .split(/(\s+)/)
 +    .filter((part) => part.length > 0)
-+    .map((part, index) => {
++    .map((part) => {
 +      const start = cursor;
 +      const end = start + part.length;
 +      cursor = end;
@@ -2072,21 +2197,42 @@ index 0000000..94d3d26
 +        rangeIndex < activeRanges.length &&
 +        activeRanges[rangeIndex]!.start < end;
 +
-+      if (/^\s+$/.test(part) || !isActiveRevealRange) {
-+        return part;
-+      }
-+
-+      return createElement(
-+        'span',
-+        {
-+          key: `${start}:${index}`,
-+          'data-happier-enriched-markdown-reveal': 'text',
-+        },
-+        part
-+      );
++      return {
++        text: part,
++        animated: !/^\s+$/.test(part) && isActiveRevealRange,
++        startOffset: start,
++      };
 +    });
++}
 +
-+  return rendered;
++export function renderStreamingRevealText(params: Readonly<{
++  capabilities: RenderCapabilities;
++  text: string;
++  revealable: boolean;
++  startOffset: number;
++}>): ReactNode {
++  const reveal = params.capabilities.streamingReveal;
++  if (!reveal || !params.revealable) {
++    return params.text;
++  }
++
++  return splitStreamingRevealTextParts({
++    text: params.text,
++    startOffset: params.startOffset,
++    activeRanges: reveal.activeRanges,
++  }).map((part, index) => {
++    if (!part.animated) {
++      return part.text;
++    }
++    return createElement(
++      'span',
++      {
++        key: `${part.startOffset}:${index}`,
++        'data-happier-enriched-markdown-reveal': 'text',
++      },
++      part.text
++    );
++  });
 +}
 diff --git a/node_modules/react-native-enriched-markdown/src/web/styles.ts b/node_modules/react-native-enriched-markdown/src/web/styles.ts
 index 4d0ff8e..10b7315 100644
@@ -2095,7 +2241,7 @@ index 4d0ff8e..10b7315 100644
 @@ -106,6 +106,16 @@ function paragraphInBlockquoteStyle(
    return { ...baseBlock(style.paragraph), marginTop: 0, marginBottom: 0 };
  }
-
+ 
 +function paragraphInListItemStyle(style: MarkdownStyleInternal): CSSProperties {
 +  return { ...baseBlock(style.paragraph), marginTop: 0 };
 +}
@@ -2136,7 +2282,7 @@ index 3a297c5..95da4b2 100644
  } from '../types/events';
  import type { KaTeXInstance } from './katex';
 +import type { StreamingRevealState } from './streamingReveal';
-
+ 
  export type NodeType =
    | 'Document'
 @@ -62,6 +63,8 @@ export interface ASTNode {
@@ -2146,15 +2292,15 @@ index 3a297c5..95da4b2 100644
 +  /** Stamped by markStreamingRevealOffsets() for web streaming reveal. */
 +  streamingRevealStartOffset?: number;
  }
-
+ 
  export interface RendererCallbacks {
 @@ -72,6 +75,7 @@ export interface RendererCallbacks {
-
+ 
  export interface RenderCapabilities {
    katex: KaTeXInstance | null;
 +  streamingReveal?: StreamingRevealState | null;
  }
-
+ 
  export interface RendererProps {
 @@ -79,6 +83,9 @@ export interface RendererProps {
    style: MarkdownStyleInternal;

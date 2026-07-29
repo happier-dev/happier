@@ -14,7 +14,6 @@ import { SESSION_ACTION_RENAME_ID } from '@/components/sessions/actions/sessionA
 const sessionRenameSpy = vi.fn(async () => ({ success: true }));
 const modalPromptSpy = vi.fn(async () => 'Renamed Session');
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: (props: any) => React.createElement('Swipeable', props),
@@ -130,6 +129,7 @@ installSessionShellCommonModuleMocks({
                 linkedProviders: [],
                 connectedServices: [],
                 connectedServicesV2: [],
+                connectedServiceCredentialRevisionsV1: [],
             }),
             useSession: () => null,
             useSessionListRenderable: () => null,
@@ -286,8 +286,8 @@ describe('SessionItem context menu press suppression', () => {
                 sessionLogPath: '/tmp/happier/session.log',
                 runtimeDescriptorV1: {
                     v: 1,
-                    providerId: 'codex',
-                    provider: {
+                    agentId: 'codex',
+                    agent: {
                         backendMode: 'appServer',
                         providerSessionId: 'codex-session-1',
                     },

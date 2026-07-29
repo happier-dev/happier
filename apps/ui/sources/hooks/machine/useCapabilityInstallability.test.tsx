@@ -11,9 +11,9 @@ vi.mock('@/sync/ops', () => ({
 }));
 
 async function renderInstallability(params: Readonly<{
-  machineId: string;
+  machineId: string | null;
   serverId: string;
-  capabilityId: CapabilityId;
+  capabilityId: CapabilityId | null;
 }>): Promise<{
   unmount: () => Promise<void>;
 }> {
@@ -70,5 +70,13 @@ describe('useCapabilityInstallability', () => {
     await second.unmount();
 
     expect(machineCapabilitiesInvokeSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not probe when capability id is unavailable', async () => {
+    const hook = await renderInstallability({ machineId: 'm1', serverId: 'server-a', capabilityId: null });
+    await flushHookEffects();
+    await hook.unmount();
+
+    expect(machineCapabilitiesInvokeSpy).not.toHaveBeenCalled();
   });
 });

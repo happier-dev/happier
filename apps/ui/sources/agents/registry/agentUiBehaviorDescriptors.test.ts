@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
@@ -6,8 +8,576 @@ import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 
 import { makeSettings } from './registryUiBehavior.testHelpers';
 import { createAgentUiBehaviorFromDescriptor } from './agentUiBehaviorDescriptors';
+import { BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS } from './generatedBundledPluginEntries.uiBehaviorOverrides';
 
 describe('createAgentUiBehaviorFromDescriptor', () => {
+    it('materializes declarative context-window behavior without a provider adapter branch', () => {
+        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
+            contextWindow: {
+                defaultTokens: 200_000,
+                modelRules: [
+                    {
+                        idSuffix: '[1m]',
+                        descriptionIncludesAny: ['1 million', '1m context'],
+                        tokens: 1_000_000,
+                    },
+                ],
+                observedUsageBumpTokens: [200_000, 1_000_000],
+                trustObservedUsageBeyondKnown: true,
+            },
+        });
+
+        expect(diagnostics).toEqual([]);
+        expect(behavior.contextWindow?.getDefaultContextWindowTokens?.()).toBe(200_000);
+        expect(behavior.contextWindow?.getContextWindowTokensForModel?.({
+            modelId: 'claude-sonnet-4-6[1m]',
+        })).toBe(1_000_000);
+        expect(behavior.contextWindow?.getContextWindowTokensForModel?.({
+            modelId: 'claude-sonnet-4-6',
+            description: '1 million token context',
+        })).toBe(1_000_000);
+        expect(behavior.contextWindow?.bumpContextWindowTokensForObservedUsage?.({
+            contextWindowTokens: 200_000,
+            observedUsedTokens: 733_000,
+        })).toBe(1_000_000);
+        expect(behavior.contextWindow?.bumpContextWindowTokensForObservedUsage?.({
+            contextWindowTokens: 1_000_000,
+            observedUsedTokens: 1_200_000,
+        })).toBe(1_200_000);
+    });
+
+    it('keeps provider-specific context-window code out of generic descriptor adapters', () => {
+        const source = readFileSync(new URL('./agentUiBehaviorDescriptorAdapters.ts', import.meta.url), 'utf8');
+
+        expect(source).not.toContain('providers/claude/contextWindowBehavior');
+        expect(source).not.toContain('claude.uiBehavior.v1');
+        expect(source).not.toContain('claude.sessionHandoff.v1');
+    });
+
+    it('materializes descriptor-owned session handoff metadata cleanup without provider-id branching', () => {
+        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
+            externalSessions: {
+                sessionHandoff: {
+                    clearMetadataKeys: [
+                        'providerTranscriptPath',
+                        'providerCheckpointId',
+                    ],
+                },
+            },
+        });
+
+        expect(diagnostics).toEqual([]);
+        expect(behavior.sessionHandoff?.buildProviderPatch?.({
+            agentId: 'codex',
+            metadata: {},
+            targetRemoteSessionId: 'remote-session-1',
+            targetDirectSource: { kind: 'codexHome', home: 'user' },
+        })).toEqual({
+            clearMetadataKeys: [
+                'providerTranscriptPath',
+                'providerCheckpointId',
+            ],
+        });
+    });
+
+    it('materializes Codex generated no-execute behavior facts without a host Codex adapter', () => {
+        const generated = BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS.codex?.descriptor;
+        expect(generated).toMatchObject({
+            guidance: { includeInSessionGettingStartedCliExamples: true },
+            mcpServers: { supportsDetectedConfigScan: true },
+            externalSessions: {
+                supportsBackgroundFollow: true,
+                browse: {
+                    order: 10,
+                    sourceOptions: [
+                        {
+                            key: 'codex:user',
+                            labelKey: 'externalSessions.browseSourceCodexUserHome',
+                            source: { kind: 'codexHome', home: 'user' },
+                        },
+                    ],
+                    connectedServiceProfileSources: [
+                        {
+                            serviceId: 'openai-codex',
+                            keyPrefix: 'codex:connected-service',
+                            detailSettingsKey: 'connectedServicesProfileLabelByKey',
+                            source: { kind: 'codexHome', home: 'connectedService' },
+                        },
+                    ],
+                    linkEnsureRequestExtras: {
+                        runtimeDescriptorFromCandidate: {
+                            providerId: 'codex',
+                            legacyModeOutputKey: 'codexBackendMode',
+                        },
+                    },
+                },
+            },
+            permissions: {
+                footer: {
+                    usePermissionUpdates: false,
+                    forceReadOnlyAfterStop: false,
+                    supportsExecPolicyAmendment: true,
+                    stopHandling: 'denyOnly',
+                },
+            },
+        });
+
+        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor(generated);
+
+        expect(diagnostics).toEqual([]);
+        expect(behavior.guidance?.includeInSessionGettingStartedCliExamples).toBe(true);
+        expect(behavior.mcpServers?.supportsDetectedConfigScan).toBe(true);
+        expect(behavior.externalSessions?.supportsBackgroundFollow).toBe(true);
+        expect(behavior.externalSessions?.browse?.order).toBe(10);
+        expect(behavior.externalSessions?.browse?.getSourceOptions?.({
+            agentId: 'codex',
+            profile: {
+                connectedServicesV2: [{
+                    serviceId: 'openai-codex',
+                    profiles: [
+                        {
+                            profileId: 'work',
+                            status: 'connected',
+                            kind: null,
+                            providerEmail: null,
+                            providerAccountId: null,
+                            expiresAt: null,
+                            lastUsedAt: null,
+                            health: null,
+                        },
+                    ],
+                    groups: [],
+                }],
+            },
+            settings: makeSettings({
+                connectedServicesProfileLabelByKey: {
+                    'openai-codex/work': 'Work Profile',
+                },
+            }),
+        })).toEqual([
+            {
+                key: 'codex:user',
+                label: expect.any(String),
+                source: { kind: 'codexHome', home: 'user' },
+            },
+            {
+                key: 'codex:connected-service:openai-codex:work',
+                label: expect.any(String),
+                detail: 'Work Profile',
+                source: {
+                    kind: 'codexHome',
+                    home: 'connectedService',
+                    connectedServiceId: 'openai-codex',
+                    connectedServiceProfileId: 'work',
+                },
+            },
+        ]);
+        expect(behavior.externalSessions?.browse?.buildLinkEnsureRequestExtras?.({
+            agentId: 'codex',
+            source: { kind: 'codexHome', home: 'user' },
+            candidate: {
+                details: {
+                    codexBackendMode: 'appServer',
+                    agentRuntimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        provider: {
+                            backendMode: 'appServer',
+                            providerSessionId: 'thread-1',
+                        },
+                    },
+                    source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
+                },
+            },
+        })).toEqual({
+            codexBackendMode: 'appServer',
+            source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: {
+                    backendMode: 'appServer',
+                    providerSessionId: 'thread-1',
+                    home: 'user',
+                    homePath: '/tmp/custom-home',
+                    agentExtra: {
+                        owner: 'codex',
+                        schemaId: 'codex.agentRuntimeDescriptorExtra',
+                        v: 1,
+                        runtimeHandle: {
+                            backendMode: 'appServer',
+                            providerSessionId: 'thread-1',
+                            home: 'user',
+                            homePath: '/tmp/custom-home',
+                        },
+                    },
+                },
+            },
+        });
+        expect(behavior.permissions?.footer).toMatchObject({
+            usePermissionUpdates: false,
+            forceReadOnlyAfterStop: false,
+            supportsExecPolicyAmendment: true,
+            stopHandling: 'denyOnly',
+        });
+        expect(behavior.resume?.experimentSwitches?.[0]?.id).toBe('resumeAcp');
+        expect(behavior.resume?.experimentSwitches?.[0]?.getValue?.(
+            makeSettings({ codexBackendMode: 'acp' }),
+        )).toBe(true);
+        expect(behavior.resume?.experimentSwitches?.[0]?.getValue?.(
+            makeSettings({ codexBackendMode: 'appServer' as any }),
+        )).toBe(false);
+        expect(behavior.newSession?.getRelevantInstallableDepKeys?.({
+            agentId: 'codex',
+            settings: makeSettings({ codexBackendMode: 'acp' }),
+            experiments: { enabled: true, switches: {} },
+            resumeSessionId: '',
+        })).toEqual(['codex-acp']);
+        expect(behavior.newSession?.getRelevantInstallableDepKeys?.({
+            agentId: 'codex',
+            settings: makeSettings({ experimentalCodexAcp: true }),
+            experiments: { enabled: true, switches: {} },
+            resumeSessionId: '',
+        })).toEqual(['codex-acp']);
+        expect(behavior.newSession?.getRelevantInstallableDepKeys?.({
+            agentId: 'codex',
+            settings: makeSettings({ codexBackendMode: 'appServer' as any }),
+            experiments: { enabled: true, switches: {} },
+            resumeSessionId: '',
+        })).toEqual([]);
+        expect(behavior.newSession?.getRelevantInstallableDepKeys?.({
+            agentId: 'codex',
+            settings: makeSettings({ codexBackendMode: 'acp' }),
+            experiments: { enabled: false, switches: {} },
+            resumeSessionId: '',
+        })).toEqual([]);
+        expect(behavior.payload?.buildSpawnSessionExtras?.({
+            agentId: 'codex',
+            settings: makeSettings({ codexBackendMode: 'mcp' }),
+            experiments: { enabled: true, switches: {} },
+            resumeSessionId: '',
+        })).toEqual({ codexBackendMode: 'appServer' });
+        expect(behavior.payload?.buildResumeSessionExtras?.({
+            agentId: 'codex',
+            settings: makeSettings({ codexBackendMode: 'acp' }),
+            experiments: { enabled: true, switches: {} },
+            session: {
+                metadata: {
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        provider: {
+                            backendMode: 'appServer',
+                        },
+                    },
+                },
+            } as any,
+        })).toEqual({ codexBackendMode: 'appServer' });
+        expect(behavior.workState?.supportsEditableGoals?.({
+            agentId: 'codex',
+            session: {
+                active: false,
+                metadata: {
+                    agentRuntimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        provider: { backendMode: 'appServer' },
+                    },
+                },
+            } as any,
+        })).toBe(true);
+        expect(behavior.workState?.supportsEditableGoals?.({
+            agentId: 'codex',
+            session: {
+                active: false,
+                metadata: {
+                    sessionWorkStateV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        items: [{ kind: 'goal' }],
+                    },
+                },
+            } as any,
+        })).toBe(true);
+    });
+
+    it('materializes capability-driven editable goals (Claude) gated on goalCapabilities.canEdit', () => {
+        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
+            descriptorId: 'claude.uiBehavior.v1',
+            workState: {
+                editableGoals: {
+                    providerId: 'claude',
+                    capabilityDriven: true,
+                    persistedGoalSnapshot: {
+                        path: ['sessionWorkStateV1'],
+                        itemKind: 'goal',
+                        providerFields: ['agentId', 'backendId'],
+                    },
+                },
+            },
+        });
+
+        expect(diagnostics).toEqual([]);
+
+        // No goal item → not editable.
+        expect(behavior.workState?.supportsEditableGoals?.({
+            agentId: 'claude',
+            session: { active: true, metadata: {} } as any,
+        })).toBe(false);
+
+        // Goal item WITHOUT canEdit capability → not editable (fail-closed).
+        expect(behavior.workState?.supportsEditableGoals?.({
+            agentId: 'claude',
+            session: {
+                active: true,
+                metadata: { sessionWorkStateV1: { v: 1, agentId: 'claude', items: [{ kind: 'goal' }] } },
+            } as any,
+        })).toBe(false);
+
+        // Goal item WITH canEdit capability → editable (works detached too, since the capability is
+        // only published alongside an observed goal).
+        const withCapability = {
+            metadata: { sessionWorkStateV1: { v: 1, agentId: 'claude', items: [{ kind: 'goal', goalCapabilities: { canEdit: true, canClear: true } }] } },
+        };
+        expect(behavior.workState?.supportsEditableGoals?.({ agentId: 'claude', session: { active: true, ...withCapability } as any })).toBe(true);
+        expect(behavior.workState?.supportsEditableGoals?.({ agentId: 'claude', session: { active: false, ...withCapability } as any })).toBe(true);
+
+        // Wrong provider id → not editable.
+        expect(behavior.workState?.supportsEditableGoals?.({ agentId: 'codex', session: { active: true, ...withCapability } as any })).toBe(false);
+    });
+
+    it('materializes session-level /goal capability for an ACTIVE Claude session with no goal item (QA-CHIP-1)', () => {
+        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
+            descriptorId: 'claude.uiBehavior.v1',
+            workState: {
+                editableGoals: {
+                    providerId: 'claude',
+                    capabilityDriven: true,
+                    sessionCapability: {
+                        path: ['slashCommands'],
+                        includesValue: 'goal',
+                    },
+                    persistedGoalSnapshot: {
+                        path: ['sessionWorkStateV1'],
+                        itemKind: 'goal',
+                        providerFields: ['agentId', 'backendId'],
+                    },
+                },
+            },
+        });
+        expect(diagnostics).toEqual([]);
+
+        // ACTIVE session whose slash_commands include `goal` → editable BEFORE any goal item exists
+        // (chip is the first-goal entry point; resolves the chicken-and-egg).
+        expect(behavior.workState?.supportsEditableGoals?.({
+            agentId: 'claude',
+            session: { active: true, metadata: { slashCommands: ['help', 'compact', 'goal'] } } as any,
+        })).toBe(true);
+
+        // D2: the slash-prefixed `/goal` shape must ALSO enable the chip (the runtime list is
+        // inconsistent about the leading slash; the shared normalizer handles both shapes).
+        expect(behavior.workState?.supportsEditableGoals?.({
+            agentId: 'claude',
+            session: { active: true, metadata: { slashCommands: ['help', '/goal'] } } as any,
+        })).toBe(true);
+
+        // ACTIVE session whose slash_commands LACK `goal` → not editable (fail-closed).
+        expect(behavior.workState?.supportsEditableGoals?.({
+            agentId: 'claude',
+            session: { active: true, metadata: { slashCommands: ['help', 'compact'] } } as any,
+        })).toBe(false);
+
+        // INACTIVE session with the capability but no goal item → not editable (the `/goal` command is
+        // injected live; inactive sessions seed through the goal-item path instead).
+        expect(behavior.workState?.supportsEditableGoals?.({
+            agentId: 'claude',
+            session: { active: false, metadata: { slashCommands: ['help', 'goal'] } } as any,
+        })).toBe(false);
+
+        // INACTIVE (detached) session carrying a prior goal item with canEdit → still editable via the
+        // goal-item fallback (resumable), even without slash_commands re-published.
+        expect(behavior.workState?.supportsEditableGoals?.({
+            agentId: 'claude',
+            session: {
+                active: false,
+                metadata: { sessionWorkStateV1: { v: 1, agentId: 'claude', items: [{ kind: 'goal', goalCapabilities: { canEdit: true, canClear: true } }] } },
+            } as any,
+        })).toBe(true);
+    });
+
+    it('supplies a Claude goal-action capability profile (edit/clear only) when goal-editable (QA-CHIP-2)', () => {
+        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
+            descriptorId: 'claude.uiBehavior.v1',
+            workState: {
+                editableGoals: {
+                    providerId: 'claude',
+                    capabilityDriven: true,
+                    sessionCapability: { path: ['slashCommands'], includesValue: 'goal' },
+                    persistedGoalSnapshot: {
+                        path: ['sessionWorkStateV1'],
+                        itemKind: 'goal',
+                        providerFields: ['agentId', 'backendId'],
+                    },
+                },
+            },
+        });
+        expect(diagnostics).toEqual([]);
+
+        // ACTIVE goal-editable Claude session (slash_commands include goal, no goal item) → restricted
+        // profile (edit + clear, no stop/budget), so the Set-goal form hides the Codex budget editor.
+        expect(behavior.workState?.resolveGoalActionCapabilityProfile?.({
+            agentId: 'claude',
+            session: { active: true, metadata: { slashCommands: ['help', 'goal'] } } as any,
+        })).toEqual({ canEdit: true, canStop: false, canClear: true, canConfigureBudget: false });
+
+        // NOT goal-editable (no /goal capability, no goal item) → null (no profile; the gate keeps the
+        // chip hidden, so the profile is irrelevant; null = full legacy surface for safety).
+        expect(behavior.workState?.resolveGoalActionCapabilityProfile?.({
+            agentId: 'claude',
+            session: { active: true, metadata: { slashCommands: ['help'] } } as any,
+        })).toBeNull();
+
+        // Wrong provider id → null.
+        expect(behavior.workState?.resolveGoalActionCapabilityProfile?.({
+            agentId: 'codex',
+            session: { active: true, metadata: { slashCommands: ['help', 'goal'] } } as any,
+        })).toBeNull();
+    });
+
+    it('ignores foreign runtime descriptor details when building Codex external-session link extras', () => {
+        const generated = BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS.codex?.descriptor;
+        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor(generated);
+        const buildExtras = behavior.externalSessions?.browse?.buildLinkEnsureRequestExtras;
+
+        expect(diagnostics).toEqual([]);
+        expect(buildExtras?.({
+            agentId: 'codex',
+            source: { kind: 'codexHome', home: 'user' },
+            candidate: {
+                details: {
+                    source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
+                    agentRuntimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'claude',
+                        provider: {
+                            backendMode: 'appServer',
+                            providerSessionId: 'foreign-session',
+                        },
+                    },
+                },
+            },
+        })).toEqual({
+            source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
+        });
+
+        expect(buildExtras?.({
+            agentId: 'codex',
+            source: { kind: 'codexHome', home: 'user' },
+            candidate: {
+                details: {
+                    codexBackendMode: 'appServer',
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'claude',
+                        provider: {
+                            backendMode: 'appServer',
+                            providerSessionId: 'foreign-session',
+                        },
+                    },
+                    source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
+                },
+            },
+        })).toEqual({
+            codexBackendMode: 'appServer',
+            source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: {
+                    backendMode: 'appServer',
+                    home: 'user',
+                    homePath: '/tmp/custom-home',
+                    agentExtra: {
+                        owner: 'codex',
+                        schemaId: 'codex.agentRuntimeDescriptorExtra',
+                        v: 1,
+                        runtimeHandle: {
+                            backendMode: 'appServer',
+                            home: 'user',
+                            homePath: '/tmp/custom-home',
+                        },
+                    },
+                },
+            },
+        });
+    });
+
+    it('materializes OhMyPi generated browse behavior from descriptor data', () => {
+        const generated = BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS.ohMyPi?.descriptor;
+        expect(generated).toMatchObject({
+            mcpServers: { supportsDetectedConfigScan: true },
+            externalSessions: {
+                supportsBackgroundFollow: true,
+                browse: {
+                    order: 25,
+                    sourceOptions: [
+                        {
+                            key: 'ohMyPi:default-agent-dir',
+                            labelKey: 'agentInput.agent.ohMyPi',
+                            detail: '~/.omp/agent',
+                            source: { kind: 'ohMyPiAgentDir' },
+                        },
+                    ],
+                    linkEnsureRequestExtras: {
+                        sourceFromCandidate: {
+                            sourceKind: 'ohMyPiAgentDir',
+                            optionalFields: ['agentDir'],
+                        },
+                    },
+                },
+            },
+        });
+
+        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor(generated);
+
+        expect(diagnostics).toEqual([]);
+        expect(behavior.mcpServers?.supportsDetectedConfigScan).toBe(true);
+        expect(behavior.externalSessions?.supportsBackgroundFollow).toBe(true);
+        expect(behavior.externalSessions?.browse?.order).toBe(25);
+        expect(behavior.externalSessions?.browse?.getSourceOptions?.({
+            agentId: 'ohMyPi',
+            profile: null,
+            settings: makeSettings(),
+        })).toEqual([
+            {
+                key: 'ohMyPi:default-agent-dir',
+                label: expect.any(String),
+                detail: '~/.omp/agent',
+                source: { kind: 'ohMyPiAgentDir' },
+            },
+        ]);
+        expect(behavior.externalSessions?.browse?.buildLinkEnsureRequestExtras?.({
+            agentId: 'ohMyPi',
+            source: { kind: 'ohMyPiAgentDir' },
+            candidate: {
+                details: {
+                    source: { kind: 'ohMyPiAgentDir', agentDir: '/tmp/omp-agent' },
+                },
+            },
+        })).toEqual({
+            source: { kind: 'ohMyPiAgentDir', agentDir: '/tmp/omp-agent' },
+        });
+        expect(behavior.externalSessions?.browse?.buildLinkEnsureRequestExtras?.({
+            agentId: 'ohMyPi',
+            source: { kind: 'ohMyPiAgentDir', agentDir: '/tmp/other-agent' } as any,
+            candidate: {
+                details: {
+                    source: { kind: 'ohMyPiAgentDir', agentDir: '/tmp/omp-agent' },
+                },
+            },
+        })).toEqual({});
+    });
+
     it('builds generic UI behavior from descriptor data', () => {
         const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
             kind: 'plugin.ui.v1',
@@ -271,12 +841,19 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                         {
                             key: 'opencode:default',
                             labelKey: 'externalSessions.browseSourceOpenCodeDefault',
+                            detail: 'http://127.0.0.1:4096',
                             source: { kind: 'opencodeServer' },
                         },
                     ],
                     compatibleSource: {
                         sourceKind: 'opencodeServer',
                         optionalFields: ['baseUrl', 'directory'],
+                    },
+                    linkEnsureRequestExtras: {
+                        sourceFromCandidate: {
+                            sourceKind: 'opencodeServer',
+                            optionalFields: ['baseUrl', 'directory'],
+                        },
                     },
                 },
             },
@@ -340,6 +917,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             {
                 key: 'opencode:default',
                 label: expect.any(String),
+                detail: 'http://127.0.0.1:4096',
                 source: { kind: 'opencodeServer' },
             },
         ]);
@@ -349,6 +927,26 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             selectedSource: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' } as any,
             candidateSource: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/', directory: '/repo' } as any,
         })).toEqual({ kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/', directory: '/repo' });
+        expect(behavior.externalSessions?.browse?.buildLinkEnsureRequestExtras?.({
+            agentId: 'opencode' as any,
+            source: { kind: 'opencodeServer' } as any,
+            candidate: {
+                details: {
+                    source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/', directory: '/repo' },
+                },
+            },
+        })).toEqual({
+            source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/', directory: '/repo' },
+        });
+        expect(behavior.externalSessions?.browse?.buildLinkEnsureRequestExtras?.({
+            agentId: 'opencode' as any,
+            source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:5000/' } as any,
+            candidate: {
+                details: {
+                    source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },
+                },
+            },
+        })).toEqual({});
         expect(behavior.payload?.buildSpawnEnvironmentVariables?.({
             agentId: 'opencode' as any,
             settings: makeSettings({
@@ -373,7 +971,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                 metadata: {
                     runtimeDescriptorV1: {
                         v: 1,
-                        providerId: 'opencode',
+                        agentId: 'opencode',
                         provider: {
                             backendMode: 'server',
                             serverBaseUrl: 'http://127.0.0.1:4097/path',
@@ -421,7 +1019,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                     flavor: 'claude',
                     sessionConfigOptionsV1: {
                         v: 1,
-                        provider: 'claude',
+                        agentId: 'claude',
                         updatedAt: 10,
                         configOptions: [
                             {
@@ -459,12 +1057,43 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                     flavor: 'claude',
                     sessionModelsV1: {
                         v: 1,
-                        provider: 'claude',
+                        agentId: 'claude',
                         updatedAt: 10,
                         currentModelId: 'sonnet',
                         availableModels: [],
                     },
                 },
+            } as any,
+            metaOverrides: {},
+        })).toBe('provider_config_change_refused');
+        const sharedPrivateLookalike = {
+            flavor: 'claude',
+            sessionConfigOptionOverridesV1: {
+                v: 1,
+                updatedAt: 20,
+                overrides: {
+                    reasoning_effort: { updatedAt: 20, value: 'high' },
+                },
+            },
+        };
+        const layoutV1Session = {
+            metadataLayoutVersion: 1,
+            metadata: {
+                v: 1,
+                ...sharedPrivateLookalike,
+            },
+            ownerMetadataView: { flavor: 'claude' },
+        };
+        expect(behavior.sessionComposer?.classifyNonSteerablePayload?.({
+            agentId: 'claude',
+            session: layoutV1Session as any,
+            metaOverrides: {},
+        })).toBeNull();
+        expect(behavior.sessionComposer?.classifyNonSteerablePayload?.({
+            agentId: 'claude',
+            session: {
+                ...layoutV1Session,
+                ownerMetadataView: sharedPrivateLookalike,
             } as any,
             metaOverrides: {},
         })).toBe('provider_config_change_refused');

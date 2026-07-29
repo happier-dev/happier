@@ -4,26 +4,21 @@ const { state } = vi.hoisted(() => {
   const state: any = {
     settings: {
       voice: {
-        adapters: {
+        providers: {
           local_conversation: {
-            agent: {
+            schemaVersion: 1,
+            config: { agent: {
               transcript: {
-                persistenceMode: ' persistent ',
+                persistenceMode: 'persistent',
                 epoch: 2,
               },
-            },
+            } },
           },
         },
       },
     },
     applySettingsLocal: vi.fn((patch: any) => {
-      const nextTranscript = patch?.voice?.adapters?.local_conversation?.agent?.transcript;
-      if (nextTranscript && typeof nextTranscript === 'object') {
-        state.settings.voice.adapters.local_conversation.agent.transcript = {
-          ...(state.settings.voice.adapters.local_conversation.agent.transcript ?? {}),
-          ...nextTranscript,
-        };
-      }
+      if (patch?.voice) state.settings.voice = patch.voice;
     }),
   };
   return { state };
@@ -41,18 +36,22 @@ vi.mock('@/sync/domains/state/storage', async () => {
 describe('invalidatePersistentVoiceTranscript', () => {
   beforeEach(() => {
     vi.resetModules();
-    state.settings.voice.adapters.local_conversation.agent.transcript = {
-      persistenceMode: ' persistent ',
-      epoch: 2,
+    state.settings.voice = {
+      providers: {
+        local_conversation: {
+          schemaVersion: 1,
+          config: { agent: { transcript: { persistenceMode: 'persistent', epoch: 2 } } },
+        },
+      },
     };
     state.applySettingsLocal.mockReset();
   });
 
-  it('increments the transcript epoch when the persistence mode is padded', async () => {
+  it('increments the transcript epoch through the canonical provider envelope', async () => {
     const { invalidatePersistentVoiceTranscript } = await import('./invalidatePersistentVoiceTranscript');
 
     expect(invalidatePersistentVoiceTranscript()).toBe(3);
     expect(state.applySettingsLocal).toHaveBeenCalled();
-    expect(state.settings.voice.adapters.local_conversation.agent.transcript.epoch).toBe(3);
+    expect(state.settings.voice.providers.local_conversation.config.agent.transcript.epoch).toBe(3);
   });
 });

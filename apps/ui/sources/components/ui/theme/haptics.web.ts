@@ -1,7 +1,7 @@
-export function hapticsError() {
+export async function hapticsError(): Promise<void> {
     // No implementation
 }
 
-export function hapticsLight() {
+export async function hapticsLight(): Promise<void> {
     // No implementation
 }

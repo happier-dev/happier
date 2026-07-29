@@ -5,6 +5,7 @@ import type { AgentId } from '@happier-dev/agents';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import type {
     EndpointReachabilityRemediation,
     EndpointReachabilityRemediationAction,
@@ -20,22 +21,29 @@ import { SetupThisComputerWizardStep } from '@/components/onboarding/steps/Setup
 import {
     buildCliInstallAndRunCommandForCurrentApp,
     buildCliInstallAndRunPowershellCommandForCurrentApp,
-    buildHappierSetupCommand,
 } from '@/components/onboarding/commands/wizardCliCommands';
-import { WebDesktopBackgroundServiceHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopBackgroundServiceHandoffContent';
+import { MachineArrivalCard } from '@/components/onboarding/detection/MachineArrivalCard';
 import { WebDesktopDownloadCta } from '@/components/onboarding/steps/webDesktop/WebDesktopDownloadCta';
 import { WebDesktopRelayHostHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopRelayHostHandoffContent';
 import { WebDesktopRemoteSshHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopRemoteSshHandoffContent';
-import { ProvidersLogoMultiSelect } from '@/components/onboarding/steps/ProvidersLogoMultiSelect';
-import { WizardProviderSetupStep } from '@/components/onboarding/steps/WizardProviderSetupStep';
+import { AgentsLogoMultiSelect } from '@/components/onboarding/steps/AgentsLogoMultiSelect';
+import { WizardAgentSetupStep } from '@/components/onboarding/steps/WizardAgentSetupStep';
 import { RelayHostLocalChecklistStep } from '@/components/onboarding/checklists/relayHostLocal/RelayHostLocalChecklistStep';
 import { RemoteSshChecklistStep } from '@/components/onboarding/checklists/remoteSsh/RemoteSshChecklistStep';
+import type { ProviderReadinessPill } from '@/components/onboarding/detection/useProviderReadiness';
 
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { ConfirmSwitchRelayStep, type RelaySwitchDecision } from '../steps/ConfirmSwitchRelayStep';
 import type { WizardBackOverride, WizardPrimaryOverride, WizardSkipOverride } from '../hooks/useWizardChromeOverrides';
 import type { WizardStepId } from '../state/wizardTypes';
-import type { RemoteRelayRuntimeCompletion, RemoteSetupIntent, SetupWizardSurfaceStyles } from './SetupWizardSurface';
+import type { RemoteRelayRuntimeCompletion, RemoteSetupIntent, SetupWizardSurfaceStyles } from './useSetupWizardController';
+
+// D22 (r2 user decision): provider readiness merges INTO the selection grid — detected
+// providers render locked-selected with a green dot in `AgentsLogoMultiSelect`; there is
+// no standalone readiness row and never a raw "checking" text badge.
+function resolveReadyProviderIds(pills: readonly ProviderReadinessPill[]): AgentId[] {
+    return pills.filter((pill) => pill.status === 'ready').map((pill) => pill.providerId);
+}
 
 export function renderSetupStepBody(params: Readonly<{
     theme: Readonly<{ colors: Readonly<{ text: Readonly<{ secondary: string }> }> }>;
@@ -45,22 +53,29 @@ export function renderSetupStepBody(params: Readonly<{
     platform: 'desktop' | 'web' | 'native';
     isDesktopShell: boolean;
     remoteSetupIntent: RemoteSetupIntent;
+    allowNativeSshMachineSetup: boolean;
     webRemoteSshDraft: SshCredentialsDraft;
     onWebRemoteSshDraftChange: (next: SshCredentialsDraft) => void;
     activeServerUrl: string | null;
     activeLocalRelayUrl: string | null;
     relayUrl: string | null;
+    webRelayHostUrlDraft: string;
+    webRelayHostInvalidUrl: boolean;
     confirmRelayUrl: string | null;
     serverProfileId: string | null;
     relayAccessTarget: RelayAccessTaskTarget;
     reachabilityRemediation: EndpointReachabilityRemediation | null;
+    webRelayHostReachabilityRemediation: EndpointReachabilityRemediation | null;
     reachabilityRemediationTaskSnapshot: SystemTaskRunState | null;
     reachabilityRemediationError: string | null;
     onReachabilityRemediationAction: (actionId: EndpointReachabilityRemediationAction['id']) => void | Promise<void>;
+    machineArrivalSince: number | null;
+    onMachineArrived: (machine: Machine) => void;
     providerMachineId: string | null;
     providerSelectionProviderIds: readonly AgentId[];
-    selectedProviderIds: readonly AgentId[];
-    onToggleProviderId: (providerId: AgentId) => void;
+    selectedAgentIds: readonly AgentId[];
+    providerReadiness: readonly ProviderReadinessPill[];
+    onToggleAgentId: (providerId: AgentId) => void;
     onLocalSetupSucceeded: (machineId: string | null) => void;
     onLocalSetupNeedsAuth: () => void;
     relaySwitchDecision: RelaySwitchDecision;
@@ -77,16 +92,25 @@ export function renderSetupStepBody(params: Readonly<{
     onWizardBackChange?: (state: WizardBackOverride | null) => void;
     onWizardSkipChange?: (state: WizardSkipOverride | null) => void;
     onRequestAdvance?: () => void;
+    connectedMachineLabel: string | null;
+    existingSessionCount: number;
 }>): React.ReactNode {
     const requiresDesktop = params.isDesktopShell !== true;
     switch (params.stepId) {
         case 'setup_this_computer':
             if (requiresDesktop) {
                 return (
-                    <WebDesktopBackgroundServiceHandoffContent
-                        testID="setupWizard-web-machine-setup-handoff"
-                        relayUrl={params.activeServerUrl ?? ''}
-                    />
+                    <View testID="setupWizard-machine-arrival-stack" style={params.styles.webRelayHostHandoff}>
+                        <MachineArrivalCard
+                            mode="live"
+                            testID="setupWizard-machine-arrival"
+                            serverUrl={params.activeServerUrl ?? ''}
+                            since={params.machineArrivalSince}
+                            onArrived={params.onMachineArrived}
+                        />
+                        <WebDesktopDownloadCta testIDPrefix="setupWizard-machine-arrival-desktop-app" />
+                        <Text style={params.styles.urlHint}>{t('setupOnboarding.setupThisComputerConnectHonesty')}</Text>
+                    </View>
                 );
             }
             return (
@@ -108,11 +132,25 @@ export function renderSetupStepBody(params: Readonly<{
                                 placeholderTextColor={params.theme.colors.text.secondary}
                                 autoCapitalize="none"
                                 autoCorrect={false}
+                                value={params.webRelayHostUrlDraft}
                                 onChangeText={params.onRelayUrlPasteChange}
                                 style={params.styles.urlInput}
                             />
                             <Text style={params.styles.urlHint}>{t('setupOnboarding.webDesktopOnlyRelayStatusSubtitle')}</Text>
+                            {params.webRelayHostInvalidUrl ? (
+                                <Text style={params.styles.urlHint}>{t('setupOnboarding.webRelayHostInvalidUrl')}</Text>
+                            ) : null}
                         </View>
+                        {params.webRelayHostReachabilityRemediation ? (
+                            <ServerReachabilityRemediationCard
+                                remediation={params.webRelayHostReachabilityRemediation}
+                                taskSnapshot={params.reachabilityRemediationTaskSnapshot}
+                                onAction={params.onReachabilityRemediationAction}
+                            />
+                        ) : null}
+                        {params.reachabilityRemediationError ? (
+                            <Text style={params.styles.urlHint}>{params.reachabilityRemediationError}</Text>
+                        ) : null}
                     </View>
                 );
             }
@@ -173,7 +211,14 @@ export function renderSetupStepBody(params: Readonly<{
                 />
             );
         case 'remote_ssh_setup':
-            if (requiresDesktop) {
+            if (
+                requiresDesktop
+                && !(
+                    params.platform === 'native'
+                    && params.remoteSetupIntent === 'remoteMachine'
+                    && params.allowNativeSshMachineSetup
+                )
+            ) {
                 return (
                     <WebDesktopRemoteSshHandoffContent
                         testID="setupWizard-web-remote-ssh"
@@ -227,8 +272,12 @@ export function renderSetupStepBody(params: Readonly<{
         }
         case 'providers_optional':
             if (requiresDesktop) {
-                const providerArgv = params.selectedProviderIds.length > 0
-                    ? ['--providers', params.selectedProviderIds.join(',')]
+                // Detected providers are locked-selected in the grid, so the effective
+                // selection (and the generated setup command) always includes them.
+                const readyProviderIds = resolveReadyProviderIds(params.providerReadiness);
+                const effectiveSelectedAgentIds = [...new Set([...params.selectedAgentIds, ...readyProviderIds])];
+                const providerArgv = effectiveSelectedAgentIds.length > 0
+                    ? ['--providers', effectiveSelectedAgentIds.join(',')]
                     : [];
                 const installAndProvidersSetupCommand = buildCliInstallAndRunCommandForCurrentApp({
                     action: 'providers-setup',
@@ -240,18 +289,19 @@ export function renderSetupStepBody(params: Readonly<{
                 });
                 return (
                     <View testID="setupWizard-web-providers-handoff" style={params.styles.webRelayHostHandoff}>
-                        <ProvidersLogoMultiSelect
+                        <AgentsLogoMultiSelect
                             testID="setupWizard-web-providers-select"
-                            providerIds={params.providerSelectionProviderIds}
-                            selectedProviderIds={params.selectedProviderIds}
-                            onToggleProvider={params.onToggleProviderId}
+                            agentIds={params.providerSelectionProviderIds}
+                            selectedAgentIds={params.selectedAgentIds}
+                            readyAgentIds={readyProviderIds}
+                            onToggleAgent={params.onToggleAgentId}
                         />
                         <WizardTerminalHandoff
                             testID="setupWizard-terminal-handoff"
                             steps={[
                                 {
-                                    title: tLoose('settingsProviders.setup.startTitle'),
-                                    subtitle: tLoose('settingsProviders.setup.startDescription'),
+                                    title: tLoose('settingsAgents.setup.startTitle'),
+                                    subtitle: tLoose('settingsAgents.setup.startDescription'),
                                     code: installAndProvidersSetupCommand,
                                     windowsCode: installAndProvidersSetupWindowsCommand,
                                     windowsLanguage: 'powershell',
@@ -264,14 +314,30 @@ export function renderSetupStepBody(params: Readonly<{
                 );
             }
             return (
-                <WizardProviderSetupStep
-                    machineId={params.providerMachineId}
-                    onWizardPrimaryChange={params.onWizardPrimaryChange}
-                    onRequestAdvance={params.onRequestAdvance}
-                />
+                <View style={params.styles.webRelayHostHandoff}>
+                    <WizardAgentSetupStep
+                        machineId={params.providerMachineId}
+                        onWizardPrimaryChange={params.onWizardPrimaryChange}
+                        onRequestAdvance={params.onRequestAdvance}
+                    />
+                </View>
             );
         case 'done':
-            return <Text>{t('setupOnboarding.nextActionReady')}</Text>;
+            return (
+                <View style={params.styles.webRelayHostHandoff}>
+                    <Text style={params.styles.doneLine}>{t('setupOnboarding.doneFirstSessionLine')}</Text>
+                    <Text testID="setupWizard-done-machine-summary" style={params.styles.doneSummary}>
+                        {t('setupOnboarding.doneConnectedMachineSummary', {
+                            machine: params.connectedMachineLabel ?? t('setupOnboarding.doneMachineFallback'),
+                        })}
+                    </Text>
+                    {params.existingSessionCount > 0 ? (
+                        <Text testID="setupWizard-done-existing-sessions" style={params.styles.doneLine}>
+                            {t('setupOnboarding.doneExistingSessionsLine', { count: params.existingSessionCount })}
+                        </Text>
+                    ) : null}
+                </View>
+            );
         default:
             return <Text>{t('setupOnboarding.postAuthBody')}</Text>;
     }

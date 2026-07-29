@@ -133,7 +133,6 @@ export function useResolvedSettingsPageCatalog(): ResolvedCatalog {
 
     const usageReportingEnabled = useFeatureEnabled('usage.reporting');
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
-    const connectedServicesEnabled = useFeatureEnabled('connectedServices');
     const memorySearchEnabled = useFeatureEnabled('memory.search');
     const voiceEnabled = useFeatureEnabled('voice');
     const sourceControlEnabled = useFeatureEnabled('scm.writeOperations');
@@ -141,12 +140,13 @@ export function useResolvedSettingsPageCatalog(): ResolvedCatalog {
     const promptsLibraryEnabled = useFeatureEnabled('prompts.library');
     const mcpServersEnabled = useFeatureEnabled('mcp.servers');
     const remoteHostsManagementEnabled = useFeatureEnabled('remoteHosts.management');
+    const providersEnabled = useFeatureEnabled('providers');
+    const externalSessionsEnabled = useFeatureEnabled('sessions.direct');
 
     const featureSnapshot = React.useMemo(() => {
         return {
             'usage.reporting': usageReportingEnabled,
             'execution.runs': executionRunsEnabled,
-            connectedServices: connectedServicesEnabled,
             'memory.search': memorySearchEnabled,
             voice: voiceEnabled,
             'scm.writeOperations': sourceControlEnabled,
@@ -154,14 +154,17 @@ export function useResolvedSettingsPageCatalog(): ResolvedCatalog {
             'prompts.library': promptsLibraryEnabled,
             'mcp.servers': mcpServersEnabled,
             'remoteHosts.management': remoteHostsManagementEnabled,
+            providers: providersEnabled,
+            'sessions.direct': externalSessionsEnabled,
         } as const;
     }, [
         attachmentsUploadsEnabled,
-        connectedServicesEnabled,
         executionRunsEnabled,
+        externalSessionsEnabled,
         mcpServersEnabled,
         memorySearchEnabled,
         promptsLibraryEnabled,
+        providersEnabled,
         remoteHostsManagementEnabled,
         sourceControlEnabled,
         usageReportingEnabled,

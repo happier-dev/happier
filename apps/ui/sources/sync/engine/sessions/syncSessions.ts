@@ -1,5 +1,6 @@
 import type { NormalizedMessage, RawRecord } from '@/sync/typesRaw';
-import { normalizeRawMessage } from '@/sync/typesRaw';
+import type { SessionMessageRole } from '@happier-dev/protocol';
+import { createRawMessageNormalizationSequenceState, normalizeRawMessageInSequence } from '@/sync/typesRaw';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
 import type { AgentState, Metadata, Session } from '@/sync/domains/state/storageTypes';
 import { computeNextReadStateV1 } from '@/sync/domains/state/readStateV1';
@@ -22,12 +23,20 @@ import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetr
 import { nowServerMs } from '@/sync/runtime/time';
 import { getTaskLifecycleEventFromRawContent, type TaskLifecycleEvent } from './taskLifecycle';
 import {
+    compareSessionMetadataRevisions,
+    parseDecryptedSessionMetadata,
     parsePlainSessionAgentState,
     parsePlainSessionMetadata,
+    readSessionMetadataLayoutVersion,
     tryParsePlainSessionAgentState,
     tryParsePlainSessionMetadata,
 } from './parsePlainSessionPayload';
 import { isLegacyMemoryArtifactTranscriptRow } from './legacyMemoryArtifactTranscriptRows';
+import { runSessionMessagesPagePipeline } from './sessionMessagesPagePipeline';
+import {
+    resolveSessionRuntimeActivityProjectionFields,
+    type SessionRuntimeActivityResyncHandler,
+} from './sessionRuntimeActivityProjection';
 import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol';
 export { handleNewMessageSocketUpdate } from './sessionSocketUpdate';
 export { handleMessageUpdatedSocketUpdate } from './sessionSocketUpdate';
@@ -93,6 +102,7 @@ function applySidechainScopeMetadata(params: Readonly<{
 type SessionEncryption = {
     decryptAgentState: (version: number, value: string | null) => Promise<AgentState>;
     decryptMetadata: (version: number, value: string) => Promise<Metadata | null>;
+    decryptMetadataPayload: (version: number, value: string) => Promise<unknown | null>;
     decryptSessionSnapshotState?: (
         metadataVersion: number,
         metadata: string,
@@ -100,6 +110,163 @@ type SessionEncryption = {
         agentState: string | null | undefined,
     ) => Promise<{ metadata: Metadata | null; agentState: AgentState }>;
 };
+
+type NewSessionSocketEncryption = {
+    decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
+    initializeSessions: (sessionKeys: Map<string, Uint8Array | null>) => Promise<void>;
+    getSessionEncryption: (sessionId: string) => SessionEncryption | null;
+};
+
+type NewSessionSocketUpdateBody = Readonly<{
+    t: 'new-session';
+    id?: unknown;
+    sid?: unknown;
+    seq?: unknown;
+    metadata?: unknown;
+    metadataLayoutVersion?: unknown;
+    metadataVersion?: unknown;
+    agentState?: unknown;
+    agentStateVersion?: unknown;
+    dataEncryptionKey?: unknown;
+    encryptionMode?: unknown;
+    active?: unknown;
+    activeAt?: unknown;
+    createdAt?: unknown;
+    updatedAt?: unknown;
+    meaningfulActivityAt?: unknown;
+}>;
+
+function readNewSessionId(body: NewSessionSocketUpdateBody): string | null {
+    const id = typeof body.id === 'string' && body.id.trim().length > 0
+        ? body.id.trim()
+        : typeof body.sid === 'string' && body.sid.trim().length > 0
+            ? body.sid.trim()
+            : '';
+    return id || null;
+}
+
+function resolveNewSessionEncryptionMode(body: NewSessionSocketUpdateBody): 'e2ee' | 'plain' | null {
+    if (body.encryptionMode === 'plain') return 'plain';
+    if (body.encryptionMode === 'e2ee') return 'e2ee';
+    if (typeof body.dataEncryptionKey === 'string' && body.dataEncryptionKey.length > 0) return 'e2ee';
+    return null;
+}
+
+export async function buildNewSessionFromSocketUpdate(params: {
+    updateBody: NewSessionSocketUpdateBody;
+    updateSeq: number;
+    updateCreatedAt: number;
+    sourceServerId?: string | null;
+    encryption: NewSessionSocketEncryption;
+}): Promise<Session | null> {
+    const { updateBody, encryption } = params;
+    const sessionId = readNewSessionId(updateBody);
+    const metadataPayload = typeof updateBody.metadata === 'string' ? updateBody.metadata : null;
+    if (!sessionId || metadataPayload === null) {
+        return null;
+    }
+
+    const encryptionMode = resolveNewSessionEncryptionMode(updateBody);
+    if (!encryptionMode) {
+        return null;
+    }
+
+    const metadataVersion = readTimestamp(updateBody.metadataVersion, 0);
+    const metadataLayoutVersion = readSessionMetadataLayoutVersion(updateBody.metadataLayoutVersion);
+    const agentStateVersion = readTimestamp(updateBody.agentStateVersion, 0);
+    const agentStatePayload = typeof updateBody.agentState === 'string' ? updateBody.agentState : null;
+
+    const decryptedState = await (async (): Promise<{ metadata: Metadata | null; agentState: AgentState } | null> => {
+        try {
+            if (encryptionMode === 'plain') {
+                return {
+                    metadata: parsePlainSessionMetadata(metadataPayload, metadataLayoutVersion),
+                    agentState: parsePlainSessionAgentState(agentStatePayload),
+                };
+            }
+
+            if (typeof updateBody.dataEncryptionKey !== 'string' || updateBody.dataEncryptionKey.length === 0) {
+                return { metadata: null, agentState: {} };
+            }
+            const dataEncryptionKey: string = updateBody.dataEncryptionKey;
+
+            const dataKey = await encryption.decryptEncryptionKey(dataEncryptionKey);
+            await encryption.initializeSessions(new Map([[sessionId, dataKey]]));
+            const sessionEncryption = encryption.getSessionEncryption(sessionId);
+            if (!sessionEncryption) {
+                return { metadata: null, agentState: {} };
+            }
+
+            if (
+                metadataLayoutVersion !== 1
+                && sessionEncryption.decryptSessionSnapshotState
+            ) {
+                const state = await sessionEncryption.decryptSessionSnapshotState(
+                    metadataVersion,
+                    metadataPayload,
+                    agentStateVersion,
+                    agentStatePayload,
+                );
+                return {
+                    ...state,
+                    metadata: parseDecryptedSessionMetadata(
+                        state.metadata,
+                        metadataLayoutVersion,
+                    ),
+                };
+            }
+
+            const [metadata, agentState] = await Promise.all([
+                metadataLayoutVersion === 1
+                    ? sessionEncryption.decryptMetadataPayload(metadataVersion, metadataPayload)
+                    : sessionEncryption.decryptMetadata(metadataVersion, metadataPayload),
+                sessionEncryption.decryptAgentState(agentStateVersion, agentStatePayload),
+            ]);
+            return {
+                metadata: parseDecryptedSessionMetadata(
+                    metadata,
+                    metadataLayoutVersion,
+                ),
+                agentState,
+            };
+        } catch {
+            return null;
+        }
+    })();
+
+    if (!decryptedState || (encryptionMode === 'e2ee' && decryptedState.metadata == null)) {
+        return null;
+    }
+
+    const active = typeof updateBody.active === 'boolean' ? updateBody.active : true;
+    const activeAt = readTimestamp(updateBody.activeAt, params.updateCreatedAt);
+    const pendingFlags = derivePendingRequestFlagsFromAgentState(decryptedState.agentState);
+
+    return {
+        id: sessionId,
+        ...(typeof params.sourceServerId === 'string' && params.sourceServerId.trim().length > 0
+            ? { serverId: params.sourceServerId.trim() }
+            : {}),
+        seq: readTimestamp(updateBody.seq, params.updateSeq),
+        encryptionMode,
+        createdAt: readTimestamp(updateBody.createdAt, params.updateCreatedAt),
+        updatedAt: readTimestamp(updateBody.updatedAt, params.updateCreatedAt),
+        meaningfulActivityAt: readTimestamp(updateBody.meaningfulActivityAt, params.updateCreatedAt),
+        active,
+        activeAt,
+        archivedAt: null,
+        ...(metadataLayoutVersion > 0 ? { metadataLayoutVersion } : {}),
+        metadata: decryptedState.metadata,
+        metadataVersion,
+        agentState: decryptedState.agentState,
+        agentStateVersion,
+        thinking: false,
+        thinkingAt: 0,
+        presence: active ? 'online' : activeAt,
+        pendingPermissionRequestCount: pendingFlags.hasPendingPermissionRequests ? 1 : 0,
+        pendingUserActionRequestCount: pendingFlags.hasPendingUserActionRequests ? 1 : 0,
+    };
+}
 
 export function handleDeleteSessionSocketUpdate(params: {
     sessionId: string;
@@ -149,6 +316,7 @@ export function buildUpdatedSessionProjectionFromSocketUpdate(params: {
     updateBody: any;
     updateSeq: number;
     updateCreatedAt: number;
+    onRuntimeActivityResyncRequired?: SessionRuntimeActivityResyncHandler;
 }): Session {
     const { session, updateBody, updateSeq, updateCreatedAt } = params;
     const encryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
@@ -218,6 +386,11 @@ export function buildUpdatedSessionProjectionFromSocketUpdate(params: {
             || (updateBody.lastRuntimeIssue && typeof updateBody.lastRuntimeIssue === 'object')
                 ? updateBody.lastRuntimeIssue
                 : session.lastRuntimeIssue,
+        ...resolveSessionRuntimeActivityProjectionFields(
+            session,
+            updateBody,
+            params.onRuntimeActivityResyncRequired,
+        ),
         ...(rollbackEligibleTurnStarts !== undefined ? { rollbackEligibleTurnStarts } : {}),
         ...(clearsStaleThinking ? {
             optimisticThinkingAt: null,
@@ -251,6 +424,7 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
         agentState?: boolean;
         metadata?: boolean;
     }>;
+    onRuntimeActivityResyncRequired?: SessionRuntimeActivityResyncHandler;
 }): Promise<{ nextSession: Session; agentState: any }> {
     const { session, updateBody, updateSeq, updateCreatedAt, sessionEncryption } = params;
 
@@ -263,20 +437,33 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
         updateBody,
         updateSeq,
         updateCreatedAt,
+        onRuntimeActivityResyncRequired: params.onRuntimeActivityResyncRequired,
     });
+    const storedMetadataLayoutVersion = readSessionMetadataLayoutVersion(session.metadataLayoutVersion);
+    const nextMetadataLayoutVersion = Math.max(
+        storedMetadataLayoutVersion,
+        readSessionMetadataLayoutVersion(updateBody.metadataLayoutVersion),
+    );
+    const metadataRevisionAdvances = compareSessionMetadataRevisions({
+        incomingLayoutVersion: nextMetadataLayoutVersion,
+        incomingMetadataVersion: updateBody.metadata?.version,
+        storedLayoutVersion: storedMetadataLayoutVersion,
+        storedMetadataVersion: session.metadataVersion,
+    }) > 0;
 
     const hydrateAgentState = updateBody.agentState
         ? params.hydrateState?.agentState !== false
         : false;
     const hydrateMetadata = updateBody.metadata
         ? params.hydrateState?.metadata !== false
-            && isStrictlyNewerSessionMetadataVersion(updateBody.metadata.version, session.metadataVersion)
+            && metadataRevisionAdvances
         : false;
     const hasStatePayload = hydrateMetadata || hydrateAgentState;
     const shouldBatchDecryptState = Boolean(
         hydrateMetadata
         && hydrateAgentState
         && encryptionMode === 'e2ee'
+        && nextMetadataLayoutVersion !== 1
         && sessionEncryption?.decryptSessionSnapshotState,
     );
     const resolveUpdatedState = async (): Promise<{
@@ -291,7 +478,10 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
                 updateBody.agentState.value,
             );
             return {
-                metadata: decryptedState.metadata,
+                metadata: parseDecryptedSessionMetadata(
+                    decryptedState.metadata,
+                    nextMetadataLayoutVersion,
+                ),
                 agentState: decryptedState.agentState,
             };
         }
@@ -304,8 +494,25 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
 
         const metadataPromise = updateBody.metadata && hydrateMetadata
             ? encryptionMode === 'plain'
-                ? Promise.resolve(parsePlainSessionMetadata(updateBody.metadata.value))
-                : sessionEncryption!.decryptMetadata(updateBody.metadata.version, updateBody.metadata.value)
+                ? Promise.resolve(parsePlainSessionMetadata(
+                    updateBody.metadata.value,
+                    nextMetadataLayoutVersion,
+                ))
+                : (
+                    nextMetadataLayoutVersion === 1
+                        ? sessionEncryption!.decryptMetadataPayload(
+                            updateBody.metadata.version,
+                            updateBody.metadata.value,
+                        )
+                        : sessionEncryption!.decryptMetadata(
+                            updateBody.metadata.version,
+                            updateBody.metadata.value,
+                        )
+                )
+                    .then((value) => parseDecryptedSessionMetadata(
+                        value,
+                        nextMetadataLayoutVersion,
+                    ))
             : Promise.resolve(session.metadata);
 
         const [agentState, metadata] = await Promise.all([agentStatePromise, metadataPromise]);
@@ -324,14 +531,24 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
             resolveUpdatedState,
         )
         : await resolveUpdatedState();
-    const mergedMetadata = preserveSessionRuntimeLocalMetadata(session.metadata, metadata);
+    const mergedMetadata = nextMetadataLayoutVersion === 1
+        ? metadata
+        : preserveSessionRuntimeLocalMetadata(session.metadata, metadata);
 
     const nextSession: Session = {
         ...projectionSession,
+        metadataLayoutVersion: hydrateMetadata
+            ? nextMetadataLayoutVersion
+            : session.metadataLayoutVersion,
         agentState,
         agentStateVersion: hydrateAgentState ? updateBody.agentState.version : session.agentStateVersion,
         metadata: mergedMetadata,
         metadataVersion: hydrateMetadata ? updateBody.metadata.version : session.metadataVersion,
+        ...(hydrateMetadata && nextMetadataLayoutVersion === 1
+            ? {
+                ownerMetadataView: null,
+            }
+            : {}),
     };
 
     return { nextSession, agentState };
@@ -347,11 +564,23 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
         agentState?: boolean;
         metadata?: boolean;
     };
+    onRuntimeActivityResyncRequired?: SessionRuntimeActivityResyncHandler;
 }): Promise<Partial<SessionListRenderableSession>> {
     const { renderable, updateBody, updateSeq, updateCreatedAt, sessionEncryption } = params;
+    const storedMetadataLayoutVersion = readSessionMetadataLayoutVersion(renderable.metadataLayoutVersion);
+    const nextMetadataLayoutVersion = Math.max(
+        storedMetadataLayoutVersion,
+        readSessionMetadataLayoutVersion(updateBody.metadataLayoutVersion),
+    );
+    const metadataRevisionAdvances = compareSessionMetadataRevisions({
+        incomingLayoutVersion: nextMetadataLayoutVersion,
+        incomingMetadataVersion: updateBody.metadata?.version,
+        storedLayoutVersion: storedMetadataLayoutVersion,
+        storedMetadataVersion: renderable.metadataVersion,
+    }) > 0;
     const hydrateMetadata = updateBody.metadata
         ? params.hydrateState?.metadata !== false
-            && isStrictlyNewerSessionMetadataVersion(updateBody.metadata.version, renderable.metadataVersion)
+            && metadataRevisionAdvances
         : false;
     const hydrateAgentState = updateBody.agentState
         ? params.hydrateState?.agentState !== false
@@ -361,9 +590,25 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
         !updateBody.metadata || !hydrateMetadata
             ? undefined
             : sessionEncryption
-                ? await sessionEncryption.decryptMetadata(updateBody.metadata.version, updateBody.metadata.value)
+                ? parseDecryptedSessionMetadata(
+                    await (
+                        nextMetadataLayoutVersion === 1
+                            ? sessionEncryption.decryptMetadataPayload(
+                                updateBody.metadata.version,
+                                updateBody.metadata.value,
+                            )
+                            : sessionEncryption.decryptMetadata(
+                                updateBody.metadata.version,
+                                updateBody.metadata.value,
+                            )
+                    ),
+                    nextMetadataLayoutVersion,
+                )
                 : typeof updateBody.metadata.value === 'string'
-                    ? tryParsePlainSessionMetadata(updateBody.metadata.value)
+                    ? tryParsePlainSessionMetadata(
+                        updateBody.metadata.value,
+                        nextMetadataLayoutVersion,
+                    )
                     : updateBody.metadata.value === null
                         ? null
                         : undefined;
@@ -398,7 +643,9 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
         : buildSessionListRenderableMetadataComparison(parsedMetadata, renderable.metadata);
     const mergedRenderableMetadata = parsedRenderableMetadata === undefined
         ? renderable.metadata
-        : preserveSessionRuntimeLocalMetadata(renderable.metadata, parsedRenderableMetadata);
+        : nextMetadataLayoutVersion === 1
+            ? parsedRenderableMetadata
+            : preserveSessionRuntimeLocalMetadata(renderable.metadata, parsedRenderableMetadata);
     const nextLatestTurnStatus = readLatestTurnStatus(updateBody.latestTurnStatus, renderable.latestTurnStatus);
     const nextLatestTurnId =
         typeof updateBody.latestTurnId === 'string' || updateBody.latestTurnId === null
@@ -466,6 +713,9 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
             typeof updateBody.meaningfulActivityAt === 'number'
                 ? updateBody.meaningfulActivityAt
                 : renderable.meaningfulActivityAt,
+        metadataLayoutVersion: updateBody.metadata && hydrateMetadata
+            ? nextMetadataLayoutVersion
+            : renderable.metadataLayoutVersion,
         metadataVersion: updateBody.metadata && hydrateMetadata ? updateBody.metadata.version : renderable.metadataVersion,
         agentStateVersion: updateBody.agentState && hydrateAgentState ? updateBody.agentState.version : renderable.agentStateVersion,
         metadata: mergedRenderableMetadata,
@@ -486,6 +736,11 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
             || (updateBody.lastRuntimeIssue && typeof updateBody.lastRuntimeIssue === 'object')
                 ? updateBody.lastRuntimeIssue
                 : renderable.lastRuntimeIssue,
+        ...resolveSessionRuntimeActivityProjectionFields(
+            renderable,
+            updateBody,
+            params.onRuntimeActivityResyncRequired,
+        ),
         ...(clearsStaleThinking ? {
             optimisticThinkingAt: null,
             thinkingGraceUntil: null,
@@ -510,7 +765,10 @@ export async function repairInvalidReadStateV1(params: {
     sessionSeqUpperBound: number;
     attempted: Set<string>;
     inFlight: Set<string>;
-    getSession: (sessionId: string) => { metadata?: Metadata | null } | undefined;
+    getSession: (sessionId: string) => {
+        metadata?: Metadata | null;
+        metadataLayoutVersion?: number;
+    } | undefined;
     updateSessionMetadataWithRetry: (sessionId: string, updater: (metadata: Metadata) => Metadata) => Promise<void>;
     now: () => number;
 }): Promise<void> {
@@ -521,6 +779,7 @@ export async function repairInvalidReadStateV1(params: {
     }
 
     const session = getSession(sessionId);
+    if (readSessionMetadataLayoutVersion(session?.metadataLayoutVersion) !== 0) return;
     const readState = session?.metadata?.readStateV1;
     if (!readState) return;
     if (readState.sessionSeq <= sessionSeqUpperBound) return;
@@ -559,6 +818,7 @@ type DecryptedSessionMessage = Readonly<{
     id: string;
     seq?: number | null;
     localId: string | null;
+    messageRole?: SessionMessageRole | null;
     content: unknown | null;
     createdAt: number;
 }>;
@@ -884,6 +1144,7 @@ export async function fetchAndApplyMessages(params: {
         }
         : null;
 
+    const normalizationState = createRawMessageNormalizationSequenceState();
     measureMessageNormalization('initial', decryptedMessages.length, () => {
         for (let i = 0; i < decryptedMessages.length; i++) {
             const decrypted = decryptedMessages[i];
@@ -918,7 +1179,14 @@ export async function fetchAndApplyMessages(params: {
                     params.onTaskLifecycleEvent?.(lifecycleEvent);
                 }
                 // Normalize the decrypted message
-                const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: decrypted.seq ?? undefined });
+                const normalized = normalizeRawMessageInSequence({
+                    id: decrypted.id,
+                    localId: decrypted.localId,
+                    createdAt: decrypted.createdAt,
+                    raw: decrypted.content,
+                    seq: decrypted.seq ?? undefined,
+                    messageRole: decrypted.messageRole ?? undefined,
+                }, normalizationState);
                 if (normalized) {
                     applySidechainScopeMetadata({
                         normalizedMessage: normalized,
@@ -975,23 +1243,6 @@ export async function fetchAndApplyOlderMessages(params: {
 } & SessionMessagesPageOptions): Promise<{ applied: number; page: ApiSessionMessagesResponse }> {
     const { sessionId, beforeSeq, limit, request, sessionReceivedMessages, applyMessages, log } = params;
 
-    // Get encryption - may not be ready yet if session was just created
-    const encryption = resolveSessionMessagesEncryption(params);
-    if (!encryption) {
-        if (params.isSessionKnown?.(sessionId) === false) {
-            writeSyncDebugLog(log, `💬 fetchOlderMessages: Session ${sessionId} is not known on this server; skipping page fetch`);
-            return {
-                applied: 0,
-                page: {
-                    messages: [],
-                    hasMore: false,
-                    nextBeforeSeq: null,
-                },
-            };
-        }
-        throw new Error(`Session encryption not ready for ${sessionId}`);
-    }
-
     const scope = params.scope ?? 'main';
     const sidechainId = typeof params.sidechainId === 'string' && params.sidechainId.trim().length > 0 ? params.sidechainId.trim() : null;
     if (scope === 'sidechain' && sidechainId === null) {
@@ -1002,77 +1253,34 @@ export async function fetchAndApplyOlderMessages(params: {
     if (scope === 'sidechain' && sidechainId) {
         qs.set('sidechainId', sidechainId);
     }
-    const data = await fetchSessionMessagesPageWithTelemetry({
-        kind: 'older',
+    const result = await runSessionMessagesPagePipeline({
+        sessionId,
+        purpose: 'older',
+        page: {
+            direction: 'older',
+            requestPath: `/v1/sessions/${sessionId}/messages?${qs.toString()}`,
+            scope,
+            sidechainId,
+            beforeSeq,
+            limit,
+        },
+        lifecyclePolicy: 'suppress',
+        getSessionEncryption: params.getSessionEncryption,
+        isSessionKnown: params.isSessionKnown,
         request,
-        path: `/v1/sessions/${sessionId}/messages?${qs.toString()}`,
-        scope,
-        sidechainId,
-        limit,
-        beforeSeq,
+        sessionReceivedMessages,
+        applyMessages,
+        onMessagesPage: params.onMessagesPage,
+        onNormalizedMessages: params.onNormalizedMessages,
+        log,
+        sessionEncryptionMode: params.sessionEncryptionMode,
+        initialMessageDecryptBatchSize: params.initialMessageDecryptBatchSize,
+        messageDecryptBatchSize: params.messageDecryptBatchSize,
+        messageDecryptYieldDelayMs: params.messageDecryptYieldDelayMs,
+        yieldToMessageDecryptBatch: params.yieldToMessageDecryptBatch,
     });
-    params.onMessagesPage?.(data);
-    recordMessagePageTelemetry('older', data.messages.length);
-
-    let existingMessages = sessionReceivedMessages.get(sessionId);
-    if (!existingMessages) {
-        existingMessages = new Map<string, number>();
-        sessionReceivedMessages.set(sessionId, existingMessages);
-    }
-
-    const messagesToDecrypt: ApiMessage[] = [];
-    for (const msg of [...data.messages].reverse()) {
-        const msgUpdatedAt = typeof msg.updatedAt === 'number' ? msg.updatedAt : msg.createdAt;
-        const existingUpdatedAt = existingMessages.get(msg.id);
-        if (existingUpdatedAt === undefined || msgUpdatedAt > existingUpdatedAt) {
-            messagesToDecrypt.push(msg);
-        }
-    }
-    recordMessageDedupeTelemetry('older', data.messages.length, messagesToDecrypt.length);
-
-    const decryptedMessages = await decryptMessagesInBatchesWithTelemetry('older', encryption, messagesToDecrypt, params);
-
-    const normalizedMessages: NormalizedMessage[] = [];
-    measureMessageNormalization('older', decryptedMessages.length, () => {
-        for (let i = 0; i < decryptedMessages.length; i++) {
-            const decrypted = decryptedMessages[i];
-            if (decrypted) {
-                const inputMessage = messagesToDecrypt[i];
-                const inputWasEncrypted = inputMessage?.content?.t === 'encrypted';
-
-                const inputUpdatedAt = inputMessage
-                    ? (typeof inputMessage.updatedAt === 'number' ? inputMessage.updatedAt : inputMessage.createdAt)
-                    : decrypted.createdAt;
-                if (decrypted.content !== null || !inputWasEncrypted) {
-                    existingMessages.set(decrypted.id, inputUpdatedAt);
-                }
-                if (inputWasEncrypted && decrypted.content === null) {
-                    continue;
-                }
-                if (isLegacyMemoryArtifactTranscriptRow(decrypted)) {
-                    continue;
-                }
-                // Older pages can include historical lifecycle markers (task_complete/turn_aborted) that
-                // should not clobber current in-flight UI state. Lifecycle handling is reserved for
-                // newer/socket flows.
-                const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: decrypted.seq ?? undefined });
-                if (normalized) {
-                    applySidechainScopeMetadata({
-                        normalizedMessage: normalized,
-                        inputSidechainId: inputMessage?.sidechainId,
-                        scope,
-                        requestedSidechainId: sidechainId,
-                    });
-                    normalizedMessages.push(normalized);
-                }
-            }
-        }
-    });
-
-    params.onNormalizedMessages?.(normalizedMessages);
-    recordMessageApplyTelemetry('older', decryptedMessages.length, sessionId, normalizedMessages, applyMessages);
-    writeSyncDebugLog(log, `💬 fetchOlderMessages completed for session ${sessionId} - applied ${normalizedMessages.length} messages`);
-    return { applied: normalizedMessages.length, page: data };
+    writeSyncDebugLog(log, `💬 fetchOlderMessages completed for session ${sessionId} - applied ${result.applied} messages`);
+    return { applied: result.applied, page: result.page };
 }
 
 export async function fetchAndApplyNewerMessages(params: {
@@ -1093,21 +1301,6 @@ export async function fetchAndApplyNewerMessages(params: {
 } & SessionMessagesPageOptions): Promise<{ applied: number; page: ApiSessionMessagesResponse }> {
     const { sessionId, afterSeq, limit, request, sessionReceivedMessages, applyMessages, log } = params;
 
-    const encryption = resolveSessionMessagesEncryption(params);
-    if (!encryption) {
-        if (params.isSessionKnown?.(sessionId) === false) {
-            writeSyncDebugLog(log, `💬 fetchNewerMessages: Session ${sessionId} is not known on this server; skipping page fetch`);
-            return {
-                applied: 0,
-                page: {
-                    messages: [],
-                    nextAfterSeq: null,
-                },
-            };
-        }
-        throw new Error(`Session encryption not ready for ${sessionId}`);
-    }
-
     const scope = params.scope ?? 'main';
     const sidechainId = typeof params.sidechainId === 'string' && params.sidechainId.trim().length > 0 ? params.sidechainId.trim() : null;
     if (scope === 'sidechain' && sidechainId === null) {
@@ -1118,77 +1311,33 @@ export async function fetchAndApplyNewerMessages(params: {
     if (scope === 'sidechain' && sidechainId) {
         qs.set('sidechainId', sidechainId);
     }
-    const data = await fetchSessionMessagesPageWithTelemetry({
-        kind: 'newer',
+    const result = await runSessionMessagesPagePipeline({
+        sessionId,
+        purpose: 'newer',
+        page: {
+            direction: 'newer',
+            requestPath: `/v1/sessions/${sessionId}/messages?${qs.toString()}`,
+            scope,
+            sidechainId,
+            afterSeq,
+            limit,
+        },
+        lifecyclePolicy: 'emit',
+        getSessionEncryption: params.getSessionEncryption,
+        isSessionKnown: params.isSessionKnown,
         request,
-        path: `/v1/sessions/${sessionId}/messages?${qs.toString()}`,
-        scope,
-        sidechainId,
-        limit,
-        afterSeq,
+        sessionReceivedMessages,
+        applyMessages,
+        onTaskLifecycleEvent: params.onTaskLifecycleEvent,
+        onMessagesPage: params.onMessagesPage,
+        onNormalizedMessages: params.onNormalizedMessages,
+        log,
+        sessionEncryptionMode: params.sessionEncryptionMode,
+        initialMessageDecryptBatchSize: params.initialMessageDecryptBatchSize,
+        messageDecryptBatchSize: params.messageDecryptBatchSize,
+        messageDecryptYieldDelayMs: params.messageDecryptYieldDelayMs,
+        yieldToMessageDecryptBatch: params.yieldToMessageDecryptBatch,
     });
-    params.onMessagesPage?.(data);
-    recordMessagePageTelemetry('newer', data.messages.length);
-
-    let existingMessages = sessionReceivedMessages.get(sessionId);
-    if (!existingMessages) {
-        existingMessages = new Map<string, number>();
-        sessionReceivedMessages.set(sessionId, existingMessages);
-    }
-
-    // Server returns ascending order in forward mode; decrypt/apply in that same order.
-    const messagesToDecrypt: ApiMessage[] = [];
-    for (const msg of data.messages) {
-        const msgUpdatedAt = typeof msg.updatedAt === 'number' ? msg.updatedAt : msg.createdAt;
-        const existingUpdatedAt = existingMessages.get(msg.id);
-        if (existingUpdatedAt === undefined || msgUpdatedAt > existingUpdatedAt) {
-            messagesToDecrypt.push(msg);
-        }
-    }
-    recordMessageDedupeTelemetry('newer', data.messages.length, messagesToDecrypt.length);
-
-    const decryptedMessages = await decryptMessagesInBatchesWithTelemetry('newer', encryption, messagesToDecrypt, params);
-
-    const normalizedMessages: NormalizedMessage[] = [];
-    measureMessageNormalization('newer', decryptedMessages.length, () => {
-        for (let i = 0; i < decryptedMessages.length; i++) {
-            const decrypted = decryptedMessages[i];
-            if (decrypted) {
-                const inputMessage = messagesToDecrypt[i];
-                const inputWasEncrypted = inputMessage?.content?.t === 'encrypted';
-
-                const inputUpdatedAt = inputMessage
-                    ? (typeof inputMessage.updatedAt === 'number' ? inputMessage.updatedAt : inputMessage.createdAt)
-                    : decrypted.createdAt;
-                if (decrypted.content !== null || !inputWasEncrypted) {
-                    existingMessages.set(decrypted.id, inputUpdatedAt);
-                }
-                if (inputWasEncrypted && decrypted.content === null) {
-                    continue;
-                }
-                if (isLegacyMemoryArtifactTranscriptRow(decrypted)) {
-                    continue;
-                }
-                const lifecycleEvent = getTaskLifecycleEventFromRawContent(decrypted.content, decrypted.createdAt);
-                if (lifecycleEvent) {
-                    params.onTaskLifecycleEvent?.(lifecycleEvent);
-                }
-                const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: decrypted.seq ?? undefined });
-                if (normalized) {
-                    applySidechainScopeMetadata({
-                        normalizedMessage: normalized,
-                        inputSidechainId: inputMessage?.sidechainId,
-                        scope,
-                        requestedSidechainId: sidechainId,
-                    });
-                    normalizedMessages.push(normalized);
-                }
-            }
-        }
-    });
-
-    params.onNormalizedMessages?.(normalizedMessages);
-    recordMessageApplyTelemetry('newer', decryptedMessages.length, sessionId, normalizedMessages, applyMessages);
-    writeSyncDebugLog(log, `💬 fetchNewerMessages completed for session ${sessionId} - applied ${normalizedMessages.length} messages`);
-    return { applied: normalizedMessages.length, page: data };
+    writeSyncDebugLog(log, `💬 fetchNewerMessages completed for session ${sessionId} - applied ${result.applied} messages`);
+    return { applied: result.applied, page: result.page };
 }

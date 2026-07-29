@@ -97,6 +97,7 @@ function SessionRunsScreenContent(props: Readonly<{
 
   const load = React.useCallback(async () => {
     const loadGeneration = ++loadGenerationRef.current;
+    const rpcOptions = props.routeScope.serverId ? { serverId: props.routeScope.serverId } : undefined;
     const commitState = (nextState: LoadState) => {
       if (loadGenerationRef.current !== loadGeneration) return;
       setState(nextState);
@@ -108,7 +109,7 @@ function SessionRunsScreenContent(props: Readonly<{
     }
 
     commitState({ status: 'loading' });
-    const first = await sessionExecutionRunList(props.sessionId, {});
+    const first = await sessionExecutionRunList(props.sessionId, {}, rpcOptions);
     if ((first as any)?.ok === false) {
       if (!isRpcMethodNotAvailableError({
         message: typeof (first as any).error === 'string' ? (first as any).error : undefined,
@@ -117,7 +118,7 @@ function SessionRunsScreenContent(props: Readonly<{
         commitState({ status: 'error', error: readExecutionRunsErrorMessage(first as any) });
         return;
       }
-      const retry = await sessionExecutionRunList(props.sessionId, {});
+      const retry = await sessionExecutionRunList(props.sessionId, {}, rpcOptions);
       if ((retry as any)?.ok === false) {
         commitState({ status: 'error', error: readExecutionRunsErrorMessage(retry as any) });
         return;
@@ -126,7 +127,7 @@ function SessionRunsScreenContent(props: Readonly<{
       return;
     }
     commitState({ status: 'loaded', runs: (first as any).runs ?? [] });
-  }, [props.sessionId]);
+  }, [props.routeScope.serverId, props.sessionId]);
 
   React.useEffect(() => {
     void load();

@@ -7,6 +7,7 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 import { createReducer } from '@/sync/reducer/reducer';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -53,13 +54,13 @@ installMessageViewCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'sessionThinkingDisplayMode') return 'inline';
                     if (key === 'sessionThinkingInlinePresentation') return 'summary';
                     if (key === 'sessionThinkingInlineChrome') return 'plain';
                     if (key === 'sessionReplayEnabled') return false;
                     return null;
-                },
+                } }),
                 useSession: () => createSessionFixture({ id: 's1', active: true, metadata: { machineId: 'm1' } as any }),
                 useSessionMessagesById: () => ({}),
                 useSessionMessagesReducerState: () => createReducer(),
@@ -89,8 +90,9 @@ vi.mock('@/components/markdown/MarkdownView', () => ({
     MarkdownView: (props: any) => React.createElement('MarkdownView', props),
 }));
 
-vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
-    shouldShowMessageCopyButton: () => true,
+vi.mock('@/components/sessions/transcript/transcriptRowActionVisibility', () => ({
+    shouldShowTranscriptRowActions: () => true,
+    shouldShowTranscriptRowPinAction: () => true,
 }));
 
 vi.mock('@/components/sessions/transcript/structured/StructuredMessageBlock', () => ({
@@ -128,10 +130,6 @@ vi.mock('@/utils/url/sessionFileDeepLink', () => ({
 
 vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: any) => promise,
-}));
-
-vi.mock('@/sync/domains/messages/messageRouteIds', () => ({
-    resolveMessageRouteIdForDisplay: () => null,
 }));
 
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({

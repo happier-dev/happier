@@ -1,4 +1,16 @@
-import type { VoiceAdapterId } from '@/voice/session/types';
+import type {
+    VoiceAdapterId,
+    VoiceMachineError,
+} from '@happier-dev/bundled-voice-runtime-contract';
+
+export type {
+    VoiceMachineError,
+    VoiceMachineErrorKind,
+    VoiceMachineErrorPhase,
+    VoiceMachineErrorPresentation,
+    VoiceMachineRecoveryAction,
+    VoiceMachineRetryPolicy,
+} from '@happier-dev/bundled-voice-runtime-contract';
 
 export type VoiceConversationRuntimeState =
     | 'disconnected'
@@ -17,23 +29,6 @@ export type VoiceConversationRuntimeState =
     | 'mic_error'
     | 'error';
 
-export type VoiceMachineErrorKind =
-    | 'mic_permission_denied'
-    | 'mic_ended'
-    | 'mic_plateau'
-    | 'transport_disconnect'
-    | 'provider_error'
-    | 'audio_context_suspended'
-    | 'stt_timeout'
-    | 'tts_failed'
-    | 'turn_aborted';
-
-export type VoiceMachineError = Readonly<{
-    kind: VoiceMachineErrorKind;
-    reason: string;
-    recoverable: boolean;
-}>;
-
 export type VoiceConversationRuntimeSnapshot = Readonly<{
     /**
      * The adapter that currently owns the runtime machine. `null` means the
@@ -46,6 +41,8 @@ export type VoiceConversationRuntimeSnapshot = Readonly<{
     adapterId: VoiceAdapterId | null;
     controlSessionId: string | null;
     state: VoiceConversationRuntimeState;
+    /** True only while the owning realtime controller is replacing its connection. */
+    reconnecting: boolean;
     micMuted: boolean;
     error: VoiceMachineError | null;
 }>;

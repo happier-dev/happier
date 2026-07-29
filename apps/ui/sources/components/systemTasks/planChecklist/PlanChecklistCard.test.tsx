@@ -89,7 +89,7 @@ function flattenPressableStyle(style: unknown): Record<string, unknown> {
 describe('PlanChecklistCard', () => {
     it('renders selectable rows, expands details, and forwards copy diagnostics actions', async () => {
         const { PlanChecklistCard } = await import('./PlanChecklistCard');
-        const copyDiagnostics = vi.fn();
+        const copyDiagnostics = vi.fn(async () => true);
         const toggleItem = vi.fn();
         const toggleExpanded = vi.fn();
 
@@ -119,6 +119,7 @@ describe('PlanChecklistCard', () => {
 
         await screen.pressByTestIdAsync('plan-checklist-row-install_cli-details-copy-diagnostics');
         expect(copyDiagnostics).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('plan-checklist-row-install_cli-details-copy-diagnostics-feedback')).toBeTruthy();
     });
 
     it('shows already satisfied items as done during selection', async () => {
@@ -398,7 +399,7 @@ describe('PlanChecklistCard', () => {
         expect(screen.getTextContent()).not.toContain('common.details');
     });
 
-    it('supports the onboarding visual variant with direct icons instead of boxed icons', async () => {
+    it('supports the onboarding visual variant with numbered timeline nodes', async () => {
         const { PlanChecklistCard } = await import('./PlanChecklistCard');
 
         const screen = await renderScreen(
@@ -418,9 +419,10 @@ describe('PlanChecklistCard', () => {
         const flattenedStyle = Array.isArray(statusSlot.props.style)
             ? Object.assign({}, ...statusSlot.props.style.filter(Boolean))
             : statusSlot.props.style;
-        expect(flattenedStyle.borderWidth ?? 0).toBe(0);
+        expect(flattenedStyle.borderWidth).toBe(1);
         expect(flattenedStyle.width).toBeGreaterThan(26);
         expect(flattenedStyle.height).toBeGreaterThan(26);
+        expect(statusSlot.findAll((node) => node.children.includes('1'))).toHaveLength(1);
     });
 
     it('does not expose an expandable panel when a row only has copy diagnostics and no content', async () => {

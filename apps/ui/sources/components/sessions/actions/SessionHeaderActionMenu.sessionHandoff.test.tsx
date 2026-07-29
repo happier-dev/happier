@@ -1,22 +1,30 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import {
   installSessionActionsCommonModuleMocks,
   resetSessionActionsCommonModuleMockState,
+  sessionActionsModuleState,
 } from './sessionActionsTestHelpers';
 import {
   SESSION_ACTION_MARK_READ_ID,
   SESSION_ACTION_MARK_UNREAD_ID,
+  SESSION_ACTION_RENAME_ID,
 } from './sessionActionIds';
-import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
+import {
+  EMPTY_PLUGIN_UI_PROJECTION,
+  normalizePluginUiProjection,
+} from '@/sync/domains/plugins/ui/projection';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const runSessionHandoffPickerFlowMock = vi.hoisted(() => vi.fn());
 const createDefaultActionExecutorMock = vi.hoisted(() => vi.fn());
+const executeSessionForkActionMock = vi.hoisted(() => vi.fn());
+const modalPromptMock = vi.hoisted(() => vi.fn(async () => null as string | null));
 const resolveSessionTargetServerIdMock = vi.hoisted(() => vi.fn());
 const preferredServerIdState = vi.hoisted(() => ({
   current: 'server_a' as string | null,
@@ -75,15 +83,65 @@ const allSessionsState = vi.hoisted(() => ({
 const reachableMachineTargetState = vi.hoisted(() => ({
   current: null as { machineId: string; basePath: string } | null,
 }));
+const canForkConversationState = vi.hoisted(() => ({
+  current: false,
+}));
 const storageState = vi.hoisted(() => ({
   current: {
     settings: { voice: null as any } as any,
     sessions: {} as Record<string, any>,
+    sessionMessages: {} as Record<string, any>,
+    sessionListRenderables: {} as Record<string, any>,
+    sessionListRowStateByServerId: {} as Record<string, Record<string, any>>,
     machines: {} as Record<string, any>,
     machineListByServerId: {} as Record<string, any>,
     createSessionActionDraft: createSessionActionDraftMock,
   },
 }));
+const storageListeners = vi.hoisted(() => ({
+  current: new Set<() => void>(),
+}));
+
+function notifyStorageListeners() {
+  for (const listener of [...storageListeners.current]) {
+    listener();
+  }
+}
+
+function createHeaderTestStorageStore() {
+  const readSnapshot = () => storageState.current as any;
+  const store = ((selector?: (state: any) => unknown) => React.useSyncExternalStore(
+    (listener) => {
+      storageListeners.current.add(listener);
+      return () => {
+        storageListeners.current.delete(listener);
+      };
+    },
+    () => (typeof selector === 'function' ? selector(readSnapshot()) : readSnapshot()),
+    () => (typeof selector === 'function' ? selector(readSnapshot()) : readSnapshot()),
+  )) as any;
+  store.getState = readSnapshot;
+  store.getInitialState = readSnapshot;
+  store.setState = (updater: any) => {
+    const next = typeof updater === 'function' ? updater(storageState.current) : updater;
+    storageState.current = {
+      ...storageState.current,
+      ...next,
+    };
+    notifyStorageListeners();
+  };
+  store.subscribe = (listener: any) => {
+    const wrapped = () => listener(readSnapshot(), readSnapshot());
+    storageListeners.current.add(wrapped);
+    return () => {
+      storageListeners.current.delete(wrapped);
+    };
+  };
+  store.destroy = () => {
+    storageListeners.current.clear();
+  };
+  return store;
+}
 
 function buildConfiguredInactiveDaemonTransferState() {
   return {
@@ -119,6 +177,14 @@ function buildConfiguredInactiveDaemonTransferState() {
 }
 
 installSessionActionsCommonModuleMocks({
+  modal: async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+      spies: {
+        prompt: modalPromptMock,
+      },
+    }).module;
+  },
   reactNative: async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
@@ -141,10 +207,7 @@ installSessionActionsCommonModuleMocks({
   storage: async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-      storage: {
-        getState: () => storageState.current,
-        subscribe: () => () => {},
-      },
+      storage: createHeaderTestStorageStore(),
       useSettings: () => storageState.current.settings,
       useSession: (sessionId: string) => storageState.current.sessions[sessionId] ?? null,
       useSetting: (key: string) => {
@@ -184,6 +247,13 @@ vi.mock('@happier-dev/protocol', async (importOriginal) => {
   return {
     ...actual,
     listActionSpecs: () => [
+      {
+        id: 'session.fork',
+        title: 'Fork session',
+        description: 'Create a child session',
+        surfaces: { ui: true },
+        placements: ['session_action_menu'],
+      },
       {
         id: 'session.handoff',
         title: 'Hand off session',
@@ -254,11 +324,11 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdFo
 }));
 
 vi.mock('@/sync/domains/sessionFork/forkUiSupport', () => ({
-  canForkConversation: () => false,
+  canForkConversation: () => canForkConversationState.current,
 }));
 
 vi.mock('@/sync/domains/sessionFork/executeSessionForkAction', () => ({
-  executeSessionForkAction: vi.fn(),
+  executeSessionForkAction: (...args: unknown[]) => executeSessionForkActionMock(...args),
 }));
 
 vi.mock('@/sync/domains/sessionHandoff/handoffUiSupport', () => ({
@@ -324,10 +394,13 @@ vi.mock('@/voice/agent/teleportVoiceAgentToSessionRoot', () => ({
 }));
 
 describe('SessionHeaderActionMenu handoff', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     resetSessionActionsCommonModuleMockState();
     runSessionHandoffPickerFlowMock.mockReset();
     createDefaultActionExecutorMock.mockReset();
+    executeSessionForkActionMock.mockReset();
+    modalPromptMock.mockReset();
+    modalPromptMock.mockResolvedValue(null);
     resolveSessionTargetServerIdMock.mockReset();
     resolveSessionTargetServerIdMock.mockImplementation((_sessionId: string, fallbackServerId?: string | null) => fallbackServerId ?? null);
     preferredServerIdState.current = 'server_a';
@@ -340,10 +413,12 @@ describe('SessionHeaderActionMenu handoff', () => {
     machineRpcWithServerScopeMock.mockReset();
     sessionSetManualReadStateWithServerScopeMock.mockReset();
     dropdownRenderCount.current = 0;
+    storageListeners.current.clear();
     patchSessionMetadataWithRetryMock.mockReset();
     applySessionMetadataLocallyMock.mockReset();
     readMachineTargetForSessionMock.mockReturnValue(null);
     machineRpcWithServerScopeMock.mockRejectedValue(new Error('unreachable'));
+    canForkConversationState.current = false;
     serverSnapshotState.current = { status: 'ready', features: { features: { sessions: { enabled: true, handoff: { enabled: true } }, machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: true }, serverRouted: { enabled: false } } } }, capabilities: {} } } as any;
 
     createDefaultActionExecutorMock.mockReturnValue({
@@ -352,6 +427,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     buildActionDraftInputMock.mockReturnValue({ draft: true });
     preferredServerIdState.current = 'server_a';
     runSessionHandoffPickerFlowMock.mockResolvedValue({ ok: true, handoffId: 'handoff_1' });
+    executeSessionForkActionMock.mockResolvedValue({ ok: true, childSessionId: 'sess_child' });
     resolveSessionActionDefaultBackendMock.mockReturnValue({
       backendTarget: { kind: 'agent', agentId: 'claude' },
       defaultBackendId: 'claude',
@@ -365,6 +441,9 @@ describe('SessionHeaderActionMenu handoff', () => {
         featureToggles: { 'execution.runs': true },
       },
       sessions: {},
+      sessionMessages: {},
+      sessionListRenderables: {},
+      sessionListRowStateByServerId: {},
       machines: {},
       machineListByServerId: {},
       createSessionActionDraft: createSessionActionDraftMock,
@@ -380,11 +459,12 @@ describe('SessionHeaderActionMenu handoff', () => {
     };
 
     vi.resetModules();
-    return import('@/voice/binding/voiceConversationBindingStore').then(({ voiceSessionBindingStore }) => {
-      for (const binding of voiceSessionBindingStore.getState().list()) {
-        voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
-      }
-    });
+    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+    registerStorageStateReader(() => storageState.current as any);
+    const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+    for (const binding of voiceSessionBindingStore.getState().list()) {
+      voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
+    }
   });
 
   it('keeps the closed trigger stable when only the session sequence changes', async () => {
@@ -432,14 +512,14 @@ describe('SessionHeaderActionMenu handoff', () => {
           summary: { text: 'same summary', updatedAt: 100 },
           sessionModesV1: {
             v: 1,
-            provider: 'claude',
+            agentId: 'claude',
             updatedAt: 100,
             currentModeId: 'default',
             availableModes: [{ id: 'default', name: 'Default' }],
           },
           sessionModelsV1: {
             v: 1,
-            provider: 'claude',
+            agentId: 'claude',
             updatedAt: 100,
             currentModelId: 'model-a',
             availableModels: [{ id: 'model-a', name: 'Model A' }],
@@ -462,14 +542,14 @@ describe('SessionHeaderActionMenu handoff', () => {
           summary: { text: 'same summary', updatedAt: 200 },
           sessionModesV1: {
             v: 1,
-            provider: 'claude',
+            agentId: 'claude',
             updatedAt: 200,
             currentModeId: 'default',
             availableModes: [{ id: 'default', name: 'Default' }],
           },
           sessionModelsV1: {
             v: 1,
-            provider: 'claude',
+            agentId: 'claude',
             updatedAt: 200,
             currentModelId: 'model-a',
             availableModels: [{ id: 'model-a', name: 'Model A' }],
@@ -592,70 +672,104 @@ describe('SessionHeaderActionMenu handoff', () => {
       selectedItem: null,
     }) as any;
 
-    expect(trigger.props.testID).toBe('session-header-action-menu-trigger');
-    expect(trigger.props.accessibilityLabel).toBe('session.actionMenu.openA11y');
+    expect(trigger.props['data-testid']).toBe('session-header-action-menu-trigger');
+    expect(trigger.props['aria-label']).toBe('session.actionMenu.openA11y');
+    expect(trigger.props.testID).toBeUndefined();
+    expect(trigger.props.accessibilityLabel).toBeUndefined();
   });
 
-  it('surfaces descriptor-backed plugin header actions and dispatches openSurface targets through the host', async () => {
-    const openPluginSurface = vi.fn();
-    const pluginUiProjection = {
-      ...EMPTY_PLUGIN_UI_PROJECTION,
-      translationsByPluginId: {
-        'acme.preview': {
-          id: 'translations:acme.preview',
+  it('exposes a web click fallback for opening the session action menu trigger', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_1"
+          session={{
+            id: 'sess_1',
+            metadata: {
+              machineId: 'machine_source',
+              flavor: 'claude',
+            },
+          } as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    const toggle = vi.fn();
+    const trigger = dropdown.props.trigger({
+      open: false,
+      toggle,
+      openMenu: vi.fn(),
+      closeMenu: vi.fn(),
+      selectedItem: null,
+    }) as any;
+
+    expect(trigger.type).toBe('button');
+    expect(trigger.props['data-testid']).toBe('session-header-action-menu-trigger');
+    expect(trigger.props.testID).toBeUndefined();
+    expect(typeof trigger.props.onClick).toBe('function');
+
+    trigger.props.onClick({ stopPropagation: vi.fn() });
+
+    expect(toggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces a normalized plugin header action reference and dispatches it through the daemon lease', async () => {
+    machineRpcWithServerScopeMock.mockResolvedValue({
+      ok: true,
+      result: { opened: true },
+    });
+    const pluginUiProjection = normalizePluginUiProjection({
+      v: 2,
+      generation: 7,
+      installedPackagesById: {},
+      agentsById: {},
+      backendsById: {},
+      actionsById: {
+        'acme.preview/run': {
+          id: 'run',
           pluginId: 'acme.preview',
-          contributionKind: 'translations',
-          locales: ['en'],
-          bundles: {
-            en: {
-              title: 'Preview',
+          title: 'Preview',
+          scopes: ['session'],
+          surfaces: ['ui'],
+          placement: 'detailsPanel',
+          dangerLevel: 'safe',
+          available: true,
+        },
+      },
+      toolsById: {},
+      commandsById: {},
+      resourcesById: {},
+      settingsById: {},
+      familiesById: {
+        pluginUi: {
+          family: 'pluginUi',
+          entriesById: {
+            'translations:acme.preview': {
+              id: 'translations:acme.preview',
+              pluginId: 'acme.preview',
+              contributionKind: 'translations',
+              locales: ['en'],
+              bundles: {
+                en: {
+                  title: 'Preview',
+                },
+              },
+            },
+            'sessionHeaderAction:acme.preview:run-preview': {
+              id: 'sessionHeaderAction:acme.preview:run-preview',
+              pluginId: 'acme.preview',
+              contributionKind: 'sessionHeaderAction',
+              descriptorId: 'run-preview',
+              title: {
+                key: 'title',
+                fallback: 'Preview',
+              },
+              action: 'run',
             },
           },
         },
       },
-      sessionHeaderActionsById: {
-        'sessionHeaderAction:acme.preview:open-preview': {
-          id: 'sessionHeaderAction:acme.preview:open-preview',
-          pluginId: 'acme.preview',
-          contributionKind: 'sessionHeaderAction',
-          descriptorId: 'open-preview',
-          action: {
-            id: 'open-preview',
-            kind: 'openSurface',
-            labelKey: 'title',
-            target: { surfaceId: 'preview-pane' },
-          },
-          display: { titleKey: 'title', iconToken: 'preview' },
-        },
-        'sessionHeaderAction:acme.preview:hidden-preview': {
-          id: 'sessionHeaderAction:acme.preview:hidden-preview',
-          pluginId: 'acme.preview',
-          contributionKind: 'sessionHeaderAction',
-          descriptorId: 'hidden-preview',
-          action: {
-            id: 'hidden-preview',
-            kind: 'openSurface',
-            labelKey: 'title',
-            target: { surfaceId: 'hidden-pane' },
-          },
-          display: { titleKey: 'title', iconToken: 'preview' },
-          visibility: { operand: 'platform.is', value: 'web' },
-        },
-        'sessionHeaderAction:acme.preview:execute-preview': {
-          id: 'sessionHeaderAction:acme.preview:execute-preview',
-          pluginId: 'acme.preview',
-          contributionKind: 'sessionHeaderAction',
-          descriptorId: 'execute-preview',
-          action: {
-            id: 'execute-preview',
-            kind: 'executeAction',
-            labelKey: 'title',
-            target: { actionId: 'acme.preview.run' },
-          },
-          display: { titleKey: 'title', iconToken: 'action' },
-        },
-      },
-    };
+      diagnostics: [],
+    });
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
@@ -668,38 +782,40 @@ describe('SessionHeaderActionMenu handoff', () => {
           flavor: 'claude',
         },
       } as any}
-      {...({ pluginUiProjection, onOpenPluginSurface: openPluginSurface } as any)}
+      pluginUiProjection={pluginUiProjection}
     />);
 
     const dropdown = screen.findByType('DropdownMenu' as any);
     expect(dropdown.props.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'plugin-ui:sessionHeaderAction:acme.preview:open-preview',
+          id: 'plugin-ui:sessionHeaderAction:acme.preview:run-preview',
           title: 'Preview',
-        }),
-      ]),
-    );
-    expect(dropdown.props.items).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: 'plugin-ui:sessionHeaderAction:acme.preview:hidden-preview',
-        }),
-      ]),
-    );
-    expect(dropdown.props.items).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: 'plugin-ui:sessionHeaderAction:acme.preview:execute-preview',
         }),
       ]),
     );
 
     await act(async () => {
-      dropdown.props.onSelect('plugin-ui:sessionHeaderAction:acme.preview:open-preview');
+      dropdown.props.onSelect('plugin-ui:sessionHeaderAction:acme.preview:run-preview');
+      const pending = fireAndForgetMock.mock.calls.at(-1)?.[0] as Promise<unknown> | undefined;
+      await pending;
     });
 
-    expect(openPluginSurface).toHaveBeenCalledWith('preview-pane');
+    expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
+      machineId: 'machine_source',
+      serverId: 'server_a',
+      method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+      payload: {
+        machineId: 'machine_source',
+        expectedGeneration: '7',
+        qualifiedActionId: 'acme.preview/run',
+        input: {},
+        sessionId: 'sess_1',
+        executionSurface: 'ui',
+      },
+      signal: undefined,
+      timeoutMs: undefined,
+    });
   });
 
   it('surfaces manual mark-unread for read sessions and sends it through the selected server scope', async () => {
@@ -731,6 +847,87 @@ describe('SessionHeaderActionMenu handoff', () => {
       'sess_read_header',
       'unread',
       { serverId: 'server_a' },
+    );
+  });
+
+  it('refreshes header read-state actions from row renderable state while the session shell is stable', async () => {
+    const sessionShell = {
+      id: 'sess_read_header',
+      seq: 742,
+      lastViewedSessionSeq: 742,
+      latestTurnStatus: 'completed',
+      serverId: 'server-header',
+      metadata: {
+        machineId: 'machine_source',
+        flavor: 'claude',
+      },
+    } as any;
+    storageState.current.sessions = {
+      sess_read_header: sessionShell,
+    };
+    storageState.current.sessionListRenderables = {
+      sess_read_header: {
+        ...sessionShell,
+        hasUnreadMessages: false,
+      },
+    };
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+      sessionId="sess_read_header"
+      session={sessionShell}
+    />);
+
+    let dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items.some((item: any) => item?.id === SESSION_ACTION_MARK_UNREAD_ID)).toBe(true);
+
+    storageState.current.sessionListRenderables = {
+      sess_read_header: {
+        ...sessionShell,
+        lastViewedSessionSeq: 741,
+        hasUnreadMessages: true,
+      },
+    };
+    await act(async () => {
+      notifyStorageListeners();
+    });
+    await flushHookEffects({ cycles: 1 });
+
+    dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items.some((item: any) => item?.id === SESSION_ACTION_MARK_READ_ID)).toBe(true);
+    expect(dropdown.props.items.some((item: any) => item?.id === SESSION_ACTION_MARK_UNREAD_ID)).toBe(false);
+  });
+
+  it('uses the canonical session display title as the rename prompt default', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_rename_header"
+          session={{
+            id: 'sess_rename_header',
+            seq: 0,
+            serverId: 'server-header',
+            metadata: {
+              machineId: 'machine_source',
+              flavor: 'claude',
+              summary: { text: 'Canonical summary title', updatedAt: 123 },
+            },
+          } as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items.some((item: any) => item?.id === SESSION_ACTION_RENAME_ID)).toBe(true);
+
+    await act(async () => {
+      dropdown.props.onSelect(SESSION_ACTION_RENAME_ID);
+    });
+
+    expect(modalPromptMock).toHaveBeenCalledWith(
+      'sessionInfo.renameSession',
+      undefined,
+      expect.objectContaining({
+        defaultValue: 'Canonical summary title',
+      }),
     );
   });
 
@@ -799,8 +996,11 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(createDefaultActionExecutorMock).toHaveBeenCalledTimes(1);
     const executorConfig = createDefaultActionExecutorMock.mock.calls[0]?.[0] as {
       resolveServerIdForSessionId: (sessionId: string) => string | null;
+      openSession: (sessionId: string, options?: { serverId?: string | null }) => void;
     };
     expect(executorConfig.resolveServerIdForSessionId('sess_1')).toBe('server-explicit');
+    await executorConfig.openSession('sess_child', { serverId: 'server-explicit' });
+    expect(sessionActionsModuleState.routerPushSpy).toHaveBeenCalledWith('/session/sess_child?serverId=server-explicit');
 
     preferredServerIdState.current = 'server-updated';
     await screen.update(<SessionHeaderActionMenu
@@ -820,6 +1020,49 @@ describe('SessionHeaderActionMenu handoff', () => {
       resolveServerIdForSessionId: (sessionId: string) => string | null;
     };
     expect(updatedExecutorConfig.resolveServerIdForSessionId('sess_1')).toBe('server-updated');
+
+  });
+
+  it('executes fork from the header menu and opens the returned child session with the scoped server', async () => {
+    canForkConversationState.current = true;
+    preferredServerIdState.current = 'server-explicit';
+    executeSessionForkActionMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess_child' });
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_parent"
+          session={{
+            id: 'sess_parent',
+            serverId: 'server-explicit',
+            metadata: {
+              machineId: 'machine_source',
+              flavor: 'claude',
+            },
+          } as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'session.fork' }),
+      ]),
+    );
+
+    await act(async () => {
+      dropdown.props.onSelect('session.fork');
+      const pendingFork = fireAndForgetMock.mock.calls.at(-1)?.[0] as Promise<unknown> | undefined;
+      await pendingFork;
+    });
+
+    expect(executeSessionForkActionMock).toHaveBeenCalledWith({
+      execute: expect.any(Function),
+      sessionId: 'sess_parent',
+      context: {
+        defaultSessionId: 'sess_parent',
+        surface: 'ui',
+        placement: 'session_action_menu',
+      },
+    });
   });
 
   it('fails closed (does not surface session.handoff) when machine transfer is disabled on the selected server', async () => {
@@ -1332,11 +1575,11 @@ describe('SessionHeaderActionMenu handoff', () => {
     voiceSettingState.current = {
       providerId: 'local_conversation',
       ui: { scopeDefault: 'global', surfaceLocation: 'auto', activityFeedEnabled: false },
-      adapters: {
-        local_conversation: {
+      providers: {
+        local_conversation: { schemaVersion: 1, config: {
           conversationMode: 'agent',
           agent: { backend: 'daemon', stayInVoiceHome: false, teleportEnabled: true },
-        },
+        } },
       },
     };
     storageState.current.settings.voice = voiceSettingState.current;
@@ -1395,11 +1638,11 @@ describe('SessionHeaderActionMenu handoff', () => {
     voiceSettingState.current = {
       providerId: 'local_conversation',
       ui: { scopeDefault: 'global', surfaceLocation: 'auto', activityFeedEnabled: false },
-      adapters: {
-        local_conversation: {
+      providers: {
+        local_conversation: { schemaVersion: 1, config: {
           conversationMode: 'agent',
           agent: { backend: 'daemon', stayInVoiceHome: false, teleportEnabled: true },
-        },
+        } },
       },
     };
     storageState.current.settings.voice = voiceSettingState.current;
@@ -1464,7 +1707,7 @@ describe('SessionHeaderActionMenu handoff', () => {
           homeDir: '/tmp',
           externalSessionV1: {
             v: 1,
-            providerId: 'codex',
+            agentId: 'codex',
             machineId: 'machine-1',
             remoteSessionId: 'vendor-session-1',
             source: { kind: 'codexHome', home: 'user' },
@@ -1508,9 +1751,10 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-1',
       serverId: 'server_a',
-      method: 'daemon.externalSessions.followPolicy.set',
+      method: 'daemon.externalSessions.backgroundFollow.set',
       payload: expect.objectContaining({
         sessionId: 's1',
+        agentId: 'codex',
         remoteSessionId: 'vendor-session-1',
         enabled: true,
       }),
@@ -1520,6 +1764,60 @@ describe('SessionHeaderActionMenu handoff', () => {
       policy: 'background_follow',
       updatedAtMs: 1,
     });
+  });
+
+  it('uses the linked direct-session agent to decide background follow support', async () => {
+    storageState.current.sessions = {
+      s1: {
+        id: 's1',
+        seq: 0,
+        encryptionMode: 'plain',
+        presence: 'offline',
+        active: true,
+        accessLevel: 'edit',
+        canApprovePermissions: false,
+        metadata: {
+          machineId: 'machine-1',
+          host: 'happy-host',
+          flavor: 'opencode',
+          version: '0.0.0',
+          path: '/tmp',
+          homeDir: '/tmp',
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'opencode',
+            agent: { backendMode: 'appServer', providerSessionId: 'opencode-session-1' },
+          },
+          externalSessionV1: {
+            v: 1,
+            agentId: 'codex',
+            machineId: 'machine-1',
+            remoteSessionId: 'vendor-session-1',
+            source: { kind: 'codexHome', home: 'user' },
+            followPolicyV1: { v: 1, policy: 'attached_only' },
+          },
+        },
+      } as any,
+    };
+
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="s1"
+          session={storageState.current.sessions.s1 as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+
+    expect(dropdown.props.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'session.externalSession.backgroundFollow',
+          title: 'session.actionMenu.backgroundFollow',
+          subtitle: 'common.disabled',
+        }),
+      ]),
+    );
   });
 
   it('surfaces a disable toggle when background follow is already enabled and turns it off on select', async () => {
@@ -1541,7 +1839,7 @@ describe('SessionHeaderActionMenu handoff', () => {
           homeDir: '/tmp',
           externalSessionV1: {
             v: 1,
-            providerId: 'codex',
+            agentId: 'codex',
             machineId: 'machine-1',
             remoteSessionId: 'vendor-session-1',
             source: { kind: 'codexHome', home: 'user' },
@@ -1585,9 +1883,10 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-1',
       serverId: 'server_a',
-      method: 'daemon.externalSessions.followPolicy.set',
+      method: 'daemon.externalSessions.backgroundFollow.set',
       payload: expect.objectContaining({
         sessionId: 's1',
+        agentId: 'codex',
         remoteSessionId: 'vendor-session-1',
         enabled: false,
       }),
@@ -1599,7 +1898,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     });
   });
 
-  it('does not surface background follow for direct-session providers without follow support', async () => {
+  it('does not surface background follow for direct-session agents without follow support', async () => {
     storageState.current.sessions = {
       s1: {
         id: 's1',
@@ -1618,7 +1917,7 @@ describe('SessionHeaderActionMenu handoff', () => {
           homeDir: '/tmp',
           externalSessionV1: {
             v: 1,
-            providerId: 'opencode',
+            agentId: 'opencode',
             machineId: 'machine-1',
             remoteSessionId: 'vendor-session-1',
             source: { kind: 'opencodeServer', directory: '/tmp' },

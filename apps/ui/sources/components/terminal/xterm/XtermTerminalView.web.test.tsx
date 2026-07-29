@@ -6,7 +6,9 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+import type { XtermTerminalHandle } from './XtermTerminalView.web';
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const fitSpy = vi.fn();
 const focusSpy = vi.fn();
@@ -15,14 +17,38 @@ const openSpy = vi.fn();
 const attachCustomKeyEventHandlerSpy = vi.fn();
 const onDataSpy = vi.fn();
 const disposeSpy = vi.fn();
+let webLinksHandler: ((event: MouseEvent, uri: string) => void) | null = null;
 let renderServiceRendererValue: unknown = {};
 const terminalConstructorOptions: Record<string, unknown>[] = [];
+const terminalInstances: MockTerminal[] = [];
+let deferWriteCallbacks = false;
+const pendingWriteCallbacks: Array<() => void> = [];
+let scheduleInternalViewportSync = false;
+let internalViewportSyncDelayMs = 0;
+const delayedViewportSyncAfterDisposeSpy = vi.fn();
+const deferredDisposeDrainMs = 80;
+
+function requireTerminalHandle(ref: React.RefObject<XtermTerminalHandle | null>): XtermTerminalHandle {
+    if (!ref.current) {
+        throw new Error('terminal handle missing');
+    }
+    return ref.current;
+}
 
 class MockTerminal {
     cols = 80;
     rows = 24;
     options: Record<string, unknown> = {};
+    element: HTMLElement | null = null;
+    disposed = false;
     _core = {
+        viewport: {
+            syncScrollArea: () => {
+                if (this.disposed) {
+                    delayedViewportSyncAfterDisposeSpy();
+                }
+            },
+        },
         _renderService: {
             _renderer: {
                 value: renderServiceRendererValue,
@@ -33,17 +59,38 @@ class MockTerminal {
     constructor(options: Record<string, unknown> = {}) {
         this.options = options;
         terminalConstructorOptions.push(options);
+        terminalInstances.push(this);
     }
 
     loadAddon = loadAddonSpy;
-    open = openSpy;
+    open = vi.fn((container: HTMLElement) => {
+        this.element = container;
+        openSpy(container);
+        if (scheduleInternalViewportSync) {
+            window.setTimeout(() => {
+                this._core.viewport.syncScrollArea();
+            }, internalViewportSyncDelayMs);
+        }
+    });
     focus = focusSpy;
     clear = vi.fn();
     hasSelection = vi.fn(() => false);
     getSelection = vi.fn(() => '');
     attachCustomKeyEventHandler = attachCustomKeyEventHandlerSpy;
-    write = vi.fn((_data: string, callback?: () => void) => callback?.());
-    dispose = disposeSpy;
+    write = vi.fn((_data: string | Uint8Array, callback?: () => void) => {
+        if (!callback) {
+            return;
+        }
+        if (deferWriteCallbacks) {
+            pendingWriteCallbacks.push(callback);
+            return;
+        }
+        callback();
+    });
+    dispose = vi.fn(() => {
+        this.disposed = true;
+        disposeSpy();
+    });
 
     onData(callback: (data: string) => void) {
         onDataSpy.mockImplementation(callback);
@@ -62,7 +109,11 @@ vi.mock('@xterm/addon-fit', () => ({
 }));
 
 vi.mock('@xterm/addon-web-links', () => ({
-    WebLinksAddon: class {},
+    WebLinksAddon: class {
+        constructor(handler?: (event: MouseEvent, uri: string) => void) {
+            webLinksHandler = handler ?? null;
+        }
+    },
 }));
 
 vi.mock('@xterm/addon-webgl', () => ({
@@ -97,8 +148,15 @@ describe('XtermTerminalView.web', () => {
         attachCustomKeyEventHandlerSpy.mockReset();
         onDataSpy.mockReset();
         disposeSpy.mockReset();
+        webLinksHandler = null;
         renderServiceRendererValue = {};
         terminalConstructorOptions.length = 0;
+        terminalInstances.length = 0;
+        pendingWriteCallbacks.length = 0;
+        deferWriteCallbacks = false;
+        scheduleInternalViewportSync = false;
+        internalViewportSyncDelayMs = 0;
+        delayedViewportSyncAfterDisposeSpy.mockReset();
         originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
         HTMLElement.prototype.getBoundingClientRect = vi.fn(() => ({
             x: 0,
@@ -119,6 +177,7 @@ describe('XtermTerminalView.web', () => {
     afterEach(async () => {
         await act(async () => {
             root.unmount();
+            await new Promise((resolve) => setTimeout(resolve, deferredDisposeDrainMs));
         });
         HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
         container.remove();
@@ -183,7 +242,78 @@ describe('XtermTerminalView.web', () => {
         expect(fitSpy).not.toHaveBeenCalled();
     });
 
-    it('opts out of xterm screen reader DOM mode in the web surface', async () => {
+    it('lets xterm queued viewport sync settle before disposing on quick unmount', async () => {
+        scheduleInternalViewportSync = true;
+        internalViewportSyncDelayMs = 70;
+
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+
+        await act(async () => {
+            root.render(
+                <XtermTerminalView
+                    testID="terminal"
+                    fontSize={14}
+                    onInput={() => {}}
+                    onResize={() => {}}
+                    onReady={() => {}}
+                />,
+            );
+        });
+
+        await act(async () => {
+            root.unmount();
+        });
+
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, deferredDisposeDrainMs));
+        });
+
+        expect(delayedViewportSyncAfterDisposeSpy).not.toHaveBeenCalled();
+        expect(disposeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports ready after the xterm renderer becomes available after the init timer', async () => {
+        renderServiceRendererValue = undefined;
+
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        const onReady = vi.fn();
+        const onResize = vi.fn();
+
+        await act(async () => {
+            root.render(
+                <XtermTerminalView
+                    testID="terminal"
+                    fontSize={14}
+                    onInput={() => {}}
+                    onResize={onResize}
+                    onReady={onReady}
+                />,
+            );
+        });
+
+        await act(async () => {
+            await new Promise((resolve) => {
+                setTimeout(resolve, 40);
+            });
+        });
+
+        expect(fitSpy).not.toHaveBeenCalled();
+        expect(onReady).not.toHaveBeenCalled();
+
+        terminalInstances[0]!._core._renderService._renderer.value = {};
+
+        await act(async () => {
+            await new Promise((resolve) => {
+                setTimeout(resolve, 60);
+            });
+        });
+
+        expect(fitSpy).toHaveBeenCalled();
+        expect(onResize).toHaveBeenCalledWith(80, 24);
+        expect(onReady).toHaveBeenCalledWith(80, 24);
+    });
+
+    it('enables xterm screen reader DOM mode in the web surface', async () => {
         const { XtermTerminalView } = await import('./XtermTerminalView.web');
 
         await act(async () => {
@@ -199,7 +329,277 @@ describe('XtermTerminalView.web', () => {
         });
 
         expect(terminalConstructorOptions[0]).toEqual(
-            expect.objectContaining({ screenReaderMode: false }),
+            expect.objectContaining({ screenReaderMode: true }),
         );
     });
+
+    it('writes byte chunks to xterm as Uint8Array without decoding high-bit bytes', async () => {
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        const ref = React.createRef<XtermTerminalHandle>();
+
+        await act(async () => {
+            root.render(
+                <XtermTerminalView
+                    ref={ref}
+                    testID="terminal"
+                    fontSize={14}
+                    onInput={() => {}}
+                    onResize={() => {}}
+                    onReady={() => {}}
+                />,
+            );
+        });
+
+        const handle = requireTerminalHandle(ref);
+        expect(typeof handle.writeBytes).toBe('function');
+        const bytes = new Uint8Array([0xff, 0x00, 0x41, 0xc3, 0x28]);
+
+        await act(async () => {
+            handle.writeBytes({
+                terminalId: 'terminal-1',
+                seq: 7,
+                byteOffset: 11,
+                bytes,
+            });
+            await new Promise((resolve) => setTimeout(resolve, 40));
+        });
+
+        expect(terminalInstances[0]?.write).toHaveBeenCalledWith(bytes, expect.any(Function));
+    });
+
+    it('mirrors byte output into the deterministic terminal text attribute', async () => {
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        const ref = React.createRef<XtermTerminalHandle>();
+
+        await act(async () => {
+            root.render(
+                <XtermTerminalView
+                    ref={ref}
+                    testID="terminal"
+                    fontSize={14}
+                    onInput={() => {}}
+                    onResize={() => {}}
+                    onReady={() => {}}
+                />,
+            );
+        });
+
+        await act(async () => {
+            requireTerminalHandle(ref).writeBytes({
+                terminalId: 'terminal-preview',
+                seq: 1,
+                byteOffset: 0,
+                bytes: new Uint8Array([
+                    0x64, 0x65, 0x74, 0x65, 0x72, 0x6d, 0x69, 0x6e, 0x69, 0x73, 0x74, 0x69, 0x63,
+                    0x2d, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x72,
+                ]),
+            });
+            await new Promise((resolve) => setTimeout(resolve, 40));
+        });
+
+        const terminalContainer = container.querySelector('[data-testid="terminal"]');
+        expect(terminalContainer?.getAttribute('data-happier-terminal-text')).toContain('deterministic-marker');
+    });
+
+    it('reports byte write completion only after xterm invokes the parser callback', async () => {
+        deferWriteCallbacks = true;
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        const onWriteComplete = vi.fn();
+        const ref = React.createRef<XtermTerminalHandle>();
+
+        await act(async () => {
+            root.render(
+                <XtermTerminalView
+                    ref={ref}
+                    testID="terminal"
+                    fontSize={14}
+                    onInput={() => {}}
+                    onResize={() => {}}
+                    onReady={() => {}}
+                    onWriteComplete={onWriteComplete}
+                />,
+            );
+        });
+
+        await act(async () => {
+            requireTerminalHandle(ref).writeBytes({
+                terminalId: 'terminal-ack',
+                seq: 2,
+                byteOffset: 100,
+                bytes: new Uint8Array([1, 2, 3, 4]),
+            });
+            await new Promise((resolve) => setTimeout(resolve, 40));
+        });
+
+        expect(onWriteComplete).not.toHaveBeenCalled();
+        expect(pendingWriteCallbacks).toHaveLength(1);
+
+        await act(async () => {
+            pendingWriteCallbacks.shift()?.();
+        });
+
+        expect(onWriteComplete).toHaveBeenCalledWith({
+            terminalId: 'terminal-ack',
+            seq: 2,
+            byteOffset: 100,
+            byteLength: 4,
+            ackedByteOffset: 104,
+        });
+    });
+
+    it('does not report a byte write completion after the surface unmounts', async () => {
+        deferWriteCallbacks = true;
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        const onWriteComplete = vi.fn();
+        const ref = React.createRef<XtermTerminalHandle>();
+
+        await act(async () => {
+            root.render(
+                <XtermTerminalView
+                    ref={ref}
+                    testID="terminal"
+                    fontSize={14}
+                    onInput={() => {}}
+                    onResize={() => {}}
+                    onReady={() => {}}
+                    onWriteComplete={onWriteComplete}
+                />,
+            );
+        });
+
+        await act(async () => {
+            requireTerminalHandle(ref).writeBytes({
+                terminalId: 'terminal-unmounted',
+                seq: 3,
+                byteOffset: 200,
+                bytes: new Uint8Array([5, 6]),
+            });
+            await new Promise((resolve) => setTimeout(resolve, 40));
+        });
+
+        expect(pendingWriteCallbacks).toHaveLength(1);
+
+        await act(async () => {
+            root.unmount();
+        });
+
+        pendingWriteCallbacks.shift()?.();
+
+        expect(onWriteComplete).not.toHaveBeenCalled();
+    });
+
+    it('keeps later byte writes queued until the active xterm write completes', async () => {
+        deferWriteCallbacks = true;
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        const ref = React.createRef<XtermTerminalHandle>();
+
+        await act(async () => {
+            root.render(
+                <XtermTerminalView
+                    ref={ref}
+                    testID="terminal"
+                    fontSize={14}
+                    onInput={() => {}}
+                    onResize={() => {}}
+                    onReady={() => {}}
+                />,
+            );
+        });
+
+        await act(async () => {
+            const handle = requireTerminalHandle(ref);
+            handle.writeBytes({
+                terminalId: 'terminal-pressure',
+                seq: 1,
+                byteOffset: 0,
+                bytes: new Uint8Array([1]),
+            });
+            handle.writeBytes({
+                terminalId: 'terminal-pressure',
+                seq: 2,
+                byteOffset: 1,
+                bytes: new Uint8Array([2]),
+            });
+            await new Promise((resolve) => setTimeout(resolve, 40));
+        });
+
+        expect(terminalInstances[0]?.write).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            pendingWriteCallbacks.shift()?.();
+            await new Promise((resolve) => setTimeout(resolve, 40));
+        });
+
+        expect(terminalInstances[0]?.write).toHaveBeenCalledTimes(2);
+        expect(terminalInstances[0]?.write).toHaveBeenLastCalledWith(new Uint8Array([2]), expect.any(Function));
+    });
+
+    it('routes keyboard paste through the host paste policy instead of direct input', async () => {
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        const onInput = vi.fn();
+        const onPaste = vi.fn();
+        const readText = vi.fn(async () => 'clipboard text');
+        Object.defineProperty(navigator, 'clipboard', {
+            configurable: true,
+            value: { readText },
+        });
+
+        await act(async () => {
+            root.render(
+                <XtermTerminalView
+                    testID="terminal"
+                    fontSize={14}
+                    onInput={onInput}
+                    onPaste={onPaste}
+                    onResize={() => {}}
+                    onReady={() => {}}
+                />,
+            );
+        });
+
+        const keyHandler = attachCustomKeyEventHandlerSpy.mock.calls.at(-1)?.[0] as ((event: KeyboardEvent) => boolean) | undefined;
+        expect(typeof keyHandler).toBe('function');
+        const event = new KeyboardEvent('keydown', { key: 'v', metaKey: true });
+        vi.spyOn(event, 'preventDefault');
+        vi.spyOn(event, 'stopPropagation');
+
+        const result = keyHandler!(event);
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        expect(result).toBe(false);
+        expect(onPaste).toHaveBeenCalledWith('clipboard text');
+        expect(onInput).not.toHaveBeenCalledWith('clipboard text');
+    });
+
+    it('routes detected web links through the host policy handler instead of xterm default opens', async () => {
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        const onLink = vi.fn();
+        const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+        await act(async () => {
+            root.render(
+                <XtermTerminalView
+                    testID="terminal"
+                    fontSize={14}
+                    onInput={() => {}}
+                    onLink={onLink}
+                    onResize={() => {}}
+                    onReady={() => {}}
+                />,
+            );
+        });
+
+        expect(typeof webLinksHandler).toBe('function');
+        const event = new MouseEvent('click');
+        vi.spyOn(event, 'preventDefault');
+        webLinksHandler?.(event, 'https://example.com/path');
+
+        expect(onLink).toHaveBeenCalledWith('https://example.com/path');
+        expect(open).not.toHaveBeenCalled();
+
+        open.mockRestore();
+    });
+
 });

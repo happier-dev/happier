@@ -4,9 +4,11 @@ import type { OptionPickerProbeState } from '@/components/sessions/pickers/Optio
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
+import type { SessionModelPickerExperimentalConfirmationController } from '@/components/sessions/modelPicker/SessionModelPicker';
 
 import type { NewSessionAgentPickerSelection } from './buildNewSessionAgentPickerDetailContent';
 import { buildNewSessionAgentPickerDetailContent } from './buildNewSessionAgentPickerDetailContent';
+import { deferAgentInputPopoverClose } from '@/components/sessions/agentInput/selection/deferAgentInputPopoverClose';
 import type { FavoriteModelTogglePayload } from './newSessionFavoriteModelsPickerOption';
 
 type BuildNewSessionAgentPickerOptionInteractionsParams = Readonly<{
@@ -23,6 +25,7 @@ type BuildNewSessionAgentPickerOptionInteractionsParams = Readonly<{
         favorite: boolean;
         onToggle: () => void;
     }>;
+    experimentalConfirmation?: SessionModelPickerExperimentalConfirmationController;
     onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
     getEngineSelectionForTargetKey: (targetKey: string) => NewSessionAgentPickerSelection;
     selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: NewSessionAgentPickerSelection) => void;
@@ -57,11 +60,11 @@ export function buildNewSessionAgentPickerOptionInteractions(
             const nextSelection = params.getEngineSelectionForTargetKey(params.entry.backendTargetKey);
             params.selectEngineSelection(params.entry, nextSelection);
         },
-        renderDetailContent: () => {
+        renderDetailContent: ({ onRequestClose }) => {
             const selection = params.getEngineSelectionForTargetKey(params.entry.backendTargetKey);
             return buildNewSessionAgentPickerDetailContent({
                 backendTarget: params.entry.backendTarget,
-                runtimeCarrierAgentId: params.entry.providerAgentId,
+                runtimeCarrierAgentId: params.entry.catalogAgentId,
                 selectedMachineId: params.selectedMachineId,
                 capabilityServerId: params.capabilityServerId,
                 cwd: params.selectedPath,
@@ -73,8 +76,12 @@ export function buildNewSessionAgentPickerOptionInteractions(
                     ? (model) => params.onToggleFavoriteModel?.(params.entry, model)
                     : undefined,
                 favoriteEngine: params.favoriteEngine,
+                experimentalConfirmation: params.experimentalConfirmation,
                 onSelectionChange: (nextSelection) => {
                     params.selectEngineSelection(params.entry, nextSelection);
+                },
+                onModelSelectionChange: () => {
+                    deferAgentInputPopoverClose(onRequestClose);
                 },
             });
         },

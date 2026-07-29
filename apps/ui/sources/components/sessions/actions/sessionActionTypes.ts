@@ -31,6 +31,7 @@ export type SessionActionTarget = Readonly<{
     isActive: boolean;
     isArchived: boolean;
     isConnected: boolean;
+    hasRecoverableTerminalHost: boolean;
     isPinned: boolean;
     isOwnedByCurrentUser: boolean;
     hasAdminAccess: boolean;
@@ -45,6 +46,7 @@ export type SessionActionOperationResult = Readonly<{
     success: boolean;
     message?: string;
     code?: string;
+    recovery?: 'wait_for_inactive' | 'upgrade_runtime';
 }>;
 
 export type SessionActionExecutionInput = Readonly<{

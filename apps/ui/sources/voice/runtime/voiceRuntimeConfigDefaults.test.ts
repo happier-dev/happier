@@ -24,6 +24,11 @@ describe('voiceRuntimeConfigDefaults', () => {
         minConfidence: null,
       },
       textualEchoGuard: { overlapThreshold: 0.7, justStartedGuardMs: 200 },
+      interruption: {
+        candidateMaxMs: 3000,
+        duckGain: 0.18,
+        retainedOutputMaxMs: 1500,
+      },
     });
   });
 

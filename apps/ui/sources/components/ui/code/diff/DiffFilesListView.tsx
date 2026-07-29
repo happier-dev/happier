@@ -1,9 +1,10 @@
 import * as React from 'react';
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
-import { FlatList, Pressable, View, Platform, useWindowDimensions } from 'react-native';
+import { Pressable, View, Platform, useWindowDimensions } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Octicons } from '@expo/vector-icons';
-import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
+import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
+import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
 
 import type { DiffFileEntry } from '@/components/ui/code/model/diff/diffViewModel';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
@@ -14,7 +15,6 @@ import { PierreScrollRootVirtualizerProvider } from '@/components/ui/code/diff/p
 import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
 import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
 import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
-import { useWebFlashListCrashFallback } from '@/components/ui/lists/useWebFlashListCrashFallback';
 
 const LINE_ADDED_PREFIX = '+';
 const LINE_REMOVED_PREFIX = '-';
@@ -22,7 +22,7 @@ const DIFF_FILE_ROW_ESTIMATED_ITEM_SIZE = 72;
 
 type DiffFilesListViewRenderContext = Readonly<{
     canRenderInlineDiffs: boolean;
-    clearLayoutCacheOnUpdate: () => void;
+    clearMeasurementCache: () => void;
     inlineDiffContainerVariant?: 'default' | 'none';
     maxVirtualizedHeight: number;
     onOpenFile?: (filePath: string) => void;
@@ -46,7 +46,7 @@ type DiffFilesListViewItem = Readonly<{
 }>;
 
 export type DiffFilesListViewHandle = Readonly<{
-    clearLayoutCacheOnUpdate: () => void;
+    clearMeasurementCache: () => void;
     scrollToIndex: (params: Readonly<{ index: number; animated?: boolean; viewPosition?: number }>) => void;
     scrollToOffset: (params: Readonly<{ offset: number; animated?: boolean }>) => void;
 }>;
@@ -126,10 +126,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
     const shouldUseVirtualizedList = virtualizeFileList === true
         && !(virtualizedListLayout === 'intrinsic' && Platform.OS !== 'web');
     const [focusedFileKey, setFocusedFileKey] = React.useState<string | null>(null);
-    const listRef = React.useRef<any>(null);
-    const webFlashListCrashed = useWebFlashListCrashFallback({
-        enabled: Platform.OS === 'web' && virtualizeFileList === true,
-    });
+    const listRef = React.useRef<VirtualizedListRef | null>(null);
 
     const { height: windowHeight } = useWindowDimensions();
     const { lineThreshold: virtualizationLineThreshold, byteThreshold: virtualizationByteThreshold } = useInlineDiffVirtualizationThresholds();
@@ -144,15 +141,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         return Math.max(1, Math.floor(height * multiplier));
     }, [drawDistanceMultiplier, windowHeight]);
 
-    const overrideItemLayout = React.useCallback((_layout: any, _item: any, _index: number) => {
-        // Intentionally no-op; we provide a stable override function so FlashList can
-        // cache layout metadata without relying on inline closures.
-    }, []);
-
-    const getItemType = React.useCallback((item: any) => {
-        if (item?.kind === 'section') return 'section';
-        return 'file';
-    }, []);
+    const getItemType = React.useCallback(() => 'file', []);
     const virtualizedListStyle = React.useMemo(() => {
         const style: Record<string, unknown> = { flex: 1 };
         if (Platform.OS === 'web') {
@@ -189,11 +178,10 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         return data;
     }, [expandedKeys, files, focusedFileKey]);
 
-    const clearLayoutCacheOnUpdate = React.useCallback(() => {
-        if (Platform.OS !== 'web') return;
+    const clearMeasurementCache = React.useCallback(() => {
         if (virtualizeFileList !== true) return;
         try {
-            listRef.current?.clearLayoutCacheOnUpdate?.();
+            listRef.current?.clearMeasurementCache?.({ mode: 'sizes' });
         } catch {
             // ignore
         }
@@ -218,17 +206,17 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
     React.useImperativeHandle(
         ref,
         () => ({
-            clearLayoutCacheOnUpdate,
+            clearMeasurementCache,
             scrollToIndex,
             scrollToOffset,
         }),
-        [clearLayoutCacheOnUpdate, scrollToIndex, scrollToOffset],
+        [clearMeasurementCache, scrollToIndex, scrollToOffset],
     );
 
     const renderContextRef = React.useRef<DiffFilesListViewRenderContext | null>(null);
     renderContextRef.current = {
         canRenderInlineDiffs,
-        clearLayoutCacheOnUpdate,
+        clearMeasurementCache,
         inlineDiffContainerVariant,
         maxVirtualizedHeight,
         onOpenFile,
@@ -281,10 +269,11 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         if (!ctx) return null;
         const { file, expanded, focused } = item;
         const handleToggleExpanded = () => {
-            // FlashList on web can keep stale measurement caches when rows expand/collapse
-            // (inline diffs have highly variable height). Clearing the cache before the
-            // state change helps prevent large empty "virtualizer buffer" gaps.
-            ctx.clearLayoutCacheOnUpdate();
+            // Expanded inline diffs have highly variable height. Invalidate the
+            // canonical backend's size cache before the state change so the
+            // current logical row remains the expansion anchor without leaving
+            // a stale virtualizer buffer.
+            ctx.clearMeasurementCache();
             ctx.onToggleExpanded(file.key);
         };
         const presentationStyleOverride =
@@ -473,44 +462,25 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
 
     return (
         <PierreScrollRootVirtualizerProvider>
-            {shouldUseVirtualizedList && !(Platform.OS === 'web' && webFlashListCrashed) ? (
-                <FlashList
+            {shouldUseVirtualizedList ? (
+                <VirtualizedList<DiffFilesListViewItem>
                     ref={listRef}
                     testID={testID}
-                    style={virtualizedListStyle as any}
+                    style={virtualizedListStyle}
                     data={listData}
                     keyExtractor={keyExtractor}
                     renderItem={renderVirtualizedItem}
                     contentContainerStyle={virtualizedListContentContainerStyle}
                     extraData={listExtraData}
                     estimatedItemSize={DIFF_FILE_ROW_ESTIMATED_ITEM_SIZE}
-                    drawDistance={drawDistance as any}
-                    overrideItemLayout={overrideItemLayout as any}
-                    getItemType={getItemType as any}
+                    drawDistance={drawDistance}
+                    getItemType={getItemType}
                     ListHeaderComponent={ListHeaderComponent}
                     ListFooterComponent={ListFooterComponent}
                     onScroll={onScroll}
                     onLayout={onLayout}
                     onContentSizeChange={onContentSizeChange}
                     onViewableItemsChanged={onViewableItemsChanged}
-                    scrollEventThrottle={scrollEventThrottle}
-                />
-            ) : shouldUseVirtualizedList ? (
-                <FlatList
-                    ref={listRef}
-                    testID={testID as any}
-                    style={virtualizedListStyle as any}
-                    data={listData as any}
-                    keyExtractor={keyExtractor as any}
-                    renderItem={renderVirtualizedItem as any}
-                    contentContainerStyle={virtualizedListContentContainerStyle as any}
-                    extraData={listExtraData as any}
-                    ListHeaderComponent={ListHeaderComponent as any}
-                    ListFooterComponent={ListFooterComponent as any}
-                    onScroll={onScroll as any}
-                    onLayout={onLayout as any}
-                    onContentSizeChange={onContentSizeChange as any}
-                    onViewableItemsChanged={onViewableItemsChanged as any}
                     scrollEventThrottle={scrollEventThrottle}
                 />
             ) : (

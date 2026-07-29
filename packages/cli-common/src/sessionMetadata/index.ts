@@ -1,0 +1,15 @@
+export {
+  prepareSessionMetadataTuplePatchV1,
+  updateSessionMetadataTupleWithRetry,
+  type SessionMetadataLegacyOwnerMutationRequestV1,
+  type SessionMetadataLegacyOwnerTupleMutationSnapshotV1,
+  type SessionMetadataLegacyOwnerTupleMutationValueV1,
+  type SessionMetadataOwnerTupleMutationValueV1,
+  type SessionMetadataSharedEditorTupleMutationValueV1,
+  type SessionMetadataOwnerTupleMutationSnapshotV1,
+  type SessionMetadataSharedEditorTupleMutationSnapshotV1,
+  type SessionMetadataTupleMutationCryptoV1,
+  type SessionMetadataTupleMutationCommitResultV1,
+  type SessionMetadataTupleMutationSnapshotV1,
+  type SessionMetadataTupleMutationV1,
+} from './updateSessionMetadataTupleWithRetry.js';

@@ -7,20 +7,14 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
-import type { SecretString } from '@/sync/encryption/secretSettings';
 import { t } from '@/text';
+import { normalizeSecretStringPromptInput } from '@/utils/secrets/normalizeSecretStringPromptInput';
 
 import {
     MemoryEmbeddingsLocalTransformersConfigSchema,
     MemoryEmbeddingsOpenAiCompatibleConfigSchema,
     type MemorySettingsV1,
 } from '@happier-dev/protocol';
-
-function normalizeSecretStringPromptInput(value: string | null): SecretString | null {
-    if (value === null) return null;
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? { _isSecretValue: true, value: trimmed } : null;
-}
 
 type EmbeddingsModeOptionId = 'disabled' | 'preset:balanced' | 'preset:long_context' | 'preset:quality' | 'custom';
 

@@ -8,6 +8,7 @@ import {
     type NewSessionCheckoutCreationDraft,
 } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { isFirstPartyGitScmBackendId } from '@/scm/registry/firstPartyScmBackendIdentity';
 
 type HydratedCheckoutAuthoringDraft = Readonly<{
     checkoutCreationDraft?: NewSessionCheckoutCreationDraft | null;
@@ -99,7 +100,10 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
                 )
                 && (
                     params.repoScmSnapshot === null
-                    || (params.repoScmSnapshot.repo.isRepo === true && params.repoScmSnapshot.repo.backendId === 'git')
+                    || (
+                        params.repoScmSnapshot.repo.isRepo === true
+                        && isFirstPartyGitScmBackendId(params.repoScmSnapshot.repo.backendId)
+                    )
                 )
             );
 
@@ -135,7 +139,10 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
         if (!autoOpenKey) {
             return;
         }
-        if (!(params.repoScmSnapshot?.repo.isRepo === true && params.repoScmSnapshot.repo.backendId === 'git')) {
+        if (!(
+            params.repoScmSnapshot?.repo.isRepo === true
+            && isFirstPartyGitScmBackendId(params.repoScmSnapshot.repo.backendId)
+        )) {
             return;
         }
         if (lastAutoOpenWorktreePickerKeyRef.current === autoOpenKey) {

@@ -273,6 +273,34 @@ describe('applySessionListTreeDropOperation', () => {
         });
     });
 
+    it('revalidates folder organization eligibility before any commit-time write', async () => {
+        const { tree, source, result } = resolveDrop({
+            sourceRowId: treeRowId.session('server-a', 'inside-a'),
+            y: 180,
+        });
+        const setSessionFolderAssignment = vi.fn(async () => undefined);
+        const setSessionListGroupOrderV1 = vi.fn();
+
+        const applied = await applySessionListTreeDropOperation({
+            tree,
+            source,
+            result,
+            context: {
+                sessionFoldersV1: folders(),
+                sessionListGroupOrderV1: {},
+                isFolderOrganizationEnabled: () => false,
+                now: () => 100,
+                setSessionFoldersV1: vi.fn(),
+                setSessionListGroupOrderV1,
+                setSessionFolderAssignment,
+            },
+        });
+
+        expect(applied).toEqual({ ok: false, reason: 'feature-disabled' });
+        expect(setSessionFolderAssignment).not.toHaveBeenCalled();
+        expect(setSessionListGroupOrderV1).not.toHaveBeenCalled();
+    });
+
     it('moves a session out to the workspace root session band by default', async () => {
         const { tree, source, result } = resolveDrop({
             sourceRowId: treeRowId.session('server-a', 'inside-a'),

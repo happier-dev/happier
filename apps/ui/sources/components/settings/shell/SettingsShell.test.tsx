@@ -103,6 +103,17 @@ describe('SettingsShell', () => {
         expect(screen.findByTestId('child')).toBeTruthy();
     });
 
+    it('docks the nav rail on the left, with the resize handle on its inner (right) edge', async () => {
+        const { SettingsShell } = await import('./SettingsShell');
+        const screen = await renderScreen(
+            React.createElement(SettingsShell, null, React.createElement('Child', { testID: 'child' }))
+        );
+
+        // A left-docked rail keeps its drag handle on the boundary with the content
+        // pane (its right edge), so `resizeEdge` is 'right'.
+        expect(screen.findByType('ResizableDockedPane').props.resizeEdge).toBe('right');
+    });
+
     it('uses the default sidebar width when the local width setting is missing', async () => {
         localSettingsState.values.delete('settingsNavSidebarWidthPx');
         windowDimsState.width = 1600;

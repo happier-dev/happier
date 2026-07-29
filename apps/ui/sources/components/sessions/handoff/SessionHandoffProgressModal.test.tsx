@@ -9,6 +9,10 @@ import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelp
 
 installSessionHandoffCommonModuleMocks();
 
+vi.mock('@/components/ui/buttons/RoundButton', () => ({
+    RoundButton: (props: Record<string, unknown>) => React.createElement('RoundButton', props),
+}));
+
 function findProgressIndicators(screen: Awaited<ReturnType<typeof renderScreen>>) {
     return screen.findAll((node) => node.props?.accessibilityRole === 'progressbar');
 }
@@ -31,6 +35,30 @@ describe('SessionHandoffProgressModal', () => {
         );
         expect(screen.getTextContent()).toContain('sessionHandoff.progress.message');
         expect(findProgressIndicators(screen)).toHaveLength(1);
+    });
+
+    it('offers Resume for an interrupted handoff but never invokes it during passive render', async () => {
+        const onResume = vi.fn();
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+
+        const screen = await renderScreen(
+            <SessionHandoffProgressModal
+                onClose={() => {}}
+                status={{
+                    handoffId: 'handoff_interrupted_1',
+                    jobId: 'prepare_job_1',
+                    status: 'awaiting_user_resume',
+                    phase: 'staging_target',
+                    recoveryActions: [],
+                }}
+                onResume={onResume}
+            />,
+        );
+
+        expect(onResume).not.toHaveBeenCalled();
+        expect(screen.findByTestId('session-handoff-progress-resume')).toBeTruthy();
+        await screen.pressByTestIdAsync('session-handoff-progress-resume');
+        expect(onResume).toHaveBeenCalledTimes(1);
     });
 
     it('renders a full checkpoint timeline that matches the protocol checkpoint enum', async () => {
@@ -141,6 +169,52 @@ describe('SessionHandoffProgressModal', () => {
         expect(textContent).toContain('sessionHandoff.progress.transferred');
         expect(textContent).toContain('sessionHandoff.progress.remaining');
         expect(textContent).toContain('common.applied');
+    });
+
+    it('exposes determinate progress and changing status through polite accessibility semantics', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const createStatus = (transferredBytes: number, updatedAtMs: number) => ({
+            handoffId: 'handoff_accessibility_1',
+            status: 'in_progress' as const,
+            phase: 'staging_target' as const,
+            progress: {
+                updatedAtMs,
+                checkpoint: 'transfer_blobs' as const,
+                planned: { totalBytes: 100 },
+                transferred: { bytes: transferredBytes },
+                resumable: true,
+            },
+            recoveryActions: [],
+        });
+
+        const screen = await renderScreen(
+            <SessionHandoffProgressModal
+                onClose={() => {}}
+                status={createStatus(25, 1)}
+            />,
+        );
+
+        const progressBar = screen.findByTestId('session-handoff-progress-bar');
+        expect(progressBar?.props.accessibilityRole).toBe('progressbar');
+        expect(progressBar?.props.accessibilityLabel).toBe('sessionHandoff.progress.title');
+        expect(progressBar?.props.accessibilityValue).toEqual({ min: 0, max: 100, now: 25 });
+
+        const initialStatus = screen.findByTestId('session-handoff-progress-status');
+        expect(initialStatus?.props.accessibilityLiveRegion).toBe('polite');
+        expect(initialStatus?.props.role).toBe('status');
+        expect(initialStatus?.props.accessibilityLabel).toContain('25%');
+
+        await screen.update(
+            <SessionHandoffProgressModal
+                onClose={() => {}}
+                status={createStatus(50, 2)}
+            />,
+        );
+
+        expect(screen.findByTestId('session-handoff-progress-bar')?.props.accessibilityValue)
+            .toEqual({ min: 0, max: 100, now: 50 });
+        expect(screen.findByTestId('session-handoff-progress-status')?.props.accessibilityLabel)
+            .toContain('50%');
     });
 
     it('renders apply progress counts without a transfer progress bar during application', async () => {

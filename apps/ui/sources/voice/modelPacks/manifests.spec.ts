@@ -17,18 +17,18 @@ describe('modelPacks manifests', () => {
   });
 
   it('falls back to the default Happier assets release when no manifest is configured', () => {
-    expect(resolveModelPackManifestUrl({ packId: 'kokoro-tts-en-v1', env: {} })).toBe(
-      'https://github.com/happier-dev/happier-assets/releases/download/model-packs/kokoro-tts-en-v1__manifest.json',
+    expect(resolveModelPackManifestUrl({ packId: 'kokoro-82m-v1.0-onnx-q8-wasm', env: {} })).toBe(
+      'https://github.com/happier-dev/happier-assets/releases/download/model-packs/kokoro-82m-v1.0-onnx-q8-wasm__manifest.json',
     );
   });
 
   it('resolves from the new per-pack manifest map when present', () => {
     expect(
       resolveModelPackManifestUrl({
-        packId: 'kokoro-tts-en-v1',
+        packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
         env: {
           EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS: JSON.stringify({
-            'kokoro-tts-en-v1': 'https://example.com/manifest.json',
+            'kokoro-82m-v1.0-onnx-q8-wasm': 'https://example.com/manifest.json',
           }),
         },
       }),

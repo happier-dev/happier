@@ -1,17 +1,15 @@
 import * as React from 'react';
 
-import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { useVisibleSessionListSummaryState } from '@/hooks/session/useVisibleSessionListSummaryState';
 import { useAllMachines, useMachineListByServerId, useSetting } from '@/sync/domains/state/storage';
-import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 
 import type { SessionGettingStartedViewModel } from './gettingStartedModel';
-import { buildSessionGettingStartedViewModel, resolveActiveServerProfile } from './gettingStartedModel';
+import { buildSessionGettingStartedViewModel } from './gettingStartedModel';
+import { useSessionGettingStartedActiveServerProfile } from './useSessionGettingStartedActiveServerProfile';
 
 export function useSessionGettingStartedGuidanceBaseModel(): SessionGettingStartedViewModel {
     const { selection: summarySelection, summary: sessionSummary } = useVisibleSessionListSummaryState();
-    const serverProfilesGeneration = useServerProfilesGeneration();
     const serverSelectionGroups = useSetting('serverSelectionGroups');
     const activeMachines = useAllMachines();
     const machineListByServerId = useMachineListByServerId();
@@ -25,12 +23,7 @@ export function useSessionGettingStartedGuidanceBaseModel(): SessionGettingStart
         summarySelection.activeServerId,
         summarySelection.allowedServerIds,
     ]);
-    const serverProfiles = React.useMemo(() => {
-        return listServerProfiles().map((p) => ({ id: p.id, name: p.name, serverUrl: p.serverUrl }));
-    }, [serverProfilesGeneration]);
-    const activeServerProfile = React.useMemo(() => {
-        return resolveActiveServerProfile(serverProfiles, summarySelection.activeServerId);
-    }, [serverProfiles, summarySelection.activeServerId]);
+    const activeServerProfile = useSessionGettingStartedActiveServerProfile(summarySelection.activeServerId);
 
     return React.useMemo(() => {
         return buildSessionGettingStartedViewModel({

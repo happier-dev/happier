@@ -15,13 +15,14 @@ import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/ba
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { Modal } from '@/modal';
+import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 import { type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import {
     getProfileEnvironmentVariables,
     isProfileCompatibleWithBackendTarget,
     type AIBackendProfile,
 } from '@/sync/domains/profiles/profileCompatibility';
-import { getBuiltInProfile, DEFAULT_PROFILES, getProfilePrimaryCli, isProfileEnabled } from '@/sync/domains/profiles/profileUtils';
+import { getProfilePrimaryCli, isProfileEnabled } from '@/sync/domains/profiles/profileUtils';
 import { DEFAULT_AGENT_ID, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
@@ -57,6 +58,7 @@ import { useNewSessionRepoScmSnapshot } from '@/components/sessions/new/hooks/sc
 import {
     buildAcpConfigOptionOverridesV1,
     type AcpConfigOptionOverridesV1,
+    type SessionModelSelectionV1,
     type WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
 import { useNewSessionMcpSelection } from '@/components/sessions/new/hooks/useNewSessionMcpSelection';
@@ -104,6 +106,17 @@ import { useDeferredRememberedEngineSelection } from '@/components/sessions/new/
 import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
 import { getCommandSuggestions } from '@/components/autocomplete/commandSuggestions';
 import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
+import {
+    projectAiLaunchProfileForLegacyUi,
+    readUiAiLaunchProfiles,
+    removeAiLaunchProfile,
+} from '@/sync/domains/profiles/aiLaunchProfileCollection';
+import { resolveVisibleBuiltInLaunchProfiles } from '@/sync/domains/profiles/visibleBuiltInLaunchProfiles';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol';
+import { resolveLaunchProfileAuthoringIntent } from '@/sync/domains/profiles/resolveLaunchProfileAuthoringIntent';
+import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
+import { useConfirmExperimentalProviderModel } from '@/providers/hooks/useConfirmExperimentalProviderModel';
+import { hiddenModelVisibilityKeys } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
 
 
 // Configuration constants
@@ -128,6 +141,7 @@ function buildNewSessionDraftSignature(draft: NewSessionDraft | null): string {
 
 type EngineSelectionRememberPatch = Readonly<{
     modelMode?: ModelMode;
+    modelSelection?: SessionModelSelectionV1 | null;
     acpSessionModeId?: string | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
 }>;
@@ -245,6 +259,14 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         setScopedPersistedDraft(nextDraft);
     }, []);
     const persistedDraft = shouldReplacePersistedDraftSelections ? null : scopedPersistedDraft;
+    const [launchUserAttemptId, setLaunchUserAttemptId] = React.useState<string | null>(() => (
+        typeof persistedDraft?.launchUserAttemptId === 'string' ? persistedDraft.launchUserAttemptId : null
+    ));
+    React.useEffect(() => {
+        setLaunchUserAttemptId(
+            typeof persistedDraft?.launchUserAttemptId === 'string' ? persistedDraft.launchUserAttemptId : null,
+        );
+    }, [draftScope, persistedDraft?.launchUserAttemptId]);
     const previousDraftScopeRef = React.useRef(draftScope);
 
     const recentMachinePaths = useSetting('recentMachinePaths');
@@ -270,7 +292,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     const sessionPromptInputMaxHeight = undefined;
     const useProfiles = useSetting('useProfiles');
-    const [secrets, setSecrets] = useSettingMutable('secrets');
+    const [secrets, setSecrets] = useSavedSecretsMutable();
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
     const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
     const settings = useSettings() ?? settingsDefaults;
@@ -305,10 +327,16 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             activeServerId: activeServerSource.activeServerId,
         });
     }, [activeServerSource.activeServerId, targetServerId]);
+    const providersFeatureEnabled = useFeatureEnabled('providers', {
+        scopeKind: 'spawn',
+        serverId: capabilityServerId,
+    });
     const externalSessionsFeatureEnabled = useFeatureEnabled('sessions.direct', { scopeKind: 'spawn', serverId: targetServerId });
     const useMachinePickerSearch = useSetting('useMachinePickerSearch');
     const usePathPickerSearch = useSetting('usePathPickerSearch');
-    const [profiles, setProfiles] = useSettingMutable('profiles');
+    const [rawProfiles, setRawProfiles] = useSettingMutable('profiles');
+    const launchProfiles = React.useMemo(() => readUiAiLaunchProfiles(rawProfiles), [rawProfiles]);
+    const profiles = React.useMemo(() => launchProfiles.map(projectAiLaunchProfileForLegacyUi), [launchProfiles]);
     const lastUsedProfile = useSetting('lastUsedProfile');
     const [favoriteDirectories, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
@@ -386,14 +414,23 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     // (prefetch effect moved below, after machines/recent/favorites are defined)
 
+    const providerSettingsForProfileIntent = React.useMemo(() => (
+        readProviderSettingsFromAccountSettingsV1({
+            providerSettingsV1: settings.providerSettingsV1,
+        }).settings
+    ), [settings.providerSettingsV1]);
+
     // Combined profiles (built-in + custom)
     const allProfiles = React.useMemo(() => {
-        const builtInProfiles = DEFAULT_PROFILES.flatMap((bp) => {
-            const profile = getBuiltInProfile(bp.id);
-            return profile ? [profile] : [];
+        const builtInProfiles = resolveVisibleBuiltInLaunchProfiles({
+            lastUsedProfile,
+            favoriteProfileIds,
+            profileEnabledById: settings.profileEnabledById,
+            secretBindingsByProfileId,
+            migration: providerSettingsForProfileIntent.migration,
         });
         return [...builtInProfiles, ...profiles];
-    }, [profiles]);
+    }, [favoriteProfileIds, lastUsedProfile, profiles, providerSettingsForProfileIntent.migration, secretBindingsByProfileId, settings.profileEnabledById]);
 
     const profileMap = useProfileMap(allProfiles);
     const selectableProfiles = React.useMemo(() => {
@@ -448,17 +485,24 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             return tempProfileId;
         }
         const draftProfileId = hydratedPersistedAuthoringDraft?.profileId;
-        if (draftProfileId && selectableProfileMap.has(draftProfileId)) {
+        if (draftProfileId) {
             return draftProfileId;
         }
-        if (lastUsedProfile && selectableProfileMap.has(lastUsedProfile)) {
+        if (lastUsedProfile) {
             return lastUsedProfile;
         }
         return null;
-    }, [hydratedPersistedAuthoringDraft?.profileId, hydratedTempAuthoringDraft?.profileId, lastUsedProfile, selectableProfileMap, useProfiles]);
+    }, [hydratedPersistedAuthoringDraft?.profileId, hydratedTempAuthoringDraft?.profileId, lastUsedProfile, useProfiles]);
+    const initialProfileAuthoringIntent = React.useMemo(() => {
+        return resolveLaunchProfileAuthoringIntent({
+            profileId: initialImplicitProfileId,
+            profiles: launchProfiles,
+            migration: providerSettingsForProfileIntent.migration,
+        });
+    }, [initialImplicitProfileId, launchProfiles, providerSettingsForProfileIntent.migration]);
 
     // Wizard state
-    const [selectedProfileId, setSelectedProfileId] = React.useState<string | null>(() => initialImplicitProfileId);
+    const [selectedProfileId, setSelectedProfileId] = React.useState<string | null>(() => initialProfileAuthoringIntent.profileId);
     const hasUserTouchedProfileSelectionRef = React.useRef<boolean>(hasExplicitSeededProfileSelection);
 
     React.useEffect(() => {
@@ -568,10 +612,25 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         settings.acpCatalogSettingsV1,
         settings.backendEnabledByTargetKey,
     ]);
+    const profilePreferredBackendTarget = React.useMemo(() => {
+        if (!initialProfileAuthoringIntent.preferredAgentTargetKey) return null;
+        return resolveBackendTargetFromRouteParams({
+            backendTargetKey: initialProfileAuthoringIntent.preferredAgentTargetKey,
+        });
+    }, [initialProfileAuthoringIntent.preferredAgentTargetKey]);
+    const implicitProfileBackendTarget = routeBackendTarget
+        || hydratedTempAuthoringDraft?.backendTarget
+        || tempSessionData?.backendTarget
+        || hydratedTempAuthoringDraft?.agentId
+        || agentTypeParam
+        || hydratedPersistedAuthoringDraft?.backendTarget
+        || hydratedPersistedAuthoringDraft?.agentId
+        ? null
+        : profilePreferredBackendTarget;
     const {
         backendTarget,
         setBackendTarget,
-        selectedProviderAgentId: agentType,
+        selectedCatalogAgentId: agentType,
         selectedRuntimeCarrierAgentId,
         selectedUiAgentType,
     } = useNewSessionBackendTargetState({
@@ -580,8 +639,13 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         lastUsedBackendTarget,
         routeBackendTarget,
         persistedBackendTarget: hydratedPersistedAuthoringDraft?.backendTarget,
-        tempBackendTarget: routeBackendTarget ?? hydratedTempAuthoringDraft?.backendTarget ?? tempSessionData?.backendTarget,
-        tempAgentType: hydratedTempAuthoringDraft?.agentId ?? agentTypeParam ?? hydratedPersistedAuthoringDraft?.agentId,
+        tempBackendTarget: routeBackendTarget
+            ?? hydratedTempAuthoringDraft?.backendTarget
+            ?? tempSessionData?.backendTarget
+            ?? implicitProfileBackendTarget,
+        tempAgentType: hydratedTempAuthoringDraft?.agentId
+            ?? agentTypeParam
+            ?? hydratedPersistedAuthoringDraft?.agentId,
         projectionPhase: daemonMergedProjection.phase,
     });
     const setAgentType = React.useCallback((next: React.SetStateAction<AgentId>) => {
@@ -613,7 +677,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     React.useEffect(() => {
         if (!useProfiles) return;
         if (!selectedProfileId) return;
-        const selected = profileMap.get(selectedProfileId) ?? getBuiltInProfile(selectedProfileId);
+        const selected = profileMap.get(selectedProfileId);
         if (!selected) {
             setSelectedProfileId(null);
             return;
@@ -637,7 +701,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     const {
         modelMode,
+        modelSelection,
         setModelMode,
+        setModelSelection,
+        setModelSelectionForBackendTarget,
         acpSessionModeId,
         setAcpSessionModeId,
         sessionConfigOptionOverrides,
@@ -653,6 +720,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         hydratedTempAuthoringDraft,
         hydratedPersistedAuthoringDraft,
         rememberedEngineSelection,
+        implicitProfileModelSelection: initialProfileAuthoringIntent.modelSelection,
     });
     const rememberEngineSelection = useDeferredRememberedEngineSelection({
         enabled: rememberLastEngineSelections,
@@ -663,13 +731,30 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const currentEngineSelectionRef = useLatestRef({
         backendTarget: selectedBackendEntry?.backendTarget ?? backendTarget,
         modelMode,
+        modelSelection,
         acpSessionModeId,
         sessionConfigOptionOverrides,
     });
     const rememberCurrentEngineSelection = React.useCallback((patch: EngineSelectionRememberPatch = {}) => {
         const current = currentEngineSelectionRef.current;
         rememberEngineSelection(current.backendTarget, {
-            modelId: String(patch.modelMode ?? current.modelMode),
+            modelSelection: Object.prototype.hasOwnProperty.call(patch, 'modelSelection')
+                ? patch.modelSelection ?? null
+                : patch.modelMode === undefined
+                ? current.modelSelection
+                : patch.modelMode === 'default'
+                    ? null
+                    : current.modelSelection?.ref.modelId === patch.modelMode
+                        ? current.modelSelection
+                        : {
+                            v: 1,
+                            updatedAt: Date.now(),
+                            ref: {
+                                agentTargetKey: resolveBackendTargetKeyV2(current.backendTarget),
+                                providerConnectionId: null,
+                                modelId: patch.modelMode,
+                            },
+                        },
             acpSessionModeId: Object.prototype.hasOwnProperty.call(patch, 'acpSessionModeId')
                 ? patch.acpSessionModeId ?? null
                 : current.acpSessionModeId,
@@ -686,6 +771,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         setModelMode(value);
         rememberCurrentEngineSelection({ modelMode: value });
     }, [currentEngineSelectionRef, rememberCurrentEngineSelection, setModelMode]);
+    const setModelSelectionAndRemember = React.useCallback((selection: SessionModelSelectionV1 | null) => {
+        setModelSelection(selection);
+        rememberCurrentEngineSelection({ modelSelection: selection });
+    }, [rememberCurrentEngineSelection, setModelSelection]);
     const setAcpSessionModeIdAndRemember = React.useCallback<React.Dispatch<React.SetStateAction<string | null>>>((next) => {
         const current = currentEngineSelectionRef.current.acpSessionModeId;
         const value = typeof next === 'function'
@@ -718,6 +807,27 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         if (!selectedMachineId) return null;
         return machines.find(m => m.id === selectedMachineId) ?? null;
     }, [selectedMachineId, machines]);
+    const providerModelProjection = useProviderModelProjection({
+        enabled: providersFeatureEnabled && selectedMachineId !== null,
+        machineId: selectedMachineId,
+        serverId: capabilityServerId,
+        agentTargetKey: selectedBackendTargetKey,
+        ...(modelSelection ? { currentSelection: modelSelection.ref } : {}),
+    });
+    const confirmExperimentalProviderModel = useConfirmExperimentalProviderModel({
+        enabled: providersFeatureEnabled,
+        machineId: selectedMachineId,
+        serverId: capabilityServerId,
+        agentTargetKey: selectedBackendTargetKey,
+        refresh: providerModelProjection.refresh,
+    });
+    const hiddenNativeModelKeys = React.useMemo(
+        () => hiddenModelVisibilityKeys(
+            providerSettingsForProfileIntent,
+            { providersFeatureEnabled },
+        ),
+        [providerSettingsForProfileIntent.modelVisibilityByRef, providersFeatureEnabled],
+    );
     const repoScmSnapshot = useNewSessionRepoScmSnapshot({
         machineId: selectedMachineId,
         path: selectedPath,
@@ -918,8 +1028,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             const profile = profileMap.get(selectedProfileId)!;
             return isProfileEnabled(profile, settings.profileEnabledById) ? profile : null;
         }
-        const builtInProfile = getBuiltInProfile(selectedProfileId);
-        return builtInProfile && isProfileEnabled(builtInProfile, settings.profileEnabledById) ? builtInProfile : null;
+        return null;
     }, [selectedProfileId, profileMap, settings.profileEnabledById]);
 
     const persistedWindowsRemoteSessionLaunchModeOverride = resolvePersistedWindowsLaunchOverrideForMachine(
@@ -1049,6 +1158,14 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         sessionDefaultPermissionModeByTargetKey,
     });
 
+    const resolveSelectedProfileAuthoringIntent = React.useCallback((profileId: string) => (
+        resolveLaunchProfileAuthoringIntent({
+            profileId,
+            profiles: launchProfiles,
+            migration: providerSettingsForProfileIntent.migration,
+        })
+    ), [launchProfiles, providerSettingsForProfileIntent.migration]);
+
     // Profile/backend reconciliation and permission-mode fallback logic is owned by the
     // extracted hook so this screen model can keep route-specific profile param handling local.
     const { selectProfile } = useNewSessionProfileBackendReconciliation({
@@ -1071,14 +1188,17 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         prepareSecretPromptForProfileSelection,
         hasUserTouchedProfileSelectionRef,
         agentType,
+        resolveProfileAuthoringIntent: resolveSelectedProfileAuthoringIntent,
+        setModelSelectionForBackendTarget,
     });
 
     const { onPressDefaultEnvironment, handleDeleteProfile } = useNewSessionProfileActions({
         hasUserTouchedProfileSelectionRef,
         setSelectedProfileId,
-        profiles,
         selectedProfileId,
-        setProfiles,
+        deleteProfile: (profileId) => {
+            setRawProfiles(removeAiLaunchProfile(rawProfiles, profileId) as AIBackendProfile[]);
+        },
     });
 
     const {
@@ -1129,6 +1249,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentLabel,
         agentOptionState,
         settings,
+        pluginProjectionV2: daemonMergedProjection.inputs?.pluginProjectionV2,
     });
 
     const clearProfileRouteParam = React.useCallback(() => {
@@ -1170,7 +1291,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     }, [agentTypeParam, backendTargetKeyParam, backendTargetParam, navigation, router]);
 
     const canSelectProfile = React.useCallback((profileId: string): boolean => {
-        const profile = profileMap.get(profileId) ?? getBuiltInProfile(profileId);
+        const profile = profileMap.get(profileId);
         if (!profile) {
             return false;
         }
@@ -1218,6 +1339,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedBackendTargetKey,
         setBackendTarget,
         modelMode,
+        modelSelection,
         setModelMode,
         acpSessionModeId,
         setAcpSessionModeId,
@@ -1240,13 +1362,14 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         onRememberEngineSelection: rememberEngineSelection,
         onExplicitBackendTargetSelection: clearBackendTargetRouteParamsAfterExplicitSelection,
         refreshProbe: cliAvailabilityProbe ?? null,
+        experimentalConfirmation: confirmExperimentalProviderModel,
     });
 
     const {
         authoringContext: newSessionAuthoringContext,
         currentAuthoringDraft,
         effectiveAutomationDraft,
-        canCreate,
+        canCreate: canCreateFromAuthoring,
         buildCurrentPersistedDraft,
         persistDraftIfEnabled,
         disableDraftPersistence,
@@ -1269,7 +1392,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedProfileId,
         resumeSessionId,
         permissionMode,
-        modelMode,
+        modelSelection,
         mcpSelection,
         agentNewSessionOptions,
         settings,
@@ -1289,12 +1412,42 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         getSessionOnlySecretValueEncByProfileIdByEnvVarName,
         backendNewSessionOptionStateByTargetKey,
         draftScope,
+        launchUserAttemptId,
     });
+    const onLaunchUserAttemptIdChange = React.useCallback((nextUserAttemptId: string | null) => {
+        const normalized = typeof nextUserAttemptId === 'string' && nextUserAttemptId.trim().length > 0
+            ? nextUserAttemptId.trim()
+            : null;
+        setLaunchUserAttemptId(normalized);
+        const currentDraft = buildCurrentPersistedDraft();
+        if (normalized) {
+            persistDraftIfEnabled({ ...currentDraft, launchUserAttemptId: normalized });
+            return;
+        }
+        const nextDraft = { ...currentDraft };
+        delete nextDraft.launchUserAttemptId;
+        persistDraftIfEnabled(nextDraft);
+    }, [buildCurrentPersistedDraft, persistDraftIfEnabled]);
+    const launchIntentSignature = React.useMemo(() => JSON.stringify({
+        draft: currentAuthoringDraft,
+        machineId: selectedMachineId,
+        targetServerId: targetServerId ?? null,
+    }), [currentAuthoringDraft, selectedMachineId, targetServerId]);
+    const previousLaunchIntentSignatureRef = React.useRef(launchIntentSignature);
+    React.useEffect(() => {
+        if (previousLaunchIntentSignatureRef.current === launchIntentSignature) return;
+        previousLaunchIntentSignatureRef.current = launchIntentSignature;
+        if (launchUserAttemptId) onLaunchUserAttemptIdChange(null);
+    }, [launchIntentSignature, launchUserAttemptId, onLaunchUserAttemptIdChange]);
     const spawnBackendTarget = React.useMemo(() => {
         return selectedBackendEntry?.backendTarget ?? backendTarget;
     }, [backendTarget, selectedBackendEntry?.backendTarget]);
 
-    const { handleCreateSession } = useNewSessionCreateSessionAction({
+    const {
+        handleCreateSession,
+        providerLaunchError,
+        retryProviderLaunch,
+    } = useNewSessionCreateSessionAction({
         router,
         selectedMachineId,
         selectedPath,
@@ -1334,10 +1487,17 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         targetServerId,
         allowedTargetServerIds,
         resolvedSettingsAllowedServerIds: resolvedSettingsTarget.allowedServerIds,
+        capabilityServerId,
         draftScope,
         disableDraftPersistence,
         onLaunchAttemptChange: setPendingLaunchAttempt,
+        launchIntentSignature,
+        launchUserAttemptId,
+        onLaunchUserAttemptIdChange,
+        authoringCommitPending: confirmExperimentalProviderModel.pending,
     });
+
+    const canCreate = canCreateFromAuthoring && !confirmExperimentalProviderModel.pending;
 
     const {
         connectionStatus,
@@ -1405,6 +1565,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         draftPersistenceEnabled,
         draftPersistenceGenerationRef,
         draftTextLength: sessionPrompt.length,
+        draftChangeKey: launchIntentSignature,
     });
 
     const submitAccessibilityLabel = newSessionAuthoringContext.submitAccessibilityLabelKey
@@ -1504,7 +1665,20 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             acpConfigOptionOverrides: sessionConfigOptionOverrides,
             setAcpConfigOptionOverride: setAcpConfigOptionOverrideAndRemember,
             modelMode,
+            modelSelection,
             setModelMode: setModelModeAndRemember,
+            setModelSelection: setModelSelectionAndRemember,
+            providerModelGroups: providersFeatureEnabled
+                ? (providerModelProjection.data?.groups ?? [])
+                : [],
+            providerModelProjectionAuthoritative: providerModelProjection.status === 'success',
+            providerModelProjectionError: providersFeatureEnabled ? providerModelProjection.error : null,
+            retryProviderModelProjection: providersFeatureEnabled ? providerModelProjection.refresh : null,
+            providerCurrentSelectionRecovery: providersFeatureEnabled
+                ? providerModelProjection.data?.currentSelectionRecovery ?? null
+                : null,
+            hiddenNativeModelKeys,
+            experimentalModelConfirmation: confirmExperimentalProviderModel,
             selectedIndicatorColor,
             profileMap,
             permissionMode,
@@ -1537,6 +1711,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             canCreate,
             isCreating,
             pendingLaunchAttempt,
+            providerLaunchError,
+            retryProviderLaunch,
             submitAccessibilityLabel,
             emptyAutocompletePrefixes,
             emptyAutocompleteSuggestions,
@@ -1581,6 +1757,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             canCreate,
             isCreating,
             pendingLaunchAttempt,
+            providerLaunchError,
+            retryProviderLaunch,
             submitAccessibilityLabel,
             emptyAutocompletePrefixes,
             emptyAutocompleteSuggestions,

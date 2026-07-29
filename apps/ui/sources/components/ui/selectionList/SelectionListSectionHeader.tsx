@@ -21,7 +21,7 @@ import { Typography } from '@/constants/Typography';
  * The component is presentational: it doesn't own selection state, dividers
  * between rows, or any interactivity. It is rendered by `SelectionList.tsx`
  * directly above the option rows for non-virtualized sections, and by the
- * virtualized section helper above the FlashList host.
+ * virtualized section helper above the virtualized list host.
  */
 export type SelectionListSectionHeaderProps = Readonly<{
     /** Section title (rendered as uppercase eyebrow text). May be undefined. */

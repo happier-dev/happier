@@ -1,4 +1,19 @@
+import {
+    hasCanonicalTurnDiffEvidence,
+    isCanonicalTurnDiffPayload,
+    readEmptyCanonicalTurnDiffToolCallId,
+    shouldSuppressEmptyCanonicalTurnDiffToolCall,
+    type SessionMessageRole,
+} from '@happier-dev/protocol';
+
 import type { MessageMeta } from '../domains/messages/messageMetaTypes';
+import { markUnsupportedContentMeta } from '../domains/messages/unsupportedContentMeta';
+import type { TranscriptObservationMetadata } from '../domains/messages/transcriptObservationProvenance';
+import {
+    hasSyntheticNoResponseMeta,
+    markSyntheticNoResponseMeta,
+    SYNTHETIC_NO_RESPONSE_TEXT,
+} from '../domains/messages/syntheticNoResponseMessageMeta';
 import { rawRecordSchema, type AgentEvent, type RawAgentContent, type RawRecord, type UsageData } from './schemas';
 import { extractUsageDataFromTokenCountRecord } from './tokenCountUsage';
 
@@ -78,7 +93,22 @@ export type NormalizedMessage = ({
     sidechainId?: string,
     meta?: MessageMeta,
     usage?: UsageData,
+} & TranscriptObservationMetadata;
+
+export type RawMessageNormalizationInput = Readonly<{
+    id: string;
+    localId?: string | null;
+    createdAt: number;
+    raw: unknown;
+    seq?: number | null;
+    messageRole?: SessionMessageRole | null;
+}>;
+
+export type RawMessageNormalizationSequenceState = {
+    suppressedEmptyCanonicalTurnDiffCallIds: Set<string>;
 };
+
+const RAW_MESSAGE_NORMALIZATION_SUPPRESSED_EMPTY_DIFF_CALL_ID_MAX = 256;
 
 type ContextCompactionAgentEvent = Extract<AgentEvent, { type: 'context-compaction' }>;
 
@@ -92,12 +122,150 @@ function isContextCompactionAgentEvent(value: unknown): value is ContextCompacti
     return record.type === 'context-compaction' && isContextCompactionPhase(record.phase);
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readRecordString(value: unknown, key: string): string | null {
+    if (!isPlainRecord(value)) return null;
+    const raw = value[key];
+    return typeof raw === 'string' ? raw : null;
+}
+
+function readSingleTextContentBlock(value: unknown): string | null {
+    if (!Array.isArray(value) || value.length !== 1) return null;
+    const block = value[0];
+    if (!isPlainRecord(block) || block.type !== 'text') return null;
+    return typeof block.text === 'string' ? block.text : null;
+}
+
+function isClaudeSyntheticNoResponseOutputData(value: unknown): boolean {
+    if (!isPlainRecord(value) || value.type !== 'assistant') return false;
+    const message = value.message;
+    if (!isPlainRecord(message)) return false;
+    const model = readRecordString(value, 'model') ?? readRecordString(message, 'model');
+    return model === '<synthetic>'
+        && readSingleTextContentBlock(message.content)?.trim() === SYNTHETIC_NO_RESPONSE_TEXT;
+}
+
+function shouldKeepNormalizedEventRoleOutput(message: NormalizedMessage, messageRole: SessionMessageRole | null | undefined): boolean {
+    if (messageRole !== 'event') return true;
+    if (message.role !== 'agent') return false;
+    if (hasSyntheticNoResponseMeta(message.meta)) return true;
+    return message.content.some((content) =>
+        content.type === 'thinking'
+        || content.type === 'tool-call'
+        || content.type === 'tool-result'
+    );
+}
+
+function filterNormalizedEventRoleOutput(
+    message: NormalizedMessage,
+    messageRole: SessionMessageRole | null | undefined,
+): NormalizedMessage | null {
+    return shouldKeepNormalizedEventRoleOutput(message, messageRole) ? message : null;
+}
+
+export function createRawMessageNormalizationSequenceState(): RawMessageNormalizationSequenceState {
+    return {
+        suppressedEmptyCanonicalTurnDiffCallIds: new Set<string>(),
+    };
+}
+
+function rememberSuppressedEmptyCanonicalTurnDiffCallId(
+    state: RawMessageNormalizationSequenceState,
+    callId: string,
+): void {
+    const callIds = state.suppressedEmptyCanonicalTurnDiffCallIds;
+    if (callIds.has(callId)) {
+        callIds.delete(callId);
+    }
+    while (callIds.size >= RAW_MESSAGE_NORMALIZATION_SUPPRESSED_EMPTY_DIFF_CALL_ID_MAX) {
+        const oldest = callIds.keys().next().value;
+        if (typeof oldest !== 'string') break;
+        callIds.delete(oldest);
+    }
+    callIds.add(callId);
+}
+
+function filterSuppressedEmptyCanonicalTurnDiffToolResults(
+    message: NormalizedMessage,
+    state: RawMessageNormalizationSequenceState,
+): NormalizedMessage | null {
+    const suppressedEmptyCanonicalTurnDiffCallIds = state.suppressedEmptyCanonicalTurnDiffCallIds;
+    if (message.role !== 'agent') {
+        return message;
+    }
+
+    let didFilter = false;
+    const matchedCallIds = new Set<string>();
+    const content = message.content.filter((item) => {
+        if (item.type !== 'tool-result') {
+            return true;
+        }
+        const isKnownSuppressedResult = suppressedEmptyCanonicalTurnDiffCallIds.has(item.tool_use_id);
+        const isCanonicalTurnDiffResult = isCanonicalTurnDiffPayload(item.content);
+        if (!isKnownSuppressedResult && !isCanonicalTurnDiffResult) return true;
+        if (isKnownSuppressedResult) matchedCallIds.add(item.tool_use_id);
+        const shouldFilter = !hasCanonicalTurnDiffEvidence(item.content);
+        if (shouldFilter) didFilter = true;
+        return !shouldFilter;
+    });
+    for (const callId of matchedCallIds) {
+        suppressedEmptyCanonicalTurnDiffCallIds.delete(callId);
+    }
+    if (!didFilter) return message;
+    if (content.length === 0) return null;
+    return {
+        ...message,
+        content,
+    };
+}
+
+export function normalizeRawMessageInSequence(
+    input: RawMessageNormalizationInput,
+    state: RawMessageNormalizationSequenceState,
+): NormalizedMessage | null {
+    const emptyTurnDiffCallId = readEmptyCanonicalTurnDiffToolCallId(input.raw);
+    const normalized = normalizeRawMessage(
+        input.id,
+        typeof input.localId === 'string' ? input.localId : null,
+        input.createdAt,
+        input.raw,
+        {
+            seq: typeof input.seq === 'number' ? input.seq : undefined,
+            messageRole: input.messageRole ?? undefined,
+        },
+    );
+    if (!normalized) {
+        if (emptyTurnDiffCallId) {
+            rememberSuppressedEmptyCanonicalTurnDiffCallId(state, emptyTurnDiffCallId);
+        }
+        return null;
+    }
+
+    return filterSuppressedEmptyCanonicalTurnDiffToolResults(
+        normalized,
+        state,
+    );
+}
+
+export function normalizeRawMessages(items: ReadonlyArray<RawMessageNormalizationInput>): NormalizedMessage[] {
+    const state = createRawMessageNormalizationSequenceState();
+    const out: NormalizedMessage[] = [];
+    for (const item of items) {
+        const normalized = normalizeRawMessageInSequence(item, state);
+        if (normalized) out.push(normalized);
+    }
+    return out;
+}
+
 export function normalizeRawMessage(
     id: string,
     localId: string | null,
     createdAt: number,
     rawInput: unknown,
-    opts?: Readonly<{ seq?: number }>,
+    opts?: Readonly<{ seq?: number; messageRole?: SessionMessageRole | null }>,
 ): NormalizedMessage | null {
     const seq = typeof opts?.seq === 'number' && Number.isFinite(opts.seq) ? Math.trunc(opts.seq) : undefined;
 
@@ -110,7 +278,7 @@ export function normalizeRawMessage(
         if (__DEV__) {
             const contentType = (rawInput as any)?.content?.type;
             const dataType = (rawInput as any)?.content?.data?.type;
-            const provider = (rawInput as any)?.content?.provider;
+            const provider = (rawInput as any)?.content?.agentId;
             const toolName =
                 contentType === 'codex'
                     ? (rawInput as any)?.content?.data?.name
@@ -149,7 +317,7 @@ export function normalizeRawMessage(
                 role: 'user',
                 isSidechain: false,
                 content: { type: 'text', text },
-                meta: (rawInput as any)?.meta,
+                meta: markUnsupportedContentMeta((rawInput as any)?.meta as MessageMeta | undefined, 'unparsed-user-message'),
             }
             : {
                 id,
@@ -159,7 +327,7 @@ export function normalizeRawMessage(
                 role: 'agent',
                 isSidechain: false,
                 content: [{ type: 'text', text, uuid: id, parentUUID: null }],
-                meta: (rawInput as any)?.meta,
+                meta: markUnsupportedContentMeta((rawInput as any)?.meta as MessageMeta | undefined, 'unparsed-agent-message'),
             };
     }
     const raw = parsed.data as RawRecord;
@@ -334,7 +502,7 @@ export function normalizeRawMessage(
             return typeof content === 'string' || Array.isArray(content);
         };
 
-		        if (raw.content.type === 'output') {
+			        if (raw.content.type === 'output') {
             // Skip Meta messages
             if (raw.content.data.isMeta) {
                 return null;
@@ -343,6 +511,25 @@ export function normalizeRawMessage(
             // Skip compact summary messages
             if (raw.content.data.isCompactSummary) {
                 return null;
+            }
+
+            if (isClaudeSyntheticNoResponseOutputData(raw.content.data)) {
+                const outputUuid = readRecordString(raw.content.data, 'uuid') ?? id;
+                return {
+                    id,
+                    ...(seq !== undefined ? { seq } : {}),
+                    localId,
+                    createdAt,
+                    role: 'agent',
+                    isSidechain: false,
+                    content: [{
+                        type: 'text',
+                        text: SYNTHETIC_NO_RESPONSE_TEXT,
+                        uuid: outputUuid,
+                        parentUUID: null,
+                    }],
+                    meta: markSyntheticNoResponseMeta(raw.meta),
+                } satisfies NormalizedMessage;
             }
 
             // Progress records are transport-level status updates and are not rendered in transcript.
@@ -413,7 +600,7 @@ export function normalizeRawMessage(
 	                }
                     const sidechainId = metaSidechainId ?? getOutputSidechainId(raw.content.data) ?? claudeParentToolUseId;
                     const legacyIsSidechain = getOutputIsSidechain(raw.content.data);
-	                  return {
+	                  return filterNormalizedEventRoleOutput({
 	                        id,
 	                        ...(seq !== undefined ? { seq } : {}),
 	                        localId,
@@ -424,7 +611,7 @@ export function normalizeRawMessage(
 	                      content,
 	                      meta: raw.meta,
 	                      usage: raw.content.data.message.usage
-	                  };
+	                  }, opts?.messageRole);
 	            } else if (isOutputUserData(raw.content.data)) {
 	                const outputUuid = raw.content.data.uuid ?? id;
 
@@ -438,7 +625,7 @@ export function normalizeRawMessage(
 	                // Handle sidechain user messages
 	                if (isSidechain && raw.content.data.message && typeof raw.content.data.message.content === 'string') {
 	                    // Return as a special agent message with sidechain content
-	                      return {
+	                      return filterNormalizedEventRoleOutput({
 	                          id,
 	                          ...(seq !== undefined ? { seq } : {}),
 	                          localId,
@@ -451,7 +638,7 @@ export function normalizeRawMessage(
 	                            uuid: outputUuid,
 	                            prompt: raw.content.data.message.content
 	                        }]
-	                    };
+	                    }, opts?.messageRole);
 	                }
 
                 // Handle regular user messages
@@ -459,7 +646,7 @@ export function normalizeRawMessage(
                     if (isClaudeTaskNotificationText(raw.content.data.message.content)) {
                         return null;
                     }
-                    return {
+                    return filterNormalizedEventRoleOutput({
                         id,
                         ...(seq !== undefined ? { seq } : {}),
                         localId,
@@ -471,7 +658,7 @@ export function normalizeRawMessage(
                             type: 'text',
                             text: raw.content.data.message.content
                         }
-                    };
+                    }, opts?.messageRole);
                 }
 
                 // Handle tool results
@@ -499,7 +686,7 @@ export function normalizeRawMessage(
 		                        }
 		                    }
 		                }
-                  return {
+                  return filterNormalizedEventRoleOutput({
                       id,
                       ...(seq !== undefined ? { seq } : {}),
                       localId,
@@ -509,10 +696,16 @@ export function normalizeRawMessage(
                       isSidechain,
                     content,
                     meta: raw.meta
-                };
+                }, opts?.messageRole);
             }
             // Any other output payload should be surfaced as an opaque message rather than dropped.
-            return {
+            // Name the payload type: agent CLIs keep adding record types, and an unnamed placeholder
+            // leaves nothing to grep for when one starts leaking into transcripts.
+            const unsupportedType = (raw.content.data as { type?: unknown }).type;
+            const unsupportedLabel = typeof unsupportedType === 'string' && unsupportedType.length > 0
+                ? `[Unsupported agent output: ${unsupportedType}]`
+                : '[Unsupported agent output]';
+            return filterNormalizedEventRoleOutput({
                 id,
                 ...(seq !== undefined ? { seq } : {}),
                 localId,
@@ -521,12 +714,12 @@ export function normalizeRawMessage(
                 isSidechain: false,
                 content: [{
                     type: 'text',
-                    text: '[Unsupported agent output]',
+                    text: unsupportedLabel,
                     uuid: id,
                     parentUUID: null,
                 }],
-                meta: raw.meta,
-            };
+                meta: markUnsupportedContentMeta(raw.meta, 'unsupported-agent-output'),
+            }, opts?.messageRole);
         }
           if (raw.content.type === 'event') {
               return {
@@ -580,6 +773,13 @@ export function normalizeRawMessage(
                 } satisfies NormalizedMessage;
             }
               if (raw.content.data.type === 'tool-call') {
+                  const toolName = raw.content.data.name || 'unknown';
+                  if (shouldSuppressEmptyCanonicalTurnDiffToolCall({
+                      toolName,
+                      input: raw.content.data.input,
+                  })) {
+                      return null;
+                  }
                   // Cast tool calls to agent tool-call messages
                   return {
                       id,
@@ -592,7 +792,7 @@ export function normalizeRawMessage(
                     content: [{
                         type: 'tool-call',
                         id: raw.content.data.callId,
-                        name: raw.content.data.name || 'unknown',
+                        name: toolName,
                         input: raw.content.data.input,
                         description: null,
                         uuid: raw.content.data.id,
@@ -647,9 +847,9 @@ export function normalizeRawMessage(
               const acpDataRecord = raw.content.data as unknown as Record<string, unknown>;
 
               if (isContextCompactionAgentEvent(raw.content.data)) {
-                  const provider = typeof raw.content.data.provider === 'string' && raw.content.data.provider.trim().length > 0
-                      ? raw.content.data.provider
-                      : raw.content.provider;
+                  const agentId = typeof raw.content.data.agentId === 'string' && raw.content.data.agentId.trim().length > 0
+                      ? raw.content.data.agentId
+                      : raw.content.agentId;
                   return {
                       id,
                       ...(seq !== undefined ? { seq } : {}),
@@ -657,7 +857,26 @@ export function normalizeRawMessage(
                       createdAt,
                       role: 'event',
                       isSidechain: false,
-                      content: { ...raw.content.data, provider },
+                      content: { ...raw.content.data, agentId },
+                      meta: raw.meta,
+                  } satisfies NormalizedMessage;
+              }
+
+              if (raw.content.data.type === 'text' && typeof acpDataRecord.text === 'string') {
+                  return {
+                      id,
+                      ...(seq !== undefined ? { seq } : {}),
+                      localId,
+                      createdAt,
+                      role: 'agent',
+                      isSidechain: structuredSidechain.isSidechain,
+                      ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
+                      content: [{
+                          type: 'text',
+                          text: acpDataRecord.text,
+                          uuid: id,
+                          parentUUID: null,
+                      }],
                       meta: raw.meta,
                   } satisfies NormalizedMessage;
               }
@@ -703,6 +922,13 @@ export function normalizeRawMessage(
               if (raw.content.data.type === 'tool-call') {
                   let description: string | null = null;
                   const parsedInput = maybeParseJsonString(raw.content.data.input);
+                const toolName = typeof acpDataRecord.name === 'string' ? acpDataRecord.name : 'unknown';
+                if (shouldSuppressEmptyCanonicalTurnDiffToolCall({
+                    toolName,
+                    input: parsedInput,
+                })) {
+                    return null;
+                }
                 const inputObj = (parsedInput && typeof parsedInput === 'object' && !Array.isArray(parsedInput))
                     ? (parsedInput as Record<string, unknown>)
                     : null;
@@ -723,7 +949,7 @@ export function normalizeRawMessage(
                     content: [{
                         type: 'tool-call',
                         id: typeof acpDataRecord.callId === 'string' ? acpDataRecord.callId : '',
-                        name: typeof acpDataRecord.name === 'string' ? acpDataRecord.name : 'unknown',
+                        name: toolName,
                         input: parsedInput,
                         description,
                         uuid: typeof acpDataRecord.id === 'string' ? acpDataRecord.id : id,
@@ -915,6 +1141,11 @@ export function normalizeRawMessage(
                 || dataType === 'turn_failed'
                 || dataType === 'turn_cancelled'
                 || dataType === 'turn_aborted'
+                // Claude SDK per-turn usage/cost summary (source
+                // 'claude-agent-sdk-result-usage'): transport-level metrics that
+                // feed the usage pipeline, not a visible transcript row. The
+                // human-readable result text is a separate 'message' record.
+                || dataType === 'result'
             ) {
                 return null;
             }
@@ -933,6 +1164,6 @@ export function normalizeRawMessage(
             uuid: id,
             parentUUID: null,
         }],
-        meta: (raw as any)?.meta,
+        meta: markUnsupportedContentMeta((raw as any)?.meta, 'unsupported-transcript-record'),
     };
 }

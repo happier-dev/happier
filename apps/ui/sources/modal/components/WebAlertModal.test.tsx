@@ -69,6 +69,7 @@ describe('WebAlertModal', () => {
         const [baseModalProps] = baseModalSpy.mock.calls.at(-1)!;
         expect(baseModalProps.closeOnBackdrop).toBe(false);
         expect(baseModalProps.showBackdrop).toBe(true);
+        expect(baseModalProps.accessibilityLabel).toBe('Push local commits');
 
         const modalCardFrame = React.Children.toArray(baseModalProps.children).find((child: any) => child.type === ModalCardFrame);
         expect(modalCardFrame).toBeDefined();

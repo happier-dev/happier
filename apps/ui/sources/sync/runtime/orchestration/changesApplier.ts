@@ -54,6 +54,7 @@ export async function applyPlannedChangeActions(params: {
         todos?: () => Promise<void>;
         pets?: () => Promise<void>;
     };
+    refreshSessionOrganization?: (plan: Exclude<PlannedChangeActions['sessionOrganization'], { mode: 'none' }>) => Promise<void>;
     invalidateMessagesForSession: (sessionId: string) => Promise<void>;
     invalidateScmStatusForSession: (sessionId: string) => void;
     applyTodoSocketUpdates: (changes: TodoSocketUpdate[]) => Promise<void>;
@@ -71,12 +72,18 @@ export async function applyPlannedChangeActions(params: {
     const failedMessageCatchUpSessionIds = new Set<string>();
     const completedPendingSessionIds = new Set<string>();
     const failedPendingSessionIds = new Set<string>();
+    const listHydrationSessionIds = Array.from(new Set(
+        planned.sessionIdsToCatchUp
+            .map((sessionId) => String(sessionId ?? '').trim())
+            .filter(Boolean),
+    ));
     const loadedCatchUpSessionIds = planned.sessionIdsToCatchUp.filter((sessionId) =>
         params.isSessionMessagesLoaded(sessionId),
     );
 
     let sessionsInvalidationFailed = false;
     let sessionFolderAssignmentsInvalidationFailed = false;
+    let sessionOrganizationRefreshFailed = false;
     let petsInvalidationFailed = false;
     let sessionsInvalidationDone: Promise<boolean> | null = null;
     let resolveSessionsInvalidationDone: ((succeeded: boolean) => void) | null = null;
@@ -113,8 +120,8 @@ export async function applyPlannedChangeActions(params: {
         tasks.push(async () => {
             try {
                 await params.invalidate.sessions?.({
-                    requiredHydrationSessionIds: loadedCatchUpSessionIds,
-                    prioritizeSessionIds: loadedCatchUpSessionIds,
+                    requiredHydrationSessionIds: listHydrationSessionIds,
+                    prioritizeSessionIds: listHydrationSessionIds,
                 });
                 resolveSessionsInvalidationDone?.(true);
             } catch {
@@ -133,6 +140,22 @@ export async function applyPlannedChangeActions(params: {
                 await params.invalidate.sessionFolderAssignments(planned.sessionFolderAssignmentSessionIds);
             } catch {
                 sessionFolderAssignmentsInvalidationFailed = true;
+            }
+        });
+    }
+    const sessionOrganizationPlan = planned.sessionOrganization?.mode === 'snapshot'
+        ? planned.sessionOrganization
+        : null;
+    if (sessionOrganizationPlan) {
+        tasks.push(async () => {
+            try {
+                if (!params.refreshSessionOrganization) {
+                    sessionOrganizationRefreshFailed = true;
+                    return;
+                }
+                await params.refreshSessionOrganization(sessionOrganizationPlan);
+            } catch {
+                sessionOrganizationRefreshFailed = true;
             }
         });
     }
@@ -241,12 +264,6 @@ export async function applyPlannedChangeActions(params: {
             };
         }
 
-        if (classification.decision === 'intentionally-skipped-by-explicit-policy') {
-            safeAdvanceCursor = classification.cursor;
-            processedChanges += 1;
-            continue;
-        }
-
         if (petsInvalidationFailed && classification.kind === 'pet') {
             return {
                 status: 'partial',
@@ -260,6 +277,22 @@ export async function applyPlannedChangeActions(params: {
 
         if (classification.materializationProof === 'session-folder-assignment-refresh') {
             if (sessionFolderAssignmentsInvalidationFailed) {
+                return {
+                    status: 'partial',
+                    safeAdvanceCursor,
+                    blockedCursor: classification.cursor,
+                    blockedReason: 'partial-materialization',
+                    processedChanges,
+                    blockedChanges: planned.changes.length - processedChanges,
+                };
+            }
+            safeAdvanceCursor = classification.cursor;
+            processedChanges += 1;
+            continue;
+        }
+
+        if (classification.materializationProof === 'session-organization') {
+            if (sessionOrganizationRefreshFailed) {
                 return {
                     status: 'partial',
                     safeAdvanceCursor,

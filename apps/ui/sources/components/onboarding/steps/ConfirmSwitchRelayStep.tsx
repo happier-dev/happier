@@ -26,15 +26,15 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     selectedRelayLabel: {
         color: theme.colors.text.secondary,
-        textAlign: 'center',
+        textAlign: 'left',
     },
     selectedRelayUrl: {
         color: theme.colors.text.primary,
-        textAlign: 'center',
+        textAlign: 'left',
     },
     confirmWarning: {
         color: theme.colors.text.secondary,
-        textAlign: 'center',
+        textAlign: 'left',
     },
 }));
 

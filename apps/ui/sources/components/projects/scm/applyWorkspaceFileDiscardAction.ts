@@ -62,6 +62,8 @@ export async function applyWorkspaceFileDiscardAction(input: Readonly<{
             const response = await machineScmChangeDiscard(input.machineId, {
                 cwd: input.rootPath,
                 entries: [{ path: input.file.fullPath, kind: input.file.status }],
+            }, {
+                serverId: input.scope.serverId,
             });
 
             if (!response.success) {

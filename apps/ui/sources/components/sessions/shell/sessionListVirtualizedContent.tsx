@@ -1,7 +1,8 @@
 import React from 'react';
 import { FlatList, Platform, View, type ViewToken } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
+import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
+import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
 import { Ionicons } from '@expo/vector-icons';
 import { t, type TranslationKey } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
@@ -44,7 +45,6 @@ const WEB_LIST_UPDATE_CELLS_BATCHING_PERIOD_MS = 50;
 const WEB_LIST_WINDOW_SIZE = 3;
 const WEB_LIST_SCROLL_EVENT_THROTTLE_MS = 32;
 const NATIVE_LIST_SCROLL_EVENT_THROTTLE_MS = 16;
-const NATIVE_LIST_MAINTAIN_VISIBLE_CONTENT_POSITION = Object.freeze({ disabled: true });
 
 const sessionListNodeKeyExtractor = (item: SessionListVirtualizedNode): string => item.id;
 
@@ -92,7 +92,7 @@ function resolveWebListInitialNumToRender(nodes: ReadonlyArray<SessionListVirtua
 export type SessionListRowDensity = 'default' | 'compact' | 'minimal';
 
 /**
- * FlashList recycling pools are keyed on this type. Session cell heights are
+ * Virtualized row types are keyed on this value. Session cell heights are
  * NOT uniform: last/single-in-group rows carry the inter-group bottom margin
  * (see SessionItem container styles) and density changes the base height, so
  * pooling all sessions under one type lets a recycled cell reuse a stale
@@ -274,7 +274,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
                 ListFooterComponent={footerComponent as any}
                 // First-page-sized web lists avoid React Native Web VirtualizedList's
                 // incremental cell update churn during live row data changes. Large
-                // web lists use FlashListCompat below so the historical all-rows
+                // web lists use the canonical virtualized backend below so the historical all-rows
                 // mount case remains bounded.
                 disableVirtualization={true}
                 initialNumToRender={initialNumToRender}
@@ -288,8 +288,8 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     }
 
     return (
-        <FlashList
-            ref={props.listRef}
+        <VirtualizedList
+            ref={props.listRef as React.Ref<VirtualizedListRef>}
             data={props.nodes as any}
             renderItem={props.renderItem as any}
             extraData={props.rowExtraData}
@@ -303,13 +303,13 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
             onMomentumScrollEnd={props.onMomentumScrollEnd}
             onEndReached={props.onEndReached}
             onEndReachedThreshold={0.4}
-            maintainVisibleContentPosition={NATIVE_LIST_MAINTAIN_VISIBLE_CONTENT_POSITION}
+            maintainVisibleContentPosition={false}
             refreshControl={isWeb ? undefined : props.nativeRefreshControl}
-            overrideProps={isWeb
+            webScrollHandlers={isWeb
                 ? ({
                     onWheel: props.onStopScrollEventPropagationOnWeb,
                     onTouchMove: props.onStopScrollEventPropagationOnWeb,
-                } as any)
+                })
                 : undefined}
             onViewableItemsChanged={props.onViewableItemsChanged as any}
             viewabilityConfig={props.viewabilityConfig as any}
@@ -318,6 +318,9 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
             scrollEventThrottle={isWeb ? WEB_LIST_SCROLL_EVENT_THROTTLE_MS : NATIVE_LIST_SCROLL_EVENT_THROTTLE_MS}
             ListHeaderComponent={headerComponent as any}
             ListFooterComponent={footerComponent as any}
+            // Session rows carry drag state, images, menus, and focus. Keep
+            // recycling off until those local-state seams have been audited.
+            recycleItems={false}
         />
     );
 });

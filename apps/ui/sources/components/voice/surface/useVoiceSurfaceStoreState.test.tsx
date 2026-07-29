@@ -64,9 +64,10 @@ describe('useVoiceSurfaceStoreState', () => {
         const hook = await renderHook(() =>
             useVoiceSurfaceStoreState({
                 activeControlSessionId: null,
-                localConversationMode: 'direct_session',
                 providerId: 'local_conversation',
                 surfaceSessionId: 'voice-conversation-1',
+                transcriptEnabled: true,
+                voiceSettings: { providerId: 'local_conversation' },
                 voicePrivacy: {
                     shareFilePaths: true,
                     shareSessionSummary: true,
@@ -81,6 +82,9 @@ describe('useVoiceSurfaceStoreState', () => {
                 createdAt: 5,
                 kind: 'assistant',
                 text: 'Hidden conversation reply',
+                transcriptState: 'final',
+                announce: false,
+                announcementId: 'voice-persisted:m1',
             },
         ]);
 
@@ -114,9 +118,10 @@ describe('useVoiceSurfaceStoreState', () => {
         const hook = await renderHook(() =>
             useVoiceSurfaceStoreState({
                 activeControlSessionId: null,
-                localConversationMode: 'direct_session',
                 providerId: 'local_conversation',
                 surfaceSessionId: 'surface-session-1',
+                transcriptEnabled: true,
+                voiceSettings: { providerId: 'local_conversation' },
                 voicePrivacy: {
                     shareFilePaths: true,
                     shareSessionSummary: true,
@@ -126,6 +131,42 @@ describe('useVoiceSurfaceStoreState', () => {
 
         expect(hook.getCurrent().currentSession?.id).toBe('surface-session-1');
         expect(hook.getCurrent().currentSession?.metadata?.summaryText).toBe('Surface session');
+
+        await hook.unmount();
+    });
+
+    it('does not offer Open Conversation for a stale runtime binding after storage replacement', async () => {
+        const storage = getStorage();
+        voiceSessionBindingStore.getState().bind({
+            adapterId: 'local_conversation',
+            controlSessionId: 'account-a-control',
+            conversationSessionId: 'account-a-voice-conversation',
+            targetSessionId: 'account-a-target',
+            transcriptMode: 'native_session',
+            updatedAt: 500,
+        });
+        storage.setState((state: any) => ({
+            ...state,
+            isDataReady: true,
+            sessions: {},
+            sessionMessages: {},
+        }));
+
+        const hook = await renderHook(() =>
+            useVoiceSurfaceStoreState({
+                activeControlSessionId: 'account-a-control',
+                providerId: 'local_conversation',
+                surfaceSessionId: null,
+                transcriptEnabled: true,
+                voiceSettings: { providerId: 'local_conversation' },
+                voicePrivacy: {
+                    shareFilePaths: true,
+                    shareSessionSummary: true,
+                },
+            }),
+        );
+
+        expect(hook.getCurrent().openConversationSessionId).toBeNull();
 
         await hook.unmount();
     });

@@ -5,6 +5,7 @@ import {
     transcriptViewportTelemetry,
     type TranscriptViewportTelemetryEvent,
     type TranscriptViewportTelemetryObservationReason,
+    type TranscriptViewportTelemetryWebTrigger,
 } from '@/components/sessions/transcript/scroll/transcriptViewportTelemetry';
 import type { TranscriptViewportMode } from '@/components/sessions/transcript/viewport/transcriptViewportTypes';
 import type { WebTranscriptScrollMetrics } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
@@ -24,7 +25,7 @@ export type RestoreDecisionTelemetryParams = Readonly<{
     offsetY?: number;
     programmaticWebWrite?: boolean;
     scrollable?: boolean;
-    webTrigger?: 'scroll' | 'edge-reached' | 'restore' | 'prepend-restore' | 'jump';
+    webTrigger?: TranscriptViewportTelemetryWebTrigger;
 }>;
 
 export type ScrollObservedTelemetryParams = Readonly<{
@@ -56,12 +57,12 @@ export function buildRestoreDecisionTelemetryEvent(params: Readonly<{
     restore: RestoreDecisionTelemetryParams;
     webMetrics: WebTranscriptScrollMetrics | null;
     resolveWebDiagnostics: (params: Readonly<{
-        flashListContentHeight?: number;
-        flashListLayoutHeight?: number;
+        listContentHeight?: number;
+        listLayoutHeight?: number;
         metrics: WebTranscriptScrollMetrics | null;
         programmaticWebWrite: boolean;
         scrollable?: boolean;
-        trigger: 'scroll' | 'edge-reached' | 'restore' | 'prepend-restore' | 'jump';
+        trigger: TranscriptViewportTelemetryWebTrigger;
     }>) => Readonly<Record<string, unknown>>;
 }>): Readonly<Record<string, unknown> & {
     mode: TranscriptViewportMode;
@@ -85,8 +86,8 @@ export function buildRestoreDecisionTelemetryEvent(params: Readonly<{
         anchorRestoreViewOffset: restore.anchorRestoreViewOffset,
         ...(Platform.OS === 'web' ? params.resolveWebDiagnostics({
             metrics: params.webMetrics,
-            flashListContentHeight: restore.contentHeight,
-            flashListLayoutHeight: restore.layoutHeight,
+            listContentHeight: restore.contentHeight,
+            listLayoutHeight: restore.layoutHeight,
             programmaticWebWrite: restore.programmaticWebWrite ?? false,
             scrollable: restore.scrollable,
             trigger: restore.webTrigger ?? (restore.mode === 'jump-to-bottom' ? 'jump' : 'restore'),

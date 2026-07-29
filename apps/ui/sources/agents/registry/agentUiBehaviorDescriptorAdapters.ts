@@ -1,9 +1,14 @@
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource, RuntimeDescriptorV1 } from '@happier-dev/protocol';
 
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { tLoose } from '@/text';
+import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
+import { t, tLoose } from '@/text';
 
-import type { AgentTranscriptStorageMode, AgentUiBehavior } from './registryUiBehavior';
+import type {
+    AgentSessionHandoffProviderPatch,
+    AgentTranscriptStorageMode,
+    AgentUiBehavior,
+} from './registryUiBehavior';
 import {
     createUiProjectionDiagnostic,
     isRecord,
@@ -11,6 +16,14 @@ import {
     readStringArray,
     type UiProjectionDiagnostic,
 } from './uiDescriptorDiagnostics';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+
+type RuntimeDescriptorAgentExtraDescriptor = Readonly<{
+    owner: string;
+    schemaId: string;
+    v: number;
+    runtimeHandleFields: readonly string[];
+}>;
 
 type EnvironmentDescriptor = Readonly<{
     providerId: string;
@@ -36,17 +49,61 @@ type EnvironmentDescriptor = Readonly<{
         httpLoopbackOnly?: boolean;
         originOnly?: boolean;
     }>;
+    agentExtra?: RuntimeDescriptorAgentExtraDescriptor;
 }>;
 
 type SourceOptionDescriptor = Readonly<{
     key: string;
     labelKey: string;
+    labelParams?: Readonly<Record<string, string>>;
+    detail?: string;
     source: ExternalSessionsSource;
+}>;
+
+type ConnectedServiceProfileSourceDescriptor = Readonly<{
+    serviceId: string;
+    keyPrefix: string;
+    labelKey: string;
+    labelParams?: Readonly<Record<string, string>>;
+    detailSettingsKey?: string;
+    source: Readonly<Record<string, unknown>>;
+    serviceIdField: string;
+    profileIdField: string;
 }>;
 
 type CompatibleSourceDescriptor = Readonly<{
     sourceKind: string;
     optionalFields: readonly string[];
+}>;
+
+type LockedConnectedServiceSourceDescriptor = Readonly<{
+    serviceId: string;
+    keyPrefix: string;
+    source: Readonly<Record<string, unknown>>;
+    serviceIdField: string;
+    profileIdField: string;
+    groupIdField: string;
+}>;
+
+type SourceFromCandidateLinkExtrasDescriptor = Readonly<{
+    sourceKind: string;
+    optionalFields: readonly string[];
+}>;
+
+type CandidatePathDescriptor = readonly string[];
+
+type RuntimeDescriptorLinkExtrasDescriptor = Readonly<{
+    providerId: string;
+    runtimeDescriptorOutputKey: string;
+    legacyModeOutputKey?: string;
+    backendMode: Readonly<{
+        values: readonly string[];
+        aliases?: Readonly<Record<string, string>>;
+        candidatePaths: readonly CandidatePathDescriptor[];
+    }>;
+    providerSessionIdPaths: readonly CandidatePathDescriptor[];
+    sourceFields: readonly string[];
+    agentExtra?: RuntimeDescriptorAgentExtraDescriptor;
 }>;
 
 type BehaviorDescriptorContext = Readonly<{
@@ -100,12 +157,12 @@ function normalizeDescriptorUrl(value: unknown, config: NonNullable<EnvironmentD
 
 function readRuntimeDescriptorProvider(metadata: unknown, providerId: string): Record<string, unknown> | null {
     const record = isRecord(metadata) ? metadata : null;
-    const runtimeDescriptor = isRecord(record?.agentRuntimeDescriptorV1)
-        ? record.agentRuntimeDescriptorV1
-        : isRecord(record?.runtimeDescriptorV1)
-            ? record.runtimeDescriptorV1
+    const runtimeDescriptor = isRecord(record?.runtimeDescriptorV1)
+        ? record.runtimeDescriptorV1
+        : isRecord(record?.agentRuntimeDescriptorV1)
+            ? record.agentRuntimeDescriptorV1
             : null;
-    if (!runtimeDescriptor || runtimeDescriptor.v !== 1 || runtimeDescriptor.providerId !== providerId) return null;
+    if (!runtimeDescriptor || runtimeDescriptor.v !== 1 || runtimeDescriptor.agentId !== providerId) return null;
     return isRecord(runtimeDescriptor.provider) ? runtimeDescriptor.provider : null;
 }
 
@@ -166,6 +223,26 @@ function readTranscriptStorageModesByBackendMode(value: unknown): ReadonlyMap<st
     return new Map(entries);
 }
 
+function readStringRecord(value: unknown): Readonly<Record<string, string>> | undefined {
+    if (!isRecord(value)) return undefined;
+    const entries = Object.entries(value).flatMap(([key, entry]) => {
+        const normalizedKey = readString(key);
+        const normalizedValue = readString(entry);
+        return normalizedKey && normalizedValue ? [[normalizedKey, normalizedValue] as const] : [];
+    });
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function translateDescriptorLabel(labelKey: string, labelParams?: Readonly<Record<string, string>>): string {
+    if (!labelParams) return tLoose(labelKey);
+    const translated = (t as unknown as (key: string, params: Readonly<Record<string, string>>) => unknown)(
+        labelKey,
+        labelParams,
+    );
+    if (typeof translated === 'string') return translated;
+    return tLoose(labelKey);
+}
+
 function readScopedServerBaseUrlFromSettings(opts: Readonly<{
     settings: unknown;
     targetServerId?: string | null;
@@ -186,14 +263,25 @@ function readScopedServerBaseUrlFromSettings(opts: Readonly<{
 function buildEnvironmentVariables(opts: Readonly<{
     descriptor: EnvironmentDescriptor;
     settings?: unknown;
-    session?: Readonly<{ metadata?: Record<string, unknown> | null }> | null;
+    session?: Readonly<{
+        metadata?: Record<string, unknown> | null;
+        metadataLayoutVersion?: number;
+        ownerMetadataView?: unknown;
+    }> | null;
     environmentVariables?: Record<string, string> | undefined;
     newSessionOptions?: Record<string, unknown> | null;
     allowLegacySettingsServerBaseUrl?: boolean;
     allowActiveServerFallback?: boolean;
 }>): Record<string, string> {
     const base = { ...(opts.environmentVariables ?? {}) };
-    const affinity = readEnvironmentAffinity(opts.session?.metadata ?? null, opts.descriptor);
+    const ownerMetadata = opts.session
+        ? readSessionOwnerMetadataView({
+            metadataLayoutVersion: opts.session.metadataLayoutVersion,
+            metadata: opts.session.metadata,
+            ownerMetadataView: opts.session.ownerMetadataView,
+        })
+        : null;
+    const affinity = readEnvironmentAffinity(ownerMetadata, opts.descriptor);
     const backendMode = affinity.backendMode
         ?? normalizeEnumValue(readSetting(opts.settings, opts.descriptor.backendMode.settingKey), opts.descriptor.backendMode);
     base[opts.descriptor.backendMode.envKey] = backendMode;
@@ -290,11 +378,29 @@ function readEnvironmentDescriptor(value: unknown, diagnostics: UiProjectionDiag
         ));
     }
 
+    const agentExtraConfig = isRecord(value.agentExtra) ? value.agentExtra : null;
+    const agentExtraOwner = readString(agentExtraConfig?.owner);
+    const agentExtraSchemaId = readString(agentExtraConfig?.schemaId);
+    const agentExtraVersion = typeof agentExtraConfig?.v === 'number' && Number.isInteger(agentExtraConfig.v) && agentExtraConfig.v > 0
+        ? agentExtraConfig.v
+        : null;
+    const runtimeHandleFields = readStringArray(agentExtraConfig?.runtimeHandleFields);
+
     return {
         providerId,
         backendMode: backendModeConfig as EnvironmentDescriptor['backendMode'],
         ...(serverBaseUrlConfig && hasValidServerBaseUrlConfig
             ? { serverBaseUrl: serverBaseUrlConfig }
+            : {}),
+        ...(agentExtraOwner && agentExtraSchemaId && agentExtraVersion && runtimeHandleFields.length > 0
+            ? {
+                agentExtra: {
+                    owner: agentExtraOwner,
+                    schemaId: agentExtraSchemaId,
+                    v: agentExtraVersion,
+                    runtimeHandleFields,
+                },
+            }
             : {}),
     };
 }
@@ -305,9 +411,43 @@ function readSourceOptionDescriptors(value: unknown): readonly SourceOptionDescr
         if (!isRecord(entry) || !isRecord(entry.source)) return [];
         const key = readString(entry.key);
         const labelKey = readString(entry.labelKey);
+        const labelParams = readStringRecord(entry.labelParams);
+        const detail = readString(entry.detail);
         const sourceKind = readString(entry.source.kind);
         if (!key || !labelKey || !sourceKind) return [];
-        return [{ key, labelKey, source: entry.source as ExternalSessionsSource }];
+        return [{
+            key,
+            labelKey,
+            ...(labelParams ? { labelParams } : {}),
+            ...(detail ? { detail } : {}),
+            source: entry.source as ExternalSessionsSource,
+        }];
+    });
+}
+
+function readConnectedServiceProfileSourceDescriptors(value: unknown): readonly ConnectedServiceProfileSourceDescriptor[] {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((entry): ConnectedServiceProfileSourceDescriptor[] => {
+        if (!isRecord(entry) || !isRecord(entry.source)) return [];
+        const serviceId = readString(entry.serviceId);
+        const keyPrefix = readString(entry.keyPrefix);
+        const labelKey = readString(entry.labelKey);
+        const labelParams = readStringRecord(entry.labelParams);
+        const detailSettingsKey = readString(entry.detailSettingsKey);
+        const serviceIdField = readString(entry.serviceIdField);
+        const profileIdField = readString(entry.profileIdField);
+        const sourceKind = readString(entry.source.kind);
+        if (!serviceId || !keyPrefix || !labelKey || !serviceIdField || !profileIdField || !sourceKind) return [];
+        return [{
+            serviceId,
+            keyPrefix,
+            labelKey,
+            ...(labelParams ? { labelParams } : {}),
+            ...(detailSettingsKey ? { detailSettingsKey } : {}),
+            source: entry.source,
+            serviceIdField,
+            profileIdField,
+        }];
     });
 }
 
@@ -321,33 +461,638 @@ function readCompatibleSourceDescriptor(value: unknown): CompatibleSourceDescrip
     };
 }
 
+function readLockedConnectedServiceSourceDescriptor(value: unknown): LockedConnectedServiceSourceDescriptor | null {
+    if (!isRecord(value) || !isRecord(value.source)) return null;
+    const serviceId = readString(value.serviceId);
+    const keyPrefix = readString(value.keyPrefix);
+    const serviceIdField = readString(value.serviceIdField);
+    const profileIdField = readString(value.profileIdField);
+    const groupIdField = readString(value.groupIdField);
+    const sourceKind = readString(value.source.kind);
+    if (!serviceId || !keyPrefix || !serviceIdField || !profileIdField || !groupIdField || !sourceKind) return null;
+    return {
+        serviceId,
+        keyPrefix,
+        source: value.source,
+        serviceIdField,
+        profileIdField,
+        groupIdField,
+    };
+}
+
+function resolveLockedConnectedServiceSourceOption(params: Readonly<{
+    descriptor: LockedConnectedServiceSourceDescriptor;
+    sourceOptions: readonly SourceOptionDescriptor[];
+    agentOptionState: Record<string, unknown> | null | undefined;
+}>): SourceOptionDescriptor | null {
+    const binding = parseConnectedServicesBindingsByServiceIdFromAgentOptionState({
+        agentOptionState: params.agentOptionState,
+    })[params.descriptor.serviceId];
+    const matchesConnectedSource = (option: SourceOptionDescriptor): boolean => (
+        option.source.kind === params.descriptor.source.kind
+        && (option.source as Record<string, unknown>)[params.descriptor.serviceIdField] === params.descriptor.serviceId
+    );
+
+    const groupId = binding?.source === 'connected' && binding.selection === 'group'
+        ? binding.groupId
+        : null;
+    if (groupId) {
+        const exact = params.sourceOptions.find((option) => (
+            matchesConnectedSource(option)
+            && (option.source as Record<string, unknown>)[params.descriptor.groupIdField] === groupId
+        ));
+        if (exact) return exact;
+        const presentation = params.sourceOptions.find((option) => (
+            matchesConnectedSource(option)
+            && (option.source as Record<string, unknown>)[params.descriptor.profileIdField] === binding?.profileId
+        ));
+        return {
+            key: `${params.descriptor.keyPrefix}:${params.descriptor.serviceId}:group:${groupId}`,
+            labelKey: presentation?.labelKey ?? groupId,
+            ...(presentation?.labelParams ? { labelParams: presentation.labelParams } : {}),
+            ...(presentation?.detail ? { detail: presentation.detail } : {}),
+            source: {
+                ...params.descriptor.source,
+                [params.descriptor.serviceIdField]: params.descriptor.serviceId,
+                [params.descriptor.groupIdField]: groupId,
+            } as ExternalSessionsSource,
+        };
+    }
+
+    if (binding?.source === 'connected') {
+        const profile = params.sourceOptions.find((option) => (
+            matchesConnectedSource(option)
+            && (option.source as Record<string, unknown>)[params.descriptor.profileIdField] === binding.profileId
+        ));
+        if (profile) return profile;
+    }
+
+    return params.sourceOptions[0] ?? null;
+}
+
+function readSourceFromCandidateLinkExtrasDescriptor(value: unknown): SourceFromCandidateLinkExtrasDescriptor | null {
+    if (!isRecord(value)) return null;
+    const sourceKind = readString(value.sourceKind);
+    if (!sourceKind) return null;
+    return {
+        sourceKind,
+        optionalFields: readStringArray(value.optionalFields),
+    };
+}
+
+function readCandidatePaths(value: unknown): readonly CandidatePathDescriptor[] {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((entry): CandidatePathDescriptor[] => {
+        const path = readStringArray(entry);
+        return path.length > 0 ? [path] : [];
+    });
+}
+
+function readRuntimeDescriptorLinkExtrasDescriptor(value: unknown): RuntimeDescriptorLinkExtrasDescriptor | null {
+    if (!isRecord(value)) return null;
+    const providerId = readString(value.providerId);
+    const runtimeDescriptorOutputKey = readString(value.runtimeDescriptorOutputKey) ?? 'runtimeDescriptorV1';
+    const legacyModeOutputKey = readString(value.legacyModeOutputKey);
+    const backendMode = isRecord(value.backendMode) ? value.backendMode : null;
+    const backendModeValues = readStringArray(backendMode?.values);
+    const candidatePaths = readCandidatePaths(backendMode?.candidatePaths);
+    const providerSessionIdPaths = readCandidatePaths(value.providerSessionIdPaths);
+    const sourceFields = readStringArray(value.sourceFields);
+    if (!providerId || !runtimeDescriptorOutputKey || backendModeValues.length === 0 || candidatePaths.length === 0) {
+        return null;
+    }
+
+    const agentExtraConfig = isRecord(value.agentExtra) ? value.agentExtra : null;
+    const agentExtraOwner = readString(agentExtraConfig?.owner);
+    const agentExtraSchemaId = readString(agentExtraConfig?.schemaId);
+    const agentExtraVersion = typeof agentExtraConfig?.v === 'number' && Number.isInteger(agentExtraConfig.v) && agentExtraConfig.v > 0
+        ? agentExtraConfig.v
+        : null;
+    const runtimeHandleFields = readStringArray(agentExtraConfig?.runtimeHandleFields);
+    return {
+        providerId,
+        runtimeDescriptorOutputKey,
+        ...(legacyModeOutputKey ? { legacyModeOutputKey } : {}),
+        backendMode: {
+            values: backendModeValues,
+            aliases: readStringRecord(backendMode?.aliases),
+            candidatePaths,
+        },
+        providerSessionIdPaths,
+        sourceFields,
+        ...(agentExtraOwner && agentExtraSchemaId && agentExtraVersion && runtimeHandleFields.length > 0
+            ? {
+                agentExtra: {
+                    owner: agentExtraOwner,
+                    schemaId: agentExtraSchemaId,
+                    v: agentExtraVersion,
+                    runtimeHandleFields,
+                },
+            }
+            : {}),
+    };
+}
+
 function normalizeOptionalString(value: unknown): string | null {
     const normalized = typeof value === 'string' ? value.trim() : '';
     return normalized.length > 0 ? normalized : null;
+}
+
+function readValueAtPath(root: unknown, path: readonly string[]): unknown {
+    let current = root;
+    for (const key of path) {
+        if (!isRecord(current)) return undefined;
+        current = current[key];
+    }
+    return current;
+}
+
+function normalizeDescriptorEnumValue(
+    value: unknown,
+    descriptor: RuntimeDescriptorLinkExtrasDescriptor['backendMode'],
+): string | null {
+    const raw = normalizeOptionalString(value);
+    if (!raw) return null;
+    const normalized = descriptor.aliases?.[raw] ?? raw;
+    return descriptor.values.includes(normalized) ? normalized : null;
+}
+
+function normalizeRuntimeDescriptorBackendMode(
+    value: unknown,
+    descriptor: RuntimeDescriptorLinkExtrasDescriptor['backendMode'],
+): string | null {
+    return normalizeDescriptorEnumValue(value, descriptor);
+}
+
+function isProviderRuntimeDescriptorPathAllowed(
+    root: unknown,
+    path: readonly string[],
+    providerId: string,
+): boolean {
+    const [descriptorKey] = path;
+    if (descriptorKey !== 'runtimeDescriptorV1' && descriptorKey !== 'agentRuntimeDescriptorV1') {
+        return true;
+    }
+    const descriptor = readValueAtPath(root, [descriptorKey]);
+    return isRecord(descriptor) && descriptor.v === 1 && descriptor.agentId === providerId;
+}
+
+function readFirstStringAtPaths(
+    root: unknown,
+    paths: readonly CandidatePathDescriptor[],
+    providerId: string,
+): string | null {
+    for (const path of paths) {
+        if (!isProviderRuntimeDescriptorPathAllowed(root, path, providerId)) continue;
+        const value = normalizeOptionalString(readValueAtPath(root, path));
+        if (value) return value;
+    }
+    return null;
+}
+
+function buildRuntimeDescriptorAgentExtra(
+    agentPayload: Readonly<Record<string, unknown>>,
+    descriptor: RuntimeDescriptorAgentExtraDescriptor | undefined,
+): Record<string, unknown> | null {
+    if (!descriptor) return null;
+    const runtimeHandle = Object.fromEntries(
+        descriptor.runtimeHandleFields.flatMap((field) => (
+            agentPayload[field] !== undefined ? [[field, agentPayload[field]] as const] : []
+        )),
+    );
+    return {
+        owner: descriptor.owner,
+        schemaId: descriptor.schemaId,
+        v: descriptor.v,
+        ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
+    };
+}
+
+function attachRuntimeDescriptorAgentExtra(
+    agentPayload: Record<string, unknown>,
+    descriptor: RuntimeDescriptorAgentExtraDescriptor | undefined,
+): Record<string, unknown> {
+    const agentExtra = buildRuntimeDescriptorAgentExtra(agentPayload, descriptor);
+    return agentExtra ? { ...agentPayload, agentExtra } : agentPayload;
+}
+
+function readCandidateDetailsSource(candidate: Readonly<{ details?: Record<string, unknown> }>): Record<string, unknown> | null {
+    const source = candidate.details?.source;
+    return isRecord(source) ? source : null;
+}
+
+function sanitizeSourceFromDescriptor(
+    source: Record<string, unknown>,
+    descriptor: SourceFromCandidateLinkExtrasDescriptor,
+): ExternalSessionsSource | null {
+    if (source.kind !== descriptor.sourceKind) return null;
+    const out: Record<string, unknown> = { kind: descriptor.sourceKind };
+    for (const field of descriptor.optionalFields) {
+        const value = normalizeOptionalString(source[field]);
+        if (value != null) {
+            out[field] = value;
+        }
+    }
+    return out as ExternalSessionsSource;
+}
+
+function sourceToRecord(source: ExternalSessionsSource): Record<string, unknown> {
+    return source as unknown as Record<string, unknown>;
+}
+
+function selectedSourceMatchesCandidateDescriptor(opts: Readonly<{
+    selectedSource: ExternalSessionsSource;
+    candidateSource: Record<string, unknown>;
+    descriptor: SourceFromCandidateLinkExtrasDescriptor;
+}>): boolean {
+    if (opts.selectedSource.kind !== opts.descriptor.sourceKind) return false;
+    if (opts.candidateSource.kind !== opts.descriptor.sourceKind) return false;
+    const selected = opts.selectedSource as Record<string, unknown>;
+    for (const field of opts.descriptor.optionalFields) {
+        const selectedValue = normalizeOptionalString(selected[field]);
+        if (selectedValue != null && selectedValue !== normalizeOptionalString(opts.candidateSource[field])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function resolveSourceFromCandidateDescriptor(opts: Readonly<{
+    selectedSource: ExternalSessionsSource;
+    candidate: Readonly<{ details?: Record<string, unknown> }>;
+    descriptor: SourceFromCandidateLinkExtrasDescriptor;
+}>): ExternalSessionsSource | null {
+    const candidateSource = readCandidateDetailsSource(opts.candidate);
+    if (!candidateSource || !selectedSourceMatchesCandidateDescriptor({
+        selectedSource: opts.selectedSource,
+        candidateSource,
+        descriptor: opts.descriptor,
+    })) {
+        return null;
+    }
+    return sanitizeSourceFromDescriptor(candidateSource, opts.descriptor);
+}
+
+function sanitizeSelectedSourceForDescriptor(
+    source: ExternalSessionsSource,
+    descriptor: SourceFromCandidateLinkExtrasDescriptor,
+): ExternalSessionsSource | null {
+    if (source.kind !== descriptor.sourceKind) return null;
+    return sanitizeSourceFromDescriptor(sourceToRecord(source), descriptor);
+}
+
+function buildRuntimeDescriptorLinkExtras(opts: Readonly<{
+    candidate: Readonly<{ details?: Record<string, unknown> }>;
+    descriptor: RuntimeDescriptorLinkExtrasDescriptor;
+    source: ExternalSessionsSource | null;
+}>): Record<string, unknown> {
+    const details = opts.candidate.details ?? {};
+    const backendMode = (() => {
+        for (const path of opts.descriptor.backendMode.candidatePaths) {
+            if (!isProviderRuntimeDescriptorPathAllowed(details, path, opts.descriptor.providerId)) continue;
+            const normalized = normalizeDescriptorEnumValue(
+                readValueAtPath(details, path),
+                opts.descriptor.backendMode,
+            );
+            if (normalized) return normalized;
+        }
+        return null;
+    })();
+    if (!backendMode) return {};
+
+    const providerSessionId = readFirstStringAtPaths(
+        details,
+        opts.descriptor.providerSessionIdPaths,
+        opts.descriptor.providerId,
+    );
+    const provider: Record<string, unknown> = {
+        backendMode,
+        ...(providerSessionId ? { providerSessionId } : {}),
+    };
+    const sourceRecord = opts.source ? sourceToRecord(opts.source) : null;
+    if (sourceRecord) {
+        for (const field of opts.descriptor.sourceFields) {
+            const value = normalizeOptionalString(sourceRecord[field]);
+            if (value) provider[field] = value;
+        }
+    }
+
+    const runtimeDescriptor = {
+        v: 1,
+        agentId: opts.descriptor.providerId,
+        agent: attachRuntimeDescriptorAgentExtra(provider, opts.descriptor.agentExtra),
+    } satisfies RuntimeDescriptorV1;
+
+    return {
+        ...(opts.descriptor.legacyModeOutputKey ? { [opts.descriptor.legacyModeOutputKey]: backendMode } : {}),
+        [opts.descriptor.runtimeDescriptorOutputKey]: runtimeDescriptor,
+    };
+}
+
+function readRuntimeDescriptorLinkDescriptorFromUiDescriptor(
+    descriptor: Readonly<Record<string, unknown>>,
+): RuntimeDescriptorLinkExtrasDescriptor | null {
+    const externalSessions = isRecord(descriptor.externalSessions) ? descriptor.externalSessions : null;
+    const browse = isRecord(externalSessions?.browse) ? externalSessions.browse : null;
+    const linkEnsureRequestExtras = isRecord(browse?.linkEnsureRequestExtras) ? browse.linkEnsureRequestExtras : null;
+    return readRuntimeDescriptorLinkExtrasDescriptor(linkEnsureRequestExtras?.runtimeDescriptorFromCandidate);
+}
+
+function readAgentPayloadFromRuntimeDescriptor(
+    runtimeDescriptor: unknown,
+    providerId: string,
+): Record<string, unknown> | null {
+    const descriptor = isRecord(runtimeDescriptor) ? runtimeDescriptor : null;
+    if (!descriptor || descriptor.v !== 1 || descriptor.agentId !== providerId) return null;
+    // legacy `provider` payload-key read-compat (pre-rename persisted/imported descriptors)
+    if (isRecord(descriptor.agent)) return descriptor.agent;
+    return isRecord(descriptor.provider) ? descriptor.provider : null;
+}
+
+function normalizeHandoffUrl(value: unknown): string | null {
+    const raw = normalizeOptionalString(value);
+    if (!raw) return null;
+    try {
+        const parsed = new URL(raw);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+        if (parsed.username || parsed.password) return null;
+        return parsed.origin;
+    } catch {
+        return null;
+    }
+}
+
+function buildHandoffRuntimeDescriptorFromLinkDescriptor(opts: Readonly<{
+    ctx: Parameters<NonNullable<NonNullable<AgentUiBehavior['sessionHandoff']>['buildProviderPatch']>>[0];
+    descriptor: RuntimeDescriptorLinkExtrasDescriptor;
+}>): AgentSessionHandoffProviderPatch | null {
+    if (opts.ctx.agentId !== opts.descriptor.providerId) return null;
+
+    const importedProvider = readAgentPayloadFromRuntimeDescriptor(
+        opts.ctx.targetRuntimeDescriptor,
+        opts.descriptor.providerId,
+    );
+    const backendMode = importedProvider
+        ? normalizeRuntimeDescriptorBackendMode(importedProvider.backendMode, opts.descriptor.backendMode)
+        : (() => {
+            for (const path of opts.descriptor.backendMode.candidatePaths) {
+                if (!isProviderRuntimeDescriptorPathAllowed(opts.ctx.metadata, path, opts.descriptor.providerId)) continue;
+                const normalized = normalizeRuntimeDescriptorBackendMode(
+                    readValueAtPath(opts.ctx.metadata, path),
+                    opts.descriptor.backendMode,
+                );
+                if (normalized) return normalized;
+            }
+            return null;
+        })();
+    if (!backendMode) return null;
+
+    const provider: Record<string, unknown> = {
+        backendMode,
+        providerSessionId: opts.ctx.targetRemoteSessionId,
+    };
+    const sourceRecord = isRecord(opts.ctx.targetDirectSource) ? opts.ctx.targetDirectSource : null;
+    if (sourceRecord) {
+        for (const field of opts.descriptor.sourceFields) {
+            const value = normalizeOptionalString(sourceRecord[field]);
+            if (value) provider[field] = value;
+        }
+    }
+    if (importedProvider) {
+        for (const [key, value] of Object.entries(importedProvider)) {
+            if (key === 'agentExtra' || key === 'providerExtra') continue;
+            if (value !== undefined && value !== null) provider[key] = value;
+        }
+    }
+
+    const runtimeDescriptor: RuntimeDescriptorV1 = {
+        v: 1,
+        agentId: opts.descriptor.providerId,
+        agent: attachRuntimeDescriptorAgentExtra(provider, opts.descriptor.agentExtra),
+    };
+
+    return {
+        metadataPatch: {
+            ...(opts.descriptor.legacyModeOutputKey ? { [opts.descriptor.legacyModeOutputKey]: backendMode } : {}),
+        },
+        runtimeDescriptor,
+        externalSessionRuntimeDescriptor: runtimeDescriptor,
+    };
+}
+
+function buildHandoffRuntimeDescriptorFromEnvironment(opts: Readonly<{
+    ctx: Parameters<NonNullable<NonNullable<AgentUiBehavior['sessionHandoff']>['buildProviderPatch']>>[0];
+    descriptor: EnvironmentDescriptor;
+}>): AgentSessionHandoffProviderPatch | null {
+    if (opts.ctx.agentId !== opts.descriptor.providerId) return null;
+
+    const importedProvider = readAgentPayloadFromRuntimeDescriptor(
+        opts.ctx.targetRuntimeDescriptor,
+        opts.descriptor.providerId,
+    );
+    const sourceRecord = isRecord(opts.ctx.targetDirectSource) ? opts.ctx.targetDirectSource : null;
+    const backendMode = normalizeOptionalEnumValue(
+        importedProvider?.[opts.descriptor.backendMode.runtimeDescriptorField],
+        opts.descriptor.backendMode,
+    )
+        ?? (opts.descriptor.serverBaseUrl && normalizeHandoffUrl(sourceRecord?.baseUrl) && opts.descriptor.backendMode.values.includes('server')
+            ? 'server'
+            : null)
+        ?? readEnvironmentAffinity(opts.ctx.metadata, opts.descriptor).backendMode
+        ?? opts.descriptor.backendMode.defaultValue;
+    const metadataPatch: Record<string, unknown> = {
+        [opts.descriptor.backendMode.legacyMetadataKey]: backendMode,
+    };
+    const provider: Record<string, unknown> = {
+        backendMode,
+        providerSessionId: opts.ctx.targetRemoteSessionId,
+    };
+
+    const serverBaseUrlConfig = opts.descriptor.serverBaseUrl;
+    if (serverBaseUrlConfig) {
+        const importedUrl = importedProvider?.[serverBaseUrlConfig.runtimeDescriptorExplicitField] === true
+            ? normalizeHandoffUrl(importedProvider[serverBaseUrlConfig.runtimeDescriptorField])
+            : null;
+        const sourceUrl = normalizeHandoffUrl(sourceRecord?.baseUrl);
+        const serverBaseUrl = importedUrl ?? sourceUrl;
+        if (serverBaseUrl) {
+            metadataPatch[serverBaseUrlConfig.legacyMetadataKey] = serverBaseUrl;
+            metadataPatch[serverBaseUrlConfig.legacyExplicitMetadataKey] = true;
+            provider[serverBaseUrlConfig.runtimeDescriptorField] = serverBaseUrl;
+            provider[serverBaseUrlConfig.runtimeDescriptorExplicitField] = true;
+        }
+    }
+
+    const runtimeDescriptor: RuntimeDescriptorV1 = {
+        v: 1,
+        agentId: opts.descriptor.providerId,
+        agent: attachRuntimeDescriptorAgentExtra(provider, opts.descriptor.agentExtra),
+    };
+
+    return {
+        metadataPatch,
+        runtimeDescriptor,
+        externalSessionRuntimeDescriptor: runtimeDescriptor,
+    };
+}
+
+function mergeHandoffProviderPatches(
+    patches: readonly (AgentSessionHandoffProviderPatch | null | undefined)[],
+): AgentSessionHandoffProviderPatch | null {
+    const clearMetadataKeys = new Set<string>();
+    let metadataPatch: Record<string, unknown> | undefined;
+    let runtimeDescriptor: RuntimeDescriptorV1 | null | undefined;
+    let externalSessionRuntimeDescriptor: RuntimeDescriptorV1 | null | undefined;
+
+    for (const patch of patches) {
+        if (!patch) continue;
+        for (const key of patch.clearMetadataKeys ?? []) clearMetadataKeys.add(key);
+        if (patch.metadataPatch) {
+            metadataPatch = { ...(metadataPatch ?? {}), ...patch.metadataPatch };
+        }
+        if ('runtimeDescriptor' in patch) runtimeDescriptor = patch.runtimeDescriptor ?? null;
+        if ('externalSessionRuntimeDescriptor' in patch) {
+            externalSessionRuntimeDescriptor = patch.externalSessionRuntimeDescriptor ?? null;
+        }
+    }
+
+    if (
+        clearMetadataKeys.size === 0
+        && !metadataPatch
+        && runtimeDescriptor === undefined
+        && externalSessionRuntimeDescriptor === undefined
+    ) {
+        return null;
+    }
+
+    return {
+        ...(clearMetadataKeys.size > 0 ? { clearMetadataKeys: [...clearMetadataKeys] } : {}),
+        ...(metadataPatch ? { metadataPatch } : {}),
+        ...(runtimeDescriptor !== undefined ? { runtimeDescriptor } : {}),
+        ...(externalSessionRuntimeDescriptor !== undefined ? { externalSessionRuntimeDescriptor } : {}),
+    };
+}
+
+function readProfileLabelFromSettings(opts: Readonly<{
+    settings: unknown;
+    settingKey?: string;
+    serviceId: string;
+    profileId: string;
+}>): string | null {
+    if (!opts.settingKey || !isRecord(opts.settings)) return null;
+    const labels = opts.settings[opts.settingKey];
+    if (!isRecord(labels)) return null;
+    return normalizeOptionalString(labels[`${opts.serviceId}/${opts.profileId}`]);
+}
+
+function buildConnectedServiceProfileSourceOptions(opts: Readonly<{
+    profile: Readonly<{ connectedServicesV2?: readonly unknown[] }> | null | undefined;
+    settings: unknown;
+    descriptors: readonly ConnectedServiceProfileSourceDescriptor[];
+}>): readonly SourceOptionDescriptor[] {
+    const services = Array.isArray(opts.profile?.connectedServicesV2) ? opts.profile.connectedServicesV2 : [];
+    return opts.descriptors.flatMap((descriptor) => {
+        const service = services.find((candidate) => isRecord(candidate) && candidate.serviceId === descriptor.serviceId);
+        const profiles = isRecord(service) && Array.isArray(service.profiles) ? service.profiles : [];
+        return profiles.flatMap((profile): SourceOptionDescriptor[] => {
+            if (!isRecord(profile)) return [];
+            const profileId = normalizeOptionalString(profile.profileId);
+            if (!profileId) return [];
+            return [{
+                key: `${descriptor.keyPrefix}:${descriptor.serviceId}:${profileId}`,
+                labelKey: descriptor.labelKey,
+                ...(descriptor.labelParams ? { labelParams: descriptor.labelParams } : {}),
+                detail: readProfileLabelFromSettings({
+                    settings: opts.settings,
+                    settingKey: descriptor.detailSettingsKey,
+                    serviceId: descriptor.serviceId,
+                    profileId,
+                }) ?? profileId,
+                source: {
+                    ...descriptor.source,
+                    [descriptor.serviceIdField]: descriptor.serviceId,
+                    [descriptor.profileIdField]: profileId,
+                } as ExternalSessionsSource,
+            }];
+        });
+    });
 }
 
 function createExternalSessionsBehavior(descriptor: Readonly<Record<string, unknown>>): AgentUiBehavior['externalSessions'] | undefined {
     const externalSessions = isRecord(descriptor.externalSessions) ? descriptor.externalSessions : null;
     const browse = isRecord(externalSessions?.browse) ? externalSessions.browse : null;
     const sourceOptions = readSourceOptionDescriptors(browse?.sourceOptions);
+    const connectedServiceProfileSources = readConnectedServiceProfileSourceDescriptors(browse?.connectedServiceProfileSources);
+    const lockedConnectedServiceSource = readLockedConnectedServiceSourceDescriptor(browse?.lockedConnectedServiceSource);
     const compatibleSource = readCompatibleSourceDescriptor(browse?.compatibleSource);
-    if (!externalSessions && sourceOptions.length === 0 && !compatibleSource) return undefined;
+    const linkEnsureRequestExtras = isRecord(browse?.linkEnsureRequestExtras) ? browse.linkEnsureRequestExtras : null;
+    const sourceFromCandidate = readSourceFromCandidateLinkExtrasDescriptor(linkEnsureRequestExtras?.sourceFromCandidate);
+    const runtimeDescriptorFromCandidate = readRuntimeDescriptorLinkExtrasDescriptor(linkEnsureRequestExtras?.runtimeDescriptorFromCandidate);
+    if (
+        !externalSessions
+        && sourceOptions.length === 0
+        && connectedServiceProfileSources.length === 0
+        && !lockedConnectedServiceSource
+        && !compatibleSource
+        && !sourceFromCandidate
+        && !runtimeDescriptorFromCandidate
+    ) {
+        return undefined;
+    }
 
     return {
         ...(typeof externalSessions?.supportsBackgroundFollow === 'boolean'
             ? { supportsBackgroundFollow: externalSessions.supportsBackgroundFollow }
             : {}),
-        ...(browse || sourceOptions.length > 0 || compatibleSource
+        ...(browse
+            || sourceOptions.length > 0
+            || connectedServiceProfileSources.length > 0
+            || lockedConnectedServiceSource
+            || compatibleSource
+            || sourceFromCandidate
+            || runtimeDescriptorFromCandidate
             ? {
                 browse: {
                     ...(typeof browse?.order === 'number' ? { order: browse.order } : {}),
-                    ...(sourceOptions.length > 0
+                    ...(sourceOptions.length > 0 || connectedServiceProfileSources.length > 0
                         ? {
-                            getSourceOptions: () => sourceOptions.map((entry) => ({
+                            getSourceOptions: ({ profile, settings }) => [
+                                ...sourceOptions,
+                                ...buildConnectedServiceProfileSourceOptions({
+                                    profile,
+                                    settings,
+                                    descriptors: connectedServiceProfileSources,
+                                }),
+                            ].map((entry) => ({
                                 key: entry.key,
-                                label: tLoose(entry.labelKey),
+                                label: translateDescriptorLabel(entry.labelKey, entry.labelParams),
+                                ...(entry.detail ? { detail: entry.detail } : {}),
                                 source: entry.source,
                             })),
+                        }
+                        : {}),
+                    ...(lockedConnectedServiceSource
+                        ? {
+                            resolveLockedSourceOption: ({ sourceOptions: runtimeSourceOptions, agentOptionState }) => {
+                                const resolved = resolveLockedConnectedServiceSourceOption({
+                                    descriptor: lockedConnectedServiceSource,
+                                    sourceOptions: runtimeSourceOptions.map((option) => ({
+                                        key: option.key,
+                                        labelKey: option.label,
+                                        ...(option.detail ? { detail: option.detail } : {}),
+                                        source: option.source,
+                                    })),
+                                    agentOptionState,
+                                });
+                                return resolved
+                                    ? {
+                                        key: resolved.key,
+                                        label: resolved.labelKey,
+                                        ...(resolved.detail ? { detail: resolved.detail } : {}),
+                                        source: resolved.source,
+                                    }
+                                    : null;
+                            },
                         }
                         : {}),
                     ...(compatibleSource
@@ -359,13 +1104,52 @@ function createExternalSessionsBehavior(descriptor: Readonly<Record<string, unkn
                                 ) {
                                     return null;
                                 }
+                                const selectedGroupId = lockedConnectedServiceSource
+                                    ? normalizeOptionalString((selectedSource as Record<string, unknown>)[lockedConnectedServiceSource.groupIdField])
+                                    : null;
+                                const candidateGroupId = lockedConnectedServiceSource
+                                    ? normalizeOptionalString((candidateSource as Record<string, unknown>)[lockedConnectedServiceSource.groupIdField])
+                                    : null;
+                                const compareByGroup = selectedGroupId !== null || candidateGroupId !== null;
+                                if (compareByGroup && (selectedGroupId === null || selectedGroupId !== candidateGroupId)) {
+                                    return null;
+                                }
                                 for (const field of compatibleSource.optionalFields) {
+                                    if (
+                                        compareByGroup
+                                        && lockedConnectedServiceSource
+                                        && (field === lockedConnectedServiceSource.profileIdField || field === lockedConnectedServiceSource.groupIdField)
+                                    ) {
+                                        continue;
+                                    }
                                     const selected = normalizeOptionalString((selectedSource as Record<string, unknown>)[field]);
                                     if (selected != null && selected !== normalizeOptionalString((candidateSource as Record<string, unknown>)[field])) {
                                         return null;
                                     }
                                 }
                                 return candidateSource;
+                            },
+                        }
+                        : {}),
+                    ...(sourceFromCandidate || runtimeDescriptorFromCandidate
+                        ? {
+                            buildLinkEnsureRequestExtras: ({ source, candidate }) => {
+                                const candidateSource = sourceFromCandidate
+                                    ? resolveSourceFromCandidateDescriptor({ selectedSource: source, candidate, descriptor: sourceFromCandidate })
+                                    : null;
+                                const descriptorSource = candidateSource
+                                    ?? (sourceFromCandidate ? sanitizeSelectedSourceForDescriptor(source, sourceFromCandidate) : null);
+                                const runtimeDescriptorExtras = runtimeDescriptorFromCandidate
+                                    ? buildRuntimeDescriptorLinkExtras({
+                                        candidate,
+                                        descriptor: runtimeDescriptorFromCandidate,
+                                        source: descriptorSource,
+                                    })
+                                    : {};
+                                return {
+                                    ...(candidateSource ? { source: candidateSource } : {}),
+                                    ...runtimeDescriptorExtras,
+                                };
                             },
                         }
                         : {}),
@@ -439,14 +1223,65 @@ function createNewSessionBehavior(
     };
 }
 
+function createSessionHandoffBehavior(
+    descriptor: Readonly<Record<string, unknown>>,
+    environmentDescriptor: EnvironmentDescriptor | null,
+): AgentUiBehavior['sessionHandoff'] | undefined {
+    const externalSessions = isRecord(descriptor.externalSessions) ? descriptor.externalSessions : null;
+    const sessionHandoff = isRecord(externalSessions?.sessionHandoff) ? externalSessions.sessionHandoff : null;
+    const runtimeDescriptorLinkDescriptor = readRuntimeDescriptorLinkDescriptorFromUiDescriptor(descriptor);
+    const clearMetadataKeys = readStringArray(sessionHandoff?.clearMetadataKeys);
+
+    if (clearMetadataKeys.length === 0 && !runtimeDescriptorLinkDescriptor && !environmentDescriptor) {
+        return undefined;
+    }
+
+    return {
+        buildProviderPatch: (ctx) => mergeHandoffProviderPatches([
+            clearMetadataKeys.length > 0 ? { clearMetadataKeys } : null,
+            runtimeDescriptorLinkDescriptor
+                ? buildHandoffRuntimeDescriptorFromLinkDescriptor({
+                    ctx,
+                    descriptor: runtimeDescriptorLinkDescriptor,
+                })
+                : null,
+            environmentDescriptor
+                ? buildHandoffRuntimeDescriptorFromEnvironment({
+                    ctx,
+                    descriptor: environmentDescriptor,
+                })
+                : null,
+        ]) ?? {},
+        ...(environmentDescriptor
+            ? {
+                buildSourceRecoveryResumePatch: (ctx) => {
+                    if (ctx.agentId !== environmentDescriptor.providerId) return {};
+                    const affinity = readEnvironmentAffinity(ctx.metadata, environmentDescriptor);
+                    if (!affinity.backendMode && !affinity.serverBaseUrlExplicit) return {};
+                    return {
+                        environmentVariables: buildEnvironmentVariables({
+                            descriptor: environmentDescriptor,
+                            session: { metadata: ctx.metadata },
+                            allowLegacySettingsServerBaseUrl: false,
+                            allowActiveServerFallback: false,
+                        }),
+                    };
+                },
+            }
+            : {}),
+    };
+}
+
 export function createDescriptorAdapterBehavior(ctx: BehaviorDescriptorContext): AgentUiBehavior {
     const payload = isRecord(ctx.descriptor.payload) ? ctx.descriptor.payload : null;
     const environmentDescriptor = readEnvironmentDescriptor(payload?.environmentVariables, ctx.diagnostics);
     const externalSessions = createExternalSessionsBehavior(ctx.descriptor);
     const newSession = createNewSessionBehavior(ctx.descriptor, environmentDescriptor);
+    const sessionHandoff = createSessionHandoffBehavior(ctx.descriptor, environmentDescriptor);
     return {
         ...(externalSessions ? { externalSessions } : {}),
         ...(newSession ? { newSession } : {}),
+        ...(sessionHandoff ? { sessionHandoff } : {}),
         ...(environmentDescriptor ? { payload: createPayloadBehavior(environmentDescriptor) } : {}),
     };
 }

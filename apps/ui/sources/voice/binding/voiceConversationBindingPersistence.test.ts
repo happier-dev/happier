@@ -10,7 +10,7 @@ const stateRef = {
                     systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
                     agentRuntimeDescriptorV1: {
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
                         provider: {
                             backendMode: 'native',
                         },
@@ -82,7 +82,7 @@ describe('voiceConversationBindingPersistence', () => {
                         systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
                         agentRuntimeDescriptorV1: {
                             v: 1,
-                            providerId: 'claude',
+                            agentId: 'claude',
                             provider: {
                                 backendMode: 'native',
                             },
@@ -171,7 +171,7 @@ describe('voiceConversationBindingPersistence', () => {
                 managedSessionId: '__voice_agent__',
             }),
         ).toEqual({
-            descriptor: expect.objectContaining({ providerId: 'claude' }),
+            descriptor: expect.objectContaining({ agentId: 'claude' }),
             capabilities: expect.objectContaining({
                 executionRun: expect.objectContaining({ supported: true }),
             }),
@@ -199,7 +199,7 @@ describe('voiceConversationBindingPersistence', () => {
                 transcriptContractVersion: 2,
             }),
             runtimePublication: {
-                descriptor: expect.objectContaining({ providerId: 'claude' }),
+                descriptor: expect.objectContaining({ agentId: 'claude' }),
                 capabilities: expect.objectContaining({
                     executionRun: expect.objectContaining({
                         supported: true,

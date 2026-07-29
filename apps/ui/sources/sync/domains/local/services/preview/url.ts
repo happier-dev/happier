@@ -1,4 +1,13 @@
-export type LocalServicePreviewPlatform = "web" | "ios" | "android";
+/**
+ * The platform a local-service preview / browser surface is presented on.
+ *
+ * `desktop` is the Tauri/Wry desktop host (Phase 5.5 / finding #13). It is a non-native host like
+ * `web` for loopback-policy purposes (a desktop WebView can load a loopback dev server), but it is a
+ * DISTINCT identity from `web` so callers can express "this is the desktop app, not a browser tab"
+ * directly — closing the finding #13 preview-platform leak together with the B-3 resolver guard
+ * (`resolveBrowserSurfacePlatform`, which excludes a leaked `web` override).
+ */
+export type LocalServicePreviewPlatform = "web" | "desktop" | "ios" | "android";
 
 export type LocalServicePreviewLoadUrlResult =
     | Readonly<{ ok: true; url: string }>

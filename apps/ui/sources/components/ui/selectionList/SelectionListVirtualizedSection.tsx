@@ -3,7 +3,9 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
-import { FlashList, type FlashListRef } from '@/components/ui/lists/flashListCompat/FlashListCompat';
+import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
+import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 import {
     SELECTION_LIST_VIRTUALIZATION_THRESHOLD,
@@ -11,6 +13,7 @@ import {
 } from './_constants';
 import { buildSelectionListOptionA11yProps } from './buildSelectionListOptionA11yProps';
 import { renderSelectionListAccessory } from './renderSelectionListAccessory';
+import { resolveSelectionListOptionDomId } from './resolveSelectionListOptionDomId';
 import { SelectionListSectionHeader } from './SelectionListSectionHeader';
 import { selectionListTestId } from './_shared';
 import type {
@@ -24,9 +27,9 @@ const stylesheet = StyleSheet.create(() => ({
         flexDirection: 'column',
     },
     virtualizedHost: {
-        // FlashList needs a measurable host. The caller (`SelectionList`) is
+        // virtualized list needs a measurable host. The caller (`SelectionList`) is
         // expected to constrain the popover via `maxHeight`; this minHeight
-        // ensures FlashList has a non-zero default when nothing else is set.
+        // ensures virtualized list has a non-zero default when nothing else is set.
         minHeight: SELECTION_LIST_VIRTUALIZED_ROW_ESTIMATED_HEIGHT_PX * 4,
         flexShrink: 1,
         flexGrow: 1,
@@ -43,12 +46,14 @@ export type SelectionListVirtualizedSectionProps = Readonly<{
     /**
      * F4 — Currently focused option id (keyboard navigation). Mirrors the
      * non-virtualized path's focused-row visual state and triggers
-     * scroll-to-focused-row inside the virtualized FlashList host. When `null`
+     * scroll-to-focused-row inside the virtualized virtualized list host. When `null`
      * (no focus, e.g. caret in the input), the section neither paints a
      * focused row nor scrolls.
      */
     focusedOptionId?: string | null;
     onSelectOption: (option: SelectionListOption) => void;
+    optionPositionById?: ReadonlyMap<string, number>;
+    optionSetSize?: number;
     /**
      * Override the descriptor's virtualization hint. Prop wins; descriptor
      * falls back when undefined; if both are undefined the default `'auto'`
@@ -84,15 +89,15 @@ function shouldVirtualize(
 
 /**
  * Renders a single SelectionList section, switching between a plain
- * `ItemGroup` + mapped `Item` rows path and a virtualized `FlashList` path
+ * `ItemGroup` + mapped `Item` rows path and a virtualized `virtualized list` path
  * based on the descriptor's `virtualization` hint and row count.
  *
  * Threshold (default 50) is owned by `_constants.ts` per the plan's
  * Phase 0.5 decision. Threshold is overridable for tests/escape hatches but
  * production consumers should rely on the default.
  *
- * Why a wrapper (rather than always using FlashList): per the React Native
- * skill and Phase 0.5 audit, FlashList carries non-trivial setup cost and
+ * Why a wrapper (rather than always using virtualized list): per the React Native
+ * skill and Phase 0.5 audit, virtualized list carries non-trivial setup cost and
  * requires a measurable parent; below the threshold the simpler mapped path
  * is the right default and avoids virtualization side-effects (recycler
  * focus juggling, intermittent layout thrash) for small lists where they
@@ -102,6 +107,7 @@ export function SelectionListVirtualizedSection(
     props: SelectionListVirtualizedSectionProps,
 ): React.ReactElement {
     const styles = stylesheet;
+    const reducedMotion = useReducedMotionPreference();
     const mode = resolveVirtualizationMode(props.virtualization, props.section.virtualization);
     const threshold = props.threshold ?? SELECTION_LIST_VIRTUALIZATION_THRESHOLD;
     const rowCount = props.section.options.length;
@@ -115,12 +121,11 @@ export function SelectionListVirtualizedSection(
 
     const renderRow = React.useCallback(
         (option: SelectionListOption): React.ReactElement => {
-            const optionTestId = selectionListTestId(
-                props.rootTestID,
-                props.stepId,
-                'option',
-                option.id,
-            );
+            const optionTestId = resolveSelectionListOptionDomId({
+                option,
+                rootTestID: props.rootTestID,
+                stepId: props.stepId,
+            });
             const optionWrapperTestId = selectionListTestId(
                 props.rootTestID,
                 props.stepId,
@@ -128,10 +133,9 @@ export function SelectionListVirtualizedSection(
                 option.id,
             );
             const isSelected = props.selectedOptionId === option.id;
-            // F4 — focus parity: mirror PlanOptionRow's
-            // `selected={isSelected || isFocused}` so the keyboard-driven
-            // focused row paints the same focused/selected visual state on
-            // the virtualized path as on the plain mapped path.
+            // F4 — focus parity: keep keyboard focus visual state separate
+            // from the row's selected accessibility state, matching the
+            // plain mapped path.
             const isFocused = props.focusedOptionId != null
                 && props.focusedOptionId === option.id;
             // F2 — single activation source: do NOT call `option.onSelect`
@@ -146,35 +150,42 @@ export function SelectionListVirtualizedSection(
             };
             // R9 (blocker 4): mirror the plain (non-virtualized) path's ARIA
             // semantics so the input header's `aria-activedescendant` resolves
-            // to a real element with role="option" + matching `id`. FlashList
-            // recycles rows out of order, so wrappers are keyed by the option
-            // id and apply per-render rather than via a memoised tree.
+            // to the actionable element with role="option" + matching `id`.
+            // virtualized list recycles rows out of order, so option rows are keyed
+            // by id and apply per-render rather than via a memoised tree.
             const optionAria = buildSelectionListOptionA11yProps({
                 optionTestId,
                 isSelected,
+                disabled: option.disabled === true,
+                positionInSet: props.optionPositionById?.get(option.id)
+                    ?? props.section.options.findIndex((candidate) => candidate.id === option.id) + 1,
+                setSize: props.optionSetSize ?? props.section.options.length,
                 accessibilityLabel: option.accessibilityLabel,
             });
             return (
                 <View
                     key={option.id}
                     testID={optionWrapperTestId}
-                    {...(optionAria as unknown as Record<string, never>)}
                 >
                     <Item
                         testID={optionTestId}
                         title={option.label}
-                        subtitle={option.subtitle}
+                        subtitle={option.subtitleContent ?? option.subtitle}
                         icon={option.icon}
                         rightElement={renderSelectionListAccessory(option.rightAccessory)}
+                        rightElementOutsidePressable={option.rightAccessoryOutsidePressable === true}
                         onPress={handlePress}
-                        selected={isSelected || isFocused}
+                        selected={isSelected}
+                        focused={isFocused}
                         disabled={option.disabled === true}
+                        loading={option.loading === true}
                         showChevron={Boolean(option.openStep)}
-                        // On web the wrapper claims `role="option"`; the inner
-                        // Item's default `accessibilityRole='button'` would
-                        // shadow that, so we explicitly opt out via Item's
-                        // `webRole` escape hatch (only affects web).
-                        webRole="presentation"
+                        accessibilityRole="button"
+                        accessibilityLabel={optionAria.accessibilityLabel}
+                        webRole="option"
+                        webId={optionAria.id}
+                        accessibilityPositionInSet={optionAria['aria-posinset']}
+                        accessibilitySetSize={optionAria['aria-setsize']}
                     />
                 </View>
             );
@@ -186,20 +197,20 @@ export function SelectionListVirtualizedSection(
 
     // F4 — scroll-to-focused-row. Keyboard navigation updates
     // `focusedOptionId` at the orchestrator; when the focused row belongs to
-    // THIS section, ask FlashList to bring it into view centered
+    // THIS section, ask virtualized list to bring it into view centered
     // (`viewPosition: 0.5`). When the focused option is null or lives in a
     // different section, do nothing — the other section's virtualized host
     // (if any) owns its own scroll behavior.
-    const flashListRef = React.useRef<FlashListRef<SelectionListOption> | null>(null);
+    const virtualizedListRef = React.useRef<VirtualizedListRef | null>(null);
     const focusedOptionId = props.focusedOptionId ?? null;
     React.useEffect(() => {
         if (focusedOptionId === null) return;
-        const ref = flashListRef.current;
+        const ref = virtualizedListRef.current;
         if (!ref || typeof ref.scrollToIndex !== 'function') return;
         const index = props.section.options.findIndex((opt) => opt.id === focusedOptionId);
         if (index < 0) return;
-        ref.scrollToIndex({ index, viewPosition: 0.5, animated: true });
-    }, [focusedOptionId, props.section.options]);
+        ref.scrollToIndex({ index, viewPosition: 0.5, animated: !reducedMotion });
+    }, [focusedOptionId, props.section.options, reducedMotion]);
 
     if (useVirtualization) {
         return (
@@ -209,14 +220,15 @@ export function SelectionListVirtualizedSection(
                     title={props.section.title}
                     count={props.section.count}
                 />
-                <FlashList
-                    ref={flashListRef as unknown as React.Ref<FlashListRef<SelectionListOption>>}
+                <VirtualizedList
+                    ref={virtualizedListRef}
                     testID={selectionListTestId(sectionTestId, 'virtualized')}
                     data={props.section.options as SelectionListOption[]}
                     keyExtractor={(option: SelectionListOption) => option.id}
                     renderItem={({ item }: { item: SelectionListOption }) => renderRow(item)}
                     getItemType={(option: SelectionListOption) => (option.openStep ? 'drilldown' : 'option')}
                     estimatedItemSize={SELECTION_LIST_VIRTUALIZED_ROW_ESTIMATED_HEIGHT_PX}
+                    recycleItems={false}
                     showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
                 />
             </View>

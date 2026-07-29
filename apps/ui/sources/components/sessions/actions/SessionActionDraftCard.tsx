@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { getActionSpec, resolveEffectiveActionInputFields } from '@happier-dev/protocol';
+import { buildBackendTargetKey, getActionSpec, resolveEffectiveActionInputFields } from '@happier-dev/protocol';
 import { useRouter } from 'expo-router';
 
 import { storage } from '@/sync/domains/state/storage';
@@ -10,6 +10,7 @@ import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolve
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionRunsBackendsForSession';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
+import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { t } from '@/text';
 import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
@@ -18,6 +19,7 @@ import { layout } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
 import { resolveActionInputValidationError } from '@/sync/domains/actions/resolveActionInputValidationError';
 import { ActionInputFields } from './ActionInputFields';
+import { normalizeActionInput, normalizeActionInputPatch } from '@/sync/domains/actions/normalizeActionInputPatch';
 
 
 type EngineOption = Readonly<{ id: string; label: string; disabled?: boolean }>;
@@ -41,7 +43,7 @@ function useExecutionBackendOptions(): readonly EngineOption[] {
   return React.useMemo(
     () =>
       enabledAgentIds.map((id) => ({
-        id,
+        id: buildBackendTargetKey({ kind: 'builtInAgent', agentId: id }),
         label: t(getAgentCore(id as AgentId).displayNameKey),
       })),
     [enabledAgentIds],
@@ -56,8 +58,11 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
       resolveServerIdForSessionId: () => sessionServerId,
-      openSession: (sessionId) => {
-        router.push((`/session/${sessionId}`) as any);
+      openSession: (sessionId, options) => {
+        router.push(buildScopedSessionRouteHref({
+          sessionId,
+          serverId: options?.serverId ?? sessionServerId,
+        }) as any);
       },
     }),
     [router, sessionServerId],
@@ -93,10 +98,11 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
 
   const setInputPatch = React.useCallback(
     (patch: Record<string, unknown>) => {
-      storage.getState().updateSessionActionDraftInput(props.sessionId, props.draft.id, patch);
+      const normalizedPatch = normalizeActionInputPatch({ actionId: props.draft.actionId, patch });
+      storage.getState().updateSessionActionDraftInput(props.sessionId, props.draft.id, normalizedPatch);
       storage.getState().setSessionActionDraftStatus(props.sessionId, props.draft.id, 'editing', null);
     },
-    [props.draft.id, props.sessionId],
+    [props.draft.actionId, props.draft.id, props.sessionId],
   );
 
   const setStatus = React.useCallback(
@@ -136,11 +142,15 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
     setIsSubmitting(true);
     setStatus('running', null);
     try {
+      const normalizedInput = normalizeActionInput({
+        actionId: props.draft.actionId,
+        input: props.draft.input ?? {},
+      });
       const res = await executor.execute(
         props.draft.actionId as any,
         {
           sessionId: props.sessionId,
-          ...(props.draft.input ?? {}),
+          ...normalizedInput,
         },
         { defaultSessionId: props.sessionId, surface: 'ui', placement: 'session_action_menu' } as any,
       );

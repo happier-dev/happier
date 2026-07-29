@@ -1,7 +1,9 @@
 import {
-    BackendTargetKeySchema,
     buildBackendTargetKey,
+    buildBackendTargetKeyV2,
     convertBackendTargetRefV2ToV1,
+    readBackendTargetRefV2,
+    type BackendTargetRefV2Input,
 } from '@happier-dev/protocol';
 
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
@@ -11,14 +13,17 @@ import { isAgentId } from '@/agents/catalog/catalog';
 type ProfileTargetValueRecord<TValue> = Readonly<Record<string, TValue | undefined>> | null | undefined;
 
 export function resolveProfileBackendTargetKeyForEntry(entry: ResolvedBackendCatalogEntry): string {
-    return buildBackendTargetKey(convertBackendTargetRefV2ToV1(entry.backendTarget));
+    return buildBackendTargetKeyV2(entry.backendTarget);
 }
 
 export function readProfileTargetKeyValueForEntry<TValue>(
     record: ProfileTargetValueRecord<TValue>,
     entry: ResolvedBackendCatalogEntry,
 ): TValue | undefined {
-    return record?.[resolveProfileBackendTargetKeyForEntry(entry)];
+    const canonical = record?.[resolveProfileBackendTargetKeyForEntry(entry)];
+    if (canonical !== undefined) return canonical;
+    const legacyKey = buildBackendTargetKey(convertBackendTargetRefV2ToV1(entry.backendTarget));
+    return record?.[legacyKey];
 }
 
 export function isProfileCompatibleWithResolvedBackendEntry(
@@ -34,8 +39,8 @@ export function isProfileCompatibleWithResolvedBackendEntry(
         return profile.compatibility[entry.builtInAgentId] === true;
     }
 
-    if (isAgentId(entry.providerId) && typeof profile.compatibility?.[entry.providerId] === 'boolean') {
-        return profile.compatibility[entry.providerId] === true;
+    if (isAgentId(entry.agentId) && typeof profile.compatibility?.[entry.agentId] === 'boolean') {
+        return profile.compatibility[entry.agentId] === true;
     }
 
     return profile.isBuiltIn ? false : entry.kind === 'builtInAgent';
@@ -44,16 +49,22 @@ export function isProfileCompatibleWithResolvedBackendEntry(
 export function stripLegacyProviderSentinelTargetKeys<TValue>(
     record: ProfileTargetValueRecord<TValue>,
     entries: readonly ResolvedBackendCatalogEntry[],
-): Record<string, TValue | undefined> {
+): Record<string, TValue> {
     void entries;
     if (!record || typeof record !== 'object') {
         return {};
     }
 
-    const out: Record<string, TValue | undefined> = {};
+    const out: Record<string, TValue> = {};
     for (const [rawKey, value] of Object.entries(record)) {
-        if (BackendTargetKeySchema.safeParse(rawKey).success) {
-            out[rawKey] = value;
+        if (value === undefined) continue;
+        try {
+            const canonicalKey = buildBackendTargetKeyV2(
+                readBackendTargetRefV2(rawKey as BackendTargetRefV2Input),
+            );
+            out[canonicalKey] = value;
+        } catch {
+            // Unsupported compatibility sentinels are not durable target identities.
         }
     }
     return out;

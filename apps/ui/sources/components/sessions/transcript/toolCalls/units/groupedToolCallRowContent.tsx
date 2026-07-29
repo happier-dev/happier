@@ -8,6 +8,7 @@ import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/ap
 import { ToolView } from '@/components/tools/shell/views/ToolView';
 import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow';
 import { MessageViewWithSessionCommon } from '@/components/sessions/transcript/MessageView';
+import type { ToolRowPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
@@ -73,7 +74,7 @@ export function renderGroupedToolCallRowContent(params: Readonly<{
     approvalRequests?: readonly OpenApprovalArtifactForSession[];
     messagePins?: readonly PersistedSessionMessagePinV1[];
     onToggleToolPin?: (pin: PersistedSessionMessagePinV1) => void;
-    toolPinAction?: React.ReactNode | null;
+    toolPinAction?: ToolRowPinAction | null;
     interaction: TranscriptInteraction;
     forkCommon: TranscriptForkCommon;
     messageDisplayCommon: TranscriptMessageDisplayCommon;
@@ -108,6 +109,7 @@ export function renderGroupedToolCallRowContent(params: Readonly<{
                 messages={params.message.children}
                 sessionId={params.sessionId}
                 messageId={params.nestedMessageId}
+                jumpHighlightSeq={params.message.seq ?? null}
                 headerAction={params.toolPinAction}
                 forcePermissionPromptsInTranscript={params.forcePermissionPromptsInTranscript}
                 approvalRequests={params.approvalRequests}
@@ -123,6 +125,7 @@ export function renderGroupedToolCallRowContent(params: Readonly<{
             messages={params.message.children}
             sessionId={params.sessionId}
             messageId={params.nestedMessageId}
+            jumpHighlightSeq={params.message.seq ?? null}
             headerAction={params.toolPinAction}
             forcePermissionPromptsInTranscript={params.forcePermissionPromptsInTranscript}
             approvalRequests={params.approvalRequests}

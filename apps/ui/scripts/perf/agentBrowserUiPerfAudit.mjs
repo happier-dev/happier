@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 import { execFile } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  createRuntimeLimitMeasurementCaptureFromEnv,
+  recordAgentBrowserPerfMeasurements,
+} from '../../../../packages/tests/scripts/plugin-platform/runtime-limit-measurement.mjs';
 
-const DEFAULT_APP_URL = process.env.HAPPIER_UI_PERF_APP_URL ?? 'http://localhost:8081/?happier_hmr=0';
-const DEFAULT_DEV_KEY = process.env.HAPPIER_UI_PERF_DEV_KEY ?? '';
+const APP_URL_ENV_NAME = 'HAPPIER_UI_PERF_APP_URL';
+const DEV_KEY_ENV_NAME = 'HAPPIER_UI_PERF_DEV_KEY';
 const DEFAULT_AGENT_BROWSER_SESSION = 'happier-ui-perf';
-const SYNC_TUNING_STORAGE_KEY = 'HAPPIER_SYNC_TUNING_JSON';
+export const SYNC_TUNING_STORAGE_KEY = 'HAPPIER_SYNC_TUNING_JSON';
 const AUDIT_GLOBAL = '__HAPPIER_AGENT_BROWSER_PERF_AUDIT__';
 const SCROLL_GLOBAL = '__HAPPIER_AGENT_BROWSER_PERF_SCROLL__';
 
@@ -58,17 +62,43 @@ function normalizeNonNegativeInt(value, fallback) {
   return Math.trunc(number);
 }
 
-export function buildSyncTuningOverride() {
+export function parseSyncTuningOverrideJson(rawJson) {
+  const trimmed = String(rawJson ?? '').trim();
+  if (!trimmed) return {};
+  const parsed = JSON.parse(trimmed);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('--sync-tuning-json must be a JSON object');
+  }
+  const sanitized = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (key === '__proto__' || key === 'prototype' || key === 'constructor') continue;
+    sanitized[key] = value;
+  }
+  return sanitized;
+}
+
+export function buildSyncTuningOverride(options = {}) {
   return {
+    ...(options.syncTuningOverrides ?? {}),
     syncPerformanceTelemetryEnabled: true,
     syncPerformanceTelemetrySlowThresholdMs: 16,
-    syncPerformanceTelemetryFlushIntervalMs: 30000,
+    syncPerformanceTelemetryFlushIntervalMs: normalizePositiveInt(options.flushIntervalMs, 30000),
     jsThreadLagTelemetrySampleIntervalMs: 50,
     jsThreadLagTelemetryThresholdMs: 50,
     jsThreadLagTelemetryMaxSamples: 2048,
     transcriptViewportTelemetryEnabled: true,
     transcriptViewportTelemetryMaxEvents: 2048,
   };
+}
+
+export function buildLiveTelemetryConfigureScript(options = {}) {
+  const flushIntervalMs = normalizePositiveInt(options.flushIntervalMs, 30000);
+  return `(() => {
+    const target = window.__HAPPIER_SYNC_PERFORMANCE__;
+    if (!target || typeof target.configure !== 'function') return false;
+    target.configure({ enabled: true, slowThresholdMs: 16, flushIntervalMs: ${JSON.stringify(flushIntervalMs)} });
+    return true;
+  })()`;
 }
 
 export function buildSafeStressPrompt({ scratchDir, basePrompt = DEFAULT_STRESS_TEST_PROMPT }) {
@@ -97,6 +127,8 @@ export function buildDefaultPerfAuditPlan(options = {}) {
     profiler: extra.profiler === true,
     requiresTargetSession: extra.requiresTargetSession === true,
     requiresStressSessions: extra.requiresStressSessions === true,
+    requiresColdAuth: extra.requiresColdAuth === true,
+    defaultIncluded: extra.defaultIncluded !== false,
   });
 
   return {
@@ -112,8 +144,9 @@ export function buildDefaultPerfAuditPlan(options = {}) {
       scenario('desktop.sessionView.streamingIdle', 'Desktop session view active streaming idle', 'sessionViewStreamingIdle', { requiresTargetSession: true, trace: true, profiler: true }),
       scenario('desktop.sessionView.transcriptScroll', 'Desktop session transcript scroll', 'sessionViewTranscriptScroll', { requiresTargetSession: true, trace: true, profiler: true }),
       scenario('desktop.sessionView.tabs', 'Desktop session right-pane tab switching', 'sessionViewTabs', { requiresTargetSession: true, trace: true, profiler: true }),
-      scenario('desktop.multiSessionStreaming.sidebarVisible', 'Desktop multi-session streaming with sidebar visible', 'multiSessionStreamingSidebarVisible', { requiresTargetSession: true, requiresStressSessions: true, trace: true, profiler: true }),
+      scenario('desktop.multiSessionStreaming.sidebarVisible', 'Desktop multi-session streaming with sidebar visible', 'multiSessionStreamingSidebarVisible', { requiresTargetSession: true, trace: true, profiler: true }),
       scenario('mobile.sessionList.hiddenMounted', 'Mobile session list remains mounted while hidden in a session', 'mobileHiddenSessionList', { viewport: 'mobile', requiresTargetSession: true, trace: true, profiler: true }),
+      scenario('desktop.sessionList.coldAuthHydration', 'Desktop cold auth session-list hydration', 'coldAuthSessionListHydration', { trace: true, profiler: true, requiresColdAuth: true, defaultIncluded: false }),
     ],
   };
 }
@@ -157,44 +190,191 @@ export function isAgentBrowserCaptureAlreadyActiveError(message) {
 
 export function isAgentBrowserOperationTimeoutError(message) {
   const normalized = String(message ?? '');
-  return /Operation timed out/i.test(normalized)
-    || /Command failed: agent-browser .*\bopen\b/i.test(normalized);
+  return /\b(?:operation\s+)?timed out\b/i.test(normalized);
+}
+
+export function isBrowserLocationAtTargetUrl(currentUrl, targetUrl) {
+  try {
+    return new URL(String(currentUrl ?? '')).href === new URL(String(targetUrl ?? '')).href;
+  } catch {
+    return false;
+  }
+}
+
+function createChromeTraceSummaryAccumulator() {
+  const threadNames = new Map();
+  const byName = new Map();
+  const byThread = new Map();
+  let totalCompleteEventMs = 0;
+
+  return {
+    add(event) {
+      if (event?.ph === 'M' && event.name === 'thread_name') {
+        threadNames.set(threadKey(event), event.args?.name ?? '');
+      }
+      if (event?.ph !== 'X' || typeof event.dur !== 'number' || !Number.isFinite(event.dur) || event.dur <= 0) return;
+      const durationMs = event.dur / 1000;
+      totalCompleteEventMs += durationMs;
+      const key = threadKey(event);
+      byThread.set(key, (byThread.get(key) ?? 0) + durationMs);
+      const name = String(event.name ?? 'unknown');
+      const current = byName.get(name) ?? { name, totalMs: 0, count: 0, maxMs: 0 };
+      current.totalMs += durationMs;
+      current.count += 1;
+      current.maxMs = Math.max(current.maxMs, durationMs);
+      byName.set(name, current);
+    },
+    snapshot() {
+      const threadGroups = { rendererMain: 0, compositor: 0, gpuViz: 0, other: 0 };
+      for (const [key, durationMs] of byThread) {
+        const group = classifyThread(threadNames.get(key));
+        threadGroups[group] += durationMs;
+      }
+      return {
+        totalCompleteEventMs: round(totalCompleteEventMs),
+        threadGroups: Object.fromEntries(Object.entries(threadGroups).map(([key, value]) => [key, round(value)])),
+        topEvents: Array.from(byName.values())
+          .map((event) => ({ ...event, totalMs: round(event.totalMs), maxMs: round(event.maxMs) }))
+          .sort((left, right) => right.totalMs - left.totalMs || right.maxMs - left.maxMs || left.name.localeCompare(right.name))
+          .slice(0, 40),
+      };
+    },
+  };
 }
 
 export function summarizeChromeTrace(trace) {
   const traceEvents = Array.isArray(trace?.traceEvents) ? trace.traceEvents : [];
-  const threadNames = new Map();
-  for (const event of traceEvents) {
-    if (event?.ph === 'M' && event.name === 'thread_name') {
-      threadNames.set(threadKey(event), event.args?.name ?? '');
+  const accumulator = createChromeTraceSummaryAccumulator();
+  for (const event of traceEvents) accumulator.add(event);
+  return accumulator.snapshot();
+}
+
+export async function summarizeChromeTraceFile(tracePath, options = {}) {
+  const accumulator = createChromeTraceSummaryAccumulator();
+  await streamChromeTraceEvents(tracePath, (event) => accumulator.add(event), options);
+  return accumulator.snapshot();
+}
+
+export function parseDevToolsActivePortFile(text) {
+  const lines = String(text ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const port = Number(lines[0]);
+  const browserPath = lines[1] ?? '';
+  if (!Number.isInteger(port) || port <= 0 || port > 65535 || !browserPath.startsWith('/devtools/browser/')) {
+    throw new Error('Invalid DevToolsActivePort file');
+  }
+  return { port, browserPath };
+}
+
+function normalizeUrlForComparison(value) {
+  try {
+    return new URL(String(value ?? '')).href;
+  } catch {
+    return null;
+  }
+}
+
+export function selectV8ProfileCdpTarget(targets, currentUrl) {
+  const pages = (Array.isArray(targets) ? targets : []).filter((target) => (
+    target?.type === 'page' &&
+    typeof target.webSocketDebuggerUrl === 'string' &&
+    target.webSocketDebuggerUrl.length > 0
+  ));
+  if (pages.length === 0) return null;
+
+  const normalizedCurrentUrl = normalizeUrlForComparison(currentUrl);
+  if (normalizedCurrentUrl) {
+    const exact = pages.find((target) => normalizeUrlForComparison(target.url) === normalizedCurrentUrl);
+    if (exact) return exact;
+  }
+
+  return pages.find((target) => {
+    const url = String(target?.url ?? '');
+    return url.length > 0 && url !== 'about:blank';
+  }) ?? pages[0] ?? null;
+}
+
+async function streamChromeTraceEvents(tracePath, onEvent, options = {}) {
+  const stream = createReadStream(tracePath, {
+    encoding: 'utf8',
+    highWaterMark: normalizePositiveInt(options.highWaterMark, 1024 * 1024),
+  });
+  const traceEventsKey = '"traceEvents"';
+  let mode = 'seekingKey';
+  let searchTail = '';
+  let collectingObject = false;
+  let objectDepth = 0;
+  let objectText = '';
+  let inString = false;
+  let escaped = false;
+
+  function consumeArrayChar(char) {
+    if (!collectingObject) {
+      if (char === ']') {
+        mode = 'done';
+        return;
+      }
+      if (char !== '{') return;
+      collectingObject = true;
+      objectDepth = 1;
+      objectText = '{';
+      inString = false;
+      escaped = false;
+      return;
+    }
+
+    objectText += char;
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      return;
+    }
+
+    if (char === '"') {
+      inString = true;
+      return;
+    }
+    if (char === '{') {
+      objectDepth += 1;
+      return;
+    }
+    if (char !== '}') return;
+
+    objectDepth -= 1;
+    if (objectDepth > 0) return;
+    onEvent(JSON.parse(objectText));
+    collectingObject = false;
+    objectText = '';
+  }
+
+  for await (const chunk of stream) {
+    if (mode === 'done') break;
+    let text = String(chunk);
+    if (mode === 'seekingKey') {
+      const searchable = searchTail + text;
+      const keyIndex = searchable.indexOf(traceEventsKey);
+      if (keyIndex < 0) {
+        searchTail = searchable.slice(-traceEventsKey.length + 1);
+        continue;
+      }
+      text = searchable.slice(keyIndex + traceEventsKey.length);
+      searchTail = '';
+      mode = 'seekingArray';
+    }
+
+    for (let index = 0; index < text.length && mode !== 'done'; index += 1) {
+      const char = text[index];
+      if (mode === 'seekingArray') {
+        if (char === '[') mode = 'array';
+        continue;
+      }
+      if (mode === 'array') consumeArrayChar(char);
     }
   }
-
-  const threadGroups = { rendererMain: 0, compositor: 0, gpuViz: 0, other: 0 };
-  const byName = new Map();
-  let totalCompleteEventMs = 0;
-  for (const event of traceEvents) {
-    if (event?.ph !== 'X' || typeof event.dur !== 'number' || !Number.isFinite(event.dur) || event.dur <= 0) continue;
-    const durationMs = event.dur / 1000;
-    totalCompleteEventMs += durationMs;
-    const group = classifyThread(threadNames.get(threadKey(event)));
-    threadGroups[group] += durationMs;
-    const name = String(event.name ?? 'unknown');
-    const current = byName.get(name) ?? { name, totalMs: 0, count: 0, maxMs: 0 };
-    current.totalMs += durationMs;
-    current.count += 1;
-    current.maxMs = Math.max(current.maxMs, durationMs);
-    byName.set(name, current);
-  }
-
-  return {
-    totalCompleteEventMs: round(totalCompleteEventMs),
-    threadGroups: Object.fromEntries(Object.entries(threadGroups).map(([key, value]) => [key, round(value)])),
-    topEvents: Array.from(byName.values())
-      .map((event) => ({ ...event, totalMs: round(event.totalMs), maxMs: round(event.maxMs) }))
-      .sort((left, right) => right.totalMs - left.totalMs || right.maxMs - left.maxMs || left.name.localeCompare(right.name))
-      .slice(0, 40),
-  };
 }
 
 function summarizeSyncTelemetry(syncSnapshot) {
@@ -213,11 +393,77 @@ function summarizeSyncTelemetry(syncSnapshot) {
     .sort((left, right) => right.totalMs - left.totalMs || right.count - left.count || left.name.localeCompare(right.name));
 }
 
-function parseArgs(argv) {
+export function buildFallbackScenarioSnapshotScript(probeError = 'Browser perf probe snapshot was not available') {
+  return `(() => {
+    const errors = [];
+    const readError = ${JSON.stringify(String(probeError ?? 'Browser perf probe snapshot was not available'))};
+    function snapshotOrNull(read) {
+      try {
+        return read();
+      } catch (error) {
+        errors.push(String(error?.message ?? error));
+        return null;
+      }
+    }
+    function readTranscriptViewportTelemetry() {
+      return snapshotOrNull(() => {
+        const telemetry = window.__HAPPIER_TRANSCRIPT_VIEWPORT_EVENTS__;
+        if (typeof telemetry === 'function') return telemetry();
+        if (telemetry && typeof telemetry.snapshot === 'function') return telemetry.snapshot();
+        return null;
+      });
+    }
+    const perf = typeof performance === 'object' && performance ? performance : null;
+    const memory = perf?.memory ? {
+      usedJSHeapSize: perf.memory.usedJSHeapSize,
+      totalJSHeapSize: perf.memory.totalJSHeapSize,
+      jsHeapSizeLimit: perf.memory.jsHeapSizeLimit,
+    } : null;
+    return {
+      auditProbeAvailable: false,
+      auditProbeError: readError,
+      startedAtMs: 0,
+      finishedAtMs: typeof perf?.now === 'function' ? perf.now() : 0,
+      longTasks: [],
+      frameGaps: [],
+      ws: null,
+      memory,
+      errors,
+      url: typeof location === 'object' && location ? String(location.href ?? '') : '',
+      syncPerformance: snapshotOrNull(() => window.__HAPPIER_SYNC_PERFORMANCE__?.snapshot?.() ?? null),
+      syncReliability: snapshotOrNull(() => window.__HAPPIER_SYNC_RELIABILITY__?.snapshot?.() ?? null),
+      transcriptViewport: readTranscriptViewportTelemetry(),
+    };
+  })()`;
+}
+
+export function buildScenarioSnapshotResult(raw) {
+  const auditProbeAvailable = raw?.auditProbeAvailable !== false;
+  return {
+    raw,
+    browserSummary: auditProbeAvailable ? summarizeBrowserProbe(raw) : null,
+    syncTopEvents: summarizeSyncTelemetry(raw?.syncPerformance).slice(0, 80),
+    snapshotWarning: auditProbeAvailable ? null : String(raw?.auditProbeError ?? 'Browser perf probe snapshot was not available'),
+  };
+}
+
+export function resolvePerfAuditEnvironmentDefaults(env = process.env) {
+  const normalize = (value) => {
+    const trimmed = String(value ?? '').trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+  return {
+    url: normalize(env[APP_URL_ENV_NAME]),
+    devKey: normalize(env[DEV_KEY_ENV_NAME]),
+  };
+}
+
+export function parsePerfAuditArgs(argv, env = process.env) {
+  const environmentDefaults = resolvePerfAuditEnvironmentDefaults(env);
   const args = {
-    url: DEFAULT_APP_URL,
+    url: environmentDefaults.url,
     session: DEFAULT_AGENT_BROWSER_SESSION,
-    devKey: DEFAULT_DEV_KEY,
+    devKey: environmentDefaults.devKey,
     outDir: null,
     durationMs: 20000,
     plan: 'full',
@@ -225,11 +471,15 @@ function parseArgs(argv) {
     skipAuth: false,
     skipTrace: false,
     skipProfiler: false,
+    v8Profile: false,
+    skipTelemetryReload: false,
     keepBrowserSession: false,
     stressSessionCount: 0,
     targetSessionTitle: 'UI Perf Stress Plan',
+    targetSessionUrl: null,
     directory: process.cwd(),
     stressPromptFile: null,
+    syncTuningOverrides: {},
     dryRun: false,
   };
 
@@ -244,13 +494,17 @@ function parseArgs(argv) {
       case '--duration-ms': args.durationMs = normalizePositiveInt(next(), args.durationMs); break;
       case '--plan': args.plan = next() ?? args.plan; break;
       case '--target-session-title': args.targetSessionTitle = next() ?? args.targetSessionTitle; break;
+      case '--target-session-url': args.targetSessionUrl = next() ?? args.targetSessionUrl; break;
       case '--directory': args.directory = next() ?? args.directory; break;
       case '--stress-sessions': args.stressSessionCount = normalizeNonNegativeInt(next(), args.stressSessionCount); break;
       case '--stress-prompt-file': args.stressPromptFile = next() ?? args.stressPromptFile; break;
+      case '--sync-tuning-json': args.syncTuningOverrides = parseSyncTuningOverrideJson(next() ?? ''); break;
       case '--print-plan': args.printPlan = true; break;
       case '--skip-auth': args.skipAuth = true; break;
       case '--skip-trace': args.skipTrace = true; break;
       case '--skip-profiler': args.skipProfiler = true; break;
+      case '--v8-profile': args.v8Profile = true; break;
+      case '--skip-telemetry-reload': args.skipTelemetryReload = true; break;
       case '--keep-browser-session': args.keepBrowserSession = true; break;
       case '--dry-run': args.dryRun = true; break;
       case '--help':
@@ -265,12 +519,24 @@ function parseArgs(argv) {
   return args;
 }
 
-function usage() {
-  return `Usage: node apps/ui/scripts/perf/agentBrowserUiPerfAudit.mjs [options]\n\nOptions:\n  --url <url>                         Web app URL (default: ${DEFAULT_APP_URL})\n  --session <name>                    agent-browser session name\n  --dev-key <key>                     dev restore key for login\n  --out-dir <dir>                     artifact directory\n  --duration-ms <ms>                  per-scenario duration\n  --plan <full|smoke|multi-stream|mobile-hidden|scenario-id>    scenario subset\n  --target-session-title <title>      session title to open for session-view scenarios\n  --directory <path>                  directory seed for /new stress sessions (default: current working directory)\n  --stress-sessions <n>               create n safe long-running stress sessions before measurement\n  --stress-prompt-file <path>         custom base stress prompt\n  --skip-auth                         assume already logged in\n  --skip-trace                        do not capture Chrome traces\n  --skip-profiler                     do not capture CPU profiles\n  --keep-browser-session              leave the script-owned agent-browser session open for warm reuse\n  --print-plan                        print plan JSON and exit\n  --dry-run                           write plan only, no browser work\n`;
+export function buildAgentBrowserPerfAuditUsage() {
+  return `Usage: node apps/ui/scripts/perf/agentBrowserUiPerfAudit.mjs [options]\n\nEnvironment defaults:\n  ${APP_URL_ENV_NAME}                 Web app URL when --url is omitted\n  ${DEV_KEY_ENV_NAME}                 Dev restore key when --dev-key is omitted\n\nOptions:\n  --url <url>                         Web app URL (or ${APP_URL_ENV_NAME})\n  --session <name>                    agent-browser session name\n  --dev-key <key>                     dev restore key for login (or ${DEV_KEY_ENV_NAME})\n  --out-dir <dir>                     artifact directory\n  --duration-ms <ms>                  per-scenario duration\n  --plan <full|smoke|multi-stream|mobile-hidden|cold-hydration|scenario-id>    scenario subset\n  --target-session-title <title>      session title to open for session-view scenarios\n  --target-session-url <url>          direct /session/... URL for session-view scenarios\n  --directory <path>                  directory seed for /new stress sessions (default: current working directory)\n  --stress-sessions <n>               create n safe long-running stress sessions before measurement\n  --stress-prompt-file <path>         custom base stress prompt\n  --sync-tuning-json <json>           merge extra HAPPIER_SYNC_TUNING_JSON keys for perf experiments\n  --skip-auth                         assume already logged in\n  --skip-trace                        do not capture Chrome traces\n  --skip-profiler                     do not capture CPU profiles\n  --v8-profile                        capture valid direct-CDP V8 CPU profiles instead of agent-browser profiler output\n  --skip-telemetry-reload             keep an already-configured warm app instead of reloading telemetry setup\n  --keep-browser-session              leave this script-owned agent-browser session open for explicit warm reuse\n  --print-plan                        print plan JSON and exit\n  --dry-run                           write plan only, no browser work\n`;
 }
 
-export function shouldCloseAgentBrowserSession(args) {
-  return args?.keepBrowserSession !== true;
+function usage() {
+  return buildAgentBrowserPerfAuditUsage();
+}
+
+export function validatePerfAuditRuntimeArgs(args, plan) {
+  const url = String(args?.url ?? '').trim();
+  if (!url) {
+    throw new Error(`Missing perf app URL: pass --url or set ${APP_URL_ENV_NAME}`);
+  }
+  const scenarios = Array.isArray(plan?.scenarios) ? plan.scenarios : [];
+  const needsDevKey = args?.skipAuth !== true || scenarios.some((scenario) => scenario?.requiresColdAuth === true);
+  if (needsDevKey && !String(args?.devKey ?? '').trim()) {
+    throw new Error(`Missing perf dev restore key: pass --dev-key or set ${DEV_KEY_ENV_NAME}`);
+  }
 }
 
 export function resolveScenarioExecutionPhases(action) {
@@ -295,6 +561,8 @@ export function resolveScenarioExecutionPhases(action) {
       return { prepare: 'targetSession', measure: 'tabs' };
     case 'mobileHiddenSessionList':
       return { prepare: 'mobileTargetSession', measure: 'idle' };
+    case 'coldAuthSessionListHydration':
+      return { prepare: 'none', measure: 'coldAuthHydration' };
     default:
       throw new Error(`Unhandled scenario action: ${action}`);
   }
@@ -304,6 +572,9 @@ export function selectPlanScenarios(plan, subset) {
   const exactScenario = plan.scenarios.find((scenario) => scenario.id === subset);
   if (exactScenario) return { ...plan, scenarios: [exactScenario] };
 
+  if (subset === 'full') {
+    return { ...plan, scenarios: plan.scenarios.filter((scenario) => scenario.defaultIncluded !== false) };
+  }
   if (subset === 'smoke') {
     const ids = new Set([
       'desktop.sessionList.idle',
@@ -325,13 +596,17 @@ export function selectPlanScenarios(plan, subset) {
     const ids = new Set(['mobile.sessionList.hiddenMounted']);
     return { ...plan, scenarios: plan.scenarios.filter((scenario) => ids.has(scenario.id)) };
   }
-  return plan;
+  if (subset === 'cold-hydration') {
+    const ids = new Set(['desktop.sessionList.coldAuthHydration']);
+    return { ...plan, scenarios: plan.scenarios.filter((scenario) => ids.has(scenario.id)) };
+  }
+  return { ...plan, scenarios: plan.scenarios.filter((scenario) => scenario.defaultIncluded !== false) };
 }
 
 function buildArtifactDir(outDir) {
   if (outDir) return resolve(outDir);
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  return join(homedir(), '.happier', 'perf-audits', 'dev-ui', stamp);
+  return join(homedir(), '.happier', 'perf-audits', 'remote-dev-ui', stamp);
 }
 
 function agentBrowserArgs(session, args) {
@@ -390,6 +665,185 @@ async function stopActiveBrowserCaptures(ctx, label) {
   await execAgentBrowser(ctx.session, ['trace', 'stop', tracePath], { parseJson: false, timeout: 30000 }).catch(() => null);
 }
 
+function execFileText(file, args, options = {}) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    execFile(file, args, { timeout: options.timeout ?? 10000 }, (error, stdout, stderr) => {
+      if (error) {
+        const message = [stderr?.trim(), error.message].filter(Boolean).join('\n');
+        rejectPromise(new Error(message));
+        return;
+      }
+      resolvePromise(String(stdout ?? ''));
+    });
+  });
+}
+
+function parseChromeUserDataDirFromCommand(command) {
+  const text = String(command ?? '');
+  const equalsMatch = text.match(/(?:^|\s)--user-data-dir=(?:"([^"]+)"|'([^']+)'|(\S+))/);
+  if (equalsMatch) return equalsMatch[1] ?? equalsMatch[2] ?? equalsMatch[3] ?? null;
+  const parts = text.split(/\s+/).filter(Boolean);
+  const index = parts.indexOf('--user-data-dir');
+  if (index >= 0 && parts[index + 1]) return parts[index + 1];
+  return null;
+}
+
+async function readProcessCommand(pid) {
+  const trimmed = String(pid ?? '').trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const output = await execFileText('ps', ['-p', trimmed, '-o', 'command='], { timeout: 10000 }).catch(() => '');
+  const command = output.trim();
+  return command.length > 0 ? command : null;
+}
+
+async function listChildPids(pid) {
+  const trimmed = String(pid ?? '').trim();
+  if (!/^\d+$/.test(trimmed)) return [];
+  const output = await execFileText('pgrep', ['-P', trimmed], { timeout: 10000 }).catch(() => '');
+  return output.split(/\s+/).map((entry) => entry.trim()).filter((entry) => /^\d+$/.test(entry));
+}
+
+async function resolveAgentBrowserChromeUserDataDir(session) {
+  const pidPath = join(homedir(), '.agent-browser', `${session}.pid`);
+  const agentPid = (await readFile(pidPath, 'utf8')).trim();
+  const candidates = [agentPid, ...await listChildPids(agentPid)];
+  for (const pid of candidates) {
+    const command = await readProcessCommand(pid);
+    const userDataDir = parseChromeUserDataDirFromCommand(command);
+    if (userDataDir) return userDataDir;
+  }
+  throw new Error(`Could not resolve Chrome user-data-dir for agent-browser session ${session}`);
+}
+
+async function resolveAgentBrowserDevToolsEndpoint(session) {
+  const userDataDir = await resolveAgentBrowserChromeUserDataDir(session);
+  const activePort = parseDevToolsActivePortFile(await readFile(join(userDataDir, 'DevToolsActivePort'), 'utf8'));
+  return { ...activePort, userDataDir };
+}
+
+async function fetchJson(url, options = {}) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), options.timeout ?? 10000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function createCdpConnection(webSocketDebuggerUrl) {
+  const ws = new WebSocket(webSocketDebuggerUrl);
+  let nextId = 1;
+  const pending = new Map();
+  let closed = false;
+
+  const rejectAll = (error) => {
+    closed = true;
+    for (const { reject, timeoutId } of pending.values()) {
+      clearTimeout(timeoutId);
+      reject(error);
+    }
+    pending.clear();
+  };
+
+  await new Promise((resolvePromise, rejectPromise) => {
+    const timeoutId = setTimeout(() => {
+      rejectPromise(new Error('Timed out connecting to CDP target'));
+      try { ws.close(); } catch {}
+    }, 10000);
+    ws.addEventListener('open', () => {
+      clearTimeout(timeoutId);
+      resolvePromise();
+    }, { once: true });
+    ws.addEventListener('error', () => {
+      clearTimeout(timeoutId);
+      rejectPromise(new Error('CDP WebSocket connection failed'));
+    }, { once: true });
+  });
+
+  ws.addEventListener('message', (event) => {
+    let message;
+    try {
+      message = JSON.parse(String(event.data));
+    } catch {
+      return;
+    }
+    if (typeof message?.id !== 'number') return;
+    const entry = pending.get(message.id);
+    if (!entry) return;
+    pending.delete(message.id);
+    clearTimeout(entry.timeoutId);
+    if (message.error) {
+      entry.reject(new Error(message.error.message ?? JSON.stringify(message.error)));
+      return;
+    }
+    entry.resolve(message.result ?? null);
+  });
+  ws.addEventListener('close', () => rejectAll(new Error('CDP WebSocket closed')));
+  ws.addEventListener('error', () => rejectAll(new Error('CDP WebSocket error')));
+
+  return {
+    send(method, params = {}, options = {}) {
+      if (closed) return Promise.reject(new Error('CDP WebSocket is closed'));
+      const id = nextId++;
+      return new Promise((resolvePromise, rejectPromise) => {
+        const timeoutId = setTimeout(() => {
+          pending.delete(id);
+          rejectPromise(new Error(`Timed out waiting for CDP method ${method}`));
+        }, options.timeout ?? 30000);
+        pending.set(id, { resolve: resolvePromise, reject: rejectPromise, timeoutId });
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+    },
+    close() {
+      closed = true;
+      for (const { reject, timeoutId } of pending.values()) {
+        clearTimeout(timeoutId);
+        reject(new Error('CDP WebSocket closed'));
+      }
+      pending.clear();
+      try { ws.close(); } catch {}
+    },
+  };
+}
+
+async function startV8CpuProfile(ctx, profilePath) {
+  const currentUrl = await browserEval(ctx.session, 'globalThis.location?.href ?? ""', { timeout: 10000 }).catch(() => null);
+  const endpoint = await resolveAgentBrowserDevToolsEndpoint(ctx.session);
+  const targets = await fetchJson(`http://127.0.0.1:${endpoint.port}/json/list`, { timeout: 10000 });
+  const target = selectV8ProfileCdpTarget(targets, currentUrl);
+  if (!target?.webSocketDebuggerUrl) throw new Error('Could not find a page CDP target for V8 profiling');
+
+  const cdp = await createCdpConnection(target.webSocketDebuggerUrl);
+  let stopped = false;
+  try {
+    await cdp.send('Profiler.enable');
+    await cdp.send('Profiler.setSamplingInterval', { interval: 1000 }).catch(() => null);
+    await cdp.send('Profiler.start');
+  } catch (error) {
+    cdp.close();
+    throw error;
+  }
+
+  return {
+    targetUrl: target.url ?? null,
+    async stop() {
+      if (stopped) return;
+      stopped = true;
+      try {
+        const result = await cdp.send('Profiler.stop', {}, { timeout: 60000 });
+        if (!result?.profile) throw new Error('CDP Profiler.stop did not return a profile');
+        await writeJson(profilePath, result.profile);
+      } finally {
+        await cdp.send('Profiler.disable').catch(() => null);
+        cdp.close();
+      }
+    },
+  };
+}
+
 async function startBrowserCapture(ctx, kind) {
   try {
     await execAgentBrowser(ctx.session, [kind, 'start'], { parseJson: false, timeout: 30000 });
@@ -412,20 +866,30 @@ async function openUrl(ctx, url, options = {}) {
   } catch (error) {
     if (!isAgentBrowserOperationTimeoutError(error?.message)) throw error;
     await waitMs(ctx.session, options.timeoutSettleMs ?? 1500).catch(() => null);
+    let currentUrl;
+    try {
+      currentUrl = await browserEval(ctx.session, 'globalThis.location?.href ?? ""', { timeout: options.validationTimeout ?? 10000 });
+    } catch (validationError) {
+      throw new Error(
+        `agent-browser open timed out and navigation state could not be validated: ${validationError?.message ?? validationError}`,
+        { cause: error },
+      );
+    }
+    if (!isBrowserLocationAtTargetUrl(currentUrl, url)) {
+      throw new Error(
+        `agent-browser open timed out before reaching target URL: expected ${url}, current ${currentUrl || 'unknown'}`,
+        { cause: error },
+      );
+    }
   }
+}
+
+export function buildAgentBrowserWaitTimeoutMs(ms) {
+  return normalizeNonNegativeInt(ms, 0) + 60000;
 }
 
 async function waitMs(session, ms) {
-  await browserJson(session, ['wait', String(ms)], { timeout: ms + 30000 });
-}
-
-async function closeAgentBrowserSession(ctx) {
-  if (!shouldCloseAgentBrowserSession(ctx)) return;
-  try {
-    await execAgentBrowser(ctx.session, ['close'], { parseJson: false, timeout: 30000 });
-  } catch (error) {
-    ctx.browserSessionCloseError = error?.message ?? String(error);
-  }
+  await browserJson(session, ['wait', String(ms)], { timeout: buildAgentBrowserWaitTimeoutMs(ms) });
 }
 
 async function writeJson(path, value) {
@@ -492,6 +956,16 @@ export function buildInstallProbeScript() {
         return 'unknown';
       }
     }
+    function readTranscriptViewportTelemetry() {
+      try {
+        const telemetry = window.__HAPPIER_TRANSCRIPT_VIEWPORT_EVENTS__;
+        if (typeof telemetry === 'function') return telemetry();
+        if (telemetry && typeof telemetry.snapshot === 'function') return telemetry.snapshot();
+      } catch (error) {
+        state.errors.push(String(error?.message ?? error));
+      }
+      return null;
+    }
     try {
       const NativeWebSocket = window.WebSocket;
       if (typeof NativeWebSocket === 'function') {
@@ -537,6 +1011,7 @@ export function buildInstallProbeScript() {
           url: location.href,
           syncPerformance: window.__HAPPIER_SYNC_PERFORMANCE__?.snapshot?.() ?? null,
           syncReliability: window.__HAPPIER_SYNC_RELIABILITY__?.snapshot?.() ?? null,
+          transcriptViewport: readTranscriptViewportTelemetry(),
         };
       },
       disconnect() {
@@ -551,12 +1026,40 @@ export function buildInstallProbeScript() {
   })()`;
 }
 
+export function buildTranscriptScrollerReadyScript() {
+  return `(() => {
+    const target = document.querySelector('[data-testid="transcript-chat-list"], [data-test-id="transcript-chat-list"], [testID="transcript-chat-list"]');
+    const targetTestId = String(
+      target?.getAttribute?.('data-testid')
+      || target?.getAttribute?.('data-test-id')
+      || target?.getAttribute?.('testID')
+      || ''
+    );
+    const scrollHeight = target?.scrollHeight || 0;
+    const clientHeight = target?.clientHeight || 0;
+    return {
+      ready: targetTestId === 'transcript-chat-list' && scrollHeight > clientHeight + 80,
+      targetTestId,
+      scrollHeight,
+      clientHeight,
+    };
+  })()`;
+}
+
+export function shouldWaitForTranscriptScrollerBeforeMeasurement(scenario) {
+  return scenario?.action === 'sessionViewTranscriptScroll';
+}
+
 export function buildScrollKickoffScript(durationMs) {
   const duration = normalizePositiveInt(durationMs, 8000);
   return `(() => {
     const globalKey = ${JSON.stringify(SCROLL_GLOBAL)};
     const previous = window[globalKey];
     if (previous && typeof previous.cancel === 'function') previous.cancel();
+    const preferredTranscriptTestIds = new Set([
+      'transcript-chat-list',
+      'transcript-web-hot-tail',
+    ]);
     const readTestId = (el) => {
       const direct = String(
         el?.getAttribute?.('data-testid')
@@ -567,6 +1070,12 @@ export function buildScrollKickoffScript(durationMs) {
       if (direct) return direct;
       return el?.closest?.('[data-testid="sessions-list-keyboard-zone"]') ? 'session-list' : '';
     };
+    const candidateScore = (el) => {
+      const area = (el.clientHeight || 0) * (el.clientWidth || 0);
+      const testId = readTestId(el);
+      const preferred = preferredTranscriptTestIds.has(testId) || testId.startsWith('transcript-chat-list') ? 1 : 0;
+      return { area, preferred };
+    };
     const candidates = [document.scrollingElement, ...document.querySelectorAll('*')]
       .filter(Boolean)
       .filter((el, index, all) => all.indexOf(el) === index)
@@ -575,7 +1084,12 @@ export function buildScrollKickoffScript(durationMs) {
         if (!rect || rect.width < 80 || rect.height < 80) return false;
         return (el.scrollHeight || 0) > (el.clientHeight || 0) + 80;
       })
-      .sort((a, b) => ((b.clientHeight || 0) * (b.clientWidth || 0)) - ((a.clientHeight || 0) * (a.clientWidth || 0)));
+      .sort((a, b) => {
+        const left = candidateScore(a);
+        const right = candidateScore(b);
+        if (left.preferred !== right.preferred) return right.preferred - left.preferred;
+        return right.area - left.area;
+      });
     const target = candidates[0] || document.scrollingElement || document.body;
     if (!target || typeof requestAnimationFrame !== 'function') {
       return { started: false, reason: 'noScrollTarget' };
@@ -626,6 +1140,110 @@ export function buildScrollKickoffScript(durationMs) {
       clientWidth: target.clientWidth || 0,
       targetTestId,
     };
+  })()`;
+}
+
+export function buildClearBrowserStorageScript(options = {}) {
+  const preserveLocalStorageKeys = Array.isArray(options.preserveLocalStorageKeys)
+    ? options.preserveLocalStorageKeys.map((key) => String(key)).filter(Boolean)
+    : [];
+  return `(async () => {
+    const preserveLocalStorageKeys = ${JSON.stringify(preserveLocalStorageKeys)};
+    const result = {
+      localStorageCleared: false,
+      sessionStorageCleared: false,
+      deletedCaches: 0,
+      deletedDatabases: 0,
+      blockedDatabases: 0,
+      serviceWorkersUnregistered: 0,
+      errors: [],
+    };
+    const recordError = (scope, error) => {
+      result.errors.push({ scope, message: String(error?.message ?? error) });
+    };
+    try {
+      const preserved = new Map();
+      for (const key of preserveLocalStorageKeys) {
+        const value = localStorage.getItem(key);
+        if (value !== null) preserved.set(key, value);
+      }
+      localStorage.clear();
+      for (const [key, value] of preserved) localStorage.setItem(key, value);
+      result.localStorageCleared = true;
+    } catch (error) {
+      recordError('localStorage', error);
+    }
+    try {
+      sessionStorage.clear();
+      result.sessionStorageCleared = true;
+    } catch (error) {
+      recordError('sessionStorage', error);
+    }
+    try {
+      if (typeof caches !== 'undefined' && typeof caches.keys === 'function') {
+        const cacheKeys = await caches.keys();
+        await Promise.all(cacheKeys.map(async (key) => {
+          try {
+            if (await caches.delete(key)) result.deletedCaches += 1;
+          } catch (error) {
+            recordError('cache:' + key, error);
+          }
+        }));
+      }
+    } catch (error) {
+      recordError('caches', error);
+    }
+    try {
+      if (typeof navigator !== 'undefined' && navigator.serviceWorker?.getRegistrations) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map(async (registration, index) => {
+          try {
+            if (await registration.unregister()) result.serviceWorkersUnregistered += 1;
+          } catch (error) {
+            recordError('serviceWorker:' + index, error);
+          }
+        }));
+      }
+    } catch (error) {
+      recordError('serviceWorkers', error);
+    }
+    try {
+      if (typeof indexedDB !== 'undefined' && typeof indexedDB.databases === 'function') {
+        const databases = await indexedDB.databases();
+        for (const database of databases) {
+          const name = typeof database?.name === 'string' ? database.name : '';
+          if (!name) continue;
+          await new Promise((resolve) => {
+            let settled = false;
+            const settle = (deleted) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timeoutId);
+              if (deleted) result.deletedDatabases += 1;
+              resolve(undefined);
+            };
+            const timeoutId = setTimeout(() => settle(false), 1500);
+            try {
+              const request = indexedDB.deleteDatabase(name);
+              request.onsuccess = () => settle(true);
+              request.onerror = () => {
+                recordError('indexedDB:' + name, request.error ?? 'delete failed');
+                settle(false);
+              };
+              request.onblocked = () => {
+                result.blockedDatabases += 1;
+              };
+            } catch (error) {
+              recordError('indexedDB:' + name, error);
+              settle(false);
+            }
+          });
+        }
+      }
+    } catch (error) {
+      recordError('indexedDB', error);
+    }
+    return result;
   })()`;
 }
 
@@ -712,17 +1330,40 @@ export function buildClickVisibleControlByNameScript(text) {
   })()`;
 }
 
+async function writeTelemetryTuningOverride(ctx, options = {}) {
+  await browserEval(ctx.session, `localStorage.setItem(${JSON.stringify(SYNC_TUNING_STORAGE_KEY)}, ${JSON.stringify(JSON.stringify(buildSyncTuningOverride({
+    ...options,
+    syncTuningOverrides: ctx.syncTuningOverrides,
+  })))}); true;`);
+}
+
 async function configureTelemetryAndReload(ctx) {
   await openUrl(ctx, ctx.url, { timeout: 90000 });
-  await browserEval(ctx.session, `localStorage.setItem(${JSON.stringify(SYNC_TUNING_STORAGE_KEY)}, ${JSON.stringify(JSON.stringify(buildSyncTuningOverride()))}); true;`);
+  await writeTelemetryTuningOverride(ctx);
   await browserJson(ctx.session, ['reload'], { timeout: 90000 });
   await waitMs(ctx.session, 3000);
+  await waitForAuthenticatedRoot(ctx);
+}
+
+async function configureLiveTelemetry(ctx) {
+  await browserEval(ctx.session, buildLiveTelemetryConfigureScript({ flushIntervalMs: 30000 }), { timeout: 30000 }).catch(() => false);
 }
 
 async function cleanupTelemetry(ctx) {
   try {
     await browserEval(ctx.session, `localStorage.removeItem(${JSON.stringify(SYNC_TUNING_STORAGE_KEY)}); window.${AUDIT_GLOBAL}?.disconnect?.(); true;`, { timeout: 30000 });
   } catch {}
+}
+
+export function shouldCloseAgentBrowserSession(args) {
+  return args?.keepBrowserSession !== true;
+}
+
+async function closeAgentBrowserSession(ctx) {
+  if (!shouldCloseAgentBrowserSession(ctx)) return;
+  await execAgentBrowser(ctx.session, ['close'], { parseJson: false, timeout: 30000 }).catch((error) => {
+    ctx.browserSessionCloseError = error instanceof Error ? error.message : String(error);
+  });
 }
 
 function refByRoleName(snapshotResponse, role, namePattern) {
@@ -733,6 +1374,83 @@ function refByRoleName(snapshotResponse, role, namePattern) {
     return `@${ref}`;
   }
   return null;
+}
+
+export function isSessionViewUrl(currentUrl) {
+  try {
+    const pathParts = new URL(String(currentUrl ?? '')).pathname.split('/').filter(Boolean);
+    return pathParts[0] === 'session' && typeof pathParts[1] === 'string' && pathParts[1].length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export function buildTargetSessionUrl(baseUrl, targetSessionUrl) {
+  const trimmed = String(targetSessionUrl ?? '').trim();
+  if (!trimmed) return null;
+  const url = new URL(trimmed, baseUrl);
+  if (!isSessionViewUrl(url.href)) {
+    throw new Error('--target-session-url must point at a concrete /session/... route');
+  }
+  url.searchParams.set('happier_hmr', '0');
+  return url.href;
+}
+
+function normalizeSessionUrlForWarmReuse(value) {
+  try {
+    const url = new URL(String(value ?? ''));
+    url.hash = '';
+    url.searchParams.delete('happier_hmr');
+    url.searchParams.sort();
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+export function shouldOpenTargetSessionUrl(currentUrl, targetSessionUrl) {
+  if (isBrowserLocationAtTargetUrl(currentUrl, targetSessionUrl)) return false;
+  const current = normalizeSessionUrlForWarmReuse(currentUrl);
+  const target = normalizeSessionUrlForWarmReuse(targetSessionUrl);
+  return !current || !target || current !== target;
+}
+
+export function resolveAuthenticationSurfaceFromSnapshot(snapshotResponse) {
+  const text = String(snapshotResponse?.data?.snapshot ?? '');
+  const textboxRef = refByRoleName(snapshotResponse, 'textbox', /XXXXX|secret|key|restore/i);
+  const restoreAccountRef = refByRoleName(snapshotResponse, 'button', /Restore Account/i);
+  if (textboxRef && restoreAccountRef) {
+    return { state: 'restore', textboxRef, restoreAccountRef };
+  }
+
+  const loginRef = refByRoleName(snapshotResponse, 'button', /Login/i);
+  const restoreRef = refByRoleName(snapshotResponse, 'button', /Restore with Secret Key/i);
+  if (restoreRef) return { state: 'restoreDisclosure', restoreRef };
+  if (loginRef) return { state: 'login', loginRef };
+
+  const refs = Object.values(snapshotResponse?.data?.refs ?? {});
+  const hasSessionScopeTabs = refs.some((meta) => meta?.role === 'tab' && /^Happier$/i.test(String(meta?.name ?? '').trim()))
+    && refs.some((meta) => meta?.role === 'tab' && /^Direct$/i.test(String(meta?.name ?? '').trim()));
+  const hasRelayControl = refs.some((meta) => meta?.role === 'button' && /localhost:\d+|https?:\/\//i.test(String(meta?.name ?? '')));
+  if (/Search sessions|Start New Session|Sessions/.test(text) || (hasSessionScopeTabs && hasRelayControl)) {
+    return { state: 'authenticated' };
+  }
+
+  return { state: 'pending' };
+}
+
+async function waitForAuthenticatedRoot(ctx, timeoutMs = 45000) {
+  const startedAt = Date.now();
+  let lastState = null;
+  let lastSnapshotText = '';
+  while (Date.now() - startedAt <= timeoutMs) {
+    const snapshot = await browserJson(ctx.session, ['snapshot', '-i'], { timeout: 90000 });
+    lastSnapshotText = String(snapshot?.data?.snapshot ?? '').slice(0, 500);
+    lastState = resolveAuthenticationSurfaceFromSnapshot(snapshot);
+    if (lastState.state === 'authenticated') return;
+    await waitMs(ctx.session, 1000);
+  }
+  throw new Error(`Authentication did not reach the authenticated session list; last state: ${lastState?.state ?? 'unknown'}; snapshot: ${lastSnapshotText}`);
 }
 
 export function chooseLaunchSessionButtonRef(snapshotResponse) {
@@ -754,38 +1472,49 @@ export function chooseLaunchSessionButtonRef(snapshotResponse) {
   return fallback?.ref ?? null;
 }
 
-async function ensureAuthenticated(ctx) {
-  await openUrl(ctx, ctx.url, { timeout: 90000 });
-  await waitMs(ctx.session, 1000);
-  let snapshot = await browserJson(ctx.session, ['snapshot', '-i'], { timeout: 90000 });
-  const text = snapshot?.data?.snapshot ?? '';
-  if (/Search sessions|Start New Session|Sessions/.test(text)) return;
+async function openAuthenticationSurface(ctx, options = {}) {
+  if (options.open !== false) {
+    await openUrl(ctx, ctx.url, { timeout: 90000 });
+  }
 
-  const loginRef = refByRoleName(snapshot, 'button', /Login/i);
-  if (loginRef) {
-    await browserJson(ctx.session, ['click', loginRef]);
+  const startedAt = Date.now();
+  let lastState = null;
+  while (Date.now() - startedAt <= 30000) {
     await waitMs(ctx.session, 500);
-    snapshot = await browserJson(ctx.session, ['snapshot', '-i'], { timeout: 90000 });
+    const snapshot = await browserJson(ctx.session, ['snapshot', '-i'], { timeout: 90000 });
+    const surface = resolveAuthenticationSurfaceFromSnapshot(snapshot);
+    lastState = surface.state;
+    if (surface.state === 'authenticated') return { alreadyAuthenticated: true };
+    if (surface.state === 'restore') {
+      return {
+        alreadyAuthenticated: false,
+        textboxRef: surface.textboxRef,
+        restoreAccountRef: surface.restoreAccountRef,
+      };
+    }
+    if (surface.state === 'login') {
+      await browserJson(ctx.session, ['click', surface.loginRef], { timeout: 30000 });
+      continue;
+    }
+    if (surface.state === 'restoreDisclosure') {
+      await browserJson(ctx.session, ['click', surface.restoreRef], { timeout: 30000 });
+      continue;
+    }
   }
 
-  const restoreRef = refByRoleName(snapshot, 'button', /Restore with Secret Key/i);
-  if (restoreRef) {
-    await browserJson(ctx.session, ['click', restoreRef]);
-    await waitMs(ctx.session, 500);
-    snapshot = await browserJson(ctx.session, ['snapshot', '-i'], { timeout: 90000 });
-  }
+  throw new Error(`Could not find dev-key restore controls in the UI; last auth surface state: ${lastState ?? 'unknown'}`);
+}
 
-  const textboxRef = refByRoleName(snapshot, 'textbox', /XXXXX|secret|key|restore/i);
-  const restoreAccountRef = refByRoleName(snapshot, 'button', /Restore Account/i);
-  if (!textboxRef || !restoreAccountRef) {
-    throw new Error('Could not find dev-key restore controls in the UI');
-  }
-  if (!ctx.devKey) {
-    throw new Error('No dev restore key configured; pass --dev-key or set HAPPIER_UI_PERF_DEV_KEY');
-  }
-  await browserJson(ctx.session, ['fill', textboxRef, ctx.devKey], { timeout: 30000 });
-  await browserJson(ctx.session, ['click', restoreAccountRef], { timeout: 30000 });
-  await waitMs(ctx.session, 5000);
+async function submitDevKeyRestore(ctx, authSurface) {
+  if (authSurface.alreadyAuthenticated) return;
+  await browserJson(ctx.session, ['fill', authSurface.textboxRef, ctx.devKey], { timeout: 30000 });
+  await browserJson(ctx.session, ['click', authSurface.restoreAccountRef], { timeout: 30000 });
+  await waitForAuthenticatedRoot(ctx);
+}
+
+async function ensureAuthenticated(ctx, options = {}) {
+  const authSurface = await openAuthenticationSurface(ctx, options);
+  await submitDevKeyRestore(ctx, authSurface);
 }
 
 export function resolvePreparationOpenRootViewport({ prepare, scenarioViewport }) {
@@ -814,13 +1543,25 @@ async function openNewSession(ctx) {
 }
 
 async function openTargetSession(ctx, options = {}) {
+  const targetSessionUrl = buildTargetSessionUrl(ctx.url, ctx.targetSessionUrl);
+  if (targetSessionUrl) {
+    const currentUrl = await browserEval(ctx.session, 'globalThis.location?.href ?? ""', { timeout: 10000 }).catch(() => null);
+    if (shouldOpenTargetSessionUrl(currentUrl, targetSessionUrl)) {
+      await openUrl(ctx, targetSessionUrl, { timeout: 90000 });
+      await waitMs(ctx.session, 2500);
+    }
+    const urlResponse = await browserJson(ctx.session, ['get', 'url'], { timeout: 30000 });
+    if (isSessionViewUrl(urlResponse?.data?.url)) return;
+    throw new Error(`Target session URL did not open a session route; current URL: ${urlResponse?.data?.url ?? 'unknown'}`);
+  }
+
   await openRoot(ctx, options.rootViewport ?? 'desktop');
   if (ctx.targetSessionTitle) {
     try {
       await browserJson(ctx.session, ['find', 'text', ctx.targetSessionTitle, 'click'], { timeout: 20000 });
       await waitMs(ctx.session, 2500);
       const urlResponse = await browserJson(ctx.session, ['get', 'url'], { timeout: 30000 });
-      if (String(urlResponse?.data?.url ?? '').includes('/session/')) return;
+      if (isSessionViewUrl(urlResponse?.data?.url)) return;
     } catch {}
   }
   const clicked = await browserEval(ctx.session, `(() => {
@@ -838,7 +1579,7 @@ async function openTargetSession(ctx, options = {}) {
     return true;
   })()`);
   if (!clicked) throw new Error('Could not locate a session row to open');
-  await waitMs(ctx.session, 2500);
+  await waitForSessionNavigation(ctx, 30000);
 }
 
 async function fillFirstTextbox(ctx, text) {
@@ -922,7 +1663,7 @@ async function waitForSessionNavigation(ctx, timeoutMs = 30000) {
   while (Date.now() - startedAt <= timeoutMs) {
     const urlResponse = await browserJson(ctx.session, ['get', 'url'], { timeout: 30000 });
     lastUrl = urlResponse?.data?.url ?? null;
-    if (String(lastUrl ?? '').includes('/session/')) return lastUrl;
+    if (isSessionViewUrl(lastUrl)) return lastUrl;
     await waitMs(ctx.session, 1000);
   }
   throw new Error(`Stress session did not navigate to a session after launch; current URL: ${lastUrl ?? 'unknown'}`);
@@ -967,9 +1708,23 @@ async function clickTextIfPresent(ctx, text) {
   return false;
 }
 
+async function waitForTranscriptScrollerReady(ctx, scenario) {
+  if (!shouldWaitForTranscriptScrollerBeforeMeasurement(scenario)) return;
+  const deadlineMs = Date.now() + 30000;
+  let lastResult = null;
+  while (Date.now() < deadlineMs) {
+    lastResult = await browserEval(ctx.session, buildTranscriptScrollerReadyScript(), { timeout: 10000 }).catch((caught) => ({ error: caught?.message ?? String(caught) }));
+    if (lastResult?.ready === true) return;
+    await waitMs(ctx.session, 500);
+  }
+  throw new Error(`Transcript scroller was not ready before measurement: ${JSON.stringify(lastResult)}`);
+}
+
 async function prepareScenarioSurface(ctx, scenario) {
   const phases = resolveScenarioExecutionPhases(scenario.action);
   switch (phases.prepare) {
+    case 'none':
+      return phases;
     case 'root':
       await openRoot(ctx);
       return phases;
@@ -992,6 +1747,26 @@ async function prepareScenarioSurface(ctx, scenario) {
   }
 }
 
+async function runColdAuthHydrationScenario(ctx, scenario) {
+  await openUrl(ctx, ctx.url, { timeout: 90000 });
+  await browserEval(ctx.session, buildClearBrowserStorageScript(), { timeout: 60000 });
+  await writeTelemetryTuningOverride(ctx, { flushIntervalMs: 120000 });
+  await browserJson(ctx.session, ['reload'], { timeout: 90000 });
+  const authSurface = await openAuthenticationSurface(ctx, { open: false });
+  if (authSurface.alreadyAuthenticated) {
+    throw new Error('Cold auth scenario expected cleared browser storage to reach the restore screen');
+  }
+  await browserEval(ctx.session, buildInstallProbeScript(), { timeout: 30000 });
+  await browserEval(ctx.session, 'window.__HAPPIER_SYNC_PERFORMANCE__?.reset?.(); true;', { timeout: 30000 });
+  await submitDevKeyRestore(ctx, authSurface);
+  await waitMs(ctx.session, scenario.durationMs);
+}
+
+function isTranscriptScrollKickoffTarget(started) {
+  const targetTestId = String(started?.targetTestId ?? '');
+  return targetTestId === 'transcript-chat-list' || targetTestId.startsWith('transcript-chat-list');
+}
+
 function isSessionListScrollKickoffTarget(started) {
   const targetTestId = String(started?.targetTestId ?? '');
   return targetTestId === 'session-list' || targetTestId === 'sessions-list-keyboard-zone';
@@ -1000,6 +1775,11 @@ function isSessionListScrollKickoffTarget(started) {
 export function validateScrollKickoffResult(scenario, started) {
   if (started?.started !== true) {
     throw new Error(`Could not start scroll measurement: ${started?.reason ?? 'unknown'}`);
+  }
+  if (scenario?.action === 'sessionViewTranscriptScroll' && !isTranscriptScrollKickoffTarget(started)) {
+    throw new Error(
+      `Transcript scroll measurement did not target the transcript scroller (targetTestId=${String(started?.targetTestId ?? 'unknown')}, scrollHeight=${Number(started?.scrollHeight ?? 0)}, clientHeight=${Number(started?.clientHeight ?? 0)})`,
+    );
   }
   if (scenario?.action === 'sessionListScroll' && !isSessionListScrollKickoffTarget(started)) {
     throw new Error(
@@ -1033,6 +1813,9 @@ async function runMeasuredScenarioAction(ctx, scenario, phases) {
       await typeIntoFocusedTextbox(ctx, 'Please write a concise markdown performance smoke test with a list, a table, and a code fence.');
       await waitMs(ctx.session, Math.max(1000, scenario.durationMs - 2000));
       return;
+    case 'coldAuthHydration':
+      await runColdAuthHydrationScenario(ctx, scenario);
+      return;
     case 'tabs':
       for (const label of ['Files', 'Git', 'Agents', 'Runs', 'Details', 'Transcript']) {
         await clickTextIfPresent(ctx, label);
@@ -1046,29 +1829,45 @@ async function runMeasuredScenarioAction(ctx, scenario, phases) {
 }
 
 async function collectScenarioSnapshot(ctx) {
-  const raw = await browserEval(ctx.session, `window.${AUDIT_GLOBAL}?.snapshot?.() ?? null`, { timeout: 60000 });
-  if (!raw) throw new Error('Browser perf probe snapshot was not available');
-  return {
-    raw,
-    browserSummary: summarizeBrowserProbe(raw),
-    syncTopEvents: summarizeSyncTelemetry(raw.syncPerformance).slice(0, 80),
-  };
+  let probeError = 'Browser perf probe snapshot was not available';
+  try {
+    const raw = await browserEval(ctx.session, `window.${AUDIT_GLOBAL}?.snapshot?.() ?? null`, { timeout: 60000 });
+    if (raw) return buildScenarioSnapshotResult(raw);
+  } catch (caught) {
+    probeError = caught?.message ?? String(caught);
+  }
+
+  try {
+    const fallbackRaw = await browserEval(ctx.session, buildFallbackScenarioSnapshotScript(probeError), { timeout: 60000 });
+    if (fallbackRaw) return buildScenarioSnapshotResult(fallbackRaw);
+  } catch (caught) {
+    throw new Error(
+      `${probeError}; fallback telemetry snapshot failed: ${caught?.message ?? String(caught)}`,
+    );
+  }
+
+  throw new Error(probeError);
 }
 
 async function runScenario(ctx, scenario) {
   const safeId = scenario.id.replace(/[^a-z0-9_.-]+/gi, '_');
   const tracePath = join(ctx.outDir, `${safeId}.trace.json`);
   const profilePath = join(ctx.outDir, `${safeId}.cpuprofile`);
+  const v8ProfilePath = join(ctx.outDir, `${safeId}.v8.cpuprofile`);
   await browserJson(ctx.session, ['set', 'viewport', String(VIEWPORTS[scenario.viewport].width), String(VIEWPORTS[scenario.viewport].height)], { timeout: 30000 });
   const phases = await prepareScenarioSurface(ctx, scenario);
+  await waitForTranscriptScrollerReady(ctx, scenario);
+  if (ctx.skipTelemetryReload) await configureLiveTelemetry(ctx);
   await browserEval(ctx.session, buildInstallProbeScript(), { timeout: 30000 });
   await browserEval(ctx.session, 'window.__HAPPIER_SYNC_PERFORMANCE__?.reset?.(); true;', { timeout: 30000 });
 
   const shouldTrace = scenario.trace && !ctx.skipTrace;
+  const shouldV8Profile = scenario.profiler && !ctx.skipProfiler && ctx.v8Profile === true;
   // agent-browser exposes trace and CPU profiler through the same active capture slot.
-  // Prefer trace for UI/GPU work because it includes renderer/compositor/Viz threads; run
-  // the same plan with --skip-trace when an isolated .cpuprofile is needed.
-  const shouldProfile = scenario.profiler && !ctx.skipProfiler && !shouldTrace;
+  // Prefer trace for UI/GPU work because it includes renderer/compositor/Viz threads. Use
+  // --v8-profile when valid V8 CPU self-time is needed; agent-browser's profiler output can
+  // be a Chrome trace despite the .cpuprofile suffix.
+  const shouldProfile = scenario.profiler && !ctx.skipProfiler && !shouldTrace && !shouldV8Profile;
   await stopActiveBrowserCaptures(ctx, `${safeId}-preflight`);
   if (shouldTrace) await startBrowserCapture(ctx, 'trace');
   if (shouldProfile) await startBrowserCapture(ctx, 'profiler');
@@ -1076,12 +1875,23 @@ async function runScenario(ctx, scenario) {
 
   const startedAt = new Date().toISOString();
   let error = null;
+  let v8Capture = null;
+  if (shouldV8Profile) {
+    try {
+      v8Capture = await startV8CpuProfile(ctx, v8ProfilePath);
+    } catch (caught) {
+      error = caught?.message ?? String(caught);
+    }
+  }
   try {
     await runMeasuredScenarioAction(ctx, scenario, phases);
   } catch (caught) {
-    error = caught?.message ?? String(caught);
+    error = error ?? caught?.message ?? String(caught);
   }
 
+  if (v8Capture) {
+    try { await v8Capture.stop(); } catch (caught) { error = error ?? caught?.message ?? String(caught); }
+  }
   if (shouldProfile) {
     try { await execAgentBrowser(ctx.session, ['profiler', 'stop', profilePath], { parseJson: false, timeout: 60000 }); } catch (caught) { error = error ?? caught?.message ?? String(caught); }
   }
@@ -1091,7 +1901,7 @@ async function runScenario(ctx, scenario) {
 
   const snapshot = await collectScenarioSnapshot(ctx).catch((caught) => ({ error: caught?.message ?? String(caught) }));
   const traceSummary = shouldTrace && existsSync(tracePath)
-    ? summarizeChromeTrace(JSON.parse(await readFile(tracePath, 'utf8')))
+    ? await summarizeChromeTraceFile(tracePath)
     : null;
   const result = {
     scenario,
@@ -1101,6 +1911,7 @@ async function runScenario(ctx, scenario) {
     artifacts: {
       trace: shouldTrace ? tracePath : null,
       profile: shouldProfile ? profilePath : null,
+      v8Profile: shouldV8Profile ? v8ProfilePath : null,
     },
     ...snapshot,
     traceSummary,
@@ -1119,12 +1930,13 @@ function buildRunSummary(results) {
       topSyncEvents: result.syncTopEvents?.slice(0, 15) ?? [],
       traceThreadGroups: result.traceSummary?.threadGroups ?? null,
       traceTopEvents: result.traceSummary?.topEvents?.slice(0, 15) ?? [],
+      v8Profile: result.artifacts?.v8Profile ?? null,
     })),
   };
 }
 
 async function main(argv) {
-  const args = parseArgs(argv);
+  const args = parsePerfAuditArgs(argv);
   if (args.help) {
     process.stdout.write(usage());
     return;
@@ -1145,6 +1957,8 @@ async function main(argv) {
     return;
   }
 
+  validatePerfAuditRuntimeArgs(args, plan);
+
   const ctx = {
     ...args,
     outDir,
@@ -1153,8 +1967,15 @@ async function main(argv) {
   const stressSessions = [];
   const results = [];
   try {
-    if (!args.skipAuth) await ensureAuthenticated(ctx);
-    await configureTelemetryAndReload(ctx);
+    const needsStandardSetup = plan.scenarios.some((scenario) => scenario.requiresColdAuth !== true);
+    if (needsStandardSetup) {
+      if (!args.skipAuth) await ensureAuthenticated(ctx);
+      if (args.skipTelemetryReload) {
+        await configureLiveTelemetry(ctx);
+      } else {
+        await configureTelemetryAndReload(ctx);
+      }
+    }
     if (args.stressSessionCount > 0) {
       stressSessions.push(...await createStressSessions(ctx, args.stressSessionCount));
       await writeJson(join(outDir, 'stress-sessions.json'), stressSessions);
@@ -1186,6 +2007,15 @@ async function main(argv) {
     stressSessions,
     ...buildRunSummary(results),
   };
+  const measurement = createRuntimeLimitMeasurementCaptureFromEnv({
+    env: process.env,
+    runnerId: 'agent-browser-ui-perf',
+    scenarioId: args.plan,
+  });
+  if (measurement) {
+    recordAgentBrowserPerfMeasurements(measurement.capture, results);
+    await measurement.capture.writeArtifact({ artifactDir: measurement.artifactDir });
+  }
   await writeJson(join(outDir, 'summary.json'), summary);
   process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
 }

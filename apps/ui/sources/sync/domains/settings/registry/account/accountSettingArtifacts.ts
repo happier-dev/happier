@@ -14,6 +14,7 @@ import { ACCOUNT_MCP_SETTING_DEFINITIONS } from './accountMcpSettingDefinitions'
 import { ACCOUNT_PET_SETTING_DEFINITIONS } from './accountPetSettingDefinitions';
 import { ACCOUNT_PERMISSION_SETTING_DEFINITIONS } from './accountPermissionSettingDefinitions';
 import { ACCOUNT_PROFILES_SETTING_DEFINITIONS } from './accountProfilesSettingDefinitions';
+import { ACCOUNT_PROVIDER_SETTING_DEFINITIONS } from './accountProviderSettingDefinitions';
 import { ACCOUNT_PROMPT_LIBRARY_SETTING_DEFINITIONS } from './accountPromptLibrarySettingDefinitions';
 import { ACCOUNT_REMOTE_HOSTS_SETTING_DEFINITIONS } from './accountRemoteHostsSettingDefinitions';
 import { ACCOUNT_RUNTIME_SETTING_DEFINITIONS } from './accountRuntimeSettingDefinitions';
@@ -39,6 +40,7 @@ export const ACCOUNT_SETTING_DEFINITIONS = defineSettingDefinitions({
     ...ACCOUNT_PET_SETTING_DEFINITIONS,
     ...ACCOUNT_PERMISSION_SETTING_DEFINITIONS,
     ...ACCOUNT_PROFILES_SETTING_DEFINITIONS,
+    ...ACCOUNT_PROVIDER_SETTING_DEFINITIONS,
     ...ACCOUNT_PROMPT_LIBRARY_SETTING_DEFINITIONS,
     ...ACCOUNT_REMOTE_HOSTS_SETTING_DEFINITIONS,
     ...ACCOUNT_RUNTIME_SETTING_DEFINITIONS,

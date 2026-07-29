@@ -12,7 +12,6 @@ export type SessionOpenLatchPhase =
     | 'disarmed';
 
 export type SessionOpenInitialFillStatus = 'idle' | 'in_progress' | 'done';
-export type SessionOpenInitialBottomPositionOwner = 'app' | 'renderer';
 
 export type SessionOpenDisarmReason =
     | 'disposed'
@@ -47,18 +46,6 @@ export type SessionOpenLatchEffect =
         type: 'release-native-first-paint-placeholder';
     }>
     | Readonly<{
-        reason: 'initial-open';
-        type: 'request-initial-pin';
-    }>
-    | Readonly<{
-        deadlineMs: number;
-        type: 'begin-web-bottom-entry';
-    }>
-    | Readonly<{
-        deadlineAtMs: number;
-        type: 'schedule-web-initial-pin-retry';
-    }>
-    | Readonly<{
         type: 'request-initial-fill';
     }>
     | Readonly<{
@@ -72,27 +59,29 @@ export type SessionOpenLatchDecision = Readonly<{
 
 export type SessionOpenLatchArmInput = Readonly<{
     entryKind: SessionOpenEntryKind;
-    initialBottomPositionOwner?: SessionOpenInitialBottomPositionOwner;
-    isNativeFlashListBottomMaintenanceEnabled: boolean;
     nativeFirstPaintFallbackDelayMs: number;
     nowMs: number;
     platform: SessionOpenPlatform;
     sessionId: string;
     shouldFollowBottom: boolean;
-    webInitialPinRetryDelaysMs: readonly number[];
-    webInitialPinStabilizeMs: number;
+    /**
+     * Hard bound on the whole web open phase: past `nowMs + delay`, the phase
+     * completes ('done') regardless of fill settlement, ending open-lifecycle
+     * authority. A starved settlement (aborted, failed, or hung fill
+     * executor) must not leave the open phase live forever. Ignored on native
+     * (paint deadline owns that path).
+     */
+    webOpenPhaseDeadlineDelayMs: number;
 }>;
 
 export type SessionOpenHostFacts = Readonly<{
     contentHeight: number;
-    hasEntrySliceWindow: boolean;
     isLoaded: boolean;
     isScrollable: boolean;
     itemCount: number;
     layoutHeight: number;
     nowMs: number;
     sessionId: string;
-    userWantsPinned: boolean;
 }>;
 
 export type SessionOpenNativeFirstPaintFallbackInput = Readonly<{
@@ -116,7 +105,6 @@ export type SessionOpenNativeFirstPaintPlaceholderInput = Readonly<{
     nativeViewportPaintObserved: boolean;
     pinThresholdPx: number;
     sessionId: string;
-    usesNativeFlashListBottomMaintenance: boolean;
 }>;
 
 export type SessionOpenInitialFillSettledInput = Readonly<{

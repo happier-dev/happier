@@ -11,7 +11,7 @@ const initialStorageState = getStorage().getState();
 const externalSessionRuntimeState = {
     externalSessionLink: null as null | {
         v: 1;
-        providerId: string;
+        agentId: string;
         machineId: string;
         remoteSessionId: string;
         source: 'provider';
@@ -64,7 +64,7 @@ describe('useSessionSubagents', () => {
     it('downgrades execution-run send and stop capabilities for linked direct sessions that are not locally controlled', async () => {
         externalSessionRuntimeState.externalSessionLink = {
             v: 1,
-            providerId: 'claude',
+            agentId: 'claude',
             machineId: 'machine-1',
             remoteSessionId: 'remote-session-1',
             source: 'provider',
@@ -146,7 +146,7 @@ describe('useSessionSubagents', () => {
         const providedRuntime = {
             externalSessionLink: {
                 v: 1,
-                providerId: 'claude',
+                agentId: 'claude',
                 machineId: 'machine-1',
                 remoteSessionId: 'remote-session-1',
                 source: 'provider',

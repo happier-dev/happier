@@ -1,13 +1,26 @@
 import { describe, expect, it } from 'vitest';
 
 import { en } from './translations/en';
-import { hasTranslation, t, tLoose } from './i18n';
+import { hasTranslation, t, tLoose, type TranslationKey } from './i18n';
+
+const declaredPluginTranslationKey: TranslationKey = 'plugins.inspector.title';
+const declaredAgentConnectedServiceKey: TranslationKey = 'agentInput.connectedServiceLabel.gemini';
+// @ts-expect-error Plugin-local keys remain closed to manifest-declared generated translations.
+const undeclaredPluginTranslationKey: TranslationKey = 'plugins.fixture.undeclared';
+void undeclaredPluginTranslationKey;
 
 describe('text/i18n', () => {
     it('translates the default language and nested function entries', () => {
         expect(t('tabs.inbox')).toBe(en.tabs.inbox);
         expect(t('promptLibrary.profileStacksSubtitle', { count: 2 })).toBe(en.promptLibrary.profileStacksSubtitle({ count: 2 }));
         expect(tLoose('tabs.inbox')).toBe(en.tabs.inbox);
+    });
+
+    it('resolves manifest-declared bundled plugin translations', () => {
+        expect(t(declaredPluginTranslationKey)).toBe('Plugin Inspector');
+        expect(hasTranslation(declaredPluginTranslationKey)).toBe(true);
+        expect(t(declaredAgentConnectedServiceKey)).toBe('Google Gemini');
+        expect(hasTranslation(declaredAgentConnectedServiceKey)).toBe(true);
     });
 
     it('reports missing keys without throwing', () => {

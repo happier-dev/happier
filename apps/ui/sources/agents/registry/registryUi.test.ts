@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_PROVIDER_IDS as SHARED_AGENT_PROVIDER_IDS } from '@happier-dev/agents';
+import { AGENT_IDS as SHARED_AGENT_IDS } from '@happier-dev/agents';
 import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 
 import { AGENTS_UI, CANONICAL_AGENTS_UI } from './registryUi';
@@ -12,7 +12,7 @@ function sortedKeys(value: Record<string, unknown>): string[] {
 
 describe('agents/registryUi', () => {
     it('covers the full canonical provider universe (no UI-only drift)', () => {
-        expect(sortedKeys(CANONICAL_AGENTS_UI)).toEqual([...SHARED_AGENT_PROVIDER_IDS].sort());
+        expect(sortedKeys(CANONICAL_AGENTS_UI)).toEqual([...SHARED_AGENT_IDS].sort());
         expect(CANONICAL_AGENTS_UI).not.toHaveProperty('customAcp');
         expect(AGENTS_UI).not.toHaveProperty('customAcp');
     });
@@ -52,10 +52,18 @@ describe('agents/registryUi', () => {
         expect(getAgentPickerIconScale('acme.review.backend')).toBe(1);
     });
 
+    it('keeps the Pi picker icon optically scaled for compact picker surfaces', () => {
+        expect(getAgentPickerIconScale('pi')).toBe(0.9);
+    });
+
+    it('slightly enlarges the Claude picker icon to compensate for the logo silhouette', () => {
+        expect(getAgentPickerIconScale('claude')).toBe(1.1);
+    });
+
     it('resolves icon metadata for every shared canonical agent id', () => {
         const theme = createThemeFixture() as Parameters<typeof getAgentIconSvgXml>[1];
 
-        for (const agentId of SHARED_AGENT_PROVIDER_IDS) {
+        for (const agentId of SHARED_AGENT_IDS) {
             expect(() => getAgentIconSvgXml(agentId, theme)).not.toThrow();
             expect(getAgentCliGlyph(agentId)).not.toBe('');
         }

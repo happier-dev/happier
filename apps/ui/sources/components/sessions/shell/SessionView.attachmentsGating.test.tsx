@@ -31,6 +31,7 @@ const executeSessionComposerResolutionMock = vi.hoisted(() => vi.fn());
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const resolveSessionComposerSendMock = vi.hoisted(() => vi.fn(() => ({ kind: 'noop' })));
 const supportsEditableSessionGoalsMock = vi.hoisted(() => vi.fn(() => false));
+const sessionAbortMock = vi.hoisted(() => vi.fn());
 
 installSessionShellCommonModuleMocks({
   reactNative: async () =>
@@ -154,7 +155,6 @@ installSessionShellCommonModuleMocks({
     }),
 });
 
-vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
   LinearGradient: 'LinearGradient',
 }));
@@ -234,11 +234,14 @@ vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => (
 vi.mock(
   '@/components/sessions/model/useSessionMachineReachability',
   async (importOriginal) => {
-    const { createSessionMachineReachabilityModuleMock } = await import('@/dev/testkit/mocks/sessionMachineReachability');
+    const {
+      createReachableSessionMachineReachability,
+      createSessionMachineReachabilityModuleMock,
+    } = await import('@/dev/testkit/mocks/sessionMachineReachability');
     return createSessionMachineReachabilityModuleMock({
       importOriginal,
       overrides: {
-        useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
+        useSessionMachineReachability: createReachableSessionMachineReachability,
         useSessionReachableMachineTarget: () => ({ machineId: 'm1', basePath: '/tmp' }),
       },
     });
@@ -279,7 +282,7 @@ vi.mock('@/sync/ops', async (importOriginal) => {
     importOriginal,
     overrides: {
       continueSessionWithReplay: vi.fn(),
-      sessionAbort: vi.fn(),
+      sessionAbort: (...args: unknown[]) => sessionAbortMock(...args),
       resumeSession: vi.fn(),
       sessionAttachmentsUploadFile: vi.fn(),
     },
@@ -309,7 +312,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
   buildResumeSessionExtrasFromUiState: () => null,
   getAgentCore: () => ({
     cli: { detectKey: 'codex' },
-    uiConnectedService: { serviceId: null, label: 'Codex', connectRoute: null },
+    uiConnectedService: { serviceId: null, labelKey: 'agentInput.agent.codex', connectRoute: null },
     model: { defaultMode: 'default' },
     resume: { vendorResumeIdField: null },
     sessionModes: { kind: 'none' },
@@ -395,9 +398,39 @@ describe('SessionView attachments gating', () => {
     modalAlertSpy.mockReset();
     resolveSessionComposerSendMock.mockReset();
     resolveSessionComposerSendMock.mockImplementation(() => ({ kind: 'noop' }));
+    sessionAbortMock.mockReset();
     supportsEditableSessionGoalsMock.mockReset();
     supportsEditableSessionGoalsMock.mockReturnValue(false);
-    featureEnabledState['agent.goals'] = false;
+    featureEnabledState['agents.goals'] = false;
+  });
+
+  it('returns the session abort operation promise from the composer callback', async () => {
+    let resolveAbort!: () => void;
+    const abortPromise = new Promise<void>((resolve) => {
+      resolveAbort = resolve;
+    });
+    sessionAbortMock.mockReturnValueOnce(abortPromise);
+
+    const tree = (await renderScreen(<AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>)).tree;
+
+    const agentInput = tree.findByType('AgentInput' as any);
+    const returnedAbort = agentInput.props.onAbort();
+
+    expect(sessionAbortMock).toHaveBeenCalledWith('s1');
+    expect(returnedAbort).toBe(abortPromise);
+
+    let settled = false;
+    void returnedAbort.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    resolveAbort();
+    await expect(returnedAbort).resolves.toBeUndefined();
+    expect(settled).toBe(true);
   });
 
   it('does not wire drag/drop/paste attachments when attachments.uploads is disabled', async () => {
@@ -472,7 +505,7 @@ describe('SessionView attachments gating', () => {
   });
 
   it('passes native goal mutation callbacks to the command executor when editable goals are enabled', async () => {
-    featureEnabledState['agent.goals'] = true;
+    featureEnabledState['agents.goals'] = true;
     supportsEditableSessionGoalsMock.mockReturnValue(true);
     sessionState.session.metadata = { flavor: 'codex' };
     resolveSessionComposerSendMock.mockReturnValue({ kind: 'goal', command: 'set', objective: 'Ship goal UI' } as any);

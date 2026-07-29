@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { encodeAutomationTemplateCiphertextForAccount } from './encodeAutomationTemplateCiphertextForAccount';
 
 const serverFetchSpy = vi.fn(async (..._args: unknown[]) => ({
@@ -13,6 +14,11 @@ vi.mock('@/sync/http/client', () => ({
 }));
 
 describe('encodeAutomationTemplateCiphertextForAccount', () => {
+  beforeEach(() => {
+    invalidateAccountEncryptionModeCache();
+    serverFetchSpy.mockClear();
+  });
+
   it('returns plaintext envelope for plain accounts without calling encryptRaw', async () => {
     const encryptRaw = vi.fn(async () => 'ciphertext-base64');
     serverFetchSpy.mockResolvedValueOnce({

@@ -132,6 +132,7 @@ describe('SessionRightPanelGitCommitTab (stash summary)', () => {
         }
         const branchSummary = screen.findByType('SourceControlBranchSummary' as any);
         expect((branchSummary.props as any).branchTrigger).toBeTruthy();
+        expect((branchSummary.props as any).backendLabel).toBe('Git');
         const rowChildren = React.Children.toArray(row.props.children);
         const trailingSummary = rowChildren[1];
         if (!React.isValidElement<{ children?: React.ReactNode }>(trailingSummary)) {

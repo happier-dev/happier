@@ -40,7 +40,7 @@ const shared = vi.hoisted(() => ({
     params: {} as Record<string, string | undefined>,
     settingsState: {
         themePreference: 'light',
-        themeProfiles: { activeProfileId: null, profiles: [] },
+        themeProfiles: { activeProfileIds: { light: null, dark: null }, profiles: [] },
         uiFontScale: 1,
     } as Record<string, unknown>,
 }));
@@ -172,6 +172,7 @@ const setThemeProfiles = (state: ThemeProfilesLocalStateV1) => {
 };
 
 const getThemeProfiles = (): ThemeProfilesLocalStateV1 => shared.settingsState.themeProfiles as ThemeProfilesLocalStateV1;
+const emptyThemeProfiles = (): ThemeProfilesLocalStateV1 => ({ activeProfileIds: { light: null, dark: null }, profiles: [] });
 const maxProfiles = (): ThemeProfileV1[] => (
     Array.from({ length: THEME_PROFILE_MAX_PROFILES }, (_, index) => baseProfile(`theme_${index}`))
 );
@@ -246,14 +247,14 @@ afterEach(() => {
     }
     Object.assign(shared.settingsState, {
         themePreference: 'light',
-        themeProfiles: { activeProfileId: null, profiles: [] },
+        themeProfiles: emptyThemeProfiles(),
         uiFontScale: 1,
     });
 });
 
 describe('Theme profile settings screen', () => {
     it('renders built-in themes in a management dropdown and shows custom themes only when they exist', async () => {
-        setThemeProfiles({ activeProfileId: null, profiles: [baseProfile('theme_ocean')] });
+        setThemeProfiles({ activeProfileIds: { light: null, dark: null }, profiles: [baseProfile('theme_ocean')] });
         const screen = await renderProfilesScreen();
 
         expect(screen.findByTestId('settings-theme-profiles-screen')).not.toBeNull();
@@ -304,7 +305,8 @@ describe('Theme profile settings screen', () => {
         });
 
         expect(getThemeProfiles().profiles).toEqual([]);
-        expect(getThemeProfiles().activeProfileId).toBe('premiumDark');
+        expect(getThemeProfiles().activeProfileIds).toEqual({ light: null, dark: 'premiumDark' });
+        expect(shared.settingsState.themePreference).toBe('light');
         expect(shared.updateTheme).toHaveBeenCalled();
     });
 
@@ -329,7 +331,7 @@ describe('Theme profile settings screen', () => {
     });
 
     it('disables profile creation and duplicate actions after the profile limit is reached', async () => {
-        setThemeProfiles({ activeProfileId: null, profiles: maxProfiles() });
+        setThemeProfiles({ activeProfileIds: { light: null, dark: null }, profiles: maxProfiles() });
         const screen = await renderProfilesScreen();
         const builtInDropdown = await findBuiltInThemesDropdown(screen);
         const premiumDarkItem = builtInDropdown!.props.items.find((item: { id: string }) => item.id === 'premiumDark');
@@ -352,7 +354,7 @@ describe('Theme profile settings screen', () => {
     });
 
     it('keeps custom theme management controls in row actions', async () => {
-        setThemeProfiles({ activeProfileId: null, profiles: [baseProfile('ocean')] });
+        setThemeProfiles({ activeProfileIds: { light: null, dark: null }, profiles: [baseProfile('ocean')] });
         const screen = await renderProfilesScreen();
         await screen.pressByTestIdAsync('settings-theme-edit-ocean');
 
@@ -363,19 +365,19 @@ describe('Theme profile settings screen', () => {
     });
 
     it('deletes a custom theme from row actions after confirmation', async () => {
-        setThemeProfiles({ activeProfileId: 'ocean', profiles: [baseProfile('ocean')] });
+        setThemeProfiles({ activeProfileIds: { light: 'ocean', dark: 'ocean' }, profiles: [baseProfile('ocean')] });
         const screen = await renderProfilesScreen();
         await screen.pressByTestIdAsync('settings-theme-delete-ocean');
 
         expect(shared.modalConfirm).toHaveBeenCalled();
-        expect(getThemeProfiles()).toEqual({ activeProfileId: null, profiles: [] });
+        expect(getThemeProfiles()).toEqual({ activeProfileIds: { light: null, dark: null }, profiles: [] });
     });
 });
 
 describe('Theme profile editor', () => {
     it('renders token groups and defaults the editing variant to the active app mode', async () => {
         shared.settingsState.themePreference = 'dark';
-        setThemeProfiles({ activeProfileId: 'ocean', profiles: [baseProfile('ocean')] });
+        setThemeProfiles({ activeProfileIds: { light: null, dark: 'ocean' }, profiles: [baseProfile('ocean')] });
 
         const screen = await renderEditorScreen('ocean');
 
@@ -397,7 +399,7 @@ describe('Theme profile editor', () => {
     });
 
     it('applies draft colors to the live interface preview before save', async () => {
-        setThemeProfiles({ activeProfileId: 'ocean', profiles: [baseProfile('ocean')] });
+        setThemeProfiles({ activeProfileIds: { light: 'ocean', dark: null }, profiles: [baseProfile('ocean')] });
         const screen = await renderEditorScreen('ocean');
         shared.updateTheme.mockClear();
 
@@ -422,11 +424,11 @@ describe('Theme profile editor', () => {
 
         const saved = getThemeProfiles();
         expect(saved.profiles).toHaveLength(1);
-        expect(saved.activeProfileId).toBe(saved.profiles[0]?.id);
+        expect(saved.activeProfileIds).toEqual({ light: saved.profiles[0]?.id, dark: null });
         expect(saved.profiles[0]?.id).toMatch(/^theme_/);
     });
 
-    it('saves the selected asset appearance and uses it as the activation mode', async () => {
+    it('saves the selected asset appearance and assigns that theme slot without changing appearance mode', async () => {
         const screen = await renderEditorScreen('new');
         const assetAppearanceDropdown = await findAssetAppearanceDropdown(screen);
 
@@ -437,7 +439,8 @@ describe('Theme profile editor', () => {
 
         const saved = getThemeProfiles().profiles[0] as (ThemeProfileV1 & { assetAppearance?: string }) | undefined;
         expect(saved?.assetAppearance).toBe('dark');
-        expect(shared.settingsState.themePreference).toBe('dark');
+        expect(getThemeProfiles().activeProfileIds).toEqual({ light: null, dark: saved?.id });
+        expect(shared.settingsState.themePreference).toBe('light');
     });
 
     it('blocks saving when the profile name is invalid', async () => {
@@ -452,7 +455,7 @@ describe('Theme profile editor', () => {
     });
 
     it('blocks saving a new draft after the profile limit is reached', async () => {
-        setThemeProfiles({ activeProfileId: null, profiles: maxProfiles() });
+        setThemeProfiles({ activeProfileIds: { light: null, dark: null }, profiles: maxProfiles() });
         const screen = await renderEditorScreen('new');
 
         expect(screen.findByTestId('settings-theme-profile-limit-error')).not.toBeNull();
@@ -469,7 +472,7 @@ describe('Theme profile editor', () => {
 
     it('replaces a clean draft from a selected preset without confirmation', async () => {
         setThemeProfiles({
-            activeProfileId: null,
+            activeProfileIds: { light: null, dark: null },
             profiles: [baseProfile('ocean', { light: { 'background.canvas': '#ABCDEF' }, dark: {} })],
         });
         const screen = await renderEditorScreen('new');
@@ -486,7 +489,7 @@ describe('Theme profile editor', () => {
     it('confirms before replacing a dirty draft from another preset', async () => {
         shared.modalConfirm.mockResolvedValueOnce(false);
         setThemeProfiles({
-            activeProfileId: null,
+            activeProfileIds: { light: null, dark: null },
             profiles: [baseProfile('ocean', { light: { 'background.canvas': '#ABCDEF' }, dark: {} })],
         });
         const screen = await renderEditorScreen('new');
@@ -504,7 +507,7 @@ describe('Theme profile editor', () => {
     });
 
     it('rejects invalid colors and preserves the last valid preview value', async () => {
-        setThemeProfiles({ activeProfileId: 'ocean', profiles: [baseProfile('ocean')] });
+        setThemeProfiles({ activeProfileIds: { light: 'ocean', dark: null }, profiles: [baseProfile('ocean')] });
         const screen = await renderEditorScreen('ocean');
 
         await act(async () => {
@@ -517,7 +520,7 @@ describe('Theme profile editor', () => {
     });
 
     it('resets a token override to its fallback value', async () => {
-        setThemeProfiles({ activeProfileId: 'ocean', profiles: [baseProfile('ocean', { light: { 'background.canvas': '#123456' }, dark: {} })] });
+        setThemeProfiles({ activeProfileIds: { light: 'ocean', dark: null }, profiles: [baseProfile('ocean', { light: { 'background.canvas': '#123456' }, dark: {} })] });
         const screen = await renderEditorScreen('ocean');
 
         expect(screen.findAllByTestId('settings-theme-color-reset-light-background.canvas').some((node) => node.props.subtitle || node.props.title)).toBe(false);
@@ -530,7 +533,7 @@ describe('Theme profile editor', () => {
 
     it('shows low contrast warnings without blocking save controls', async () => {
         setThemeProfiles({
-            activeProfileId: 'ocean',
+            activeProfileIds: { light: 'ocean', dark: null },
             profiles: [baseProfile('ocean', { light: { 'background.canvas': '#000000', 'text.primary': '#000000' }, dark: {} })],
         });
 
@@ -542,24 +545,24 @@ describe('Theme profile editor', () => {
     });
 
     it('only shows deactivate for the profile that is currently active', async () => {
-        setThemeProfiles({ activeProfileId: 'other', profiles: [baseProfile('ocean'), baseProfile('other')] });
+        setThemeProfiles({ activeProfileIds: { light: 'other', dark: null }, profiles: [baseProfile('ocean'), baseProfile('other')] });
         const screen = await renderEditorScreen('ocean');
 
         expect(screen.findByTestId('settings-theme-profile-deactivate')).toBeNull();
     });
 
     it('deactivates the current profile and leaves the editor to avoid reapplying live preview', async () => {
-        setThemeProfiles({ activeProfileId: 'ocean', profiles: [baseProfile('ocean')] });
+        setThemeProfiles({ activeProfileIds: { light: 'ocean', dark: null }, profiles: [baseProfile('ocean')] });
         const screen = await renderEditorScreen('ocean');
 
         await screen.pressByTestIdAsync('settings-theme-profile-deactivate');
 
-        expect(getThemeProfiles().activeProfileId).toBeNull();
+        expect(getThemeProfiles().activeProfileIds).toEqual({ light: null, dark: null });
         expect(shared.routerBack).toHaveBeenCalled();
     });
 
     it('saves and activates through the runtime profile activation path', async () => {
-        setThemeProfiles({ activeProfileId: null, profiles: [baseProfile('ocean')] });
+        setThemeProfiles({ activeProfileIds: { light: null, dark: null }, profiles: [baseProfile('ocean')] });
         const screen = await renderEditorScreen('ocean');
 
         await act(async () => {
@@ -568,7 +571,7 @@ describe('Theme profile editor', () => {
         await screen.pressByTestIdAsync('settings-theme-profile-save');
 
         const saved = getThemeProfiles();
-        expect(saved.activeProfileId).toBe('ocean');
+        expect(saved.activeProfileIds).toEqual({ light: 'ocean', dark: null });
         expect(saved.profiles[0]?.overrides.light['background.canvas']).toBe('#123456');
         expect(shared.updateTheme).toHaveBeenCalled();
     });
@@ -576,7 +579,7 @@ describe('Theme profile editor', () => {
     it('previews and activates a dark custom theme in its inferred mode even when the app is currently light', async () => {
         shared.settingsState.themePreference = 'light';
         setThemeProfiles({
-            activeProfileId: null,
+            activeProfileIds: { light: null, dark: null },
             profiles: [baseProfile('noir', { light: {}, dark: { 'background.canvas': '#0B0B0D' } })],
         });
         const screen = await renderEditorScreen('noir');
@@ -590,8 +593,8 @@ describe('Theme profile editor', () => {
 
         await screen.pressByTestIdAsync('settings-theme-profile-save');
 
-        expect(shared.settingsState.themePreference).toBe('dark');
-        expect(getThemeProfiles().activeProfileId).toBe('noir');
+        expect(shared.settingsState.themePreference).toBe('light');
+        expect(getThemeProfiles().activeProfileIds).toEqual({ light: null, dark: 'noir' });
     });
 
     it('treats built-in presets as read-only and cloneable', async () => {
@@ -712,7 +715,7 @@ describe('Theme profile import and export screens', () => {
     });
 
     it('exports the selected profile full resolved theme JSON and copies it to the clipboard', async () => {
-        setThemeProfiles({ activeProfileId: 'ocean', profiles: [baseProfile('ocean', { light: { 'background.canvas': '#123456' }, dark: {} })] });
+        setThemeProfiles({ activeProfileIds: { light: 'ocean', dark: null }, profiles: [baseProfile('ocean', { light: { 'background.canvas': '#123456' }, dark: {} })] });
         shared.params = { profileId: 'ocean' };
         const screen = await renderExportScreen();
 
@@ -726,7 +729,7 @@ describe('Theme profile import and export screens', () => {
     });
 
     it('downloads the selected profile JSON through the platform file handoff', async () => {
-        setThemeProfiles({ activeProfileId: 'ocean', profiles: [baseProfile('ocean', { light: { 'background.canvas': '#123456' }, dark: {} })] });
+        setThemeProfiles({ activeProfileIds: { light: 'ocean', dark: null }, profiles: [baseProfile('ocean', { light: { 'background.canvas': '#123456' }, dark: {} })] });
         shared.params = { profileId: 'ocean' };
         const screen = await renderExportScreen();
 
@@ -738,7 +741,7 @@ describe('Theme profile import and export screens', () => {
     });
 
     it('does not export an arbitrary custom profile when no profile is selected for export', async () => {
-        setThemeProfiles({ activeProfileId: 'premiumDark', profiles: [baseProfile('ocean', { light: { 'background.canvas': '#123456' }, dark: {} })] });
+        setThemeProfiles({ activeProfileIds: { light: null, dark: 'premiumDark' }, profiles: [baseProfile('ocean', { light: { 'background.canvas': '#123456' }, dark: {} })] });
         const screen = await renderExportScreen();
 
         expect(screen.findByTestId('settings-theme-profile-export-json')?.props.value).toBe('');

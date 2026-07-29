@@ -6,6 +6,7 @@ import {
 } from '@/dev/testkit';
 
 import { collectHostText, installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -21,7 +22,7 @@ installToolShellCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'toolViewDetailLevelDefault') return 'compact';
                     if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
                     if (key === 'toolViewDetailLevelByToolName') return {};
@@ -31,7 +32,7 @@ installToolShellCommonModuleMocks({
                     if (key === 'toolViewExpandedDetailLevelByToolName') return {};
                     if (key === 'permissionPromptSurface') return 'transcript';
                     return null;
-                },
+                } }),
             },
         });
     },

@@ -1,5 +1,6 @@
+import { readTurnChangeToolMetadataFromToolCall } from '@happier-dev/protocol';
+
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { readTurnChangeToolMetadataFromToolCall } from '@/sync/domains/session/changes/parsing/readTurnChangeToolMetadata';
 import { t } from '@/text';
 
 import { parseUnifiedDiffFilePaths } from './parseUnifiedDiffFilePaths';

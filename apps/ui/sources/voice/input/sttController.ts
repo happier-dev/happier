@@ -27,6 +27,8 @@ export type SttSink = Readonly<{
 }>;
 
 export type SttStartParams = Readonly<{
+    /** Active user-visible control session; privacy and diagnostics use this identity, never a routing session. */
+    sessionId?: string;
     /** The single, already-acquired capture stream owner for this turn. */
     micSession: MicSession;
     /** Streaming callbacks the controller emits into. */
@@ -35,15 +37,20 @@ export type SttStartParams = Readonly<{
     signal?: AbortSignal;
 }>;
 
-export type SttStopResult = Readonly<{
-    finalText: string;
-}>;
+export type SttStopResult =
+    | Readonly<{
+        finalText: string;
+    }>
+    | Readonly<{
+        error: VoiceMachineError;
+    }>;
 
 /**
  * Unified speech-to-text capture contract. Every STT path (device, sherpa,
  * HTTP one-shot, daemon) converges on this seam: it consumes the canonical
  * {@link MicSession}, streams results through an {@link SttSink}, honors an
- * abort `signal`, and returns the final transcript on `stop()`.
+ * abort `signal`, and returns either a truthfully finalized transcript or a
+ * typed terminal failure on `stop()`. Interim text is never a final result.
  *
  * Interface-only contract — concrete controllers are implemented in Lane 2.
  */

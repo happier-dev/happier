@@ -95,6 +95,50 @@ describe('workspaceFileTransfers', () => {
         expect(createBufferedTransferDestinationMock.mock.results[2]?.value.toBase64).not.toHaveBeenCalled();
     });
 
+    it('cleans up a timed-out relay attempt before reaching the retained machine-RPC fallback', async () => {
+        relayDownloadMock.mockResolvedValue({
+            ok: false,
+            error: 'Server relay transfer timed out',
+        });
+        bulkDownloadMock.mockResolvedValue({
+            ok: true,
+            name: 'a.txt',
+            sizeBytes: 3,
+        });
+        const cleanup = vi.fn(async () => {});
+
+        const { downloadDaemonWorkspaceFileToDestination } = await import('./workspaceFileTransfers');
+        const result = await downloadDaemonWorkspaceFileToDestination({
+            machineId: 'machine-1',
+            rootPath: '/repo',
+            request: {
+                path: 'a.txt',
+                asZip: false,
+            },
+            destination: {
+                writeBytes: async () => {},
+                close: async () => {},
+                cleanup,
+            },
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            name: 'a.txt',
+            sizeBytes: 3,
+        });
+        expect(directExportDownloadMock).toHaveBeenCalledTimes(1);
+        expect(relayDownloadMock).toHaveBeenCalledTimes(1);
+        expect(bulkDownloadMock).toHaveBeenCalledTimes(1);
+        expect(cleanup).toHaveBeenCalledTimes(2);
+        expect(directExportDownloadMock.mock.invocationCallOrder[0]).toBeLessThan(
+            relayDownloadMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+        );
+        expect(relayDownloadMock.mock.invocationCallOrder[0]).toBeLessThan(
+            bulkDownloadMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+        );
+    });
+
     it('rejects file-download destinations that cannot be cleaned up between carrier retries', async () => {
         const { downloadDaemonWorkspaceFileToDestination } = await import('./workspaceFileTransfers');
         const result = await downloadDaemonWorkspaceFileToDestination({

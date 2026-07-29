@@ -11,6 +11,50 @@ import {
 } from './nativeCryptoWorker/types';
 
 describe('SessionEncryption.decryptMessages (cache behavior)', () => {
+  it('releases decrypted message entries for one session without clearing another session', () => {
+    const cache = new EncryptionCache();
+    const first = {
+      id: 'm_clear_1',
+      seq: 1,
+      localId: null,
+      createdAt: 1,
+      content: { role: 'user', content: { type: 'text', text: 'first' } },
+    } as any;
+    const second = {
+      id: 'm_clear_2',
+      seq: 1,
+      localId: null,
+      createdAt: 1,
+      content: { role: 'user', content: { type: 'text', text: 'second' } },
+    } as any;
+
+    cache.setCachedMessage('m_clear_1', first, 'plain:first', 's_clear_1');
+    cache.setCachedMessage('m_clear_2', second, 'plain:second', 's_clear_2');
+
+    cache.clearSessionCache('s_clear_1');
+
+    expect(cache.getCachedMessage('m_clear_1', 'plain:first')).toBeNull();
+    expect(cache.getCachedMessage('m_clear_2', 'plain:second')).toBe(second);
+  });
+
+  it('evicts decrypted messages by approximate byte budget instead of entry count only', () => {
+    const cache = new (EncryptionCache as any)({ maxMessageBytes: 180 });
+    const largeContent = (text: string) => ({
+      id: text,
+      seq: 1,
+      localId: null,
+      createdAt: 1,
+      content: { role: 'agent', content: { type: 'text', text: text.repeat(60) } },
+    });
+
+    cache.setCachedMessage('m_large_1', largeContent('a'), 'fp1', 's_large');
+    cache.setCachedMessage('m_large_2', largeContent('b'), 'fp2', 's_large');
+
+    expect(cache.getCachedMessage('m_large_1', 'fp1')).toBeNull();
+    expect(cache.getCachedMessage('m_large_2', 'fp2')).not.toBeNull();
+    expect(cache.getStats().messageBytes).toBeLessThanOrEqual(180);
+  });
+
   it('returns plaintext messages without decrypting and caches them', async () => {
     const cache = new EncryptionCache()
     const sessionId = 's_plain'

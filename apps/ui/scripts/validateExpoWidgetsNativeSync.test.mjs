@@ -120,6 +120,6 @@ test('apps/ui prebuild validates Expo widgets native sync before deleting genera
 
   assert.equal(
     pkg?.scripts?.prebuild,
-    'yarn -s validate:ios:widgets:native-sync && rm -rf android ios && cross-env EXPO_UNSTABLE_WEB_MODAL=1 expo prebuild && yarn -s validate:ios:widgets:generated-project',
+    'yarn -s validate:ios:widgets:native-sync && rm -rf android ios && cross-env EXPO_UNSTABLE_WEB_MODAL=1 expo prebuild && yarn -s validate:rn:repack:generated-project && yarn -s validate:ios:widgets:generated-project',
   );
 });

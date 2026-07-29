@@ -12,10 +12,13 @@ import { t } from '@/text';
 import { useProfile } from '@/sync/store/hooks';
 import { useSettingMutable, useSettings } from '@/sync/store/hooks';
 import { Modal } from '@/modal';
-import { CONNECTED_SERVICES_REGISTRY, getConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { getConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { AGENT_IDS, getAgentCore } from '@/agents/catalog/catalog';
 import {
+  ConnectedServiceIdSchema,
   ConnectedServicesProviderStateSharingSettingsV1Schema,
+  isConnectedServiceCredentialHealthStatusUsable,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -23,6 +26,8 @@ import { ConnectedServiceQuotaBadgesView } from '@/components/settings/connected
 import { useConnectedServiceQuotaBadges } from '@/hooks/server/connectedServices/useConnectedServiceQuotaBadges';
 import { useConnectedServiceQuotaSummaries } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
 import { connectedServiceProfileKey, resolveConnectedServiceDefaultProfileId } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
+import { resolveConnectedServiceCredentialHealthStatus } from '@/sync/domains/connectedServices/resolveConnectedServiceCredentialHealthStatus';
+import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
 import { resolveConnectedServiceDisplayName } from './model/resolveConnectedServiceDisplayName';
 import { buildConnectedServiceQuotaSummaryCards } from './buildConnectedServiceQuotaSummaryCards';
 import { ConnectedServiceQuotaSummaryCardSection } from './ConnectedServiceQuotaSummaryCardSection';
@@ -32,13 +37,22 @@ import { ConnectedServicesProviderStateSharingDefaultsGroup } from './ConnectedS
 export const ConnectedServicesSettingsView = React.memo(function ConnectedServicesSettingsView() {
   const { theme } = useUnistyles();
   const profile = useProfile();
+  const connectedServicesRegistrySnapshot = useProjectedConnectedServicesRegistry();
+  const connectedServicesRegistry = connectedServicesRegistrySnapshot.entries;
   const settings = useSettings();
   const [providerStateSharingSettings, setProviderStateSharingSettings] =
     useSettingMutable('connectedServicesProviderStateSharingSettingsV1');
   const [defaultAuthSettings, setDefaultAuthSettings] =
     useSettingMutable('connectedServicesDefaultAuthByAgentIdV1');
+  const [poolAdoptionDismissedByKey, setPoolAdoptionDismissedByKey] =
+    useSettingMutable('connectedServicesDefaultAuthPoolAdoptionDismissedByKey');
+  const dismissPoolAdoptionSuggestion = React.useCallback((key: string) => {
+    setPoolAdoptionDismissedByKey({
+      ...(poolAdoptionDismissedByKey ?? {}),
+      [key]: true,
+    });
+  }, [poolAdoptionDismissedByKey, setPoolAdoptionDismissedByKey]);
   const router = useRouter();
-  const connectedServicesEnabled = useFeatureEnabled('connectedServices');
   const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
   const normalizedProviderStateSharingSettings = React.useMemo(
     () => ConnectedServicesProviderStateSharingSettingsV1Schema.parse(providerStateSharingSettings),
@@ -47,18 +61,22 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
 
   const services = profile.connectedServicesV2;
   const serviceIdsFromProfile = services.map((svc) => svc.serviceId);
-  const allServiceIds = Array.from(new Set<ConnectedServiceId>([
-    ...CONNECTED_SERVICES_REGISTRY.map((entry) => entry.serviceId),
+  const allServiceIds = Array.from(new Set<string>([
+    ...connectedServicesRegistry.map((entry) => entry.serviceId),
     ...serviceIdsFromProfile,
   ]));
 
   const quotaRequestedProfiles = React.useMemo(() => {
-    if (!connectedServicesEnabled) return [];
     const next: Array<{ serviceId: ConnectedServiceId; profileId: string }> = [];
-    for (const serviceId of allServiceIds) {
+    for (const serviceIdRaw of allServiceIds) {
+      const parsedServiceId = ConnectedServiceIdSchema.safeParse(serviceIdRaw);
+      if (!parsedServiceId.success) continue;
+      const serviceId = parsedServiceId.data;
       const svc = services.find((s) => s.serviceId === serviceId) ?? null;
       const profiles = svc?.profiles ?? [];
-      const connectedIds = profiles.filter((p) => p.status === 'connected').map((p) => p.profileId);
+      const connectedIds = profiles
+        .filter((p) => isConnectedServiceCredentialHealthStatusUsable(resolveConnectedServiceCredentialHealthStatus(p.status)))
+        .map((p) => p.profileId);
       const effectiveProfileId = resolveConnectedServiceDefaultProfileId({
         serviceId,
         connectedProfileIds: connectedIds,
@@ -70,7 +88,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
     return next;
   }, [allServiceIds, services, settings.connectedServicesDefaultProfileByServiceId]);
 
-  const quotaBadgesByKey = useConnectedServiceQuotaBadges(connectedServicesEnabled ? quotaRequestedProfiles : []);
+  const quotaBadgesByKey = useConnectedServiceQuotaBadges(quotaRequestedProfiles);
   const {
     summaries: quotaSummaries,
     isRefreshing: quotaSummariesRefreshing,
@@ -80,20 +98,17 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
     () => buildConnectedServiceQuotaSummaryCards(quotaSummaries),
     [quotaSummaries],
   );
-
-  if (!connectedServicesEnabled) {
-    return (
-      <ItemList>
-        <ItemGroup title={t('connectedServices.title')}>
-          <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ color: theme.colors.text.secondary }}>
-              {t('settings.connectedAccountsDisabled')}
-            </Text>
-          </View>
-        </ItemGroup>
-      </ItemList>
-    );
-  }
+  const openProjectedConnectedServiceSettings = React.useCallback(async (serviceId: string) => {
+    const entry = connectedServicesRegistry.find((candidate) => candidate.serviceId === serviceId);
+    if (!entry?.service || entry.executable !== true) {
+      await Modal.alert(
+        t('errors.daemonUnavailableTitle'),
+        t('errors.daemonUnavailableBody'),
+      );
+      return;
+    }
+    router.push(buildConnectedAccountSettingsRoute(entry.service));
+  }, [connectedServicesRegistry, router]);
 
   return (
     <ItemList>
@@ -105,7 +120,22 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
         testID="connected-services-quota-summary-section"
       />
       <ItemGroup title={t('connectedServices.title')}>
-        {services.length === 0 ? (
+        {connectedServicesRegistrySnapshot.status === 'loading' ? (
+          <Item
+            testID="connected-services-projection-loading"
+            title={t('common.loading')}
+            mode="info"
+          />
+        ) : null}
+        {connectedServicesRegistrySnapshot.status === 'error' ? (
+          <Item
+            testID="connected-services-projection-error"
+            title={t('common.requestFailed')}
+            subtitle={connectedServicesRegistrySnapshot.errorReason ?? t('common.unavailable')}
+            mode="info"
+          />
+        ) : null}
+        {services.length === 0 && allServiceIds.length === 0 ? (
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
             <Text style={{ color: theme.colors.text.secondary }}>{t('connectedServices.list.empty')}</Text>
           </View>
@@ -117,7 +147,9 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
           const entry = getConnectedServiceRegistryEntry(serviceId);
           const label = resolveConnectedServiceDisplayName(serviceId, t);
           const profiles = svc?.profiles ?? [];
-          const connected = profiles.filter((p) => p.status === 'connected');
+          const connected = profiles.filter((p) =>
+            isConnectedServiceCredentialHealthStatusUsable(resolveConnectedServiceCredentialHealthStatus(p.status))
+          );
           const connectedIds = connected
             .map((p) => p.profileId);
           const effectiveProfileId = resolveConnectedServiceDefaultProfileId({
@@ -127,12 +159,24 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
           });
           const quotaKey = effectiveProfileId ? connectedServiceProfileKey({ serviceId, profileId: effectiveProfileId }) : '';
           const badges = quotaKey ? (quotaBadgesByKey[quotaKey] ?? []) : [];
-          const subtitle =
+          const projectedDiagnostic = entry.projectedDescriptor
+            ? [
+                entry.projectionStatus === 'conflict' ? t('common.blocked') : null,
+                entry.projectionStatus === 'stale' ? t('common.unavailable') : null,
+                entry.availability?.state === 'blocked' ? t('common.blocked') : null,
+                entry.availability?.state === 'disabled' ? t('common.disabled') : null,
+                ...(entry.diagnostics ?? []),
+                entry.projectionStatus === 'stale' ? connectedServicesRegistrySnapshot.errorReason : null,
+                entry.availability?.state !== 'available' ? entry.availability?.reason : null,
+              ].filter((value): value is string => typeof value === 'string' && value.length > 0).join(' · ')
+            : '';
+          const subtitle = projectedDiagnostic || (
             connected.length > 0
               ? t('connectedServices.list.connectedCount', { count: connected.length })
               : profiles.length > 0
                 ? t('connectedServices.list.needsReauth')
-                : t('connectedServices.list.notConnected');
+                : t('connectedServices.list.notConnected')
+          );
 
           return (
             <Item
@@ -141,9 +185,15 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
               subtitle={subtitle}
               icon={<Ionicons name="key-outline" size={22} color={theme.colors.accent.blue} />}
               rightElement={badges.length > 0 ? <ConnectedServiceQuotaBadgesView badges={badges} /> : undefined}
-              onPress={async () => {
+              disabled={entry.executable === false}
+              onPress={entry.executable === false ? undefined : async () => {
                 try {
-                  router.push({ pathname: '/(app)/settings/connected-services/[serviceId]', params: { serviceId } });
+                  router.push(entry.service
+                    ? buildConnectedAccountSettingsRoute(entry.service)
+                    : {
+                        pathname: '/(app)/settings/connected-services/[serviceId]',
+                        params: { serviceId },
+                      });
                 } catch {
                   // Fallback for environments without route support.
                   await Modal.alert(
@@ -170,7 +220,6 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
               agentId={agentId}
               agentTitle={t(agentCore.displayNameKey)}
               agentCore={agentCore}
-              connectedServicesEnabled={connectedServicesEnabled}
               accountGroupsEnabled={accountGroupsEnabled}
               accountProfileConnectedServicesV2={services}
               settings={{
@@ -179,10 +228,9 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
                 connectedServicesDefaultAuthByAgentIdV1: defaultAuthSettings,
               }}
               setDefaultAuthSettings={setDefaultAuthSettings}
-              onOpenConnectedServicesSettings={(serviceId) => router.push({
-                pathname: '/(app)/settings/connected-services/[serviceId]',
-                params: { serviceId },
-              } as any)}
+              onOpenConnectedServicesSettings={openProjectedConnectedServiceSettings}
+              dismissedPoolAdoptionSuggestionKeys={poolAdoptionDismissedByKey}
+              onDismissPoolAdoptionSuggestion={dismissPoolAdoptionSuggestion}
             />
           );
         })}

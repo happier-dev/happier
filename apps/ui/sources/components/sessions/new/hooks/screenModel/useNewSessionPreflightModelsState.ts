@@ -2,7 +2,7 @@ import * as React from 'react';
 import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
-import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import {
@@ -47,6 +47,7 @@ function createUnavailableModelProbeAttempt(retryDelayMs: number): DynamicModelP
 
 export function useNewSessionPreflightModelsState(params: Readonly<{
     backendTarget: BackendTargetRefV2 | null | undefined;
+    providerConnectionId?: string | null;
     runtimeCarrierAgentId?: AgentId | null;
     selectedMachineId: string | null;
     capabilityServerId: string;
@@ -100,7 +101,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         }
         // For built-in backends the backend id is already a canonical agent id.
         // For plugin-contributed backends the provider may still override it.
-        return resolveProviderAgentIdForBackendTarget(backendTarget) ?? backendTarget.backendId;
+        return resolveCatalogAgentIdForBackendTarget(backendTarget) ?? backendTarget.backendId;
     }, [backendTarget, params.runtimeCarrierAgentId]);
 
     const dynamicProbeEnabled = React.useMemo(() => {
@@ -130,20 +131,22 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             serverId,
             machineId,
             backendTargetKey,
+            params.providerConnectionId ?? null,
             ...extraKeySuffixParts,
         ]);
-    }, [agentType, backendTargetKey, params.capabilityServerId, params.selectedMachineId, probeContextKey, probeContextCacheKeySuffixParts]);
+    }, [agentType, backendTargetKey, params.capabilityServerId, params.providerConnectionId, params.selectedMachineId, probeContextKey, probeContextCacheKeySuffixParts]);
 
     const preflightModelsKey = React.useMemo(() => {
         if (!backendTargetKey || !agentType) return null;
         return buildDynamicModelProbeCacheKey({
             machineId: params.selectedMachineId,
             targetKey: backendTargetKey,
+            providerConnectionId: params.providerConnectionId ?? null,
             serverId: params.capabilityServerId,
             cwd: params.cwd ?? null,
             extraKeySuffixParts: probeContextCacheKeySuffixParts,
         });
-    }, [agentType, backendTargetKey, params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextCacheKeySuffixParts]);
+    }, [agentType, backendTargetKey, params.capabilityServerId, params.cwd, params.providerConnectionId, params.selectedMachineId, probeContextCacheKeySuffixParts]);
 
     React.useEffect(() => {
         preflightModelsRef.current = preflightModels;

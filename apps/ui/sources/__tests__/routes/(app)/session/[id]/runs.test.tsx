@@ -37,7 +37,8 @@ const useSessionExecutionRunLaunchabilitySpy = vi.fn<(sessionId: string, session
     executionRunsSupported: canLaunchExecutionRunsMock,
 }));
 
-type ExecutionRunListArgs = [string, Record<string, unknown>];
+type ExecutionRunListOptions = Readonly<{ serverId?: string | null }>;
+type ExecutionRunListArgs = [string, Record<string, unknown>, ExecutionRunListOptions?];
 type ExecutionRunSummary = Readonly<{
     runId: string;
     callId: string;
@@ -65,7 +66,7 @@ function createDeferredExecutionRunListResult(): {
 }
 
 const listRunsSpy = vi.fn<(...args: ExecutionRunListArgs) => Promise<ExecutionRunListResult>>(
-    async (_sessionId: string, _params: Record<string, unknown>) => ({
+    async (_sessionId: string, _params: Record<string, unknown>, _options?: ExecutionRunListOptions) => ({
         runs: [] as const,
     }),
 );
@@ -384,7 +385,7 @@ describe('Session Runs Screen', () => {
 
         const screen = await renderRunsScreen();
 
-        expect(listRunsSpy).toHaveBeenCalledWith('session-1', {});
+        expect(listRunsSpy).toHaveBeenCalledWith('session-1', {}, undefined);
         expect(screen.getTextContent()).toContain('run_1');
     });
 

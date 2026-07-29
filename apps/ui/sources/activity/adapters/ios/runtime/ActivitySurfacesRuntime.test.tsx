@@ -3,8 +3,29 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { buildLiveActivityRemoteUpdateCapabilityDiagnostics, PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
 
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionFixture as createBaseSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { renderScreen } from '@/dev/testkit';
+
+function createSessionFixture(
+    overrides: Parameters<typeof createBaseSessionFixture>[0] = {},
+): ReturnType<typeof createBaseSessionFixture> {
+    const observedAt = Date.now();
+    const hasPendingRequest = (overrides.pendingPermissionRequestCount ?? 0) > 0
+        || (overrides.pendingUserActionRequestCount ?? 0) > 0;
+
+    return createBaseSessionFixture({
+        ...(typeof overrides.seq === 'number' && overrides.latestReadyEventSeq === undefined
+            ? { latestReadyEventSeq: overrides.seq }
+            : {}),
+        ...(overrides.thinking === true && overrides.thinkingAt === undefined
+            ? { thinkingAt: observedAt }
+            : {}),
+        ...(hasPendingRequest && overrides.pendingRequestObservedAt === undefined
+            ? { pendingRequestObservedAt: observedAt }
+            : {}),
+        ...overrides,
+    });
+}
 
 const platformState = vi.hoisted(() => ({
     os: 'ios' as 'ios' | 'web' | 'android',
@@ -292,13 +313,10 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
     }),
 }));
 
-vi.mock('expo-modules-core', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('expo-modules-core')>();
-    return {
-        ...actual,
-        requireOptionalNativeModule: () => liveActivityAuthorizationState.module,
-    };
-});
+vi.mock('expo-modules-core', () => ({
+    requireNativeModule: () => ({}),
+    requireOptionalNativeModule: () => liveActivityAuthorizationState.module,
+}));
 
 vi.mock('@/sync/domains/features/featureDecisionRuntime', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/features/featureDecisionRuntime')>();
@@ -331,6 +349,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
         isDataReady: dataReadyState.value,
         sessions: Object.fromEntries(sessionsState.value.map((session) => [session.id, session])),
         sessionListRenderables: {},
+        sessionMessages: {},
         sessionListIndexByServerId: sessionsState.value.reduce<Record<string, Array<{
             type: 'session';
             sessionId: string;
@@ -1282,6 +1301,7 @@ describe('ActivitySurfacesRuntime', () => {
         vi.setSystemTime(new Date('2026-05-03T20:00:01.000Z'));
         sessionsState.value = [{
             ...session,
+            pendingRequestObservedAt: Date.now(),
             metadata: {
                 ...session.metadata,
                 path: session.metadata?.path ?? '',
@@ -1986,16 +2006,16 @@ describe('ActivitySurfacesRuntime', () => {
         });
 
         expect(actionExecutorExecute).toHaveBeenCalledWith(
-            'approval.request.decide',
+            'session.permission.respond',
             {
-                action: 'allow',
+                decision: 'allow',
                 sessionId: 'permission',
                 requestId: 'request-1',
-                serverId: 'server-a',
             },
             {
                 surface: 'ui',
                 defaultSessionId: 'permission',
+                serverId: 'server-a',
             },
         );
         expect(routerPush).not.toHaveBeenCalled();
@@ -2158,16 +2178,16 @@ describe('ActivitySurfacesRuntime', () => {
         });
 
         expect(actionExecutorExecute).toHaveBeenCalledWith(
-            'approval.request.decide',
+            'session.permission.respond',
             {
-                action: 'allow',
+                decision: 'allow',
                 sessionId: 'permission',
                 requestId: 'request-1',
-                serverId: 'server-a',
             },
             {
                 surface: 'ui',
                 defaultSessionId: 'permission',
+                serverId: 'server-a',
             },
         );
         expect(routerPush).not.toHaveBeenCalled();
@@ -2228,16 +2248,16 @@ describe('ActivitySurfacesRuntime', () => {
         });
 
         expect(actionExecutorExecute).toHaveBeenCalledWith(
-            'approval.request.decide',
+            'session.permission.respond',
             {
-                action: 'allow',
+                decision: 'allow',
                 sessionId: 'permission',
                 requestId: 'request-1',
-                serverId: 'server-a',
             },
             {
                 surface: 'ui',
                 defaultSessionId: 'permission',
+                serverId: 'server-a',
             },
         );
         expect(routerPush).not.toHaveBeenCalled();

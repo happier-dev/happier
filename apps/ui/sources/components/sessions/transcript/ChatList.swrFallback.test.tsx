@@ -7,6 +7,17 @@ import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockStat
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+// The Legend renderer (default transcript renderer) schedules landing verification through
+// requestAnimationFrame; this suite's bare environment does not provide one.
+if (typeof (globalThis as any).requestAnimationFrame !== 'function') {
+    (globalThis as any).requestAnimationFrame = (callback: (time: number) => void) => (
+        setTimeout(() => callback(Date.now()), 0) as unknown as number
+    );
+    (globalThis as any).cancelAnimationFrame = (handle: number) => {
+        clearTimeout(handle as unknown as ReturnType<typeof setTimeout>);
+    };
+}
+
 const buildChatListItemsCachedSpy = vi.hoisted(() => vi.fn((_args: unknown) => ({ cache: null, items: [] })));
 const preloadEnrichedMarkdownRuntimeSpy = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 
@@ -18,10 +29,7 @@ vi.mock('@/components/sessions/chatListItems', () => ({
 vi.mock('@/components/markdown/enriched/preloadEnrichedMarkdownRuntime', () => ({
     preloadEnrichedMarkdownRuntime: preloadEnrichedMarkdownRuntimeSpy,
     isEnrichedMarkdownRuntimePreloaded: () => true,
-}));
-
-vi.mock('@shopify/flash-list', () => ({
-    FlashList: () => null,
+    useEnrichedMarkdownRuntimeStatus: () => 'ready',
 }));
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -57,7 +65,6 @@ function installSwrFallbackMocks(params: { transcriptLoaded: boolean }) {
                 useSessionLatestThinkingMessageActivityAtMs: () => null,
                 useMessage: () => null,
                 useSetting: (key: string) => {
-                    if (key === 'transcriptListImplementation') return 'flatlist_legacy';
                     if (key === 'transcriptGroupingMode') return 'linear';
                     if (key === 'transcriptGroupToolCalls') return false;
                     if (key === 'transcriptTurnToolCallsGroupStrategy') return 'consecutive_tools';

@@ -9,7 +9,6 @@ import { createModelBackedSessionItemTestComponent } from './sessionItemRowViewM
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: (props: any) => React.createElement('Swipeable', props),
@@ -97,6 +96,7 @@ installSessionShellCommonModuleMocks({
                 linkedProviders: [],
                 connectedServices: [],
                 connectedServicesV2: [],
+                connectedServiceCredentialRevisionsV1: [],
             }),
             useSession: () => null,
             useSessionListRenderable: () => null,

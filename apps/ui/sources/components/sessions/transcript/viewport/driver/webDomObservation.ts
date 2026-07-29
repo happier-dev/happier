@@ -19,20 +19,32 @@ export type WebDomScrollObservationState = Readonly<{
 
 export type WebDomScrollObservation = Readonly<{
     getState(): WebDomScrollObservationState;
+    invalidateUserMovementAuthority(): void;
     observeGenuineScrollMovement(params: Readonly<{
         distanceFromBottom: number;
         fallbackObservedScrollTop: number | null;
         isTrusted: boolean;
         metrics: WebTranscriptScrollMetrics;
         pinThresholdPx: number;
+        semanticContext?: Readonly<{
+            atEndNonUserCause: 'layout' | 'command';
+            isUserInputActive: boolean;
+            nowMs: number;
+        }>;
         sustainFrames: number;
     }>): WebGenuineScrollMovementResult;
     recordProgrammaticScrollTopWrite(params: Readonly<{
         element: WebScrollTopWriteTarget;
         targetScrollTop: number;
     }>): WebScrollTopWriteResult;
+    recordUserScrollInput(params: Readonly<{
+        direction: -1 | 1 | null;
+        nowMs: number;
+    }>): void;
     reset(): void;
 }>;
+
+const USER_MOVEMENT_CONTINUATION_WINDOW_MS = 320;
 
 /**
  * C3b web DOM observation owner.
@@ -47,6 +59,14 @@ export function createWebDomScrollObservation(): WebDomScrollObservation {
     const observedScrollHeightRef = { current: null as number | null };
     const observedClientHeightRef = { current: null as number | null };
     let streak: WebScrollMovementStreak | null = null;
+    let pendingUserInput: Readonly<{ atMs: number; direction: -1 | 1 | null }> | null = null;
+    let lastUserMovement: Readonly<{ atMs: number; direction: -1 | 1 }> | null = null;
+
+    const invalidateUserMovementAuthority = (): void => {
+        pendingUserInput = null;
+        lastUserMovement = null;
+        streak = null;
+    };
 
     return {
         getState() {
@@ -57,6 +77,7 @@ export function createWebDomScrollObservation(): WebDomScrollObservation {
                 streak,
             };
         },
+        invalidateUserMovementAuthority,
         observeGenuineScrollMovement(params) {
             const observedScrollTop = observedScrollTopRef.current;
             const observedScrollHeight = observedScrollHeightRef.current;
@@ -91,7 +112,60 @@ export function createWebDomScrollObservation(): WebDomScrollObservation {
             observedScrollTopRef.current = params.metrics.scrollTop;
             observedScrollHeightRef.current = params.metrics.scrollHeight;
             observedClientHeightRef.current = params.metrics.clientHeight;
-            return movement;
+            const semanticContext = params.semanticContext;
+            if (!semanticContext) return movement;
+
+            const direction = movement.direction;
+            const moved = movement.movedSinceLastObservation && direction !== null;
+            const pendingInputIsCurrent =
+                pendingUserInput !== null
+                && semanticContext.nowMs - pendingUserInput.atMs <= USER_MOVEMENT_CONTINUATION_WINDOW_MS;
+            if (pendingUserInput !== null && !pendingInputIsCurrent) {
+                pendingUserInput = null;
+            }
+            const pendingInputMatchesDirection =
+                pendingInputIsCurrent
+                && (
+                    pendingUserInput?.direction === null
+                    || pendingUserInput?.direction === direction
+                );
+            const directUserMovement =
+                semanticContext.atEndNonUserCause !== 'command'
+                && moved
+                && (semanticContext.isUserInputActive || pendingInputMatchesDirection);
+            const inertiaContinuation =
+                semanticContext.atEndNonUserCause !== 'command'
+                && moved
+                && !directUserMovement
+                && lastUserMovement !== null
+                && lastUserMovement.direction === direction
+                && semanticContext.nowMs - lastUserMovement.atMs <= USER_MOVEMENT_CONTINUATION_WINDOW_MS;
+            const isGenuineUserMovement = directUserMovement || inertiaContinuation;
+
+            // A command echo cannot consume user input that arrived after the command write.
+            // The first later non-command physical movement consumes it, whether or not its
+            // direction agrees, so input evidence cannot leak to an unrelated adjustment.
+            if (moved && semanticContext.atEndNonUserCause !== 'command') {
+                pendingUserInput = null;
+            }
+            if (isGenuineUserMovement && direction !== null) {
+                lastUserMovement = { atMs: semanticContext.nowMs, direction };
+            } else if (moved) {
+                lastUserMovement = null;
+            }
+
+            return {
+                ...movement,
+                atEndPublicationCause:
+                    semanticContext.atEndNonUserCause === 'command'
+                        ? 'command'
+                        : isGenuineUserMovement ? 'user' : 'layout',
+                direction: moved ? direction : null,
+                downwardIntent: isGenuineUserMovement && direction === 1,
+                isGenuineUserMovement,
+                movedSinceLastObservation: moved,
+                upwardIntent: isGenuineUserMovement && direction === -1,
+            };
         },
         recordProgrammaticScrollTopWrite(params) {
             const write = writeWebScrollTopAndObserve({
@@ -101,15 +175,21 @@ export function createWebDomScrollObservation(): WebDomScrollObservation {
                 observedScrollTopRef,
             });
             if (write.ok) {
-                streak = null;
+                invalidateUserMovementAuthority();
             }
             return write;
+        },
+        recordUserScrollInput(params) {
+            pendingUserInput = {
+                atMs: params.nowMs,
+                direction: params.direction,
+            };
         },
         reset() {
             observedScrollTopRef.current = null;
             observedScrollHeightRef.current = null;
             observedClientHeightRef.current = null;
-            streak = null;
+            invalidateUserMovementAuthority();
         },
     };
 }

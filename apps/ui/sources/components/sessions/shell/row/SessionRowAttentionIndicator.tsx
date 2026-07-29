@@ -49,8 +49,6 @@ export const SessionRowAttentionIndicator = React.memo(function SessionRowAttent
                     return theme.colors.text.tertiary;
                 }
                 return theme.colors.state.info.foreground;
-            case 'background':
-                return theme.colors.state.info.foreground;
             case 'ready':
                 return theme.colors.state.success.foreground;
             case 'failed':

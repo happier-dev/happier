@@ -117,7 +117,7 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
             cwd: input.scope.rootPath,
             path: input.filePath,
             area: toScmDiffArea(input.diffMode),
-        });
+        }, { serverId: input.scope.serverId });
         diffContent = diffResponse.success ? (diffResponse.diff ?? '') : null;
         if (typeof diffContent === 'string' && diffContent.includes('diff --git ') && (diffContent.match(/^diff --git /gm) ?? []).length > 1) {
             diffContent = extractUnifiedDiffForSingleFile({ patch: diffContent, path: input.filePath });

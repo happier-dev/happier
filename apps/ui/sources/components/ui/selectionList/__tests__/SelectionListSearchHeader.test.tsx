@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -14,6 +15,7 @@ vi.mock('react-native-unistyles', async () => {
         theme: {
             colors: {
                 input: { placeholder: '#123456' },
+                border: { strong: '#654321' },
                 text: { secondary: '#ABCDEF' },
             },
         },
@@ -39,6 +41,39 @@ describe('SelectionListSearchHeader', () => {
         expect(input?.props.placeholderTextColor).toBe('#123456');
         screen.changeTextByTestId('hdr:input', 'foo');
         expect(onChangeText).toHaveBeenCalledWith('foo');
+    });
+
+    it('exposes an explicit accessible name and a visible web focus indicator', async () => {
+        const { SelectionListSearchHeader } = await import('../SelectionListSearchHeader');
+        const screen = await renderScreen(
+            <SelectionListSearchHeader
+                value=""
+                onChangeText={() => {}}
+                placeholder="Search external sessions"
+                canPop={false}
+                testID="hdr"
+            />,
+        );
+        const input = screen.findByTestId('hdr:input');
+        expect(input?.props.accessibilityLabel).toBe('Search external sessions');
+
+        const readWrapStyle = () => Object.assign(
+            {},
+            ...((Array.isArray(screen.findByTestId('hdr:input-wrap')?.props.style)
+                ? screen.findByTestId('hdr:input-wrap')!.props.style.flat(Infinity)
+                : [screen.findByTestId('hdr:input-wrap')?.props.style]).filter(Boolean)),
+        );
+        expect(readWrapStyle().boxShadow).toBeUndefined();
+
+        await act(async () => {
+            input?.props.onFocus?.({});
+        });
+        expect(readWrapStyle().boxShadow).toBe('0 0 0 2px #654321');
+
+        await act(async () => {
+            input?.props.onBlur?.({});
+        });
+        expect(readWrapStyle().boxShadow).toBeUndefined();
     });
 
     it('renders the search-icon leading slot when canPop is false', async () => {

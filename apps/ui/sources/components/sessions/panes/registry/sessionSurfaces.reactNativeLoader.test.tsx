@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui';
+import {
+    computePluginUiArtifactFileSetSha256DigestV1,
+    computePluginUiArtifactSha256DigestV1,
+} from '@happier-dev/protocol/plugins/ui';
 
 import { encodeBase64 } from '@/encryption/base64';
 import { renderScreen } from '@/dev/testkit';
@@ -11,6 +14,7 @@ import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection
 
 const reactNativeSurfaceProps: unknown[] = [];
 const fetchReactNativeInstalledArtifactBytesViaMachineRpcMock = vi.hoisted(() => vi.fn());
+const loadInstalledBundleMock = vi.hoisted(() => vi.fn(async () => () => null));
 const reportReactNativeCrashDisableViaMachineRpcMock = vi.hoisted(() => vi.fn(async () => ({
     ok: true,
     disabled: true,
@@ -39,6 +43,14 @@ vi.mock('@/components/plugins/reactNative/bundleCache', async (importOriginal) =
     };
 });
 
+vi.mock('@/components/plugins/reactNative/resolveDefaultReactNativeLoaderBackend', () => ({
+    resolveDefaultReactNativeLoaderBackend: () => ({
+        backendId: 'repackScriptManager',
+        available: true,
+        loadInstalledBundle: loadInstalledBundleMock,
+    }),
+}));
+
 vi.mock('@/sync/domains/plugins/ui/reactNativeCrashReports', () => ({
     reportReactNativeCrashDisableViaMachineRpc: reportReactNativeCrashDisableViaMachineRpcMock,
 }));
@@ -59,6 +71,7 @@ describe('plugin session surface React Native loader routing', () => {
     beforeEach(() => {
         reactNativeSurfaceProps.length = 0;
         fetchReactNativeInstalledArtifactBytesViaMachineRpcMock.mockReset();
+        loadInstalledBundleMock.mockClear();
         reportReactNativeCrashDisableViaMachineRpcMock.mockClear();
     });
 
@@ -126,8 +139,6 @@ describe('plugin session surface React Native loader routing', () => {
         expect(props.decision.diagnostics).not.toContain('react_native_loader_unavailable');
         expect(props.loadPolicy).toEqual({
             source: 'installedArtifact',
-            featureEnabled: true,
-            loaderBackendAvailable: true,
         });
         expect(props.cacheKey).toBe('cache_1');
         expect(props.cacheIdentity).toEqual({
@@ -145,12 +156,33 @@ describe('plugin session surface React Native loader routing', () => {
         });
         expect(props.onCrashDisable).toBeUndefined();
         expect(typeof props.load).toBe('function');
-        await expect(props.load?.()).rejects.toThrow('loader_backend_unavailable');
     });
 
     it('preloads installed RN artifact bytes from the owning machine before loading the cached module', async () => {
         const bytes = new Uint8Array([47, 47, 32, 98, 117, 110, 100, 108, 101]);
-        const digest = computePluginUiArtifactSha256DigestV1(bytes);
+        const entryPath = 'react-native/native-preview/ios.bundle.js';
+        const entryDigest = computePluginUiArtifactSha256DigestV1(bytes);
+        const digest = computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: entryPath, bytes }]);
+        const artifactGraph = {
+            contributionId: 'native-artifact',
+            tier: 'reactNative' as const,
+            platform: 'ios' as const,
+            entry: entryPath,
+            files: [{
+                relativePath: entryPath,
+                digest: entryDigest,
+                byteSize: bytes.byteLength,
+            }],
+            digest,
+            builtWith: { bundler: 'repack' as const, version: '5.2.5' },
+            repack: {
+                containerName: 'acme_preview_native',
+                modulePath: './renderSurface',
+                exportName: 'renderSurface',
+            },
+            hostUiApiVersion: '1.0.0',
+            compat: { react: '19.0.0', reactNative: '0.83.4' },
+        };
         const cacheIdentity = {
             pluginId: 'acme.preview',
             contributionId: 'native-preview',
@@ -161,7 +193,7 @@ describe('plugin session surface React Native loader routing', () => {
             reactNativeVersion: '0.83.4',
             platform: 'ios',
             channel: 'internal',
-            nativeCapabilitiesDigest: 'sha256:native-capabilities',
+            nativeCapabilitiesDigest: `sha256:${'c'.repeat(64)}`,
             projectionGeneration: 12,
         } as const;
         fetchReactNativeInstalledArtifactBytesViaMachineRpcMock.mockResolvedValueOnce({
@@ -176,6 +208,12 @@ describe('plugin session surface React Native loader routing', () => {
                 byteSize: bytes.byteLength,
             },
             bytesBase64: encodeBase64(bytes),
+            files: [{
+                relativePath: entryPath,
+                digest: entryDigest,
+                byteSize: bytes.byteLength,
+                bytesBase64: encodeBase64(bytes),
+            }],
         });
 
         const { renderPluginSessionSurfaceTab } = await import('./sessionSurfaces');
@@ -183,15 +221,19 @@ describe('plugin session surface React Native loader routing', () => {
             tab,
             machineId: 'machine-1',
             serverId: 'server-1',
+            platform: 'ios',
             nowMs: () => 1234,
             pluginUiProjection: {
                 ...EMPTY_PLUGIN_UI_PROJECTION,
+                generation: 12,
                 reactNativeBundlesById: {
                     'reactNativeBundle:acme.preview:native-preview': {
                         id: 'reactNativeBundle:acme.preview:native-preview',
                         pluginId: 'acme.preview',
                         contributionKind: 'reactNativeBundle',
                         contributionId: 'native-preview',
+                        generatedV2: true,
+                        artifactGraph,
                         runtime: {
                             state: 'loadable',
                             decision: { state: 'load', reason: 'compatible', diagnostics: [] },
@@ -224,7 +266,9 @@ describe('plugin session surface React Native loader routing', () => {
             load?: () => Promise<unknown>;
         };
 
-        await expect(props.load?.()).rejects.toThrow('loader_backend_unavailable');
+        await expect(props.load?.()).resolves.toMatchObject({
+            renderSurface: expect.any(Function),
+        });
         expect(props.cacheIdentity).toEqual(cacheIdentity);
         expect(props.onCrashDisable).toEqual(expect.any(Function));
         await props.onCrashDisable?.({
@@ -250,6 +294,18 @@ describe('plugin session surface React Native loader routing', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
             identity: cacheIdentity,
+        });
+        expect(loadInstalledBundleMock).toHaveBeenCalledWith({
+            identity: cacheIdentity,
+            bytes,
+            files: [expect.objectContaining({
+                relativePath: entryPath,
+                digest: entryDigest,
+                byteSize: bytes.byteLength,
+                bytes,
+            })],
+            entryRelativePath: entryPath,
+            moduleReference: artifactGraph.repack,
         });
     });
 });

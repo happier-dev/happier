@@ -6,3 +6,4 @@ export {
     downloadInChunks,
     uploadInChunks,
 } from '../plumbing/chunkTransferClient';
+export { createTransferRecipientKeyPair } from '../plumbing/transferChunkEncryption';

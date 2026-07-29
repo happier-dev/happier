@@ -6,10 +6,14 @@ import type { WorkspaceTargetForSession } from '@/sync/domains/session/resolveWo
 import { normalizeWorkspaceRootPath, tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export function useSessionWorkspaceTarget(sessionId: string | null): WorkspaceTargetForSession | null {
     const resolvedSessionId = normalizeSessionId(sessionId);
     const session = useSession(resolvedSessionId);
+    const ownerMetadata = session
+        ? readSessionOwnerMetadataView(session)
+        : null;
     const project = useProjectForSession(resolvedSessionId);
     const allMachines = useAllMachines();
     const allSessions = useAllSessions();
@@ -47,9 +51,9 @@ export function useSessionWorkspaceTarget(sessionId: string | null): WorkspaceTa
         project?.key?.serverId,
         preferredServerId,
         resolvedSessionId,
-        session?.metadata?.homeDir,
-        session?.metadata?.host,
-        session?.metadata?.machineId,
-        session?.metadata?.path,
+        ownerMetadata?.homeDir,
+        ownerMetadata?.host,
+        ownerMetadata?.machineId,
+        ownerMetadata?.path,
     ]);
 }

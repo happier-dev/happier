@@ -26,6 +26,7 @@ export const SETTINGS_PAGE_IDS = {
     language: 'language',
     features: 'features',
 
+    agents: 'agents',
     providers: 'providers',
     subAgent: 'subAgent',
     profiles: 'profiles',
@@ -43,6 +44,7 @@ export const SETTINGS_PAGE_IDS = {
     memory: 'memory',
 
     session: 'session',
+    externalSessions: 'externalSessions',
     actions: 'actions',
     transcript: 'transcript',
     permissions: 'permissions',

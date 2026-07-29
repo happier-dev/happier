@@ -1,7 +1,8 @@
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { listActionSpecs } from '@happier-dev/protocol';
+import { listActionSpecs, type ActionExecutorContext } from '@happier-dev/protocol';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
@@ -37,10 +38,12 @@ import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { machineExternalSessionFollowPolicySet } from '@/sync/ops/machineExternalSessions';
 import { useSessionHandoffSourceReachability } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
+import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import {
   readExternalSessionFollowPolicy,
   updateMetadataWithExternalSessionFollowPolicy,
 } from '@/sync/domains/session/external/externalSessionFollowMetadata';
+import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { sync } from '@/sync/sync';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
 import {
@@ -64,10 +67,17 @@ import {
 import { buildSessionMetadataStabilitySignature } from '@/sync/domains/session/metadata/sessionMetadataStability';
 import { HappyError } from '@/utils/errors/errors';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { PLUGIN_SESSION_HEADER_ACTION_MENU_PREFIX } from './pluginHeaderActions';
 import {
+  createPluginSessionHeaderActionExecutor,
   createPluginSessionHeaderActionDropdownItems,
-  resolvePluginSessionHeaderActionOpenSurface,
+  dispatchPluginSessionHeaderAction,
 } from './pluginHeaderActions';
+import type { StorageState } from '@/sync/store/types';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
 
 function resolveSessionHandoffMenuSubtitle(handoffAvailability: ReturnType<typeof resolveSessionHandoffUiAvailability>, fallbackSubtitle: string | undefined): string | undefined {
   if (handoffAvailability.available) {
@@ -109,6 +119,71 @@ function readCurrentSessionForOpenMenu(sessionId: string, fallback: Session): Se
   return storage.getState().sessions[sessionId] ?? fallback;
 }
 
+function signatureValue(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(Math.trunc(value));
+  if (typeof value === 'string' || typeof value === 'boolean') return String(value);
+  return '';
+}
+
+function readLegacyReadStateMetadata(metadata: unknown): Readonly<{
+  sessionSeq: unknown;
+  pendingActivityAt: unknown;
+}> {
+  if (!metadata || typeof metadata !== 'object') {
+    return { sessionSeq: null, pendingActivityAt: null };
+  }
+  const readStateV1 = (metadata as { readStateV1?: unknown }).readStateV1;
+  if (!readStateV1 || typeof readStateV1 !== 'object') {
+    return { sessionSeq: null, pendingActivityAt: null };
+  }
+  return {
+    sessionSeq: (readStateV1 as { sessionSeq?: unknown }).sessionSeq,
+    pendingActivityAt: (readStateV1 as { pendingActivityAt?: unknown }).pendingActivityAt,
+  };
+}
+
+function buildSessionHeaderReadStateSignature(
+  state: Pick<StorageState, 'sessions' | 'sessionListRenderables' | 'sessionListRowStateByServerId' | 'sessionMessages'>,
+  sessionId: string,
+  serverId: string | null,
+): string {
+  const normalizedServerId = typeof serverId === 'string' ? serverId.trim() : '';
+  const session = state.sessions[sessionId];
+  const scopedRenderable = normalizedServerId
+    ? state.sessionListRowStateByServerId?.[normalizedServerId]?.[sessionId]
+    : undefined;
+  const renderable = scopedRenderable ?? state.sessionListRenderables[sessionId];
+  const messages = state.sessionMessages[sessionId] as Readonly<{
+    isLoaded?: unknown;
+    messageIdsOldestFirst?: ReadonlyArray<unknown>;
+    messagesVersion?: unknown;
+    reducerVersion?: unknown;
+    renderableAggregate?: unknown;
+  }> | undefined;
+  const readStateV1 = readLegacyReadStateMetadata(
+    session ? readSessionOwnerMetadataView(session) : null,
+  );
+
+  return [
+    signatureValue(session?.seq),
+    signatureValue(session?.lastViewedSessionSeq),
+    signatureValue(session?.latestReadyEventSeq),
+    signatureValue(session?.latestTurnStatus),
+    signatureValue(session?.accessLevel),
+    signatureValue(readStateV1.sessionSeq),
+    signatureValue(readStateV1.pendingActivityAt),
+    signatureValue(renderable?.hasUnreadMessages),
+    signatureValue(renderable?.seq),
+    signatureValue(renderable?.lastViewedSessionSeq),
+    signatureValue(renderable?.latestReadyEventSeq),
+    signatureValue(messages?.isLoaded),
+    signatureValue(messages?.messagesVersion),
+    signatureValue(messages?.reducerVersion),
+    signatureValue(messages?.messageIdsOldestFirst?.length),
+    signatureValue(messages?.renderableAggregate ? 1 : 0),
+  ].join('|');
+}
+
 function showSessionHeaderActionError(error: unknown): void {
   if (error instanceof HappyError) {
     Modal.alert(t('common.error'), error.message);
@@ -117,12 +192,22 @@ function showSessionHeaderActionError(error: unknown): void {
   Modal.alert(t('common.error'), t('errors.unknownError'));
 }
 
+type WebActionMenuTriggerProps = React.ButtonHTMLAttributes<HTMLButtonElement> & Readonly<{
+  'data-testid': string;
+  style: React.CSSProperties;
+}>;
+
 function areSessionActionMenuMetadataSemanticallyEqual(
-  prev: Session['metadata'],
-  next: Session['metadata'],
+  prev: Session,
+  next: Session,
 ): boolean {
   if (prev === next) return true;
-  return buildSessionMetadataStabilitySignature(prev) === buildSessionMetadataStabilitySignature(next);
+  return (
+    buildSessionMetadataStabilitySignature(prev.metadata)
+      === buildSessionMetadataStabilitySignature(next.metadata)
+    && buildSessionMetadataStabilitySignature(readSessionOwnerMetadataView(prev))
+      === buildSessionMetadataStabilitySignature(readSessionOwnerMetadataView(next))
+  );
 }
 
 function didSessionHeaderActionMenuPropsChange(
@@ -136,7 +221,7 @@ function didSessionHeaderActionMenuPropsChange(
   if (prev.pluginUiLocale !== next.pluginUiLocale) return true;
   if (prev.onOpenPluginSurface !== next.onOpenPluginSurface) return true;
   if (prev.session.serverId !== next.session.serverId) return true;
-  if (!areSessionActionMenuMetadataSemanticallyEqual(prev.session.metadata, next.session.metadata)) return true;
+  if (!areSessionActionMenuMetadataSemanticallyEqual(prev.session, next.session)) return true;
   if (prev.session.active !== next.session.active) return true;
   if (prev.session.owner !== next.session.owner) return true;
   if (prev.session.archivedAt !== next.session.archivedAt) return true;
@@ -164,20 +249,24 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     () => resolveSessionTargetServerId(props.sessionId, preferredSessionServerId ?? session.serverId ?? null),
     [preferredSessionServerId, session.serverId, props.sessionId],
   );
+  const readStateSignature = storage((state) =>
+    buildSessionHeaderReadStateSignature(state, props.sessionId, sessionServerId ?? null),
+  );
   const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
   const sessionActionTarget = React.useMemo(() => createSessionActionTarget({
     session,
     serverId: sessionServerId ?? null,
     currentUserId,
     isConnected: true,
-  }), [currentUserId, session, sessionServerId]);
+  }), [currentUserId, readStateSignature, session, sessionServerId]);
   const reachableMachineId = useSessionReachableMachineTarget(props.sessionId)?.machineId ?? null;
+  const ownerMetadata = readSessionOwnerMetadataView(session);
   const sourceMachineId = React.useMemo(
     () => resolveSessionHandoffSourceMachineId({
       reachableMachineId,
-      sessionMetadata: session.metadata as any,
+      sessionMetadata: ownerMetadata,
     }),
-    [session.metadata, reachableMachineId],
+    [ownerMetadata, reachableMachineId],
   );
   const serverSnapshot = useServerFeaturesSnapshotForServerId(sessionServerId, { enabled: Boolean(sessionServerId) });
   const runtimeAvailability = useSessionHandoffSourceReachability({
@@ -196,26 +285,34 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
       resolveServerIdForSessionId: () => sessionServerId,
-      openSession: (childSessionId: string) => {
-        router.push((`/session/${childSessionId}`) as any);
+      openSession: (childSessionId: string, options?: { serverId?: string | null }) => {
+        router.push(buildScopedSessionRouteHref({
+          sessionId: childSessionId,
+          serverId: options?.serverId ?? sessionServerId,
+        }) as any);
       },
     }),
     [router, sessionServerId],
+  );
+  const pluginHeaderActionExecutor = React.useMemo(
+    () => createPluginSessionHeaderActionExecutor({
+      projection: props.pluginUiProjection,
+      machineId: sourceMachineId,
+      serverId: sessionServerId,
+    }),
+    [props.pluginUiProjection, sessionServerId, sourceMachineId],
   );
   const teleportAvailability = React.useMemo(
     () => getVoiceAgentSessionTeleportAvailability({ voice, sessionId: props.sessionId }),
     [props.sessionId, voice],
   );
   const showTeleportAction = teleportAvailability.ok && hasGlobalVoiceAgentConversation;
-  const externalSessionLink = readExternalSessionLink(session.metadata);
-  const externalSessionFollowPolicy = readExternalSessionFollowPolicy(session.metadata);
+  const externalSessionLink = readExternalSessionLink(ownerMetadata);
+  const externalSessionFollowPolicy = readExternalSessionFollowPolicy(ownerMetadata);
   const externalSessionAgentId = React.useMemo(
-    () => resolveAgentIdFromFlavor(
-      typeof (session.metadata as Record<string, unknown> | null | undefined)?.flavor === 'string'
-        ? String((session.metadata as Record<string, unknown>).flavor)
-        : externalSessionLink?.providerId ?? null,
-    ),
-    [session.metadata, externalSessionLink?.providerId],
+    () => resolveAgentIdFromFlavor(externalSessionLink?.agentId ?? null)
+      ?? resolveAgentIdFromSessionMetadata(ownerMetadata),
+    [externalSessionLink?.agentId, ownerMetadata],
   );
   const supportsExternalSessionBackgroundFollow =
     externalSessionAgentId != null
@@ -302,12 +399,27 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       onSelect={(actionId) => {
         setOpen(false);
         if (props.onSelectExtraItem?.(actionId) === true) return;
-        const pluginSurfaceId = resolvePluginSessionHeaderActionOpenSurface({
-          projection: props.pluginUiProjection,
-          menuActionId: actionId,
-        });
-        if (pluginSurfaceId) {
-          props.onOpenPluginSurface?.(pluginSurfaceId);
+        if (actionId.startsWith(PLUGIN_SESSION_HEADER_ACTION_MENU_PREFIX)) {
+          // The normalized header contribution already resolved its action
+          // reference against the current projected action catalog. Dispatch
+          // that qualified action through the single UI ActionExecutor.
+          const onOpenPluginSurface = props.onOpenPluginSurface;
+          fireAndForget(dispatchPluginSessionHeaderAction({
+            projection: props.pluginUiProjection,
+            menuActionId: actionId,
+            data: { session, sessionId: props.sessionId },
+            executor: pluginHeaderActionExecutor,
+            context: {
+              defaultSessionId: props.sessionId,
+              surface: 'ui',
+              placement: 'session_action_menu',
+            } satisfies ActionExecutorContext,
+            host: {
+              copy: (value) => { void setClipboardStringSafe(value); },
+              openExternal: (url) => { void openExternalUrl(url); },
+              ...(onOpenPluginSurface ? { openSurface: (surfaceId: string) => { onOpenPluginSurface(surfaceId); } } : {}),
+            },
+          }), { tag: 'SessionHeaderActionMenu.execute.pluginHeaderAction' });
           return;
         }
         if (actionId === 'session.externalSession.backgroundFollow') {
@@ -317,7 +429,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
             const result = await machineExternalSessionFollowPolicySet({
               machineId: externalSessionLink.machineId,
               sessionId: props.sessionId,
-              providerId: externalSessionLink.providerId,
+              agentId: externalSessionLink.agentId,
               remoteSessionId: externalSessionLink.remoteSessionId,
               source: externalSessionLink.source,
               enabled: nextPolicy === 'background_follow',
@@ -357,11 +469,12 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
           fireAndForget((async () => {
             try {
               if (actionId === SESSION_ACTION_RENAME_ID) {
+                const currentSessionTitle = readSessionDisplayTitleField(session).value ?? ownerMetadata?.name ?? '';
                 const newName = await Modal.prompt(
                   t('sessionInfo.renameSession'),
                   undefined,
                   {
-                    defaultValue: session.metadata?.name ?? '',
+                    defaultValue: currentSessionTitle,
                     placeholder: t('sessionInfo.renameSessionPlaceholder'),
                     confirmText: t('common.save'),
                     cancelText: t('common.cancel'),
@@ -443,26 +556,67 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
         });
         storage.getState().createSessionActionDraft(props.sessionId, { actionId, input });
       }}
-      trigger={({ toggle }) => (
-            <Pressable
-              onPress={toggle}
-              hitSlop={15}
-              testID="session-header-action-menu-trigger"
-              accessibilityRole="button"
-              accessibilityLabel={t('session.actionMenu.openA11y')}
-              style={({ pressed }) => ({
-                width: 44,
-                height: 44,
-                alignItems: 'center',
-            justifyContent: 'center',
-            opacity: pressed ? 0.7 : 1,
-          })}
-        >
+      trigger={({ toggle }) => {
+        const label = t('session.actionMenu.openA11y');
+        const icon = (
           <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-            <Ionicons name="ellipsis-horizontal" size={22} color={theme.colors.chrome.header.foreground} />
+            <Ionicons name="ellipsis-horizontal" size={SESSION_HEADER_ICON_SIZE_PX} color={theme.colors.chrome.header.foreground} />
           </View>
-        </Pressable>
-      )}
+        );
+
+        if (Platform.OS === 'web') {
+          const webTriggerProps: WebActionMenuTriggerProps = {
+            type: 'button',
+            'data-testid': 'session-header-action-menu-trigger',
+            role: 'button',
+            'aria-label': label,
+            onClick: (event) => {
+              if (!event) return;
+              event.stopPropagation();
+              toggle();
+            },
+            style: {
+              width: 44,
+              height: 44,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 0,
+              margin: 0,
+              border: 0,
+              background: 'transparent',
+              color: 'inherit',
+              cursor: 'pointer',
+              appearance: 'none',
+              WebkitAppearance: 'none',
+            },
+          };
+          return React.createElement(
+            'button',
+            webTriggerProps,
+            icon,
+          );
+        }
+
+        return (
+          <Pressable
+            onPress={toggle}
+            hitSlop={15}
+            testID="session-header-action-menu-trigger"
+            accessibilityRole="button"
+            accessibilityLabel={label}
+            style={({ pressed }) => ({
+              width: 44,
+              height: 44,
+              alignItems: 'center',
+              justifyContent: 'center',
+              opacity: pressed ? 0.7 : 1,
+            })}
+          >
+            {icon}
+          </Pressable>
+        );
+      }}
       placement="bottom"
       variant="slim"
       rowKind="selectableRow"

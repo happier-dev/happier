@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema, type BackendTargetRefV2 } from '@happier-dev/protocol';
+import { FavoriteModelSelectionV1Schema } from '@/sync/domains/models/favoriteModelSelections';
 
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 import { renderScreen } from '@/dev/testkit';
@@ -10,11 +11,33 @@ import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import type { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 type AgentInputSelectOption = Readonly<{ value: string; name: string }>;
+
+function favoriteModel(backendTargetKey: string, modelId: string, extra: Record<string, unknown> = {}) {
+    return FavoriteModelSelectionV1Schema.parse({ backendTargetKey, modelId, ...extra });
+}
+
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map(flattenStyle));
+    }
+    return style && typeof style === 'object' ? style as Record<string, unknown> : {};
+}
+
+function resolveInteractiveStyle(style: unknown): Record<string, unknown> {
+    return flattenStyle(typeof style === 'function'
+        ? (style as (state: Readonly<{ pressed: boolean; hovered: boolean; focused: boolean }>) => unknown)({
+            pressed: false,
+            hovered: false,
+            focused: false,
+        })
+        : style);
+}
 
 type AgentInputOptionControl = Readonly<{
     id: string;
@@ -73,7 +96,29 @@ const probePhaseState = vi.hoisted(() => ({
     models: 'idle' as 'idle' | 'loading' | 'refreshing',
     config: 'idle' as 'idle' | 'loading' | 'refreshing',
 }));
-let lastModelPickerOverlayProps: any = null;
+const providersFeatureEnabledState = vi.hoisted(() => ({ value: true }));
+type ProviderProjectionResult = ReturnType<typeof useProviderModelProjection>;
+const providerProjectionSpy = vi.hoisted(() => vi.fn<(input: unknown) => ProviderProjectionResult>((_input) => ({
+    data: null,
+    error: null,
+    loading: false,
+    status: 'pending',
+    refresh: vi.fn(async () => {}),
+    refreshWithResult: vi.fn(async () => null),
+})));
+let lastOptionPickerOverlayProps: any = null;
+
+function renderedModelPickerOptions(): any[] {
+    return (lastOptionPickerOverlayProps?.sections ?? [])
+        .flatMap((section: { options?: readonly unknown[] }) => section.options ?? []);
+}
+
+function renderedNativeModelOption(modelId: string): any {
+    return renderedModelPickerOptions().find((option) => (
+        option.value?.providerConnectionId === null && option.value.modelId === modelId
+    ));
+}
+
 const probeRefreshSpies = {
     cli: vi.fn(),
     models: vi.fn(),
@@ -136,7 +181,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
 vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
     OptionPickerOverlay: (props: any) => {
         if (props.title === 'agentInput.model.title') {
-            lastModelPickerOverlayProps = props;
+            lastOptionPickerOverlayProps = props;
         }
         const optionTestIDPrefix = props.optionTestIDPrefix ?? 'model-picker-overlay-option';
         const refreshTestID = props.refreshTestID ?? 'model-picker-overlay-refresh';
@@ -197,6 +242,14 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfi
     }),
 }));
 
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => providersFeatureEnabledState.value,
+}));
+
+vi.mock('@/providers/hooks/useProviderModelProjection', () => ({
+    useProviderModelProjection: (input: unknown) => providerProjectionSpy(input),
+}));
+
 describe('NewSessionEngineOptionDetail', () => {
     const backendTarget: BackendTargetRefV2 = {
         kind: 'backend',
@@ -219,15 +272,208 @@ describe('NewSessionEngineOptionDetail', () => {
         ];
         configOptionsState.value = [];
         configOptionsState.unavailable = false;
-        lastModelPickerOverlayProps = null;
+        lastOptionPickerOverlayProps = null;
         probeEnabledState.models = true;
         probeEnabledState.config = true;
         probePhaseState.models = 'idle';
         probePhaseState.config = 'idle';
+        providersFeatureEnabledState.value = true;
+        providerProjectionSpy.mockReset();
+        providerProjectionSpy.mockReturnValue({
+            data: null,
+            error: null,
+            loading: false,
+            status: 'pending',
+            refresh: vi.fn(async () => {}),
+            refreshWithResult: vi.fn(async () => null),
+        });
         probeRefreshSpies.cli.mockClear();
         probeRefreshSpies.models.mockClear();
         probeRefreshSpies.modes.mockClear();
         probeRefreshSpies.config.mockClear();
+    });
+
+    it('keeps provider projection disabled when the root providers feature is disabled', async () => {
+        providersFeatureEnabledState.value = false;
+        const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
+
+        await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="default"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+        />);
+
+        expect(providerProjectionSpy).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
+        expect(lastOptionPickerOverlayProps?.options).toEqual([]);
+        expect(lastOptionPickerOverlayProps?.sections).toEqual([
+            expect.objectContaining({
+                id: 'native',
+                options: expect.arrayContaining([
+                    expect.objectContaining({ value: null }),
+                    expect.objectContaining({
+                        value: expect.objectContaining({
+                            providerConnectionId: null,
+                            modelId: 'preset-fast',
+                        }),
+                    }),
+                ]),
+            }),
+        ]);
+    });
+
+    it('keeps the canonical structured picker for an enabled zero-Provider projection', async () => {
+        providerProjectionSpy.mockReturnValueOnce({
+            data: {
+                status: 'success',
+                agentTargetKey: formatBackendTargetKeyV2(backendTarget),
+                groups: [],
+            },
+            error: null,
+            loading: false,
+            status: 'success',
+            refresh: vi.fn(async () => {}),
+            refreshWithResult: vi.fn(async () => null),
+        });
+        const onSelectionChange = vi.fn();
+        const onModelSelectionChange = vi.fn();
+        const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
+
+        await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="preset-fast"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+            onSelectionChange={onSelectionChange}
+            onModelSelectionChange={onModelSelectionChange}
+        />);
+
+        expect(lastOptionPickerOverlayProps?.options).toEqual([]);
+        const nativeOption = lastOptionPickerOverlayProps?.sections
+            ?.flatMap((section: { options: unknown[] }) => section.options)
+            .find((option: { value?: { modelId?: string } | null }) => option.value?.modelId === 'preset-fast');
+        expect(nativeOption).toEqual(expect.objectContaining({
+            value: expect.objectContaining({ providerConnectionId: null, modelId: 'preset-fast' }),
+        }));
+
+        act(() => {
+            lastOptionPickerOverlayProps.onSelect(nativeOption.value);
+        });
+        expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({
+            modelId: 'preset-fast',
+            modelSelection: expect.objectContaining({
+                ref: expect.objectContaining({ providerConnectionId: null, modelId: 'preset-fast' }),
+            }),
+        }));
+        expect(onModelSelectionChange).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        {
+            state: 'loading',
+            projection: {
+                data: null,
+                error: null,
+                loading: true,
+                status: 'pending',
+                refresh: vi.fn(async () => {}),
+                refreshWithResult: vi.fn(async () => null),
+            } satisfies ProviderProjectionResult,
+        },
+        {
+            state: 'error',
+            projection: {
+                data: null,
+                error: {
+                    v: 1,
+                    code: 'provider_endpoint_unreachable',
+                    retryable: true,
+                    action: 'retry',
+                },
+                loading: false,
+                status: 'error',
+                refresh: vi.fn(async () => {}),
+                refreshWithResult: vi.fn(async () => null),
+            } satisfies ProviderProjectionResult,
+        },
+    ])('keeps an exact Provider selection identity without a false recovery row while projection is $state', async ({ state, projection }) => {
+        const providerConnectionId = ProviderConnectionIdSchema.parse('pc_stale');
+        const selectedModelSelection = {
+            v: 1 as const,
+            updatedAt: 1,
+            ref: {
+                agentTargetKey: formatBackendTargetKeyV2(backendTarget),
+                providerConnectionId,
+                modelId: 'provider-only-model',
+            },
+        };
+        providerProjectionSpy.mockReturnValue(projection);
+        const onSelectionChange = vi.fn();
+        const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
+
+        await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="provider-only-model"
+            selectedModelSelection={selectedModelSelection}
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+            onSelectionChange={onSelectionChange}
+        />);
+
+        expect(providerProjectionSpy).toHaveBeenCalledWith(expect.objectContaining({
+            enabled: true,
+            currentSelection: selectedModelSelection.ref,
+        }));
+        expect(lastOptionPickerOverlayProps?.options).toEqual([]);
+        expect(lastOptionPickerOverlayProps?.selectedValue).toEqual(selectedModelSelection.ref);
+        expect(lastOptionPickerOverlayProps?.effectiveLabel).toBe('provider-only-model');
+        const renderedOptions = lastOptionPickerOverlayProps?.sections
+            ?.flatMap((section: { options: unknown[] }) => section.options) ?? [];
+        expect(renderedOptions.find(
+            (option: { value?: { providerConnectionId?: string | null; modelId?: string } | null }) => (
+                option.value?.providerConnectionId === providerConnectionId
+                && option.value.modelId === 'provider-only-model'
+            ),
+        )).toBeUndefined();
+
+        const nativeRecovery = renderedOptions.find(
+            (option: { value?: { providerConnectionId?: string | null; modelId?: string } | null }) => (
+                option.value?.providerConnectionId === null && option.value.modelId === 'preset-fast'
+            ),
+        );
+        expect(nativeRecovery).toBeTruthy();
+        expect(nativeRecovery.disabled).not.toBe(true);
+
+        expect(lastOptionPickerOverlayProps?.probe?.phase).toBe(state === 'loading' ? 'loading' : 'idle');
+        if (state === 'error') {
+            const { ProviderErrorItems } = await import('@/components/settings/providers/ProviderErrorItems');
+            expect(lastOptionPickerOverlayProps?.probe?.onRefresh).toBeTypeOf('function');
+            expect(lastOptionPickerOverlayProps.summary).toBeTruthy();
+            const summary = await renderScreen(lastOptionPickerOverlayProps.summary);
+            const errorItems = summary.findByType(ProviderErrorItems.type);
+            expect(errorItems.props.error).toBe(projection.error);
+            expect(errorItems.props.retry).toBeTypeOf('function');
+            await act(async () => { await errorItems.props.retry(); });
+            expect(projection.refresh).toHaveBeenCalledTimes(1);
+        }
+
+        act(() => {
+            lastOptionPickerOverlayProps.onSelect(nativeRecovery.value);
+        });
+        expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({
+            modelSelection: expect.objectContaining({
+                ref: expect.objectContaining({ providerConnectionId: null, modelId: 'preset-fast' }),
+            }),
+        }));
     });
 
     it('renders an engine favorite action in the model header and toggles it without refreshing models', async () => {
@@ -247,7 +493,19 @@ describe('NewSessionEngineOptionDetail', () => {
             }}
         />);
 
-        expect(lastModelPickerOverlayProps?.headerAccessory).toBeTruthy();
+        expect(lastOptionPickerOverlayProps?.headerAccessory).toBeTruthy();
+
+        const favoriteAction = screen.findByTestId('new-session-engine-favorite-toggle');
+        const targetStyle = resolveInteractiveStyle(favoriteAction?.props.style);
+        expect(targetStyle.width ?? targetStyle.minWidth).toBeGreaterThanOrEqual(44);
+        expect(targetStyle.height ?? targetStyle.minHeight).toBeGreaterThanOrEqual(44);
+        expect(favoriteAction?.props.accessibilityLabel).toBe('profiles.actions.removeFromFavorites');
+        expect(typeof favoriteAction?.props.onFocus).toBe('function');
+
+        await act(async () => {
+            favoriteAction?.props.onFocus?.();
+        });
+        expect(screen.findByTestId('new-session-engine-favorite-toggle-tooltip')).toBeTruthy();
 
         await screen.pressByTestIdAsync('new-session-engine-favorite-toggle');
 
@@ -278,15 +536,18 @@ describe('NewSessionEngineOptionDetail', () => {
 
         expect(() => screen.findByProps({ testID: 'agent-input-session-mode-option:review' })).toThrow();
 
-        await screen.pressByTestIdAsync('model-picker-overlay-option:preset-fast');
-        expect(latestSelection).toEqual({
+        act(() => {
+            lastOptionPickerOverlayProps.onSelect(renderedNativeModelOption('preset-fast').value);
+        });
+        expect(latestSelection).toMatchObject({
             modelId: 'preset-fast',
+            modelSelection: { ref: { providerConnectionId: null, modelId: 'preset-fast' } },
             sessionModeId: 'review',
             configOverrides: {},
         });
     });
 
-    it('passes the full model list and custom-model capability through to ModelPickerOverlay', async () => {
+    it('passes the full model list and custom-model capability through to OptionPickerOverlay', async () => {
         modelOptionsState.value = Array.from({ length: 12 }, (_, index) => ({
             value: `model-${index + 1}`,
             label: `Model ${index + 1}`,
@@ -308,9 +569,10 @@ describe('NewSessionEngineOptionDetail', () => {
             selectedConfigOverrides={{}}
         />);
 
-        expect(lastModelPickerOverlayProps).toBeTruthy();
-        expect(lastModelPickerOverlayProps.options).toHaveLength(12);
-        expect(lastModelPickerOverlayProps.canEnterCustomValue).toBe(true);
+        expect(lastOptionPickerOverlayProps).toBeTruthy();
+        expect(lastOptionPickerOverlayProps.options).toEqual([]);
+        expect(renderedModelPickerOptions()).toHaveLength(12);
+        expect(lastOptionPickerOverlayProps.canEnterCustomValue).toBe(true);
     });
 
     it('marks dynamically probed and catalog fallback models as favoritable for dynamic backends', async () => {
@@ -335,21 +597,25 @@ describe('NewSessionEngineOptionDetail', () => {
             selectedSessionModeId="default"
             selectedConfigOverrides={{}}
             favoriteModelSelections={[
-                { backendTargetKey: formatBackendTargetKeyV2(backendTarget), configuredBackendId: 'custom-preset', modelId: 'preset-fast' },
-                { backendTargetKey: formatBackendTargetKeyV2(backendTarget), configuredBackendId: 'custom-preset', modelId: 'catalog-only' },
+                favoriteModel(formatBackendTargetKeyV2(backendTarget), 'preset-fast', { configuredBackendId: 'custom-preset' }),
+                favoriteModel(formatBackendTargetKeyV2(backendTarget), 'catalog-only', { configuredBackendId: 'custom-preset' }),
             ]}
             onToggleFavoriteModel={vi.fn()}
         />);
 
-        expect(lastModelPickerOverlayProps?.favoriteOptions?.values.has('preset-fast')).toBe(true);
-        expect(lastModelPickerOverlayProps?.favoriteOptions?.values.has('catalog-only')).toBe(true);
-        expect(lastModelPickerOverlayProps?.favoriteOptions?.isFavoritable({ value: 'preset-fast' })).toBe(true);
-        expect(lastModelPickerOverlayProps?.favoriteOptions?.isFavoritable({ value: 'catalog-only' })).toBe(true);
-        expect((lastModelPickerOverlayProps?.options ?? []).map((option: ModelOptionEntry) => option.value)).toEqual([
-            'preset-fast',
-            'catalog-only',
-            'default',
-        ]);
+        const presetFast = renderedNativeModelOption('preset-fast');
+        const catalogOnly = renderedNativeModelOption('catalog-only');
+        expect(lastOptionPickerOverlayProps?.favoriteOptions?.values.has(
+            lastOptionPickerOverlayProps.getValueKey(presetFast.value),
+        )).toBe(true);
+        expect(lastOptionPickerOverlayProps?.favoriteOptions?.values.has(
+            lastOptionPickerOverlayProps.getValueKey(catalogOnly.value),
+        )).toBe(true);
+        expect(lastOptionPickerOverlayProps?.favoriteOptions?.isFavoritable(presetFast)).toBe(true);
+        expect(lastOptionPickerOverlayProps?.favoriteOptions?.isFavoritable(catalogOnly)).toBe(true);
+        expect(renderedModelPickerOptions().map((option) => option.value?.modelId ?? 'default')).toEqual(
+            expect.arrayContaining(['default', 'preset-fast', 'catalog-only']),
+        );
     });
 
     it('marks static catalog models as favoritable for static-only backends', async () => {
@@ -374,14 +640,18 @@ describe('NewSessionEngineOptionDetail', () => {
             selectedSessionModeId="default"
             selectedConfigOverrides={{}}
             favoriteModelSelections={[
-                { backendTargetKey: 'agent:claude', builtInAgentId: 'claude', modelId: 'claude-sonnet-4-5' },
+                favoriteModel(formatBackendTargetKeyV2(staticBackendTarget), 'claude-sonnet-4-5', { builtInAgentId: 'claude' }),
             ]}
             onToggleFavoriteModel={vi.fn()}
         />);
 
-        expect(lastModelPickerOverlayProps?.favoriteOptions?.values.has('claude-sonnet-4-5')).toBe(true);
-        expect(lastModelPickerOverlayProps?.favoriteOptions?.isFavoritable({ value: 'claude-sonnet-4-5' })).toBe(true);
-        expect(lastModelPickerOverlayProps?.favoriteOptions?.isFavoritable({ value: 'default' })).toBe(false);
+        const sonnet = renderedNativeModelOption('claude-sonnet-4-5');
+        const automatic = renderedModelPickerOptions().find((option) => option.value === null);
+        expect(lastOptionPickerOverlayProps?.favoriteOptions?.values.has(
+            lastOptionPickerOverlayProps.getValueKey(sonnet.value),
+        )).toBe(true);
+        expect(lastOptionPickerOverlayProps?.favoriteOptions?.isFavoritable(sonnet)).toBe(true);
+        expect(lastOptionPickerOverlayProps?.favoriteOptions?.isFavoritable(automatic)).toBe(false);
     });
 
     it('renders a single refresh control (in the model section) that refreshes CLI detection even when model/config probes have no refresh callback', async () => {
@@ -427,7 +697,7 @@ describe('NewSessionEngineOptionDetail', () => {
             selectedConfigOverrides={{}}
         />);
 
-        const defaultOption = (lastModelPickerOverlayProps?.options ?? []).find((o: any) => o.value === 'default');
+        const defaultOption = renderedModelPickerOptions().find((option) => option.value === null);
         expect(defaultOption).toBeTruthy();
         expect(typeof defaultOption.description).toBe('string');
         expect(String(defaultOption.description).trim().length).toBeGreaterThan(0);
@@ -451,9 +721,9 @@ describe('NewSessionEngineOptionDetail', () => {
             selectedConfigOverrides={{}}
         />);
 
-        expect(lastModelPickerOverlayProps).toBeTruthy();
-        expect(lastModelPickerOverlayProps.options).toEqual([]);
-        expect(lastModelPickerOverlayProps.canEnterCustomValue).toBe(true);
+        expect(lastOptionPickerOverlayProps).toBeTruthy();
+        expect(lastOptionPickerOverlayProps.options).toEqual([]);
+        expect(lastOptionPickerOverlayProps.canEnterCustomValue).toBe(true);
     });
 
     it('shows a shared unavailable note when dynamic model discovery is unavailable', async () => {
@@ -480,10 +750,10 @@ describe('NewSessionEngineOptionDetail', () => {
             selectedConfigOverrides={{}}
         />);
 
-        expect(lastModelPickerOverlayProps).toBeTruthy();
-        expect(lastModelPickerOverlayProps.options).toEqual([]);
-        expect(lastModelPickerOverlayProps.canEnterCustomValue).toBe(false);
-        expect(lastModelPickerOverlayProps.notes).toContain('agentInput.model.unavailable');
+        expect(lastOptionPickerOverlayProps).toBeTruthy();
+        expect(lastOptionPickerOverlayProps.options).toEqual([]);
+        expect(lastOptionPickerOverlayProps.canEnterCustomValue).toBe(false);
+        expect(lastOptionPickerOverlayProps.notes).toContain('agentInput.model.unavailable');
     });
 
     it('suppresses the unavailable model note while an unavailable probe is retrying', async () => {
@@ -510,9 +780,9 @@ describe('NewSessionEngineOptionDetail', () => {
             selectedConfigOverrides={{}}
         />);
 
-        expect(lastModelPickerOverlayProps).toBeTruthy();
-        expect(lastModelPickerOverlayProps.notes).not.toContain('agentInput.model.unavailable');
-        expect(lastModelPickerOverlayProps.probe?.phase).toBe('loading');
+        expect(lastOptionPickerOverlayProps).toBeTruthy();
+        expect(lastOptionPickerOverlayProps.notes).not.toContain('agentInput.model.unavailable');
+        expect(lastOptionPickerOverlayProps.probe?.phase).toBe('loading');
     });
 
     it('keeps custom model entry available when the provider catalog supports freeform even if preflight does not', async () => {
@@ -534,8 +804,8 @@ describe('NewSessionEngineOptionDetail', () => {
             selectedConfigOverrides={{}}
         />);
 
-        expect(lastModelPickerOverlayProps).toBeTruthy();
-        expect(lastModelPickerOverlayProps.canEnterCustomValue).toBe(true);
+        expect(lastOptionPickerOverlayProps).toBeTruthy();
+        expect(lastOptionPickerOverlayProps.canEnterCustomValue).toBe(true);
     });
 
     it('publishes inline custom model submissions through the shared model picker surface', async () => {
@@ -559,14 +829,15 @@ describe('NewSessionEngineOptionDetail', () => {
             }}
         />);
 
-        expect(typeof lastModelPickerOverlayProps?.onSubmitCustomValue).toBe('function');
+        expect(typeof lastOptionPickerOverlayProps?.onSubmitCustomValue).toBe('function');
 
         act(() => {
-            lastModelPickerOverlayProps.onSubmitCustomValue('custom-model');
+            lastOptionPickerOverlayProps.onSubmitCustomValue('custom-model');
         });
 
-        expect(latestSelection).toEqual({
+        expect(latestSelection).toMatchObject({
             modelId: 'custom-model',
+            modelSelection: { ref: { providerConnectionId: null, modelId: 'custom-model' } },
             sessionModeId: 'default',
             configOverrides: {},
         });
@@ -625,10 +896,13 @@ describe('NewSessionEngineOptionDetail', () => {
             'agentInput.acp.currentValue',
         );
 
-        await screen.pressByTestIdAsync('agent-input-config-option-option:thinking:high');
+        await screen.pressByTestIdAsync(
+            `agent-input-config-option-option:${JSON.stringify(['thinking', 'high'])}`,
+        );
 
         expect(latestSelection).toEqual({
             modelId: 'default',
+            modelSelection: null,
             sessionModeId: 'default',
             configOverrides: {
                 thinking: 'high',
@@ -703,10 +977,10 @@ describe('NewSessionEngineOptionDetail', () => {
             }}
         />);
 
-        expect(typeof lastModelPickerOverlayProps?.onSelectOptionControlValue).toBe('function');
+        expect(typeof lastOptionPickerOverlayProps?.onSelectOptionControlValue).toBe('function');
 
         act(() => {
-            lastModelPickerOverlayProps.onSelectOptionControlValue('service_tier', 'fast');
+            lastOptionPickerOverlayProps.onSelectOptionControlValue('service_tier', 'fast');
         });
 
         expect(latestSelection).toEqual(expect.objectContaining({
@@ -729,10 +1003,10 @@ describe('NewSessionEngineOptionDetail', () => {
             }}
         />);
 
-        expect(typeof lastModelPickerOverlayProps?.onSelectOptionControlValue).toBe('function');
+        expect(typeof lastOptionPickerOverlayProps?.onSelectOptionControlValue).toBe('function');
 
         act(() => {
-            lastModelPickerOverlayProps.onSelectOptionControlValue('reasoning_effort', 'high');
+            lastOptionPickerOverlayProps.onSelectOptionControlValue('reasoning_effort', 'high');
         });
 
         expect(latestSelection).toEqual(expect.objectContaining({
@@ -773,7 +1047,7 @@ describe('NewSessionEngineOptionDetail', () => {
             selectedConfigOverrides={{ reasoning_effort: 'high' }}
         />);
 
-        expect(lastModelPickerOverlayProps?.selectedOptionControls).toEqual(expect.arrayContaining([
+        expect(lastOptionPickerOverlayProps?.selectedOptionControls).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 option: expect.objectContaining({ id: 'reasoning_effort' }),
                 effectiveValue: 'high',
@@ -845,11 +1119,12 @@ describe('NewSessionEngineOptionDetail', () => {
         />);
 
         act(() => {
-            lastModelPickerOverlayProps.onSelect('anthropic/claude-sonnet-4-6');
+            lastOptionPickerOverlayProps.onSelect(renderedNativeModelOption('anthropic/claude-sonnet-4-6').value);
         });
 
-        expect(latestSelection).toEqual({
+        expect(latestSelection).toMatchObject({
             modelId: 'anthropic/claude-sonnet-4-6',
+            modelSelection: { ref: { providerConnectionId: null, modelId: 'anthropic/claude-sonnet-4-6' } },
             sessionModeId: 'default',
             configOverrides: {
                 service_tier: 'fast',

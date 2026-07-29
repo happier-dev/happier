@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { installAccountCommonModuleMocks } from '../../account/accountTestHelpers';
 
@@ -16,9 +16,20 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
-vi.mock('expo-clipboard', () => ({
-    setStringAsync: vi.fn(async () => {}),
+const clipboardMocks = vi.hoisted(() => ({
+    setStringAsync: vi.fn(async (_value: string) => {}),
 }));
+vi.mock('expo-clipboard', () => clipboardMocks);
+
+const modalMocks = vi.hoisted(() => ({
+    alertAsync: vi.fn(async () => {}),
+}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: modalMocks,
+    }).module;
+});
 
 vi.mock('@/components/qr/QRCode', () => ({
     QRCode: 'QRCode',
@@ -88,6 +99,11 @@ vi.mock('@/sync/http/client', () => ({
 }));
 
 describe('AddPhoneSettingsView', () => {
+    afterEach(() => {
+        clipboardMocks.setStringAsync.mockClear();
+        modalMocks.alertAsync.mockClear();
+    });
+
     it('renders a pairing QR code after starting a session', async () => {
         featureState = 'enabled';
         activeServerUrl = 'https://stack.example.test';
@@ -158,5 +174,24 @@ describe('AddPhoneSettingsView', () => {
         const textContent = screen.getTextContent();
         expect(textContent).toContain('connect.serverUrlNotEmbeddedTitle');
         expect(textContent).toContain('connect.serverUrlNotEmbeddedBody');
+    });
+
+    it('copies the pairing link without opening a success modal', async () => {
+        featureState = 'enabled';
+        activeServerUrl = 'https://stack.example.test';
+        pairingStatusResponse = {
+            ok: true,
+            status: 200,
+            json: async () => ({ state: 'pending', pairId: 'pair_123', expiresAt: '2026-02-23T00:00:00.000Z' }),
+        } as any;
+        const { AddPhoneSettingsView } = await import('./AddPhoneSettingsView');
+
+        const screen = await renderScreen(<AddPhoneSettingsView />);
+        await screen.pressByTestIdAsync('add-phone-pairing-link');
+
+        expect(clipboardMocks.setStringAsync).toHaveBeenCalledTimes(1);
+        expect(String(clipboardMocks.setStringAsync.mock.calls[0]?.[0])).toContain('happier:///pair?v=1');
+        expect(modalMocks.alertAsync).not.toHaveBeenCalledWith('common.success', 'common.copied');
+        expect(screen.findByTestId('add-phone-pairing-link-copy-feedback')).toBeTruthy();
     });
 });

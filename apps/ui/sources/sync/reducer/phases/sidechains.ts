@@ -7,6 +7,7 @@ import { normalizeThinkingChunk, unwrapThinkingText } from '../helpers/thinkingT
 import { readStreamSegmentMetaV1 } from '../helpers/streamSegmentMeta';
 import { upsertStreamSegmentSnapshotMessage } from '../helpers/upsertStreamSegmentSnapshotMessage';
 import { restoreSubagentToolFromSyntheticInterruption } from '../helpers/subagentInterruption';
+import { normalizeTranscriptSeq } from '../../domains/messages/transcriptOrdering';
 
 export function runSidechainsPhase(params: Readonly<{
     state: ReducerState;
@@ -49,7 +50,7 @@ export function runSidechainsPhase(params: Readonly<{
             const userMsg: ReducerMessage = {
                 id: mid,
                 realID: msg.id,
-                seq: typeof msg.seq === 'number' ? msg.seq : null,
+                seq: normalizeTranscriptSeq(msg.seq),
                 localId: msg.localId ?? null,
                 role: 'user',
                 createdAt: msg.createdAt,
@@ -118,7 +119,7 @@ export function runSidechainsPhase(params: Readonly<{
                         const textMsg: ReducerMessage = {
                             id: mid,
                             realID: msg.id,
-                            seq: typeof msg.seq === 'number' ? msg.seq : null,
+	                            seq: normalizeTranscriptSeq(msg.seq),
                             localId: msg.localId ?? null,
                             role: 'agent',
                             createdAt: msg.createdAt,
@@ -196,7 +197,7 @@ export function runSidechainsPhase(params: Readonly<{
                             const textMsg: ReducerMessage = {
                                 id: mid,
                                 realID: msg.id,
-                                seq: typeof msg.seq === 'number' ? msg.seq : null,
+	                                seq: normalizeTranscriptSeq(msg.seq),
                                 localId: msg.localId ?? null,
                                 role: 'agent',
                                 createdAt: msg.createdAt,
@@ -247,7 +248,7 @@ export function runSidechainsPhase(params: Readonly<{
                     const toolMsg: ReducerMessage = {
                         id: mid,
                         realID: msg.id,
-                        seq: typeof msg.seq === 'number' ? msg.seq : null,
+	                        seq: normalizeTranscriptSeq(msg.seq),
                         localId: msg.localId ?? null,
                         role: 'agent',
                         createdAt: msg.createdAt,

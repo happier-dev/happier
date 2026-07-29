@@ -12,10 +12,8 @@ let storageState: any = {
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: {
-        getState: () => storageState,
-    },
-});
+        storage: { getState: () => storageState },
+    });
 });
 
 afterEach(() => {
@@ -97,6 +95,37 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         });
+    });
+
+    it('does not build fresh-spawn options for a replay fork after the replay seed was consumed without a vendor resume id', () => {
+        expect(buildResumeSessionBaseOptionsFromSession({
+            sessionId: 's1',
+            session: {
+                metadata: {
+                    machineId: 'm1',
+                    path: '/tmp',
+                    flavor: 'claude',
+                    forkV1: {
+                        v: 1,
+                        parentSessionId: 'parent-session',
+                        parentCutoffSeqInclusive: 7,
+                        createdAtMs: 1000,
+                        strategy: 'replay',
+                        providerHint: { providerId: 'claude' },
+                    },
+                    replaySeedV1: {
+                        v: 1,
+                        seedText: '',
+                        sourceSessionId: 'parent-session',
+                        sourceCutoffSeqInclusive: 7,
+                        createdAtMs: 1000,
+                        appliedToLocalId: 'local-1',
+                        appliedAtMs: 2000,
+                    },
+                },
+            } as any,
+            resumeCapabilityOptions: { accountSettings: {} },
+        })).toBeNull();
     });
 
     it('returns base options when vendor resume is allowed and present', () => {
@@ -258,7 +287,7 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
                     codexSessionId: 'x1',
                     runtimeDescriptorV1: {
                         v: 1,
-                        providerId: 'codex',
+                        agentId: 'codex',
                         provider: {
                             backendMode: 'appServer',
                             providerSessionId: 'x1',
@@ -266,7 +295,7 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
                     },
                     agentRuntimeDescriptorV1: {
                         v: 1,
-                        providerId: 'codex',
+                        agentId: 'codex',
                         provider: {
                             backendMode: 'acp',
                             providerSessionId: 'legacy-x1',
@@ -283,8 +312,8 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
             resume: 'x1',
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
-                provider: {
+                agentId: 'codex',
+                agent: {
                     backendMode: 'appServer',
                     providerSessionId: 'x1',
                 },
@@ -295,7 +324,7 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
     it('passes through permission mode overrides', () => {
         expect(buildResumeSessionBaseOptionsFromSession({
             sessionId: 's1',
-            session: { metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1' } } as any,
+            session: { metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' } } as any,
             resumeCapabilityOptions: { accountSettings: {} },
             permissionOverride: { permissionMode: 'plan', permissionModeUpdatedAt: 123 },
         })).toEqual({

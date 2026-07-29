@@ -33,11 +33,10 @@ const styles = StyleSheet.create((theme) => ({
     },
     title: {
         ...Typography.default('semiBold'),
-        fontSize: 14,
+        fontSize: 15,
         lineHeight: 20,
-        letterSpacing: -0.08,
-        color: theme.colors.text.secondary,
-        textTransform: 'uppercase',
+        letterSpacing: -0.2,
+        color: theme.colors.text.primary,
     },
     subtitle: {
         ...Typography.default(),

@@ -1,7 +1,9 @@
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 
-export function makeSettings(overrides: Partial<typeof settingsDefaults> = {}) {
+export function makeSettings(
+    overrides: Readonly<Record<string, unknown>> = {},
+): typeof settingsDefaults & Readonly<Record<string, unknown>> {
     return { ...settingsDefaults, ...overrides };
 }
 

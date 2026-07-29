@@ -1,3 +1,5 @@
+import { isDevRouteEnabled } from './devRoutePolicy';
+
 export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
     // expo-router includes route groups like "(app)" in segments.
     const normalized = segments.filter((s) => !(s.startsWith('(') && s.endsWith(')')));
@@ -29,6 +31,11 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
     // Desktop activity overlay must stay reachable so the separate Tauri overlay window
     // can bootstrap its own public utility surface before auth state settles.
     if (first === 'desktop' && normalized[1] === 'activity-overlay') return true;
+
+    // The stage performance route must be reachable without credentials because its demo seed
+    // guard intentionally refuses to run when real credentials are present. Keep it closed in
+    // ordinary production builds because it seeds local demo data.
+    if (isDevRouteEnabled() && first === 'dev' && normalized[1] === 'stage-dperf') return true;
 
     return false;
 }

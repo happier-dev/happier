@@ -22,10 +22,13 @@ describe('machines ops server-scoped routing', () => {
             serverId: 'server-b',
         });
 
-        expect(result).toEqual({ type: 'success', sessionId: 'sess-1' });
+        expect(result).toEqual(expect.objectContaining({ type: 'success', sessionId: 'sess-1' }));
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
             serverId: 'server-b',
+            payload: expect.objectContaining({
+                spawnNonce: expect.any(String),
+            }),
         }));
     });
 

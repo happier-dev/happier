@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSessionGettingStartedViewModel, computeMachinesSummary, computeSessionGettingStartedDecision, resolveActiveServerProfile } from './gettingStartedModel';
+import {
+    buildSessionGettingStartedViewModel,
+    computeMachinesSummary,
+    computeSessionGettingStartedDecision,
+    resolveActiveServerProfile,
+    resolveSessionGettingStartedMachinesSummary,
+} from './gettingStartedModel';
+import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 
 describe('computeSessionGettingStartedDecision', () => {
     it('returns loading when sessions are not ready', () => {
@@ -32,6 +39,11 @@ describe('computeSessionGettingStartedDecision', () => {
         const machines = computeMachinesSummary([{ machineCount: 1, onlineCount: 1 }]);
         expect(computeSessionGettingStartedDecision({ sessionsReady: true, sessionCount: 3, machines })).toBe('select_session');
     });
+
+    it('returns select_session when sessions exist even if no machines are currently known', () => {
+        const machines = computeMachinesSummary([{ machineCount: 0, onlineCount: 0 }]);
+        expect(computeSessionGettingStartedDecision({ sessionsReady: true, sessionCount: 3, machines })).toBe('select_session');
+    });
 });
 
 describe('buildSessionGettingStartedViewModel', () => {
@@ -43,6 +55,8 @@ describe('buildSessionGettingStartedViewModel', () => {
             id: 'srv-b',
             name: 'B',
             serverUrl: 'https://api.b.example',
+            serverIdentityId: null,
+            legacyServerIds: [],
         });
         expect(resolveActiveServerProfile([
             { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
@@ -50,6 +64,117 @@ describe('buildSessionGettingStartedViewModel', () => {
             id: 'srv-a',
             name: 'A',
             serverUrl: 'https://api.a.example',
+            serverIdentityId: null,
+            legacyServerIds: [],
+        });
+    });
+
+    it('resolves the active server profile by server identity and legacy aliases', () => {
+        const profiles: Array<Pick<ServerProfile, 'id' | 'name' | 'serverUrl' | 'serverIdentityId' | 'legacyServerIds'>> = [
+            { id: 'localhost-18830', name: 'localhost:18830', serverUrl: 'http://localhost:18830' },
+            {
+                id: 'localhost-52753',
+                name: 'localhost:52753',
+                serverUrl: 'http://localhost:52753',
+                serverIdentityId: 'srv_local_relay',
+                legacyServerIds: ['old-local-relay'],
+            },
+        ];
+
+        expect(resolveActiveServerProfile(profiles, 'srv_local_relay')).toEqual({
+            id: 'localhost-52753',
+            name: 'localhost:52753',
+            serverUrl: 'http://localhost:52753',
+            serverIdentityId: 'srv_local_relay',
+            legacyServerIds: ['old-local-relay'],
+        });
+        expect(resolveActiveServerProfile(profiles, 'old-local-relay')).toEqual({
+            id: 'localhost-52753',
+            name: 'localhost:52753',
+            serverUrl: 'http://localhost:52753',
+            serverIdentityId: 'srv_local_relay',
+            legacyServerIds: ['old-local-relay'],
+        });
+    });
+
+    it('uses active server profile identity aliases when resolving scoped machines', () => {
+        const model = buildSessionGettingStartedViewModel({
+            sessionsReady: true,
+            sessionCount: 0,
+            activeMachines: [],
+            selection: {
+                activeTarget: { kind: 'server', id: 'localhost-64115' },
+                activeServerId: 'localhost-64115',
+                allowedServerIds: ['localhost-64115'],
+            },
+            serverSelectionGroups: [],
+            activeServerProfile: {
+                id: 'localhost-64115',
+                name: 'localhost:64115',
+                serverUrl: 'http://127.0.0.1:64115',
+                serverIdentityId: 'srv_local_relay',
+                legacyServerIds: ['old-local-relay'],
+            } as any,
+            machineListByServerId: {
+                srv_local_relay: [{ active: true }],
+            },
+        });
+
+        expect(model.kind).toBe('create_session');
+    });
+
+    it('resolves active-server machines when profile aliases are unavailable', () => {
+        expect(resolveSessionGettingStartedMachinesSummary({
+            activeMachines: [],
+            selection: {
+                activeTarget: { kind: 'server', id: 'srv-a' },
+                activeServerId: 'srv-a',
+                allowedServerIds: ['srv-a'],
+            },
+            machineListByServerId: {
+                'srv-a': [{ active: true }],
+            },
+        })).toEqual({
+            hasUnknownServers: false,
+            machineCount: 1,
+            onlineCount: 1,
+        });
+    });
+
+    it('prefers direct server profile ids over identity and legacy aliases', () => {
+        const profiles: Array<Pick<ServerProfile, 'id' | 'name' | 'serverUrl' | 'serverIdentityId' | 'legacyServerIds'>> = [
+            {
+                id: 'old-profile',
+                name: 'Old profile',
+                serverUrl: 'https://old.example',
+                serverIdentityId: 'current-profile',
+                legacyServerIds: ['legacy-collision'],
+            },
+            {
+                id: 'current-profile',
+                name: 'Current profile',
+                serverUrl: 'https://current.example',
+            },
+            {
+                id: 'legacy-collision',
+                name: 'Legacy collision profile',
+                serverUrl: 'https://legacy-collision.example',
+            },
+        ];
+
+        expect(resolveActiveServerProfile(profiles, 'current-profile')).toEqual({
+            id: 'current-profile',
+            name: 'Current profile',
+            serverUrl: 'https://current.example',
+            serverIdentityId: null,
+            legacyServerIds: [],
+        });
+        expect(resolveActiveServerProfile(profiles, 'legacy-collision')).toEqual({
+            id: 'legacy-collision',
+            name: 'Legacy collision profile',
+            serverUrl: 'https://legacy-collision.example',
+            serverIdentityId: null,
+            legacyServerIds: [],
         });
     });
 

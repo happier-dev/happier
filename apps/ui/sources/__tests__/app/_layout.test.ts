@@ -96,7 +96,10 @@ function stubFeatureFetch() {
     );
 }
 
-vi.mock('react-native-reanimated', () => ({}));
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
+});
 
 vi.mock('socket.io-client', () => {
     const socket = {
@@ -427,7 +430,7 @@ describe('RootLayout stack options', () => {
         }
     }, 60_000);
 
-    it('disables stack screen animations for main tab routes', async () => {
+    it('keeps main tab transitions instant while allowing the desktop settings modal to animate', async () => {
         stubFeatureFetch();
 
         const { default: RootLayout } = await import('@/app/(app)/_layout');
@@ -435,7 +438,7 @@ describe('RootLayout stack options', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         try {
             tree = (await renderScreen(React.createElement(RootLayout))).tree;
-            const mainTabRouteNames = new Set(['index', 'inbox/index', 'friends/index', 'settings']);
+            const mainTabRouteNames = new Set(['index', 'inbox/index', 'friends/index']);
             const mainTabScreens = tree.root
                 .findAllByType('StackScreen')
                 .filter((node) => mainTabRouteNames.has(node.props?.name));
@@ -443,6 +446,45 @@ describe('RootLayout stack options', () => {
             expect(mainTabScreens).toHaveLength(mainTabRouteNames.size);
             for (const screen of mainTabScreens) {
                 expect(screen.props?.options).toMatchObject({ animation: 'none' });
+            }
+
+            const settingsScreen = tree.root
+                .findAllByType('StackScreen')
+                .find((node) => node.props?.name === 'settings');
+            expect(settingsScreen?.props?.options).toMatchObject({ presentation: 'modal' });
+            expect(settingsScreen?.props?.options?.animation).toBeUndefined();
+        } finally {
+            if (tree) {
+                act(() => {
+                    tree!.unmount();
+                });
+            }
+        }
+    }, 60_000);
+
+    it('disables stack screen animations for session cockpit surface routes', async () => {
+        stubFeatureFetch();
+
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(React.createElement(RootLayout))).tree;
+            const sessionSurfaceRouteNames = new Set([
+                'session/[id]/files',
+                'session/[id]/git',
+                'session/[id]/details',
+                'session/[id]/terminal',
+                'session/[id]/index',
+            ]);
+            const sessionSurfaceScreens = tree.root
+                .findAllByType('StackScreen')
+                .filter((node) => sessionSurfaceRouteNames.has(node.props?.name));
+
+            expect(sessionSurfaceScreens).toHaveLength(sessionSurfaceRouteNames.size);
+            for (const screen of sessionSurfaceScreens) {
+                expect(screen.props?.options).toMatchObject({ animation: 'none' });
+                expect(screen.props?.options).toMatchObject({ headerShown: false });
             }
         } finally {
             if (tree) {

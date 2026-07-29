@@ -1,0 +1,1175 @@
+import * as React from 'react';
+import { useLocalSearchParams } from 'expo-router';
+
+import type {
+    BuiltInLegacyConnectedAccountOperation,
+    ConnectedAccountPeerOperationTransport,
+    PluginConnectedAccountAuthenticationModeV2,
+    QualifiedConnectedAccountRef,
+} from '@happier-dev/protocol';
+import {
+    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
+    ConnectedServiceIdSchema,
+} from '@happier-dev/protocol';
+
+import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemList } from '@/components/ui/lists/ItemList';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { useQualifiedConnectedAccountGroups } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountGroups';
+import { Modal } from '@/modal';
+import { t } from '@/text';
+import {
+    resolveConnectedAccountOperationTarget,
+    resolveQualifiedConnectedAccountSettingsRoute,
+} from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
+import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
+import {
+    isQualifiedConnectedAccountLegacyOperationSupported,
+    type QualifiedConnectedAccountUiPeerTransport,
+} from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
+import {
+    pruneQualifiedConnectedAccountPreferences,
+    resolveQualifiedConnectedAccountDefaultId,
+    resolveQualifiedConnectedAccountLabel,
+    updateQualifiedConnectedAccountDefaultId,
+    updateQualifiedConnectedAccountLabel,
+} from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
+import {
+    runConnectedAccountAuthenticationCommand,
+    runConnectedAccountControlCommand,
+    type ConnectedAccountAttemptResponse,
+    type ConnectedAccountConfigurationTarget,
+    type ConnectedAccountControlTarget,
+    type ConnectedAccountDaemonControlResponse,
+} from '@/sync/ops/connectedAccounts/connectedAccountDaemon';
+import {
+    useAllMachines,
+    useMachineListByServerId,
+    useProfile,
+    useSettings,
+} from '@/sync/store/hooks';
+import { useApplySettings } from '@/sync/store/settingsWriters';
+
+import { readConnectedServiceSettingsErrorCode } from '../connectedServiceSettingsErrors';
+import { ConnectedAccountConfigurationForm } from './ConnectedAccountConfigurationForm';
+import { ConnectedAccountDeviceForm } from './ConnectedAccountDeviceForm';
+import { ConnectedAccountManualForm } from './ConnectedAccountManualForm';
+import { ConnectedAccountOAuthForm } from './ConnectedAccountOAuthForm';
+import {
+    ConnectedAccountServiceContent,
+    type ConnectedAccountServiceProfile,
+} from './ConnectedAccountServiceContent';
+
+type ServiceDescription = Extract<
+    ConnectedAccountDaemonControlResponse,
+    { status: 'described' }
+>;
+type ConfigurationDescription = Extract<
+    ConnectedAccountDaemonControlResponse,
+    { status: 'configuration' | 'configurationCommitted' }
+>;
+type ServiceConfigurationStatus =
+    ConfigurationDescription['configuration']['status'];
+type ServiceConfigurationStatusByModeId = Readonly<
+    Record<string, ServiceConfigurationStatus | undefined>
+>;
+type PendingIntent =
+    | Readonly<{
+        kind: 'connect';
+        service: QualifiedConnectedAccountRef['service'];
+        modeId: string;
+    }>
+    | Readonly<{
+        kind: 'reconnect';
+        account: QualifiedConnectedAccountRef;
+    }>;
+
+function asStringParam(value: unknown): string {
+    if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0].trim() : '';
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function localizedText(
+    value: string | Readonly<{ fallback: string }> | undefined,
+): string {
+    return typeof value === 'string' ? value : value?.fallback ?? '';
+}
+
+function toControlTarget(
+    target: ConnectedAccountConfigurationTarget,
+): ConnectedAccountControlTarget {
+    switch (target.kind) {
+        case 'service':
+            return target;
+        case 'account':
+            return { kind: 'account', account: target.account };
+        case 'attempt':
+            return { kind: 'attempt', attemptId: target.attemptId };
+    }
+}
+
+function isTerminalAttempt(response: ConnectedAccountAttemptResponse): boolean {
+    return response.status === 'connected'
+        || response.status === 'cancelled'
+        || response.status === 'rejected'
+        || response.status === 'unavailable'
+        || response.status === 'conflict';
+}
+
+function readControlFailureCode(
+    response: ConnectedAccountDaemonControlResponse,
+    fallback: string,
+): string {
+    return response.status === 'conflict' || response.status === 'unavailable'
+        ? response.code
+        : fallback;
+}
+
+function readLegacyAuthenticationModeId(
+    mapping: Readonly<Partial<Record<'oauth' | 'token', string>>>,
+    kind: 'oauth' | 'token',
+): string | null {
+    return mapping[kind] ?? null;
+}
+
+function projectDaemonPeerTransport(
+    transport: ConnectedAccountPeerOperationTransport,
+): QualifiedConnectedAccountUiPeerTransport {
+    return transport.kind === 'v4'
+        ? { protocol: 'v4' }
+        : {
+            protocol: 'legacy',
+            peerClass: transport.peerClass === 'exact_v0_2_1'
+                ? 'exact-v0.2.1'
+                : 'revisioned-v2-v3',
+            legacyServiceId: transport.serviceId,
+        };
+}
+
+type ConnectedAccountServiceControllerProps = Readonly<{
+    params: ReturnType<typeof useLocalSearchParams>;
+    connectedServicesRegistry:
+        ReturnType<typeof useProjectedConnectedServicesRegistry>;
+    activeServer: ReturnType<typeof useActiveServerSnapshot>;
+    machines: ReturnType<typeof useAllMachines>;
+}>;
+
+const ConnectedAccountServiceController = React.memo(
+    function ConnectedAccountServiceController(
+        controllerProps: ConnectedAccountServiceControllerProps,
+    ) {
+    const {
+        params,
+        connectedServicesRegistry,
+        activeServer,
+        machines,
+    } = controllerProps;
+    const settings = useSettings();
+    const profile = useProfile();
+    const applySettings = useApplySettings();
+    const activeServerId = asStringParam(activeServer.serverId);
+    const activeServerGeneration = activeServer.generation;
+    const route = React.useMemo(
+        () => resolveQualifiedConnectedAccountSettingsRoute(
+            {
+                pluginId: params.pluginId,
+                localId: params.localId,
+                serviceId: params.serviceId,
+                accountId: params.accountId,
+                groupId: params.groupId,
+                serverId: params.serverId,
+                machineId: params.machineId,
+            },
+            connectedServicesRegistry.entries,
+        ),
+        [
+            connectedServicesRegistry.entries,
+            params.localId,
+            params.pluginId,
+            params.serviceId,
+            params.accountId,
+            params.groupId,
+            params.serverId,
+            params.machineId,
+        ],
+    );
+    const operationTarget = resolveConnectedAccountOperationTarget({
+        activeServerId,
+        executionTarget: route?.executionTarget ?? null,
+        machines,
+    });
+    const serverId = operationTarget?.serverId ?? '';
+    const machineId = operationTarget?.machineId ?? '';
+    const expectedActiveServer = React.useMemo(
+        () => serverId === activeServerId
+            ? {
+                serverId,
+                generation: activeServerGeneration,
+            }
+            : null,
+        [activeServerGeneration, activeServerId, serverId],
+    );
+    const servicePluginId = route?.service.pluginId ?? '';
+    const serviceLocalId = route?.service.localId ?? '';
+    const service = React.useMemo(
+        () => servicePluginId && serviceLocalId
+            ? Object.freeze({
+                pluginId: servicePluginId,
+                localId: serviceLocalId,
+            })
+            : null,
+        [serviceLocalId, servicePluginId],
+    );
+    const registryEntry = route?.entry ?? null;
+    const serviceId = registryEntry?.serviceId ?? '';
+    const parsedLegacyServiceId = ConnectedServiceIdSchema.safeParse(
+        route?.legacyServiceId,
+    );
+    const legacyServiceId = parsedLegacyServiceId.success
+        ? parsedLegacyServiceId.data
+        : null;
+    const exactRoute = route !== null;
+
+    const [description, setDescription] = React.useState<ServiceDescription | null>(null);
+    const [
+        serviceConfigurationStatusByModeId,
+        setServiceConfigurationStatusByModeId,
+    ] = React.useState<ServiceConfigurationStatusByModeId>({});
+    const [attempt, setAttempt] = React.useState<ConnectedAccountAttemptResponse | null>(null);
+    const [configuration, setConfiguration] = React.useState<ConfigurationDescription | null>(null);
+    const [
+        configurationContinuationAttemptId,
+        setConfigurationContinuationAttemptId,
+    ] = React.useState<string | null>(null);
+    const [pendingIntent, setPendingIntent] = React.useState<PendingIntent | null>(null);
+    const [activeModeId, setActiveModeId] = React.useState<string | null>(null);
+    const [busy, setBusy] = React.useState(false);
+    const [errorCode, setErrorCode] = React.useState<string | null>(null);
+    const activeControllerRef = React.useRef(true);
+    React.useEffect(() => () => {
+        activeControllerRef.current = false;
+    }, []);
+    const accountPeer = React.useMemo(() => {
+        if (!description?.operationTransport) {
+            return {
+                status: 'loading' as const,
+                transport: null,
+                error: null,
+            };
+        }
+        return {
+            status: 'ready' as const,
+            transport:
+                projectDaemonPeerTransport(description.operationTransport),
+            error: null,
+        };
+    }, [description?.operationTransport]);
+    const groups = useQualifiedConnectedAccountGroups({
+        serverId,
+        service,
+        peer: accountPeer,
+    });
+    const visibleAccounts = React.useMemo<
+        readonly ConnectedAccountServiceProfile[]
+    >(() => {
+        const transport = description?.operationTransport;
+        if (!description || !transport) return [];
+        if (transport.kind === 'v4') return description.accounts;
+        const compatibility =
+            BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
+                transport.serviceId
+            ];
+        if (!compatibility) return [];
+        const legacyService = profile.connectedServicesV2.find(
+            (candidate) => candidate.serviceId === transport.serviceId,
+        );
+        return Object.freeze((legacyService?.profiles ?? []).map(
+            (legacyProfile) => {
+                const kind = legacyProfile.kind === 'oauth'
+                    || legacyProfile.kind === 'token'
+                    ? legacyProfile.kind
+                    : null;
+                const authenticationModeId = kind
+                    ? readLegacyAuthenticationModeId(
+                        compatibility.authenticationModeByCredentialKind,
+                        kind,
+                    )
+                        ?? readLegacyAuthenticationModeId(
+                            compatibility
+                                .unsupportedAuthenticationModeByCredentialKind,
+                            kind,
+                        )
+                        ?? null
+                    : compatibility.defaultAuthenticationModeId;
+                return Object.freeze({
+                    ref: Object.freeze({
+                        service: description.service,
+                        accountId: legacyProfile.profileId,
+                    }),
+                    status: legacyProfile.status,
+                    authenticationModeId,
+                    configurationReady: false,
+                    configurationRevision: null,
+                    displayName: legacyProfile.providerEmail
+                        ?? legacyProfile.providerAccountId
+                        ?? legacyProfile.profileId,
+                    scopes: [] as string[],
+                    ...(legacyProfile.expiresAt === undefined
+                        ? {}
+                        : { expiresAt: legacyProfile.expiresAt }),
+                    ...(legacyProfile.lastUsedAt === undefined
+                        ? {}
+                        : { lastUsedAt: legacyProfile.lastUsedAt }),
+                });
+            },
+        ));
+    }, [description, profile.connectedServicesV2]);
+
+    const refreshDescription = React.useCallback(async (signal?: AbortSignal) => {
+        if (
+            !servicePluginId
+            || !serviceLocalId
+            || !serverId
+            || !machineId
+            || !exactRoute
+        ) return;
+        const result = await runConnectedAccountControlCommand({
+            serverId,
+            machineId,
+            ...(expectedActiveServer ? { expectedActiveServer } : {}),
+            command: {
+                operation: 'describeService',
+                service: {
+                    pluginId: servicePluginId,
+                    localId: serviceLocalId,
+                },
+                requiredOperation: 'account_list',
+            },
+            ...(signal ? { signal } : {}),
+        });
+        if (!activeControllerRef.current) return;
+        if (
+            result.status !== 'described'
+            || result.operationTransport === undefined
+        ) {
+            setErrorCode(readControlFailureCode(
+                result,
+                'connected_account_service_description_unavailable',
+            ));
+            return;
+        }
+        const serviceConfigurationStatusEntries = await Promise.all(
+            result.descriptor.authentication.modes
+                .filter((mode) => mode.configuration?.scope === 'service')
+                .map(async (mode) => {
+                    try {
+                        const configurationResult =
+                            await runConnectedAccountControlCommand({
+                                serverId,
+                                machineId,
+                                ...(expectedActiveServer
+                                    ? { expectedActiveServer }
+                                    : {}),
+                                command: {
+                                    operation: 'readConfiguration',
+                                    target: {
+                                        kind: 'service',
+                                        service: result.service,
+                                        modeId: mode.id,
+                                    },
+                                },
+                                ...(signal ? { signal } : {}),
+                            });
+                        const current =
+                            configurationResult.status === 'configuration'
+                            && configurationResult.target.kind === 'service'
+                            && configurationResult.target.service.pluginId
+                                === result.service.pluginId
+                            && configurationResult.target.service.localId
+                                === result.service.localId
+                            && configurationResult.target.modeId === mode.id
+                            && configurationResult.mode.id === mode.id
+                            && configurationResult.generation
+                                === result.generation
+                            && configurationResult.immutableGenerationId
+                                === result.immutableGenerationId;
+                        return [
+                            mode.id,
+                            current
+                                ? configurationResult.configuration.status
+                                : 'configurationRequired',
+                        ] as const;
+                    } catch (error) {
+                        if (signal?.aborted) throw error;
+                        return [
+                            mode.id,
+                            'configurationRequired',
+                        ] as const;
+                    }
+                }),
+        );
+        if (!activeControllerRef.current || signal?.aborted) return;
+        setServiceConfigurationStatusByModeId(Object.freeze(
+            Object.fromEntries(serviceConfigurationStatusEntries),
+        ));
+        setDescription(result);
+        setErrorCode(null);
+    }, [
+        exactRoute,
+        machineId,
+        expectedActiveServer,
+        serverId,
+        serviceLocalId,
+        servicePluginId,
+    ]);
+
+    React.useEffect(() => {
+        const controller = new AbortController();
+        void refreshDescription(controller.signal).catch(() => {
+            if (!controller.signal.aborted) setErrorCode('connected_account_daemon_unavailable');
+        });
+        return () => controller.abort();
+    }, [refreshDescription]);
+
+    const readConfiguration = React.useCallback(async (
+        target: ConnectedAccountConfigurationTarget,
+    ) => {
+        if (!serverId || !machineId) return;
+        const result = await runConnectedAccountControlCommand({
+            serverId,
+            machineId,
+            ...(expectedActiveServer ? { expectedActiveServer } : {}),
+            command: {
+                operation: 'readConfiguration',
+                target: toControlTarget(target),
+            },
+        });
+        if (!activeControllerRef.current) return;
+        if (result.status === 'configuration') {
+            setConfiguration(result);
+            setActiveModeId(result.mode.id);
+            setErrorCode(null);
+        } else {
+            setErrorCode(readControlFailureCode(
+                result,
+                'connected_account_configuration_unavailable',
+            ));
+        }
+    }, [expectedActiveServer, machineId, serverId]);
+
+    const acceptAttemptResponse = React.useCallback(async (
+        response: ConnectedAccountAttemptResponse,
+    ) => {
+        if (!activeControllerRef.current) return;
+        setAttempt(response);
+        if (isTerminalAttempt(response)) {
+            setPendingIntent(null);
+            setConfigurationContinuationAttemptId(null);
+        }
+        if (response.status === 'configurationRequired') {
+            setConfigurationContinuationAttemptId(
+                response.attemptId ?? null,
+            );
+            await readConfiguration(response.target);
+            return;
+        }
+        if (response.status === 'connected') {
+            setAttempt(null);
+            setConfiguration(null);
+            await refreshDescription();
+            return;
+        }
+        if (
+            response.status === 'rejected'
+            || response.status === 'unavailable'
+            || response.status === 'conflict'
+            || response.status === 'reconnectRequired'
+            || response.status === 'cleanupPending'
+        ) {
+            setErrorCode(response.code);
+        } else {
+            setErrorCode(null);
+        }
+    }, [readConfiguration, refreshDescription]);
+
+    const runAuthentication = React.useCallback(async (
+        command: Parameters<typeof runConnectedAccountAuthenticationCommand>[0]['command'],
+    ) => {
+        if (!serverId || !machineId) return;
+        setBusy(true);
+        try {
+            const response = await runConnectedAccountAuthenticationCommand({
+                serverId,
+                machineId,
+                ...(expectedActiveServer ? { expectedActiveServer } : {}),
+                command,
+            });
+            if (!activeControllerRef.current) return;
+            await acceptAttemptResponse(response);
+        } catch {
+            if (!activeControllerRef.current) return;
+            setErrorCode('connected_account_daemon_unavailable');
+        } finally {
+            if (activeControllerRef.current) setBusy(false);
+        }
+    }, [
+        acceptAttemptResponse,
+        expectedActiveServer,
+        machineId,
+        serverId,
+    ]);
+
+    const beginIntent = React.useCallback(async (
+        intent: PendingIntent,
+        expectedConfigurationRevision?: string,
+    ) => {
+        setPendingIntent(intent);
+        if (intent.kind === 'connect') {
+            setActiveModeId(intent.modeId);
+            await runAuthentication({
+                operation: 'beginConnect',
+                service: intent.service,
+                modeId: intent.modeId,
+                ...(expectedConfigurationRevision
+                    ? { expectedConfigurationRevision }
+                    : {}),
+            });
+            return;
+        }
+        const account = visibleAccounts.find((candidate) => (
+            candidate.ref.accountId === intent.account.accountId
+            && candidate.ref.service.pluginId === intent.account.service.pluginId
+            && candidate.ref.service.localId === intent.account.service.localId
+        ));
+        setActiveModeId(account?.authenticationModeId ?? null);
+        await runAuthentication({
+            operation: 'beginReconnect',
+            account: intent.account,
+            ...(expectedConfigurationRevision
+                ? { expectedConfigurationRevision }
+            : {}),
+        });
+    }, [runAuthentication, visibleAccounts]);
+
+    const activeMode: PluginConnectedAccountAuthenticationModeV2 | null =
+        description?.descriptor.authentication.modes.find(
+            (candidate) => candidate.id === activeModeId,
+        ) ?? null;
+    const activeModeKind = activeMode?.kind ?? null;
+
+    React.useEffect(() => {
+        if (!attempt || busy) return;
+        const attemptId = 'attemptId' in attempt ? attempt.attemptId : undefined;
+        if (!attemptId) return;
+        if (attempt.status !== 'starting' && attempt.status !== 'pending') return;
+        if (attempt.status === 'pending' && activeModeKind === null) return;
+        const delayMs = attempt.status === 'pending'
+            ? Math.max(250, attempt.retryAfterMs)
+            : 250;
+        const timeout = setTimeout(() => {
+            void runAuthentication(
+                attempt.status === 'pending'
+                    ? {
+                        operation: activeModeKind === 'oauthDeviceCode'
+                            ? 'pollDevice'
+                            : 'reconcile',
+                        attemptId,
+                    }
+                    : { operation: 'read', attemptId },
+            );
+        }, delayMs);
+        return () => clearTimeout(timeout);
+    }, [activeModeKind, attempt, busy, runAuthentication]);
+
+    const revokeAccount = React.useCallback(async (
+        account: QualifiedConnectedAccountRef,
+    ) => {
+        const serviceLabel = localizedText(description?.descriptor.title) || serviceId;
+        const confirmed = await Modal.confirm(
+            t('modals.disconnect'),
+            t('connectedServices.detail.disconnectConfirmBody', {
+                service: serviceLabel,
+                profileId: account.accountId,
+            }),
+            {
+                confirmText: t('modals.disconnect'),
+                cancelText: t('common.cancel'),
+            },
+        );
+        if (!confirmed || !activeControllerRef.current) return;
+
+        const revoke = async (cleanupGroupReferences: boolean) => {
+            try {
+                return await runConnectedAccountControlCommand({
+                    serverId,
+                    machineId,
+                    ...(expectedActiveServer ? { expectedActiveServer } : {}),
+                    command: {
+                        operation: 'revokeAccount',
+                        account,
+                        cleanupGroupReferences,
+                    },
+                });
+            } catch (error) {
+                const code = readConnectedServiceSettingsErrorCode(error);
+                if (code === 'connect_credential_referenced_by_group') {
+                    return { status: 'conflict' as const, code };
+                }
+                throw error;
+            }
+        };
+
+        setBusy(true);
+        try {
+            let result = await revoke(false);
+            if (!activeControllerRef.current) return;
+            if (
+                result.status === 'conflict'
+                && result.code === 'connect_credential_referenced_by_group'
+            ) {
+                const cleanupConfirmed = await Modal.confirm(
+                    t('modals.disconnect'),
+                    t('connectedServices.errors.credentialReferencedByGroup'),
+                    {
+                        confirmText: t('modals.disconnect'),
+                        cancelText: t('common.cancel'),
+                    },
+                );
+                if (!cleanupConfirmed || !activeControllerRef.current) return;
+                result = await revoke(true);
+                if (!activeControllerRef.current) return;
+            }
+            if (result.status === 'revoked') {
+                applySettings(pruneQualifiedConnectedAccountPreferences({
+                    service: account.service,
+                    legacyServiceId,
+                    accountId: account.accountId,
+                    defaultAccountByServiceKey:
+                        settings.connectedServicesDefaultProfileByServiceId,
+                    labelsByKey:
+                        settings.connectedServicesProfileLabelByKey,
+                }));
+                await refreshDescription();
+                return;
+            }
+            setErrorCode(
+                result.status === 'outcomeUnknown'
+                    ? 'connected_account_revoke_outcome_unknown'
+                    : readControlFailureCode(
+                        result,
+                        'connected_account_revoke_unavailable',
+                    ),
+            );
+        } catch (error) {
+            if (!activeControllerRef.current) return;
+            setErrorCode(
+                readConnectedServiceSettingsErrorCode(error)
+                ?? 'connected_account_daemon_unavailable',
+            );
+        } finally {
+            if (activeControllerRef.current) setBusy(false);
+        }
+    }, [
+        applySettings,
+        expectedActiveServer,
+        description?.descriptor.title,
+        machineId,
+        refreshDescription,
+        legacyServiceId,
+        serverId,
+        serviceId,
+        settings.connectedServicesDefaultProfileByServiceId,
+        settings.connectedServicesProfileLabelByKey,
+    ]);
+
+    if (!exactRoute || !service || !serverId || !machineId) {
+        return (
+            <ItemList>
+                <ItemGroup title={t('connectedServices.title')}>
+                    <Item
+                        title={t('connectedServices.detail.unknownService')}
+                        mode="info"
+                        showChevron={false}
+                    />
+                </ItemGroup>
+            </ItemList>
+        );
+    }
+
+    const title = localizedText(description?.descriptor.title)
+        || localizedText(registryEntry?.projectedTitle)
+        || serviceId;
+    const supportsOperation = (
+        operation: BuiltInLegacyConnectedAccountOperation,
+    ): boolean => {
+        const transport = description?.operationTransport;
+        if (!transport) return false;
+        if (transport.kind === 'v4') return true;
+        return isQualifiedConnectedAccountLegacyOperationSupported({
+            service,
+            legacyServiceId: transport.serviceId,
+            peerClass: transport.peerClass === 'exact_v0_2_1'
+                ? 'exact-v0.2.1'
+                : 'revisioned-v2-v3',
+            operation,
+        });
+    };
+    const transport = description?.operationTransport;
+    const descriptorModes =
+        description?.descriptor.authentication.modes ?? [];
+    const mutationModes = transport?.kind === 'v4'
+        ? descriptorModes
+        : transport?.kind === 'legacy'
+            && transport.peerClass === 'revisioned_v2_v3'
+            && descriptorModes.length === 1
+            ? descriptorModes.filter((mode) => {
+                const compatibility =
+                    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
+                        transport.serviceId
+                    ];
+                return compatibility
+                    ? (
+                        Object.values(
+                            compatibility.authenticationModeByCredentialKind,
+                        ) as readonly string[]
+                    ).includes(mode.id)
+                    : false;
+            })
+            : [];
+    const legacyMutationModeIds = new Set(
+        mutationModes.map((mode) => mode.id),
+    );
+    const credentialWriteAllowed = supportsOperation('credential_write')
+        && (
+            transport?.kind === 'v4'
+            || legacyMutationModeIds.size === 1
+        );
+    const credentialDeleteAllowed = supportsOperation('credential_delete')
+        && (
+            transport?.kind === 'v4'
+            || (
+                transport?.kind === 'legacy'
+                && transport.peerClass === 'revisioned_v2_v3'
+            )
+        );
+    const attemptId = attempt && 'attemptId' in attempt ? attempt.attemptId : null;
+    const connectedAccountIds = visibleAccounts
+        .filter((account) => (
+            account.ref.service.pluginId === service.pluginId
+            && account.ref.service.localId === service.localId
+        ))
+        .map((account) => account.ref.accountId);
+    const defaultAccountId = resolveQualifiedConnectedAccountDefaultId({
+        service,
+        legacyServiceId,
+        connectedAccountIds,
+        defaultAccountByServiceKey:
+            settings.connectedServicesDefaultProfileByServiceId,
+    });
+    const accountLabels = Object.fromEntries(
+        connectedAccountIds.map((accountId) => [
+            accountId,
+            resolveQualifiedConnectedAccountLabel({
+                labelsByKey: settings.connectedServicesProfileLabelByKey,
+                service,
+                legacyServiceId,
+                accountId,
+            }) ?? undefined,
+        ]),
+    );
+
+    const editAccountLabel = async (account: QualifiedConnectedAccountRef) => {
+        const current = accountLabels[account.accountId] ?? '';
+        const result = await Modal.prompt(
+            t('connectedServices.detail.actions.editLabel'),
+            t('connectedServices.detail.actions.editLabel'),
+            {
+                defaultValue: current,
+                confirmText: t('common.save'),
+                cancelText: t('common.cancel'),
+            },
+        );
+        if (
+            typeof result !== 'string'
+            || !activeControllerRef.current
+        ) return;
+        applySettings({
+            connectedServicesProfileLabelByKey:
+                updateQualifiedConnectedAccountLabel({
+                    service,
+                    legacyServiceId,
+                    accountId: account.accountId,
+                    label: result,
+                    labelsByKey:
+                        settings.connectedServicesProfileLabelByKey,
+                }),
+        });
+    };
+
+    const toggleDefaultAccount = (account: QualifiedConnectedAccountRef) => {
+        applySettings({
+            connectedServicesDefaultProfileByServiceId:
+                updateQualifiedConnectedAccountDefaultId({
+                    service,
+                    legacyServiceId,
+                    accountId: defaultAccountId === account.accountId
+                        ? null
+                        : account.accountId,
+                    defaultAccountByServiceKey:
+                        settings.connectedServicesDefaultProfileByServiceId,
+                }),
+        });
+    };
+
+    return (
+        <ItemList>
+            {description ? (
+                <ConnectedAccountServiceContent
+                    title={title}
+                    service={service}
+                    legacyServiceId={legacyServiceId}
+                    focus={route.focus}
+                    modes={mutationModes}
+                    accounts={visibleAccounts}
+                    serviceConfigurationStatusByModeId={
+                        serviceConfigurationStatusByModeId
+                    }
+                    accountLabels={accountLabels}
+                    defaultAccountId={defaultAccountId}
+                    groups={groups}
+                    busy={busy}
+                    onEditLabel={credentialWriteAllowed ? (account) => {
+                        void editAccountLabel(account);
+                    } : undefined}
+                    onToggleDefault={
+                        credentialWriteAllowed
+                            ? toggleDefaultAccount
+                            : undefined
+                    }
+                    onConfigureAccount={credentialWriteAllowed ? (account) => {
+                        const modeId = visibleAccounts.find((candidate) => (
+                            candidate.ref.accountId === account.accountId
+                            && candidate.ref.service.pluginId
+                                === account.service.pluginId
+                            && candidate.ref.service.localId
+                                === account.service.localId
+                        ))?.authenticationModeId;
+                        if (!modeId) return;
+                        const mode =
+                            description.descriptor.authentication.modes.find(
+                                (candidate) => candidate.id === modeId,
+                            );
+                        if (!mode?.configuration) return;
+                        setAttempt(null);
+                        setPendingIntent(null);
+                        setConfigurationContinuationAttemptId(null);
+                        setActiveModeId(modeId);
+                        void readConfiguration(
+                            {
+                                kind: 'account',
+                                account,
+                                modeId,
+                            },
+                        );
+                    } : undefined}
+                    onConfigureService={credentialWriteAllowed ? (modeId) => {
+                        const mode =
+                            description.descriptor.authentication.modes.find(
+                                (candidate) => candidate.id === modeId,
+                            );
+                        if (mode?.configuration?.scope !== 'service') return;
+                        setAttempt(null);
+                        setPendingIntent(null);
+                        setConfigurationContinuationAttemptId(null);
+                        setActiveModeId(modeId);
+                        void readConfiguration({
+                            kind: 'service',
+                            service,
+                            modeId,
+                        });
+                    } : undefined}
+                    onBeginConnect={credentialWriteAllowed ? (intent) => {
+                        void beginIntent({ kind: 'connect', ...intent });
+                    } : undefined}
+                    onBeginReconnect={credentialWriteAllowed ? (account) => {
+                        void beginIntent({ kind: 'reconnect', account });
+                    } : undefined}
+                    canReconnectAccount={(account) => (
+                        transport?.kind === 'v4'
+                        || (
+                            account.authenticationModeId !== null
+                            && legacyMutationModeIds.has(
+                                account.authenticationModeId,
+                            )
+                        )
+                    )}
+                    onRevoke={credentialDeleteAllowed ? (account) => {
+                        void revokeAccount(account);
+                    } : undefined}
+                />
+            ) : (
+                <ItemGroup title={title || t('connectedServices.title')}>
+                    <Item
+                        title={
+                            errorCode
+                            ?? (
+                                accountPeer.status !== 'ready'
+                                    ? accountPeer.error
+                                    : null
+                            )
+                            ?? t('connectedServices.deviceAuth.preparing')
+                        }
+                        mode="info"
+                        showChevron={false}
+                    />
+                </ItemGroup>
+            )}
+
+            {attempt?.status === 'awaitingManual' && activeMode?.kind === 'manual' ? (
+                <ConnectedAccountManualForm
+                    key={attempt.attemptId}
+                    title={localizedText(activeMode.title) || title}
+                    fields={activeMode.fields}
+                    submitting={busy}
+                    onSubmit={({ fields }) => runAuthentication({
+                        operation: 'submitManual',
+                        attemptId: attempt.attemptId,
+                        fields,
+                    })}
+                />
+            ) : null}
+
+            {attempt?.status === 'awaitingOAuth' ? (
+                <ConnectedAccountOAuthForm
+                    key={attempt.attemptId}
+                    authorizationUrl={attempt.authorizationUrl ?? ''}
+                    callbackUrl={attempt.callbackUrl}
+                    submitting={busy}
+                    onSubmit={(completion) => runAuthentication({
+                        operation: 'completeOAuth',
+                        attemptId: attempt.attemptId,
+                        completion,
+                    })}
+                />
+            ) : null}
+
+            {attempt?.status === 'awaitingDeviceAuthorization' ? (
+                <ConnectedAccountDeviceForm
+                    key={attempt.attemptId}
+                    verificationUri={attempt.verificationUri}
+                    verificationUriComplete={attempt.verificationUriComplete}
+                    userCode={attempt.userCode}
+                    busy={busy}
+                    onPoll={() => runAuthentication({
+                        operation: 'pollDevice',
+                        attemptId: attempt.attemptId,
+                    })}
+                    onResume={() => runAuthentication({
+                        operation: 'resumeDevice',
+                        attemptId: attempt.attemptId,
+                    })}
+                />
+            ) : null}
+
+            {configuration && activeMode?.configuration ? (
+                <ConnectedAccountConfigurationForm
+                    key={`${configuration.generation}:${configuration.configuration.revision ?? 'new'}`}
+                    title={localizedText(activeMode.title) || title}
+                    fields={activeMode.configuration.fields}
+                    values={configuration.configuration.values}
+                    configuredSecretFieldIds={
+                        configuration.configuration.configuredSecretFieldIds
+                    }
+                    saving={busy}
+                    onSubmit={async ({ values, secretValues }) => {
+                        setBusy(true);
+                        try {
+                            const committed = await runConnectedAccountControlCommand({
+                                serverId,
+                                machineId,
+                                ...(expectedActiveServer ? { expectedActiveServer } : {}),
+                                command: {
+                                    operation: 'replaceConfiguration',
+                                    target: toControlTarget(configuration.target),
+                                    expectedRevision: configuration.configuration.revision,
+                                    values,
+                                    secretValues,
+                                },
+                            });
+                            if (!activeControllerRef.current) return;
+                            if (committed.status !== 'configurationCommitted') {
+                                setErrorCode(readControlFailureCode(
+                                    committed,
+                                    'connected_account_configuration_unavailable',
+                                ));
+                                return;
+                            }
+                            setConfiguration(null);
+                            const revision = committed.configuration.revision ?? undefined;
+                            const changeBehavior =
+                                committed.mode.configuration?.changeBehavior;
+                            if (configurationContinuationAttemptId) {
+                                await acceptAttemptResponse(
+                                    await runConnectedAccountAuthenticationCommand({
+                                        serverId,
+                                        machineId,
+                                        ...(expectedActiveServer ? { expectedActiveServer } : {}),
+                                        command: {
+                                            operation: 'continueConnect',
+                                            attemptId:
+                                                configurationContinuationAttemptId,
+                                            ...(revision
+                                                ? { expectedConfigurationRevision: revision }
+                                                : {}),
+                                        },
+                                    }),
+                                );
+                                if (!activeControllerRef.current) return;
+                            } else if (pendingIntent) {
+                                await beginIntent(pendingIntent, revision);
+                            } else {
+                                await refreshDescription();
+                                if (changeBehavior) {
+                                    await Modal.alert(
+                                        t('connectedServices.account.configurationUpdatedTitle'),
+                                        changeBehavior === 'refresh'
+                                            ? t('connectedServices.account.configurationRefreshApplied')
+                                            : t('connectedServices.account.configurationReconnectApplied'),
+                                    );
+                                }
+                            }
+                        } catch {
+                            if (!activeControllerRef.current) return;
+                            setErrorCode('connected_account_configuration_unavailable');
+                        } finally {
+                            if (activeControllerRef.current) setBusy(false);
+                        }
+                    }}
+                />
+            ) : null}
+
+            {attempt?.status === 'outcomeUnknown' ? (
+                <ItemGroup title={t('connectedServices.detail.actionsGroupTitle')}>
+                    <Item
+                        testID="connected-account:reconcile"
+                        title={t('common.retry')}
+                        disabled={busy}
+                        onPress={() => {
+                            void runAuthentication({
+                                operation: 'reconcile',
+                                attemptId: attempt.attemptId,
+                            });
+                        }}
+                    />
+                </ItemGroup>
+            ) : null}
+
+            {errorCode ? (
+                <ItemGroup title={t('common.error')}>
+                    <Item
+                        testID="connected-account:error"
+                        title={
+                            errorCode === 'connected_account_configuration_invalid'
+                                ? t('connectedServices.account.configurationInvalid')
+                                : t('common.error')
+                        }
+                        mode="info"
+                        showChevron={false}
+                    />
+                </ItemGroup>
+            ) : null}
+
+            {(
+                pendingIntent
+                && attempt
+                && (
+                    attempt.status === 'reconnectRequired'
+                    || attempt.status === 'rejected'
+                    || attempt.status === 'unavailable'
+                    || attempt.status === 'conflict'
+                )
+            ) ? (
+                <ItemGroup title={t('connectedServices.detail.actionsGroupTitle')}>
+                    <Item
+                        testID="connected-account:retry"
+                        title={t('common.retry')}
+                        disabled={busy}
+                        onPress={() => {
+                            void beginIntent(pendingIntent);
+                        }}
+                    />
+                </ItemGroup>
+            ) : null}
+
+            {attemptId && attempt && !isTerminalAttempt(attempt) ? (
+                <ItemGroup title={t('connectedServices.detail.actionsGroupTitle')}>
+                    <Item
+                        testID="connected-account:cancel"
+                        title={t('common.cancel')}
+                        disabled={busy}
+                        onPress={() => {
+                            void runAuthentication({ operation: 'cancel', attemptId });
+                        }}
+                    />
+                </ItemGroup>
+            ) : null}
+        </ItemList>
+    );
+});
+
+export function ConnectedAccountServiceView() {
+    const params = useLocalSearchParams();
+    const connectedServicesRegistry =
+        useProjectedConnectedServicesRegistry();
+    const activeServer = useActiveServerSnapshot();
+    const activeMachines = useAllMachines();
+    const machineListByServerId = useMachineListByServerId();
+    const activeServerId = asStringParam(activeServer.serverId);
+    const requestedServerId = asStringParam(params.serverId);
+    const machines = React.useMemo(
+        () => [
+            ...(resolveServerScopedMachines({
+                serverId: requestedServerId || activeServerId,
+                activeServerId,
+                activeMachines,
+                machineListByServerId,
+            }) ?? []),
+        ],
+        [
+            activeMachines,
+            activeServerId,
+            machineListByServerId,
+            requestedServerId,
+        ],
+    );
+    const requestedMachineId = asStringParam(params.machineId);
+    const machine = requestedMachineId
+        ? machines.find((candidate) => candidate.id === requestedMachineId) ?? null
+        : machines.find(
+            (candidate) => candidate.active === true,
+        ) ?? machines[0] ?? null;
+    const controllerKey = [
+        activeServerId,
+        String(activeServer.generation ?? ''),
+        machine?.id ?? '',
+        asStringParam(params.pluginId),
+        asStringParam(params.localId),
+        asStringParam(params.serviceId),
+        asStringParam(params.accountId),
+        asStringParam(params.groupId),
+        requestedServerId,
+        requestedMachineId,
+    ].join('\u0000');
+
+    return (
+        <ConnectedAccountServiceController
+            key={controllerKey}
+            params={params}
+            connectedServicesRegistry={connectedServicesRegistry}
+            activeServer={activeServer}
+            machines={machines}
+        />
+    );
+}

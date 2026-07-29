@@ -8,10 +8,42 @@ import { installNavigationShellCommonModuleMocks } from './navigationShellTestHe
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const pushSpy = vi.fn();
+const pendingRequestObservedAt = Date.now();
+const inboxFixtureState = vi.hoisted(() => ({
+    includeHiddenVoiceTranscriptPermission: false,
+    includeHiddenVoiceLateResult: false,
+}));
 const storageState = {
     profile: { id: 'me' },
     sessionMessages: {
         'session-1': { messages: [] },
+        'hidden-voice': {
+            messages: [
+                {
+                    kind: 'tool-call',
+                    id: 'hidden-voice-tool-message',
+                    localId: null,
+                    createdAt: pendingRequestObservedAt,
+                    children: [],
+                    tool: {
+                        id: 'hidden-voice-permission',
+                        name: 'Bash',
+                        state: 'running',
+                        input: { command: 'git status' },
+                        createdAt: pendingRequestObservedAt,
+                        startedAt: pendingRequestObservedAt,
+                        completedAt: null,
+                        description: 'Inspect repository status',
+                        permission: {
+                            id: 'hidden-voice-permission',
+                            status: 'pending',
+                            kind: 'permission',
+                        },
+                    },
+                },
+            ],
+        },
+        'hidden-voice-late-result': { messages: [] },
     },
     sessions: {
         'session-1': {
@@ -121,7 +153,7 @@ installNavigationShellCommonModuleMocks({
                                 tool: 'Bash',
                                 kind: 'permission',
                                 arguments: { command: 'pwd' },
-                                createdAt: 1,
+                                createdAt: pendingRequestObservedAt - 1,
                             },
                             ask_1: {
                                 tool: 'AskUserQuestion',
@@ -129,7 +161,7 @@ installNavigationShellCommonModuleMocks({
                                 arguments: {
                                     questions: [{ question: 'Continue?', header: 'Confirm', options: [{ label: 'Yes', description: 'Proceed' }] }],
                                 },
-                                createdAt: 2,
+                                createdAt: pendingRequestObservedAt,
                             },
                         },
                         completedRequests: {},
@@ -154,7 +186,7 @@ installNavigationShellCommonModuleMocks({
                                 tool: 'Bash',
                                 kind: 'permission',
                                 arguments: { command: 'pwd' },
-                                createdAt: 1,
+                                createdAt: pendingRequestObservedAt - 1,
                             },
                             ask_1: {
                                 tool: 'AskUserQuestion',
@@ -162,13 +194,78 @@ installNavigationShellCommonModuleMocks({
                                 arguments: {
                                     questions: [{ question: 'Continue?', header: 'Confirm', options: [{ label: 'Yes', description: 'Proceed' }] }],
                                 },
-                                createdAt: 2,
+                                createdAt: pendingRequestObservedAt,
                             },
                         },
                         completedRequests: {},
                     },
                     owner: null,
                 },
+                ...(inboxFixtureState.includeHiddenVoiceTranscriptPermission
+                    ? [{
+                        id: 'hidden-voice',
+                        serverId: 'server-a',
+                        seq: 1,
+                        lastViewedSessionSeq: 1,
+                        updatedAt: pendingRequestObservedAt,
+                        createdAt: pendingRequestObservedAt,
+                        active: true,
+                        activeAt: pendingRequestObservedAt,
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 'online',
+                        metadata: {
+                            name: 'Hidden Voice session',
+                            path: '/Users/leeroy/repo',
+                            homeDir: '/Users/leeroy',
+                            machineId: 'machine-stale',
+                            systemSessionV1: {
+                                v: 1,
+                                key: 'voice_conversation',
+                                hidden: true,
+                            },
+                        },
+                        metadataVersion: 1,
+                        agentState: null,
+                        agentStateVersion: 1,
+                        pendingPermissionRequestCount: 1,
+                        pendingRequestObservedAt,
+                        owner: null,
+                    }]
+                    : []),
+                ...(inboxFixtureState.includeHiddenVoiceLateResult
+                    ? [{
+                        id: 'hidden-voice-late-result',
+                        serverId: 'server-a',
+                        seq: 2,
+                        lastViewedSessionSeq: 1,
+                        latestReadyEventSeq: 2,
+                        updatedAt: pendingRequestObservedAt + 1,
+                        createdAt: pendingRequestObservedAt,
+                        active: false,
+                        activeAt: pendingRequestObservedAt,
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 'offline',
+                        metadata: {
+                            name: 'Global Voice late result',
+                            path: '/Users/leeroy/repo',
+                            homeDir: '/Users/leeroy',
+                            machineId: 'machine-stale',
+                            systemSessionV1: {
+                                v: 1,
+                                key: 'voice_conversation_retired',
+                                hidden: true,
+                            },
+                        },
+                        metadataVersion: 1,
+                        agentState: null,
+                        agentStateVersion: 1,
+                        pendingPermissionRequestCount: 0,
+                        pendingRequestObservedAt: null,
+                        owner: null,
+                    }]
+                    : []),
             ],
             useAllSessionListRenderables: () => [
                 {
@@ -279,7 +376,16 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: ({ title, subtitle, testID }: any) => React.createElement('Item', { title, subtitle, testID }),
+    Item: ({ title, subtitle, testID, ...props }: any) => React.createElement('Item', {
+        title,
+        subtitle,
+        testID,
+        ...props,
+    }),
+}));
+
+vi.mock('@/components/ui/cards/UserCard', () => ({
+    UserCard: 'UserCard',
 }));
 
 vi.mock('@/components/ui/feedback/UpdateBanner', () => ({
@@ -340,6 +446,8 @@ function collectText(node: renderer.ReactTestRenderer): string[] {
 describe('InboxView session attention', () => {
     beforeEach(() => {
         pushSpy.mockReset();
+        inboxFixtureState.includeHiddenVoiceTranscriptPermission = false;
+        inboxFixtureState.includeHiddenVoiceLateResult = false;
     });
 
     it('renders actionable grouped session attention with machine and path context', async () => {
@@ -357,6 +465,50 @@ describe('InboxView session attention', () => {
         expect(text).toContain('Rebound workstation');
         expect(text).toContain('~/repo');
         expect(text).not.toContain('status.permissionRequired');
+    });
+
+    it('renders a transcript-only hidden Voice permission as an actionable Inbox card', async () => {
+        inboxFixtureState.includeHiddenVoiceTranscriptPermission = true;
+        const { InboxView } = await import('./InboxView');
+
+        const tree = (await renderScreen(<InboxView />)).tree;
+
+        const hiddenVoiceCard = tree.findByTestId('inbox.session_attention.hidden-voice');
+        expect(hiddenVoiceCard).not.toBeNull();
+        if (!hiddenVoiceCard) {
+            throw new Error('Expected hidden Voice permission card.');
+        }
+        expect(
+            tree.findAllByType('PermissionPromptCard')
+                .some((card) => card.props.request.id === 'hidden-voice-permission'),
+        ).toBe(true);
+
+        await renderer.act(async () => {
+            hiddenVoiceCard.findByType('Pressable').props.onPress();
+        });
+        expect(pushSpy).toHaveBeenCalledWith('/session/hidden-voice?serverId=server-a');
+    });
+
+    it('navigates an unread hidden post-Voice result to its exact scoped session', async () => {
+        inboxFixtureState.includeHiddenVoiceLateResult = true;
+        const { InboxView } = await import('./InboxView');
+
+        const tree = (await renderScreen(<InboxView />)).tree;
+        const lateResultItem = tree.findAllByType('Item')
+            .find((item) => item.props.title === 'Global Voice late result');
+        expect(lateResultItem).toBeDefined();
+        if (!lateResultItem) {
+            throw new Error('Expected hidden Voice late-result Inbox item.');
+        }
+
+        await renderer.act(async () => {
+            lateResultItem.props.onPress();
+        });
+
+        expect(pushSpy).toHaveBeenCalledTimes(1);
+        expect(pushSpy).toHaveBeenCalledWith(
+            '/session/hidden-voice-late-result?serverId=server-a',
+        );
     });
 
     it('renders unread sessions in inbox and does not list shared sessions there', async () => {

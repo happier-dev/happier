@@ -27,7 +27,10 @@ type FetchAndApplySessionsCall = Readonly<{
     shouldContinue?: () => boolean;
     applySessions: (sessions: unknown[]) => void;
 }>;
-const fetchAndApplySessionsSpy = vi.hoisted(() => vi.fn(async (_params: FetchAndApplySessionsCall) => {}));
+const fetchAndApplySessionsSpy = vi.hoisted(() => vi.fn(async (_params: FetchAndApplySessionsCall) => ({
+    hasNext: false,
+    nextCursor: null,
+})));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -78,6 +81,14 @@ vi.mock('./engine/sessions/syncSessions', async () => {
     };
 });
 
+vi.mock('./engine/artifacts/syncArtifacts', async () => {
+    const actual = await vi.importActual<typeof import('./engine/artifacts/syncArtifacts')>('./engine/artifacts/syncArtifacts');
+    return {
+        ...actual,
+        fetchAndApplyArtifactsList: vi.fn(async () => {}),
+    };
+});
+
 describe('sync archived session fetch server-scope guards', () => {
     beforeEach(() => {
         vi.resetModules();
@@ -123,5 +134,70 @@ describe('sync archived session fetch server-scope guards', () => {
 
         params.applySessions([{ id: 'session-after-switch' }]);
         expect(applySessionsSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('replays an archived sessions fetch requested before credentials are restored', async () => {
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        const { sync } = await import('./sync');
+
+        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+
+        await (sync as any).fetchArchivedSessions();
+
+        expect(fetchAndApplySessionsSpy).not.toHaveBeenCalled();
+
+        await (sync as any).restore(
+            { token: 'hdr.eyJzdWIiOiJ0ZXN0In0.sig', secret: 'secret' },
+            {
+                anonID: 'anon-test',
+                configureAesBatchConcurrencyLimit: () => {},
+                configureNativeCryptoWorker: () => {},
+                warmNativeCryptoWorkerForDiagnostics: async () => {},
+                decryptEncryptionKey: async () => null,
+                initializeSessions: async () => {},
+                getSessionEncryption: () => null,
+            },
+        );
+
+        await expect.poll(() => (
+            fetchAndApplySessionsSpy.mock.calls.some((call) => call[0]?.sessionListPath === '/v2/sessions/archived')
+        )).toBe(true);
+    });
+
+    it('replays an archived sessions fetch aborted by an active server switch', async () => {
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        const { sync } = await import('./sync');
+        const encryption = {
+            anonID: 'anon-test',
+            configureAesBatchConcurrencyLimit: () => {},
+            configureNativeCryptoWorker: () => {},
+            warmNativeCryptoWorkerForDiagnostics: async () => {},
+            decryptEncryptionKey: async () => null,
+            initializeSessions: async () => {},
+            getSessionEncryption: () => null,
+        };
+
+        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+
+        (sync as any).credentials = { token: 'hdr.eyJzdWIiOiJ0ZXN0In0.sig', secret: 'secret' };
+        (sync as any).encryption = encryption;
+        (sync as any).sessionDataKeys = new Map<string, Uint8Array>();
+
+        const serverSwitchAbort = new Error('Aborted request due to an active server switch');
+        serverSwitchAbort.name = 'ServerFetchAbortedForServerSwitchError';
+        fetchAndApplySessionsSpy.mockRejectedValueOnce(serverSwitchAbort);
+
+        await expect((sync as any).fetchArchivedSessions()).resolves.toBeUndefined();
+
+        await (sync as any).restore(
+            { token: 'hdr.eyJzdWIiOiJ0ZXN0In0.sig', secret: 'secret' },
+            encryption,
+        );
+
+        await expect.poll(() => (
+            fetchAndApplySessionsSpy.mock.calls
+                .filter((call) => call[0]?.sessionListPath === '/v2/sessions/archived')
+                .length
+        )).toBeGreaterThanOrEqual(2);
     });
 });

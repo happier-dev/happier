@@ -37,7 +37,7 @@ const BASE_DRAFT: SessionAuthoringDraft = {
 };
 
 describe('buildNewSessionAuthoringContext', () => {
-    it('allows live launch only when the selected machine has exact spawn readiness', () => {
+    it('allows live launch when the selected machine is structurally ready', () => {
         const context = buildNewSessionAuthoringContext({
             automationDraft: {
                 enabled: false,
@@ -54,7 +54,6 @@ describe('buildNewSessionAuthoringContext', () => {
                 id: 'machine-1',
                 active: true,
                 activeAt: Date.now(),
-                spawnReadinessStatus: 'ready',
             } as any,
             selectedPath: '/repo/project',
             automationEditId: null,

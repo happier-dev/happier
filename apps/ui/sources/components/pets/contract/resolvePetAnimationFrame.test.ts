@@ -5,6 +5,7 @@ import {
     PET_ATLAS_V1,
 } from '@happier-dev/protocol';
 
+import { PET_IDLE_DURATION_MULTIPLIER } from '@/components/pets/animation/petAnimationPlaybackConfig';
 import { resolvePetAnimationFrame } from './resolvePetAnimationFrame';
 
 describe('resolvePetAnimationFrame', () => {
@@ -29,7 +30,7 @@ describe('resolvePetAnimationFrame', () => {
 
         expect(resolvePetAnimationFrame({
             state: 'idle',
-            elapsedMs: firstDurationMs,
+            elapsedMs: firstDurationMs * PET_IDLE_DURATION_MULTIPLIER,
             reducedMotion: false,
         })).toMatchObject({
             state: 'idle',
@@ -39,7 +40,7 @@ describe('resolvePetAnimationFrame', () => {
 
         expect(resolvePetAnimationFrame({
             state: 'idle',
-            elapsedMs: totalDurationMs + 1,
+            elapsedMs: (totalDurationMs * PET_IDLE_DURATION_MULTIPLIER) + 1,
             reducedMotion: false,
         })).toMatchObject({
             state: 'idle',
@@ -48,14 +49,14 @@ describe('resolvePetAnimationFrame', () => {
         });
     });
 
-    it('freezes animation on idle frame zero when reduced motion is enabled', () => {
+    it('freezes animation on the requested state frame zero when reduced motion is enabled', () => {
         expect(resolvePetAnimationFrame({
             state: 'running',
             elapsedMs: 10_000,
             reducedMotion: true,
         })).toMatchObject({
-            state: 'idle',
-            row: 0,
+            state: 'running',
+            row: 7,
             frame: 0,
         });
     });

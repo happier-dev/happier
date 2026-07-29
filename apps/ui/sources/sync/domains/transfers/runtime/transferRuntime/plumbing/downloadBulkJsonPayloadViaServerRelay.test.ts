@@ -25,7 +25,9 @@ vi.mock('@/platform/digest', () => ({
     ) => digestMock(algorithm, bytes),
 }));
 
-function createRelaySocketHarness(): Readonly<{
+function createRelaySocketHarness(options?: Readonly<{
+    chunkSequences?: readonly number[];
+}>): Readonly<{
     scopeUserId: string;
     sent: TransferRelayV2SendEnvelope[];
     disconnect: ReturnType<typeof vi.fn>;
@@ -68,30 +70,32 @@ function createRelaySocketHarness(): Readonly<{
                 if (payload.envelope.kind === 'open') {
                     const recipientPublicKeyBase64 = payload.envelope.recipientPublicKeyBase64;
                     void (async () => {
-                        const encryptedChunk = await createEncryptedTransferChunkEnvelope({
-                            transferId: payload.envelope.transferId,
-                            sequence: 0,
-                            payload: payloadBytes,
-                            recipientPublicKeyBase64,
-                        });
-                        for (const listener of listeners) {
-                            listener({
-                                scopeUserId: payload.scopeUserId,
-                                sender: {
-                                    kind: 'machine',
-                                    machineId: 'machine-1',
-                                },
-                                recipient: {
-                                    kind: 'user',
-                                },
-                                envelope: {
-                                    transferId: payload.envelope.transferId,
-                                    kind: 'chunk',
-                                    sequence: 0,
-                                    payloadBase64: encryptedChunk.payloadBase64,
-                                    encryptedDataKeyEnvelopeBase64: encryptedChunk.encryptedDataKeyEnvelopeBase64,
-                                },
+                        for (const sequence of options?.chunkSequences ?? [0]) {
+                            const encryptedChunk = await createEncryptedTransferChunkEnvelope({
+                                transferId: payload.envelope.transferId,
+                                sequence,
+                                payload: payloadBytes,
+                                recipientPublicKeyBase64,
                             });
+                            for (const listener of listeners) {
+                                listener({
+                                    scopeUserId: payload.scopeUserId,
+                                    sender: {
+                                        kind: 'machine',
+                                        machineId: 'machine-1',
+                                    },
+                                    recipient: {
+                                        kind: 'user',
+                                    },
+                                    envelope: {
+                                        transferId: payload.envelope.transferId,
+                                        kind: 'chunk',
+                                        sequence,
+                                        payloadBase64: encryptedChunk.payloadBase64,
+                                        encryptedDataKeyEnvelopeBase64: encryptedChunk.encryptedDataKeyEnvelopeBase64,
+                                    },
+                                });
+                            }
                         }
                     })();
                 }
@@ -199,6 +203,39 @@ describe('downloadBulkJsonPayloadViaServerRelay', () => {
         });
     });
 
+    it('does not duplicate bounded JSON bytes when an encrypted chunk is replayed', async () => {
+        const harness = createRelaySocketHarness({ chunkSequences: [0, 0] });
+        resolveServerScopedTransferRelaySocketMock.mockResolvedValue(harness.socket);
+
+        const { downloadBulkJsonPayloadViaServerRelay } = await import('./downloadBulkJsonPayloadViaServerRelay');
+        const result = await downloadBulkJsonPayloadViaServerRelay({
+            machineId: 'machine-1',
+            serverId: 'server-a',
+            init: async () => ({
+                success: true as const,
+                downloadId: 'download-duplicate-json',
+                chunkSizeBytes: 4096,
+                sizeBytes: 36,
+                name: 'payload.json',
+            }),
+            finalize: async () => ({ success: true as const }),
+            parsePayload: (value) => value as { ok: boolean; title: string },
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            payload: {
+                ok: true,
+                title: 'Relay payload',
+            },
+        });
+        expect(
+            harness.sent
+                .filter((entry) => entry.envelope.kind === 'ack')
+                .map((entry) => entry.envelope.kind === 'ack' ? entry.envelope.nextSequence : null),
+        ).toEqual([1, 1]);
+    });
+
     it('aborts the server-side download session when finalize fails', async () => {
         const harness = createRelaySocketHarness();
         resolveServerScopedTransferRelaySocketMock.mockResolvedValue(harness.socket);
@@ -289,6 +326,7 @@ describe('downloadBulkJsonPayloadViaServerRelay', () => {
         expect(resolveServerScopedTransferRelaySocketMock).toHaveBeenCalledWith({
             machineId: 'machine-1',
             serverId: 'server-a',
+            timeoutMs: 600_000,
         });
         expect(harness.disconnect).toHaveBeenCalledTimes(1);
     });
@@ -392,6 +430,7 @@ describe('downloadBulkJsonPayloadViaServerRelay', () => {
         expect(abortMock).toHaveBeenCalledWith({
             downloadId: 'download-timeout',
         });
+        expect(abortMock).toHaveBeenCalledTimes(1);
         expect(disconnect).toHaveBeenCalledTimes(1);
         expect(sent).toEqual([
             expect.objectContaining({

@@ -27,24 +27,24 @@ const stylesheet = StyleSheet.create((theme) => ({
     root: {
         width: '100%',
         gap: 12,
-        alignItems: 'center',
+        alignItems: 'flex-start',
     },
     section: {
         width: '100%',
-        gap: 4,
+        gap: 8,
     },
+    // Title/subtitle margins removed (F-W13-2): the section `gap` already
+    // spaces the stack, and the setup columns must fit at 1440×900.
     sectionTitle: {
-        textAlign: 'center',
+        textAlign: 'left',
         color: theme.colors.text.primary,
         fontSize: 16,
-        marginTop: 10,
         ...Typography.default('semiBold'),
     },
     sectionSubtitle: {
-        textAlign: 'center',
+        textAlign: 'left',
         color: theme.colors.text.secondary,
         fontSize: 13,
-        marginBottom: 10,
         maxWidth: HANDOFF_TEXT_MAX_WIDTH,
     },
     platformToggle: {
@@ -172,7 +172,10 @@ export function WizardTerminalHandoff(props: WizardTerminalHandoffProps) {
                                 </Pressable>
                             </View>
                         ) : undefined}
-                        wrap={false}
+                        // Spec §2 / F-W13-1: onboarding commands must be fully
+                        // readable — wrap to multiple lines, never a horizontal
+                        // overflow scroller fading unread content.
+                        wrap
                         showCopyButton
                         scrollTestID={`${props.testID}-${step.scrollTestIDSuffix}`}
                     />

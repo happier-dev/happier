@@ -1,4 +1,6 @@
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import { readLocalConversationVoiceSettings, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { resolveVoiceProviderIdFromSettings } from '@/voice/settings/resolveVoiceProviderId';
 
 export type VoiceAgentSessionTeleportAvailability =
     | Readonly<{ ok: true }>
@@ -12,9 +14,10 @@ export function getVoiceAgentSessionTeleportAvailability(params: Readonly<{ voic
     if (!sessionId) return { ok: false, code: 'VOICE_TELEPORT_UNAVAILABLE' };
 
     const voice = params.voice as any;
-    if (voice?.providerId !== 'local_conversation') return { ok: false, code: 'VOICE_TELEPORT_UNAVAILABLE' };
+    const canonicalVoice = voiceSettingsParse(voice);
+    if (resolveVoiceProviderIdFromSettings(canonicalVoice) !== 'local_conversation') return { ok: false, code: 'VOICE_TELEPORT_UNAVAILABLE' };
 
-    const adapterCfg = voice?.adapters?.local_conversation ?? null;
+    const adapterCfg = readLocalConversationVoiceSettings(canonicalVoice);
     if (adapterCfg?.conversationMode !== 'agent') return { ok: false, code: 'VOICE_TELEPORT_UNAVAILABLE' };
 
     const agentCfg = adapterCfg?.agent ?? null;

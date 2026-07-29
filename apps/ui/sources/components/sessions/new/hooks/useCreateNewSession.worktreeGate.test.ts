@@ -1,11 +1,16 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import {
+    buildBackendTargetKey,
+    createProviderErrorV1,
+    SPAWN_SESSION_ERROR_CODES,
+    SPAWN_SESSION_ERROR_DETAIL_KINDS,
+} from '@happier-dev/protocol';
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
 import { settingsDefaults as testSettingsDefaults } from '@/sync/domains/settings/settings';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { renderScreen } from '@/dev/testkit';
+import { renderHook as renderLiveHook, renderScreen } from '@/dev/testkit';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 
 
@@ -136,7 +141,7 @@ const ensureSessionVisibleForMessageRouteMock = vi.hoisted(() => vi.fn(async (se
 }));
 type MachineSpawnNewSessionResult =
     | { type: 'success'; sessionId: string }
-    | { type: 'error'; errorCode: string; errorMessage?: string };
+    | { type: 'error'; errorCode: string; errorMessage?: string; errorDetail?: unknown };
 
 const machineSpawnNewSessionMock = vi.hoisted(() => vi.fn(async (_input?: unknown): Promise<MachineSpawnNewSessionResult> => ({
     type: 'success',
@@ -148,6 +153,7 @@ const machineBashMock = vi.hoisted(() => vi.fn(async () => ({
     stderr: '',
     exitCode: 0,
 })));
+const activeServerSnapshotMockState = vi.hoisted(() => ({ serverId: 'server-a' }));
 
 installNewSessionScreenModelCommonModuleMocks({
     routerConfig: {
@@ -225,15 +231,15 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', (
 
 vi.mock('@/sync/domains/server/selection/serverSelectionResolver', () => ({
     resolveNewSessionServerTarget: vi.fn((params: { requestedServerId?: string | null; allowedServerIds: string[] }) => ({
-        targetServerId: params.requestedServerId ?? params.allowedServerIds[0] ?? null,
+        targetServerId: params.requestedServerId?.trim() || params.allowedServerIds[0] || null,
         rejectedRequestedServerId: null,
     })),
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: vi.fn(() => ({
-        serverId: 'server-a',
-        serverUrl: 'https://server-a.example.test',
+        serverId: activeServerSnapshotMockState.serverId,
+        serverUrl: `https://${activeServerSnapshotMockState.serverId}.example.test`,
         kind: 'custom',
         generation: 1,
     })),
@@ -372,6 +378,7 @@ afterEach(() => {
     followUpSpawnedSessionWithServerScopeMock.mockReset();
     followUpSpawnedSessionWithServerScopeMock.mockImplementation(async (_params?: unknown) => {});
     autoPressModalButtonTextState.value = null;
+    activeServerSnapshotMockState.serverId = 'server-a';
     modalAlertMock.mockClear();
     ensureSessionVisibleForMessageRouteMock.mockClear();
     for (const key of Object.keys(storedSessionsState.sessions)) {
@@ -381,6 +388,161 @@ afterEach(() => {
 });
 
 describe('useCreateNewSession (worktree gating)', () => {
+    it('does not launch from a stale authoring snapshot while a selection commit is pending', async () => {
+        const { useCreateNewSession } = await import('./useCreateNewSession');
+        const setIsCreating = vi.fn();
+        const params = {
+            launchIntentSignature: 'test-launch-intent',
+            router: { push: vi.fn(), replace: vi.fn() },
+            selectedMachineId: 'machine-1',
+            selectedPath: '/repo',
+            selectedMachine: { id: 'machine-1', metadata: {} },
+            setIsCreating,
+            setIsResumeSupportChecking: vi.fn(),
+            settings: testSettingsDefaults,
+            useProfiles: false,
+            selectedProfileId: null,
+            profileMap: new Map(),
+            recentMachinePaths: [],
+            agentType: 'claude' as const,
+            permissionMode: 'default' as const,
+            modelMode: 'default' as const,
+            sessionPrompt: 'Use the just-confirmed Provider',
+            resumeSessionId: '',
+            agentNewSessionOptions: null,
+            authoringCommitPending: true,
+            machineEnvPresence: {
+                isPreviewEnvSupported: false,
+                isLoading: false,
+                meta: {},
+            } as unknown as Parameters<typeof useCreateNewSession>[0]['machineEnvPresence'],
+            secrets: [],
+            secretBindingsByProfileId: {},
+            selectedSecretIdByProfileIdByEnvVarName: {},
+            sessionOnlySecretValueByProfileIdByEnvVarName: {},
+            selectedMachineCapabilities: null,
+            targetServerId: null,
+            allowedTargetServerIds: [],
+        } satisfies Parameters<typeof useCreateNewSession>[0];
+        const hook = await renderHook(() => useCreateNewSession(params));
+
+        await act(async () => {
+            await hook.handleCreateSession();
+        });
+
+        expect(materializeNewSessionCheckoutMock).not.toHaveBeenCalled();
+        expect(machineSpawnNewSessionMock).not.toHaveBeenCalled();
+        expect(setIsCreating).not.toHaveBeenCalled();
+    });
+
+    it('exposes a structured Provider launch refusal for canonical inline recovery without leaking a raw modal', async () => {
+        const providerError = createProviderErrorV1('provider_not_enabled_on_machine', {
+            connectionId: 'pc_provider',
+            machineId: 'machine-1',
+        });
+        const spawnRefusal = {
+            type: 'error',
+            errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+            errorMessage: providerError.code,
+            errorDetail: {
+                kind: SPAWN_SESSION_ERROR_DETAIL_KINDS.PROVIDER_ERROR,
+                providerError,
+            },
+        } as const;
+        machineSpawnNewSessionMock
+            .mockResolvedValueOnce(spawnRefusal)
+            .mockResolvedValueOnce(spawnRefusal)
+            .mockImplementationOnce(async () => {
+                activeServerSnapshotMockState.serverId = 'server-b';
+                return spawnRefusal;
+            });
+        const { useCreateNewSession } = await import('./useCreateNewSession');
+        const params: Parameters<typeof useCreateNewSession>[0] = {
+            launchIntentSignature: 'test-launch-intent',
+            router: { push: vi.fn(), replace: vi.fn() },
+            selectedMachineId: 'machine-1',
+            selectedPath: '/repo',
+            selectedMachine: { id: 'machine-1', metadata: {} },
+            setIsCreating: vi.fn(),
+            setIsResumeSupportChecking: vi.fn(),
+            settings: testSettingsDefaults,
+            useProfiles: false,
+            selectedProfileId: null,
+            profileMap: new Map(),
+            recentMachinePaths: [],
+            agentType: 'claude' as const,
+            permissionMode: 'default' as const,
+            modelMode: 'auto' as const,
+            sessionPrompt: 'Use the selected Provider',
+            resumeSessionId: '',
+            agentNewSessionOptions: null,
+            machineEnvPresence: {
+                isPreviewEnvSupported: false,
+                isLoading: false,
+                meta: {},
+            } as unknown as Parameters<typeof useCreateNewSession>[0]['machineEnvPresence'],
+            secrets: [],
+            secretBindingsByProfileId: {},
+            selectedSecretIdByProfileIdByEnvVarName: {},
+            sessionOnlySecretValueByProfileIdByEnvVarName: {},
+            selectedMachineCapabilities: null,
+            targetServerId: null,
+            allowedTargetServerIds: [],
+        };
+        const hook = await renderLiveHook(
+            (hookParams: Parameters<typeof useCreateNewSession>[0]) => useCreateNewSession(hookParams),
+            { initialProps: params },
+        );
+
+        await act(async () => {
+            await hook.getCurrent().handleCreateSession();
+        });
+
+        expect(hook.getCurrent().providerLaunchError).toEqual(providerError);
+        expect(hook.getCurrent().retryProviderLaunch).toBeTypeOf('function');
+        expect(modalAlertMock).not.toHaveBeenCalled();
+
+        await hook.rerender({
+            ...params,
+            allowedTargetServerIds: ['server-b'],
+        });
+
+        expect(hook.getCurrent().providerLaunchError).toBeNull();
+
+        await hook.rerender(params);
+
+        expect(hook.getCurrent().providerLaunchError).toBeNull();
+
+        await act(async () => {
+            await hook.getCurrent().handleCreateSession();
+        });
+
+        expect(hook.getCurrent().providerLaunchError).toEqual(providerError);
+
+        await hook.rerender({
+            ...params,
+            selectedMachineId: 'machine-2',
+            selectedMachine: { id: 'machine-2', metadata: {} },
+        });
+
+        expect(hook.getCurrent().providerLaunchError).toBeNull();
+
+        await hook.rerender(params);
+
+        expect(hook.getCurrent().providerLaunchError).toBeNull();
+
+        await act(async () => {
+            await hook.getCurrent().handleCreateSession();
+        });
+
+        expect(hook.getCurrent().providerLaunchError).toBeNull();
+
+        activeServerSnapshotMockState.serverId = 'server-a';
+        await hook.rerender(params);
+
+        expect(hook.getCurrent().providerLaunchError).toBeNull();
+    });
+
     it('does not create a worktree when no checkout creation draft is selected', async () => {
         const { useCreateNewSession } = await import('./useCreateNewSession');
         const typecheck = useCreateNewSession;
@@ -406,6 +568,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         });
 
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: vi.fn() },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo',
@@ -466,6 +629,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         const routerReplace = vi.fn();
         const disableDraftPersistence = vi.fn();
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: routerReplace },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo',
@@ -534,6 +698,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         });
 
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: vi.fn() },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo',
@@ -616,6 +781,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         });
 
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: vi.fn() },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo',
@@ -682,6 +848,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         });
 
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: vi.fn() },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo/packages/app',
@@ -743,6 +910,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         const disableDraftPersistence = vi.fn();
         const setIsCreating = vi.fn();
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: routerReplace },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo',
@@ -818,6 +986,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         } as any));
 
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: vi.fn() },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo',
@@ -888,6 +1057,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         } as any));
 
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: vi.fn() },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo',
@@ -956,6 +1126,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         const typecheck = useCreateNewSession;
 
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: vi.fn() },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo',
@@ -1025,6 +1196,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         } as any));
 
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: vi.fn() },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo',
@@ -1101,6 +1273,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         });
 
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: vi.fn() },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo',
@@ -1159,6 +1332,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         saveWorkspaceLocationMock.mockRejectedValueOnce(new Error('attach failed'));
 
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: vi.fn() },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo',
@@ -1227,6 +1401,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         machineSpawnNewSessionMock.mockRejectedValueOnce(new Error('spawn exploded'));
 
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: vi.fn() },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo',
@@ -1316,6 +1491,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         const disableDraftPersistence = vi.fn();
         const setIsCreating = vi.fn();
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: routerReplace },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo',
@@ -1419,6 +1595,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         const routerReplace = vi.fn();
         const disableDraftPersistence = vi.fn();
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: routerReplace },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo',
@@ -1521,6 +1698,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         const routerReplace = vi.fn();
         const disableDraftPersistence = vi.fn();
         const params = {
+            launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: routerReplace },
             selectedMachineId: 'machine-1',
             selectedPath: '/repo',

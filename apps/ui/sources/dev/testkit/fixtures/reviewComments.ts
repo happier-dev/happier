@@ -48,8 +48,6 @@ export function buildReviewCommentFixture(overrides: Partial<ReviewCommentV1> = 
 
 export const reviewCommentLabelsFixture = {
     empty: 'No comments',
-    directWriteGranted: 'Direct write enabled',
-    directWriteMissing: 'Proposals only',
     engine: 'Engine',
     stale: 'Stale',
     outdated: 'Outdated',

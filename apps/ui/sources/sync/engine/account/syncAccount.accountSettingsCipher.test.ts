@@ -137,4 +137,39 @@ describe('handleUpdateAccountSocketUpdate account settings ciphertext', () => {
         expect(encryption.decryptRaw).not.toHaveBeenCalled();
         expect(applySettings).toHaveBeenCalledWith(expect.objectContaining({ analyticsOptOut: true }), 11);
     });
+
+    it('rejects a raw cross-domain object without calling the ambiguous decryptor', async () => {
+        const { handleUpdateAccountSocketUpdate } = await import('./syncAccount');
+        const applySettings = vi.fn();
+        const decryptRaw = vi.fn(async () => ({
+            name: 'automation',
+            prompt: 'not account settings',
+        }));
+        const log = vi.fn();
+
+        await handleUpdateAccountSocketUpdate({
+            accountUpdate: {
+                settings: {
+                    value: 'untagged-cross-domain-ciphertext',
+                    version: 12,
+                },
+            },
+            updateCreatedAt: 123,
+            currentProfile: { ...profileDefaults },
+            encryption: {
+                getContentPrivateKey: () =>
+                    new Uint8Array(32).fill(7),
+                decryptRaw,
+            } as any,
+            applyProfile: vi.fn(),
+            applySettings,
+            log: { log },
+        });
+
+        expect(decryptRaw).not.toHaveBeenCalled();
+        expect(applySettings).not.toHaveBeenCalled();
+        expect(log).toHaveBeenCalledWith(
+            expect.stringContaining('no authenticated settings domain'),
+        );
+    });
 });

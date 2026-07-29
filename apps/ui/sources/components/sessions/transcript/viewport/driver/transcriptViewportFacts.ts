@@ -1,6 +1,6 @@
 /**
- * C3 DRIVER FACT SEAM — the orientation-agnostic boundary between the transcript host and the platform
- * scroll physics (native inverted FlashList / web standard DOM).
+ * C3 DRIVER FACT SEAM — the orientation-agnostic boundary between the transcript host
+ * and platform scroll physics (native renderer state / web standard DOM).
  *
  * Above this seam the host holds only semantic FACTS (read) and issues semantic COMMANDS; below it the
  * platform drivers own the raw scroll primitives. Native fact readers are command-space specific; web DOM
@@ -89,7 +89,7 @@ export type TranscriptViewportSemanticEdge = 'older' | 'newer';
  * The read accessors native fact drivers need from the host: closures over the list ref and
  * the measured geometry refs. Passing closures (rather than the refs themselves) keeps the driver pure and
  * unit-testable without React, and keeps the raw `getAbsoluteLastScrollOffset` call on the host side of the
- * closure boundary so the driver body never names a FlashList primitive type.
+ * closure boundary so the driver body never depends on a renderer adapter type.
  */
 export type NativeListFactReaders = Readonly<{
     /** `listRef.current?.getAbsoluteLastScrollOffset?.()` — the raw native scroll offset (undefined if unavailable). */
@@ -110,5 +110,3 @@ export type NativeListFactReaders = Readonly<{
      */
     readSourceIndexForRenderedIndex?: (renderedIndex: number) => number | null | undefined;
 }>;
-
-export type NativeInvertedFlashListFactReaders = NativeListFactReaders;

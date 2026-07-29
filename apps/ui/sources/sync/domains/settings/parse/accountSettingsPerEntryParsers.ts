@@ -1,10 +1,10 @@
 import {
     ActionsSettingsV1Schema,
+    readAiLaunchProfileCollection,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import { dbgSettings } from '../debugSettings';
-import { AIBackendProfileSchema } from '../../profiles/aiBackendProfileSchema';
 import { SavedSecretSchema } from '../savedSecretTypes';
 import { voiceSettingsParse } from '../voiceSettings';
 import {
@@ -43,21 +43,22 @@ export function applyAccountSettingsPerEntryParsing(params: {
 
     if (key === 'profiles') {
         if (Array.isArray(value)) {
-            const parsedProfiles: Array<z.infer<typeof AIBackendProfileSchema>> = [];
-            for (const rawProfile of value) {
-                const parsedProfile = AIBackendProfileSchema.safeParse(rawProfile);
-                if (parsedProfile.success) {
-                    parsedProfiles.push(parsedProfile.data);
-                } else {
-                    logInvalidSettingEntry({
-                        context,
-                        key,
-                        issues: parsedProfile.error.issues,
-                        message: '[settingsParse] Dropping invalid profile entry',
-                    });
-                }
+            const collection = readAiLaunchProfileCollection(value);
+            for (const diagnostic of collection.diagnostics) {
+                logInvalidSettingEntry({
+                    context,
+                    key,
+                    issues: [{
+                        path: [diagnostic.index],
+                        code: diagnostic.reason,
+                        message: 'Preserving an opaque AI launch profile entry for migration-safe round-trip',
+                    }],
+                    message: '[settingsParse] Preserving opaque profile entry',
+                });
             }
-            result.profiles = parsedProfiles;
+            // Account settings are rewritten as a whole by some sync paths. Keep
+            // the exact collection here; screens consume a tolerant parsed view.
+            result.profiles = value;
         }
         return true;
     }

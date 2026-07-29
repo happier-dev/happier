@@ -50,7 +50,9 @@ describe('voiceAgentRunMetadata', () => {
             ...stateRef.current.sessions,
             sys_voice: {
                 ...stateRef.current.sessions.sys_voice,
+                metadataLayoutVersion: 0,
                 metadata: { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
+                ownerMetadataView: undefined,
             },
         },
         sessionListRenderables: {},
@@ -77,6 +79,40 @@ describe('voiceAgentRunMetadata', () => {
       backendId: 'claude',
       updatedAtMs: 123,
     });
+  });
+
+  it('reads a layout-v1 run only from the owner metadata view', async () => {
+    stateRef.current.sessions.sys_voice = {
+      ...stateRef.current.sessions.sys_voice,
+      metadataLayoutVersion: 1,
+      metadata: {
+        v: 1,
+        voiceAgentRunV1: {
+          v: 1,
+          runId: 'shared_private_lookalike',
+          backendTarget: codexTarget,
+          backendId: 'codex',
+          resumeHandle: null,
+          updatedAtMs: 1,
+        },
+      },
+      ownerMetadataView: {
+        voiceAgentRunV1: {
+          v: 1,
+          runId: 'owner_run',
+          backendTarget: claudeTarget,
+          backendId: 'claude',
+          resumeHandle: null,
+          updatedAtMs: 2,
+        },
+      },
+    } as any;
+
+    const { readVoiceAgentRunMetadataFromSession } = await import('./voiceAgentRunMetadata');
+    expect(readVoiceAgentRunMetadataFromSession({ sessionId: 'sys_voice' })?.runId).toBe('owner_run');
+
+    stateRef.current.sessions.sys_voice.ownerMetadataView = null;
+    expect(readVoiceAgentRunMetadataFromSession({ sessionId: 'sys_voice' })).toBeNull();
   });
 
   it('writes voiceAgentRunV1 into voice conversation session metadata', async () => {

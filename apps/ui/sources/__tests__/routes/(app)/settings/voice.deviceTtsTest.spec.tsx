@@ -5,6 +5,7 @@ import {
     renderSettingsView,
     standardCleanup,
 } from '@/dev/testkit';
+import { settingsParse } from '@/sync/domains/settings/settings';
 import {
     getVoiceSettingsRouteModalMockRef,
     installVoiceSettingsRouteModuleMocks,
@@ -27,7 +28,7 @@ installVoiceSettingsRouteModuleMocks({
                 if (key === 'recentMachinePaths') return [];
                 throw new Error(`unexpected useSetting(${key})`);
             },
-            useSettings: () => ({}),
+            useSettings: () => settingsParse({}),
         });
     },
 });
@@ -60,16 +61,17 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModel
     }),
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
-    useAllMachines: () => [],
-}));
+vi.mock('@/sync/store/hooks', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/store/hooks')>();
+    return {
+        ...actual,
+        useAllMachines: () => [],
+        useProfile: () => null,
+    };
+});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'test-server' }),
-}));
-
-vi.mock('@/components/settings/pickers/resolvePreferredMachineId', () => ({
-    resolvePreferredMachineId: () => null,
 }));
 
 vi.mock('@/agents/runtime/resumeCapabilities', () => ({
@@ -111,21 +113,20 @@ describe('VoiceSettingsScreen (device TTS)', () => {
     });
 
     it('uses device TTS for Test TTS when enabled (does not require TTS Base URL)', async () => {
-        const { voiceSettingsDefaults } = await import('@/sync/domains/settings/voiceSettings');
-        voiceSetting = {
-            ...voiceSettingsDefaults,
+        const {
+            readLocalDirectVoiceSettings,
+            voiceSettingsDefaults,
+            voiceSettingsParse,
+            writeLocalDirectVoiceSettings,
+        } = await import('@/sync/domains/settings/voiceSettings');
+        const localDirect = readLocalDirectVoiceSettings(voiceSettingsDefaults);
+        voiceSetting = voiceSettingsParse({
+            ...writeLocalDirectVoiceSettings(voiceSettingsDefaults, {
+                ...localDirect,
+                tts: { ...localDirect.tts, provider: 'device' },
+            }),
             providerId: 'local_direct',
-            adapters: {
-                ...voiceSettingsDefaults.adapters,
-                local_direct: {
-                    ...voiceSettingsDefaults.adapters.local_direct,
-                    tts: {
-                        ...voiceSettingsDefaults.adapters.local_direct.tts,
-                        provider: 'device',
-                    },
-                },
-            },
-        };
+        });
 
         await import('@/modal');
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
@@ -141,22 +142,21 @@ describe('VoiceSettingsScreen (device TTS)', () => {
     });
 
     it('uses device TTS for Test TTS when enabled for local conversation', async () => {
-        const { voiceSettingsDefaults } = await import('@/sync/domains/settings/voiceSettings');
-        voiceSetting = {
-            ...voiceSettingsDefaults,
+        const {
+            readLocalConversationVoiceSettings,
+            voiceSettingsDefaults,
+            voiceSettingsParse,
+            writeLocalConversationVoiceSettings,
+        } = await import('@/sync/domains/settings/voiceSettings');
+        const localConversation = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+        voiceSetting = voiceSettingsParse({
+            ...writeLocalConversationVoiceSettings(voiceSettingsDefaults, {
+                ...localConversation,
+                conversationMode: 'agent',
+                tts: { ...localConversation.tts, provider: 'device' },
+            }),
             providerId: 'local_conversation',
-            adapters: {
-                ...voiceSettingsDefaults.adapters,
-                local_conversation: {
-                    ...voiceSettingsDefaults.adapters.local_conversation,
-                    conversationMode: 'agent',
-                    tts: {
-                        ...voiceSettingsDefaults.adapters.local_conversation.tts,
-                        provider: 'device',
-                    },
-                },
-            },
-        };
+        });
 
         await import('@/modal');
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
@@ -173,21 +173,20 @@ describe('VoiceSettingsScreen (device TTS)', () => {
 
     it('shows an error when device TTS test fails', async () => {
         speakDeviceTextSpy.mockRejectedValueOnce(new Error('device failed'));
-        const { voiceSettingsDefaults } = await import('@/sync/domains/settings/voiceSettings');
-        voiceSetting = {
-            ...voiceSettingsDefaults,
+        const {
+            readLocalDirectVoiceSettings,
+            voiceSettingsDefaults,
+            voiceSettingsParse,
+            writeLocalDirectVoiceSettings,
+        } = await import('@/sync/domains/settings/voiceSettings');
+        const localDirect = readLocalDirectVoiceSettings(voiceSettingsDefaults);
+        voiceSetting = voiceSettingsParse({
+            ...writeLocalDirectVoiceSettings(voiceSettingsDefaults, {
+                ...localDirect,
+                tts: { ...localDirect.tts, provider: 'device' },
+            }),
             providerId: 'local_direct',
-            adapters: {
-                ...voiceSettingsDefaults.adapters,
-                local_direct: {
-                    ...voiceSettingsDefaults.adapters.local_direct,
-                    tts: {
-                        ...voiceSettingsDefaults.adapters.local_direct.tts,
-                        provider: 'device',
-                    },
-                },
-            },
-        };
+        });
         await import('@/modal');
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
         const screen = await renderSettingsView(<VoiceSettingsScreen />);

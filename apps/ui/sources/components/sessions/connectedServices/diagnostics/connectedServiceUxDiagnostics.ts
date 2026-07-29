@@ -144,7 +144,7 @@ function bodyParamsForDiagnostic(diagnostic: ConnectedServiceUxDiagnosticV1): Co
     }
     return {
         reason: readStringDiagnostic(diagnostic, 'reason') || diagnostic.code,
-        agentId: diagnostic.agentId ?? diagnostic.providerId ?? 'provider',
+        agentId: diagnostic.agentId ?? 'agent',
     };
 }
 

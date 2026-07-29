@@ -1,11 +1,12 @@
 import React from 'react';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { Platform, Pressable } from 'react-native';
+import { Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-import { useSettingMutable, useSettings } from '@/sync/domains/state/storage';
+import { useSettings } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { SecretsList } from '@/components/secrets/SecretsList';
+import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 import { useUnistyles } from 'react-native-unistyles';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
@@ -14,6 +15,7 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 
 export default React.memo(function SecretPickerScreen() {
     const { theme } = useUnistyles();
@@ -62,7 +64,7 @@ export default React.memo(function SecretPickerScreen() {
         settings.lastUsedBackendTarget,
     ]);
 
-    const [secrets, setSecrets] = useSettingMutable('secrets');
+    const [secrets, setSecrets] = useSavedSecretsMutable();
 
     const setSecretParamAndClose = React.useCallback((secretId: string) => {
         const roundTripFallbackTarget = resolveRouteCloseoutFallbackTarget({
@@ -139,6 +141,7 @@ export default React.memo(function SecretPickerScreen() {
             </Pressable>
         );
     }, [handleBackPress, theme.colors.chrome.header.foreground]);
+    const presentation = useNewSessionPickerRoutePresentation();
 
     const screenOptions = React.useMemo(() => {
         return {
@@ -146,12 +149,10 @@ export default React.memo(function SecretPickerScreen() {
             title: headerTitle,
             headerTitle,
             headerBackTitle,
-            // /new is presented as `containedModal` on iOS. Ensure picker screens are too,
-            // otherwise they can be pushed "behind" the modal (invisible but on the back stack).
-            presentation: Platform.OS === 'ios' ? 'containedModal' : undefined,
+            presentation,
             headerLeft,
         } as const;
-    }, [headerBackTitle, headerLeft, headerTitle]);
+    }, [headerBackTitle, headerLeft, headerTitle, presentation]);
 
     return (
         <>

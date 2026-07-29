@@ -11,6 +11,7 @@ import {
     type SessionListAttentionPlacementMode,
     type SessionListAttentionPlacementReason,
     type SessionListWorkingPlacementMode,
+    type SessionListWorkingPlacementReason,
 } from './sessionListAttentionPlacementTypes';
 
 export const ATTENTION_PLACEMENT_GROUP_KEY_V1 = 'attention-promotion-v1';
@@ -50,6 +51,7 @@ type PlacementCandidate<Reason extends PlacementReason> = Readonly<{
     timestamp: number;
     originalIndex: number;
     retainedIndex: number | null;
+    retainedWorking?: boolean;
 }>;
 
 type PlacementLane<Reason extends PlacementReason> = Readonly<{
@@ -60,6 +62,7 @@ type PlacementLane<Reason extends PlacementReason> = Readonly<{
         retainedKeys: ReadonlySet<string>;
         retainedKeyRanks: ReadonlyMap<string, number>;
         nowMs: number;
+        workingPlacementOptions?: SessionListWorkingPlacementOptions;
     }>) => PlacementCandidate<Reason> | null;
     compareCandidates: (left: PlacementCandidate<Reason>, right: PlacementCandidate<Reason>) => number;
     createGlobalSessionItem: (candidate: PlacementCandidate<Reason>) => SessionItem;
@@ -83,22 +86,35 @@ function normalizePositiveTimestamp(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
-function isWorkingSession(session: SessionListRenderableSession, nowMs: number): boolean {
+function deriveRuntimePresentationForSession(session: SessionListRenderableSession, nowMs: number) {
     return deriveSessionRuntimePresentationState({
         active: session.active,
         activeAt: session.thinking === false ? 0 : session.activeAt,
+        archivedAt: session.archivedAt,
         presence: session.presence,
         thinking: session.thinking,
         thinkingAt: session.thinkingAt,
+        optimisticThinkingAt: session.optimisticThinkingAt ?? null,
+        hasPendingUserMessages: (session.pendingCount ?? 0) > 0,
         latestTurnStatus: session.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: session.latestTurnStatusObservedAt ?? null,
+        runtimeActivityState: session.runtimeActivityState ?? 'unknown',
+        runtimeActivityActiveCount: session.runtimeActivityActiveCount ?? null,
+        runtimeActivityObservedAt: session.runtimeActivityObservedAt ?? null,
+        runtimeActivityRevision: session.runtimeActivityRevision ?? null,
         meaningfulActivityAt: session.meaningfulActivityAt ?? null,
         lastRuntimeIssue: session.lastRuntimeIssue ?? null,
         hasPendingPermissionRequests: session.hasPendingPermissionRequests,
         hasPendingUserActionRequests: session.hasPendingUserActionRequests,
         pendingRequestObservedAt: session.pendingRequestObservedAt ?? null,
         nowMs,
-    }).working;
+    });
+}
+
+function isWorkingPlacementSession(session: SessionListRenderableSession, nowMs: number): boolean {
+    const runtimePresentation = deriveRuntimePresentationForSession(session, nowMs);
+    return runtimePresentation.working
+        || (session.presence === 'online' && runtimePresentation.backgroundActive);
 }
 
 function isRetainableWorkingSession(session: SessionListRenderableSession, nowMs: number): boolean {
@@ -149,11 +165,18 @@ function resolveAttentionReason(
     const runtimePresentation = deriveSessionRuntimePresentationState({
         active: session.active,
         activeAt: session.thinking === false ? 0 : session.activeAt,
+        archivedAt: session.archivedAt,
         presence: session.presence,
         thinking: session.thinking,
         thinkingAt: session.thinkingAt,
+        optimisticThinkingAt: session.optimisticThinkingAt ?? null,
+        hasPendingUserMessages: (session.pendingCount ?? 0) > 0,
         latestTurnStatus: session.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: session.latestTurnStatusObservedAt ?? null,
+        runtimeActivityState: session.runtimeActivityState ?? 'unknown',
+        runtimeActivityActiveCount: session.runtimeActivityActiveCount ?? null,
+        runtimeActivityObservedAt: session.runtimeActivityObservedAt ?? null,
+        runtimeActivityRevision: session.runtimeActivityRevision ?? null,
         meaningfulActivityAt: session.meaningfulActivityAt ?? null,
         lastRuntimeIssue: session.lastRuntimeIssue ?? null,
         hasPendingPermissionRequests: session.hasPendingPermissionRequests,
@@ -170,7 +193,13 @@ function resolveAttentionReason(
     if (runtimePresentation.freshPermissionRequired) {
         return 'permission_required';
     }
-    if (runtimePresentation.working) {
+    if ((session.pendingBlockedCount ?? 0) > 0) {
+        return 'action_required';
+    }
+    if (
+        runtimePresentation.working
+        || (session.presence === 'online' && runtimePresentation.backgroundActive)
+    ) {
         return null;
     }
     if (isTerminalTurnAfterReadCursor(session)) {
@@ -203,7 +232,7 @@ function resolveAttentionTimestamp(
     reason: SessionListAttentionPlacementReason,
 ): number {
     if (reason === 'action_required' || reason === 'permission_required') {
-        return normalizePositiveTimestamp(session.pendingRequestObservedAt) ?? 0;
+        return resolveActionRequiredAttentionTimestamp(session) ?? 0;
     }
     if (reason === 'failed') {
         return normalizePositiveTimestamp(session.lastRuntimeIssue?.occurredAt)
@@ -216,6 +245,15 @@ function resolveAttentionTimestamp(
             ?? 0;
     }
     return 0;
+}
+
+function resolveActionRequiredAttentionTimestamp(session: Pick<
+    SessionListRenderableSession,
+    'pendingRequestObservedAt' | 'updatedAt' | 'createdAt'
+>): number | null {
+    return normalizePositiveTimestamp(session.pendingRequestObservedAt)
+        ?? normalizePositiveTimestamp(session.updatedAt)
+        ?? normalizePositiveTimestamp(session.createdAt);
 }
 
 function normalizeRetainedKeys(retained: ReadonlySet<string> | ReadonlyArray<string> | null | undefined): ReadonlySet<string> {
@@ -273,7 +311,7 @@ function resolveAttentionCandidate(params: Readonly<{
 
     const reason = resolveAttentionReason(params.row, params.nowMs);
     if (!reason && !params.retainedKeys.has(key)) return null;
-    if (!reason && isWorkingSession(params.row, params.nowMs)) return null;
+    if (!reason && isWorkingPlacementSession(params.row, params.nowMs)) return null;
 
     const resolvedReason = reason ?? 'ready';
     return {
@@ -294,12 +332,16 @@ function resolveWorkingCandidate(params: Readonly<{
     retainedKeys: ReadonlySet<string>;
     retainedKeyRanks: ReadonlyMap<string, number>;
     nowMs: number;
+    workingPlacementOptions?: SessionListWorkingPlacementOptions;
 }>): PlacementCandidate<'working'> | null {
     const key = normalizeSessionListKeyParts(params.item.serverId, params.item.sessionId).sessionKey;
     if (!key || !params.row) return null;
     if (params.item.archivedAt != null || params.row.archivedAt != null) return null;
     if (resolveAttentionReason(params.row, params.nowMs)) return null;
-    if (!isWorkingSession(params.row, params.nowMs) && !(params.retainedKeys.has(key) && isRetainableWorkingSession(params.row, params.nowMs))) {
+    const runtimePresentation = deriveRuntimePresentationForSession(params.row, params.nowMs);
+    const liveWorking = runtimePresentation.working
+        || (params.row.presence === 'online' && runtimePresentation.backgroundActive);
+    if (!liveWorking && !(params.retainedKeys.has(key) && isRetainableWorkingSession(params.row, params.nowMs))) {
         return null;
     }
     return {
@@ -310,6 +352,7 @@ function resolveWorkingCandidate(params: Readonly<{
         timestamp: 0,
         originalIndex: params.originalIndex,
         retainedIndex: params.retainedKeyRanks.get(key) ?? null,
+        retainedWorking: !liveWorking,
     };
 }
 
@@ -341,22 +384,31 @@ function createWithinGroupAttentionSessionItem(candidate: PlacementCandidate<Ses
     };
 }
 
+function resolveWorkingPlacementReason(candidate: PlacementCandidate<'working'>): SessionListWorkingPlacementReason {
+    // Retained placement keeps the session in the working group after its
+    // live signals went stale; rows use the distinct reason to render a
+    // paused indicator instead of pretending live activity.
+    return candidate.retainedWorking === true ? 'working-retained' : 'working';
+}
+
 function createGlobalWorkingSessionItem(candidate: PlacementCandidate<'working'>): SessionItem {
+    const workingPlacementReason = resolveWorkingPlacementReason(candidate);
     return {
         ...candidate.item,
         groupKey: WORKING_PLACEMENT_GROUP_KEY_V1,
         groupKind: 'working',
         attentionPlacementReason: undefined,
-        workingPlacementReason: 'working',
+        workingPlacementReason,
         variant: 'default',
         keepVisibleWhenInactive: true,
     };
 }
 
 function createWithinGroupWorkingSessionItem(candidate: PlacementCandidate<'working'>): SessionItem {
+    const workingPlacementReason = resolveWorkingPlacementReason(candidate);
     if (
         candidate.item.keepVisibleWhenInactive === true
-        && candidate.item.workingPlacementReason === 'working'
+        && candidate.item.workingPlacementReason === workingPlacementReason
         && candidate.item.attentionPlacementReason == null
     ) {
         return candidate.item;
@@ -364,7 +416,7 @@ function createWithinGroupWorkingSessionItem(candidate: PlacementCandidate<'work
     return {
         ...candidate.item,
         attentionPlacementReason: undefined,
-        workingPlacementReason: 'working',
+        workingPlacementReason,
         keepVisibleWhenInactive: true,
     };
 }
@@ -392,6 +444,7 @@ type SessionListPlacementResult = Readonly<{
 function buildSessionListGlobalPlacement<Reason extends PlacementReason>(params: Readonly<{
     source: ReadonlyArray<SessionListIndexItem>;
     retainedKeys?: ReadonlySet<string> | ReadonlyArray<string> | null;
+    workingPlacementOptions?: SessionListWorkingPlacementOptions;
     resolveSessionRow: (serverId: string | null | undefined, sessionId: string) => SessionListRenderableSession | null;
     lane: PlacementLane<Reason>;
     header: Extract<SessionListIndexItem, { type: 'header' }>;
@@ -413,6 +466,7 @@ function buildSessionListGlobalPlacement<Reason extends PlacementReason>(params:
             retainedKeys,
             retainedKeyRanks,
             nowMs: params.nowMs,
+            workingPlacementOptions: params.workingPlacementOptions,
         });
         if (!candidate) return;
         promoted.push(candidate);
@@ -452,6 +506,7 @@ function reorderSessionRunWithinGroup<Reason extends PlacementReason>(
     retainedKeys: ReadonlySet<string>,
     lane: PlacementLane<Reason>,
     nowMs: number,
+    workingPlacementOptions?: SessionListWorkingPlacementOptions,
 ): Readonly<{
     items: SessionListIndexItem[];
     changed: boolean;
@@ -466,6 +521,7 @@ function reorderSessionRunWithinGroup<Reason extends PlacementReason>(
             retainedKeys,
             retainedKeyRanks,
             nowMs,
+            workingPlacementOptions,
         });
         if (candidate) candidates.set(entry.item, candidate);
     }
@@ -493,6 +549,7 @@ function reorderSessionRunWithinGroup<Reason extends PlacementReason>(
 function applySessionListPlacementWithinGroups<Reason extends PlacementReason>(params: Readonly<{
     source: ReadonlyArray<SessionListIndexItem>;
     retainedKeys?: ReadonlySet<string> | ReadonlyArray<string> | null;
+    workingPlacementOptions?: SessionListWorkingPlacementOptions;
     resolveSessionRow: (serverId: string | null | undefined, sessionId: string) => SessionListRenderableSession | null;
     lane: PlacementLane<Reason>;
     nowMs: number;
@@ -508,7 +565,13 @@ function applySessionListPlacementWithinGroups<Reason extends PlacementReason>(p
 
     const flushRun = () => {
         if (run.length === 0) return;
-        const reordered = reorderSessionRunWithinGroup(run, retainedKeys, params.lane, params.nowMs);
+        const reordered = reorderSessionRunWithinGroup(
+            run,
+            retainedKeys,
+            params.lane,
+            params.nowMs,
+            params.workingPlacementOptions,
+        );
         out.push(...reordered.items);
         changed = changed || reordered.changed;
         run = [];
@@ -563,6 +626,15 @@ export function buildSessionListAttentionPlacement(params: Readonly<{
         : null;
 }
 
+function createWorkingPlacementHeader(): Extract<SessionListIndexItem, { type: 'header' }> {
+    return {
+        type: 'header',
+        title: t('sessionsList.workingSectionTitle'),
+        headerKind: 'working',
+        groupKey: WORKING_PLACEMENT_GROUP_KEY_V1,
+    };
+}
+
 export function buildSessionListWorkingPlacement(params: Readonly<{
     source: ReadonlyArray<SessionListIndexItem>;
     options: SessionListWorkingPlacementOptions | undefined;
@@ -576,15 +648,11 @@ export function buildSessionListWorkingPlacement(params: Readonly<{
     const result = buildSessionListGlobalPlacement({
         source: params.source,
         retainedKeys: params.options.retainSessionKeys,
+        workingPlacementOptions: params.options,
         resolveSessionRow: params.resolveSessionRow,
         lane: WORKING_LANE,
         nowMs: params.nowMs,
-        header: {
-            type: 'header',
-            title: t('sessionsList.workingSectionTitle'),
-            headerKind: 'working',
-            groupKey: WORKING_PLACEMENT_GROUP_KEY_V1,
-        },
+        header: createWorkingPlacementHeader(),
     });
     return result
         ? {
@@ -627,6 +695,7 @@ export function applySessionListWorkingPlacementWithinGroups(params: Readonly<{
     return applySessionListPlacementWithinGroups({
         source: params.source,
         retainedKeys: params.options.retainSessionKeys,
+        workingPlacementOptions: params.options,
         resolveSessionRow: params.resolveSessionRow,
         lane: WORKING_LANE,
         nowMs: params.nowMs,

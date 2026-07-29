@@ -21,7 +21,7 @@ export async function fetchWorkspaceUnifiedDiffForPath(input: Readonly<{
         cwd: input.scope.rootPath,
         path: input.path,
         area: input.diffArea,
-    });
+    }, { serverId: input.scope.serverId });
     if (!response.success) {
         const rawError = typeof response.error === 'string' ? response.error : '';
         const normalized = rawError.trim() ? input.normalizeError(rawError) : '';

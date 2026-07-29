@@ -1,13 +1,19 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
-import { sync } from '@/sync/sync';
 import { createNotAuthenticatedError, isAuthenticationResponseStatus } from '@/sync/runtime/connectivity/authErrors';
-import type { SessionMessageDirectBypassReason } from '@/sync/domains/session/control/submitMode';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 
 import { fetchSessionByIdWithServerScope } from './fetchSessionByIdWithServerScope';
+import {
+    requireLocalSessionVisibleForRoute,
+    type EnsureSessionVisibleForMessageRoute,
+} from './localSessionRouteReadiness';
 import { resolveServerScopedSessionContext } from './resolveServerScopedSessionContext';
-import { sendSessionMessageWithServerScope } from './serverScopedSessionSendMessage';
+import {
+    createServerScopedSessionSendMessage,
+    sendSessionMessageWithServerScope,
+} from './serverScopedSessionSendMessage';
 
 type AppliedSession = Omit<Session, 'presence'> & { presence?: 'online' | number };
 
@@ -81,48 +87,31 @@ export function readRecoverableFollowUpPayload(error: unknown): RecoverableFollo
     return payload?.draftText ? payload : null;
 }
 
-async function ensureSessionHydratedForNavigation(params: Readonly<{
-    sessionId: string;
-    serverId?: string | null;
-    getStoredSession: (sessionId: string) => Session | null;
-    ensureSessionVisibleForMessageRoute?: (sessionId: string, options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) => Promise<unknown>;
-}>): Promise<void> {
-    if (typeof params.ensureSessionVisibleForMessageRoute === 'function') {
-        const serverId = String(params.serverId ?? '').trim();
-        await params.ensureSessionVisibleForMessageRoute(
-            params.sessionId,
-            serverId ? { forceRefresh: true, serverId } : { forceRefresh: true },
-        );
-    }
-
-    if (!params.getStoredSession(params.sessionId)) {
-        throw new Error('Created session is not available locally yet');
-    }
-}
-
 function getDefaultActiveSync() {
     return {
         ensureSessionVisibleForMessageRoute: async (sessionId: string, options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) => {
-            if (typeof sync.ensureSessionVisibleForMessageRoute === 'function') {
-                await sync.ensureSessionVisibleForMessageRoute(sessionId, options);
+            const activeSync = getSyncSingleton();
+            if (typeof activeSync.ensureSessionVisibleForMessageRoute === 'function') {
+                return await activeSync.ensureSessionVisibleForMessageRoute(sessionId, options);
             }
+            return undefined;
         },
         refreshSessions: async () => {
-            if (typeof sync.refreshSessions === 'function') {
-                await sync.refreshSessions();
+            const activeSync = getSyncSingleton();
+            if (typeof activeSync.refreshSessions === 'function') {
+                await activeSync.refreshSessions();
             }
         },
-        sendMessage: async (
+        enqueuePendingMessage: async (
             sessionId: string,
             text: string,
             displayText?: string,
             metaOverrides?: Record<string, unknown>,
-            options?: Readonly<{ profileId?: string | null; localId?: string | null; bypassPendingQueueReason?: SessionMessageDirectBypassReason }>,
-        ) => {
-            if (typeof sync.sendMessage === 'function') {
-                await sync.sendMessage(sessionId, text, displayText, metaOverrides, options);
-            }
-        },
+            options?: Readonly<{ localId?: string | null; requestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1 }>,
+        ) => await getSyncSingleton().enqueuePendingMessage(sessionId, text, displayText, metaOverrides, {
+            ...options,
+            requestedAction: options?.requestedAction ?? { v: 1, kind: 'enqueue' },
+        }),
     };
 }
 
@@ -130,7 +119,7 @@ type ActiveSyncLike = Readonly<ReturnType<typeof getDefaultActiveSync>>;
 
 function getDefaultApplySessions(): (sessions: AppliedSession[]) => void {
     return (sessions: AppliedSession[]) => {
-        const syncWithSessionApply = sync as unknown as {
+        const syncWithSessionApply = getSyncSingleton() as unknown as {
             applySessions?: (sessions: AppliedSession[]) => void;
         };
 
@@ -150,10 +139,8 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
     resolveContext?: typeof resolveServerScopedSessionContext;
     fetchSessionById?: typeof fetchSessionByIdWithServerScope;
     sendSessionMessageWithServerScope?: typeof sendSessionMessageWithServerScope;
-    activeSync?: Readonly<Omit<ActiveSyncLike, 'ensureSessionVisibleForMessageRoute'>> & {
-        ensureSessionVisibleForMessageRoute?: ActiveSyncLike['ensureSessionVisibleForMessageRoute'];
-    };
-    ensureSessionVisibleForMessageRoute?: (sessionId: string, options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) => Promise<unknown>;
+    activeSync?: Partial<ActiveSyncLike> & Pick<ActiveSyncLike, 'refreshSessions'>;
+    ensureSessionVisibleForMessageRoute?: EnsureSessionVisibleForMessageRoute;
     getStoredSession?: (sessionId: string) => Session | null;
     applySessions?: (sessions: AppliedSession[]) => void;
 }>): Readonly<{
@@ -169,8 +156,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
 }> {
     const resolveContext = deps?.resolveContext ?? resolveServerScopedSessionContext;
     const fetchSessionById = deps?.fetchSessionById ?? fetchSessionByIdWithServerScope;
-    const sendScopedMessage = deps?.sendSessionMessageWithServerScope ?? sendSessionMessageWithServerScope;
-    const activeSync = deps?.activeSync ?? getDefaultActiveSync();
+    const activeSync = { ...getDefaultActiveSync(), ...(deps?.activeSync ?? {}) };
     const ensureSessionVisibleForMessageRoute = deps?.ensureSessionVisibleForMessageRoute
         ?? activeSync.ensureSessionVisibleForMessageRoute;
     const getStoredSession = deps?.getStoredSession ?? ((sessionId: string) => storage.getState().sessions[sessionId] ?? null);
@@ -194,37 +180,40 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
 
         try {
             const context = await resolveContext({ serverId: params.targetServerId ?? null });
+            const sendScopedMessage = deps?.sendSessionMessageWithServerScope
+                ?? createServerScopedSessionSendMessage({
+                    resolveContext: async () => context,
+                    enqueuePendingMessageActive: activeSync.enqueuePendingMessage,
+                    getSession: getStoredSession,
+                }).sendSessionMessageWithServerScope;
             const trimmedInitialMessage = String(params.initialMessageText ?? '').trim();
 
             if (context.scope === 'active') {
                 if (trimmedInitialMessage.length > 0) {
-                    await activeSync.sendMessage(
+                    await requireLocalSessionVisibleForRoute({
                         sessionId,
-                        trimmedInitialMessage,
-                        typeof params.displayText === 'string' ? params.displayText : undefined,
-                        params.metaOverrides ?? undefined,
-                        {
-                            profileId: params.profileId,
-                            localId: params.messageLocalId,
-                            bypassPendingQueueReason: 'server_scoped_rpc',
-                        },
-                    );
-                    try {
-                        await ensureSessionHydratedForNavigation({
-                            sessionId,
-                            serverId: params.targetServerId ?? null,
-                            getStoredSession,
-                            ensureSessionVisibleForMessageRoute,
-                        });
-                    } catch {
-                        // Best-effort only: after the first message is already committed, do not fail closed if
-                        // local hydration still lags behind.
+                        serverId: params.targetServerId ?? null,
+                        getStoredSession,
+                        ensureSessionVisibleForMessageRoute,
+                    });
+                    const result = await sendScopedMessage({
+                        sessionId,
+                        message: trimmedInitialMessage,
+                        serverId: params.targetServerId ?? null,
+                        displayText: typeof params.displayText === 'string' ? params.displayText : undefined,
+                        metaOverrides: params.metaOverrides ?? undefined,
+                        profileId: params.profileId,
+                        messageLocalId: params.messageLocalId,
+                        providerDeliveryIntent: 'first_turn',
+                    });
+                    if (!result.ok) {
+                        throw new Error(result.error || 'Failed to send message');
                     }
                     return;
                 }
 
                 await activeSync.refreshSessions();
-                await ensureSessionHydratedForNavigation({
+                await requireLocalSessionVisibleForRoute({
                     sessionId,
                     serverId: params.targetServerId ?? null,
                     getStoredSession,
@@ -257,6 +246,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                     metaOverrides: params.metaOverrides ?? undefined,
                     profileId: params.profileId,
                     messageLocalId: params.messageLocalId,
+                    providerDeliveryIntent: 'first_turn',
                 });
                 if (!result.ok) {
                     throw new Error(result.error || 'Failed to send message');

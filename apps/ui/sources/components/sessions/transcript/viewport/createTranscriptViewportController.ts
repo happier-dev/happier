@@ -23,7 +23,7 @@ export function createTranscriptViewportController(): TranscriptViewportControll
             if (sessionId !== input.sessionId) {
                 sessionId = input.sessionId;
                 mode = 'hydrating';
-                if (input.type === 'user-scroll' || input.type === 'auto-follow') {
+                if (input.type === 'user-scroll') {
                     return { kind: 'none', sessionId: input.sessionId, reason: 'session-change', mode };
                 }
             }
@@ -33,8 +33,6 @@ export function createTranscriptViewportController(): TranscriptViewportControll
                     return resolveFirstPaint(input);
                 case 'user-scroll':
                     return resolveUserScroll(input);
-                case 'auto-follow':
-                    return resolveAutoFollow(input);
                 case 'jump-to-bottom':
                     mode = 'jump-to-bottom';
                     return {
@@ -127,18 +125,6 @@ export function createTranscriptViewportController(): TranscriptViewportControll
                         averageItemLengthPx: normalizeNonNegative(input.averageItemLengthPx),
                         ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
                     };
-                case 'preserve-live-tail-distance':
-                    return resolvePreserveLiveTailDistance(input);
-                case 'restore-web-prepend-anchor':
-                    mode = 'restore-anchor';
-                    return {
-                        kind: 'restore-web-prepend-anchor',
-                        sessionId: input.sessionId,
-                        reason: 'prepend-restore',
-                        mode,
-                        anchor: input.anchor,
-                        ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
-                    };
             }
         },
     };
@@ -224,87 +210,12 @@ export function createTranscriptViewportController(): TranscriptViewportControll
         };
     }
 
-    function resolveAutoFollow(
-        input: Extract<TranscriptViewportControllerInput, { type: 'auto-follow' }>,
-    ): TranscriptViewportCommand {
-        const distanceFromBottom = normalizeNonNegative(input.distanceFromBottom);
-        const pinThresholdPx = normalizeNonNegative(input.pinThresholdPx);
-        if (!input.wantsPinned || mode === 'user-unpinned') {
-            mode = 'user-unpinned';
-            return { kind: 'none', sessionId: input.sessionId, reason: 'user-unpinned', mode };
-        }
-        if (distanceFromBottom <= pinThresholdPx) {
-            mode = 'follow-bottom';
-            return { kind: 'none', sessionId: input.sessionId, reason: 'already-pinned', mode };
-        }
-        if (input.recentUserIntent) {
-            mode = 'user-unpinned';
-            return { kind: 'none', sessionId: input.sessionId, reason: 'recent-user-intent', mode };
-        }
-
-        mode = 'follow-bottom';
-        if (input.skipNativeJsPin === true) {
-            return {
-                kind: 'skip-native-js-pin',
-                sessionId: input.sessionId,
-                reason: input.reason,
-                skipReason: 'mvcp-only',
-                mode,
-            };
-        }
-        return {
-            kind: 'pin-bottom',
-            sessionId: input.sessionId,
-            reason: input.reason,
-            mode,
-            ...(typeof input.observedContentHeightPx === 'number' && Number.isFinite(input.observedContentHeightPx)
-                ? { contentHeight: normalizeFiniteNonNegative(input.observedContentHeightPx) }
-                : {}),
-            ...(typeof input.observedLayoutHeightPx === 'number' && Number.isFinite(input.observedLayoutHeightPx)
-                ? { layoutHeight: normalizeFiniteNonNegative(input.observedLayoutHeightPx) }
-                : {}),
-        };
-    }
-
-    function resolvePreserveLiveTailDistance(
-        input: Extract<TranscriptViewportControllerInput, { type: 'preserve-live-tail-distance' }>,
-    ): TranscriptViewportCommand {
-        const previousDistanceFromLiveTailPx = normalizeNonNegative(input.previousDistanceFromLiveTailPx);
-        const pinThresholdPx = normalizeNonNegative(input.pinThresholdPx);
-        if (!input.wantsPinned || mode === 'user-unpinned') {
-            mode = 'user-unpinned';
-            return { kind: 'none', sessionId: input.sessionId, reason: 'user-unpinned', mode };
-        }
-        if (input.recentUserIntent) {
-            mode = 'user-unpinned';
-            return { kind: 'none', sessionId: input.sessionId, reason: 'recent-user-intent', mode };
-        }
-        if (previousDistanceFromLiveTailPx > pinThresholdPx) {
-            return { kind: 'none', sessionId: input.sessionId, reason: 'user-unpinned', mode };
-        }
-
-        mode = 'follow-bottom';
-        return {
-            kind: 'preserve-live-tail-distance',
-            sessionId: input.sessionId,
-            reason: input.reason,
-            mode,
-            previousDistanceFromLiveTailPx,
-            ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
-            ...(input.schedulerAuthorityReason ? { schedulerAuthorityReason: input.schedulerAuthorityReason } : {}),
-            ...(input.schedulerAuthorityWriter ? { schedulerAuthorityWriter: input.schedulerAuthorityWriter } : {}),
-        };
-    }
 }
 
 function normalizeNonNegative(value: number | null | undefined): number {
     return typeof value === 'number' && Number.isFinite(value)
         ? Math.max(0, Math.trunc(value))
         : 0;
-}
-
-function normalizeFiniteNonNegative(value: number): number {
-    return Math.max(0, value);
 }
 
 function normalizeRouteMessageId(value: unknown): string | null {

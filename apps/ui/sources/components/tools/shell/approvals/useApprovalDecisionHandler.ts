@@ -6,14 +6,16 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 
-function readServerId(artifact: DecryptedArtifact, sessionId: string): string | null {
+type ApprovalDecisionArtifact = Pick<DecryptedArtifact, 'id' | 'header'>;
+
+function readServerId(artifact: ApprovalDecisionArtifact, sessionId: string): string | null {
     const headerServerId = typeof artifact.header?.serverId === 'string' ? artifact.header.serverId.trim() : '';
     if (headerServerId.length > 0) return headerServerId;
     return resolvePreferredServerIdForSessionId(sessionId) ?? null;
 }
 
 export function useApprovalDecisionHandler(
-    artifact: DecryptedArtifact,
+    artifact: ApprovalDecisionArtifact,
     sessionId: string,
 ): (decision: 'approve' | 'reject') => Promise<boolean> {
     const executor = React.useMemo(

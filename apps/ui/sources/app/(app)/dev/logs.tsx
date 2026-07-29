@@ -1,16 +1,21 @@
 import * as React from 'react';
-import { View, Text, FlatList, Pressable } from 'react-native';
+import { View, Text, Pressable } from 'react-native';
+import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
+import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
 import { Ionicons } from '@expo/vector-icons';
 import { log } from '@/log';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Item } from '@/components/ui/lists/Item';
-import * as Clipboard from 'expo-clipboard';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import { Modal } from '@/modal';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 export default function LogsScreen() {
     const [logs, setLogs] = React.useState<string[]>([]);
-    const flatListRef = React.useRef<FlatList>(null);
+    const listRef = React.useRef<VirtualizedListRef>(null);
+    const copyFeedback = useTemporaryCopyFeedback();
 
     // Subscribe to log changes
     React.useEffect(() => {
@@ -36,7 +41,7 @@ export default function LogsScreen() {
     React.useEffect(() => {
         if (logs.length > 0) {
             setTimeout(() => {
-                flatListRef.current?.scrollToEnd({ animated: false });
+                listRef.current?.scrollToEnd?.({ animated: false });
             }, 100);
         }
     }, [logs.length]);
@@ -59,8 +64,12 @@ export default function LogsScreen() {
         }
 
         const allLogs = logs.join('\n');
-        await Clipboard.setStringAsync(allLogs);
-        Modal.alert('Copied', `${logs.length} log entries copied to clipboard`);
+        const copied = await setClipboardStringSafe(allLogs);
+        if (!copied) {
+            Modal.alert('Error', 'Failed to copy logs to clipboard');
+            return;
+        }
+        copyFeedback.markCopied('logs');
     };
 
     const handleAddTestLog = () => {
@@ -100,6 +109,7 @@ export default function LogsScreen() {
                     <Item 
                         title="Copy All Logs"
                         icon={<Ionicons name="copy-outline" size={24} color="#007AFF" />}
+                        rightElement={<CopiedPill visible={copyFeedback.isCopied('logs')} testID="dev-logs-copy-feedback" />}
                         onPress={handleCopyAll}
                         disabled={logs.length === 0}
                     />
@@ -141,8 +151,8 @@ export default function LogsScreen() {
                         </Text>
                     </View>
                 ) : (
-                    <FlatList
-                        ref={flatListRef}
+                    <VirtualizedList
+                        ref={listRef}
                         data={logs}
                         renderItem={renderLogItem}
                         keyExtractor={(item, index) => index.toString()}

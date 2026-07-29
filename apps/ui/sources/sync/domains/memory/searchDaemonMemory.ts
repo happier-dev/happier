@@ -9,8 +9,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
-
-const SESSION_MACHINE_TARGET_UNAVAILABLE_ERROR_CODE = 'SESSION_MACHINE_TARGET_UNAVAILABLE';
+import { SESSION_MACHINE_TARGET_UNAVAILABLE_ERROR_CODE } from '@/sync/runtime/sessionMachineRpcErrorCodes';
 
 export async function searchDaemonMemory(args: Readonly<{
     serverId: string | null | undefined;

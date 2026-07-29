@@ -66,7 +66,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const WizardChoiceRow = React.memo(function WizardChoiceRow(props: WizardChoiceRowProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const iconColor = props.selected ? theme.colors.accent.blue : theme.colors.text.secondary;
+    const iconColor = props.selected ? theme.colors.text.primary : theme.colors.text.secondary;
     const rowDisabled = Boolean(props.disabled);
     const [menuOpen, setMenuOpen] = React.useState(false);
     const suppressRowPressRef = React.useRef(false);
@@ -102,12 +102,19 @@ export const WizardChoiceRow = React.memo(function WizardChoiceRow(props: Wizard
         }));
     }, [menuActions]);
 
+    // F-QAVISUAL-1: SelectableRow's default web role renders a real <button>; rows
+    // that embed interactive trailing controls (overflow menu, retry action) would
+    // emit invalid nested-button markup. Use the established `webRole="presentation"`
+    // escape hatch (same pattern as SelectionListOptionRow) for those rows.
+    const hasInteractiveTrailingContent = Boolean(props.secondaryAction) || menuActions.length > 0;
+
     return (
         <SelectableRow
             testID={props.testID}
             variant="selectable"
             selected={props.selected}
             disabled={rowDisabled}
+            webRole={hasInteractiveTrailingContent ? 'presentation' : undefined}
             allowChildInteractionWhenDisabled={rowDisabled && (Boolean(props.secondaryAction) || menuItems.length > 0)}
             onPress={onPress}
             containerStyle={props.dimmed ? ({ opacity: 0.55 } as const) : null}

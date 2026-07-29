@@ -22,6 +22,7 @@ export async function uploadInChunks<
     TFinalize extends { success: boolean; error?: string; errorCode?: string },
 >(params: Readonly<{
     totalBytes: number;
+    initialChunkIndex?: number;
     readBytes: (offset: number, length: number) => Promise<Uint8Array>;
     init: () => Promise<TInit>;
     sendChunk: (request: Readonly<{
@@ -58,6 +59,13 @@ export async function uploadInChunks<
             return { success: false, error: 'Upload init returned no recipientPublicKeyBase64' };
         }
 
+        const initialChunkIndex = params.initialChunkIndex ?? 0;
+        const maxChunkCount = Math.ceil(params.totalBytes / chunkSizeBytes);
+        if (!Number.isSafeInteger(initialChunkIndex) || initialChunkIndex < 0 || initialChunkIndex > maxChunkCount) {
+            return { success: false, error: 'Upload resume state is invalid' };
+        }
+        const initialUploadedBytes = Math.min(params.totalBytes, initialChunkIndex * chunkSizeBytes);
+
         uploadId = initUploadId;
         const emitProgress = (uploadedBytes: number) => {
             if (!params.onProgress) return;
@@ -68,9 +76,9 @@ export async function uploadInChunks<
             }
         };
 
-        let index = 0;
-        let uploadedBytes = 0;
-        for (let offset = 0; offset < params.totalBytes; offset += chunkSizeBytes) {
+        let index = initialChunkIndex;
+        let uploadedBytes = initialUploadedBytes;
+        for (let offset = initialUploadedBytes; offset < params.totalBytes; offset += chunkSizeBytes) {
             if (params.signal?.aborted) {
                 return { success: false, error: 'Upload canceled' };
             }

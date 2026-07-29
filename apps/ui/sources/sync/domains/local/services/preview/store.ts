@@ -1,17 +1,27 @@
-import type { BrowserViewTargetV1, LocalServicePreviewResourceV1 } from '@happier-dev/protocol';
+import type {
+    BrowserViewTargetV1,
+    LocalServicePreviewDiagnosticV1,
+    LocalServicePreviewResourceV1,
+} from '@happier-dev/protocol';
+
+import { readLocalServicePreviewDiagnostics } from './diagnostics';
 
 export type LocalServicePreviewRow = Readonly<{
     previewId: string;
     resource: LocalServicePreviewResourceV1;
     accessUrl: string | null;
     expiresAt: number | null;
+    diagnostics: readonly LocalServicePreviewDiagnosticV1[];
+}>;
+
+export type LocalServicePreviewSnapshotRow = Omit<LocalServicePreviewRow, 'diagnostics'> & Readonly<{
     diagnostics: readonly unknown[];
 }>;
 
 export type LocalServicePreviewSnapshot = Readonly<{
     generatedAt: number;
     refreshState: 'idle' | 'refreshing' | 'error';
-    previews: readonly LocalServicePreviewRow[];
+    previews: readonly LocalServicePreviewSnapshotRow[];
     diagnostics: readonly unknown[];
 }>;
 
@@ -20,7 +30,7 @@ export type LocalServicePreviewState = Readonly<{
     refreshState: 'idle' | 'refreshing' | 'error';
     previewIds: readonly string[];
     previewsById: ReadonlyMap<string, LocalServicePreviewRow>;
-    diagnostics: readonly unknown[];
+    diagnostics: readonly LocalServicePreviewDiagnosticV1[];
 }>;
 
 function rowKey(row: LocalServicePreviewRow): string {
@@ -52,6 +62,17 @@ export function applyLocalServicePreviewRefreshStarted(
     };
 }
 
+export function applyLocalServicePreviewRefreshFailed(
+    state: LocalServicePreviewState,
+    generatedAt: number,
+): LocalServicePreviewState {
+    return {
+        ...state,
+        generatedAt,
+        refreshState: 'error',
+    };
+}
+
 export function applyLocalServicePreviewSnapshot(
     state: LocalServicePreviewState,
     snapshot: LocalServicePreviewSnapshot,
@@ -59,16 +80,23 @@ export function applyLocalServicePreviewSnapshot(
     const previewsById = new Map<string, LocalServicePreviewRow>();
     const previewIds: string[] = [];
     for (const preview of snapshot.previews) {
+        const normalizedPreview: LocalServicePreviewRow = {
+            ...preview,
+            diagnostics: readLocalServicePreviewDiagnostics(preview.diagnostics),
+        };
         previewIds.push(preview.previewId);
         const previous = state.previewsById.get(preview.previewId);
-        previewsById.set(preview.previewId, areRowsEquivalent(previous, preview) ? previous as LocalServicePreviewRow : preview);
+        previewsById.set(
+            preview.previewId,
+            areRowsEquivalent(previous, normalizedPreview) ? previous as LocalServicePreviewRow : normalizedPreview,
+        );
     }
     return {
         generatedAt: snapshot.generatedAt,
         refreshState: snapshot.refreshState,
         previewIds,
         previewsById,
-        diagnostics: snapshot.diagnostics,
+        diagnostics: readLocalServicePreviewDiagnostics(snapshot.diagnostics),
     };
 }
 

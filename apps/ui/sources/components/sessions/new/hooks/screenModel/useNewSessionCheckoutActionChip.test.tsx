@@ -185,6 +185,16 @@ describe('useNewSessionCheckoutActionChip', () => {
         expect(shouldReconcileInitialHydratedCheckoutCreationDraftRef.current).toBe(false);
     });
 
+    it('keeps the worktree action for the canonical qualified first-party Git backend identity', async () => {
+        const chip = await renderCheckoutChip({
+            repoScmSnapshot: makeSnapshot(DEFAULT_WORKTREES, {
+                backendId: 'happier.scm.backend.git/git',
+            }),
+        });
+
+        expect(chip).not.toBeNull();
+    });
+
     it('keeps worktree popover height intent platform-agnostic so the shared popover wrapper owns native sizing', async () => {
         vi.doMock('@/components/ui/selectionList', async (importOriginal) => {
             const actual = await importOriginal<typeof import('@/components/ui/selectionList')>();

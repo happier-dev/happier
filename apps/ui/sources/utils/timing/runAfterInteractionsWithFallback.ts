@@ -8,7 +8,21 @@ function readRunAfterInteractionsFallbackDelayMsFromEnv(): number {
     return Math.max(0, Math.min(30_000, parsed));
 }
 
-export function runAfterInteractionsWithFallback(fn: () => void): () => void {
+export type RunAfterInteractionsWithFallbackOptions = Readonly<{
+    /**
+     * Overrides the env-configured fallback delay. An explicit `0` schedules
+     * an immediate (next-tick) fallback for call sites that must run promptly
+     * even while interactions are in flight (e.g. actions chained after
+     * closing an overlay), unlike the env value where `0` disables the
+     * fallback entirely.
+     */
+    fallbackDelayMs?: number;
+}>;
+
+export function runAfterInteractionsWithFallback(
+    fn: () => void,
+    options?: RunAfterInteractionsWithFallbackOptions,
+): () => void {
     if (Platform.OS === 'web') {
         let cancelled = false;
         const handle = setTimeout(() => {
@@ -28,8 +42,11 @@ export function runAfterInteractionsWithFallback(fn: () => void): () => void {
         fn();
     };
 
-    const fallbackDelayMs = readRunAfterInteractionsFallbackDelayMsFromEnv();
-    const fallback = fallbackDelayMs > 0 ? setTimeout(runOnce, fallbackDelayMs) : null;
+    const hasExplicitFallbackDelay = typeof options?.fallbackDelayMs === 'number' && Number.isFinite(options.fallbackDelayMs);
+    const fallbackDelayMs = hasExplicitFallbackDelay
+        ? Math.max(0, Math.min(30_000, Math.trunc(options!.fallbackDelayMs!)))
+        : readRunAfterInteractionsFallbackDelayMsFromEnv();
+    const fallback = fallbackDelayMs > 0 || hasExplicitFallbackDelay ? setTimeout(runOnce, fallbackDelayMs) : null;
     try {
         const task = InteractionManager.runAfterInteractions(() => {
             if (fallback !== null) clearTimeout(fallback);

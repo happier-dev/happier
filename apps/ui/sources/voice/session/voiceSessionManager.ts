@@ -3,6 +3,7 @@ import { getVoiceSessionSnapshot } from './voiceSessionStore';
 import type { VoiceSessionLifecycleController } from './voiceSessionLifecycleController';
 
 export type VoiceSessionManager = Readonly<{
+  bargeIn: (sessionId: string) => Promise<void>;
   toggle: (sessionId: string) => Promise<void>;
   stop: (sessionId: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<void>;
@@ -20,6 +21,12 @@ export function createVoiceSessionManager(deps: Readonly<{
     const lifecycleController = resolveLifecycleController();
     if (!lifecycleController) return;
     await lifecycleController.toggle(sessionId);
+  };
+
+  const bargeIn = async (sessionId: string) => {
+    const lifecycleController = resolveLifecycleController();
+    if (!lifecycleController) return;
+    await lifecycleController.bargeIn(sessionId);
   };
 
   const stop = async (sessionId: string) => {
@@ -47,6 +54,7 @@ export function createVoiceSessionManager(deps: Readonly<{
   };
 
   return {
+    bargeIn,
     toggle,
     stop,
     interrupt,

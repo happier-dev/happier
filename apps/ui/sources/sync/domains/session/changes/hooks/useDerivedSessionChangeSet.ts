@@ -7,6 +7,7 @@ import { useSession, useSessionMessages } from '@/sync/domains/state/storage';
 import { deriveLatestTurnScopedChangeSet } from '../derivation/deriveLatestTurnScopedChangeSet';
 import { deriveSessionChangeSet } from '../derivation/deriveSessionChangeSet';
 import { deriveTurnChangeSetsFromMessages } from '../derivation/deriveTurnChangeSetsFromMessages';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 type UseDerivedSessionChangeSetResult = Readonly<{
     turnChangeSets: readonly TurnChangeSet[];
@@ -70,10 +71,16 @@ export function useDerivedSessionChangeSet(sessionId: string): UseDerivedSession
     const sessionChangeSet = React.useMemo(() => {
         return deriveSessionChangeSet({
             sessionId,
-            metadata: session?.metadata ?? null,
+            metadata: session ? readSessionOwnerMetadataView(session) : null,
             turnChangeSets,
         });
-    }, [session?.metadata, sessionId, turnChangeSets]);
+    }, [
+        session?.metadata,
+        session?.metadataLayoutVersion,
+        session?.ownerMetadataView,
+        sessionId,
+        turnChangeSets,
+    ]);
 
     const latestTurnScopedChangeSet = React.useMemo(() => {
         return deriveLatestTurnScopedChangeSet({

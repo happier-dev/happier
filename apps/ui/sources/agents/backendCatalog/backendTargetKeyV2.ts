@@ -1,5 +1,5 @@
 import {
-    BackendTargetKeyV2Schema,
+    buildBackendTargetKeyV2,
     readBackendTargetRefV2,
     type BackendTargetKeyV2,
     type BackendTargetRefV2,
@@ -7,16 +7,7 @@ import {
 } from '@happier-dev/protocol';
 
 export function formatBackendTargetKeyV2(target: BackendTargetRefV2): BackendTargetKeyV2 {
-    const backendId = String(target.backendId ?? '').trim();
-    if (!backendId) {
-        throw new Error('Expected backendTarget.backendId to be a non-empty string');
-    }
-
-    const configuredBackendId = typeof target.configuredBackendId === 'string'
-        ? target.configuredBackendId.trim()
-        : '';
-    const suffix = configuredBackendId ? `:configured:${configuredBackendId}` : '';
-    return BackendTargetKeyV2Schema.parse(`backend:${backendId}${suffix}`);
+    return buildBackendTargetKeyV2(target);
 }
 
 export function resolveBackendTargetKeyV2(input: BackendTargetRefV2Input): BackendTargetKeyV2 {

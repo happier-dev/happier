@@ -193,11 +193,8 @@ function buildStepPlan() {
 }
 
 export function buildOnboardingWizardPath(stepId = null) {
-  const normalized = String(stepId ?? '').trim();
-  if (!normalized) {
+    void stepId;
     return appendTauriQaHmrOptOut('/');
-  }
-  return appendTauriQaHmrOptOut(`/?happier_wizard_step=${encodeURIComponent(normalized)}`);
 }
 
 export function buildTauriOnboardingWizardQaPlan({ env = process.env } = {}) {

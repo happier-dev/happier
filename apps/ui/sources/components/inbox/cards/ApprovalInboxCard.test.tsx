@@ -119,6 +119,24 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('ApprovalInboxCard', () => {
+    it('shows the qualified plugin action without interpreting it as a built-in action', async () => {
+        const { ApprovalInboxCard } = await import('./ApprovalInboxCard');
+        const artifact = {
+            ...createApprovalArtifact(),
+            header: {
+                title: 'Publish release notes',
+                kind: 'target_action_approval.v1',
+                qualifiedActionId: 'acme.publisher/actions/releases/publish',
+            },
+        } satisfies DecryptedArtifact;
+        const screen = await renderScreen(<ApprovalInboxCard artifact={artifact} onPress={() => {}} />);
+        expect(screen.getTextContent()).toContain('acme.publisher/actions/releases/publish');
+        expect(screen.findByTestId(`inbox.approval.${artifact.id}`)?.props).toMatchObject({
+            accessibilityRole: 'button',
+            accessibilityLabel: 'Publish release notes · acme.publisher/actions/releases/publish',
+        });
+    });
+
     it('shows the reachable machine label when the stored session machine id is stale', async () => {
         const { ApprovalInboxCard } = await import('./ApprovalInboxCard');
         const screen = await renderScreen(

@@ -9,6 +9,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { ensureSessionSuggestionCatalogs } from '@/sync/ops/sessionCatalogs';
 import type { AutocompleteSuggestion } from './autocompleteTypes';
 import { getCommandSuggestions } from './commandSuggestions';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 type VendorPluginCatalogItem = Readonly<{
     name: string;
@@ -156,7 +157,8 @@ function normalizeSkill(value: unknown): SkillCatalogItem | null {
 }
 
 function readCatalogsFromSession(sessionId: string): SuggestionCatalogOverrides {
-    const metadata = storage.getState().sessions[sessionId]?.metadata;
+    const session = storage.getState().sessions[sessionId];
+    const metadata = session ? readSessionOwnerMetadataView(session) : null;
     if (!metadata || typeof metadata !== 'object') return {};
     const record = metadata as Record<string, unknown>;
     const vendorPluginRaw = record.sessionVendorPluginCatalogV1 ?? record.vendorPluginCatalogV1 ?? record.vendorPlugins;

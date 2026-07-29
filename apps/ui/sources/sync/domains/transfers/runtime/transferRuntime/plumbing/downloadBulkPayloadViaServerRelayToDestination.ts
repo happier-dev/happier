@@ -1,5 +1,4 @@
 import { type TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
-import { sha256 } from '@noble/hashes/sha2';
 
 import { resolveServerScopedTransferRelaySocket } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedTransferRelaySocket';
 
@@ -7,6 +6,9 @@ import { type ChunkDownloadProgress } from './chunkTransferClient';
 import { type BulkTransferFileDestination } from './bulkTransferFileDestination';
 import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from './transferChunkEncryption';
 import { cleanupBulkTransferDestination } from './cleanupBulkTransferDestination';
+import { createTransferManifestHasher } from './transferManifestHasher';
+import { classifyServerRelayTransferChunkSequence } from './classifyServerRelayTransferChunkSequence';
+import { resolveServerRelayTransferInactivityTimeoutMs } from './resolveServerRelayTransferInactivityTimeoutMs';
 
 type BulkTransferFailureResponse = Readonly<{
     success: false;
@@ -27,10 +29,6 @@ type BulkTransferDownloadFinalizeResponse = Readonly<{ success: boolean; error?:
 type RelayFileDownloadResponse =
     | Readonly<{ ok: true; name: string; sizeBytes: number }>
     | Readonly<{ ok: false; error: string }>;
-
-function bytesToHex(bytes: Uint8Array): string {
-    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
 
 function isChunkEnvelopeForTransfer(
     payload: TransferRelayV2SendEnvelope,
@@ -74,9 +72,7 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
     }
 
     const recipientKeyPair = createTransferRecipientKeyPair();
-    const transferTimeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0
-        ? Math.max(1, Math.floor(params.timeoutMs))
-        : null;
+    const transferTimeoutMs = resolveServerRelayTransferInactivityTimeoutMs(params.timeoutMs);
     const init = await params.init({
         recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
     });
@@ -124,7 +120,7 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
         relaySocket = await resolveServerScopedTransferRelaySocket({
             machineId: params.machineId,
             ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
-            ...(transferTimeoutMs !== null ? { timeoutMs: transferTimeoutMs } : {}),
+            timeoutMs: transferTimeoutMs,
         });
     } catch (error) {
         return await abortAndCleanupFailure(
@@ -140,7 +136,8 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
         let transferTimeoutId: ReturnType<typeof setTimeout> | null = null;
         let envelopeQueue = Promise.resolve();
         let downloadedBytes = 0;
-        const manifestHasher = sha256.create();
+        let nextExpectedSequence = 0;
+        const manifestHasher = createTransferManifestHasher();
 
         const emitProgress = () => {
             if (!params.onProgress) {
@@ -167,9 +164,6 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
 
         const armTransferTimeout = () => {
             clearTransferTimeout();
-            if (transferTimeoutMs === null) {
-                return;
-            }
             transferTimeoutId = setTimeout(() => {
                 void resolveError('Server relay transfer timed out', true);
             }, transferTimeoutMs);
@@ -198,7 +192,15 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
             if (!settle()) {
                 return;
             }
-            await params.destination.close();
+            try {
+                await params.destination.close();
+            } catch (error) {
+                resolve(await abortAndCleanupFailure(
+                    error instanceof Error ? error.message : 'Failed to close transfer destination',
+                    true,
+                ));
+                return;
+            }
             resolve({
                 ok: true as const,
                 name: init.name,
@@ -229,6 +231,29 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
                 }
 
                 if (isChunkEnvelopeForTransfer(payload, params.machineId, init.downloadId)) {
+                    const sequenceDisposition = classifyServerRelayTransferChunkSequence(
+                        payload.envelope.sequence,
+                        nextExpectedSequence,
+                    );
+                    if (sequenceDisposition === 'duplicate') {
+                        relaySocket.sendEnvelope({
+                            scopeUserId: relaySocket.scopeUserId,
+                            sender: {
+                                kind: 'user',
+                            },
+                            recipient: {
+                                kind: 'machine',
+                                machineId: params.machineId,
+                            },
+                            envelope: {
+                                transferId: init.downloadId,
+                                kind: 'ack',
+                                nextSequence: nextExpectedSequence,
+                            },
+                        });
+                        armTransferTimeout();
+                        return;
+                    }
                     const decrypted = await decryptEncryptedTransferChunkEnvelope({
                         transferId: init.downloadId,
                         sequence: payload.envelope.sequence,
@@ -239,6 +264,7 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
                     manifestHasher.update(decrypted);
                     await params.destination.writeBytes(decrypted);
                     downloadedBytes += decrypted.byteLength;
+                    nextExpectedSequence = payload.envelope.sequence + 1;
                     emitProgress();
                     relaySocket.sendEnvelope({
                         scopeUserId: relaySocket.scopeUserId,
@@ -252,7 +278,7 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
                         envelope: {
                             transferId: init.downloadId,
                             kind: 'ack',
-                            nextSequence: payload.envelope.sequence + 1,
+                            nextSequence: nextExpectedSequence,
                         },
                     });
                     return;
@@ -262,7 +288,7 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
                     return;
                 }
 
-                const manifestHash = `sha256:${bytesToHex(manifestHasher.digest())}`;
+                const manifestHash = manifestHasher.digestManifestHash();
                 if (manifestHash !== payload.envelope.manifestHash) {
                     await resolveError('Downloaded transfer payload manifest hash mismatch', true);
                     return;

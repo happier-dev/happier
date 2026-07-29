@@ -69,13 +69,6 @@ export const MachineTransferExposureSection = React.memo(function MachineTransfe
                 mode="info"
             />
             <Item
-                testID="machine.transferExposure.lanHttp"
-                title={t('machine.transferExposure.lanHttp')}
-                subtitle={resolveListenerStateLabel(transferState.listenerClasses.lan_http)}
-                showChevron={false}
-                mode="info"
-            />
-            <Item
                 testID="machine.transferExposure.tailscaleServeHttps"
                 title={t('machine.transferExposure.tailscaleServeHttps')}
                 subtitle={resolveTailscaleServeStateLabel(transferState.listenerClasses.tailscale_serve_https)}

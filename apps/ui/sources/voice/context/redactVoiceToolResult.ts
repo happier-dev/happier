@@ -1,4 +1,8 @@
 import { redactVoicePathLikeData } from '@/voice/shared/redactVoicePathLikeData';
+import {
+  isInventoryPrivacyVoiceToolName,
+  isRecentMessagesPrivacyVoiceToolName,
+} from '@/sync/domains/settings/actionSettingsPolicy';
 
 /**
  * Privacy preferences that gate what voice tool-result detail is allowed to cross the provider
@@ -11,6 +15,8 @@ export type VoiceToolResultRedactionPrefs = Readonly<{
   shareFilePaths: boolean;
   shareSessionSummary: boolean;
   sharePermissionRequests: boolean;
+  shareDeviceInventory?: boolean;
+  shareRecentMessages?: boolean;
 }>;
 
 /**
@@ -33,7 +39,11 @@ const FILE_PATH_KEYS: ReadonlySet<string> = new Set(['locationLabel']);
 /**
  * Pending permission-request identifiers/state surfaced by the session-activity tool.
  */
-const PERMISSION_REQUEST_KEYS: ReadonlySet<string> = new Set(['permissionRequestIds']);
+const PERMISSION_REQUEST_KEYS: ReadonlySet<string> = new Set([
+  'permissionRequestIds',
+  'requestId',
+  'requestIds',
+]);
 
 function shouldDropKey(key: string, prefs: VoiceToolResultRedactionPrefs): boolean {
   if (!prefs.shareSessionSummary && SESSION_SUMMARY_KEYS.has(key)) return true;
@@ -43,7 +53,10 @@ function shouldDropKey(key: string, prefs: VoiceToolResultRedactionPrefs): boole
 }
 
 function stripGatedKeys(value: unknown, prefs: VoiceToolResultRedactionPrefs, depth: number): unknown {
-  if (depth > 20) return value;
+  // Tool output is untrusted provider-bound data. Returning the untouched
+  // subtree at the safety limit would turn the recursion guard into a privacy
+  // bypass for deeply nested/cyclic payloads, so truncate fail closed.
+  if (depth > 20) return null;
   if (Array.isArray(value)) {
     return value.map((entry) => stripGatedKeys(entry, prefs, depth + 1));
   }
@@ -63,6 +76,35 @@ function stripGatedKeys(value: unknown, prefs: VoiceToolResultRedactionPrefs, de
  * redaction applied to provider-bound tool results — no per-tool redaction path should exist.
  */
 export function redactVoiceToolResultValue(value: unknown, prefs: VoiceToolResultRedactionPrefs): unknown {
-  const stripped = stripGatedKeys(value, prefs, 0);
-  return prefs.shareFilePaths ? stripped : redactVoicePathLikeData(stripped);
+  const resolvedPrefs: VoiceToolResultRedactionPrefs = {
+    shareFilePaths: prefs?.shareFilePaths === true,
+    shareSessionSummary: prefs?.shareSessionSummary === true,
+    sharePermissionRequests: prefs?.sharePermissionRequests === true,
+  };
+  const stripped = stripGatedKeys(value, resolvedPrefs, 0);
+  return resolvedPrefs.shareFilePaths ? stripped : redactVoicePathLikeData(stripped);
+}
+
+export function isVoiceToolResultBlockedByPrivacy(
+  toolName: string,
+  prefs: VoiceToolResultRedactionPrefs,
+): boolean {
+  if (prefs?.shareDeviceInventory !== true && isInventoryPrivacyVoiceToolName(toolName)) return true;
+  if (prefs?.shareRecentMessages !== true && isRecentMessagesPrivacyVoiceToolName(toolName)) return true;
+  return false;
+}
+
+export function redactVoiceToolResultForProvider(
+  toolName: string,
+  value: unknown,
+  prefs: VoiceToolResultRedactionPrefs,
+): unknown {
+  if (isVoiceToolResultBlockedByPrivacy(toolName, prefs)) {
+    return {
+      ok: false,
+      errorCode: 'privacy_disabled',
+      errorMessage: 'privacy_disabled',
+    };
+  }
+  return redactVoiceToolResultValue(value, prefs);
 }

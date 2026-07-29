@@ -5,8 +5,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 const directImportUploadMock = vi.hoisted(() => vi.fn());
 const createWorkspaceFileTransferRpcCallerMock = vi.hoisted(() => vi.fn());
 
-vi.mock('./directTransferImportUpload', () => ({
-    uploadBulkPayloadFromFileViaDirectImport: (...args: unknown[]) => directImportUploadMock(...args),
+vi.mock('./uploadBulkPayloadFromFileWithCarrierFallbacks', () => ({
+    uploadBulkPayloadFromFileWithCarrierFallbacks: (...args: unknown[]) => directImportUploadMock(...args),
 }));
 
 vi.mock('../families/workspaceFileTransferRpcCaller', () => ({
@@ -14,13 +14,13 @@ vi.mock('../families/workspaceFileTransferRpcCaller', () => ({
 }));
 
 describe('daemonWorkspaceFiles upload', () => {
-    it('uploads workspace files via direct import (no legacy bulk byte carrier)', async () => {
+    it('routes workspace uploads through the shared direct-to-relay carrier owner', async () => {
         directImportUploadMock.mockImplementation(async (params: any) => {
             expect(params.machineId).toBe('machine-1');
             expect(params.serverId).toBe('server-1');
             expect(params.fileReader.sizeBytes).toBe(5);
             await params.fileReader.readBytes(0, 5);
-            expect(params.request).toEqual({
+            expect(params.directImportRequest).toEqual({
                 t: 'session_file_upload_v1',
                 workingDirectory: '/repo',
                 path: '/repo/payload.bin',
@@ -55,6 +55,6 @@ describe('daemonWorkspaceFiles upload', () => {
             sha256: 'sha256:test',
         });
         expect(directImportUploadMock).toHaveBeenCalledTimes(1);
-        expect(createWorkspaceFileTransferRpcCallerMock).toHaveBeenCalledTimes(0);
+        expect(createWorkspaceFileTransferRpcCallerMock).toHaveBeenCalledTimes(1);
     });
 });

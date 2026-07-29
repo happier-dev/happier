@@ -5,7 +5,7 @@ export function resolveTranscriptListShellEdgeSlots<T>(params: Readonly<{
     visualTopNode: T;
     visualBottomNode: T;
 }>): Readonly<{ listHeaderNode: T; listFooterNode: T }> {
-    if (params.frame.rendererOptions.flashList.inverted) {
+    if (params.frame.dataOrder === 'newest-first') {
         return {
             listHeaderNode: params.visualBottomNode,
             listFooterNode: params.visualTopNode,

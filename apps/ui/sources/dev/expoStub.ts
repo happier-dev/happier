@@ -13,11 +13,11 @@ export class NativeModule<TEvents = unknown> {
     removeListeners(_count: number): void {}
 }
 
-export function requireOptionalNativeModule(): null {
+export function requireOptionalNativeModule(_moduleName?: string): null {
     return null;
 }
 
-export function requireNativeModule<T>(): T {
+export function requireNativeModule<T>(_moduleName?: string): T {
     return {} as T;
 }
 

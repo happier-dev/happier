@@ -202,12 +202,12 @@ function withTurnId(turn: TranscriptTurn, id: string): TranscriptTurn {
  * Keeps previously-assigned turn ids sticky across full rebuilds within one build-cache lineage
  * (per mounted session). When an older-page prepend lands mid-turn, the previously-rendered
  * headless first turn is absorbed into the older turn; without remapping, the merged turn would
- * derive a NEW id from its new first message, re-keying the on-screen FlashList row exactly at
+ * derive a NEW id from its new first message, re-keying the on-screen virtual row exactly at
  * the pagination anchor and breaking MVCP key-based offset correction (plan C3).
  *
  * Rule: a rebuilt turn that fully contains the messages of a previously-emitted turn keeps that
  * turn's id; embedded tool-group child ids follow. When several previous turns merge into one
- * rebuilt turn, the bottom-most previously-rendered id wins — that is the key FlashList has on
+ * rebuilt turn, the bottom-most previously-rendered id wins — that is the mounted key the renderer has on
  * screen. Fresh turns (no contained predecessor) keep `turn:<firstMessageId>` derivation.
  *
  * The same containment rule applies one level down to tool-group ids (plan N2c): group ids embed

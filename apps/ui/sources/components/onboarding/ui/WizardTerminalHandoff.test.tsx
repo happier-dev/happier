@@ -51,7 +51,7 @@ describe('WizardTerminalHandoff', () => {
         expect(rootFlattened.gap).toBe(12);
 
         const flattened = flattenStyle(step.props.style as unknown);
-        expect(flattened.gap).toBe(4);
+        expect(flattened.gap).toBe(8);
 
         const codeBlock = screen.findByType('CodeBlockView' as never) as unknown as {
             props: {
@@ -63,7 +63,9 @@ describe('WizardTerminalHandoff', () => {
         };
         expect(codeBlock.props.showHeaderRow).toBe(false);
         expect(codeBlock.props.showCopyButton).toBe(true);
-        expect(codeBlock.props.wrap).toBe(false);
+        // Spec §2 / F-W13-1: the full command must be readable — the row wraps
+        // to multiple lines instead of overflowing behind a horizontal fade.
+        expect(codeBlock.props.wrap).toBe(true);
         expect(codeBlock.props.scrollTestID).toBe('handoff-cli');
     });
 

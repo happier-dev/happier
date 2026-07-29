@@ -43,6 +43,21 @@ function nativeBinding() {
 }
 
 describe('encryptor native base64 JSON decrypt', () => {
+    it('exposes AES base64 JSON decrypt without native worker and preserves undefined', async () => {
+        const key = decodeHex(UI_CRYPTO_GOLDEN_VECTORS.aesGcmJson.keyHex);
+        const encryptor = new AES256Encryption(key);
+        const decryptBase64 = requireBase64Decryptor(encryptor);
+        const encrypted = await encryptor.encrypt([
+            { value: 'large-web-fallback' },
+            undefined,
+        ]);
+
+        await expect(decryptBase64(encrypted.map((item) => encodeBase64(item, 'base64')))).resolves.toEqual([
+            { value: 'large-web-fallback' },
+            undefined,
+        ]);
+    });
+
     it('keeps valid secretbox base64 JSON item order through the native worker', async () => {
         const key = decodeHex(UI_CRYPTO_GOLDEN_VECTORS.secretboxJson.keyHex);
         const encryptor = new SecretBoxEncryption(key, { nativeCryptoWorker: nativeBinding() });

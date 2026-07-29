@@ -6,6 +6,7 @@ import url from 'node:url';
 import { resolveUiPostinstallTasks } from './resolveUiPostinstallTasks.mjs';
 import { ensureNohoistPeerLinks } from './ensureNohoistPeerLinks.mjs';
 import { runCommandBestEffort, runCommandOrExit } from './postinstall/runCommand.mjs';
+import { verifyNativePatchCompilation } from './postinstall/verifyNativePatchCompilation.mjs';
 
 // Yarn workspaces can execute this script via a symlinked path (e.g. repoRoot/node_modules/happy/...).
 // Resolve symlinks so repoRootDir/expoAppDir are computed from the real filesystem location.
@@ -144,6 +145,60 @@ if (wants('patch-package')) {
     }
 }
 
+if (wants('verify-sentry-native-replay-postinit-patch')) {
+    const marker = 'HAPPIER PATCH(sentry-native-replay-postinit-guard)';
+    const sentryNativeStartCandidatePaths = [
+        path.resolve(repoRootNodeModulesDir, '@sentry', 'react-native', 'ios', 'RNSentryStart.m'),
+        path.resolve(repoRootNodeModulesDir, '@sentry', 'react-native', 'ios', 'RNSentry.mm'),
+        path.resolve(expoAppNodeModulesDir, '@sentry', 'react-native', 'ios', 'RNSentryStart.m'),
+        path.resolve(expoAppNodeModulesDir, '@sentry', 'react-native', 'ios', 'RNSentry.mm'),
+    ];
+    const existingSentryNativeStartPaths = sentryNativeStartCandidatePaths.filter((candidatePath) =>
+        fs.existsSync(candidatePath),
+    );
+
+    if (existingSentryNativeStartPaths.length === 0) {
+        console.error(
+            `Could not find @sentry/react-native iOS native start source at:\n${sentryNativeStartCandidatePaths
+                .map((p) => `- ${p}`)
+                .join('\n')}`,
+        );
+        process.exit(1);
+    }
+
+    const unpatchedPaths = [];
+    for (const filePath of existingSentryNativeStartPaths) {
+        const contents = fs.readFileSync(filePath, 'utf8');
+        const markerIndex = contents.indexOf(marker);
+        const guardIndex = contents.indexOf('if (isSessionReplayEnabled)', markerIndex);
+        const postInitIndex = contents.indexOf('[RNSentryReplay postInit]', guardIndex);
+
+        if (markerIndex < 0 || guardIndex <= markerIndex || postInitIndex <= guardIndex) {
+            unpatchedPaths.push(filePath);
+        }
+    }
+
+    if (unpatchedPaths.length > 0) {
+        console.error(
+            `Sentry native replay postInit patch does not appear to be applied to:\n${unpatchedPaths
+                .map((p) => `- ${p}`)
+                .join('\n')}`,
+        );
+        process.exit(1);
+    }
+}
+
+if (wants('verify-native-patch-compilation')) {
+    const { ok, errors, warnings } = verifyNativePatchCompilation({ uiDir: expoAppDir });
+    for (const warning of warnings) {
+        console.warn(`\n[native-patch-compilation] ${warning}\n`);
+    }
+    if (!ok) {
+        console.error(`\n${errors.join('\n\n')}\n`);
+        process.exit(1);
+    }
+}
+
 if (wants('install-react-native-enriched-markdown-web-wasm')) {
     const packageDirs = findReactNativeEnrichedMarkdownPackageDirs();
     const vendoredWasmModulePath = path.resolve(
@@ -221,10 +276,14 @@ if (wants('verify-react-native-enriched-markdown-web-streaming-patch')) {
             || !enrichedMarkdownTextContents.includes('streamingAnimation')
             || !enrichedMarkdownTextContents.includes('updateStreamingRevealRanges')
             || !parseMarkdownContents.includes('preloadMarkdownRuntime')
+            || !parseMarkdownContents.includes("import createMd4cModule from './wasm/md4c.js'")
+            || parseMarkdownContents.includes("import('./wasm/md4c")
             || !parseMarkdownContents.includes("['number', 'number', 'number']")
             || !parseMarkdownContents.includes('stringToUTF8(markdown')
             || !parseMarkdownContents.includes('parseCache.clear()')
             || !parseMarkdownSourceContents.includes('lengthBytesUTF8(markdown)')
+            || !parseMarkdownSourceContents.includes("import createMd4cModule from './wasm/md4c.js'")
+            || parseMarkdownSourceContents.includes("import('./wasm/md4c")
             || !parseMarkdownSourceContents.includes('parserPromise = null')
             || !enrichedMarkdownTextSourceContents.includes('lastChildStyles.paragraph')
             || enrichedMarkdownTextSourceContents.includes('<pre')
@@ -260,57 +319,86 @@ if (wants('verify-react-native-enriched-markdown-web-streaming-patch')) {
 }
 
 if (wants('verify-expo-router-web-modal-patch')) {
-    const expoRouterWebModalCandidatePaths = [
-        path.resolve(repoRootDir, 'node_modules', 'expo-router', 'build', 'layouts', '_web-modal.js'),
-        path.resolve(expoAppDir, 'node_modules', 'expo-router', 'build', 'layouts', '_web-modal.js'),
+    const expoRouterPackageRoots = [
+        path.resolve(repoRootDir, 'node_modules', 'expo-router'),
+        path.resolve(expoAppDir, 'node_modules', 'expo-router'),
     ];
-    const expoRouterModalStackCandidatePaths = [
-        path.resolve(repoRootDir, 'node_modules', 'expo-router', 'build', 'modal', 'web', 'ModalStack.js'),
-        path.resolve(expoAppDir, 'node_modules', 'expo-router', 'build', 'modal', 'web', 'ModalStack.js'),
+    const expoRouterPatchTargets = [
+        {
+            relativePath: ['build', 'layouts', '_web-modal.js'],
+            markers: ['ExperimentalModalStack'],
+        },
+        {
+            relativePath: ['build', 'modal', 'web', 'ModalStack.js'],
+            markers: ['preloadedRoutes: state.preloadedRoutes ?? []'],
+        },
+        {
+            relativePath: ['build', 'modal', 'web', 'ModalStackRouteDrawer.js'],
+            markers: [
+                'HAPPIER PATCH(expo-router-web-modal-critical-inline-layout)',
+                'criticalDrawerContentStyle',
+                'criticalModalDesktopStyle',
+                'criticalModalBodyStyle',
+            ],
+        },
+        {
+            relativePath: ['build', 'fork', 'native-stack', 'createNativeStackNavigator.js'],
+            markers: [
+                'isLiquidGlassNavigatorAvailable',
+                'expo-glass-effect/build/isLiquidGlassAvailable',
+            ],
+        },
+        {
+            relativePath: ['build', 'fork', 'useLinking.js'],
+            markers: [
+                'rollbackHistoryIfPrevented',
+                'pendingPopStateDeltaRef',
+                'CommonActions.goBack()',
+                'HAPPIER PATCH(expo-router-root-focused-history-ownership)',
+                'previousState === rootState',
+                'const currentState = store.state ?? navigation.getRootState()',
+                'previousStateRef.current = rootState',
+                'findMatchingState(previousState, rootState)',
+            ],
+            forbiddenMarkers: ['history.go(historyDelta)'],
+        },
+        {
+            relativePath: ['build', 'fork', 'createMemoryHistory.js'],
+            markers: [
+                'const foundIndex = pending.findIndex',
+                'pending[foundIndex]?.cb()',
+                'index = this.index',
+            ],
+        },
     ];
-
-    const existingExpoRouterWebModalPaths = expoRouterWebModalCandidatePaths.filter((candidatePath) =>
-        fs.existsSync(candidatePath),
-    );
-    const existingExpoRouterModalStackPaths = expoRouterModalStackCandidatePaths.filter((candidatePath) =>
-        fs.existsSync(candidatePath),
-    );
-
-    if (existingExpoRouterWebModalPaths.length === 0) {
-        console.error(
-            `Could not find expo-router _web-modal.js at:\n${expoRouterWebModalCandidatePaths
-                .map((p) => `- ${p}`)
-                .join('\n')}`,
-        );
-        process.exit(1);
-    }
-
-    if (existingExpoRouterModalStackPaths.length === 0) {
-        console.error(
-            `Could not find expo-router ModalStack.js at:\n${expoRouterModalStackCandidatePaths
-                .map((p) => `- ${p}`)
-                .join('\n')}`,
-        );
-        process.exit(1);
-    }
-
     const unpatchedPaths = [];
-    for (const filePath of existingExpoRouterWebModalPaths) {
-        const contents = fs.readFileSync(filePath, 'utf8');
-        if (!contents.includes('ExperimentalModalStack')) {
-            unpatchedPaths.push(filePath);
+    for (const target of expoRouterPatchTargets) {
+        const candidatePaths = expoRouterPackageRoots.map((packageRoot) =>
+            path.resolve(packageRoot, ...target.relativePath),
+        );
+        const existingPaths = candidatePaths.filter((candidatePath) => fs.existsSync(candidatePath));
+        if (existingPaths.length === 0) {
+            console.error(
+                `Could not find expo-router ${target.relativePath.join('/')} at:\n${candidatePaths
+                    .map((p) => `- ${p}`)
+                    .join('\n')}`,
+            );
+            process.exit(1);
         }
-    }
-    for (const filePath of existingExpoRouterModalStackPaths) {
-        const contents = fs.readFileSync(filePath, 'utf8');
-        if (!contents.includes('preloadedRoutes: state.preloadedRoutes ?? []')) {
-            unpatchedPaths.push(filePath);
+        for (const filePath of existingPaths) {
+            const contents = fs.readFileSync(filePath, 'utf8');
+            if (
+                target.markers.some((marker) => !contents.includes(marker))
+                || target.forbiddenMarkers?.some((marker) => contents.includes(marker))
+            ) {
+                unpatchedPaths.push(filePath);
+            }
         }
     }
 
     if (unpatchedPaths.length > 0) {
         console.error(
-            `expo-router web modals patch does not appear to be applied to:\n${unpatchedPaths
+            `expo-router patch does not appear to be applied to:\n${unpatchedPaths
                 .map((p) => `- ${p}`)
                 .join('\n')}`,
         );
@@ -402,5 +490,28 @@ if (wants('vendor-tiptap-webview-bundle')) {
         });
     } catch (e) {
         // Best-effort: the rich markdown editor is experimental and degrades to raw mode without it.
+    }
+}
+
+// Bundle Mermaid for the native transcript WebView. Product code consumes the
+// committed generated fallback and has no CDN or other runtime-network path.
+if (wants('vendor-mermaid-webview-bundle')) {
+    try {
+        const result = runCommandBestEffort({
+            command: process.execPath,
+            args: [path.resolve(expoAppDir, 'tools', 'mermaid', 'buildMermaidWebViewBundle.mjs')],
+            options: { cwd: expoAppDir },
+        });
+        if (!result.ok) {
+            console.warn(
+                `[postinstall] Mermaid WebView bundle refresh exited with status ${result.status}; `
+                + 'the committed bundle was retained and candidate verification will reject stale bytes.',
+            );
+        }
+    } catch (error) {
+        console.warn(
+            `[postinstall] Mermaid WebView bundle refresh failed: ${error instanceof Error ? error.message : String(error)}; `
+            + 'the committed bundle was retained and candidate verification will reject stale bytes.',
+        );
     }
 }

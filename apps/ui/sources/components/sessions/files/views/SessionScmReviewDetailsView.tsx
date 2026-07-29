@@ -42,6 +42,7 @@ import {
 } from '@/sync/domains/plugins/permissions/store';
 import {
     REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
+    pluginPermissionGrantScopeKey,
     type PluginPermissionGrantListInput,
     type PluginPermissionGrantTargetScope,
 } from '@/sync/domains/plugins/permissions/types';
@@ -217,18 +218,19 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         enabled: reviewCommentsEnabled && Boolean(pluginPermissionGrantListInput),
         listInput: pluginPermissionGrantListInput,
     });
-    const directWriteGranted = directWriteGrantScope
-        ? pluginPermissionGrants.hasGrant({
-            capability: REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
-            targetScope: directWriteGrantScope,
-        })
-        : false;
-    const pendingDirectWriteGrantRequest = directWriteGrantScope
+    const directWriteGrants = pluginPermissionGrants.state.grantIds
+        .map((id) => pluginPermissionGrants.state.grantsById[id])
+        .filter((grant): grant is NonNullable<typeof grant> => (
+            Boolean(grant)
+            && grant?.capability === REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY
+            && pluginPermissionGrantScopeKey(grant.targetScope) === pluginPermissionGrantScopeKey(directWriteGrantScope)
+        ));
+    const pendingDirectWriteGrantRequests = directWriteGrantScope
         ? selectPluginPermissionPendingRequests(pluginPermissionGrants.state, {
             capability: REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
             targetScope: directWriteGrantScope,
-        })[0] ?? null
-        : null;
+        })
+        : [];
     const [diffRefreshToken, setDiffRefreshToken] = React.useState(0);
 
     useScmDiffCacheLimits(scmDiffCache);
@@ -448,10 +450,14 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
                     projectId={project.id}
                     sessionId={props.sessionId}
                     execute={reviewCommentsExecutor}
-                    directWriteGranted={directWriteGranted}
-                    pendingDirectWriteGrantRequest={pendingDirectWriteGrantRequest}
+                    directWriteGrants={directWriteGrants}
+                    pendingDirectWriteGrantRequests={pendingDirectWriteGrantRequests}
                     onGrantDirectWrite={pluginPermissionGrants.grant}
                     onCancelDirectWriteGrant={pluginPermissionGrants.dismissRequest}
+                    onRevokeDirectWrite={pluginPermissionGrants.revoke}
+                    permissionGrantStatus={pluginPermissionGrants.state.status}
+                    permissionGrantError={pluginPermissionGrants.state.error}
+                    onRefreshPermissionGrants={() => { void pluginPermissionGrants.refresh(); }}
                     defaultPanelOpen={false}
                     testID="review-comments-session"
                 />

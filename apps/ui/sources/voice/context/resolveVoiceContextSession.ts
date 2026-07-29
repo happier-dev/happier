@@ -14,11 +14,16 @@ export function resolveVoiceContextSessionFromState(sessionId: string, state: un
   const stateRecord = state as {
     sessions?: Readonly<Record<string, Session | null>> | null | undefined;
   };
+  const directSession = stateRecord.sessions?.[normalizedSessionId] ?? null;
+  if (directSession && (directSession.metadataLayoutVersion ?? 0) !== 0) {
+    return directSession;
+  }
+
   const lookupSession = findSessionListLookupSession(
     state as Parameters<typeof findSessionListLookupSession>[0],
     normalizedSessionId,
   )?.session as Session | null;
   if (lookupSession) return lookupSession;
 
-  return stateRecord.sessions?.[normalizedSessionId] ?? null;
+  return directSession;
 }

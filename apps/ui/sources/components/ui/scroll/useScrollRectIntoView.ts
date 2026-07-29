@@ -89,6 +89,7 @@ export function useScrollRectIntoViewRegistry(params: Readonly<{
     padding?: number;
     alignment?: 'nearest' | 'center';
     animated?: boolean;
+    once?: boolean;
 }>): ScrollRectIntoViewRegistry {
     const scrollRef = React.useRef<ScrollView | null>(null);
     const itemLayoutsRef = React.useRef(new Map<string, ScrollRect>());
@@ -98,6 +99,7 @@ export function useScrollRectIntoViewRegistry(params: Readonly<{
         viewportHeight: 0,
         contentHeight: 0,
     });
+    const settledActiveKeyRef = React.useRef<string | null>(null);
     const [revision, setRevision] = React.useState(0);
 
     const bumpRevision = React.useCallback(() => {
@@ -107,8 +109,10 @@ export function useScrollRectIntoViewRegistry(params: Readonly<{
     const ensureActiveItemVisible = React.useCallback(() => {
         const activeKey = activeKeyRef.current;
         if (!activeKey) return;
+        if (params.once === true && settledActiveKeyRef.current === activeKey) return;
         const rect = itemLayoutsRef.current.get(activeKey);
         if (!rect) return;
+        if (metricsRef.current.viewportHeight <= 0 || metricsRef.current.contentHeight <= 0) return;
         const nextOffset = resolveScrollOffsetForVisibleRect({
             rect,
             metrics: metricsRef.current,
@@ -116,11 +120,16 @@ export function useScrollRectIntoViewRegistry(params: Readonly<{
             alignment: params.alignment,
         });
         if (nextOffset === null) return;
-        scrollRef.current?.scrollTo?.({
+        const scrollView = scrollRef.current;
+        if (!scrollView?.scrollTo) return;
+        scrollView.scrollTo({
             y: nextOffset,
             animated: params.animated ?? true,
         });
-    }, [params.alignment, params.animated, params.padding]);
+        if (params.once === true) {
+            settledActiveKeyRef.current = activeKey;
+        }
+    }, [params.alignment, params.animated, params.once, params.padding]);
 
     const registerItemLayout = React.useCallback((key: string): ScrollItemLayoutHandler => {
         return (event) => {
@@ -163,6 +172,9 @@ export function useScrollRectIntoViewRegistry(params: Readonly<{
 
     React.useEffect(() => {
         activeKeyRef.current = params.activeKey;
+        if (params.activeKey === null) {
+            settledActiveKeyRef.current = null;
+        }
         ensureActiveItemVisible();
     }, [ensureActiveItemVisible, params.activeKey, revision]);
 

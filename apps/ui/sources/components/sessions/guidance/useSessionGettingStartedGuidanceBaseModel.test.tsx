@@ -43,7 +43,13 @@ const guidanceState = vi.hoisted(() => ({
     serverProfilesGeneration: 1,
     serverProfiles: [
         { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
-    ] as Array<{ id: string; name: string; serverUrl: string }>,
+    ] as Array<{
+        id: string;
+        name: string;
+        serverUrl: string;
+        serverIdentityId?: string;
+        legacyServerIds?: string[];
+    }>,
 }));
 
 vi.mock('./gettingStartedModel', async (importOriginal) => {
@@ -163,6 +169,44 @@ describe('useSessionGettingStartedGuidanceBaseModel', () => {
             serverName: 'Renamed',
             serverUrl: 'https://api.renamed.example',
         }));
+    });
+
+    it('resolves active server profile by server identity id', async () => {
+        guidanceState.selection = {
+            enabled: false,
+            presentation: 'grouped',
+            activeServerId: 'srv_local_relay',
+            allowedServerIds: ['srv_local_relay'],
+            explicit: false,
+            activeTarget: { kind: 'server', id: 'srv_local_relay', serverId: 'srv_local_relay' },
+        };
+        guidanceState.serverProfiles = [
+            { id: 'localhost-18830', name: 'localhost:18830', serverUrl: 'http://localhost:18830' },
+            {
+                id: 'localhost-52753',
+                name: 'localhost:52753',
+                serverUrl: 'http://localhost:52753',
+                serverIdentityId: 'srv_local_relay',
+                legacyServerIds: ['old-local-relay'],
+            },
+        ];
+
+        const { useSessionGettingStartedGuidanceBaseModel } = await import('./useSessionGettingStartedGuidanceBaseModel');
+        const hook = await renderHook(() => useSessionGettingStartedGuidanceBaseModel());
+        await flushHookEffects();
+
+        expect(hook.getCurrent()).toEqual(expect.objectContaining({
+            serverId: 'localhost-52753',
+            serverName: 'localhost:52753',
+            serverUrl: 'http://localhost:52753',
+        }));
+        expect(buildSessionGettingStartedViewModel.mock.calls.at(-1)?.[0].activeServerProfile).toEqual({
+            id: 'localhost-52753',
+            name: 'localhost:52753',
+            serverUrl: 'http://localhost:52753',
+            serverIdentityId: 'srv_local_relay',
+            legacyServerIds: ['old-local-relay'],
+        });
     });
 
     it('rebuilds the model when local daemon health changes', async () => {

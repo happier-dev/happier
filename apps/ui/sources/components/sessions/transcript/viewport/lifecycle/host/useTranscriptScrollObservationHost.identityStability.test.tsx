@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 /**
  * Identity-stability contract for the M6 scroll observation host.
  *
@@ -5,9 +7,11 @@
  * callbacks and interaction props must stay stable when the individual dependency fields are
  * unchanged.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
+import type { WebTranscriptScrollMetrics } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
+import { createWebDomScrollObservation } from '@/components/sessions/transcript/viewport/driver/webDomObservation';
 
 import { useTranscriptScrollObservationHost } from './useTranscriptScrollObservationHost';
 
@@ -17,10 +21,18 @@ function createRef<T>(current: T): { current: T } {
     return { current };
 }
 
+function createScrollElement(): HTMLElement {
+    return {
+        clientHeight: 600,
+        scrollHeight: 1200,
+        scrollTop: 600,
+    } as unknown as HTMLElement;
+}
+
 function createStableMembers() {
     const lifecycleHost = {
-        planLocalInteractionAutoPinDeferral: vi.fn(() => ({
-            localInteractionAutoPinDeferralEffects: [],
+        planLocalInteractionIntent: vi.fn(() => ({
+            localInteractionIntentEffects: [],
             state: { bottomFollowState: { dragSession: null, mode: 'following' } },
         })),
     };
@@ -32,11 +44,8 @@ function createStableMembers() {
         applyNativeDragActiveMirrorEffectsRef: createRef(() => {}),
         applyNativeMountSettlePassiveDriftRepinObservation: vi.fn(),
         applyNativeUserScrollTakeoverHostEffects: vi.fn(),
-        applyWebPassiveLiveTailCorrectionEffectRef: createRef(() => false),
+        webDomObservation: createWebDomScrollObservation(),
         bottomFollowModeStateRef: createRef({ dragSession: null, mode: 'following' }),
-        cancelScheduledPinToBottom: vi.fn(),
-        captureNativeBottomFollowPreviousFollow: vi.fn(() => false),
-        captureWebBottomFollowPreviousMetrics: vi.fn(() => null),
         commitBottomFollowModeState: vi.fn(),
         commitJumpToBottomDistanceForVisibility: vi.fn(),
         commitScrollPinEvent: vi.fn(),
@@ -57,7 +66,6 @@ function createStableMembers() {
         hasNativeContentMeasurementForCurrentSession: vi.fn(() => false),
         hasNativeInitialViewportAppliedForCurrentSession: vi.fn(() => false),
         lastExplicitWebScrollIntentAtMsRef: createRef(Number.NEGATIVE_INFINITY),
-        lastNativePinOffsetRef: createRef(null),
         lastPinOffsetForIntentRef: createRef(null),
         lastRouteJumpProtectionClearingWebMovementAtMsRef: createRef(Number.NEGATIVE_INFINITY),
         lastScrollOffsetForIntentRef: createRef(null),
@@ -66,7 +74,7 @@ function createStableMembers() {
         listContentHeightRef: createRef(0),
         listDataRef: createRef([]),
         listLayoutHeightRef: createRef(0),
-        listRef: createRef(null),
+        listRef: createRef<ScrollObservationHostDeps['listRef']['current']>(null),
         loadOlderInFlightRef: createRef(false),
         markNativeInitialViewportAppliedForCurrentSession: vi.fn(),
         measurementHost: {
@@ -75,7 +83,6 @@ function createStableMembers() {
         nativeBottomFollowRearmedAfterDragRef: createRef(false),
         nativeListDragActiveRef: createRef(false),
         nativeMomentumScrollActiveRef: createRef(false),
-        nativeMountSettleAutoPinSuppressedRef: createRef(false),
         nativeMountSettleDeadlineReachedRef: createRef(false),
         nativePrependTelemetryStateRef: createRef(() => 'closed'),
         nativeTranscriptTouchStartYRef: createRef(null),
@@ -84,29 +91,21 @@ function createStableMembers() {
         observeNativeConfirmation: vi.fn(() => false),
         observeNativeEntryRestoreHostFacts: vi.fn(() => []),
         observeNativePrependOwner: vi.fn(),
-        observeWebGenuineScrollMovement: vi.fn(() => ({
-            webMovedSinceLastObservation: null,
-            webObservedUpwardIntent: false,
-            webObservedUserScrollMovement: false,
-        })),
-        observeWebTranscriptNavigationVisibilityForSession: vi.fn(),
+        observeTranscriptNavigationVisibility: vi.fn(),
         olderPagination: {
             getSnapshot: vi.fn(() => ({ phase: 'idle', suspendedReasons: [] })),
+            isNearOlderEdge: vi.fn(() => false),
+            isReadyForLoad: vi.fn(() => true),
             onScrollObservation: vi.fn(),
         },
         pendingJumpSeqViewportPromotionRef: createRef(null),
-        pendingNativeMountSettleBottomPinRef: createRef(false),
         pinEnabledRef: createRef(true),
-        pinNativeInitialFollowBottomViewportIfReady: vi.fn(),
         pinThresholdPxRef: createRef(72),
         preemptEntryRestoreTransaction: vi.fn(),
-        prepareNativeContentMaterializationAutoPin: vi.fn(),
         prependHost: {
             applyNativeEffects: vi.fn(),
             hasOpenNativeTransaction: vi.fn(() => false),
             observeWeb: vi.fn(),
-            refreshInFlightWebAnchor: vi.fn(),
-            retargetPendingWebAnchorForUserScroll: vi.fn(),
             trustedNativeScroll: vi.fn(() => []),
         },
         promotedJumpSeqViewportProtectionRef: createRef(null),
@@ -118,14 +117,15 @@ function createStableMembers() {
         recordScrollObservedTelemetry: vi.fn(),
         recordStablePaintTelemetry: vi.fn(),
         recordViewportTelemetryEvent: vi.fn(),
+        readItemsToNewerEdge: vi.fn<() => number | null>(() => null),
+        readItemsToOlderEdge: vi.fn<() => number | null>(() => null),
         resolveEffectiveListPaintMetrics: vi.fn(() => null),
-        resolveNativeObservedScrollOffset: vi.fn(() => null),
+        resolveNativeObservedScrollOffset: vi.fn<ScrollObservationHostDeps['resolveNativeObservedScrollOffset']>(() => null),
         resolveTranscriptMountSettleBottomDistanceNoiseFloorPx: vi.fn(() => null),
         resolveViewportReachedEdge: vi.fn((edge: 'start' | 'end') => edge === 'start' ? 'older' : 'newer'),
         resolveViewportTelemetryMode: vi.fn(() => 'follow-bottom'),
-        resolveWebScrollMetrics: vi.fn(() => null),
+        resolveWebScrollMetrics: vi.fn<() => WebTranscriptScrollMetrics | null>(() => null),
         resolveWebViewportTelemetryDiagnostics: vi.fn(() => ({})),
-        requestAutomaticLiveTailPin: vi.fn(),
         runEntryRestoreAttempt: vi.fn(),
         scheduleViewportAnchorCaptureRef: createRef(() => {}),
         scrollPinRef: createRef({ isPinned: true, lastActivityKey: null, newActivityCount: 0 }),
@@ -136,11 +136,10 @@ function createStableMembers() {
         shouldIgnoreNativeInvalidScrollObservation: vi.fn(() => false),
         shouldSuppressGenericViewportStateForProtectedJumpSeq: vi.fn(() => false),
         targetWindowActiveRef: createRef(false),
-        targetWindowEdgeLoadInFlightRef: createRef({ newer: false, older: false }),
+        targetWindowEdgeLoadInFlightRef: createRef<'newer' | 'older' | null>(null),
         targetWindowHostFacts: { activeWindowState: null },
         updateNativeInitialViewportPendingObservation: vi.fn(),
         updateNativeViewportPaintObserved: vi.fn(),
-        verifyNativeSliceEntryRestoreTransaction: vi.fn(),
         viewportCommandController: { activeOwner: vi.fn(() => 'follow') },
         wantsPinnedRef: createRef(true),
         verifyWebEntryRestoreTransaction: vi.fn(),
@@ -162,11 +161,16 @@ function buildDeps(members: ReturnType<typeof createStableMembers>): ScrollObser
         sessionId: 's1',
         showFirstPaintPlaceholder: false,
         userIntentRecentMs: 500,
-        usesNativeFlashListBottomMaintenance: true,
     } as unknown as ScrollObservationHostDeps;
 }
 
 describe('useTranscriptScrollObservationHost identity stability', () => {
+    afterEach(() => {
+        document.body.replaceChildren();
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+    });
+
     it('keeps shell callbacks and interaction props stable across fresh deps object identities', async () => {
         const members = createStableMembers();
         const hook = await renderHook(
@@ -184,8 +188,140 @@ describe('useTranscriptScrollObservationHost identity stability', () => {
         expect(second.onContentSizeChange).toBe(first.onContentSizeChange);
         expect(second.onScroll).toBe(first.onScroll);
         expect(second.platformInteractionProps).toBe(first.platformInteractionProps);
-        expect(second.nativeFlashListScrollOverrideProps).toBe(first.nativeFlashListScrollOverrideProps);
 
+        await hook.unmount();
+    });
+
+    it('re-evaluates ordinary older pagination after a committed projection at exact web top', async () => {
+        const members = createStableMembers();
+        const element = createScrollElement();
+        Object.defineProperties(element, {
+            scrollTop: { configurable: true, value: 0 },
+            scrollHeight: { configurable: true, value: 1200 },
+            clientHeight: { configurable: true, value: 600 },
+        });
+        members.resolveWebScrollMetrics.mockReturnValue({
+            clientHeight: 600,
+            element,
+            scrollHeight: 1200,
+            scrollTop: 0,
+        });
+        members.wantsPinnedRef.current = false;
+        const hook = await renderHook(
+            (deps: ScrollObservationHostDeps) => useTranscriptScrollObservationHost(deps),
+            { initialProps: { ...buildDeps(members), isLoaded: true } },
+        );
+
+        hook.getCurrent().observeCommittedProjectionLayout();
+
+        expect(members.olderPagination.onScrollObservation).toHaveBeenCalledWith({
+            itemsToOlderEdge: null,
+            offsetY: 0,
+            scrollable: true,
+            trigger: 'layout-committed',
+        });
+        await hook.unmount();
+    });
+
+    it.each([
+        ['standard', (edge: 'start' | 'end') => edge === 'start' ? 'older' as const : 'newer' as const],
+        ['inverted', (edge: 'start' | 'end') => edge === 'start' ? 'newer' as const : 'older' as const],
+    ])('rechecks canonical older pagination from committed native item-edge facts in %s orientation', async (
+        _orientation,
+        resolveReachedEdge,
+    ) => {
+        const members = createStableMembers();
+        members.readItemsToOlderEdge.mockReturnValue(0);
+        members.listContentHeightRef.current = 1200;
+        members.listLayoutHeightRef.current = 600;
+        members.listRef.current = {
+            getAbsoluteLastScrollOffset: () => 0,
+            scrollToIndex: vi.fn(),
+            scrollToOffset: vi.fn(),
+        };
+        members.resolveNativeObservedScrollOffset.mockReturnValue({
+            canonicalOffsetY: 0,
+            distanceFromLiveTailPx: 600,
+        });
+        members.wantsPinnedRef.current = false;
+        members.bottomFollowModeStateRef.current = { dragSession: null, mode: 'released' };
+        const hook = await renderHook(
+            (deps: ScrollObservationHostDeps) => useTranscriptScrollObservationHost(deps),
+            { initialProps: { ...buildDeps(members), isLoaded: true, platformOS: 'ios' } },
+        );
+
+        members.resolveViewportReachedEdge.mockImplementation(resolveReachedEdge);
+        hook.getCurrent().observeCommittedProjectionLayout();
+
+        expect(members.olderPagination.onScrollObservation).toHaveBeenCalledWith({
+            itemsToOlderEdge: 0,
+            offsetY: 0,
+            scrollable: true,
+            trigger: 'layout-committed',
+        });
+        await hook.unmount();
+    });
+
+    it('does not treat an unknown native committed visible range as edge or exit evidence', async () => {
+        const members = createStableMembers();
+        members.readItemsToOlderEdge.mockReturnValue(null);
+        members.listContentHeightRef.current = 1200;
+        members.listLayoutHeightRef.current = 600;
+        members.listRef.current = {
+            getAbsoluteLastScrollOffset: () => 0,
+            scrollToIndex: vi.fn(),
+            scrollToOffset: vi.fn(),
+        };
+        members.resolveNativeObservedScrollOffset.mockReturnValue({
+            canonicalOffsetY: 0,
+            distanceFromLiveTailPx: 600,
+        });
+        members.wantsPinnedRef.current = false;
+        members.bottomFollowModeStateRef.current = { dragSession: null, mode: 'released' };
+        const hook = await renderHook(
+            (deps: ScrollObservationHostDeps) => useTranscriptScrollObservationHost(deps),
+            { initialProps: { ...buildDeps(members), isLoaded: true, platformOS: 'ios' } },
+        );
+        members.olderPagination.onScrollObservation.mockClear();
+
+        hook.getCurrent().observeCommittedProjectionLayout();
+
+        expect(members.olderPagination.onScrollObservation).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
+    it('dispatches one captured native committed item-edge fact even if the live reader changes', async () => {
+        const members = createStableMembers();
+        members.readItemsToOlderEdge
+            .mockReturnValueOnce(0)
+            .mockReturnValue(null);
+        members.listContentHeightRef.current = 1200;
+        members.listLayoutHeightRef.current = 600;
+        members.listRef.current = {
+            getAbsoluteLastScrollOffset: () => 0,
+            scrollToIndex: vi.fn(),
+            scrollToOffset: vi.fn(),
+        };
+        members.resolveNativeObservedScrollOffset.mockReturnValue({
+            canonicalOffsetY: 0,
+            distanceFromLiveTailPx: 600,
+        });
+        members.wantsPinnedRef.current = false;
+        members.bottomFollowModeStateRef.current = { dragSession: null, mode: 'released' };
+        const hook = await renderHook(
+            (deps: ScrollObservationHostDeps) => useTranscriptScrollObservationHost(deps),
+            { initialProps: { ...buildDeps(members), isLoaded: true, platformOS: 'ios' } },
+        );
+        members.olderPagination.onScrollObservation.mockClear();
+
+        hook.getCurrent().observeCommittedProjectionLayout();
+
+        expect(members.olderPagination.onScrollObservation).toHaveBeenCalledWith({
+            itemsToOlderEdge: 0,
+            offsetY: 0,
+            scrollable: true,
+            trigger: 'layout-committed',
+        });
         await hook.unmount();
     });
 
@@ -210,6 +346,197 @@ describe('useTranscriptScrollObservationHost identity stability', () => {
         onWheel?.(event);
 
         expect(event.stopped).toBe(true);
+
+        await hook.unmount();
+    });
+
+    it('keeps one explicitly interacted transcript as the keyboard owner after its focused row unmounts', async () => {
+        const membersA = createStableMembers();
+        const membersB = createStableMembers();
+        const scrollerA = document.createElement('div');
+        const scrollerB = document.createElement('div');
+        const focusedRowA = document.createElement('button');
+        const rowB = document.createElement('div');
+        const outside = document.createElement('button');
+        scrollerA.append(focusedRowA);
+        scrollerB.append(rowB);
+        document.body.append(scrollerA, scrollerB, outside);
+        membersA.resolveWebScrollMetrics.mockReturnValue({
+            clientHeight: 600,
+            element: scrollerA,
+            scrollHeight: 1200,
+            scrollTop: 600,
+        });
+        membersB.resolveWebScrollMetrics.mockReturnValue({
+            clientHeight: 600,
+            element: scrollerB,
+            scrollHeight: 1200,
+            scrollTop: 600,
+        });
+        const notifyA = vi.fn();
+        const notifyB = vi.fn();
+        membersA.listRef.current = {
+            notifyViewportInput: notifyA,
+            scrollToIndex: vi.fn(),
+            scrollToOffset: vi.fn(),
+        };
+        membersB.listRef.current = {
+            notifyViewportInput: notifyB,
+            scrollToIndex: vi.fn(),
+            scrollToOffset: vi.fn(),
+        };
+        const addEventListenerSpy = vi.spyOn(document, 'addEventListener');
+        const removeEventListenerSpy = vi.spyOn(document, 'removeEventListener');
+        const hookA = await renderHook(
+            (deps: ScrollObservationHostDeps) => useTranscriptScrollObservationHost(deps),
+            { initialProps: { ...buildDeps(membersA), sessionId: 'session-a' } },
+        );
+        const hookB = await renderHook(
+            (deps: ScrollObservationHostDeps) => useTranscriptScrollObservationHost(deps),
+            { initialProps: { ...buildDeps(membersB), sessionId: 'session-b' } },
+        );
+
+        expect(hookA.getCurrent().platformInteractionProps.onKeyDown).toBeUndefined();
+        expect(hookB.getCurrent().platformInteractionProps.onKeyDown).toBeUndefined();
+        expect(
+            addEventListenerSpy.mock.calls.filter(
+                ([type, , options]) => type === 'keydown' && options === true,
+            ),
+        ).toHaveLength(1);
+
+        focusedRowA.focus();
+        expect(document.activeElement).toBe(focusedRowA);
+        focusedRowA.remove();
+        expect(document.activeElement).toBe(document.body);
+
+        let activeElementObservedBeforeDefault: Element | null = null;
+        document.body.addEventListener('keydown', () => {
+            activeElementObservedBeforeDefault = document.activeElement;
+        }, { once: true });
+        document.body.dispatchEvent(new KeyboardEvent('keydown', {
+            bubbles: true,
+            cancelable: true,
+            key: 'PageDown',
+        }));
+
+        expect(notifyA).toHaveBeenCalledTimes(1);
+        expect(notifyA).toHaveBeenLastCalledWith({
+            kind: 'keyboard',
+            verticalDirection: 'toward-end',
+        });
+        expect(notifyB).not.toHaveBeenCalled();
+        expect(activeElementObservedBeforeDefault).toBe(scrollerA);
+        expect(scrollerA.getAttribute('tabindex')).toBe('-1');
+
+        outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+        document.body.dispatchEvent(new KeyboardEvent('keydown', {
+            bubbles: true,
+            cancelable: true,
+            key: 'PageDown',
+        }));
+        expect(notifyA).toHaveBeenCalledTimes(1);
+        expect(notifyB).not.toHaveBeenCalled();
+
+        rowB.dispatchEvent(new KeyboardEvent('keydown', {
+            bubbles: true,
+            cancelable: true,
+            key: 'PageDown',
+        }));
+        expect(notifyA).toHaveBeenCalledTimes(1);
+        expect(notifyB).toHaveBeenCalledTimes(1);
+        expect(notifyB).toHaveBeenLastCalledWith({
+            kind: 'keyboard',
+            verticalDirection: 'toward-end',
+        });
+
+        rowB.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+        document.body.dispatchEvent(new KeyboardEvent('keydown', {
+            bubbles: true,
+            cancelable: true,
+            key: 'PageDown',
+        }));
+        expect(notifyA).toHaveBeenCalledTimes(1);
+        expect(notifyB).toHaveBeenCalledTimes(2);
+        document.dispatchEvent(new KeyboardEvent('keydown', {
+            bubbles: true,
+            cancelable: true,
+            key: 'PageDown',
+        }));
+        expect(notifyB).toHaveBeenCalledTimes(3);
+
+        await hookA.unmount();
+        await hookB.unmount();
+        expect(scrollerA.hasAttribute('tabindex')).toBe(false);
+        expect(scrollerB.hasAttribute('tabindex')).toBe(false);
+        expect(
+            removeEventListenerSpy.mock.calls.filter(
+                ([type, , options]) => type === 'keydown' && options === true,
+            ),
+        ).toHaveLength(1);
+    });
+
+    it.each([
+        ['textarea', () => document.createElement('textarea')],
+        ['contenteditable', () => {
+            const element = document.createElement('div');
+            element.setAttribute('contenteditable', 'true');
+            return element;
+        }],
+        ['dialog', () => document.createElement('dialog')],
+        ['menu', () => {
+            const element = document.createElement('div');
+            element.setAttribute('role', 'menu');
+            return element;
+        }],
+        ['listbox', () => {
+            const element = document.createElement('div');
+            element.setAttribute('role', 'listbox');
+            return element;
+        }],
+        ['combobox', () => {
+            const element = document.createElement('div');
+            element.setAttribute('role', 'combobox');
+            return element;
+        }],
+    ])('does not claim transcript keyboard scrolling from a %s', async (_name, createExcludedElement) => {
+        const members = createStableMembers();
+        const scroller = document.createElement('div');
+        const excludedElement = createExcludedElement();
+        scroller.append(excludedElement);
+        document.body.append(scroller);
+        members.resolveWebScrollMetrics.mockReturnValue({
+            clientHeight: 600,
+            element: scroller,
+            scrollHeight: 1200,
+            scrollTop: 600,
+        });
+        const notifyViewportInput = vi.fn();
+        members.listRef.current = {
+            notifyViewportInput,
+            scrollToIndex: vi.fn(),
+            scrollToOffset: vi.fn(),
+        };
+        const hook = await renderHook(
+            (deps: ScrollObservationHostDeps) => useTranscriptScrollObservationHost(deps),
+            { initialProps: buildDeps(members) },
+        );
+
+        excludedElement.dispatchEvent(new KeyboardEvent('keydown', {
+            bubbles: true,
+            cancelable: true,
+            key: 'PageDown',
+        }));
+        expect(notifyViewportInput).not.toHaveBeenCalled();
+
+        excludedElement.setAttribute('tabindex', '0');
+        excludedElement.focus();
+        expect(document.activeElement).toBe(excludedElement);
+        document.body.dispatchEvent(new KeyboardEvent('keydown', {
+            bubbles: true,
+            cancelable: true,
+            key: 'PageDown',
+        }));
+        expect(notifyViewportInput).not.toHaveBeenCalled();
 
         await hook.unmount();
     });

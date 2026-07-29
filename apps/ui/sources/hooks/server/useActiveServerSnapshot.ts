@@ -11,6 +11,8 @@ const emptyActiveServerSnapshot: ActiveServerSnapshot = {
     serverUrl: '',
     generation: 0,
 };
+const noopSubscribe = () => () => {};
+const getEmptyActiveServerSnapshot = () => emptyActiveServerSnapshot;
 
 let lastActiveServerSnapshot: ActiveServerSnapshot | null = null;
 
@@ -39,10 +41,10 @@ function getActiveServerSnapshotSafe(): ActiveServerSnapshot {
     return nextSnapshot;
 }
 
-export function useActiveServerSnapshot(): ActiveServerSnapshot {
+export function useActiveServerSnapshot(enabled = true): ActiveServerSnapshot {
     return React.useSyncExternalStore(
-        subscribeActiveServer,
-        getActiveServerSnapshotSafe,
-        getActiveServerSnapshotSafe,
+        enabled ? subscribeActiveServer : noopSubscribe,
+        enabled ? getActiveServerSnapshotSafe : getEmptyActiveServerSnapshot,
+        enabled ? getActiveServerSnapshotSafe : getEmptyActiveServerSnapshot,
     );
 }

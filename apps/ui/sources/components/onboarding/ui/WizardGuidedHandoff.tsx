@@ -38,7 +38,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     root: {
         width: '100%',
         gap: 14,
-        alignItems: 'center',
+        alignItems: 'flex-start',
     },
     divider: {
         width: '100%',
@@ -61,16 +61,16 @@ const stylesheet = StyleSheet.create((theme) => ({
     noteBlock: {
         width: '100%',
         gap: 8,
-        alignItems: 'center',
+        alignItems: 'flex-start',
     },
     noteTitle: {
-        textAlign: 'center',
+        textAlign: 'left',
         color: theme.colors.text.primary,
         fontSize: 16,
         lineHeight: 22,
     },
     noteSubtitle: {
-        textAlign: 'center',
+        textAlign: 'left',
         color: theme.colors.text.secondary,
         fontSize: 13,
         lineHeight: 18,

@@ -7,6 +7,7 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { installNewPickRouteCommonModuleMocks } from './newPickRouteTestHelpers';
+import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -71,7 +72,10 @@ const scopedMachinesState = vi.hoisted(() => ({
 
 let capturedMachineSelectionContentProps: any = null;
 
-vi.mock('react-native-reanimated', () => ({}));
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
+});
 
 installNewPickRouteCommonModuleMocks({
     reactNative: async () => {
@@ -163,7 +167,7 @@ installNewPickRouteCommonModuleMocks({
                 ...state.settings,
                 useMachinePickerSearch: false,
             } as any),
-            useSettingMutable: (key: string) => (key === 'favoriteMachines' ? [[], vi.fn()] : [undefined, vi.fn()]),
+            useSettingMutable: createUseSettingMutableMockFromReader((key) => (key === 'favoriteMachines' ? [[], vi.fn()] : [undefined, vi.fn()])),
         },
     }),
 });
@@ -206,14 +210,19 @@ vi.mock('@/hooks/machine/useMachineEnvPresence', () => ({
     invalidateMachineEnvPresence: vi.fn(),
 }));
 
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerId: () => activeServerId,
-    listServerProfiles: () => ([
-        { id: 'server-a', name: 'Server A', serverUrl: 'https://stack-a.example.test', lastUsedAt: 1000 },
-        { id: 'server-b', name: 'Server B', serverUrl: 'https://stack-b.example.test', lastUsedAt: 900 },
-        { id: 'server-c', name: 'Server C', serverUrl: 'https://stack-c.example.test', lastUsedAt: 800 },
-    ]),
-}));
+vi.mock('@/sync/domains/server/serverProfiles', async () => {
+    const { createServerProfilesModuleMock } = await import('@/dev/testkit/mocks/serverProfiles');
+    return createServerProfilesModuleMock({
+        profiles: [
+            { id: 'server-a', name: 'Server A', serverUrl: 'https://stack-a.example.test' },
+            { id: 'server-b', name: 'Server B', serverUrl: 'https://stack-b.example.test' },
+            { id: 'server-c', name: 'Server C', serverUrl: 'https://stack-c.example.test' },
+        ],
+        overrides: {
+            getActiveServerId: () => activeServerId,
+        },
+    });
+});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({

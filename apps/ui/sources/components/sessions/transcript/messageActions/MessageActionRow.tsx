@@ -4,25 +4,37 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 
+import { RowActionRevealSlot } from './RowActionRevealSlot';
+
+/**
+ * Timestamp + hover-revealed actions for one transcript message.
+ *
+ * The pin has its own reveal slot: a pinned row must keep showing its pin
+ * without dragging the rest of the actions — or the timestamp presentation —
+ * into view. The container never captures pointer input; each slot owns whether
+ * its own children are clickable.
+ */
 export function MessageActionRow(props: Readonly<{
     children: React.ReactNode;
     isWeb: boolean;
     invertTimestampAndActions: boolean;
     messageId: string;
-    pointerEvents: 'auto' | 'none';
     showActions: boolean;
+    showPinAction?: boolean;
+    pinAction?: React.ReactNode;
+    /** Notified when descendant focus enters/leaves, so the host can mirror it. */
+    onActionsFocus?: () => void;
+    onActionsBlur?: () => void;
     timestampText: string | null;
 }>): React.ReactElement {
     const hasTimestamp = typeof props.timestampText === 'string' && props.timestampText.length > 0;
-    const shouldHideRow = !hasTimestamp && !props.showActions;
     return (
         <View
-            {...(props.isWeb ? {} : { pointerEvents: props.pointerEvents })}
+            {...(props.isWeb ? {} : { pointerEvents: 'box-none' as const })}
             style={[
                 styles.container,
                 props.invertTimestampAndActions ? styles.containerInverted : null,
-                shouldHideRow ? styles.hidden : null,
-                props.isWeb ? { pointerEvents: props.pointerEvents } : null,
+                props.isWeb ? styles.containerWebPointerEvents : null,
             ]}
             testID={`transcript-message-actions-row:${props.messageId}`}
         >
@@ -37,17 +49,24 @@ export function MessageActionRow(props: Readonly<{
                     {props.timestampText}
                 </Text>
             ) : null}
-            <View
-                accessibilityElementsHidden={!props.showActions}
-                importantForAccessibility={props.showActions ? 'auto' : 'no-hide-descendants'}
-                style={[
-                    styles.buttons,
-                    !props.showActions ? styles.hidden : null,
-                ]}
+            {props.pinAction ? (
+                <RowActionRevealSlot
+                    revealed={props.showPinAction === true}
+                    onFocus={props.onActionsFocus}
+                    onBlur={props.onActionsBlur}
+                    testID={`transcript-message-pin-slot:${props.messageId}`}
+                >
+                    {props.pinAction}
+                </RowActionRevealSlot>
+            ) : null}
+            <RowActionRevealSlot
+                revealed={props.showActions}
+                onFocus={props.onActionsFocus}
+                onBlur={props.onActionsBlur}
                 testID={`transcript-message-actions:${props.messageId}`}
             >
                 {props.children}
-            </View>
+            </RowActionRevealSlot>
         </View>
     );
 }
@@ -64,12 +83,8 @@ const styles = StyleSheet.create((theme) => ({
     containerInverted: {
         flexDirection: 'row-reverse',
     },
-    hidden: {
-        opacity: 0,
-    },
-    buttons: {
-        flexDirection: 'row',
-        alignItems: 'center',
+    containerWebPointerEvents: {
+        pointerEvents: 'box-none',
     },
     timestampText: {
         color: theme.colors.text.tertiary,

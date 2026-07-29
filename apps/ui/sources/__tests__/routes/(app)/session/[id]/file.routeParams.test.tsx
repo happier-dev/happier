@@ -57,6 +57,10 @@ vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
     SessionFileDetailsView: (props: any) => React.createElement('SessionFileDetailsView', props),
 }));
 
+vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
+    useHydrateSessionForRoute: (sessionId: string) => ({ kind: 'available', sessionId }),
+}));
+
 vi.mock('@/components/ui/panels/shouldRedirectDetailsRouteToPanes', () => ({
     shouldRedirectDetailsRouteToPanes: () => false,
 }));
@@ -101,8 +105,8 @@ describe('session file route', () => {
             expect.objectContaining({ intent: 'preview' }),
         );
         expect(capturedScopeIdRef.current).toBe('session:s1');
-        expect(paneScopeMock.openRight).toHaveBeenCalledWith({ tabId: 'files' });
-        expect(paneScopeMock.setRightTab).toHaveBeenCalledWith('files');
+        expect(paneScopeMock.openRight).not.toHaveBeenCalled();
+        expect(paneScopeMock.setRightTab).not.toHaveBeenCalled();
         expect(routerReplaceSpy).toHaveBeenCalledWith({
             pathname: '/session/[id]/details',
             params: expect.objectContaining({ id: 's1' }),

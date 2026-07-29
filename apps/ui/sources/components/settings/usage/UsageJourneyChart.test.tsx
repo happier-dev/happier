@@ -7,7 +7,7 @@ import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import type { UsageAnalyticsTimelineBucket } from '@/sync/api/account/usageAnalytics';
 
-import { formatUsageCurrency } from './formatUsageCurrency';
+import { formatUsageCost } from '@/utils/format/usageNumbers';
 import { UsageJourneyChart } from './UsageJourneyChart';
 
 const timeline: UsageAnalyticsTimelineBucket[] = Array.from({ length: 10 }, (_, index) => ({
@@ -60,6 +60,6 @@ describe('UsageJourneyChart', () => {
         );
 
         const tooltips = screen.findAllByType(ChartTooltip as never) as unknown as Array<{ props: { value: string } }>;
-        expect(tooltips[0]?.props.value).toBe(formatUsageCurrency(timeline[0]?.leaders[0]?.totalCost ?? 0, 'EUR'));
+        expect(tooltips[0]?.props.value).toBe(formatUsageCost(timeline[0]?.leaders[0]?.totalCost ?? 0, 'EUR'));
     });
 });

@@ -13,7 +13,7 @@ import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { NewSessionScreenPortalScope, createNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
+import { NewSessionScreenPortalScope, useNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -176,6 +176,8 @@ export default React.memo(function PathPickerScreen() {
             <Pressable
                 onPress={handleBackPress}
                 hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.back')}
                 style={({ pressed }) => ({
                     marginLeft: 10,
                     opacity: pressed ? 0.7 : 1,
@@ -196,6 +198,8 @@ export default React.memo(function PathPickerScreen() {
             <Pressable
                 testID="new-session-path-picker-confirm"
                 onPress={() => handleSelectPath()}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.done')}
                 style={({ pressed }) => ({
                     opacity: pressed ? 0.7 : 1,
                     padding: 4,
@@ -210,16 +214,17 @@ export default React.memo(function PathPickerScreen() {
         );
     }, [handleSelectPath, theme.colors.chrome.header.foreground]);
 
+    const baseScreenOptions = useNewSessionContainedModalScreenOptions({
+        title: headerTitle,
+        headerBackTitle,
+    });
     const screenOptions = React.useMemo(() => {
         return {
-            ...createNewSessionContainedModalScreenOptions({
-                title: headerTitle,
-                headerBackTitle,
-            }),
+            ...baseScreenOptions,
             headerLeft,
             headerRight,
         } as const;
-    }, [headerBackTitle, headerLeft, headerRight, headerTitle]);
+    }, [baseScreenOptions, headerLeft, headerRight]);
 
     if (!machine) {
         return (

@@ -68,6 +68,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides', () => ({
+    BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: {},
     BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES: {},
 }));
 
@@ -304,7 +305,8 @@ describe('WorkspaceScmReviewDetailsView', () => {
 
         expect(reviewCommentsSurfaceSpy).toHaveBeenCalledWith(expect.objectContaining({
             workspaceId: 'wr_1',
-            directWriteGranted: false,
+            directWriteGrants: [],
+            pendingDirectWriteGrantRequests: [],
             defaultPanelOpen: false,
             testID: 'workspace-review-comments',
             execute: expect.any(Function),

@@ -8,14 +8,22 @@ import {
     type SessionListRenderableSession,
 } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { storage } from '@/sync/domains/state/storage';
+import type { SessionListCacheEntryV1 } from '@/sync/domains/state/warmCachePersistence';
 import { Encryption } from '@/sync/encryption/encryption';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { HappyError } from '@/utils/errors/errors';
-import { encodeV2SessionListCursorV1, type V2SessionRecord } from '@happier-dev/protocol';
+import {
+    encodeV2SessionListCursorV1,
+    projectSessionSharedMetadataV1,
+    type V2SessionRecord,
+} from '@happier-dev/protocol';
 
 import { fetchAndApplySessions, type SessionListEncryption } from './sessionSnapshot';
 
 const onAgentRequest = vi.fn();
+const OWNER_METADATA_CIPHERTEXT =
+    'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==';
 
 vi.mock('@/voice/context/voiceHooks', () => ({
     voiceHooks: {
@@ -117,6 +125,7 @@ function createEncryptionHarness(): {
     removeSessionEncryption: ReturnType<typeof vi.fn>;
     getSessionEncryption: ReturnType<typeof vi.fn>;
     decryptMetadata: ReturnType<typeof vi.fn>;
+    decryptMetadataPayload: ReturnType<typeof vi.fn>;
     decryptAgentState: ReturnType<typeof vi.fn>;
 } {
     const decryptEncryptionKeys = vi.fn(async (values: readonly string[], _scope?: { signal?: AbortSignal }) =>
@@ -128,12 +137,14 @@ function createEncryptionHarness(): {
     });
     const initializeSessions = vi.fn(async () => {});
     const removeSessionEncryption = vi.fn();
+    const decryptMetadata = vi.fn(async (_version: number, value: string) => ({ decrypted: value }));
+    const decryptMetadataPayload = vi.fn(async (_version: number, value: string) => ({ decrypted: value }));
+    const decryptAgentState = vi.fn(async () => null);
     const getSessionEncryption = vi.fn(() => ({
         decryptMetadata,
+        decryptMetadataPayload,
         decryptAgentState,
     }));
-    const decryptMetadata = vi.fn(async (_version: number, value: string) => ({ decrypted: value }));
-    const decryptAgentState = vi.fn(async () => null);
     const encryption: EncryptionHarnessEncryption = {
         decryptEncryptionKey,
         decryptEncryptionKeys,
@@ -141,7 +152,17 @@ function createEncryptionHarness(): {
         removeSessionEncryption,
         getSessionEncryption,
     };
-    return { encryption, decryptEncryptionKey, decryptEncryptionKeys, initializeSessions, removeSessionEncryption, getSessionEncryption, decryptMetadata, decryptAgentState };
+    return {
+        encryption,
+        decryptEncryptionKey,
+        decryptEncryptionKeys,
+        initializeSessions,
+        removeSessionEncryption,
+        getSessionEncryption,
+        decryptMetadata,
+        decryptMetadataPayload,
+        decryptAgentState,
+    };
 }
 
 type SingleDecryptOnlyEncryptionHarness = Omit<SessionListEncryption, 'decryptEncryptionKeys'> & {
@@ -257,12 +278,140 @@ function staleCacheEntry(
 }
 
 afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
     syncPerformanceTelemetry.configure({ enabled: false });
 });
 
 describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
+    it('treats layout-v1 recipient hydration as an authoritative privacy contraction over newer private cache state', async () => {
+        const row = buildSessionRow({
+            id: 's_privacy_contraction',
+            encryptionMode: 'plain',
+            metadataLayoutVersion: 1,
+            metadataVersion: 1,
+            metadata: JSON.stringify({
+                v: 1,
+                summary: { text: 'Safe title', updatedAt: 10 },
+            }),
+            ownerMetadata: undefined,
+            agentStateVersion: 7,
+            agentState: null,
+            share: {
+                accessLevel: 'view',
+                canApprovePermissions: false,
+            },
+            pendingPermissionRequestCount: 0,
+            pendingUserActionRequestCount: 0,
+        } as Partial<SessionRow> & Pick<SessionRow, 'id'>);
+        const legacyExternalSession = {
+            v: 1,
+            agentId: 'codex',
+            machineId: 'private-machine',
+            remoteSessionId: 'private-native-id',
+            source: { kind: 'codexHome', home: 'local' },
+        } satisfies NonNullable<SessionListCacheEntryV1['externalSessionV1']>;
+        const legacyPrivateMetadata = {
+            path: '/private/worktree',
+            host: 'private-host',
+            machineId: 'private-machine',
+            flavor: 'codex',
+            externalSessionV1: legacyExternalSession,
+        } satisfies NonNullable<Session['metadata']>;
+        const cachedSessionListEntries = {
+            s_privacy_contraction: {
+                sessionId: 's_privacy_contraction',
+                seq: 7,
+                metadataVersion: 9,
+                agentStateVersion: 8,
+                updatedAt: 10,
+                createdAt: 1,
+                active: true,
+                activeAt: 10,
+                archivedAt: null,
+                name: 'Legacy cached title',
+                summaryText: null,
+                path: legacyPrivateMetadata.path,
+                homeDir: '/private',
+                host: legacyPrivateMetadata.host,
+                machineId: legacyPrivateMetadata.machineId,
+                flavor: legacyPrivateMetadata.flavor,
+                externalSessionV1: legacyPrivateMetadata.externalSessionV1,
+                hasPendingPermissionRequests: true,
+                hasPendingUserActionRequests: true,
+            },
+        } satisfies NonNullable<FetchAndApplySessionsParams['cachedSessionListEntries']>;
+        const existingSession = buildExistingSession({
+            id: 's_privacy_contraction',
+            metadataVersion: 9,
+            metadata: legacyPrivateMetadata,
+            ownerMetadataView: {
+                path: '/private/owner-worktree',
+                host: 'private-owner-host',
+                machineId: 'private-owner-machine',
+                externalSessionV1: legacyExternalSession,
+            },
+            agentStateVersion: 8,
+            agentState: {
+                requests: {
+                    privateRequest: {
+                        tool: 'private-tool',
+                        arguments: 'private-tool-arguments',
+                    },
+                },
+            },
+        });
+        storage.setState(storage.getInitialState(), true);
+        storage.getState().applySessions([existingSession]);
+        const applySessions = vi.fn((
+            sessions: Parameters<FetchAndApplySessionsParams['applySessions']>[0],
+        ) => {
+            storage.getState().applySessions(sessions);
+        });
+        const applySessionListRenderables = vi.fn();
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: encodeBase64(new Uint8Array(32).fill(3), 'base64url') },
+            encryption: createEncryptionHarness().encryption,
+            sessionDataKeys: new Map(),
+            request: vi.fn(async () => jsonResponse({
+                sessions: [row],
+                nextCursor: null,
+                hasNext: false,
+            })),
+            applySessions,
+            applySessionListRenderables,
+            cachedSessionListEntries,
+            getExistingSession: () => existingSession,
+            awaitSessionListHydration: true,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        const hydrated = storage.getState().sessions.s_privacy_contraction;
+        expect(hydrated).toBeDefined();
+        expect(hydrated.metadata).toEqual({
+            v: 1,
+            summary: { text: 'Safe title', updatedAt: 10 },
+        });
+        expect(hydrated.metadataVersion).toBe(1);
+        expect(hydrated.ownerMetadataView ?? null).toBeNull();
+        expect(hydrated.agentState).toBeNull();
+        expect(hydrated.agentStateVersion).toBe(7);
+        expect(JSON.stringify(hydrated)).not.toMatch(
+            /private-native-id|private-tool-arguments|private-owner-worktree/,
+        );
+
+        const rendered = applySessionListRenderables.mock.calls[0]?.[0]?.[0];
+        expect(rendered.metadata).not.toHaveProperty('path', '/private/worktree');
+        expect(rendered.metadata).not.toHaveProperty('host', 'private-host');
+        expect(rendered.metadata).not.toHaveProperty('machineId', 'private-machine');
+        expect(rendered.metadata?.externalSessionV1).toBeNull();
+        expect(rendered.hasPendingPermissionRequests).toBe(false);
+        expect(rendered.hasPendingUserActionRequests).toBe(false);
+    });
+
     it('fetches one bounded v2 session page by default and returns the next cursor for loading more', async () => {
         const firstPage = Array.from({ length: 50 }, (_, index) => buildSessionRow({
             id: `session_${String(index + 1).padStart(3, '0')}`,
@@ -321,7 +470,37 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         }));
     });
 
-    it('requests initial pinned and attention rows through the bounded page and de-duplicates rows', async () => {
+    it('does not write routine success logs for warm-cache session-list pages', async () => {
+        const session = buildSessionRow({
+            id: 'cached-session',
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/cached', host: 'host' }),
+            agentState: JSON.stringify({}),
+        });
+        const requestSpy = vi.fn(async (path: string) => {
+            if (path === '/v2/sessions?limit=50') {
+                return jsonResponse({ sessions: [session], nextCursor: null, hasNext: false });
+            }
+            throw new Error(`Unexpected path ${path}`);
+        });
+
+        const { encryption } = createEncryptionHarness();
+        const log = { log: vi.fn() };
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions: vi.fn(),
+            repairInvalidReadStateV1: async () => {},
+            log,
+        });
+
+        expect(log.log).not.toHaveBeenCalled();
+    });
+
+    it('ignores legacy client-derived pinned ids when building the initial sessions request', async () => {
         const priorityRow = buildSessionRow({
             id: 's_pinned_outside_first_page',
             encryptionMode: 'plain',
@@ -335,7 +514,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             agentState: JSON.stringify({}),
         });
         const requestSpy = vi.fn(async (path: string) => {
-            if (path === '/v2/sessions?pinnedSessionIds=s_pinned_outside_first_page&includeAttention=true&limit=50') {
+            if (path === '/v2/sessions?includeAttention=true&limit=50') {
                 return jsonResponse({ sessions: [priorityRow, pageRow, priorityRow], nextCursor: null, hasNext: false });
             }
             throw new Error(`Unexpected path ${path}`);
@@ -358,7 +537,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         const result = await fetchAndApplySessions(params);
 
         expect(requestSpy.mock.calls.map((call) => call[0])).toEqual([
-            '/v2/sessions?pinnedSessionIds=s_pinned_outside_first_page&includeAttention=true&limit=50',
+            '/v2/sessions?includeAttention=true&limit=50',
         ]);
         expect(applySessions.mock.calls[0]?.[0].map((session: { id: string }) => session.id)).toEqual([
             's_pinned_outside_first_page',
@@ -370,7 +549,394 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         ]);
     });
 
-    it('starts encrypted metadata and agent-state row decrypts before awaiting either result', async () => {
+    it('drains the independent attention continuation and deduplicates rows from ordinary pagination', async () => {
+        const newerAttention = buildSessionRow({
+            id: 's_newer_attention',
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/newer', host: 'host' }),
+            agentState: JSON.stringify({}),
+        });
+        const olderPermission = buildSessionRow({
+            id: 's_older_hidden_permission',
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({
+                path: '/hidden',
+                host: 'host',
+                systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+            }),
+            agentState: JSON.stringify({
+                requests: {
+                    approve: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: { command: 'git status' },
+                        createdAt: 1,
+                    },
+                },
+            }),
+            agentStateVersion: 1,
+            pendingPermissionRequestCount: 1,
+        });
+        const regularRow = buildSessionRow({
+            id: 's_regular',
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/regular', host: 'host' }),
+            agentState: JSON.stringify({}),
+        });
+        const requestSpy = vi.fn(async (path: string) => {
+            if (path === '/v2/sessions?includeAttention=true&limit=50') {
+                return jsonResponse({
+                    sessions: [newerAttention, regularRow],
+                    nextCursor: 'ordinary_cursor',
+                    hasNext: true,
+                    attentionNextCursor: 'attention_cursor_1',
+                    attentionHasNext: true,
+                });
+            }
+            if (path === '/v2/sessions?limit=50&attentionCursor=attention_cursor_1') {
+                return jsonResponse({
+                    sessions: [newerAttention, olderPermission],
+                    nextCursor: null,
+                    hasNext: false,
+                    attentionNextCursor: null,
+                    attentionHasNext: false,
+                });
+            }
+            throw new Error(`Unexpected path ${path}`);
+        });
+        const { encryption } = createEncryptionHarness();
+        const applySessions = vi.fn();
+
+        const result = await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            includeSessionListAttentionRows: true,
+            applySessions,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(requestSpy.mock.calls.map((call) => call[0])).toEqual([
+            '/v2/sessions?includeAttention=true&limit=50',
+            '/v2/sessions?limit=50&attentionCursor=attention_cursor_1',
+        ]);
+        expect(result).toMatchObject({
+            nextCursor: 'ordinary_cursor',
+            hasNext: true,
+        });
+        expect(result.sessionIds).toEqual([
+            's_newer_attention',
+            's_regular',
+            's_older_hidden_permission',
+        ]);
+        expect(applySessions.mock.calls[0]?.[0].map((session: { id: string }) => session.id)).toEqual([
+            's_newer_attention',
+            's_regular',
+            's_older_hidden_permission',
+        ]);
+    });
+
+    it('stops an attention drain when the server repeats a cursor', async () => {
+        const attentionRow = buildSessionRow({
+            id: 's_attention',
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/attention', host: 'host' }),
+            agentState: JSON.stringify({}),
+        });
+        const requestSpy = vi.fn(async (path: string) => {
+            if (path === '/v2/sessions?includeAttention=true&limit=50') {
+                return jsonResponse({
+                    sessions: [attentionRow],
+                    nextCursor: null,
+                    hasNext: false,
+                    attentionNextCursor: 'attention_cursor_repeat',
+                    attentionHasNext: true,
+                });
+            }
+            if (path === '/v2/sessions?limit=50&attentionCursor=attention_cursor_repeat') {
+                return jsonResponse({
+                    sessions: [attentionRow],
+                    nextCursor: null,
+                    hasNext: false,
+                    attentionNextCursor: 'attention_cursor_repeat',
+                    attentionHasNext: true,
+                });
+            }
+            throw new Error(`Unexpected path ${path}`);
+        });
+        const { encryption } = createEncryptionHarness();
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            includeSessionListAttentionRows: true,
+            applySessions: vi.fn(),
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(requestSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('stops an attention drain at its bounded continuation ceiling', async () => {
+        const requestSpy = vi.fn(async (path: string) => {
+            const cursor = new URL(path, 'https://example.test').searchParams.get('attentionCursor');
+            if (cursor === null) {
+                return jsonResponse({
+                    sessions: [buildSessionRow({ id: 's_attention_0', encryptionMode: 'plain' })],
+                    nextCursor: null,
+                    hasNext: false,
+                    attentionNextCursor: 'attention_cursor_1',
+                    attentionHasNext: true,
+                });
+            }
+            const page = Number(cursor.slice('attention_cursor_'.length));
+            return jsonResponse({
+                sessions: [buildSessionRow({ id: `s_attention_${page}`, encryptionMode: 'plain' })],
+                nextCursor: null,
+                hasNext: false,
+                attentionNextCursor: `attention_cursor_${page + 1}`,
+                attentionHasNext: true,
+            });
+        });
+        const { encryption } = createEncryptionHarness();
+
+        const result = await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            includeSessionListAttentionRows: true,
+            sessionListAttentionMaxPages: 2,
+            applySessions: vi.fn(),
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(requestSpy).toHaveBeenCalledTimes(3);
+        expect(result.sessionIds).toEqual([
+            's_attention_0',
+            's_attention_1',
+            's_attention_2',
+        ]);
+    });
+
+    it('leaves a failed attention drain unapplied so the next cold sync can retry it', async () => {
+        const olderPermission = buildSessionRow({
+            id: 's_retry_permission',
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/hidden', host: 'host' }),
+            agentState: JSON.stringify({}),
+            pendingPermissionRequestCount: 1,
+        });
+        let failContinuation = true;
+        const requestSpy = vi.fn(async (path: string) => {
+            if (path === '/v2/sessions?includeAttention=true&limit=50') {
+                return jsonResponse({
+                    sessions: [],
+                    nextCursor: null,
+                    hasNext: false,
+                    attentionNextCursor: 'attention_cursor_retry',
+                    attentionHasNext: true,
+                });
+            }
+            if (path === '/v2/sessions?limit=50&attentionCursor=attention_cursor_retry') {
+                if (failContinuation) throw new Error('transient attention failure');
+                return jsonResponse({
+                    sessions: [olderPermission],
+                    nextCursor: null,
+                    hasNext: false,
+                    attentionNextCursor: null,
+                    attentionHasNext: false,
+                });
+            }
+            throw new Error(`Unexpected path ${path}`);
+        });
+        const { encryption } = createEncryptionHarness();
+        const applySessions = vi.fn();
+        const params = {
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            includeSessionListAttentionRows: true,
+            applySessions,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        } satisfies FetchAndApplySessionsParams;
+
+        await expect(fetchAndApplySessions(params)).rejects.toThrow('transient attention failure');
+        expect(applySessions).not.toHaveBeenCalled();
+
+        failContinuation = false;
+        const result = await fetchAndApplySessions(params);
+        expect(result.sessionIds).toEqual(['s_retry_permission']);
+        expect(applySessions).toHaveBeenCalledTimes(1);
+    });
+
+    it('hydrates a required changed session when only its runtime activity tuple advanced', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 'runtime-transition',
+                        encryptionMode: 'plain',
+                        metadata: JSON.stringify({ path: '/repo', host: 'host' }),
+                        metadataVersion: 1,
+                        agentState: JSON.stringify({}),
+                        agentStateVersion: 0,
+                        runtimeActivityState: 'idle',
+                        runtimeActivityActiveCount: 0,
+                        runtimeActivityObservedAt: 2_000,
+                        runtimeActivityRevision: 35,
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+        const { encryption } = createEncryptionHarness();
+        const applySessions = vi.fn();
+        const existingSession = buildExistingSession({
+            id: 'runtime-transition',
+            metadata: { path: '/repo', host: 'host' },
+            metadataVersion: 1,
+            agentState: {},
+            agentStateVersion: 0,
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: 1_000,
+            runtimeActivityRevision: 34,
+        });
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            applySessionListRenderables: vi.fn(),
+            getExistingSession: () => existingSession,
+            getCurrentSessionListRenderable: () => buildSessionListRenderableFromSession(existingSession),
+            requiredHydrationSessionIds: ['runtime-transition'],
+            awaitSessionListHydration: true,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 'runtime-transition',
+                runtimeActivityState: 'idle',
+                runtimeActivityActiveCount: 0,
+                runtimeActivityObservedAt: 2_000,
+                runtimeActivityRevision: 35,
+            }),
+        ]);
+    });
+
+    it('attributes active-row and list-page request timings separately', async () => {
+        const requestSpy = vi.fn(async (path: string) => {
+            if (path === '/v2/sessions/active?limit=500') {
+                return jsonResponse({
+                    sessions: [buildSessionRow({ id: 's_active', encryptionMode: 'plain' })],
+                    nextCursor: null,
+                    hasNext: false,
+                });
+            }
+            if (path === '/v2/sessions?includeAttention=true&limit=50') {
+                return jsonResponse({
+                    sessions: [buildSessionRow({ id: 's_page', encryptionMode: 'plain' })],
+                    nextCursor: null,
+                    hasNext: false,
+                });
+            }
+            throw new Error(`Unexpected path ${path}`);
+        });
+        const { encryption } = createEncryptionHarness();
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 60_000,
+        });
+        syncPerformanceTelemetry.reset();
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            includeActiveSessionRows: true,
+            includeSessionListAttentionRows: true,
+            applySessions: vi.fn(),
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(requestSpy.mock.calls.map((call) => call[0])).toEqual([
+            '/v2/sessions/active?limit=500',
+            '/v2/sessions?includeAttention=true&limit=50',
+        ]);
+        const requestEvent = syncPerformanceTelemetry.snapshot().events.find(
+            (event) => event.name === 'sync.sessions.snapshot.fetchPage.request',
+        );
+        expect(requestEvent).toEqual(expect.objectContaining({
+            count: 2,
+            fields: expect.objectContaining({
+                activePage: 1,
+                listPage: 1,
+                limit: 550,
+            }),
+        }));
+    });
+
+    it('requests server timing only while sync performance telemetry is enabled', async () => {
+        const requestSpy = vi.fn<(path: string, init: RequestInit) => Promise<Response>>(async () =>
+            jsonResponse({
+                sessions: [buildSessionRow({ id: 's_page', encryptionMode: 'plain' })],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+        const { encryption } = createEncryptionHarness();
+        const commonParams = {
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions: vi.fn(),
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        } satisfies FetchAndApplySessionsParams;
+
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 60_000,
+        });
+        syncPerformanceTelemetry.reset();
+        await fetchAndApplySessions(commonParams);
+        expect(requestSpy.mock.calls[0]?.[1]?.headers).toEqual(expect.objectContaining({
+            'X-Happier-Session-List-Timing': '1',
+        }));
+
+        requestSpy.mockClear();
+        syncPerformanceTelemetry.configure({
+            enabled: false,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 60_000,
+        });
+        await fetchAndApplySessions(commonParams);
+        expect(requestSpy.mock.calls[0]?.[1]?.headers).not.toEqual(expect.objectContaining({
+            'X-Happier-Session-List-Timing': '1',
+        }));
+    });
+
+    it('decrypts layout-v1 list metadata without requesting omitted owner Agent state', async () => {
         const requestSpy = vi.fn(async () =>
             jsonResponse({
                 sessions: [
@@ -378,21 +944,27 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                         id: 'encrypted_1',
                         encryptionMode: 'e2ee',
                         dataEncryptionKey: 'dek',
+                        metadataLayoutVersion: 1,
                         metadata: 'enc-meta',
                         metadataVersion: 2,
-                        agentState: 'enc-state',
-                        agentStateVersion: 3,
+                        ownerMetadata: undefined,
+                        agentState: null,
+                        agentStateVersion: 7,
                     }),
                 ],
                 nextCursor: null,
                 hasNext: false,
             }),
         );
-        const { encryption, decryptMetadata, decryptAgentState } = createEncryptionHarness();
-        const metadataDeferred = createDeferred<{ readStateV1: null }>();
-        const agentStateDeferred = createDeferred<{ controlledByUser: true }>();
-        decryptMetadata.mockImplementation(async () => metadataDeferred.promise);
-        decryptAgentState.mockImplementation(async () => agentStateDeferred.promise);
+        const {
+            encryption,
+            decryptMetadata,
+            decryptMetadataPayload,
+            decryptAgentState,
+        } = createEncryptionHarness();
+        const sharedMetadata = projectSessionSharedMetadataV1({ metadata: {} });
+        const metadataDeferred = createDeferred<typeof sharedMetadata>();
+        decryptMetadataPayload.mockImplementation(async () => metadataDeferred.promise);
 
         const applySessions = vi.fn();
         const fetchPromise = fetchAndApplySessions({
@@ -407,22 +979,23 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
 
         try {
             await expect.poll(() => ({
-                metadata: decryptMetadata.mock.calls.length,
+                metadata: decryptMetadataPayload.mock.calls.length,
                 agentState: decryptAgentState.mock.calls.length,
-            }), { timeout: 100 }).toEqual({ metadata: 1, agentState: 1 });
+            }), { timeout: 100 }).toEqual({ metadata: 1, agentState: 0 });
         } finally {
-            metadataDeferred.resolve({ readStateV1: null });
-            agentStateDeferred.resolve({ controlledByUser: true });
+            metadataDeferred.resolve(sharedMetadata);
             await fetchPromise;
         }
 
         expect(applySessions).toHaveBeenCalledWith([
             expect.objectContaining({
                 id: 'encrypted_1',
-                metadata: expect.objectContaining({ readStateV1: null }),
-                agentState: { controlledByUser: true },
+                metadata: sharedMetadata,
+                agentState: null,
+                agentStateVersion: 7,
             }),
         ]);
+        expect(decryptMetadata).not.toHaveBeenCalled();
     });
 
     it('records snapshot fetch and hydration telemetry when sync performance telemetry is enabled', async () => {
@@ -1231,6 +1804,10 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                         latestReadyEventAt: 2_200,
                         latestTurnStatus: 'in_progress',
                         latestTurnStatusObservedAt: 1_900,
+                        runtimeActivityState: 'active',
+                        runtimeActivityActiveCount: 1,
+                        runtimeActivityObservedAt: 2_300,
+                        runtimeActivityRevision: 9_999,
                         rollbackEligibleTurnStarts: [1, 3],
                         encryptionMode: 'plain',
                         metadata: JSON.stringify({ path: '/repo/projected', host: 'dev' }),
@@ -1267,6 +1844,9 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 pendingRequestObservedAt: 2_100,
                 latestReadyEventSeq: 9,
                 latestReadyEventAt: 2_200,
+                runtimeActivityActiveCount: 1,
+                runtimeActivityObservedAt: 2_300,
+                runtimeActivityRevision: 9_999,
                 rollbackEligibleTurnStarts: [1, 3],
                 hasPendingPermissionRequests: true,
                 hasUnreadMessages: true,
@@ -1280,9 +1860,207 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 pendingRequestObservedAt: 2_100,
                 latestReadyEventSeq: 9,
                 latestReadyEventAt: 2_200,
+                runtimeActivityActiveCount: 1,
+                runtimeActivityObservedAt: 2_300,
+                runtimeActivityRevision: 9_999,
                 rollbackEligibleTurnStarts: [1, 3],
             }),
         ]);
+    });
+
+    it('hydrates a cold plain permission row into the canonical session store', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_cold_permission',
+                        seq: 2,
+                        encryptionMode: 'plain',
+                        metadata: JSON.stringify({ path: '/repo/cold-permission', host: 'dev' }),
+                        metadataVersion: 1,
+                        agentState: JSON.stringify({
+                            controlledByUser: null,
+                            requests: {
+                                approve: {
+                                    tool: 'Bash',
+                                    kind: 'permission',
+                                    arguments: { command: 'git status' },
+                                    createdAt: 10,
+                                },
+                            },
+                        }),
+                        agentStateVersion: 1,
+                        pendingPermissionRequestCount: 1,
+                        pendingUserActionRequestCount: 0,
+                        pendingRequestObservedAt: 10,
+                        lastViewedSessionSeq: 2,
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+        const { encryption } = createEncryptionHarness();
+        const applySessions = vi.fn();
+        let currentRenderables: Record<string, SessionListRenderableSession> = {};
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            applySessionListRenderables: (renderables) => {
+                currentRenderables = Object.fromEntries(renderables.map((renderable) => [renderable.id, renderable]));
+            },
+            getCurrentSessionListRenderable: (sessionId) => currentRenderables[sessionId] ?? null,
+            sessionListBackgroundHydrationYield: async () => {},
+            sessionListBackgroundHydrationApplyFlushDelayMs: 0,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        await expect.poll(() => applySessions.mock.calls.flatMap(
+            (call) => call[0].map((session: { id: string }) => session.id),
+        )).toEqual(['s_cold_permission']);
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's_cold_permission',
+                agentState: expect.objectContaining({
+                    requests: {
+                        approve: expect.objectContaining({
+                            kind: 'permission',
+                            tool: 'Bash',
+                        }),
+                    },
+                }),
+            }),
+        ]);
+    });
+
+    it('builds non-required plain first-usable renderables from the full plain parse without background hydration', async () => {
+        const metadata = {
+            name: 'Plain live title',
+            summary: { text: 'Live summary', updatedAt: 2_400 },
+            path: '/repo/plain-live',
+            host: 'dev-host',
+            machineId: 'machine-live',
+            hiddenSystemSession: true,
+        };
+        const agentState = {
+            requests: {
+                req_1: {
+                    tool: 'Bash',
+                    arguments: { command: 'make test' },
+                    createdAt: 2_500,
+                },
+            },
+        };
+        const plainRow = buildSessionRow({
+            id: 's_plain_fast',
+            seq: 11,
+            createdAt: 1_000,
+            updatedAt: 2_000,
+            active: true,
+            activeAt: 2_000,
+            archivedAt: null,
+            encryptionMode: 'plain',
+            metadata: JSON.stringify(metadata),
+            metadataVersion: 4,
+            agentState: JSON.stringify(agentState),
+            agentStateVersion: 5,
+            pendingCount: 3,
+            pendingBlockedCount: 2,
+            pendingVersion: 6,
+            lastViewedSessionSeq: 8,
+            latestReadyEventSeq: 10,
+            latestReadyEventAt: 2_600,
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 2_550,
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 2,
+            runtimeActivityObservedAt: 2_700,
+            runtimeActivityRevision: 3_000,
+            rollbackEligibleTurnStarts: [4, 9],
+        });
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [plainRow],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption } = createEncryptionHarness();
+        const applySessions = vi.fn();
+        let currentRenderables: Record<string, SessionListRenderableSession> = {};
+        const applySessionListRenderables = vi.fn((renderables: SessionListRenderableSession[]) => {
+            currentRenderables = Object.fromEntries(renderables.map((renderable) => [renderable.id, renderable]));
+        });
+        const expectedRenderable = buildSessionListRenderableFromSession(buildExistingSession({
+            id: 's_plain_fast',
+            seq: 11,
+            createdAt: 1_000,
+            updatedAt: 2_000,
+            active: true,
+            activeAt: 2_000,
+            archivedAt: null,
+            metadata,
+            metadataVersion: 4,
+            agentState,
+            agentStateVersion: 5,
+            pendingCount: 3,
+            pendingBlockedCount: 2,
+            pendingVersion: 6,
+            lastViewedSessionSeq: 8,
+            latestReadyEventSeq: 10,
+            latestReadyEventAt: 2_600,
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 2_550,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 2,
+            runtimeActivityObservedAt: 2_700,
+            runtimeActivityRevision: 3_000,
+            rollbackEligibleTurnStarts: [4, 9],
+        }));
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            applySessionListRenderables,
+            getCurrentSessionListRenderable: (sessionId) => currentRenderables[sessionId] ?? null,
+            cachedSessionListEntries: {
+                s_plain_fast: {
+                    sessionId: 's_plain_fast',
+                    metadataVersion: 3,
+                    agentStateVersion: 4,
+                    updatedAt: 1_500,
+                    createdAt: 1_000,
+                    active: true,
+                    activeAt: 1_500,
+                    archivedAt: null,
+                    name: 'Cached stale title',
+                    path: '/repo/stale',
+                    host: 'stale-host',
+                    hasPendingPermissionRequests: false,
+                    hasPendingUserActionRequests: false,
+                },
+            },
+            sessionListBackgroundHydrationYield: vi.fn(async () => {}),
+            awaitSessionListHydration: true,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(applySessionListRenderables).toHaveBeenCalledTimes(1);
+        expect(applySessionListRenderables).toHaveBeenCalledWith([expectedRenderable], { replace: true });
+        expect(applySessions).not.toHaveBeenCalled();
     });
 
     it('reuses warm cache list data when metadata and agentState versions match and the canonical session already exists', async () => {
@@ -1340,7 +2118,13 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     host: 'mbp',
                     machineId: 'm1',
                     flavor: 'claude',
-                    externalSessionV1: { v: 1, providerId: 'codex' },
+                    externalSessionV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        machineId: 'm1',
+                        remoteSessionId: 'remote-cached',
+                        source: { kind: 'codexHome', home: 'user' },
+                    },
                     hiddenSystemSession: false,
                     hasPendingPermissionRequests: false,
                     hasPendingUserActionRequests: true,
@@ -1383,7 +2167,13 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     host: 'mbp',
                     machineId: 'm1',
                     flavor: 'claude',
-                    externalSessionV1: { v: 1, providerId: 'codex' },
+                    externalSessionV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        machineId: 'm1',
+                        remoteSessionId: 'remote-cached',
+                        source: { kind: 'codexHome', home: 'user' },
+                    },
                     hiddenSystemSession: false,
                 }),
                 hasPendingUserActionRequests: true,
@@ -1442,7 +2232,13 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     host: 'mbp',
                     machineId: 'm1',
                     flavor: 'claude',
-                    externalSessionV1: { v: 1, providerId: 'codex' },
+                    externalSessionV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        machineId: 'm1',
+                        remoteSessionId: 'remote-cached',
+                        source: { kind: 'codexHome', home: 'user' },
+                    },
                     hiddenSystemSession: false,
                     hasPendingPermissionRequests: false,
                     hasPendingUserActionRequests: false,
@@ -1463,6 +2259,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         ], { replace: true });
         await expect.poll(() => decryptMetadata.mock.calls.length).toBe(1);
         expect(decryptAgentState).toHaveBeenCalledTimes(1);
+        await expect.poll(() => applySessions.mock.calls.length).toBe(1);
         expect(applySessions).toHaveBeenCalledWith([
             expect.objectContaining({
                 id: 's_cached',
@@ -2473,7 +3270,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             cachedSessionListEntries: {},
             sessionListBackgroundHydrationConcurrencyLimit: 1,
             sessionListBackgroundHydrationApplyBatchSize: 4,
-            sessionListBackgroundHydrationApplyFlushDelayMs: 1_000,
+            sessionListBackgroundHydrationApplyFlushDelayMs: 1,
             sessionListBackgroundHydrationYieldEveryRows: 2,
             sessionListBackgroundHydrationYield,
             repairInvalidReadStateV1: async () => {},
@@ -2569,7 +3366,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         delete currentRenderables.s_deleted_before_flush;
 
         yieldResolvers.shift()?.();
-        await expect.poll(() => applySessions.mock.calls.length).toBe(1);
+        await expect.poll(() => applySessions.mock.calls.length, { timeout: 2_000 }).toBe(1);
         expect(applySessions).toHaveBeenCalledWith([
             expect.objectContaining({ id: 's_survivor_after_delete' }),
         ]);
@@ -2640,7 +3437,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         };
 
         yieldResolvers.shift()?.();
-        await expect.poll(() => applySessions.mock.calls.length).toBe(1);
+        await expect.poll(() => applySessions.mock.calls.length, { timeout: 2_000 }).toBe(1);
         expect(applySessions).toHaveBeenCalledWith([
             expect.objectContaining({ id: 's_survivor_after_archive' }),
         ]);
@@ -3021,7 +3818,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             applySessionListRenderables,
             cachedSessionListEntries: {},
             sessionListBackgroundHydrationConcurrencyLimit: 1,
-            sessionListBackgroundHydrationApplyFlushDelayMs: 2_000,
+            sessionListBackgroundHydrationApplyFlushDelayMs: 1,
             sessionListBackgroundHydrationYield,
             repairInvalidReadStateV1: async () => {},
             log: { log: () => {} },
@@ -3087,7 +3884,10 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     flavor: 'claude',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
+                        machineId: 'm1',
+                        remoteSessionId: 'remote-direct',
+                        source: { kind: 'claudeConfig', configDir: '/tmp/.claude' },
                     },
                     hiddenSystemSession: false,
                     hasPendingPermissionRequests: false,
@@ -3111,7 +3911,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 metadata: expect.objectContaining({
                     externalSessionV1: expect.objectContaining({
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
                     }),
                 }),
             }),
@@ -3177,7 +3977,10 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     flavor: 'claude',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
+                        machineId: 'm1',
+                        remoteSessionId: 'remote-direct',
+                        source: { kind: 'claudeConfig', configDir: '/tmp/.claude' },
                     },
                     hiddenSystemSession: false,
                     hasPendingPermissionRequests: false,
@@ -3198,7 +4001,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     machineId: 'm1',
                     externalSessionV1: expect.objectContaining({
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
                     }),
                     externalSessionAttentionV1: expect.objectContaining({
                         v: 1,
@@ -3268,7 +4071,10 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     flavor: 'claude',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
+                        machineId: 'm1',
+                        remoteSessionId: 'remote-direct',
+                        source: { kind: 'claudeConfig', configDir: '/tmp/.claude' },
                     },
                     hiddenSystemSession: false,
                     hasPendingPermissionRequests: false,
@@ -3288,7 +4094,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     host: 'host',
                     externalSessionV1: expect.objectContaining({
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
                     }),
                     externalSessionAttentionV1: expect.objectContaining({
                         v: 1,
@@ -3388,6 +4194,71 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
 
         expect(decryptEncryptionKeys).not.toHaveBeenCalled();
         expect(applySessions).not.toHaveBeenCalled();
+    });
+
+    it('defers final non-awaited background hydration applies by the configured apply delay', async () => {
+        vi.useFakeTimers();
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            now: () => Date.now(),
+        });
+        syncPerformanceTelemetry.reset();
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({ id: 's_delayed_final_first', metadata: 'meta-delayed-first' }),
+                    buildSessionRow({ id: 's_delayed_final_second', metadata: 'meta-delayed-second' }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption } = createEncryptionHarness();
+        const applySessions = vi.fn();
+        const applySessionListRenderables = vi.fn();
+
+        let resolved = false;
+        const resultPromise = fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            applySessionListRenderables,
+            cachedSessionListEntries: {},
+            sessionListEagerHydrationCount: 2,
+            sessionListBackgroundHydrationConcurrencyLimit: 1,
+            sessionListBackgroundHydrationYieldEveryRows: 100,
+            sessionListBackgroundHydrationYield: async () => {},
+            sessionListBackgroundHydrationApplyBatchSize: 10,
+            sessionListBackgroundHydrationApplyFlushDelayMs: 60_000,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        }).then((result) => {
+            resolved = true;
+            return result;
+        });
+
+        await Promise.resolve();
+        expect(resolved).toBe(false);
+        expect(applySessions).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(syncPerformanceTelemetry.snapshot().events.filter((event) =>
+            event.name === 'sync.sessions.snapshot.hydrationApply.flush'
+        )).toEqual([]);
+        expect(applySessions).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(50_000);
+        const result = await resultPromise;
+        expect(result.sessionIds).toEqual(['s_delayed_final_first', 's_delayed_final_second']);
+        expect(resolved).toBe(true);
+        expect(applySessions).toHaveBeenCalledTimes(1);
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({ id: 's_delayed_final_first' }),
+            expect.objectContaining({ id: 's_delayed_final_second' }),
+        ]);
     });
 
     it('does not apply hydrated sessions when the caller scope becomes inactive during decrypt', async () => {

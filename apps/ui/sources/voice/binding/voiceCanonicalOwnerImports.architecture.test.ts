@@ -115,9 +115,10 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
         requiredImports: [
             './voiceConversationBindingMetadata',
             './voiceConversationBindingTypes',
-            '@/sync/domains/session/listing/sessionListLookupState',
+            '@/voice/shared/readVoiceSessionOwnerMetadata',
         ],
         forbiddenImports: [
+            '@/sync/domains/session/listing/sessionListLookupState',
             '@/voice/sessionBinding/voiceConversationBindingMetadata',
             '@/voice/sessionBinding/voiceSessionBindingTypes',
             '@/voice/sessionBinding/voiceConversationSystemSessionLookup',
@@ -154,15 +155,6 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
         forbiddenImports: [
             '@/voice/sessionBinding/voiceConversationSession',
             '@/voice/sessionBinding/voiceSessionBindingTypes',
-        ],
-    },
-    {
-        filePath: 'sources/voice/runtime/realtime/RealtimeTransport.ts',
-        requiredImports: [
-            '@/voice/binding/applyVoiceSessionTargetSelection',
-        ],
-        forbiddenImports: [
-            '@/voice/sessionBinding/applyVoiceSessionTargetSelection',
         ],
     },
     {
@@ -265,29 +257,21 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
     {
         filePath: 'sources/voice/qa/voiceQaRuntimeDeps.ts',
         requiredImports: [
-            '@/voice/runtime/realtime/RealtimeTransport',
+            '@/voice/session/voiceAdapterRegistry',
         ],
         forbiddenImports: [
             '@/realtime/RealtimeSession',
+            '@/voice/adapters/realtimeElevenLabs',
         ],
     },
     {
         filePath: 'sources/voice/context/getVoiceContextSinkForSession.ts',
         requiredImports: [
-            '@/voice/runtime/realtime/RealtimeTransport',
+            '@/voice/session/voiceAdapterRegistry',
         ],
         forbiddenImports: [
             '@/realtime/RealtimeSession',
-        ],
-    },
-    {
-        filePath: 'sources/voice/adapters/realtimeElevenLabs/realtimeElevenLabsAdapter.ts',
-        requiredImports: [
-            '@/voice/runtime/realtime/RealtimeTransport',
-        ],
-        forbiddenImports: [
-            '@/realtime/RealtimeSession',
-            '@/voice/transcript/voiceConversationTranscript',
+            '@/voice/adapters/realtimeElevenLabs',
         ],
     },
     {
@@ -320,45 +304,6 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
         ],
         forbiddenImports: [
             '@/voice/sessionBinding/applyVoiceSessionTargetSelection',
-        ],
-    },
-    {
-        filePath: 'sources/voice/runtime/realtime/RealtimeTransport.voiceModes.spec.ts',
-        requiredImports: [
-            '@/voice/binding/VoiceConversationBindingResolver',
-            '@/voice/binding/voiceConversationBindingRuntime',
-            '@/voice/transcript/voiceConversationTranscript',
-        ],
-        forbiddenImports: [
-            '@/voice/sessionBinding/resolveVoiceSessionBinding',
-            '@/voice/sessionBinding/voiceSessionBindingRuntime',
-            '@/voice/sessionBinding/voiceConversationTranscript',
-        ],
-    },
-    {
-        filePath: 'sources/realtime/RealtimeVoiceSession.tsx',
-        requiredImports: [
-            '@/voice/runtime/realtime/RealtimeTransport',
-        ],
-        forbiddenImports: [
-            '@/realtime/RealtimeSession',
-            '@/voice/sessionBinding/voiceConversationTranscript',
-            '@/voice/transcript/voiceConversationTranscript',
-            '@/voice/binding/VoiceConversationBindingResolver',
-            '@/voice/binding/voiceConversationBindingStore',
-        ],
-    },
-    {
-        filePath: 'sources/realtime/RealtimeVoiceSession.web.tsx',
-        requiredImports: [
-            '@/voice/runtime/realtime/RealtimeTransport',
-        ],
-        forbiddenImports: [
-            '@/realtime/RealtimeSession',
-            '@/voice/sessionBinding/voiceConversationTranscript',
-            '@/voice/transcript/voiceConversationTranscript',
-            '@/voice/binding/VoiceConversationBindingResolver',
-            '@/voice/binding/voiceConversationBindingStore',
         ],
     },
 ];

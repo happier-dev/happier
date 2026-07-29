@@ -15,15 +15,13 @@ import { ForkDividerRow } from '@/components/sessions/transcript/forkContext/For
 import { PendingMessagesTranscriptBlock } from '@/components/sessions/pending/PendingMessagesTranscriptBlock';
 import { SessionActionDraftCard } from '@/components/sessions/actions/SessionActionDraftCard';
 import { UserActionPromptCard } from '@/components/tools/shell/userActions/UserActionPromptCard';
-import { TurnViewWithSessionCommon } from '@/components/sessions/transcript/turns/TurnView';
 import { ToolCallsGroupRowWithSessionCommon } from '@/components/sessions/transcript/toolCalls/ToolCallsGroupRow';
 import { ToolCallsGroupUnitHeaderRowWithSessionCommon } from '@/components/sessions/transcript/toolCalls/units/ToolCallsGroupUnitHeaderRow';
 import { ToolCallsGroupUnitExpandRowWithSessionCommon } from '@/components/sessions/transcript/toolCalls/units/ToolCallsGroupUnitExpandRow';
 import { ToolCallsGroupUnitToolRowWithSessionCommon } from '@/components/sessions/transcript/toolCalls/units/ToolCallsGroupUnitToolRow';
 import { ToolCallsGroupUnitFooterRowWithSessionCommon } from '@/components/sessions/transcript/toolCalls/units/ToolCallsGroupUnitFooterRow';
+import { TranscriptLiveMessagesRowShell } from '@/components/sessions/transcript/rowHost/TranscriptLiveMessagesRowShell';
 import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/TranscriptEnterWrapper';
-import { TranscriptHotTail } from '@/components/sessions/transcript/segments/TranscriptHotTail';
-import { WebTranscriptSplitFooter } from '@/components/sessions/transcript/web/WebTranscriptSplitFooter';
 import { OlderLoadProgressOverlay } from '@/components/sessions/transcript/OlderLoadProgressOverlay';
 import { CatchUpProgressOverlay } from '@/components/sessions/transcript/CatchUpProgressOverlay';
 import { resolveTranscriptListShellEdgeSlots } from '@/components/sessions/transcript/viewport/shell/transcriptListShellEdgeSlots';
@@ -33,8 +31,24 @@ import {
 import type { TranscriptMeasurementReconciler } from '@/components/sessions/transcript/measurement/transcriptMeasurementReconciler';
 import type { TranscriptItemHeightValiditySignature } from '@/components/sessions/transcript/measurement/transcriptItemHeightCache';
 import type { TranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
-import type { TranscriptRollbackAction } from '@/sync/domains/sessionRollback/rollbackUiSupport';
-import type { TranscriptRenderWindowProjection } from '@/components/sessions/transcript/viewport/window/resolveTranscriptRenderWindowProjection';
+import { TranscriptWindowGapRow } from '@/components/sessions/transcript/viewport/window/TranscriptWindowGapRow';
+import {
+    ExternalImportProgressCard,
+    type ExternalSessionOperationActionRef,
+} from '@/components/sessions/external/progress/ExternalImportProgressCard';
+import {
+    ExternalSessionOperationSharedCard,
+} from '@/components/sessions/external/progress/ExternalSessionOperationSharedCard';
+import { resolveExternalSessionOperationRowCapabilities } from '@/components/sessions/external/progress/externalSessionOperationRowCapabilities';
+import { Modal } from '@/modal';
+import {
+    machineExternalSessionOperationCancel,
+    machineExternalSessionOperationDiscard,
+    machineExternalSessionOperationResume,
+    machineExternalSessionOperationRetry,
+} from '@/sync/ops/machineExternalSessions';
+import { t } from '@/text';
+import { presentExternalSessionOperationActionError } from '@/components/sessions/external/progress/externalSessionOperationActionErrorPresentation';
 
 type Ref<T> = { current: T };
 
@@ -48,24 +62,21 @@ export type TranscriptItemRendererDeps = Readonly<{
     buildRowShellSignature: (item: ChatTranscriptListItem) => TranscriptItemHeightValiditySignature;
     expandedToolCallsAnchorMessageIds: ReadonlySet<string>;
     getMessageById: (messageId: string) => Message | null;
-    getMessageOrigin: ((messageId: string) => { sessionId: string; isReadOnlyContext: boolean } | null) | undefined;
     getMessageRevisionById: (messageId: string) => number | null;
     handleRowLayoutMutation: (params: Readonly<{ itemId: string; mutation: TranscriptRowLayoutMutation; rowKind: string }>) => void;
     handleRowShellMeasured: (params: Readonly<{ itemId: string; rowKind: string; heightPx: number }>) => void;
     itemsRef: Ref<readonly ChatTranscriptListItem[]>;
-    listDataRef: Ref<readonly ChatTranscriptListItem[]>;
+    listData: readonly ChatTranscriptListItem[];
     listOrientation: TranscriptListOrientation;
     measurementReconciler: TranscriptMeasurementReconciler;
     props: ChatListInternalProps;
-    resolveCreatedAtForMessageId: (messageId: string) => number | null;
     resolveKindForMessageId: (messageId: string) => string | null;
-    resolveRollbackActionForMessage: (messageId: string) => TranscriptRollbackAction | null;
     resolveThinkingExpanded: (messageId: string) => boolean;
     resolveToolCallMessagesForIds: (toolMessageIds: readonly string[]) => ToolCallMessage[];
     setThinkingExpanded: (messageId: string, expanded: boolean) => void;
     setToolCallsGroupExpanded: (request: ToolCallsGroupExpansionRequest) => void;
     toolTimelineChromeMode: unknown;
-    toolRouteCommonRef: Ref<ChatListInternalProps['toolRouteCommon']>;
+    toolRouteCommon: ChatListInternalProps['toolRouteCommon'];
 }>;
 
 export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
@@ -73,37 +84,39 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
         buildRowShellSignature,
         expandedToolCallsAnchorMessageIds,
         getMessageById,
-        getMessageOrigin,
         getMessageRevisionById,
         handleRowLayoutMutation,
         handleRowShellMeasured,
         itemsRef,
-        listDataRef,
+        listData,
         listOrientation,
         measurementReconciler,
-        resolveCreatedAtForMessageId,
         resolveKindForMessageId,
-        resolveRollbackActionForMessage,
         resolveThinkingExpanded,
         resolveToolCallMessagesForIds,
         setThinkingExpanded,
         setToolCallsGroupExpanded,
-        toolRouteCommonRef,
+        toolRouteCommon,
         toolTimelineChromeMode,
     } = deps;
-    // renderItem identity gates FlashList view-holder bailout (ViewHolder memo compares it
-    // with ===). ChatList re-renders pass a fresh props object literal with stable fields,
-    // so identity must derive from the fields this renderer actually uses.
+    // ChatList re-renders pass a fresh props object literal with stable fields. Keep row
+    // renderer identity derived only from the fields it consumes so unchanged rows retain
+    // their mounted render path.
     const {
         activeThinkingMessageId,
         approvalRequests,
         forkCommon,
+        forkMessageMetadataById,
         forkedTranscriptEnabled,
         interaction: transcriptInteraction,
+        eventEmphasisByMessageId,
+        externalSessionOperationOwnerTarget,
         messageDisplayCommon,
         messagePins,
         messagesById,
         metadata,
+        onDismissExternalSessionOperation,
+        onExternalSessionOperationActionResult,
         onEditPendingMessage,
         onToggleMessagePin,
         rollbackActionsByMessageId,
@@ -111,6 +124,74 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
         sessionId,
         toolChromeCommon,
     } = deps.props;
+    const operationMachineId =
+        externalSessionOperationOwnerTarget?.machineId ?? null;
+    const sessionServerId =
+        externalSessionOperationOwnerTarget?.serverId ?? null;
+    const operationRowCapabilities = React.useMemo(
+        () => resolveExternalSessionOperationRowCapabilities({
+            canSendMessages: transcriptInteraction.canSendMessages,
+            hasOperationMachineTarget: operationMachineId !== null,
+            machineStatusKnown:
+                externalSessionOperationOwnerTarget?.machineStatusKnown === true,
+            machineOnline:
+                externalSessionOperationOwnerTarget?.machineOnline === true,
+        }),
+        [
+            externalSessionOperationOwnerTarget?.machineOnline,
+            externalSessionOperationOwnerTarget?.machineStatusKnown,
+            operationMachineId,
+            transcriptInteraction.canSendMessages,
+        ],
+    );
+    const invokeExternalSessionOperationAction = React.useCallback(async (
+        action:
+            | typeof machineExternalSessionOperationResume
+            | typeof machineExternalSessionOperationRetry
+            | typeof machineExternalSessionOperationCancel
+            | typeof machineExternalSessionOperationDiscard,
+        actionRef: ExternalSessionOperationActionRef,
+    ) => {
+        if (!operationMachineId) {
+            Modal.alert(
+                t('common.error'),
+                t('chatFooter.externalSessionStatusUnavailable'),
+            );
+            return;
+        }
+        try {
+            const result = await action({
+                machineId: operationMachineId,
+                sessionId,
+                ...actionRef,
+            }, sessionServerId ? { serverId: sessionServerId } : undefined);
+            if (!result.ok) {
+                Modal.alert(
+                    t('common.error'),
+                    t(presentExternalSessionOperationActionError(result.error.code)),
+                );
+                return;
+            }
+            if (result.progress.operationId !== actionRef.operationId) {
+                Modal.alert(
+                    t('common.error'),
+                    t('externalSessions.operationActionErrorUnavailable'),
+                );
+                return;
+            }
+            onExternalSessionOperationActionResult(result.progress);
+        } catch {
+            Modal.alert(
+                t('common.error'),
+                t('externalSessions.operationActionErrorUnavailable'),
+            );
+        }
+    }, [
+        onExternalSessionOperationActionResult,
+        operationMachineId,
+        sessionId,
+        sessionServerId,
+    ]);
     const wrapTranscriptItemForAnchor = React.useCallback((item: ChatTranscriptListItem, node: React.ReactNode) => {
         const signature = buildRowShellSignature(item);
         return (
@@ -127,6 +208,11 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
     }, [buildRowShellSignature, handleRowLayoutMutation, handleRowShellMeasured, measurementReconciler]);
 
     const renderItem = React.useCallback(({ item, index }: { item: ChatTranscriptListItem; index: number }) => {
+        if (item.kind === 'transcript-window-gap') {
+            // Projection-only pagination geometry must not publish an anchor
+            // identity that disappears as soon as the window closes the gap.
+            return <TranscriptWindowGapRow gap={item} />;
+        }
         if (item.kind === 'action-draft') {
             return wrapTranscriptItemForAnchor(item, <SessionActionDraftCard sessionId={sessionId} draft={item.draft} />);
         }
@@ -173,6 +259,52 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                 </TranscriptEnterWrapper>
             ));
         }
+        if (item.kind === 'external-session-operation') {
+            return wrapTranscriptItemForAnchor(item, (
+                <TranscriptEnterWrapper id={item.id} createdAt={item.createdAt}>
+                    {item.progress ? (
+                        <ExternalImportProgressCard
+                            progress={item.progress}
+                            observationContext="hydrated"
+                            originAvailability={operationRowCapabilities.originAvailability}
+                            onDismiss={onDismissExternalSessionOperation}
+                            onResume={operationRowCapabilities.canInvokeOwnerActions
+                                ? async (actionRef) =>
+                                await invokeExternalSessionOperationAction(
+                                    machineExternalSessionOperationResume,
+                                    actionRef,
+                                )
+                                : undefined}
+                            onRetry={operationRowCapabilities.canInvokeOwnerActions
+                                ? async (actionRef) =>
+                                await invokeExternalSessionOperationAction(
+                                    machineExternalSessionOperationRetry,
+                                    actionRef,
+                                )
+                                : undefined}
+                            onCancel={operationRowCapabilities.canInvokeOwnerActions
+                                ? async (actionRef) =>
+                                await invokeExternalSessionOperationAction(
+                                    machineExternalSessionOperationCancel,
+                                    actionRef,
+                                )
+                                : undefined}
+                            onDiscard={operationRowCapabilities.canInvokeOwnerActions
+                                ? async (actionRef) =>
+                                await invokeExternalSessionOperationAction(
+                                    machineExternalSessionOperationDiscard,
+                                    actionRef,
+                                )
+                                : undefined}
+                        />
+                    ) : (
+                        <ExternalSessionOperationSharedCard
+                            presentation={item.presentation}
+                        />
+                    )}
+                </TranscriptEnterWrapper>
+            ));
+        }
         if (item.kind === 'tool-calls-group') {
             const interaction = deriveReadOnlyTranscriptInteraction(transcriptInteraction, item.isReadOnlyContext === true);
             return wrapTranscriptItemForAnchor(item, (
@@ -191,7 +323,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                     forkCommon={forkCommon}
                     messageDisplayCommon={messageDisplayCommon}
                     toolChromeCommon={toolChromeCommon}
-                    toolRouteCommon={toolRouteCommonRef.current}
+                    toolRouteCommon={toolRouteCommon}
                 />
             ));
         }
@@ -199,25 +331,42 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
             const interaction = deriveReadOnlyTranscriptInteraction(transcriptInteraction, item.isReadOnlyContext === true);
             const headerToolMessageIds = item.toolMessageIds;
             const headerGroupId = item.groupId;
-            return wrapTranscriptItemForAnchor(item, (
-                <ToolCallsGroupUnitHeaderRowWithSessionCommon
-                    sessionId={sessionId}
-                    groupId={item.groupId}
-                    metadata={metadata}
-                    interaction={interaction}
-                    toolMessages={resolveToolCallMessagesForIds(item.toolMessageIds)}
-                    expanded={item.expanded}
-                    setExpanded={(expanded: boolean) => setToolCallsGroupExpanded({
-                        toolCallsGroupId: headerGroupId,
-                        toolMessageIds: headerToolMessageIds,
-                        expanded,
-                    })}
-                    forkCommon={forkCommon}
-                    messageDisplayCommon={messageDisplayCommon}
-                    toolChromeCommon={toolChromeCommon}
-                    toolRouteCommon={toolRouteCommonRef.current}
-                />
-            ));
+            const initialToolMessages = resolveToolCallMessagesForIds(item.toolMessageIds);
+            const messageRefs = item.toolMessageIds.map((messageId) => ({
+                sessionId: forkMessageMetadataById?.[messageId]?.originSessionId ?? sessionId,
+                messageId,
+            }));
+            return (
+                <TranscriptLiveMessagesRowShell
+                    item={item}
+                    messageRefs={messageRefs}
+                    initialMessages={initialToolMessages}
+                    buildRowShellSignature={buildRowShellSignature}
+                    measurementReconciler={measurementReconciler}
+                    onRowLayoutMutation={handleRowLayoutMutation}
+                    onRowMeasured={handleRowShellMeasured}
+                >
+                    {(messages) => (
+                        <ToolCallsGroupUnitHeaderRowWithSessionCommon
+                            sessionId={sessionId}
+                            groupId={item.groupId}
+                            metadata={metadata}
+                            interaction={interaction}
+                            toolMessages={messages.filter((message): message is ToolCallMessage => message.kind === 'tool-call')}
+                            expanded={item.expanded}
+                            setExpanded={(expanded: boolean) => setToolCallsGroupExpanded({
+                                toolCallsGroupId: headerGroupId,
+                                toolMessageIds: headerToolMessageIds,
+                                expanded,
+                            })}
+                            forkCommon={forkCommon}
+                            messageDisplayCommon={messageDisplayCommon}
+                            toolChromeCommon={toolChromeCommon}
+                            toolRouteCommon={toolRouteCommon}
+                        />
+                    )}
+                </TranscriptLiveMessagesRowShell>
+            );
         }
         if (item.kind === 'tool-group-expand') {
             const interaction = deriveReadOnlyTranscriptInteraction(transcriptInteraction, item.isReadOnlyContext === true);
@@ -238,30 +387,49 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                     forkCommon={forkCommon}
                     messageDisplayCommon={messageDisplayCommon}
                     toolChromeCommon={toolChromeCommon}
-                    toolRouteCommon={toolRouteCommonRef.current}
+                    toolRouteCommon={toolRouteCommon}
                 />
             ));
         }
         if (item.kind === 'tool-group-tool') {
             const interaction = deriveReadOnlyTranscriptInteraction(transcriptInteraction, item.isReadOnlyContext === true);
             const toolMessage = getMessageById(item.toolMessageId);
-            return wrapTranscriptItemForAnchor(item, toolMessage?.kind === 'tool-call' ? (
-                <ToolCallsGroupUnitToolRowWithSessionCommon
-                    sessionId={sessionId}
-                    groupId={item.groupId}
-                    metadata={metadata}
-                    interaction={interaction}
-                    message={toolMessage}
-                    expanded={item.expanded}
-                    approvalRequests={approvalRequests}
-                    messagePins={messagePins}
-                    onToggleToolPin={onToggleMessagePin}
-                    forkCommon={forkCommon}
-                    messageDisplayCommon={messageDisplayCommon}
-                    toolChromeCommon={toolChromeCommon}
-                    toolRouteCommon={toolRouteCommonRef.current}
-                />
-            ) : null);
+            const messageRefs = [{
+                sessionId: forkMessageMetadataById?.[item.toolMessageId]?.originSessionId ?? item.originSessionId ?? sessionId,
+                messageId: item.toolMessageId,
+            }];
+            return (
+                <TranscriptLiveMessagesRowShell
+                    item={item}
+                    messageRefs={messageRefs}
+                    initialMessages={toolMessage ? [toolMessage] : []}
+                    buildRowShellSignature={buildRowShellSignature}
+                    measurementReconciler={measurementReconciler}
+                    onRowLayoutMutation={handleRowLayoutMutation}
+                    onRowMeasured={handleRowShellMeasured}
+                >
+                    {(messages) => {
+                        const message = messages[0];
+                        return message?.kind === 'tool-call' ? (
+                            <ToolCallsGroupUnitToolRowWithSessionCommon
+                                sessionId={sessionId}
+                                groupId={item.groupId}
+                                metadata={metadata}
+                                interaction={interaction}
+                                message={message}
+                                expanded={item.expanded}
+                                approvalRequests={approvalRequests}
+                                messagePins={messagePins}
+                                onToggleToolPin={onToggleMessagePin}
+                                forkCommon={forkCommon}
+                                messageDisplayCommon={messageDisplayCommon}
+                                toolChromeCommon={toolChromeCommon}
+                                toolRouteCommon={toolRouteCommon}
+                            />
+                        ) : null;
+                    }}
+                </TranscriptLiveMessagesRowShell>
+            );
         }
         if (item.kind === 'tool-group-footer') {
             const interaction = deriveReadOnlyTranscriptInteraction(transcriptInteraction, item.isReadOnlyContext === true);
@@ -274,55 +442,15 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                     forkCommon={forkCommon}
                     messageDisplayCommon={messageDisplayCommon}
                     toolChromeCommon={toolChromeCommon}
-                    toolRouteCommon={toolRouteCommonRef.current}
+                    toolRouteCommon={toolRouteCommon}
                 />
-            ));
-        }
-        if (item.kind === 'turn') {
-            const rowActiveThinkingMessageId = resolveTranscriptItemActiveThinkingMessageId(item, activeThinkingMessageId);
-            const turnCreatedAt =
-                (item.turn.userMessageId ? resolveCreatedAtForMessageId(item.turn.userMessageId) : null) ??
-                (item.turn.content[0]?.kind === 'message'
-                    ? resolveCreatedAtForMessageId(item.turn.content[0].messageId)
-                    : item.turn.content[0]?.kind === 'tool_calls'
-                        ? (item.turn.content[0].toolMessageIds[0]
-                            ? resolveCreatedAtForMessageId(item.turn.content[0].toolMessageIds[0])
-                            : null)
-                        : null) ??
-                0;
-            return wrapTranscriptItemForAnchor(item, (
-                <TranscriptEnterWrapper id={item.id} createdAt={turnCreatedAt}>
-                    <TurnViewWithSessionCommon
-                        turn={item.turn}
-                        metadata={metadata}
-                        sessionId={sessionId}
-                        interaction={transcriptInteraction}
-                        activeThinkingMessageId={rowActiveThinkingMessageId}
-                        getMessageById={getMessageById}
-                        getMessageRevisionById={getMessageRevisionById}
-                        getMessageOrigin={getMessageOrigin}
-                        approvalRequests={approvalRequests}
-                        messagePins={messagePins}
-                        onToggleMessagePin={onToggleMessagePin}
-                        rollbackRanges={rollbackRanges}
-                        resolveRollbackAction={resolveRollbackActionForMessage}
-                        resolveThinkingExpanded={resolveThinkingExpanded}
-                        setThinkingExpanded={setThinkingExpanded}
-                        expandedToolCallsAnchorMessageIds={expandedToolCallsAnchorMessageIds}
-                        setToolCallsGroupExpanded={setToolCallsGroupExpanded}
-                        forkCommon={forkCommon}
-                        messageDisplayCommon={messageDisplayCommon}
-                        toolChromeCommon={toolChromeCommon}
-                        toolRouteCommon={toolRouteCommonRef.current}
-                    />
-                </TranscriptEnterWrapper>
             ));
         }
         if (item.kind === 'message') {
             const rowActiveThinkingMessageId = resolveTranscriptItemActiveThinkingMessageId(item, activeThinkingMessageId);
             const toolChromeMode = toolTimelineChromeMode === 'activity_feed' ? 'activity_feed' : 'cards';
-            const neighborItems = listDataRef.current[index]?.id === item.id
-                ? listDataRef.current
+            const neighborItems = listData[index]?.id === item.id
+                ? listData
                 : itemsRef.current;
             const olderNeighborIndex = resolveOlderNeighborRenderedIndex(
                 index,
@@ -353,6 +481,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                             resolveThinkingExpanded={resolveThinkingExpanded}
                             setThinkingExpanded={setThinkingExpanded}
                             interaction={transcriptInteraction}
+                            eventEmphasisByMessageId={eventEmphasisByMessageId}
                             rollbackAction={rollbackActionsByMessageId[item.messageId] ?? null}
                             rollbackRanges={rollbackRanges}
                             approvalRequests={approvalRequests}
@@ -361,7 +490,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                             forkCommon={forkCommon}
                             messageDisplayCommon={messageDisplayCommon}
                             toolChromeCommon={toolChromeCommon}
-                            toolRouteCommon={toolRouteCommonRef.current}
+                            toolRouteCommon={toolRouteCommon}
                         />
                     </View>
                 </TranscriptEnterWrapper>
@@ -371,34 +500,38 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
     }, [
         expandedToolCallsAnchorMessageIds,
         getMessageById,
-        getMessageOrigin,
         getMessageRevisionById,
+        invokeExternalSessionOperationAction,
         itemsRef,
-        listDataRef,
+        listData,
         listOrientation,
         activeThinkingMessageId,
         approvalRequests,
         forkCommon,
+        forkMessageMetadataById,
         forkedTranscriptEnabled,
         transcriptInteraction,
+        eventEmphasisByMessageId,
+        externalSessionOperationOwnerTarget,
         messageDisplayCommon,
         messagePins,
         messagesById,
         metadata,
+        operationRowCapabilities,
+        onDismissExternalSessionOperation,
+        onExternalSessionOperationActionResult,
         onEditPendingMessage,
         onToggleMessagePin,
         rollbackActionsByMessageId,
         rollbackRanges,
         sessionId,
         toolChromeCommon,
-        resolveCreatedAtForMessageId,
         resolveKindForMessageId,
-        resolveRollbackActionForMessage,
         resolveThinkingExpanded,
         resolveToolCallMessagesForIds,
         setThinkingExpanded,
         setToolCallsGroupExpanded,
-        toolRouteCommonRef,
+        toolRouteCommon,
         toolTimelineChromeMode,
         wrapTranscriptItemForAnchor,
     ]);
@@ -417,21 +550,16 @@ export type TranscriptItemsEdgeSlotsDeps = Readonly<{
     composerInsetHeight: number;
     controlSwitchTo: ChatListInternalProps['controlSwitchTo'];
     controlledByUserOverride: ChatListInternalProps['controlledByUserOverride'];
-    directControlFooter: ChatListInternalProps['directControlFooter'];
+    externalControlFooter: ChatListInternalProps['externalControlFooter'];
     handleComposerInsetHeightChange: (height: number) => void;
-    handleNativeHotTailHeightChange: (height: number) => void;
     isLoadingOlder: boolean;
     mainTranscriptListShellFrame: Parameters<typeof resolveTranscriptListShellEdgeSlots>[0]['frame'];
     onRequestSwitchToRemote: ChatListInternalProps['onRequestSwitchToRemote'];
     olderPaginationIsLoadingOlder: boolean;
-    prependRangeReservePx: number;
     renderTranscriptItemAtIndex: (item: ChatTranscriptListItem, index: number) => React.ReactNode;
     sessionId: string;
-    shouldUseNativeHotColdSplit: boolean;
-    shouldUseWebHotColdSplit: boolean;
     showCatchUpOverlay: boolean;
     showFirstPaintPlaceholder: boolean;
-    transcriptHotColdSegments: TranscriptRenderWindowProjection<ChatTranscriptListItem>['hotCold'];
     transcriptOlderLoadSpinnerDelayMs: number;
 }>;
 
@@ -441,96 +569,45 @@ export function useTranscriptItemsEdgeSlots(deps: TranscriptItemsEdgeSlotsDeps) 
         composerInsetHeight,
         controlSwitchTo,
         controlledByUserOverride,
-        directControlFooter,
+        externalControlFooter,
         handleComposerInsetHeightChange,
-        handleNativeHotTailHeightChange,
         isLoadingOlder,
         mainTranscriptListShellFrame,
         onRequestSwitchToRemote,
         olderPaginationIsLoadingOlder,
-        prependRangeReservePx,
         renderTranscriptItemAtIndex,
         sessionId,
-        shouldUseNativeHotColdSplit,
-        shouldUseWebHotColdSplit,
         showCatchUpOverlay,
         showFirstPaintPlaceholder,
-        transcriptHotColdSegments,
         transcriptOlderLoadSpinnerDelayMs,
     } = deps;
     const listHeaderNode = React.useMemo(() => (
         <ListHeader />
     ), []);
     const listFooterNode = React.useMemo(() => (
-        <>
-            {prependRangeReservePx > 0 ? (
-                <View
-                    pointerEvents="none"
-                    testID="transcript-web-prepend-range-reserve"
-                    style={{ height: prependRangeReservePx }}
-                />
-            ) : null}
-            <ChatListFooterWithKeyboardInset
-                sessionId={sessionId}
-                bottomNotice={bottomNotice}
-                controlledByUserOverride={controlledByUserOverride}
-                controlSwitchTo={controlSwitchTo ?? null}
-                onRequestSwitchToRemote={onRequestSwitchToRemote}
-                directControl={directControlFooter}
-                onComposerInsetHeightChange={handleComposerInsetHeightChange}
-            />
-        </>
+        <ChatListFooterWithKeyboardInset
+            sessionId={sessionId}
+            bottomNotice={bottomNotice}
+            controlledByUserOverride={controlledByUserOverride}
+            controlSwitchTo={controlSwitchTo ?? null}
+            onRequestSwitchToRemote={onRequestSwitchToRemote}
+            externalControl={externalControlFooter}
+            onComposerInsetHeightChange={handleComposerInsetHeightChange}
+        />
     ), [
         bottomNotice,
         controlSwitchTo,
         controlledByUserOverride,
-        directControlFooter,
+        externalControlFooter,
         handleComposerInsetHeightChange,
         onRequestSwitchToRemote,
-        prependRangeReservePx,
         sessionId,
-    ]);
-    const flashListFooterNode = React.useMemo(() => {
-        if (shouldUseWebHotColdSplit) {
-            return (
-                <WebTranscriptSplitFooter
-                    hotItems={transcriptHotColdSegments.hotItems}
-                    startIndex={transcriptHotColdSegments.coldItems.length}
-                    renderItemAtIndex={renderTranscriptItemAtIndex}
-                    footer={listFooterNode}
-                />
-            );
-        }
-        if (shouldUseNativeHotColdSplit) {
-            return (
-                <TranscriptHotTail
-                    hotItems={transcriptHotColdSegments.hotItemsCanonical}
-                    startIndex={Math.max(0, transcriptHotColdSegments.hotCount - 1)}
-                    displayIndexMode="invertedEdgeSlot"
-                    renderItemAtIndex={renderTranscriptItemAtIndex}
-                    footer={listFooterNode}
-                    testIDPrefix="transcript-native-hot-tail"
-                    onHeightChange={handleNativeHotTailHeightChange}
-                />
-            );
-        }
-        return listFooterNode;
-    }, [
-        handleNativeHotTailHeightChange,
-        listFooterNode,
-        renderTranscriptItemAtIndex,
-        shouldUseNativeHotColdSplit,
-        shouldUseWebHotColdSplit,
-        transcriptHotColdSegments.coldItems.length,
-        transcriptHotColdSegments.hotCount,
-        transcriptHotColdSegments.hotItems,
-        transcriptHotColdSegments.hotItemsCanonical,
     ]);
     const edgeSlots = React.useMemo(() => resolveTranscriptListShellEdgeSlots({
         frame: mainTranscriptListShellFrame,
         visualTopNode: listHeaderNode,
-        visualBottomNode: flashListFooterNode,
-    }), [flashListFooterNode, listHeaderNode, mainTranscriptListShellFrame]);
+        visualBottomNode: listFooterNode,
+    }), [listFooterNode, listHeaderNode, mainTranscriptListShellFrame]);
     const olderLoadOverlay =
         (olderPaginationIsLoadingOlder || isLoadingOlder) && !showFirstPaintPlaceholder ? (
             <OlderLoadProgressOverlay />
@@ -549,4 +626,3 @@ export function useTranscriptItemsEdgeSlots(deps: TranscriptItemsEdgeSlotsDeps) 
         olderLoadOverlay,
     }), [catchUpOverlay, edgeSlots, olderLoadOverlay]);
 }
-

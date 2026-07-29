@@ -68,6 +68,8 @@ vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
 }));
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+    getMachineContributionRegistryProjectionRevision: () => 0,
+    subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machineContributionRegistryProjectionDescribe: (...args: any[]) => machineContributionRegistryProjectionDescribeMock(...args),
 }));
 

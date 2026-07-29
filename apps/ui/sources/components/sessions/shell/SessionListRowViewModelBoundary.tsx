@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { View } from 'react-native';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import {
@@ -15,7 +16,7 @@ import {
     type SessionListRowViewModel,
 } from './sessionListRowViewModels';
 import { useSessionListRelativeNowMs } from './sessionListRowClocks';
-import { useSessionListRuntimeNowMs, useSessionListRuntimeWake } from '@/hooks/session/sessionListRuntimeClock';
+import { useSessionListRuntimeNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import type {
     UseSessionInlineDragCancelEvent,
     UseSessionInlineDragDropResultEvent,
@@ -26,6 +27,10 @@ import type {
     RegisterSessionListTreeRowBounds,
     UnregisterSessionListTreeRowBounds,
 } from './SessionListHeaderFrame';
+import { STAGE_SPOTLIGHT_TARGET_IDS } from '@/components/onboarding/tour/stage/stageSpotlightTargetIds';
+import {
+    useSpotlightTarget,
+} from '@/components/onboarding/tour/stage/useSpotlightTarget';
 
 const EMPTY_ROW_RENDERABLES = new Map<string, SessionListRenderableSession>() as ReadonlyMap<string, SessionListRenderableSession>;
 export type SessionListRowViewModelBoundaryProps = Readonly<{
@@ -78,6 +83,11 @@ export type SessionListRowViewModelBoundaryProps = Readonly<{
 export const SessionListRowViewModelBoundary = React.memo(function SessionListRowViewModelBoundary(
     props: SessionListRowViewModelBoundaryProps,
 ) {
+    const stageSpotlightRef = React.useRef<View>(null);
+    const stageSpotlightProps = useSpotlightTarget(
+        stageSpotlightRef,
+        props.item.groupKind === 'attention' ? STAGE_SPOTLIGHT_TARGET_IDS.attentionGroup : null,
+    );
     const rowItems = React.useMemo(() => [props.item], [props.item]);
     const liveRowRenderableByKey = useSessionListRowRenderablesForItems(props.dataActive ? rowItems : null);
     const frozenRowRenderableByKeyRef = React.useRef<ReadonlyMap<string, SessionListRenderableSession>>(EMPTY_ROW_RENDERABLES);
@@ -89,11 +99,9 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         : frozenRowRenderableByKeyRef.current;
 
     const relativeNowMs = useSessionListRelativeNowMs(props.dataActive);
-    // The row reads the SAME shared runtime clock as group placement, so the
-    // working indicator and the session's group can never cross a freshness
-    // boundary in different render cycles. The row contributes its own wake
-    // horizon (below, straight from the freshly built view model), which can
-    // be earlier than the list's when its renderable is fresher.
+    // The row reads the SAME shared runtime clock as group placement. The
+    // list-level surface owns the single earliest-wake registration; rows
+    // subscribe to the shared timestamp without adding per-row effects.
     const runtimeNowMs = useSessionListRuntimeNowMs(props.dataActive);
     const rowViewModel = React.useMemo<SessionListRowViewModel>(() => buildSessionListRowViewModel({
         item: props.item,
@@ -139,9 +147,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         runtimeNowMs,
     ]);
 
-    useSessionListRuntimeWake(rowViewModel.nextRuntimeFreshnessAtMs, props.dataActive);
-
-    return (
+    const sessionItem = (
         <SessionListSessionItem
             item={props.item}
             rowViewModel={rowViewModel}
@@ -173,6 +179,12 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
             onMoveToWorkspaceRoot={props.onMoveToWorkspaceRoot}
             onMoveUp={props.onMoveUp}
             onMoveDown={props.onMoveDown}
+            measurementTarget={props.item.groupKind === 'attention' ? {
+                ref: stageSpotlightRef,
+                onLayout: stageSpotlightProps.onLayout,
+                style: stageSpotlightProps.style,
+            } : undefined}
         />
     );
+    return sessionItem;
 });

@@ -7,6 +7,11 @@ import type { SessionListIndexItem } from '../../domains/sessionList/sessionList
 import { getSessionStorageKind } from '../../domains/session/sessionStorageKind';
 import type { ScmWorkingSnapshot, Session } from '../../domains/state/storageTypes';
 
+const normalizeKnownProjectMachineIdMock = (value: unknown): string | null => {
+    const normalized = typeof value === 'string' ? value.trim() : '';
+    return normalized.length > 0 ? normalized : null;
+};
+
 beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
@@ -295,6 +300,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('builds an empty sessionListIndex when the server snapshot returns zero sessions', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -312,6 +318,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('initializes the active-server sessionListIndex when a no-op patch arrives before the index exists', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -358,6 +365,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('tracks the active-server sessionListIndex in sessionListIndexByServerId', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         vi.doMock('../../domains/server/serverRuntime', () => ({
@@ -392,6 +400,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('reuses the server-scoped previous index when rebuilding the active server index', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn(), getProjectForSession: vi.fn(() => null) },
         }));
         vi.doMock('../../domains/server/serverRuntime', () => ({
@@ -468,6 +477,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
     it('does not call projectManager.updateSessions for non-project-structural session updates', async () => {
         const updateSessions = vi.fn();
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions },
         }));
         mockSessionPersistenceBoundaries();
@@ -519,6 +529,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('keeps the active-server sessionListIndex reference stable for non-structural applySessions updates', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries({ trackWarmCacheEntries: true });
@@ -572,6 +583,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('rebuilds inactive date-grouped sessionListIndex when updatedAt changes ordering', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries({ trackWarmCacheEntries: true });
@@ -651,6 +663,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('reuses the previous renderable object for semantically identical applySessions refreshes', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries({ trackWarmCacheEntries: true });
@@ -707,6 +720,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('preserves ready metadata across applySessions refresh rows that omit it', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries({ trackWarmCacheEntries: true });
@@ -766,8 +780,127 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         expect(get().sessionListRowStateByServerId['server-active'].s1.latestReadyEventAt).toBe(9_000);
     });
 
+    it('keeps terminal unread renderables unread when only a partial transcript slice is cached', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        mockSessionPersistenceBoundaries({ trackWarmCacheEntries: true });
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain, {
+            sessionMessages: {
+                s1: {
+                    isLoaded: false,
+                    messageIdsOldestFirst: ['old'],
+                    messagesById: {
+                        old: {
+                            id: 'old',
+                            kind: 'agent-text',
+                            seq: 110,
+                            localId: null,
+                            createdAt: 1,
+                            text: 'older visible message',
+                        },
+                    },
+                },
+            },
+        });
+
+        domain.applySessions([
+            {
+                id: 's1',
+                serverId: 'server-active',
+                seq: 742,
+                createdAt: 1,
+                updatedAt: 2,
+                active: true,
+                activeAt: 1,
+                lastViewedSessionSeq: 741,
+                latestTurnStatus: 'completed',
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+        ]);
+
+        expect(get().sessionListRenderables.s1.hasUnreadMessages).toBe(true);
+        expect(get().sessionListRowStateByServerId['server-active'].s1.hasUnreadMessages).toBe(true);
+    });
+
+    it('keeps the active-server sessionListIndex stable when ready metadata only changes row overlay state', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        mockSessionPersistenceBoundaries({ trackWarmCacheEntries: true });
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        domain.applySessions([
+            {
+                id: 's1',
+                serverId: 'server-active',
+                seq: 10,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                lastViewedSessionSeq: 4,
+                latestTurnStatus: 'in_progress',
+                latestReadyEventSeq: 4,
+                latestReadyEventAt: 4_000,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+        ]);
+        const initialIndex = get().sessionListIndexByServerId['server-active'];
+
+        domain.applySessions([
+            {
+                id: 's1',
+                serverId: 'server-active',
+                seq: 11,
+                createdAt: 1,
+                updatedAt: 2,
+                active: true,
+                activeAt: 1,
+                lastViewedSessionSeq: 4,
+                latestTurnStatus: 'in_progress',
+                latestReadyEventSeq: 5,
+                latestReadyEventAt: 5_000,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+        ]);
+
+        expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
+        expect(get().sessionListRenderables.s1.latestReadyEventSeq).toBe(5);
+        expect(get().sessionListRenderables.s1.latestReadyEventAt).toBe(5_000);
+        expect(get().sessionListRenderables.s1.hasUnreadMessages).toBe(true);
+        expect(get().sessionListRowStateByServerId['server-active'].s1.latestReadyEventSeq).toBe(5);
+        expect(get().sessionListRowStateByServerId['server-active'].s1.latestReadyEventAt).toBe(5_000);
+        expect(get().sessionListRowStateByServerId['server-active'].s1.hasUnreadMessages).toBe(true);
+    });
+
     it('reuses the previous session object for semantically identical applySessions refreshes', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -879,6 +1012,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('keeps store collection references stable for active session heartbeat updates', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -938,6 +1072,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('skips map churn and warm-cache writes for a semantically identical applySessions batch', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -1002,6 +1137,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         vi.setSystemTime(1_700_000_000_000);
         try {
             vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -1081,6 +1217,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('preserves transient renderable visibility flags across applySessions refreshes', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -1134,6 +1271,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('keeps the active-server sessionListIndex reference stable for non-structural renderable patches', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -1184,6 +1322,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('tracks canonical server-scoped session list index/rows for the active server', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         vi.doMock('../../domains/server/serverRuntime', () => ({
@@ -1244,6 +1383,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('keeps owner-scoped sessions out of the active-server row/index state', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         vi.doMock('../../domains/server/serverRuntime', () => ({
@@ -1288,8 +1428,223 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         ).toBe(true);
     });
 
+    it('repairs active-server indexes when only the session owner server changes', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        vi.doMock('../../domains/server/serverRuntime', () => ({
+            getActiveServerSnapshot: () => ({ serverId: 'server-active', serverUrl: 'https://example.com', generation: 1 }),
+        }));
+        mockSessionPersistenceBoundaries();
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        const baseSession = {
+            id: 'owner-move-session',
+            serverId: 'server-owner',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 1,
+        } as any;
+
+        domain.applySessions([baseSession]);
+
+        const ownerRenderable = get().sessionListRenderables['owner-move-session'];
+        const initialActiveIndex = get().sessionListIndexByServerId['server-active'];
+        expect(get().sessionListRowStateByServerId['server-owner']?.['owner-move-session']).toBe(ownerRenderable);
+        expect(
+            initialActiveIndex?.some(
+                (item: SessionListIndexItem) => item.type === 'session' && item.sessionId === 'owner-move-session',
+            ) ?? false,
+        ).toBe(false);
+
+        domain.applySessions([
+            {
+                ...baseSession,
+                serverId: 'server-active',
+            },
+        ]);
+
+        expect(get().sessionListRenderables['owner-move-session']).toBe(ownerRenderable);
+        expect(get().sessionListRowStateByServerId['server-active']?.['owner-move-session']).toBe(ownerRenderable);
+        expect(
+            get().sessionListIndexByServerId['server-active']?.some(
+                (item: SessionListIndexItem) => item.type === 'session' && item.sessionId === 'owner-move-session',
+            ) ?? false,
+        ).toBe(true);
+        expect(get().sessionListRowStateByServerId['server-owner']).toBeUndefined();
+        expect(get().sessionListIndexByServerId['server-owner']).toBeUndefined();
+    });
+
+    it('keeps equivalent owner server ids in the active-server row/index state', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        vi.doMock('../../domains/server/serverRuntime', () => ({
+            getActiveServerSnapshot: () => ({
+                serverId: 'http://localhost:53288',
+                serverUrl: 'http://localhost:53288',
+                generation: 1,
+            }),
+        }));
+        vi.doMock('../../domains/server/serverProfiles', async () => {
+            const actual = await vi.importActual<typeof import('../../domains/server/serverProfiles')>(
+                '../../domains/server/serverProfiles',
+            );
+            return {
+                ...actual,
+                areServerProfileIdentifiersEquivalent: (left: string | null | undefined, right: string | null | undefined) => {
+                    const ids = new Set([String(left ?? '').trim(), String(right ?? '').trim()]);
+                    if (ids.has('srv_stack') && ids.has('http://localhost:53288')) {
+                        return true;
+                    }
+                    return actual.areServerProfileIdentifiersEquivalent(left, right);
+                },
+            };
+        });
+        mockSessionPersistenceBoundaries();
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        domain.applySessions([
+            {
+                id: 'equivalent-owner-session',
+                serverId: 'srv_stack',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+        ]);
+
+        const activeServerRows = get().sessionListRowStateByServerId['http://localhost:53288'];
+        const activeServerIndex = get().sessionListIndexByServerId['http://localhost:53288'];
+
+        expect(activeServerRows?.['equivalent-owner-session']).toBeDefined();
+        expect(
+            activeServerIndex?.some(
+                (item: SessionListIndexItem) => item.type === 'session' && item.sessionId === 'equivalent-owner-session',
+            ) ?? false,
+        ).toBe(true);
+        expect(get().sessionListRowStateByServerId['srv_stack']?.['equivalent-owner-session']).toBeUndefined();
+    });
+
+    it('removes stale exact-alias row/index projections after equivalent owner sessions converge to the active server', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        vi.doMock('../../domains/server/serverRuntime', () => ({
+            getActiveServerSnapshot: () => ({
+                serverId: 'http://localhost:53288',
+                serverUrl: 'http://localhost:53288',
+                generation: 1,
+            }),
+        }));
+        vi.doMock('../../domains/server/serverProfiles', async () => {
+            const actual = await vi.importActual<typeof import('../../domains/server/serverProfiles')>(
+                '../../domains/server/serverProfiles',
+            );
+            return {
+                ...actual,
+                areServerProfileIdentifiersEquivalent: (left: string | null | undefined, right: string | null | undefined) => {
+                    const ids = new Set([String(left ?? '').trim(), String(right ?? '').trim()]);
+                    if (ids.has('srv_stack') && ids.has('http://localhost:53288')) {
+                        return true;
+                    }
+                    return actual.areServerProfileIdentifiersEquivalent(left, right);
+                },
+            };
+        });
+        mockSessionPersistenceBoundaries();
+
+        const staleSession = {
+            id: 'stale-alias-session',
+            serverId: 'srv_stack',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: { machineId: 'm1', path: '/home/u/stale', homeDir: '/home/u' },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 1,
+        } as any;
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain, {
+            sessionListRowStateByServerId: {
+                srv_stack: {
+                    'stale-alias-session': buildSessionListRenderableFromSession(staleSession),
+                },
+            },
+            sessionListIndexByServerId: {
+                srv_stack: [{
+                    type: 'session',
+                    sessionId: 'stale-alias-session',
+                    serverId: 'srv_stack',
+                    groupKey: 'active',
+                }],
+            },
+        });
+
+        domain.applySessions([
+            {
+                id: 'equivalent-owner-session',
+                serverId: 'srv_stack',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+        ]);
+
+        expect(get().sessionListRowStateByServerId['http://localhost:53288']?.['equivalent-owner-session']).toBeDefined();
+        expect(
+            get().sessionListIndexByServerId['http://localhost:53288']?.some(
+                (item: SessionListIndexItem) => item.type === 'session' && item.sessionId === 'equivalent-owner-session',
+            ) ?? false,
+        ).toBe(true);
+        expect(get().sessionListRowStateByServerId.srv_stack).toBeUndefined();
+        expect(get().sessionListIndexByServerId.srv_stack).toBeUndefined();
+    });
+
     it('keeps canonical server-scoped session list index/rows in sync when deleting a session', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         vi.doMock('../../domains/server/serverRuntime', () => ({
@@ -1336,6 +1691,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('keeps the active-server sessionListIndex reference stable for non-structural renderable replacement', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -1385,9 +1741,57 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
     });
 
+    it('repairs stale active-server row/index projections when an identical snapshot confirms warm-cache renderables', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        mockSessionPersistenceBoundaries();
+
+        const warmCachedRenderable = buildSessionListRenderableFromSession({
+            id: 'warm-cache-session',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            archivedAt: null,
+            pendingCount: 0,
+            pendingVersion: 1,
+            metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any);
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain, {
+            sessionListRenderables: {
+                [warmCachedRenderable.id]: warmCachedRenderable,
+            },
+            sessionListRowStateByServerId: {
+                'server-active': {},
+            },
+            sessionListIndexByServerId: {
+                'server-active': [],
+            },
+        });
+
+        domain.replaceSessionListRenderables([warmCachedRenderable]);
+
+        expect(get().sessionListRowStateByServerId['server-active']?.[warmCachedRenderable.id]).toBe(warmCachedRenderable);
+        expect(get().sessionListIndexByServerId['server-active']?.some(
+            (item: SessionListIndexItem) => item.type === 'session' && item.sessionId === warmCachedRenderable.id,
+        )).toBe(true);
+    });
+
     it('keeps sessionListIndex stable when peer updates only change heartbeat and progress fields', async () => {
         const updateSessions = vi.fn();
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions },
         }));
         mockSessionPersistenceBoundaries();
@@ -1496,6 +1900,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
     it('skips reachable peer scans for row-only applySessions updates that cannot affect canonical targets', async () => {
         const updateSessions = vi.fn();
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions },
         }));
         mockSessionPersistenceBoundaries();
@@ -1617,6 +2022,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
     it('skips reachable peer scans for active metadata-version-only updates with explicit canonical targets', async () => {
         const updateSessions = vi.fn();
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions },
         }));
         mockSessionPersistenceBoundaries();
@@ -1711,6 +2117,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         const resolveSessionMachineRpcTargetSpy = vi.fn();
         let peerProjectMachineId = 'm-b';
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: {
                 updateSessions,
             },
@@ -1834,6 +2241,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('rebuilds the active-server sessionListIndex for structural applySessions changes (grouping keys)', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -1887,6 +2295,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('rebuilds the active-server sessionListIndex when archivedAt changes (visibility)', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -1942,6 +2351,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('rebuilds the active-server sessionListIndex when direct-session storage classification changes', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -1988,7 +2398,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
                     homeDir: '/home/u',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'codex',
+                        agentId: 'codex',
                     },
                 },
                 metadataVersion: 2,
@@ -2005,6 +2415,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('preserves linked direct-session metadata when a later refresh omits externalSessionV1', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -2029,7 +2440,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
                     homeDir: '/home/u',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
                         machineId: 'm1',
                         remoteSessionId: 'remote-1',
                         source: { kind: 'claudeConfigDir', configDir: '/tmp/claude' },
@@ -2078,7 +2489,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
         expect((get().sessions.s1?.metadata as any)?.externalSessionV1).toEqual(expect.objectContaining({
             v: 1,
-            providerId: 'claude',
+            agentId: 'claude',
             remoteSessionId: 'remote-1',
         }));
         expect(getSessionStorageKind(get().sessions.s1)).toBe('direct');
@@ -2091,6 +2502,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('preserves linked direct-session metadata when a later refresh sets externalSessionV1 to null', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -2115,7 +2527,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
                     homeDir: '/home/u',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
                         machineId: 'm1',
                         remoteSessionId: 'remote-1',
                         source: { kind: 'claudeConfigDir', configDir: '/tmp/claude' },
@@ -2158,7 +2570,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
         expect((get().sessions.s1?.metadata as any)?.externalSessionV1).toEqual(expect.objectContaining({
             v: 1,
-            providerId: 'claude',
+            agentId: 'claude',
             remoteSessionId: 'remote-1',
         }));
         expect(getSessionStorageKind(get().sessions.s1)).toBe('direct');
@@ -2171,6 +2583,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('does not rebuild the active-server sessionListIndex when updating a draft for a loaded session', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -2209,6 +2622,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         vi.setSystemTime(1_700_000_000_000);
         try {
             vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -2277,6 +2691,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         vi.setSystemTime(1_700_000_000_000);
         try {
             vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries({ trackWarmCacheEntries: true });
@@ -2369,6 +2784,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('does not rebuild the active-server sessionListIndex when marking optimistic thinking', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -2406,6 +2822,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         vi.setSystemTime(1_700_000_000_000);
         try {
             vi.doMock('../../runtime/orchestration/projectManager', () => ({
+                normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
                 projectManager: { updateSessions: vi.fn() },
             }));
             mockSessionPersistenceBoundaries();
@@ -2470,6 +2887,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         vi.setSystemTime(1_700_000_000_000);
         try {
             vi.doMock('../../runtime/orchestration/projectManager', () => ({
+                normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
                 projectManager: { updateSessions: vi.fn() },
             }));
             mockSessionPersistenceBoundaries();
@@ -2528,6 +2946,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         vi.setSystemTime(1_700_000_000_000);
         try {
             vi.doMock('../../runtime/orchestration/projectManager', () => ({
+                normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
                 projectManager: { updateSessions: vi.fn() },
             }));
             mockSessionPersistenceBoundaries();
@@ -2596,6 +3015,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         vi.setSystemTime(1_700_000_000_000);
         try {
             vi.doMock('../../runtime/orchestration/projectManager', () => ({
+                normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
                 projectManager: { updateSessions: vi.fn() },
             }));
             mockSessionPersistenceBoundaries();
@@ -2662,6 +3082,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         vi.setSystemTime(1_700_000_000_000);
         try {
             vi.doMock('../../runtime/orchestration/projectManager', () => ({
+                normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
                 projectManager: { updateSessions: vi.fn() },
             }));
             mockSessionPersistenceBoundaries();
@@ -2728,6 +3149,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         vi.setSystemTime(1_700_000_000_000);
         try {
             vi.doMock('../../runtime/orchestration/projectManager', () => ({
+                normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
                 projectManager: { updateSessions: vi.fn() },
             }));
             mockSessionPersistenceBoundaries();
@@ -2778,6 +3200,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
     it('records applySessions telemetry when sync performance telemetry is enabled', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -2875,5 +3298,69 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         } finally {
             syncPerformanceTelemetry.configure({ enabled: false });
         }
+    });
+
+    it('publishes changed renderable ids from applySessions', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            normalizeKnownProjectMachineId: normalizeKnownProjectMachineIdMock,
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        mockSessionPersistenceBoundaries();
+        const { createSessionsDomain } = await import('./sessions');
+        const { domain, get } = createHarness(createSessionsDomain);
+
+        domain.applySessions([
+            {
+                id: 's1',
+                serverId: 'server-active',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+        ]);
+
+        expect(get().sessionListRenderableDelta).toEqual({
+            revision: 1,
+            changedSessionIds: ['s1'],
+            removedSessionIds: [],
+            rebuiltSessionListIndex: true,
+        });
+
+        const firstDelta = get().sessionListRenderableDelta;
+        domain.applySessions([
+            {
+                id: 's1',
+                serverId: 'server-active',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 2,
+                active: true,
+                activeAt: 2,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: { requests: {} },
+                agentStateVersion: 1,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 2,
+            } as any,
+        ]);
+
+        expect(get().sessionListRenderableDelta).toEqual({
+            revision: 2,
+            changedSessionIds: ['s1'],
+            removedSessionIds: [],
+            rebuiltSessionListIndex: false,
+        });
+        expect(get().sessionListRenderableDelta).not.toBe(firstDelta);
     });
 });

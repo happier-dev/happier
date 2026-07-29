@@ -19,6 +19,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.base,
         overflow: 'hidden',
     },
+    cardOnboarding: {
+        borderRadius: 14,
+        borderColor: theme.colors.border.modal,
+    },
     footer: {
         borderTopWidth: 1,
         borderTopColor: theme.colors.border.default,
@@ -43,7 +47,7 @@ export type PlanChecklistCardProps = Readonly<{
     expandedId?: string | null;
     onToggleItem?: (itemId: string) => void;
     onToggleExpanded?: (itemId: string) => void;
-    onCopyDiagnostics?: (item: PlanChecklistItem) => void | Promise<void>;
+    onCopyDiagnostics?: (item: PlanChecklistItem) => boolean | void | Promise<boolean | void>;
     header?: React.ReactNode;
     footer?: React.ReactNode;
     style?: StyleProp<ViewStyle>;
@@ -137,7 +141,14 @@ export const PlanChecklistCard = React.memo(function PlanChecklistCard(props: Pl
     const depth = props.depth ?? 0;
 
     return (
-        <View testID={props.testID} style={[styles.card, props.style]}>
+        <View
+            testID={props.testID}
+            style={[
+                styles.card,
+                props.variant === 'onboarding' ? styles.cardOnboarding : null,
+                props.style,
+            ]}
+        >
             {props.header ? (
                 <View>{props.header}</View>
             ) : null}
@@ -167,7 +178,7 @@ export const PlanChecklistCard = React.memo(function PlanChecklistCard(props: Pl
                     ) : null;
                     return (
                         <View key={item.id}>
-                            {index > 0 ? (
+                            {props.variant !== 'onboarding' && index > 0 ? (
                                 <View style={styles.rowSeparator} />
                             ) : null}
                             <PlanChecklistRow
@@ -180,6 +191,8 @@ export const PlanChecklistCard = React.memo(function PlanChecklistCard(props: Pl
                                 expanded={expandedSet.has(item.id)}
                                 childrenContent={childrenCard}
                                 depth={depth}
+                                positionIndex={index + 1}
+                                isLast={index === props.items.length - 1}
                                 onToggle={() => props.onToggleItem?.(item.id)}
                                 onToggleExpanded={() => props.onToggleExpanded?.(item.id)}
                                 onCopyDiagnostics={props.onCopyDiagnostics ? () => props.onCopyDiagnostics?.(item) : undefined}

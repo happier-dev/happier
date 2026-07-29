@@ -26,6 +26,7 @@ import { useProjectOverviewMode } from './detail/useProjectOverviewMode';
 export const ProjectDetailScreen = React.memo((props: Readonly<{
     workspaceRefId: string;
     activeRootPath?: string | null;
+    isFocused?: boolean;
     showWorktrees?: boolean;
     onSelectRootPath?: (path: string) => void;
     onSetShowWorktrees?: (nextValue: boolean) => void;
@@ -138,6 +139,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     ]);
 
     React.useEffect(() => {
+        if (props.isFocused === false) return;
         if (!workspaceRef) return;
         if (requestedRootPath === resolvedActiveRootPath) return;
 
@@ -161,6 +163,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         controlledActiveRootPath,
         lastActiveRootPathByWorkspaceRefId,
         lastActiveWorktreeIdByWorkspaceRefId,
+        props.isFocused,
         props.onSelectRootPath,
         props.workspaceRefId,
         requestedRootPath,

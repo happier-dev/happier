@@ -481,6 +481,93 @@ describe('SessionItem activity time', () => {
         expect(screen.findByTestId('session-list-status-subtitle-sess_failed_primary_turn-failed')).toBeTruthy();
     });
 
+    it.each([
+        ['web', 'working', 'status.workingExternally', 'working'],
+        ['ios', 'working', 'status.workingExternally', 'working'],
+        ['web', 'waiting', 'status.needsInputExternally', 'action_required'],
+        ['web', 'idle', 'status.ready', 'ready'],
+        ['web', 'unknown', 'status.externalStatusUnknown', 'none'],
+    ] as const)('renders pushed external %s %s status while hosted control stays offline', async (platform, state, labelKey, indicator) => {
+        platformOs = platform;
+        mockSessionStatus = {
+            ...defaultSessionStatus,
+            state: 'disconnected',
+            isConnected: false,
+            statusText: 'status.offline',
+            shouldShowStatus: true,
+            isPulsing: false,
+        };
+        const SessionItem = await importSessionItem();
+        const session = createSession('sess_external_status', {
+            host: 'MacBook Pro',
+            externalSessionV1: {
+                v: 1,
+                agentId: 'codex',
+                machineId: 'machine-a',
+                remoteSessionId: 'native-session-1',
+                source: {
+                    kind: 'codexHome',
+                    home: '/Users/test/.codex',
+                },
+            },
+        } as any);
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                rowViewModelOverrides={{
+                    externalSessionRuntime: {
+                        controlConnectivity: 'offline',
+                        detachedActivity: 'unknown',
+                        externalAgent: {
+                            state,
+                            labelKey,
+                            tone: state === 'working'
+                                ? 'live'
+                                : state === 'waiting'
+                                    ? 'attention'
+                                    : state === 'idle'
+                                        ? 'ready'
+                                        : 'muted',
+                            indicator: indicator === 'action_required' ? 'action' : indicator,
+                            nextExpiryAtMs: null,
+                        },
+                    } as any,
+                    externalSessionIdentity: {
+                        agentId: 'codex',
+                        agentLabel: 'agentInput.agent.codex',
+                        machineLabel: 'MacBook Pro',
+                        storageLabel: 'sessionsList.storageExternalFilter',
+                        headerBadgeLabel: 'agentInput.agent.codex · MacBook Pro',
+                        rowMetadataLabel: 'sessionsList.storageExternalFilter · MacBook Pro',
+                    },
+                }}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                secondaryLineMode="path"
+                compact={false}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain(labelKey);
+        if (indicator === 'none') {
+            expect(screen.findByTestId('session-list-attention-indicator-sess_external_status-secondary-none')).toBeNull();
+        } else {
+            expect(screen.findByTestId(
+                `session-list-attention-indicator-sess_external_status-secondary-${indicator}`,
+            )).toBeTruthy();
+            expect(screen.findByTestId(
+                'session-row-attention-indicator-sess_external_status-secondary',
+            )?.props.accessibilityLabel).toBe(labelKey);
+        }
+        expect(screen.findByType('Avatar' as any)?.props.monochrome).toBe(true);
+    });
+
     it('renders inactive sessions with a monochrome avatar even when the daemon still reports connected', async () => {
         mockSessionStatus = {
             ...defaultSessionStatus,
@@ -999,6 +1086,8 @@ describe('SessionItem activity time', () => {
                         statusDotColor: '#34C759',
                         isPulsing: false,
                     },
+                    externalSessionRuntime: null,
+                    externalSessionIdentity: null,
                     isIdentityLoading: false,
                     nextRuntimeFreshnessAtMs: null,
                     hasUnreadMessages: true,

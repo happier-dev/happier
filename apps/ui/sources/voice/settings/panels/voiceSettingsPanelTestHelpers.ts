@@ -84,7 +84,12 @@ export function installVoiceSettingsPanelCommonModuleMocks(
     });
 
     vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({});
-});
+        const activeOptions = voiceSettingsPanelModuleState.options;
+        if (activeOptions.storage) {
+            return await activeOptions.storage(async () => await import('@/sync/domains/state/storage'));
+        }
+
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({});
+    });
 }

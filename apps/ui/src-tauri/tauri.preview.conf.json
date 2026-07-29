@@ -11,6 +11,7 @@
     }
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "Happier (preview)",

@@ -169,6 +169,24 @@ function shouldDropScrollForContext(
     return false;
 }
 
+/**
+ * Whether the persisted state's text basis matches the live text closely
+ * enough for its transient payload (scroll/selection) to be applied. On
+ * session open the composer mounts before the draft text is adopted (live
+ * textLength 0 vs persisted textLength N), so the payload is withheld or
+ * clamped; restore consumers use this predicate to know when the basis has
+ * been adopted. Uses the same drift tolerance as the scrollY guard above.
+ */
+export function isAgentInputLocalUiStateTextBasisApplicable(
+    state: AgentInputLocalUiStateV1 | null,
+    textLength: number | undefined,
+): boolean {
+    if (!state) return true;
+    if (state.textLength === undefined || textLength === undefined) return true;
+    const denominator = Math.max(1, state.textLength);
+    return Math.abs(textLength - state.textLength) / denominator <= SCROLL_TEXT_LENGTH_DRIFT_RATIO;
+}
+
 export function readAgentInputLocalUiState(
     scope: ServerAccountScope | null | undefined,
     owner: AgentInputDraftOwner,

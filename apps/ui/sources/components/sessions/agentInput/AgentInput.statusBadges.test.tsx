@@ -9,6 +9,17 @@ import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+vi.mock('react-native-svg', () => ({
+    __esModule: true,
+    default: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('Svg', props, props.children),
+    Svg: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('Svg', props, props.children),
+    Circle: (props: Record<string, unknown>) => React.createElement('Circle', props, null),
+    G: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('G', props, props.children),
+}));
+
 const capturedFloatingOverlayProps = vi.hoisted(() => ({
     last: null as (Record<string, unknown> & { children?: React.ReactNode }) | null,
 }));
@@ -92,7 +103,7 @@ vi.mock('@/sync/domains/models/modelOptions', () => ({
 }));
 
 vi.mock('@/sync/domains/models/describeEffectiveModelMode', () => ({
-    describeEffectiveModelMode: () => ({ effectiveModelId: 'default' }),
+    describeEffectiveModelMode: () => ({ selectedModelId: 'default', appliedModelId: null, effectiveModelId: 'default' }),
 }));
 
 vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
@@ -174,22 +185,24 @@ describe('AgentInput status badges', () => {
                     onSend={() => {}}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                    providerUsageGauge={providerUsageGauge}
-                    onProviderUsageRecoveryCreditPress={onProviderUsageRecoveryCreditPress}
+                    instrumentQuota={{
+                        viewModel: providerUsageGauge,
+                        onRecoveryCreditPress: onProviderUsageRecoveryCreditPress,
+                    }}
                 />,
             );
 
-            const badge = screen.findByTestId('agent-input-provider-usage-badge');
+            const badge = screen.findByTestId('session-instrument-quota-ring');
             expect(badge).toBeTruthy();
-            expect(screen.findByTestId('agent-input-provider-usage-ring')).toBeTruthy();
+            expect(screen.findByTestId('session-instrument-quota-ring-arc')).toBeTruthy();
 
             act(() => {
                 badge?.props.onPress?.({} as never);
             });
 
-            expect(screen.findByTestId('agent-input-provider-usage-popover')).toBeTruthy();
-            expect(screen.findByTestId('agent-input-provider-usage-meter:weekly')).toBeTruthy();
-            const recoveryCreditAction = screen.findByTestId('agent-input-provider-usage-recovery-credit-action');
+            expect(screen.findByTestId('session-instrument-quota-popover')).toBeTruthy();
+            expect(screen.findByTestId('session-instrument-quota-meter:weekly')).toBeTruthy();
+            const recoveryCreditAction = screen.findByTestId('session-instrument-quota-recovery-credit-action');
             expect(recoveryCreditAction).toBeTruthy();
             act(() => {
                 recoveryCreditAction?.props.onPress?.({} as never);

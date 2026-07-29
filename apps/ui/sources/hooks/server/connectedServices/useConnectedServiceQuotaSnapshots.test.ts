@@ -20,7 +20,9 @@ import {
 } from './useConnectedServiceQuotaSnapshots.testkit';
 
 describe('useConnectedServiceQuotaSnapshots', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        const { __resetConnectedServiceQuotaSnapshotStore } = await import('./connectedServiceQuotaSnapshotStore');
+        __resetConnectedServiceQuotaSnapshotStore();
         resetConnectedServiceQuotaSnapshotsTestState();
     });
 

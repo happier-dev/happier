@@ -1,8 +1,11 @@
+import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionOwnerMetadataView } from './readSessionOwnerMetadataView';
+
 type SessionWorkspaceContextState = Readonly<{
     sessions?: Record<string, {
-        metadata?: {
-            path?: string | null;
-        } | null;
+        metadata?: Session['metadata'];
+        metadataLayoutVersion?: Session['metadataLayoutVersion'];
+        ownerMetadataView?: Session['ownerMetadataView'];
     }>;
     getProjectForSession?: (sessionId: string) => { key?: { machineId?: string | null; rootPath?: string | null } } | null;
 }>;
@@ -21,13 +24,21 @@ export function readSessionWorkspaceContext(
     projectPath: string | null;
     projectMachineId: string | null;
 }> {
-    const metadata = state.sessions?.[sessionId]?.metadata;
+    const session = state.sessions?.[sessionId];
+    const metadata = session
+        ? readSessionOwnerMetadataView({
+            metadataLayoutVersion: session.metadataLayoutVersion,
+            metadata: session.metadata ?? null,
+            ownerMetadataView: session.ownerMetadataView,
+        })
+        : null;
     const sessionPath = normalizeNonEmptyString(metadata?.path);
     const project = typeof state.getProjectForSession === 'function' ? state.getProjectForSession(sessionId) : null;
     const projectPath = normalizeNonEmptyString(project?.key?.rootPath);
     const projectMachineId = normalizeNonEmptyString(project?.key?.machineId);
+    const ownerViewUnavailable = session?.metadataLayoutVersion === 1 && metadata == null;
     return {
-        workspacePath: sessionPath ?? projectPath,
+        workspacePath: ownerViewUnavailable ? null : sessionPath ?? projectPath,
         projectPath,
         projectMachineId,
     };

@@ -8,11 +8,11 @@ import { installCodeDiffCommonModuleMocks } from './codeDiffTestHelpers';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const diffViewerSpy = vi.fn();
-let flashListMockState: { props: any | null } | null = null;
+let legendListMockState: { props: any | null } | null = null;
 
-function getFlashListProps() {
-    expect(flashListMockState?.props).toBeTruthy();
-    return flashListMockState!.props;
+function getLegendListProps() {
+    expect(legendListMockState?.props).toBeTruthy();
+    return legendListMockState!.props;
 }
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -25,11 +25,11 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     return {};
 }
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
-    FlashList: (props: any) => {
-        flashListMockState = flashListMockState ?? { props: null };
-        flashListMockState.props = props;
-        return React.createElement('FlashList', props);
+vi.mock('@legendapp/list/react-native', () => ({
+    LegendList: (props: any) => {
+        legendListMockState = legendListMockState ?? { props: null };
+        legendListMockState.props = props;
+        return React.createElement('LegendList', props);
     },
 }));
 
@@ -68,7 +68,7 @@ vi.mock('@/components/ui/code/diff/useInlineDiffVirtualizationThresholds', () =>
 describe('DiffFilesListView', () => {
     it('renders a virtualized file list when requested', async () => {
         const { DiffFilesListView } = await import('./DiffFilesListView');
-        flashListMockState = null;
+        legendListMockState = null;
 
         const files: any[] = [
             {
@@ -94,7 +94,7 @@ describe('DiffFilesListView', () => {
                     virtualizeFileList
                 />);
 
-        expect(getFlashListProps()).toBeTruthy();
+        expect(getLegendListProps()).toBeTruthy();
     });
 
     it('renders intrinsic native diff file lists without mounting a bounded virtualized list', async () => {
@@ -102,7 +102,7 @@ describe('DiffFilesListView', () => {
         const { Platform } = await import('react-native');
         const previousOS = Platform.OS;
         const previousSelect = Platform.select;
-        flashListMockState = null;
+        legendListMockState = null;
 
         try {
             (Platform as unknown as { OS: string; select: (options: any) => unknown }).OS = 'ios';
@@ -143,7 +143,7 @@ describe('DiffFilesListView', () => {
                         virtualizedListLayout="intrinsic"
                     />);
 
-            expect(screen.findAllByType('FlashList' as any)).toHaveLength(0);
+            expect(screen.findAllByType('LegendList' as any)).toHaveLength(0);
             expect(screen.findAllByType('FlatList' as any)).toHaveLength(0);
             expect(screen.getTextContent()).toContain('src/a.ts');
             expect(screen.getTextContent()).toContain('src/b.ts');
@@ -153,9 +153,9 @@ describe('DiffFilesListView', () => {
         }
     });
 
-    it('configures FlashList with stable virtualization defaults', async () => {
+    it('configures LegendList with stable virtualization defaults', async () => {
         const { DiffFilesListView } = await import('./DiffFilesListView');
-        flashListMockState = null;
+        legendListMockState = null;
 
         await renderScreen(<DiffFilesListView
                 files={[{
@@ -174,21 +174,21 @@ describe('DiffFilesListView', () => {
                 virtualizeFileList
             />);
 
-        const listProps = getFlashListProps();
+        const listProps = getLegendListProps();
         expect(typeof listProps.drawDistance).toBe('number');
         expect(Number.isFinite(listProps.drawDistance)).toBe(true);
         expect(listProps.drawDistance).toBeGreaterThan(0);
         expect(listProps.drawDistance).toBe(1600);
-        expect(typeof listProps.overrideItemLayout).toBe('function');
+        expect(listProps.overrideItemLayout).toBeUndefined();
         expect(typeof listProps.getItemType).toBe('function');
         expect(typeof listProps.estimatedItemSize).toBe('number');
         expect(Number.isFinite(listProps.estimatedItemSize)).toBe(true);
         expect(listProps.estimatedItemSize).toBeGreaterThan(0);
     });
 
-    it('allows callers to reduce FlashList draw distance for dense review lists', async () => {
+    it('allows callers to reduce LegendList draw distance for dense review lists', async () => {
         const { DiffFilesListView } = await import('./DiffFilesListView');
-        flashListMockState = null;
+        legendListMockState = null;
 
         await renderScreen(<DiffFilesListView
                 files={[{
@@ -208,12 +208,12 @@ describe('DiffFilesListView', () => {
                 drawDistanceMultiplier={0.75}
             />);
 
-        expect(getFlashListProps().drawDistance).toBe(600);
+        expect(getLegendListProps().drawDistance).toBe(600);
     });
 
     it('forwards scroll handlers to the underlying list when virtualized', async () => {
         const { DiffFilesListView } = await import('./DiffFilesListView');
-        flashListMockState = null;
+        legendListMockState = null;
 
         const onScroll = vi.fn();
         const onLayout = vi.fn();
@@ -239,15 +239,15 @@ describe('DiffFilesListView', () => {
                 onContentSizeChange={onContentSizeChange}
             />);
 
-        const listProps = getFlashListProps();
+        const listProps = getLegendListProps();
         expect(listProps.onScroll).toBe(onScroll);
         expect(listProps.onLayout).toBe(onLayout);
         expect(listProps.onContentSizeChange).toBe(onContentSizeChange);
     });
 
-    it('passes a flat style object to FlashList when virtualized', async () => {
+    it('passes a flat style object to LegendList when virtualized', async () => {
         const { DiffFilesListView } = await import('./DiffFilesListView');
-        flashListMockState = null;
+        legendListMockState = null;
 
         await renderScreen(<DiffFilesListView
                 files={[{
@@ -266,14 +266,14 @@ describe('DiffFilesListView', () => {
                 virtualizeFileList
             />);
 
-        const listProps = getFlashListProps();
+        const listProps = getLegendListProps();
         expect(Array.isArray(listProps.style)).toBe(false);
         expect(typeof listProps.style).toBe('object');
     });
 
     it('keeps virtualized list row plumbing stable across equivalent parent rerenders', async () => {
         const { DiffFilesListView } = await import('./DiffFilesListView');
-        flashListMockState = null;
+        legendListMockState = null;
         const files = [{
             key: 'k1',
             filePath: 'src/a.ts',
@@ -303,12 +303,12 @@ describe('DiffFilesListView', () => {
         }
 
         const { tree } = await renderScreen(<Wrapper tick={0} />);
-        const before = getFlashListProps();
+        const before = getLegendListProps();
 
         await act(async () => {
             tree.update(<Wrapper tick={1} />);
         });
-        const after = getFlashListProps();
+        const after = getLegendListProps();
 
         expect(after.keyExtractor).toBe(before.keyExtractor);
         expect(after.renderItem).toBe(before.renderItem);
@@ -546,126 +546,4 @@ describe('DiffFilesListView', () => {
         expect(onOpenFile).toHaveBeenCalledWith('src/a.ts');
     });
 
-    it('falls back to FlatList on web when FlashList throws "not enough layouts"', async () => {
-        const globalWindowContainer = globalThis as unknown as { window?: unknown };
-        const prevWindow = globalWindowContainer.window;
-        const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
-        try {
-            globalWindowContainer.window = {
-                addEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
-                    const arr = listeners.get(type) ?? [];
-                    arr.push(fn);
-                    listeners.set(type, arr);
-                },
-                removeEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
-                    const arr = listeners.get(type) ?? [];
-                    listeners.set(type, arr.filter((f) => f !== fn));
-                },
-            };
-
-            const { DiffFilesListView } = await import('./DiffFilesListView');
-
-            const files: any[] = [
-                { key: 'k1', filePath: 'src/a.ts', added: 1, removed: 0, unifiedDiff: 'a\n', kind: null },
-            ];
-
-            const screen = await renderScreen(<DiffFilesListView
-                        files={files}
-                        expandedKeys={new Set()}
-                        onToggleExpanded={() => {}}
-                        canRenderInlineDiffs={true}
-                        wrapLines={true}
-                        showLineNumbers={true}
-                        showPrefix={true}
-                        virtualizeFileList
-                    />);
-
-            expect(screen.findAllByType('FlashList' as any)).toHaveLength(1);
-            expect(listeners.get('error')?.length ?? 0).toBeGreaterThan(0);
-
-            const errorMessage = 'index out of bounds, not enough layouts';
-            const handler = (listeners.get('error') ?? [])[0];
-            const fakeEvent = {
-                message: errorMessage,
-                error: new Error(errorMessage),
-                preventDefault: vi.fn(),
-                stopImmediatePropagation: vi.fn(),
-            } as unknown as ErrorEvent;
-
-            await act(async () => {
-                (handler as EventListener)(fakeEvent);
-            });
-
-            expect(screen.findAllByType('FlatList' as any).length).toBeGreaterThan(0);
-            expect(screen.findAllByType('FlashList' as any)).toHaveLength(0);
-        } finally {
-            globalWindowContainer.window = prevWindow;
-        }
-    });
-
-    it('falls back to FlatList on web when FlashList hits a recycler commit layout update loop', async () => {
-        const globalWindowContainer = globalThis as unknown as { window?: unknown };
-        const prevWindow = globalWindowContainer.window;
-        const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
-        try {
-            globalWindowContainer.window = {
-                addEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
-                    const arr = listeners.get(type) ?? [];
-                    arr.push(fn);
-                    listeners.set(type, arr);
-                },
-                removeEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
-                    const arr = listeners.get(type) ?? [];
-                    listeners.set(type, arr.filter((f) => f !== fn));
-                },
-            };
-
-            const { DiffFilesListView } = await import('./DiffFilesListView');
-
-            const files: any[] = [
-                { key: 'k1', filePath: 'src/a.ts', added: 1, removed: 0, unifiedDiff: 'a\n', kind: null },
-            ];
-
-            const screen = await renderScreen(<DiffFilesListView
-                        files={files}
-                        expandedKeys={new Set()}
-                        onToggleExpanded={() => {}}
-                        canRenderInlineDiffs={true}
-                        wrapLines={true}
-                        showLineNumbers={true}
-                        showPrefix={true}
-                        virtualizeFileList
-                    />);
-
-            expect(screen.findAllByType('FlashList' as any)).toHaveLength(1);
-            expect(listeners.get('error')?.length ?? 0).toBeGreaterThan(0);
-
-            const errorMessage = 'Maximum update depth exceeded. This can happen when a component repeatedly calls setState inside componentWillUpdate or componentDidUpdate. React limits the number of nested updates to prevent infinite loops.';
-            const handler = (listeners.get('error') ?? [])[0];
-            const fakeEvent = {
-                message: errorMessage,
-                error: {
-                    message: errorMessage,
-                    stack: [
-                        'Error: Maximum update depth exceeded',
-                        '    at getRootForUpdatedFiber (bundle:15941:169)',
-                        '    at dispatchSetState (bundle:17871:7)',
-                        '    at Object.commitLayout (bundle:594088:11)',
-                        '    at commitHookLayoutEffects (bundle:19716:58)',
-                    ].join('\n'),
-                },
-                preventDefault: vi.fn(),
-                stopImmediatePropagation: vi.fn(),
-            } as unknown as ErrorEvent;
-
-            await act(async () => {
-                (handler as EventListener)(fakeEvent);
-            });
-
-            expect(screen.findAllByType('FlatList' as any).length).toBeGreaterThan(0);
-            expect(screen.findAllByType('FlashList' as any)).toHaveLength(0);
-        } finally {
-            globalWindowContainer.window = prevWindow;
-        }
-    });
 });

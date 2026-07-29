@@ -158,8 +158,15 @@ describe('updateExistingSessionAutomationTemplateMessage', () => {
             profileId: 'profile-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: {
+                v: 1,
+                updatedAt: 456,
+                ref: {
+                    agentTargetKey: 'backend:review-bot:configured:review-bot',
+                    providerConnectionId: null,
+                    modelId: 'gpt-5',
+                },
+            },
             codexBackendMode: 'acp',
             sessionEncryptionMode: 'e2ee',
             sessionEncryptionVariant: 'dataKey',
@@ -167,5 +174,7 @@ describe('updateExistingSessionAutomationTemplateMessage', () => {
             existingSessionId: 's1',
         }));
         expect(encryptedPayloads[0]).not.toHaveProperty('experimentalCodexAcp');
+        expect(encryptedPayloads[0]).not.toHaveProperty('modelId');
+        expect(encryptedPayloads[0]).not.toHaveProperty('modelUpdatedAt');
     });
 });

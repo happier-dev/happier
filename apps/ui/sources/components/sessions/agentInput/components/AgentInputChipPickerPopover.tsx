@@ -21,6 +21,7 @@ export type AgentInputChipPickerPopoverProps = Readonly<{
     railWidth?: number;
     railMaxWidth?: number | `${number}%`;
     detailPaneHeaderAccessory?: React.ReactNode;
+    detailContentOwnsScroll?: boolean;
     maxHeightCap?: number;
     maxWidthCap?: number;
 }>;
@@ -31,10 +32,17 @@ export function AgentInputChipPickerPopover(props: AgentInputChipPickerPopoverPr
         Platform.OS === 'web' && isMobileLayoutWidth(windowWidth)
             ? 'boundary'
             : undefined;
+    const requestContentClose = React.useCallback(() => {
+        props.onRequestClose();
+        if (Platform.OS === 'web') {
+            setTimeout(() => props.anchorRef.current?.focus?.(), 0);
+        }
+    }, [props.anchorRef, props.onRequestClose]);
 
     return (
         <AgentInputSelectionPopover
             open={props.open}
+            autoFocusOnOpen
             anchorRef={props.anchorRef}
             boundaryRef={props.boundaryRef}
             maxHeightCap={props.maxHeightCap ?? 420}
@@ -53,11 +61,12 @@ export function AgentInputChipPickerPopover(props: AgentInputChipPickerPopoverPr
                     options={props.options}
                     selectedOptionId={props.selectedOptionId}
                     onSelect={props.onSelect}
-                    onRequestClose={props.onRequestClose}
+                    onRequestClose={requestContentClose}
                     applyLabel={props.applyLabel}
                     railWidth={props.railWidth}
                     railMaxWidth={props.railMaxWidth}
                     detailPaneHeaderAccessory={props.detailPaneHeaderAccessory}
+                    detailContentOwnsScroll={props.detailContentOwnsScroll}
                     maxHeight={maxHeight}
                 />
             )}

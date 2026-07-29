@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
@@ -16,12 +16,33 @@ type ChartTooltipProps = Readonly<{
     testID?: string;
     triggerTestID?: string;
     disabled?: boolean;
+    /**
+     * Layout style for the trigger wrapper — charts whose marks own their flex
+     * sizing (e.g. 100%-stacked composition segments with `flexGrow`) pass it
+     * here so wrapping a mark in the tooltip never changes the chart layout.
+     */
+    triggerStyle?: StyleProp<ViewStyle>;
 }>;
 
 const styles = StyleSheet.create((theme) => ({
     trigger: {
         minWidth: 0,
-        alignSelf: 'flex-start',
+        // Fill the parent's cross axis (RN's default) rather than shrinking to
+        // content. `flex-start` here made the trigger shrink-to-fit, which on
+        // web collapsed any percentage-width fill child (bar tracks, meters) to
+        // width 0 — the fill's `width:'100%'` resolved against a 0-width parent
+        // and never painted. `stretch` lets those fills resolve to the track
+        // width; fixed-size children are unaffected (they keep their own width,
+        // stretch only governs the otherwise-auto cross size).
+        alignSelf: 'stretch',
+    },
+    // Inner pressable fills the trigger wrapper so the hover/press target covers
+    // the whole mark area even when `triggerStyle` sizes the wrapper (flexGrow
+    // segments, full-height bar slots) beyond the visible fill.
+    triggerFill: {
+        minWidth: 0,
+        alignSelf: 'stretch',
+        flexGrow: 1,
     },
     tooltipContent: {
         minWidth: 156,
@@ -70,9 +91,16 @@ export function ChartTooltip(props: ChartTooltipProps): React.ReactElement {
         testID,
         triggerTestID,
         disabled = false,
+        triggerStyle,
     } = props;
     const anchorRef = React.useRef<View>(null);
     const [open, setOpen] = React.useState(false);
+    // On pointer devices a press is always preceded by hover-in (which already
+    // opened the tooltip) — the press must then KEEP it open, or every click
+    // instantly toggles the hover-opened tooltip away and reads as "tooltips
+    // never show" (D-R4-3 root cause #3). Touch devices emit no hover events,
+    // so the ref stays false there and press keeps plain toggle semantics.
+    const hoveredRef = React.useRef(false);
     const resolvedTriggerTestID = triggerTestID ?? (testID ? `${testID}-trigger` : undefined);
 
     if (disabled) {
@@ -81,14 +109,20 @@ export function ChartTooltip(props: ChartTooltipProps): React.ReactElement {
 
     return (
         <>
-            <View ref={anchorRef} collapsable={false} style={styles.trigger}>
+            <View ref={anchorRef} collapsable={false} style={[styles.trigger, triggerStyle]}>
                 <Pressable
                     testID={resolvedTriggerTestID}
                     accessibilityRole="button"
-                    onPress={() => setOpen((current) => !current)}
-                    onHoverIn={() => setOpen(true)}
-                    onHoverOut={() => setOpen(false)}
-                    style={styles.trigger}
+                    onPress={() => setOpen((current) => (hoveredRef.current ? true : !current))}
+                    onHoverIn={() => {
+                        hoveredRef.current = true;
+                        setOpen(true);
+                    }}
+                    onHoverOut={() => {
+                        hoveredRef.current = false;
+                        setOpen(false);
+                    }}
+                    style={styles.triggerFill}
                 >
                     {children}
                 </Pressable>

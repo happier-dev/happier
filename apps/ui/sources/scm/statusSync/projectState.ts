@@ -4,6 +4,8 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
 import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
 import { clearSuggestionFileSearchCache } from '@/sync/domains/input/suggestionFileCacheInvalidation';
+import { clearCachedRepositoryDirectoryEntries } from '@/sync/domains/input/repositoryDirectory';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 import { isSessionPathWithinRepoRoot } from '../sync/paths';
 
@@ -74,6 +76,7 @@ export async function clearSearchCacheForProject(
     for (const [sessionId, key] of sessionToProjectKey.entries()) {
         if (key === projectKey) {
             clearSuggestionFileSearchCache(sessionId);
+            clearCachedRepositoryDirectoryEntries({ sessionId });
         }
     }
 }
@@ -84,7 +87,7 @@ export function getRepoScopeSessionIds(referenceSessionId: string, repoRoot: str
     const referenceWorkspaceContext = readSessionWorkspaceContext(state, referenceSessionId);
     const scopeId =
         referenceWorkspaceContext.projectMachineId
-        ?? resolveProjectMachineScopeId(reference?.metadata ?? {});
+        ?? resolveProjectMachineScopeId(reference ? readSessionOwnerMetadataView(reference) ?? {} : {});
     if (!scopeId || scopeId === 'unknown') return [referenceSessionId];
 
     const inScope = new Set<string>();
@@ -94,7 +97,7 @@ export function getRepoScopeSessionIds(referenceSessionId: string, repoRoot: str
         if (!sessionPath) continue;
         const sessionScopeId =
             sessionWorkspaceContext.projectMachineId
-            ?? resolveProjectMachineScopeId(session.metadata ?? {});
+            ?? resolveProjectMachineScopeId(readSessionOwnerMetadataView(session) ?? {});
         if (sessionScopeId !== scopeId) continue;
         if (!isSessionPathWithinRepoRoot(sessionPath, repoRoot)) continue;
         inScope.add(session.id);

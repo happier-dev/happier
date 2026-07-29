@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { EmbeddedTerminalToolbarIconButton } from '@/components/terminal/embedded/EmbeddedTerminalToolbarIconButton';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { openProjectTerminalDetailsTab } from '@/components/projects/detail/openProjectTerminalDetailsTab';
 import { WorkspaceEmbeddedTerminalPane } from '@/components/projects/panes/details/views/WorkspaceEmbeddedTerminalPane';
 import { t } from '@/text';
@@ -18,14 +18,18 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
     const pane = useAppPaneScope(props.scopeId);
 
     const toolbarActionsStart = React.useMemo(() => (
-        <EmbeddedTerminalToolbarIconButton
+        <IconButton
             testID="workspace-embedded-terminal-new-tab"
+            iconName="add-outline"
             accessibilityLabel={t('terminalEmbedded.openNewTabA11y')}
+            tooltip={t('terminalEmbedded.openNewTabA11y')}
+            variant="plain"
+            size={28}
+            iconSize={18}
             onPress={() => openProjectTerminalDetailsTab({
                 openDetailsTab: pane.openDetailsTab,
                 cwd: props.rootPath,
             })}
-            icon="add-outline"
         />
     ), [pane, props.rootPath]);
 

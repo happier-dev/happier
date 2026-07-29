@@ -10,6 +10,10 @@ export type DeferredTranscriptState = Readonly<{
     knownRemoteSeqBySessionId: Readonly<Record<string, number>>;
     deferredDurableSeqBySessionId: Readonly<Record<string, number>>;
     staleMessageIdsBySessionId: Readonly<Record<string, readonly string[]>>;
+    // Lowest seq among rows edited while hidden — the lower bound for the targeted refetch
+    // region (refetch newer from `minSeq - 1`) so reopening repairs the edited rows without
+    // wiping paginated older history.
+    staleMinSeqBySessionId: Readonly<Record<string, number>>;
 }>;
 
 export function createDeferredTranscriptState(): DeferredTranscriptState {
@@ -17,6 +21,7 @@ export function createDeferredTranscriptState(): DeferredTranscriptState {
         knownRemoteSeqBySessionId: {},
         deferredDurableSeqBySessionId: {},
         staleMessageIdsBySessionId: {},
+        staleMinSeqBySessionId: {},
     };
 }
 
@@ -70,19 +75,46 @@ export function markTranscriptStale(
 ): DeferredTranscriptState {
     const remoteState = markTranscriptDeferred(state, sessionId, marker);
     if (!sessionId || !marker.messageId) return remoteState;
+    const normalizedSeq = normalizeSeq(marker.seq);
+    const existingMinSeq = remoteState.staleMinSeqBySessionId[sessionId];
+    const nextMinSeq = normalizedSeq === null
+        ? existingMinSeq
+        : (existingMinSeq === undefined ? normalizedSeq : Math.min(existingMinSeq, normalizedSeq));
+    const staleMinSeqBySessionId = nextMinSeq === existingMinSeq
+        ? remoteState.staleMinSeqBySessionId
+        : { ...remoteState.staleMinSeqBySessionId, ...(nextMinSeq !== undefined ? { [sessionId]: nextMinSeq } : {}) };
     const existing = remoteState.staleMessageIdsBySessionId[sessionId] ?? [];
-    if (existing.includes(marker.messageId)) return remoteState;
+    if (existing.includes(marker.messageId)) {
+        return staleMinSeqBySessionId === remoteState.staleMinSeqBySessionId
+            ? remoteState
+            : { ...remoteState, staleMinSeqBySessionId };
+    }
     return {
         ...remoteState,
         staleMessageIdsBySessionId: {
             ...remoteState.staleMessageIdsBySessionId,
             [sessionId]: [...existing, marker.messageId],
         },
+        staleMinSeqBySessionId,
     };
 }
 
 export function hasStaleTranscriptMarkers(state: DeferredTranscriptState, sessionId: string): boolean {
     return (state.staleMessageIdsBySessionId[sessionId]?.length ?? 0) > 0;
+}
+
+export function readStaleTranscriptMessageIds(
+    state: DeferredTranscriptState,
+    sessionId: string,
+): readonly string[] {
+    return state.staleMessageIdsBySessionId[sessionId] ?? [];
+}
+
+export function readStaleTranscriptMinSeq(
+    state: DeferredTranscriptState,
+    sessionId: string,
+): number | null {
+    return normalizeSeq(state.staleMinSeqBySessionId[sessionId]);
 }
 
 export function readDeferredTranscriptDurableSeq(state: DeferredTranscriptState, sessionId: string): number | null {
@@ -96,14 +128,17 @@ export function clearDeferredTranscriptStateForSession(
     if (
         !(sessionId in state.deferredDurableSeqBySessionId)
         && !(sessionId in state.staleMessageIdsBySessionId)
+        && !(sessionId in state.staleMinSeqBySessionId)
     ) {
         return state;
     }
     const { [sessionId]: _deferred, ...deferredDurableSeqBySessionId } = state.deferredDurableSeqBySessionId;
     const { [sessionId]: _stale, ...staleMessageIdsBySessionId } = state.staleMessageIdsBySessionId;
+    const { [sessionId]: _staleMinSeq, ...staleMinSeqBySessionId } = state.staleMinSeqBySessionId;
     return {
         ...state,
         deferredDurableSeqBySessionId,
         staleMessageIdsBySessionId,
+        staleMinSeqBySessionId,
     };
 }

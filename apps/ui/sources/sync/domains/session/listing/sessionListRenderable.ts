@@ -1,5 +1,10 @@
 import type { AgentState, Metadata, Session } from '@/sync/domains/state/storageTypes';
-import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import {
+    SessionSharedMetadataV1Schema,
+    type ExternalAgentObservationSnapshotV1,
+    type PrimaryTurnStatusV1,
+    type SessionRuntimeIssueV1,
+} from '@happier-dev/protocol';
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { deriveExternalSessionAttentionHasUnread } from '@/sync/domains/session/external/readExternalSessionAttention';
@@ -8,16 +13,36 @@ import {
     deriveLatestPendingRequestObservedAtFromSession,
     derivePendingRequestFlagsFromAgentState,
     derivePendingRequestFlagsFromSession,
+    type TranscriptRequestStatesCache,
 } from '@/sync/domains/session/pending/listPendingSessionRequests';
-import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
-import { resolveSessionProjectGroupingKeyParts } from './sessionListProjectGroupingKeys';
 import {
+    buildTranscriptRenderableAggregate,
+    canReuseTranscriptRenderableAggregateRequestStates,
+    type TranscriptRenderableAggregate,
+} from './transcriptRenderableAggregate';
+import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
+import {
+    createSessionListReadableActivityAccumulator,
+    foldSessionListReadableActivityMessage,
+    maxReadSeq,
+    normalizeReadSeq,
+    type MessageReadableActivityFields,
+} from './sessionListReadableActivity';
+import { resolveSessionProjectGroupingKeyParts } from './sessionListProjectGroupingKeys';
+import { readSessionPresentationCompletedRequests } from '../presentation/readSessionPresentationCompletedRequests';
+import {
+    areSessionListRenderableExternalSessionIdentitiesEqual,
     areSessionListRenderableMetadataComparisonsEqual,
     readSessionListRenderableMetadataComparison,
     readSessionListRenderableMetadataComparisonFromRenderable,
+    type SessionListRenderableExternalSessionIdentity,
 } from './sessionListRenderableMetadataComparison';
 import { deriveSessionListMeaningfulActivityAt } from './deriveSessionListActivity';
-import { resolveSessionRuntimePresenceFields } from '../attention/runtimePresentation';
+import {
+    deriveSessionRuntimePresentationState,
+    resolveSessionRuntimePresenceFields,
+} from '../attention/runtimePresentation';
+import { readSessionOwnerMetadataView } from '../readSessionOwnerMetadataView';
 
 export { derivePendingRequestFlagsFromAgentState } from '@/sync/domains/session/pending/listPendingSessionRequests';
 
@@ -29,10 +54,8 @@ export interface SessionListRenderableMetadata {
     host?: string | null;
     machineId?: string | null;
     flavor?: string | null;
-    externalSessionV1?: {
-        v: 1;
-        providerId?: string;
-    } | null;
+    externalSessionV1?: SessionListRenderableExternalSessionIdentity | null;
+    externalAgentObservationV1?: ExternalAgentObservationSnapshotV1 | null;
     readStateV1?: {
         v: 1;
         sessionSeq: number;
@@ -40,6 +63,12 @@ export interface SessionListRenderableMetadata {
         updatedAt: number;
     } | null;
     hiddenSystemSession?: boolean;
+    terminalControlServiceabilityV1?: {
+        v: 1;
+        state: 'servable' | 'recoverable_unservable' | 'unknown';
+        observedAt: number;
+        reason?: string;
+    } | null;
 }
 
 export interface SessionListRenderableSession {
@@ -53,6 +82,7 @@ export interface SessionListRenderableSession {
     archivedAt?: number | null;
     pendingVersion?: number;
     pendingCount?: number;
+    pendingBlockedCount?: number;
     lastViewedSessionSeq?: number | null;
     latestTurnId?: string | null;
     latestTurnStatus?: PrimaryTurnStatusV1 | null;
@@ -61,7 +91,12 @@ export interface SessionListRenderableSession {
     latestReadyEventSeq?: number | null;
     latestReadyEventAt?: number | null;
     lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
+    runtimeActivityActiveCount?: number | null;
+    runtimeActivityState?: 'active' | 'idle' | 'unknown' | null;
+    runtimeActivityObservedAt?: number | null;
+    runtimeActivityRevision?: number | null;
     lastTurnCompletedAt?: number | null;
+    metadataLayoutVersion?: number;
     metadataVersion: number;
     agentStateVersion: number;
     metadata: SessionListRenderableMetadata | null;
@@ -69,6 +104,7 @@ export interface SessionListRenderableSession {
     thinkingAt: number;
     presence: 'online' | number;
     optimisticThinkingAt?: number | null;
+    resumingAt?: number | null;
     thinkingGraceUntil?: number | null;
     owner?: string;
     accessLevel?: 'view' | 'edit' | 'admin';
@@ -81,6 +117,8 @@ export interface SessionListRenderableSession {
     metadataUnavailable?: boolean;
 }
 
+export type SessionListRenderablePatchFields = Readonly<Partial<Omit<SessionListRenderableSession, 'id'>>>;
+
 export type SessionListRenderableFieldSnapshot = Readonly<{
     active: boolean;
     createdAt: number;
@@ -90,6 +128,7 @@ export type SessionListRenderableFieldSnapshot = Readonly<{
     archivedAt: number | null;
     pendingVersion: number | null;
     pendingCount: number | null;
+    pendingBlockedCount: number | null;
     lastViewedSessionSeq: number | null;
     metadataVersion: number;
     agentStateVersion: number;
@@ -112,46 +151,32 @@ type SessionListRenderableStaleFieldSource = Readonly<{
     agentState?: AgentState | null | undefined;
     pendingPermissionRequestCount?: number;
     pendingUserActionRequestCount?: number;
+    pendingBlockedCount?: number;
     hasPendingPermissionRequests?: boolean;
     hasPendingUserActionRequests?: boolean;
 }>;
 
+const NO_PENDING_REQUEST_FLAGS = {
+    hasPendingPermissionRequests: false,
+    hasPendingUserActionRequests: false,
+} as const;
+
 export function summarizeSessionListReadableActivityFromMessageRecords(
     messageIds: ReadonlyArray<string> | undefined,
-    messagesById: Readonly<Record<string, Pick<Message, 'seq' | 'createdAt'> | undefined>> | null | undefined,
+    messagesById: Readonly<Record<string, MessageReadableActivityFields | undefined>> | null | undefined,
 ): SessionListReadableActivitySummary | undefined {
     if (!Array.isArray(messageIds)) return undefined;
 
-    let latestCommittedMessageSeq: number | null = null;
-    let latestCommittedMessageCreatedAt: number | null = null;
+    const accumulator = createSessionListReadableActivityAccumulator();
     for (const messageId of messageIds) {
         const message = messagesById?.[messageId];
         if (!message) continue;
-        latestCommittedMessageSeq = maxReadSeq(latestCommittedMessageSeq, normalizeReadSeq(message.seq));
-        latestCommittedMessageCreatedAt = maxReadSeq(latestCommittedMessageCreatedAt, normalizeReadSeq(message.createdAt));
+        foldSessionListReadableActivityMessage(accumulator, message);
     }
 
     return {
-        latestCommittedMessageSeq,
-        latestCommittedMessageCreatedAt,
-    };
-}
-
-function summarizeSessionListReadableActivityFromMessages(
-    messages: ReadonlyArray<Message> | undefined,
-): SessionListReadableActivitySummary | undefined {
-    if (!messages) return undefined;
-
-    let latestCommittedMessageSeq: number | null = null;
-    let latestCommittedMessageCreatedAt: number | null = null;
-    for (const message of messages) {
-        latestCommittedMessageSeq = maxReadSeq(latestCommittedMessageSeq, normalizeReadSeq(message.seq));
-        latestCommittedMessageCreatedAt = maxReadSeq(latestCommittedMessageCreatedAt, normalizeReadSeq(message.createdAt));
-    }
-
-    return {
-        latestCommittedMessageSeq,
-        latestCommittedMessageCreatedAt,
+        latestCommittedMessageSeq: accumulator.latestCommittedMessageSeq,
+        latestCommittedMessageCreatedAt: accumulator.latestCommittedMessageCreatedAt,
     };
 }
 
@@ -197,11 +222,46 @@ function deriveSessionListRenderableExternalSessionUnread(
     return deriveExternalSessionAttentionHasUnread(metadata);
 }
 
+function readSessionListRenderableSourceMetadata(
+    session: Pick<
+        Session,
+        'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView' | 'accessLevel'
+    >,
+): Metadata | null {
+    const metadataLayoutVersion = session.metadataLayoutVersion ?? 0;
+    if (metadataLayoutVersion === 0) {
+        return session.metadata;
+    }
+    if (metadataLayoutVersion !== 1) {
+        return null;
+    }
+    if (session.accessLevel === 'view' || session.accessLevel === 'edit' || session.accessLevel === 'admin') {
+        const sharedMetadata = SessionSharedMetadataV1Schema.safeParse(session.metadata);
+        if (!sharedMetadata.success) return null;
+        const presentationAgentId = sharedMetadata.data.agentPresentation?.agentId;
+        return {
+            ...sharedMetadata.data,
+            ...(presentationAgentId ? { flavor: presentationAgentId } : {}),
+        } as unknown as Metadata;
+    }
+    return readSessionOwnerMetadataView(session);
+}
+
 export function deriveSessionListRenderableHasUnreadMessagesFromSession(
-    session: Pick<Session, 'seq' | 'metadata' | 'lastViewedSessionSeq'> & Partial<Pick<Session, 'latestTurnStatus' | 'latestReadyEventSeq'>>,
+    session: Pick<Session, 'seq' | 'metadata' | 'lastViewedSessionSeq'>
+        & Partial<Pick<
+            Session,
+            'latestTurnStatus' | 'latestReadyEventSeq' | 'metadataLayoutVersion' | 'ownerMetadataView' | 'accessLevel'
+        >>,
     readableActivity?: SessionListReadableActivitySummary,
 ): boolean {
-    const externalSessionHasUnread = deriveSessionListRenderableExternalSessionUnread(session.metadata);
+    const metadata = readSessionListRenderableSourceMetadata({
+        metadata: session.metadata,
+        metadataLayoutVersion: session.metadataLayoutVersion,
+        ownerMetadataView: session.ownerMetadataView,
+        accessLevel: session.accessLevel,
+    });
+    const externalSessionHasUnread = deriveSessionListRenderableExternalSessionUnread(metadata);
     if (externalSessionHasUnread !== null) {
         return externalSessionHasUnread;
     }
@@ -210,7 +270,7 @@ export function deriveSessionListRenderableHasUnreadMessagesFromSession(
         sessionSeq: resolveSessionListReadableSeq(session, readableActivity),
         pendingActivityAt: 0,
         lastViewedSessionSeq: resolveLastViewedSessionSeq(session),
-        lastViewedPendingActivityAt: session.metadata?.readStateV1?.pendingActivityAt,
+        lastViewedPendingActivityAt: metadata?.readStateV1?.pendingActivityAt,
     });
 }
 
@@ -270,26 +330,124 @@ function shouldPreserveSessionListRenderablePendingFlags(
     );
 }
 
+function shouldPreserveSessionListRenderablePendingBlockedCount(
+    current: SessionListRenderableStaleFieldSource,
+    previous: SessionListRenderableSession | undefined,
+): boolean {
+    return (
+        current.active === true
+        && current.agentState == null
+        && typeof current.pendingBlockedCount !== 'number'
+        && typeof previous?.pendingBlockedCount === 'number'
+    );
+}
+
+function normalizeTransientTitleText(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().replace(/\s+/g, ' ');
+    return normalized.length > 0 ? normalized : null;
+}
+
+function readFirstUserMessageTitleFallback(
+    messages: ReadonlyArray<Message> | undefined,
+): string | null {
+    if (!messages) return null;
+    for (const message of messages) {
+        if (message.kind !== 'user-text') continue;
+        return normalizeTransientTitleText(message.displayText) ?? normalizeTransientTitleText(message.text);
+    }
+    return null;
+}
+
+function hasRenderableDisplayTitle(metadata: SessionListRenderableMetadata | null): boolean {
+    return Boolean(
+        normalizeTransientTitleText(metadata?.summaryText)
+        || normalizeTransientTitleText(metadata?.name),
+    );
+}
+
+function applyTransientUserMessageTitleFallback(
+    metadata: SessionListRenderableMetadata | null,
+    previousMetadata: SessionListRenderableMetadata | null,
+    messages: ReadonlyArray<Message> | undefined,
+): SessionListRenderableMetadata | null {
+    if (!metadata || hasRenderableDisplayTitle(metadata)) return metadata;
+
+    const previousFallback = hasRenderableDisplayTitle(previousMetadata)
+        ? null
+        : normalizeTransientTitleText(previousMetadata?.summaryText);
+    const summaryText = readFirstUserMessageTitleFallback(messages) ?? previousFallback;
+    if (!summaryText) return metadata;
+
+    return {
+        ...metadata,
+        summaryText,
+    };
+}
+
 export function buildSessionListRenderableFromSession(
     session: Session,
     previous?: SessionListRenderableSession,
     messages?: ReadonlyArray<Message>,
+    transcriptAggregate?: TranscriptRenderableAggregate | null,
 ): SessionListRenderableSession {
-    const preserveMetadata = session.metadata == null && previous?.metadata != null;
-    const preservePendingFlags = shouldPreserveSessionListRenderablePendingFlags(session, previous);
-    const pending = preservePendingFlags && previous
-        ? {
-            hasPendingPermissionRequests: previous.hasPendingPermissionRequests,
-            hasPendingUserActionRequests: previous.hasPendingUserActionRequests,
+    // Single derivation path: the transcript folds live in the aggregate.
+    // Hot callers (store streaming refresh) pass an incrementally-maintained
+    // aggregate; cold callers pass messages and pay one full walk here.
+    const completedRequests = readSessionPresentationCompletedRequests(session);
+    const aggregate = (() => {
+        if (transcriptAggregate && canReuseTranscriptRenderableAggregateRequestStates(transcriptAggregate, completedRequests)) {
+            return transcriptAggregate;
         }
-        : derivePendingRequestFlagsFromSession(session, messages);
+        if (messages) {
+            return buildTranscriptRenderableAggregate({ messages, completedRequests });
+        }
+        return null;
+    })();
+    const statesCache: TranscriptRequestStatesCache = aggregate ? { states: aggregate.requestStates } : {};
+    const renderableSourceMetadata = readSessionListRenderableSourceMetadata(session);
+    const layout1OwnerMetadataUnavailable =
+        session.metadataLayoutVersion === 1
+        && session.accessLevel == null
+        && renderableSourceMetadata == null;
+    const preserveMetadata =
+        !layout1OwnerMetadataUnavailable
+        && renderableSourceMetadata == null
+        && previous?.metadata != null
+        && (session.metadataLayoutVersion ?? 0) === (previous.metadataLayoutVersion ?? 0);
+    const preservePendingFlags = shouldPreserveSessionListRenderablePendingFlags(session, previous);
+    const suppressPendingAttention = session.active !== true;
+    const pending = (() => {
+        if (suppressPendingAttention) return NO_PENDING_REQUEST_FLAGS;
+        if (preservePendingFlags && previous) {
+            return {
+                hasPendingPermissionRequests: previous.hasPendingPermissionRequests,
+                hasPendingUserActionRequests: previous.hasPendingUserActionRequests,
+            };
+        }
+        return derivePendingRequestFlagsFromSession(session, messages, statesCache);
+    })();
+    const pendingRequestObservedAt = (() => {
+        if (suppressPendingAttention) return null;
+        if (preservePendingFlags && previous) return previous.pendingRequestObservedAt ?? null;
+        return deriveLatestPendingRequestObservedAtFromSession(session, messages, statesCache);
+    })();
     const previousMetadata: ReturnType<typeof readSessionListRenderableMetadataComparisonFromRenderable> = previous?.metadata
         ? readSessionListRenderableMetadataComparisonFromRenderable(previous.metadata)
         : null;
     const nextMetadata: ReturnType<typeof readSessionListRenderableMetadataComparisonFromRenderable> = preserveMetadata
         ? previousMetadata
-        : readSessionListRenderableMetadataComparison(session.metadata, previousMetadata);
-    const readableActivity = summarizeSessionListReadableActivityFromMessages(messages);
+        : readSessionListRenderableMetadataComparison(renderableSourceMetadata, previousMetadata);
+    const titleFallbackMessages = aggregate
+        ? (aggregate.firstUserTextMessage ? [aggregate.firstUserTextMessage] : [])
+        : messages;
+    const projectedMetadata = applyTransientUserMessageTitleFallback(nextMetadata, previousMetadata, titleFallbackMessages);
+    const readableActivity: SessionListReadableActivitySummary | undefined = aggregate
+        ? {
+            latestCommittedMessageSeq: aggregate.latestCommittedMessageSeq,
+            latestCommittedMessageCreatedAt: aggregate.latestCommittedMessageCreatedAt,
+        }
+        : undefined;
     const latestCommittedMessageCreatedAt = readableActivity?.latestCommittedMessageCreatedAt ?? null;
     const latestReadyEventSeq =
         normalizeLastViewedSessionSeq(session.latestReadyEventSeq)
@@ -326,6 +484,7 @@ export function buildSessionListRenderableFromSession(
         archivedAt: session.archivedAt ?? null,
         pendingVersion: session.pendingVersion,
         pendingCount: session.pendingCount,
+        pendingBlockedCount: session.pendingBlockedCount,
         lastViewedSessionSeq: normalizeLastViewedSessionSeq(session.lastViewedSessionSeq),
         latestTurnId: readSessionLatestTurnId(session),
         latestTurnStatus,
@@ -334,29 +493,38 @@ export function buildSessionListRenderableFromSession(
         latestReadyEventSeq,
         latestReadyEventAt,
         lastRuntimeIssue: session.lastRuntimeIssue ?? null,
+        runtimeActivityState: session.runtimeActivityState ?? 'unknown',
+        runtimeActivityActiveCount: session.runtimeActivityActiveCount ?? null,
+        runtimeActivityObservedAt: session.runtimeActivityObservedAt ?? null,
+        runtimeActivityRevision: session.runtimeActivityRevision ?? null,
         lastTurnCompletedAt: session.lastTurnCompletedAt ?? null,
+        metadataLayoutVersion: preserveMetadata && previous
+            ? previous.metadataLayoutVersion
+            : session.metadataLayoutVersion,
         metadataVersion: preserveMetadata && previous ? previous.metadataVersion : session.metadataVersion,
         agentStateVersion: preservePendingFlags && previous ? previous.agentStateVersion : session.agentStateVersion,
-        metadata: previous && areSessionListRenderableMetadataComparisonsEqual(previousMetadata, nextMetadata)
+        metadata: previous && areSessionListRenderableMetadataComparisonsEqual(previousMetadata, projectedMetadata)
             ? previous.metadata
-            : nextMetadata,
+            : projectedMetadata,
         thinking: runtimePresence.thinking,
         thinkingAt: runtimePresence.thinkingAt,
         presence: session.presence,
         optimisticThinkingAt: session.optimisticThinkingAt ?? null,
+        resumingAt: session.resumingAt ?? null,
         thinkingGraceUntil: session.thinkingGraceUntil ?? null,
         owner: session.owner,
         accessLevel: session.accessLevel,
         canApprovePermissions: session.canApprovePermissions,
         hasPendingPermissionRequests: pending.hasPendingPermissionRequests,
         hasPendingUserActionRequests: pending.hasPendingUserActionRequests,
-        pendingRequestObservedAt: preservePendingFlags && previous
-            ? previous.pendingRequestObservedAt ?? null
-            : deriveLatestPendingRequestObservedAtFromSession(session, messages),
+        pendingRequestObservedAt,
         hasUnreadMessages: deriveSessionListRenderableHasUnreadMessagesFromSession({
             ...session,
             latestReadyEventSeq,
         }, readableActivity),
+        metadataUnavailable: session.metadataLayoutVersion === 1 && session.accessLevel == null
+            ? layout1OwnerMetadataUnavailable
+            : undefined,
     };
 
     return previous && areSessionListRenderablesEqual(previous, next) ? previous : next;
@@ -366,27 +534,16 @@ export function resolveSessionListReadableSeq(
     session: Pick<Session, 'seq'> & Partial<Pick<Session, 'latestTurnStatus' | 'latestReadyEventSeq'>>,
     readableActivity: SessionListReadableActivitySummary | undefined,
 ): number {
+    const hasCommittedMessageAttentionProjection = readableActivity !== undefined;
     const sessionSeq = normalizeReadSeq(session.seq) ?? 0;
     let readableSeq: number | null = readableActivity?.latestCommittedMessageSeq ?? null;
     readableSeq = maxReadSeq(readableSeq, normalizeReadSeq(session.latestReadyEventSeq));
 
-    if (isTerminalTurnStatus(session.latestTurnStatus)) {
+    if (!hasCommittedMessageAttentionProjection && isTerminalTurnStatus(session.latestTurnStatus)) {
         readableSeq = maxReadSeq(readableSeq, sessionSeq);
     }
 
     return readableSeq ?? 0;
-}
-
-function normalizeReadSeq(value: unknown): number | null {
-    return typeof value === 'number' && Number.isFinite(value)
-        ? Math.max(0, Math.trunc(value))
-        : null;
-}
-
-function maxReadSeq(left: number | null, right: number | null): number | null {
-    if (left === null) return right;
-    if (right === null) return left;
-    return Math.max(left, right);
 }
 
 function isTerminalTurnStatus(value: unknown): value is Exclude<PrimaryTurnStatusV1, 'in_progress'> {
@@ -401,18 +558,25 @@ function readSessionLatestTurnId(session: Session): string | null {
 export function preserveSessionListRenderableTransientState(
     previous: SessionListRenderableSession | undefined,
     next: SessionListRenderableSession,
+    options?: Readonly<{ preserveResumingAt?: boolean }>,
 ): SessionListRenderableSession {
-    if (previous?.keepVisibleWhenInactive !== true) {
-        return next;
-    }
-
-    if (next.keepVisibleWhenInactive === true) {
+    const keepVisibleWhenInactive = previous?.keepVisibleWhenInactive === true
+        ? true
+        : next.keepVisibleWhenInactive;
+    const resumingAt = options?.preserveResumingAt === false
+        ? next.resumingAt ?? null
+        : previous?.resumingAt ?? next.resumingAt ?? null;
+    if (
+        next.keepVisibleWhenInactive === keepVisibleWhenInactive
+        && (next.resumingAt ?? null) === resumingAt
+    ) {
         return next;
     }
 
     return {
         ...next,
-        keepVisibleWhenInactive: true,
+        keepVisibleWhenInactive,
+        resumingAt,
     };
 }
 
@@ -420,20 +584,26 @@ export function preserveSessionListRenderableStaleFields(
     previous: SessionListRenderableSession | undefined,
     next: SessionListRenderableSession,
 ): SessionListRenderableSession {
-    const preserveMetadata = next.metadata == null && previous?.metadata != null;
+    const preserveMetadata =
+        next.metadata == null
+        && previous?.metadata != null
+        && (next.metadataLayoutVersion ?? 0) === (previous.metadataLayoutVersion ?? 0);
     const preserveMetadataUnavailable =
         !preserveMetadata
         && next.metadata == null
         && previous?.metadata == null
         && previous?.metadataUnavailable === true;
     const preservePendingFlags = shouldPreserveSessionListRenderablePendingFlags(next, previous);
+    const preservePendingBlockedCount = shouldPreserveSessionListRenderablePendingBlockedCount(next, previous);
     const preserveExternalSessionClassification =
         previous?.metadata?.externalSessionV1 != null
         && next.metadata != null
         && next.metadata.externalSessionV1 == null
+        && (previous.metadataLayoutVersion ?? 0) === (next.metadataLayoutVersion ?? 0)
         && previous.metadataVersion === next.metadataVersion;
     const preserveReadyEventSeq = next.latestReadyEventSeq == null && previous?.latestReadyEventSeq != null;
     const preserveReadyEventAt = next.latestReadyEventAt == null && previous?.latestReadyEventAt != null;
+    const preserveUnread = previous?.hasUnreadMessages === true && next.hasUnreadMessages !== true;
 
     if (
         previous == null
@@ -441,9 +611,11 @@ export function preserveSessionListRenderableStaleFields(
             !preserveMetadata
             && !preserveMetadataUnavailable
             && !preservePendingFlags
+            && !preservePendingBlockedCount
             && !preserveExternalSessionClassification
             && !preserveReadyEventSeq
             && !preserveReadyEventAt
+            && !preserveUnread
         )
     ) {
         return next;
@@ -488,6 +660,12 @@ export function preserveSessionListRenderableStaleFields(
         ...next,
         latestReadyEventSeq,
         latestReadyEventAt,
+        pendingBlockedCount: preservePendingBlockedCount
+            ? previous.pendingBlockedCount
+            : next.pendingBlockedCount,
+        metadataLayoutVersion: preserveMetadata
+            ? previous.metadataLayoutVersion
+            : next.metadataLayoutVersion,
         metadataVersion: preserveMetadata ? previous.metadataVersion : next.metadataVersion,
         agentStateVersion: preservePendingFlags ? previous.agentStateVersion : next.agentStateVersion,
         metadata: nextMetadata,
@@ -527,6 +705,7 @@ export function areSessionListRenderablesEqual(
         && (previous.archivedAt ?? null) === (next.archivedAt ?? null)
         && (previous.pendingVersion ?? null) === (next.pendingVersion ?? null)
         && (previous.pendingCount ?? null) === (next.pendingCount ?? null)
+        && (previous.pendingBlockedCount ?? null) === (next.pendingBlockedCount ?? null)
         && (previous.lastViewedSessionSeq ?? null) === (next.lastViewedSessionSeq ?? null)
         && (previous.latestTurnId ?? null) === (next.latestTurnId ?? null)
         && (previous.latestTurnStatus ?? null) === (next.latestTurnStatus ?? null)
@@ -535,13 +714,19 @@ export function areSessionListRenderablesEqual(
         && (previous.latestReadyEventSeq ?? null) === (next.latestReadyEventSeq ?? null)
         && (previous.latestReadyEventAt ?? null) === (next.latestReadyEventAt ?? null)
         && JSON.stringify(previous.lastRuntimeIssue ?? null) === JSON.stringify(next.lastRuntimeIssue ?? null)
+        && (previous.runtimeActivityState ?? null) === (next.runtimeActivityState ?? null)
+        && (previous.runtimeActivityActiveCount ?? null) === (next.runtimeActivityActiveCount ?? null)
+        && (previous.runtimeActivityObservedAt ?? null) === (next.runtimeActivityObservedAt ?? null)
+        && (previous.runtimeActivityRevision ?? null) === (next.runtimeActivityRevision ?? null)
         && (previous.lastTurnCompletedAt ?? null) === (next.lastTurnCompletedAt ?? null)
+        && (previous.metadataLayoutVersion ?? 0) === (next.metadataLayoutVersion ?? 0)
         && previous.metadataVersion === next.metadataVersion
         && previous.agentStateVersion === next.agentStateVersion
         && previous.thinking === next.thinking
         && previous.thinkingAt === next.thinkingAt
         && previous.presence === next.presence
         && (previous.optimisticThinkingAt ?? null) === (next.optimisticThinkingAt ?? null)
+        && (previous.resumingAt ?? null) === (next.resumingAt ?? null)
         && (previous.thinkingGraceUntil ?? null) === (next.thinkingGraceUntil ?? null)
         && (previous.owner ?? null) === (next.owner ?? null)
         && (previous.accessLevel ?? null) === (next.accessLevel ?? null)
@@ -555,6 +740,27 @@ export function areSessionListRenderablesEqual(
         && areSessionListRenderableMetadataComparisonsEqual(previousMetadata, nextMetadata);
 }
 
+export function applySessionListRenderablePatch(
+    renderable: SessionListRenderableSession,
+    patch: SessionListRenderablePatchFields,
+): SessionListRenderableSession {
+    return {
+        ...renderable,
+        ...patch,
+        id: renderable.id,
+    };
+}
+
+export function isSessionListRenderablePatchNoop(
+    renderable: SessionListRenderableSession,
+    patch: SessionListRenderablePatchFields,
+): boolean {
+    return areSessionListRenderablesEqual(
+        renderable,
+        applySessionListRenderablePatch(renderable, patch),
+    );
+}
+
 export function didSessionListRenderableStructuralFieldsChange(
     previous: SessionListRenderableSession | undefined,
     next: SessionListRenderableSession,
@@ -563,8 +769,6 @@ export function didSessionListRenderableStructuralFieldsChange(
     if (previous.active !== next.active) return true;
     if (previous.createdAt !== next.createdAt) return true;
     if ((previous.archivedAt ?? null) !== (next.archivedAt ?? null)) return true;
-    if ((previous.latestReadyEventSeq ?? null) !== (next.latestReadyEventSeq ?? null)) return true;
-    if ((previous.latestReadyEventAt ?? null) !== (next.latestReadyEventAt ?? null)) return true;
     if ((previous.keepVisibleWhenInactive === true) !== (next.keepVisibleWhenInactive === true)) return true;
 
     const prevMeta = previous.metadata;
@@ -572,8 +776,10 @@ export function didSessionListRenderableStructuralFieldsChange(
     if (String(prevMeta?.machineId ?? '') !== String(nextMeta?.machineId ?? '')) return true;
     if (String(prevMeta?.path ?? '') !== String(nextMeta?.path ?? '')) return true;
     if (String(prevMeta?.homeDir ?? '') !== String(nextMeta?.homeDir ?? '')) return true;
-    if ((prevMeta?.externalSessionV1?.v ?? null) !== (nextMeta?.externalSessionV1?.v ?? null)) return true;
-    if ((prevMeta?.externalSessionV1?.providerId ?? null) !== (nextMeta?.externalSessionV1?.providerId ?? null)) return true;
+    if (!areSessionListRenderableExternalSessionIdentitiesEqual(
+        prevMeta?.externalSessionV1,
+        nextMeta?.externalSessionV1,
+    )) return true;
     if ((prevMeta?.hiddenSystemSession === true) !== (nextMeta?.hiddenSystemSession === true)) return true;
 
     return false;
@@ -637,13 +843,19 @@ export function didSessionListRenderableWarmCacheFieldsChange(
     if (previous.activeAt !== next.activeAt) return true;
     if ((previous.archivedAt ?? null) !== (next.archivedAt ?? null)) return true;
     if ((previous.pendingCount ?? null) !== (next.pendingCount ?? null)) return true;
+    if ((previous.pendingBlockedCount ?? null) !== (next.pendingBlockedCount ?? null)) return true;
     if ((previous.pendingVersion ?? null) !== (next.pendingVersion ?? null)) return true;
     if ((previous.latestTurnId ?? null) !== (next.latestTurnId ?? null)) return true;
+    if ((previous.runtimeActivityState ?? null) !== (next.runtimeActivityState ?? null)) return true;
+    if ((previous.runtimeActivityActiveCount ?? null) !== (next.runtimeActivityActiveCount ?? null)) return true;
+    if ((previous.runtimeActivityObservedAt ?? null) !== (next.runtimeActivityObservedAt ?? null)) return true;
+    if ((previous.runtimeActivityRevision ?? null) !== (next.runtimeActivityRevision ?? null)) return true;
     if ((previous.latestReadyEventSeq ?? null) !== (next.latestReadyEventSeq ?? null)) return true;
     if ((previous.latestReadyEventAt ?? null) !== (next.latestReadyEventAt ?? null)) return true;
     if (!areRollbackEligibleTurnStartsEqual(previous.rollbackEligibleTurnStarts, next.rollbackEligibleTurnStarts)) return true;
     if ((previous.accessLevel ?? null) !== (next.accessLevel ?? null)) return true;
     if ((previous.canApprovePermissions ?? null) !== (next.canApprovePermissions ?? null)) return true;
+    if ((previous.metadataLayoutVersion ?? 0) !== (next.metadataLayoutVersion ?? 0)) return true;
     if (previous.metadataVersion !== next.metadataVersion) return true;
     if (previous.agentStateVersion !== next.agentStateVersion) return true;
 
@@ -657,8 +869,10 @@ export function didSessionListRenderableWarmCacheFieldsChange(
     if ((prevMeta?.machineId ?? null) !== (nextMeta?.machineId ?? null)) return true;
     if ((prevMeta?.flavor ?? null) !== (nextMeta?.flavor ?? null)) return true;
     if ((prevMeta?.hiddenSystemSession === true) !== (nextMeta?.hiddenSystemSession === true)) return true;
-    if ((prevMeta?.externalSessionV1?.v ?? null) !== (nextMeta?.externalSessionV1?.v ?? null)) return true;
-    if ((prevMeta?.externalSessionV1?.providerId ?? null) !== (nextMeta?.externalSessionV1?.providerId ?? null)) return true;
+    if (!areSessionListRenderableExternalSessionIdentitiesEqual(
+        prevMeta?.externalSessionV1,
+        nextMeta?.externalSessionV1,
+    )) return true;
 
     if ((previous.hasPendingPermissionRequests ?? null) !== (next.hasPendingPermissionRequests ?? null)) return true;
     if ((previous.hasPendingUserActionRequests ?? null) !== (next.hasPendingUserActionRequests ?? null)) return true;
@@ -679,15 +893,21 @@ export function isSessionListRenderableWarmCacheProgressOnlyChange(
     if (previous.thinking !== next.thinking) return false;
     if ((previous.archivedAt ?? null) !== (next.archivedAt ?? null)) return false;
     if ((previous.pendingCount ?? null) !== (next.pendingCount ?? null)) return false;
+    if ((previous.pendingBlockedCount ?? null) !== (next.pendingBlockedCount ?? null)) return false;
     if ((previous.pendingVersion ?? null) !== (next.pendingVersion ?? null)) return false;
     if ((previous.lastViewedSessionSeq ?? null) !== (next.lastViewedSessionSeq ?? null)) return false;
     if ((previous.latestTurnId ?? null) !== (next.latestTurnId ?? null)) return false;
     if ((previous.latestTurnStatus ?? null) !== (next.latestTurnStatus ?? null)) return false;
     if ((previous.latestTurnStatusObservedAt ?? null) !== (next.latestTurnStatusObservedAt ?? null)) return false;
     if ((previous.lastRuntimeIssue ?? null) !== (next.lastRuntimeIssue ?? null)) return false;
+    if ((previous.runtimeActivityState ?? null) !== (next.runtimeActivityState ?? null)) return false;
+    if ((previous.runtimeActivityActiveCount ?? null) !== (next.runtimeActivityActiveCount ?? null)) return false;
+    if ((previous.runtimeActivityObservedAt ?? null) !== (next.runtimeActivityObservedAt ?? null)) return false;
+    if ((previous.runtimeActivityRevision ?? null) !== (next.runtimeActivityRevision ?? null)) return false;
     if (!areRollbackEligibleTurnStartsEqual(previous.rollbackEligibleTurnStarts, next.rollbackEligibleTurnStarts)) return false;
     if ((previous.latestReadyEventSeq ?? null) !== (next.latestReadyEventSeq ?? null)) return false;
     if ((previous.latestReadyEventAt ?? null) !== (next.latestReadyEventAt ?? null)) return false;
+    if ((previous.metadataLayoutVersion ?? 0) !== (next.metadataLayoutVersion ?? 0)) return false;
     if (previous.metadataVersion !== next.metadataVersion) return false;
     if (previous.agentStateVersion !== next.agentStateVersion) return false;
     if ((previous.accessLevel ?? null) !== (next.accessLevel ?? null)) return false;

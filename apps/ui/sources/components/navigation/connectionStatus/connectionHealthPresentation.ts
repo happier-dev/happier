@@ -9,6 +9,13 @@ type StatusColors = Readonly<{
     default: string;
 }>;
 
+function resolveKnownMachineLabelKey(health: ConnectionHealth): ConnectionHealthPresentation['machineLabelKey'] {
+    if (health.hasUnknownMachines) return 'status.unknown';
+    if (health.machineCount === 0) return 'newSession.noMachinesFound';
+    if (health.onlineCount === 0) return 'status.offline';
+    return 'status.online';
+}
+
 export function resolveConnectionHealthPresentation(
     health: ConnectionHealth,
     statusColors: StatusColors,
@@ -29,6 +36,14 @@ export function resolveConnectionHealthPresentation(
                 isPulsing: true,
                 statusLabelKey: 'status.connecting',
                 machineLabelKey: 'status.unknown',
+            };
+        case 'server_restarting':
+            return {
+                tone: 'neutral',
+                color: statusColors.connecting,
+                isPulsing: true,
+                statusLabelKey: 'status.connecting',
+                machineLabelKey: resolveKnownMachineLabelKey(health),
             };
         case 'server_error':
             return {

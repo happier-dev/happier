@@ -1,18 +1,32 @@
 import {
+    REALTIME_CONVERSATION_VOICE_TURN_ORIGIN_V1,
     deriveVoiceAgentTurnLocalId,
     deriveVoiceAgentTurnProvisionalLocalId,
     readVoiceAgentTurnPayloadFromMeta,
     readVoiceAgentTurnProvisionalLocalId,
+    type ConversationTurnOriginV1,
     type VoiceAgentTurnV1,
+    type VoiceTranscriptCanonicalEventV1,
 } from '@happier-dev/protocol';
 
 import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
+import type { PersistSessionTranscriptMessageInput } from '@/sync/domains/messages/persistSessionTranscriptMessage';
 import { storage } from '@/sync/domains/state/storage';
-import type { NormalizedMessage } from '@/sync/typesRaw';
+import type { NormalizedMessage, RawRecord } from '@/sync/typesRaw';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
-import { VOICE_TRANSCRIPT_UNRECONCILED_EVENT_RING_MAX } from './voiceTranscriptBounds';
+import {
+    VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX,
+    VOICE_TRANSCRIPT_UNRECONCILED_EVENT_RING_MAX,
+} from './voiceTranscriptBounds';
 import type { VoiceTranscriptTurn } from './voiceTranscriptEvents';
 import { buildVoiceTranscriptNoteMeta } from './voiceTranscriptNoteMeta';
+import {
+    createCanonicalVoiceTranscriptProjector,
+    deriveCanonicalVoiceTranscriptEntryId,
+    type CanonicalVoiceTranscriptItem,
+} from './canonicalProjector';
+export { deriveCanonicalVoiceTranscriptEntryId } from './canonicalProjector';
 
 type VoiceTranscriptStateLike = Readonly<{
     sessionMessages?: Record<string, Readonly<{ messages?: ReadonlyArray<unknown> }>>;
@@ -22,8 +36,16 @@ type VoiceTranscriptStateLike = Readonly<{
 
 type VoiceTranscriptProjectorDeps = Readonly<{
     getState: () => VoiceTranscriptStateLike;
+    persistFinal?: (input: PersistSessionTranscriptMessageInput) => void | Promise<unknown>;
     nowMs?: () => number;
+    maxCanonicalConversations?: number;
 }>;
+
+type RealtimeConversationTurnSource =
+    NonNullable<Extract<
+        ConversationTurnOriginV1,
+        { channel: 'realtime_conversation' }
+    >['source']>;
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     if (!value || typeof value !== 'object') return null;
@@ -78,6 +100,52 @@ function buildVoiceTurnMeta(turn: VoiceTranscriptTurn | null): NormalizedMessage
             } satisfies VoiceAgentTurnV1,
         },
     };
+}
+
+function buildRealtimeConversationTurnMeta(
+    source?: RealtimeConversationTurnSource,
+): NormalizedMessage['meta'] {
+    return {
+        happier: {
+            kind: 'conversation_turn.v1',
+            payload: { v: 1 },
+            conversationTurnOriginV1: {
+                ...REALTIME_CONVERSATION_VOICE_TURN_ORIGIN_V1,
+                ...(source ? { source } : {}),
+            },
+        },
+    };
+}
+
+function buildRealtimeConversationRawRecord(params: Readonly<{
+    id: string;
+    role: 'user' | 'assistant';
+    text: string;
+    source?: RealtimeConversationTurnSource;
+}>): RawRecord {
+    const meta = buildRealtimeConversationTurnMeta(params.source);
+    return params.role === 'user'
+        ? {
+            role: 'user',
+            content: { type: 'text', text: params.text },
+            meta,
+        }
+        : {
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'assistant',
+                    uuid: params.id,
+                    message: {
+                        role: 'assistant',
+                        content: [{ type: 'text', text: params.text }],
+                        usage: undefined,
+                    },
+                },
+            },
+            meta,
+        };
 }
 
 export function deriveVoiceTranscriptOptimisticId(params: Readonly<{
@@ -179,6 +247,7 @@ function upsertProjectedMessage(
     message: NormalizedMessage,
     text: string,
     turn: VoiceTranscriptTurn | null,
+    replaceExisting: boolean,
 ): UpsertProjectedMessageResult {
     const existingMessages = readStoredSessionMessages(state as any, conversationSessionId);
     const existing = existingMessages.find((candidate: unknown) => {
@@ -191,6 +260,7 @@ function upsertProjectedMessage(
         );
     });
     if (existing) {
+        const existingRecord = readRecord(existing);
         if (messageMatchesProvisionalTurn(existing, conversationSessionId, text, turn)) {
             promoteProvisionalMessage(existing, message);
             return {
@@ -199,6 +269,13 @@ function upsertProjectedMessage(
                 reconciledProvisionalId: readProvisionalRecordId(readRecord(existing)),
             };
         }
+        if (replaceExisting && readProjectedMessageText(existingRecord ?? {}) !== text) {
+            const replacement = typeof existingRecord?.createdAt === 'number' && Number.isFinite(existingRecord.createdAt)
+                ? { ...message, createdAt: existingRecord.createdAt } as NormalizedMessage
+                : message;
+            state.applyMessages?.(conversationSessionId, [replacement]);
+            return { message: replacement, appliedNew: false, reconciledProvisionalId: null };
+        }
         return { message, appliedNew: false, reconciledProvisionalId: null };
     }
     state.applyMessagesLoaded?.(conversationSessionId);
@@ -206,27 +283,49 @@ function upsertProjectedMessage(
     return { message, appliedNew: true, reconciledProvisionalId: null };
 }
 
-/**
- * Truncate `fullText` to the prefix that was actually heard, snapping back to the
- * nearest preceding word boundary so a partially-spoken word is not surfaced.
- */
-export function truncateTextToPlayedBoundary(fullText: string, playedMs: number, spokenDurationMs: number): string {
-    if (!Number.isFinite(spokenDurationMs) || spokenDurationMs <= 0) return fullText;
-    const fraction = playedMs / spokenDurationMs;
-    if (!Number.isFinite(fraction) || fraction >= 1) return fullText;
-    if (fraction <= 0) return '';
-    const cut = Math.floor(fraction * fullText.length);
-    if (cut >= fullText.length) return fullText;
-    if (cut <= 0) return '';
-    const head = fullText.slice(0, cut);
-    const lastBoundary = head.search(/\s+\S*$/);
-    const snapped = lastBoundary > 0 ? head.slice(0, lastBoundary) : head;
-    return snapped.trimEnd();
-}
-
 export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDeps) {
     const nowMs = deps.nowMs ?? (() => Date.now());
+    const maxCanonicalConversations = Number.isFinite(deps.maxCanonicalConversations)
+        ? Math.max(1, Math.floor(deps.maxCanonicalConversations ?? VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX))
+        : VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX;
     let localProjectionSequence = 0;
+    let lastLocalProjectionCreatedAt = Number.NEGATIVE_INFINITY;
+    const pendingCanonicalPersistenceByRow = new Map<string, Promise<void>>();
+
+    const canonicalPersistenceRowKey = (input: Readonly<{
+        sessionId: string;
+        localId: string;
+    }>): string => `${input.sessionId.length}:${input.sessionId}${input.localId}`;
+
+    const persistCanonicalFinal = (input: PersistSessionTranscriptMessageInput): void => {
+        if (!deps.persistFinal) return;
+        const rowKey = canonicalPersistenceRowKey(input);
+        const invoke = (): Promise<void> => {
+            try {
+                return Promise.resolve(deps.persistFinal?.(input)).then(() => undefined);
+            } catch (error) {
+                return Promise.reject(error);
+            }
+        };
+        const previous = pendingCanonicalPersistenceByRow.get(rowKey);
+        const pending = previous
+            ? previous.catch(() => undefined).then(invoke)
+            : invoke();
+        pendingCanonicalPersistenceByRow.set(rowKey, pending);
+        void pending.then(
+            () => {
+                if (pendingCanonicalPersistenceByRow.get(rowKey) === pending) {
+                    pendingCanonicalPersistenceByRow.delete(rowKey);
+                }
+            },
+            () => {
+                if (pendingCanonicalPersistenceByRow.get(rowKey) === pending) {
+                    pendingCanonicalPersistenceByRow.delete(rowKey);
+                }
+            },
+        );
+        fireAndForget(pending, { tag: 'VoiceTranscriptProjector.persistFinal' });
+    };
 
     /**
      * In-memory ring of still-unreconciled (provisional/ephemeral) projection ids.
@@ -256,20 +355,33 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
         text: string;
         role: 'user' | 'assistant' | 'note';
         turn?: VoiceTranscriptTurn | null;
+        canonicalItem?: Pick<
+            CanonicalVoiceTranscriptItem,
+            'attemptIdentity' | 'itemId' | 'revision'
+        > | null;
+        source?: RealtimeConversationTurnSource;
     }>): NormalizedMessage | null => {
         const conversationSessionId = normalizeNonEmptyString(params.conversationSessionId);
         const text = normalizeText(params.text);
         if (!conversationSessionId || !text) return null;
         const turn = params.turn ?? null;
-        const createdAt = turn?.ts ?? nowMs();
+        const createdAt = turn?.ts ?? Math.max(nowMs(), lastLocalProjectionCreatedAt + 1);
+        if (!turn) lastLocalProjectionCreatedAt = createdAt;
         const localSequence = turn ? null : ++localProjectionSequence;
-        const id = deriveVoiceTranscriptOptimisticId({
-            conversationSessionId,
-            role: params.role,
-            text,
-            turn,
-            localSequence,
-        });
+        const canonicalItem = params.canonicalItem ?? null;
+        const id = canonicalItem && params.role !== 'note'
+            ? deriveCanonicalVoiceTranscriptEntryId({
+                attemptIdentity: canonicalItem.attemptIdentity,
+                itemId: canonicalItem.itemId,
+                role: params.role,
+            })
+            : deriveVoiceTranscriptOptimisticId({
+                conversationSessionId,
+                role: params.role,
+                text,
+                turn,
+                localSequence,
+            });
         const message: NormalizedMessage = params.role === 'user'
             ? {
                 id,
@@ -278,7 +390,13 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                 isSidechain: false,
                 role: 'user',
                 content: { type: 'text', text },
-                ...(buildVoiceTurnMeta(turn) ? { meta: buildVoiceTurnMeta(turn) } : {}),
+                ...(
+                    canonicalItem
+                        ? { meta: buildRealtimeConversationTurnMeta(params.source) }
+                        : buildVoiceTurnMeta(turn)
+                            ? { meta: buildVoiceTurnMeta(turn) }
+                            : {}
+                ),
             }
             : {
                 id,
@@ -288,14 +406,38 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                 role: 'agent',
                 content: [{ type: 'text', text, uuid: id, parentUUID: null }],
                 ...(
-                    params.role === 'note'
+                    canonicalItem
+                        ? { meta: buildRealtimeConversationTurnMeta(params.source) }
+                        : params.role === 'note'
                         ? { meta: buildVoiceTranscriptNoteMeta() }
                         : buildVoiceTurnMeta(turn)
                             ? { meta: buildVoiceTurnMeta(turn) }
                             : {}
                 ),
-            };
-        const result = upsertProjectedMessage(deps.getState(), conversationSessionId, message, text, turn);
+        };
+        if (canonicalItem && params.role !== 'note' && deps.persistFinal) {
+            persistCanonicalFinal({
+                sessionId: conversationSessionId,
+                localId: id,
+                createdAt: message.createdAt,
+                rawRecord: buildRealtimeConversationRawRecord({
+                    id,
+                    role: params.role,
+                    text,
+                    source: params.source,
+                }),
+                messageRole: params.role === 'user' ? 'user' : 'agent',
+            });
+            return message;
+        }
+        const result = upsertProjectedMessage(
+            deps.getState(),
+            conversationSessionId,
+            message,
+            text,
+            turn,
+            canonicalItem !== null,
+        );
 
         // Retire any provisional projection that this canonical turn reconciled, and
         // track a freshly applied unreconciled (no-turn) projection in the bounded ring.
@@ -306,6 +448,55 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
         return result.message;
     };
 
+    const EMPTY_CANONICAL_ITEMS: readonly CanonicalVoiceTranscriptItem[] = Object.freeze([]);
+    const canonicalProjectors = new Map<string, ReturnType<typeof createCanonicalVoiceTranscriptProjector>>();
+    const canonicalSnapshots = new Map<string, readonly CanonicalVoiceTranscriptItem[]>();
+    const canonicalListeners = new Map<string, Set<() => void>>();
+    const canonicalSourceByConversation = new Map<string, RealtimeConversationTurnSource>();
+
+    const publishCanonicalSnapshot = (conversationSessionId: string): void => {
+        const projector = canonicalProjectors.get(conversationSessionId);
+        const next = projector?.snapshot() ?? EMPTY_CANONICAL_ITEMS;
+        canonicalSnapshots.set(conversationSessionId, next);
+        for (const listener of canonicalListeners.get(conversationSessionId) ?? []) listener();
+    };
+
+    const evictInactiveCanonicalProjector = (): boolean => {
+        for (const conversationSessionId of canonicalProjectors.keys()) {
+            if ((canonicalListeners.get(conversationSessionId)?.size ?? 0) > 0) continue;
+            canonicalProjectors.delete(conversationSessionId);
+            canonicalSnapshots.delete(conversationSessionId);
+            canonicalSourceByConversation.delete(conversationSessionId);
+            return true;
+        }
+        return false;
+    };
+    const getCanonicalProjector = (conversationSessionId: string) => {
+        const existing = canonicalProjectors.get(conversationSessionId);
+        if (existing) {
+            canonicalProjectors.delete(conversationSessionId);
+            canonicalProjectors.set(conversationSessionId, existing);
+            return existing;
+        }
+        const created = createCanonicalVoiceTranscriptProjector({
+            persistFinal: (item) => {
+                projectTextMessage({
+                    conversationSessionId,
+                    text: item.text,
+                    role: item.role,
+                    canonicalItem: item,
+                    source: canonicalSourceByConversation.get(conversationSessionId),
+                });
+            },
+        });
+        canonicalProjectors.set(conversationSessionId, created);
+        canonicalSnapshots.set(conversationSessionId, EMPTY_CANONICAL_ITEMS);
+        while (canonicalProjectors.size > maxCanonicalConversations) {
+            if (!evictInactiveCanonicalProjector()) break;
+        }
+        return created;
+    };
+
     return {
         projectUserText: (params: Readonly<{ conversationSessionId: string; text: string; turn?: VoiceTranscriptTurn | null }>) =>
             projectTextMessage({ ...params, role: 'user' }),
@@ -313,21 +504,73 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
             projectTextMessage({ ...params, role: 'assistant' }),
         projectNoteText: (params: Readonly<{ conversationSessionId: string; text: string }>) =>
             projectTextMessage({ ...params, role: 'note' }),
+        projectCanonicalEvent: (params: Readonly<{
+            conversationSessionId: string;
+            event: VoiceTranscriptCanonicalEventV1;
+            source?: RealtimeConversationTurnSource;
+        }>) => {
+            if (params.source) {
+                canonicalSourceByConversation.set(params.conversationSessionId, params.source);
+            } else {
+                canonicalSourceByConversation.delete(params.conversationSessionId);
+            }
+            const result = getCanonicalProjector(params.conversationSessionId).project(params.event);
+            if (result.status === 'applied') publishCanonicalSnapshot(params.conversationSessionId);
+            return result;
+        },
+        beginCanonicalAttempt: (conversationSessionId: string): number => {
+            const epoch = getCanonicalProjector(conversationSessionId).beginAttempt();
+            publishCanonicalSnapshot(conversationSessionId);
+            return epoch;
+        },
+        resetCanonicalEpoch: (conversationSessionId: string, epoch: number): boolean => {
+            const reset = getCanonicalProjector(conversationSessionId).resetEpoch(epoch);
+            if (reset) {
+                publishCanonicalSnapshot(conversationSessionId);
+            }
+            return reset;
+        },
+        releaseCanonicalConversation: (conversationSessionId: string): void => {
+            const listeners = canonicalListeners.get(conversationSessionId);
+            canonicalProjectors.delete(conversationSessionId);
+            canonicalSnapshots.delete(conversationSessionId);
+            canonicalListeners.delete(conversationSessionId);
+            canonicalSourceByConversation.delete(conversationSessionId);
+            for (const listener of listeners ?? []) listener();
+        },
+        canonicalSnapshot: (conversationSessionId: string): readonly CanonicalVoiceTranscriptItem[] => {
+            const existing = canonicalProjectors.get(conversationSessionId);
+            if (!existing) return EMPTY_CANONICAL_ITEMS;
+            canonicalProjectors.delete(conversationSessionId);
+            canonicalProjectors.set(conversationSessionId, existing);
+            return canonicalSnapshots.get(conversationSessionId) ?? EMPTY_CANONICAL_ITEMS;
+        },
+        subscribeCanonical: (conversationSessionId: string, listener: () => void): (() => void) => {
+            let listeners = canonicalListeners.get(conversationSessionId);
+            if (!listeners) {
+                listeners = new Set();
+                canonicalListeners.set(conversationSessionId, listeners);
+            }
+            listeners.add(listener);
+            return () => {
+                const current = canonicalListeners.get(conversationSessionId);
+                current?.delete(listener);
+                if (current?.size === 0) canonicalListeners.delete(conversationSessionId);
+            };
+        },
+        canonicalProjectorCount: (): number => canonicalProjectors.size,
         /**
          * Count of still-unreconciled in-memory projections (bounded by
          * {@link VOICE_TRANSCRIPT_UNRECONCILED_EVENT_RING_MAX}). Exposed for the
          * perf-bound regression test and ring observability.
          */
         unreconciledProjectionCount: (): number => unreconciledProjectionIds.length,
-        /**
-         * Truncate assistant transcript text to the prefix that was actually heard.
-         * Method-only hook: barge-in wires this to the real `playedMs` later.
-         */
-        truncateToPlayedBoundary: (params: Readonly<{ fullText: string; playedMs: number; spokenDurationMs: number }>): string =>
-            truncateTextToPlayedBoundary(params.fullText, params.playedMs, params.spokenDurationMs),
     };
 }
 
 export const voiceTranscriptProjector = createVoiceTranscriptProjector({
     getState: () => storage.getState() as VoiceTranscriptStateLike,
+    persistFinal: (input) => import('@/sync/sync')
+        .then(({ sync }) => sync.persistSessionTranscriptMessage(input))
+        .then(() => undefined),
 });

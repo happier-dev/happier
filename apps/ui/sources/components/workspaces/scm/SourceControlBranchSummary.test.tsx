@@ -95,6 +95,28 @@ describe('SourceControlBranchSummary', () => {
         expect(branchTriggers).toHaveLength(1);
     });
 
+    it('renders the projected backend identity in the accessible branch summary', async () => {
+        const { SourceControlBranchSummary } = await import('./SourceControlBranchSummary');
+
+        const screen = await renderScreen(<SourceControlBranchSummary
+            variant="rail"
+            theme={buildBranchSummaryTheme()}
+            backendLabel="Acme Stacked SCM"
+            scmStatusFiles={{
+                branch: 'dev',
+                includedFiles: [],
+                pendingFiles: [],
+                totalIncluded: 0,
+                totalPending: 0,
+            }}
+        />);
+
+        const backendLabel = screen.findByTestId('scm-backend-label');
+        expect(backendLabel).not.toBeNull();
+        expect(backendLabel?.props.children).toBe('Acme Stacked SCM');
+        expect(backendLabel?.props.accessibilityRole).toBe('text');
+    });
+
     it('renders branch and staged/unstaged summary', async () => {
         const { SourceControlBranchSummary } = await import('./SourceControlBranchSummary');
 

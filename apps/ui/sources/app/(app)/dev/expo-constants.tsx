@@ -8,8 +8,10 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Typography } from '@/constants/Typography';
-import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import { config } from '@/config';
 import { resolveExpoReleaseChannel } from '@/sync/runtime/appVariant';
@@ -22,14 +24,15 @@ interface JsonViewerProps {
 
 function JsonViewer({ title, data, defaultExpanded = false }: JsonViewerProps) {
     const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+    const copyFeedback = useTemporaryCopyFeedback();
     
     const handleCopy = async () => {
-        try {
-            await Clipboard.setStringAsync(JSON.stringify(data, null, 2));
-            Modal.alert('Copied', 'JSON data copied to clipboard');
-        } catch (error) {
+        const copied = await setClipboardStringSafe(JSON.stringify(data, null, 2));
+        if (!copied) {
             Modal.alert('Error', 'Failed to copy to clipboard');
+            return;
         }
+        copyFeedback.markCopied('json');
     };
     
     if (!data) {
@@ -68,7 +71,11 @@ function JsonViewer({ title, data, defaultExpanded = false }: JsonViewerProps) {
                     hitSlop={10}
                     style={{ padding: 4 }}
                 >
-                    <Ionicons name="copy-outline" size={20} color="#007AFF" />
+                    {copyFeedback.isCopied('json') ? (
+                        <CopiedPill visible testID={`dev-expo-constants-copy-feedback:${title}`} />
+                    ) : (
+                        <Ionicons name="copy-outline" size={20} color="#007AFF" />
+                    )}
                 </Pressable>
             </Pressable>
             

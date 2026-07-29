@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 
 import { buildAccountSettingsSnapshot } from './buildAccountSettingsSnapshot';
 
 describe('buildAccountSettingsSnapshot', () => {
     it('tracks transcript and tool presentation settings from the canonical account registry', () => {
-        const snapshot = buildAccountSettingsSnapshot({
+        const snapshot = buildAccountSettingsSnapshot(settingsParse({
             ...settingsDefaults,
             toolViewDetailLevelDefault: 'compact',
             toolViewDetailLevelDefaultLocalControl: 'full',
@@ -32,7 +32,7 @@ describe('buildAccountSettingsSnapshot', () => {
             transcriptScrollJumpToBottomEnabled: false,
             transcriptScrollJumpToBottomAnimateScroll: false,
             permissionPromptSurface: 'both',
-        });
+        }));
 
         expect(snapshot.properties.acct_setting__toolViewDetailLevelDefault).toBe('compact');
         expect(snapshot.properties.acct_setting__toolViewDetailLevelDefaultLocalControl).toBe('full');
@@ -45,7 +45,7 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__transcriptToolCallsGroupShowBackground).toBe(false);
         expect(snapshot.properties.acct_setting__transcriptMessageTimestampDisplayMode).toBe('always');
         expect(snapshot.properties.acct_setting__transcriptStreamingCoalesceEnabled).toBe(false);
-        expect(snapshot.properties.acct_setting__transcriptListImplementation).toBe('flatlist_legacy');
+        expect(snapshot.properties.acct_setting__transcriptListImplementation).toBeUndefined();
         expect(snapshot.properties.acct_setting__toolViewTimelineChromeMode).toBe('cards');
         expect(snapshot.properties.acct_setting__toolViewTimelineFeedDefaultExpanded).toBe(true);
         expect(snapshot.properties.acct_setting__transcriptMotionPreset).toBe('full');

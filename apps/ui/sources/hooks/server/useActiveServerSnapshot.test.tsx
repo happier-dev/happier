@@ -60,4 +60,36 @@ describe('useActiveServerSnapshot', () => {
 
         expect(hook.getCurrent().serverUrl).toBe('http://api.other.test');
     });
+
+    it('does not subscribe or read the active server while disabled', async () => {
+        getActiveServerSnapshotMock.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'http://api.example.test',
+            generation: 1,
+        });
+        const unsubscribe = vi.fn();
+        subscribeActiveServerMock.mockReturnValue(unsubscribe);
+
+        const { useActiveServerSnapshot } = await import('./useActiveServerSnapshot');
+        const hook = await renderHook(
+            (enabled: boolean) => useActiveServerSnapshot(enabled),
+            { initialProps: false },
+        );
+
+        expect(hook.getCurrent().serverId).toBe('');
+        expect(getActiveServerSnapshotMock).not.toHaveBeenCalled();
+        expect(subscribeActiveServerMock).not.toHaveBeenCalled();
+
+        await hook.rerender(true);
+
+        expect(hook.getCurrent().serverId).toBe('server-a');
+        expect(subscribeActiveServerMock).toHaveBeenCalledTimes(1);
+
+        await hook.rerender(false);
+
+        expect(unsubscribe).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().serverId).toBe('');
+        await hook.unmount();
+        expect(unsubscribe).toHaveBeenCalledTimes(1);
+    });
 });

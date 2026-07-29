@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 type TestState = {
     settings: any;
@@ -167,8 +168,19 @@ vi.mock('@/sync/domains/reviews/comments/api', () => ({
 }));
 
 vi.mock('@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides', () => ({
+    BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Object.freeze({}),
     BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES: Object.freeze({}),
 }));
+
+async function getSessionRpcWithServerScopeMock() {
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    return vi.mocked(sessionRpcWithServerScope);
+}
+
+async function getSendSessionMessageWithServerScopeMock() {
+    const { sendSessionMessageWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage');
+    return vi.mocked(sendSessionMessageWithServerScope);
+}
 
 describe('createDefaultActionExecutor approvals', () => {
     beforeEach(() => {
@@ -225,6 +237,102 @@ describe('createDefaultActionExecutor approvals', () => {
             'reviews.comments.list',
             { projectId: 'project-1', states: ['open'], includeHistory: false, limit: 50 },
         );
+    });
+
+    it('routes permission responses through the canonical session permission RPC method', async () => {
+        const sessionRpcWithServerScope = await getSessionRpcWithServerScopeMock();
+        sessionRpcWithServerScope.mockReset();
+        sessionRpcWithServerScope.mockResolvedValueOnce({ ok: false, errorCode: 'permission_request_not_found' });
+
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const executor = createDefaultActionExecutor({
+            resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'srv-main' : null,
+        });
+
+        const res = await executor.execute(
+            'session.permission.respond' as any,
+            { sessionId: 's1', requestId: 'req-1', decision: 'deny' },
+            { surface: 'ui' },
+        );
+
+        expect(res).toEqual({
+            ok: false,
+            errorCode: 'permission_request_not_found',
+            error: 'permission_request_not_found',
+        });
+        expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
+            sessionId: 's1',
+            serverId: 'srv-main',
+            method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
+            payload: { id: 'req-1', approved: false },
+        });
+    });
+
+    it('routes user-action answers through the canonical session user-action RPC method', async () => {
+        const sessionRpcWithServerScope = await getSessionRpcWithServerScopeMock();
+        sessionRpcWithServerScope.mockReset();
+        sessionRpcWithServerScope.mockResolvedValueOnce({ ok: true, status: 'accepted' });
+
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const executor = createDefaultActionExecutor({
+            resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'srv-main' : null,
+        });
+
+        const res = await executor.execute(
+            'session.user_action.answer' as any,
+            {
+                sessionId: 's1',
+                requestId: 'user-action-1',
+                decision: 'approve',
+                answers: [{
+                    question: 'Where should this run?',
+                    values: ['Washington, D.C.', 'Virginia', 'A custom, exact answer'],
+                }],
+                reason: ' approved from UI ',
+                updatedPermissions: { allowedTools: ['shell'] },
+            },
+            { surface: 'ui' },
+        );
+
+        expect(res).toEqual({ ok: true, result: { ok: true, status: 'accepted' } });
+        expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
+            sessionId: 's1',
+            serverId: 'srv-main',
+            method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
+            payload: {
+                id: 'user-action-1',
+                approved: true,
+                answers: {
+                    'Where should this run?': ['Washington, D.C.', 'Virginia', 'A custom, exact answer'],
+                },
+                reason: 'approved from UI',
+                updatedPermissions: { allowedTools: ['shell'] },
+            },
+        });
+    });
+
+    it('routes session.message.send through the active readiness barrier', async () => {
+        const sendSessionMessageWithServerScope = await getSendSessionMessageWithServerScopeMock();
+        sendSessionMessageWithServerScope.mockReset();
+        sendSessionMessageWithServerScope.mockResolvedValueOnce({ ok: true });
+
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const executor = createDefaultActionExecutor({
+            resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'srv-main' : null,
+        });
+
+        const res = await executor.execute(
+            'session.message.send' as any,
+            { sessionId: 's1', message: 'Hello from action' },
+            { surface: 'ui' },
+        );
+
+        expect(res).toEqual({ ok: true, result: { ok: true } });
+        expect(sendSessionMessageWithServerScope).toHaveBeenCalledWith({
+            sessionId: 's1',
+            message: 'Hello from action',
+            serverId: 'srv-main',
+        });
     });
 
     it('executes approved session.title.set requests when the approval was created from the MCP surface', async () => {

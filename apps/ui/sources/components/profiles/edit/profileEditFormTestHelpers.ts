@@ -137,6 +137,7 @@ export function installProfileEditFormModuleMocks(
     vi.mock('@/components/ui/lists/ItemGroup', () => ({
         ItemGroup: ({ children }: { children?: React.ReactNode }) =>
             React.createElement(React.Fragment, null, children),
+        ItemGroupSelectionContext: React.createContext<{ selectableItemCount: number } | null>(null),
     }));
 
     vi.mock('@/components/ui/forms/Switch', () => ({

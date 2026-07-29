@@ -1,11 +1,11 @@
 import React from 'react';
-import { Platform } from 'react-native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
 import { useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { SecretRequirementScreen, type SecretRequirementModalResult } from '@/components/secrets/requirements';
+import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
 import { PopoverScope } from '@/components/ui/popover';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
@@ -15,6 +15,7 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
+import { useNewSessionSecretRequirementRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 
 type SecretRequirementRoutePayload = Readonly<{
     profileId: string;
@@ -64,7 +65,7 @@ export default React.memo(function SecretRequirementPickerScreen() {
     const revertOnCancel = params.revertOnCancel === '1';
 
     const profiles = useSetting('profiles');
-    const [secrets, setSecrets] = useSettingMutable('secrets');
+    const [secrets, setSecrets] = useSavedSecretsMutable();
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
     const settings = useSettings() ?? settingsDefaults;
 
@@ -105,13 +106,14 @@ export default React.memo(function SecretRequirementPickerScreen() {
         settings.lastUsedAgent,
         settings.lastUsedBackendTarget,
     ]);
+    const presentation = useNewSessionSecretRequirementRoutePresentation();
 
     const screenOptions = React.useMemo(() => {
         return {
             headerShown: false,
-            presentation: Platform.OS === 'ios' ? 'containedTransparentModal' : undefined,
+            presentation,
         } as const;
-    }, []);
+    }, [presentation]);
 
     const didSendResultRef = React.useRef(false);
 

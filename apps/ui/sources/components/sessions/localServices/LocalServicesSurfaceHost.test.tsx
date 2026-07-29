@@ -50,6 +50,9 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
 
 vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
     useAppShellPluginUiProjection: () => pluginProjectionState.appShell,
+}));
+
+vi.mock('@/components/plugins/projection/useScopedPluginUiProjection', () => ({
     useScopedPluginUiProjection: () => pluginProjectionState.scoped,
 }));
 

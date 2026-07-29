@@ -1,13 +1,13 @@
 import { buildMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import type { SessionMessageHistoryRemoteRow } from '@/sync/engine/sessions/fetchUserMessageHistoryPage';
 
-import { deriveTranscriptNavigationEntries } from './deriveTranscriptNavigationEntries';
+import { buildUserEntry, deriveTranscriptNavigationEntries } from './deriveTranscriptNavigationEntries';
 import { normalizeTranscriptNavigationTextPreview } from './transcriptNavigationTextPreview';
 import type {
     DeriveTranscriptNavigationEntriesParams,
     TranscriptNavigationEntry,
     TranscriptNavigationLoadedMessage,
-    TranscriptNavigationLoadedMessageDerivationFacts,
     TranscriptNavigationRole,
 } from './transcriptNavigationTypes';
 
@@ -24,7 +24,8 @@ function textForMessage(message: Message): string | null {
         return message.displayText ?? message.text;
     }
     if (message.kind === 'agent-text') {
-        return message.text;
+        // Thinking is never a reply preview: it is provider reasoning, not what the agent said.
+        return message.isThinking === true ? null : message.text;
     }
     if (message.kind === 'tool-call') {
         return message.tool.description ?? message.tool.name;
@@ -41,45 +42,74 @@ function normalizeSessionId(value: string): string {
     return value.trim();
 }
 
-function buildDerivationFacts(
-    sessionId: string,
-    row: Readonly<{
-        routeMessageId: string | null;
-        seq: number | null;
-        transcriptBlockIndex: number | null;
-        role: TranscriptNavigationRole;
-        text: string | null;
-        createdAtMs: number | null;
-    }>,
-): TranscriptNavigationLoadedMessageDerivationFacts {
+function buildLoadedMessageRow(sessionId: string, message: Message): TranscriptNavigationLoadedMessage {
     return {
         sessionId: normalizeSessionId(sessionId),
-        routeMessageId: normalizeTranscriptNavigationTextPreview(row.routeMessageId),
-        seq: row.seq,
-        transcriptBlockIndex: row.transcriptBlockIndex,
-        role: row.role,
-        textPreview: normalizeTranscriptNavigationTextPreview(row.text),
-        createdAtMs: row.createdAtMs,
-    };
-}
-
-function buildLoadedMessageRow(sessionId: string, message: Message): TranscriptNavigationLoadedMessage {
-    const routeMessageId = buildMessageRouteId(message);
-    const row = {
-        sessionId,
         messageId: message.id,
-        routeMessageId,
+        routeMessageId: normalizeTranscriptNavigationTextPreview(buildMessageRouteId(message)),
         seq: normalizeFiniteInteger(message.seq),
         transcriptBlockIndex: normalizeFiniteInteger(message.transcriptBlockIndex),
         role: roleForMessage(message),
-        text: textForMessage(message),
+        text: normalizeTranscriptNavigationTextPreview(textForMessage(message)),
         createdAtMs: normalizeFiniteInteger(message.createdAt),
         loaded: true,
+        preNormalized: true,
     };
-    return {
-        ...row,
-        derivationFacts: buildDerivationFacts(sessionId, row),
-    };
+}
+
+/**
+ * Cursor for the remote history page: the oldest seq the transcript window already holds. Rows
+ * below it are the ones navigation is missing, whatever their role.
+ */
+export function resolveTranscriptNavigationRemoteHistoryBeforeSeq(
+    loadedMessages: readonly TranscriptNavigationLoadedMessage[],
+): number | null {
+    let earliestSeq: number | null = null;
+    for (const message of loadedMessages) {
+        const seq = normalizeFiniteInteger(message.seq);
+        if (seq === null || seq < 0) continue;
+        earliestSeq = earliestSeq === null ? seq : Math.min(earliestSeq, seq);
+    }
+    return earliestSeq;
+}
+
+function remoteRoleForRow(row: SessionMessageHistoryRemoteRow): TranscriptNavigationRole {
+    if (row.role === 'user') return 'user';
+    if (row.role === 'assistant') return 'assistant';
+    return 'tool';
+}
+
+/**
+ * Remote history rows are ordinary transcript rows that the loaded window does not currently
+ * hold. They go through the same normalization and the same pairing pass as loaded rows, so a
+ * turn outside the window gets the same prompt/response previews as one inside it.
+ */
+export function buildTranscriptNavigationRemoteMessages(params: Readonly<{
+    sessionId: string;
+    rows: readonly SessionMessageHistoryRemoteRow[];
+}>): TranscriptNavigationLoadedMessage[] {
+    const sessionId = normalizeSessionId(params.sessionId);
+    if (!sessionId) return [];
+
+    const messages: TranscriptNavigationLoadedMessage[] = [];
+    for (const row of params.rows) {
+        const seq = normalizeFiniteInteger(row.seq);
+        const text = normalizeTranscriptNavigationTextPreview(row.text);
+        if (seq === null || !text) continue;
+        messages.push({
+            sessionId,
+            messageId: row.messageId,
+            routeMessageId: normalizeTranscriptNavigationTextPreview(row.routeMessageId),
+            seq,
+            transcriptBlockIndex: null,
+            role: remoteRoleForRow(row),
+            text,
+            createdAtMs: normalizeFiniteInteger(row.createdAt),
+            loaded: false,
+            preNormalized: true,
+        });
+    }
+    return messages;
 }
 
 export type TranscriptNavigationLoadedMessagesCache = {
@@ -95,7 +125,7 @@ export type TranscriptNavigationLoadedMessagesCache = {
         readonly sessionId: string;
         readonly mode: DeriveTranscriptNavigationEntriesParams['mode'];
         readonly loadedMessages: readonly TranscriptNavigationLoadedMessage[];
-        readonly remoteUserTurns: DeriveTranscriptNavigationEntriesParams['remoteUserTurns'];
+        readonly remoteMessages: DeriveTranscriptNavigationEntriesParams['remoteMessages'];
         readonly pins: DeriveTranscriptNavigationEntriesParams['pins'];
         readonly entries: TranscriptNavigationEntry[];
     } | null;
@@ -172,7 +202,7 @@ export function deriveTranscriptNavigationEntriesWithLoadedMessageCache(
         && cachedDerivation.sessionId === params.sessionId
         && cachedDerivation.mode === params.mode
         && cachedDerivation.loadedMessages === params.loadedMessages
-        && cachedDerivation.remoteUserTurns === params.remoteUserTurns
+        && cachedDerivation.remoteMessages === params.remoteMessages
         && cachedDerivation.pins === params.pins
     ) {
         return cachedDerivation.entries;
@@ -185,7 +215,7 @@ export function deriveTranscriptNavigationEntriesWithLoadedMessageCache(
             sessionId: params.sessionId,
             mode: params.mode,
             loadedMessages: params.loadedMessages,
-            remoteUserTurns: params.remoteUserTurns,
+            remoteMessages: params.remoteMessages,
             pins: params.pins,
             entries: appendEntries,
         };
@@ -196,7 +226,7 @@ export function deriveTranscriptNavigationEntriesWithLoadedMessageCache(
         sessionId: params.sessionId,
         mode: params.mode,
         loadedMessages: params.loadedMessages,
-        remoteUserTurns: params.remoteUserTurns,
+        remoteMessages: params.remoteMessages,
         pins: params.pins,
         previousEntries: params.cache.previousEntries,
     });
@@ -205,7 +235,7 @@ export function deriveTranscriptNavigationEntriesWithLoadedMessageCache(
         sessionId: params.sessionId,
         mode: params.mode,
         loadedMessages: params.loadedMessages,
-        remoteUserTurns: params.remoteUserTurns,
+        remoteMessages: params.remoteMessages,
         pins: params.pins,
         entries,
     };
@@ -232,21 +262,27 @@ function deriveSingleAppendedUserTurnEntries(
     if (!cachedDerivation) return null;
     if (cachedDerivation.sessionId !== params.sessionId) return null;
     if (cachedDerivation.mode !== 'all' || params.mode !== 'all') return null;
-    if (cachedDerivation.remoteUserTurns !== params.remoteUserTurns) return null;
+    if (cachedDerivation.remoteMessages !== params.remoteMessages) return null;
     if (cachedDerivation.pins !== params.pins) return null;
-    if (params.remoteUserTurns.length > 0) return null;
     if (!loadedMessagePrefixMatches(cachedDerivation.loadedMessages, params.loadedMessages)) return null;
 
     const appendedMessage = params.loadedMessages[params.loadedMessages.length - 1];
     if (!appendedMessage || appendedMessage.role !== 'user') return null;
-    const facts = appendedMessage.derivationFacts;
     const sessionId = params.sessionId.trim();
-    const seq = facts?.seq ?? normalizeFiniteInteger(appendedMessage.seq);
-    const promptPreview = facts?.textPreview ?? normalizeTranscriptNavigationTextPreview(appendedMessage.text);
+    const seq = normalizeFiniteInteger(appendedMessage.seq);
+    const promptPreview = appendedMessage.preNormalized === true
+        ? appendedMessage.text
+        : normalizeTranscriptNavigationTextPreview(appendedMessage.text);
     if (!sessionId || seq === null || !promptPreview) return null;
     if (params.pins.some((pin) => {
         const pinSeq = normalizeFiniteInteger(pin.seq);
         return pinSeq !== null && pinSeq >= seq;
+    })) return null;
+    // Remote history rows are strictly older than the loaded window, but one at or above the
+    // appended seq would join the new turn during a full derivation, so fall back in that case.
+    if (params.remoteMessages.some((message) => {
+        const remoteSeq = normalizeFiniteInteger(message.seq);
+        return remoteSeq !== null && remoteSeq >= seq;
     })) return null;
 
     const previousEntries = cachedDerivation.entries;
@@ -256,23 +292,20 @@ function deriveSingleAppendedUserTurnEntries(
     }, null);
     if (previousMaxSeq !== null && seq < previousMaxSeq) return null;
 
-    return [
-        ...previousEntries,
-        {
-            id: `${sessionId}:user-turn:${seq}`,
-            sessionId,
-            seq,
-            routeMessageId: facts?.routeMessageId ?? normalizeTranscriptNavigationTextPreview(appendedMessage.routeMessageId),
-            transcriptBlockIndex: facts?.transcriptBlockIndex ?? normalizeFiniteInteger(appendedMessage.transcriptBlockIndex),
-            kind: 'user-turn',
-            role: 'user',
-            label: promptPreview,
-            promptPreview,
-            responsePreview: null,
-            createdAtMs: facts?.createdAtMs ?? normalizeFiniteInteger(appendedMessage.createdAtMs),
-            pinned: false,
-            pinnedAtMs: null,
-            loaded: appendedMessage.loaded !== false,
-        },
-    ];
+    const appendedEntry = buildUserEntry({
+        sessionId,
+        seq,
+        routeMessageId: appendedMessage.preNormalized === true
+            ? appendedMessage.routeMessageId
+            : normalizeTranscriptNavigationTextPreview(appendedMessage.routeMessageId),
+        promptPreview,
+        responsePreview: null,
+        createdAtMs: normalizeFiniteInteger(appendedMessage.createdAtMs),
+        loaded: appendedMessage.loaded !== false,
+        blockOrder: 0,
+        transcriptBlockIndex: normalizeFiniteInteger(appendedMessage.transcriptBlockIndex),
+    }, 'all', null);
+    if (!appendedEntry) return null;
+
+    return [...previousEntries, appendedEntry.entry];
 }

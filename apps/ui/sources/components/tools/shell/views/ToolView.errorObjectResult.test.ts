@@ -5,6 +5,7 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,13 +39,13 @@ installToolShellCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'toolViewDetailLevelDefault') return 'summary';
                     if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
                     if (key === 'toolViewDetailLevelByToolName') return {};
                     if (key === 'toolViewShowDebugByDefault') return false;
                     return null;
-                },
+                } }),
             },
         });
     },

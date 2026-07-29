@@ -69,7 +69,20 @@ describe('SessionRightPanelGitCommitTab (keyboard inset)', () => {
         const { SessionRightPanelGitCommitTab } = await import('./SessionRightPanelGitCommitTab');
 
         const screen = await renderScreen(<SessionRightPanelGitCommitTab
-            theme={{ colors: { divider: '#ddd', surface: '#fff', surfaceHigh: '#f6f6f6', text: '#000', textSecondary: '#666', success: '#0a0', warning: '#f90', textLink: '#09f', danger: '#c00' } }}
+            theme={{
+                colors: {
+                    border: { default: '#ddd' },
+                    divider: '#ddd',
+                    surface: { base: '#fff', inset: '#f6f6f6' },
+                    surfaceHigh: '#f6f6f6',
+                    text: { primary: '#000', secondary: '#666' },
+                    textSecondary: '#666',
+                    success: '#0a0',
+                    warning: '#f90',
+                    textLink: '#09f',
+                    danger: '#c00',
+                },
+            }}
             sessionId="s1"
             sessionPath="/workspace"
             backendLabel="Git"

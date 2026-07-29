@@ -1,5 +1,15 @@
+import type {
+    ConversationTurnOriginV1,
+    VoiceTranscriptCanonicalEventV1,
+} from '@happier-dev/protocol';
+
 import { voiceTranscriptProjector as projector } from './VoiceTranscriptProjector';
-import type { VoiceTranscriptEvent, VoiceTranscriptTurn } from './voiceTranscriptEvents';
+export { deriveCanonicalVoiceTranscriptEntryId } from './VoiceTranscriptProjector';
+import type {
+    CanonicalVoiceTranscriptItem,
+    CanonicalVoiceTranscriptProjectionResult,
+} from './canonicalProjector';
+import type { VoiceTranscriptTurn } from './voiceTranscriptEvents';
 
 export type { VoiceTranscriptEvent, VoiceTranscriptTurn } from './voiceTranscriptEvents';
 
@@ -7,54 +17,6 @@ function normalizeText(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
-}
-
-function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    return value as Readonly<Record<string, unknown>>;
-}
-
-function readGenericRole(payload: Readonly<Record<string, unknown>>): 'user' | 'agent' | null {
-    const source = normalizeText(payload.source)?.toLowerCase();
-    const role = normalizeText(payload.role)?.toLowerCase();
-
-    if (source === 'user' || role === 'user') return 'user';
-    if (source === 'ai' || source === 'agent' || role === 'assistant' || role === 'agent') return 'agent';
-    return null;
-}
-
-function readNumber(value: unknown): number | null {
-    const numeric = typeof value === 'number' ? value : Number(value);
-    return Number.isFinite(numeric) ? numeric : null;
-}
-
-function readTurnRole(value: unknown): VoiceTranscriptTurn['role'] | null {
-    return value === 'user' || value === 'assistant' ? value : null;
-}
-
-function readVoiceTranscriptTurn(payload: Readonly<Record<string, unknown>>): VoiceTranscriptTurn | null {
-    const rawTurn = readRecord(payload.turn);
-    if (!rawTurn) return null;
-
-    const epoch = readNumber(rawTurn.epoch);
-    const ts = readNumber(rawTurn.ts);
-    const role = readTurnRole(rawTurn.role);
-    const voiceAgentId = normalizeText(rawTurn.voiceAgentId);
-    if (epoch === null || ts === null || !role || !voiceAgentId) return null;
-
-    return {
-        epoch,
-        role,
-        ts,
-        voiceAgentId,
-        runId: normalizeText(rawTurn.runId) ?? normalizeText(payload.runId),
-        streamId: normalizeText(rawTurn.streamId) ?? normalizeText(payload.streamId),
-        requestId: normalizeText(rawTurn.requestId) ?? normalizeText(payload.requestId),
-    };
-}
-
-function readVoiceTranscriptEvent(value: unknown): VoiceTranscriptEvent | null {
-    return readRecord(value) as VoiceTranscriptEvent | null;
 }
 
 export function appendVoiceConversationUserText(params: Readonly<{
@@ -69,8 +31,9 @@ export function appendVoiceConversationAssistantText(params: Readonly<{
     conversationSessionId: string;
     text: string;
     turn?: VoiceTranscriptTurn | null;
-}>): void {
-    projector.projectAssistantText(params);
+}>): string | null {
+    const message = projector.projectAssistantText(params);
+    return message?.id ?? message?.localId ?? null;
 }
 
 export function appendVoiceConversationNoteText(params: Readonly<{
@@ -80,78 +43,57 @@ export function appendVoiceConversationNoteText(params: Readonly<{
     projector.projectNoteText(params);
 }
 
-export function projectRealtimeVoiceTranscriptEvent(params: Readonly<{
-    conversationSessionId: string | null;
-    payload: unknown;
-}>): void {
+export function projectCanonicalVoiceTranscriptEvent(params: Readonly<{
+    conversationSessionId: string;
+    event: VoiceTranscriptCanonicalEventV1;
+    source?: NonNullable<Extract<
+        ConversationTurnOriginV1,
+        { channel: 'realtime_conversation' }
+    >['source']>;
+}>): CanonicalVoiceTranscriptProjectionResult | null {
     const conversationSessionId = normalizeText(params.conversationSessionId);
+    if (!conversationSessionId) return null;
+    return projector.projectCanonicalEvent({
+        conversationSessionId,
+        event: params.event,
+        ...(params.source ? { source: params.source } : {}),
+    });
+}
+
+export function beginCanonicalVoiceTranscriptAttempt(params: Readonly<{
+    conversationSessionId: string;
+}>): number | null {
+    const conversationSessionId = normalizeText(params.conversationSessionId);
+    return conversationSessionId ? projector.beginCanonicalAttempt(conversationSessionId) : null;
+}
+
+export function resetCanonicalVoiceTranscriptEpoch(params: Readonly<{
+    conversationSessionId: string;
+    epoch: number;
+}>): boolean {
+    const conversationSessionId = normalizeText(params.conversationSessionId);
+    return conversationSessionId ? projector.resetCanonicalEpoch(conversationSessionId, params.epoch) : false;
+}
+
+export function releaseCanonicalVoiceTranscriptConversation(
+    conversationSessionIdValue: string,
+): void {
+    const conversationSessionId = normalizeText(conversationSessionIdValue);
     if (!conversationSessionId) return;
-    const payload = readVoiceTranscriptEvent(params.payload);
-    if (!payload) return;
-    const payloadRecord = payload as Readonly<Record<string, unknown>>;
-    const payloadType = normalizeText(payloadRecord.type);
-    const turn = readVoiceTranscriptTurn(payloadRecord);
+    projector.releaseCanonicalConversation(conversationSessionId);
+}
 
-    if (payloadType === 'user_transcript') {
-        const userTranscriptionEvent = readRecord(payloadRecord.user_transcription_event);
-        const text = normalizeText(userTranscriptionEvent?.user_transcript ?? payloadRecord.user_transcript ?? payloadRecord.transcript);
-        if (!text) return;
-        appendVoiceConversationUserText({ conversationSessionId, text, turn });
-        return;
-    }
+export function readCanonicalVoiceTranscriptSnapshot(
+    conversationSessionIdValue: string,
+): readonly CanonicalVoiceTranscriptItem[] {
+    const conversationSessionId = normalizeText(conversationSessionIdValue);
+    return conversationSessionId ? projector.canonicalSnapshot(conversationSessionId) : [];
+}
 
-    if (payloadType === 'agent_response') {
-        const agentResponseEvent = readRecord(payloadRecord.agent_response_event);
-        const text = normalizeText(agentResponseEvent?.agent_response ?? payloadRecord.agent_response ?? payloadRecord.transcript);
-        if (!text) return;
-        appendVoiceConversationAssistantText({ conversationSessionId, text, turn });
-        return;
-    }
-
-    if (payloadType === 'agent_response_correction') {
-        const correctionEvent = readRecord(payloadRecord.agent_response_correction_event);
-        const text = normalizeText(
-            correctionEvent?.corrected_agent_response ?? payloadRecord.corrected_agent_response,
-        );
-        if (!text) return;
-        appendVoiceConversationNoteText({
-            conversationSessionId,
-            text: `Agent response corrected: ${text}`,
-        });
-        return;
-    }
-
-    if (payloadType === 'client_tool_call') {
-        const toolCall = readRecord(payloadRecord.client_tool_call);
-        const toolName = normalizeText(toolCall?.tool_name ?? payloadRecord.tool_name);
-        if (!toolName) return;
-        appendVoiceConversationNoteText({
-            conversationSessionId,
-            text: `Tool call: ${toolName}`,
-        });
-        return;
-    }
-
-    if (payloadType === 'agent_tool_response') {
-        const toolResponse = readRecord(payloadRecord.agent_tool_response);
-        const toolName = normalizeText(toolResponse?.tool_name ?? payloadRecord.tool_name);
-        if (!toolName) return;
-        const isError = toolResponse?.is_error === true || payloadRecord.is_error === true;
-        appendVoiceConversationNoteText({
-            conversationSessionId,
-            text: `Tool result: ${toolName} ${isError ? 'failed' : 'succeeded'}`,
-        });
-        return;
-    }
-
-    const genericText = normalizeText(payloadRecord.message ?? payloadRecord.text ?? payloadRecord.transcript);
-    const genericRole = readGenericRole(payloadRecord);
-    if (!genericText || !genericRole) return;
-
-    if (genericRole === 'user') {
-        appendVoiceConversationUserText({ conversationSessionId, text: genericText, turn });
-        return;
-    }
-
-    appendVoiceConversationAssistantText({ conversationSessionId, text: genericText, turn });
+export function subscribeCanonicalVoiceTranscript(
+    conversationSessionIdValue: string,
+    listener: () => void,
+): () => void {
+    const conversationSessionId = normalizeText(conversationSessionIdValue);
+    return conversationSessionId ? projector.subscribeCanonical(conversationSessionId, listener) : () => {};
 }

@@ -15,6 +15,7 @@ export {
     type SelectionListInputMode,
     type SelectionListKeyboardHint,
     type SelectionListOption,
+    type SelectionListPagination,
     type SelectionListProps,
     type SelectionListQuickActionShortcut,
     type SelectionListSection,
@@ -26,4 +27,5 @@ export {
 } from './_types';
 
 export { SelectionList } from './SelectionList';
+export { SelectionListScreen, type SelectionListScreenProps } from './SelectionListScreen';
 export { resolvePopoverSelectionListHeightBehavior } from './resolvePopoverSelectionListHeightBehavior';

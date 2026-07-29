@@ -10,6 +10,7 @@ import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings'
 import { t } from '@/text';
 import { BUILT_IN_PROMPTS } from './slashCommands/builtInPrompts';
 import type { PromptInvocationSuggestionMetadata } from './slashCommands/promptInvocationSuggestion';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export interface CommandItem {
     command: string;        // The command without slash (e.g., "compact")
@@ -185,12 +186,13 @@ function getCommandsFromSession(sessionId: string): CommandItem[] {
         if (commands.find((c) => c.command === invocation.command)) continue;
         commands.push(invocation);
     }
-    if (!session || !session.metadata) {
+    const metadata = session ? readSessionOwnerMetadataView(session) : null;
+    if (!metadata) {
         return commands;
     }
 
     // Prefer richer metadata when available
-    const details = (session.metadata as any).slashCommandDetails as Array<{ command?: unknown; description?: unknown }> | undefined;
+    const details = (metadata as any).slashCommandDetails as Array<{ command?: unknown; description?: unknown }> | undefined;
     if (Array.isArray(details) && details.length > 0) {
         for (const d of details) {
             const cmd = typeof d.command === 'string' ? d.command : null;
@@ -208,8 +210,8 @@ function getCommandsFromSession(sessionId: string): CommandItem[] {
     }
 
     // Fallback: commands from metadata.slashCommands (filter with ignore list)
-    if (session.metadata.slashCommands) {
-        for (const cmd of session.metadata.slashCommands) {
+    if (metadata.slashCommands) {
+        for (const cmd of metadata.slashCommands) {
             if (IGNORED_COMMANDS.includes(cmd)) continue;
             if (commands.find(c => c.command === cmd)) continue;
             commands.push({

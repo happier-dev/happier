@@ -2,7 +2,6 @@ import type { WebTranscriptScrollMetrics } from '@/components/sessions/transcrip
 import { resolveWebDomOlderLoadObservationTrigger } from '../driver/webDomOlderLoadObservation';
 import {
     normalizeTranscriptScrollIngress,
-    type TranscriptScrollIngressNativeCommandSpace,
     type TranscriptScrollIngressNativeEvent,
     type TranscriptScrollIngressObservation,
     type TranscriptScrollIngressPlatform,
@@ -18,17 +17,7 @@ import type { TranscriptBottomFollowModeState } from '@/components/sessions/tran
 import type { TranscriptViewportOwner } from '../transcriptViewportTypes';
 import type { EntryRestoreOwnerEffect } from '../entryRestore/entryRestoreOwner';
 import type { NativePrependOwnerEffect } from '../prepend/nativePrependOwner';
-
-export type TranscriptScrollIngressWebMovement = Readonly<{
-    /**
-     * DOM observation attestation that `scrollTop` moved since the last observed
-     * (landed) value; `false` = the echo of the app's own programmatic write,
-     * `null` = no live metrics were available to attest the frame.
-     */
-    webMovedSinceLastObservation: boolean | null;
-    webObservedUpwardIntent: boolean;
-    webObservedUserScrollMovement: boolean;
-}>;
+import type { WebScrollMovementFact } from '@/components/sessions/transcript/scroll/resolveWebGenuineScrollMovement';
 
 export type TranscriptScrollIngressSessionEntryFacts = Readonly<{
     sessionId: string | null | undefined;
@@ -49,38 +38,28 @@ export type TranscriptScrollIngressInput = Readonly<{
     hasRenderedItems: boolean;
     isLoaded: boolean;
     isWarmKeepAliveInstance: boolean;
-    lastNativePinOffset: number | null;
     lastScrollOffsetForIntent: number | null;
     lastUserScrollIntentAtMs: number;
     loadOlderInFlight: boolean;
     measuredContentHeight: number;
     measuredLayoutHeight: number;
-    nativeCommandSpace?: TranscriptScrollIngressNativeCommandSpace;
     nativeListDragActive: boolean;
     nativeMomentumScrollActive: boolean;
     nativeMountSettleDeadlineReached: boolean;
     nativeMountSettleStable: boolean;
     nowMs: number;
-    pendingBottomPin: boolean;
     pinEnabled: boolean;
     pinThresholdPx: number;
     platform: TranscriptScrollIngressPlatform;
     sessionEntry: TranscriptScrollIngressSessionEntryFacts;
     sessionId: string;
     userIntentRecentMs: number;
-    usesNativeFlashListBottomMaintenance: boolean;
     wantsPinned: boolean;
+    /** Required for web ingress; omission fails closed before lifecycle effects. */
+    webMovementFact?: WebScrollMovementFact;
 }>;
 
 export type TranscriptScrollIngressCallbacks = Readonly<{
-    applyNativeMountSettlePassiveDriftRepinObservation(input: Readonly<{
-        bottomFollowMode: TranscriptBottomFollowModeState['mode'];
-        isTrusted: boolean;
-        nowMs: number;
-        pinThresholdPx: number;
-        usesNativeFlashListBottomMaintenance: boolean;
-        wantsPinned: boolean;
-    }>): void;
     applyNativePrependOwnerEffects(effects: readonly NativePrependOwnerEffect[]): void;
     applyEntryRestoreOwnerEffects(effects: readonly EntryRestoreOwnerEffect[]): void;
     applyScrollObservationPlan(
@@ -112,6 +91,7 @@ export type TranscriptScrollIngressCallbacks = Readonly<{
         contentHeight: number;
         distanceFromBottom: number;
         layoutHeight: number;
+        mountSettleStable?: boolean;
         nowMs: number;
         offsetY: number;
         rawOffsetY: number;
@@ -125,16 +105,12 @@ export type TranscriptScrollIngressCallbacks = Readonly<{
         trigger: 'edge-reached' | 'scroll';
         webMetrics: WebTranscriptScrollMetrics | null;
     }>): boolean | void;
-    observeWebGenuineScrollMovement(input: Readonly<{
-        distanceFromBottom: number;
-        isTrusted: boolean;
-        metrics: WebTranscriptScrollMetrics | null;
-        pinThresholdPx: number;
-        visualBottomScrollOffset: number | null;
-    }>): TranscriptScrollIngressWebMovement;
-    observeWebTranscriptNavigationVisibility(metrics: WebTranscriptScrollMetrics, input: Readonly<{
-        isTrusted: boolean;
-    }>): void;
+    /**
+     * `genuineUserMovement` is this frame's user-authority classification: it
+     * releases a jump landing's claim on the current navigation anchor so normal
+     * containment resumes on the very same frame.
+     */
+    observeTranscriptNavigationVisibility(input: Readonly<{ genuineUserMovement: boolean }>): void;
     preemptEntryRestoreTransaction(): void;
     promotePendingJumpSeqViewportSnapshot(input: Readonly<{
         distanceFromBottom: number;
@@ -172,11 +148,7 @@ export type TranscriptScrollIngressCallbacks = Readonly<{
             viewportOutsideContentObserved?: boolean;
         }>,
     ): void;
-    refreshInFlightWebPrependAnchor(input: Readonly<{
-        userScrolledDuringLoad: boolean;
-    }>): void;
     resolveWebScrollMetrics(): WebTranscriptScrollMetrics | null;
-    retargetPendingWebPrependAnchorForUserScroll(): void;
     shouldIgnoreNativeInvalidScrollObservation(rawOffsetY: number, distanceFromLiveTailPx: number): boolean;
     trustedNativePrependScroll(input: Readonly<{
         activeOwner: TranscriptViewportOwner;
@@ -196,17 +168,27 @@ export function observeTranscriptScrollIngress(
         eventNativeEvent: input.eventNativeEvent,
         measuredContentHeight: input.measuredContentHeight,
         measuredLayoutHeight: input.measuredLayoutHeight,
-        nativeCommandSpace: input.nativeCommandSpace,
         platform: input.platform,
         webMetrics: input.platform === 'web' ? callbacks.resolveWebScrollMetrics() : null,
     });
     if (!observation) return { consumed: true, observation: null };
-
-    if (observation.webMetrics) {
-        callbacks.observeWebTranscriptNavigationVisibility(observation.webMetrics, {
-            isTrusted: observation.isTrusted,
-        });
+    const webMovementFact = input.webMovementFact;
+    if (observation.platform === 'web' && webMovementFact === undefined) {
+        return { consumed: true, observation };
     }
+
+    // Native user authority is the OPEN DRAG: `onScrollBeginDrag` fires only for a
+    // real finger drag (never for the app's own programmatic write), and RN puts
+    // `isTrusted` on the synthetic event wrapper — the native scroll payload this
+    // ingress receives carries none, so it could only ever answer `false` here and
+    // a native landing would pin the rail forever. Web frames arrive with the
+    // renderer's own canonical classification (the fail-closed guard above already
+    // dropped frames without one).
+    callbacks.observeTranscriptNavigationVisibility({
+        genuineUserMovement: observation.platform === 'native'
+            ? input.nativeListDragActive === true
+            : webMovementFact?.isGenuineUserMovement === true,
+    });
 
     const recordNativeScrollObservation = (
         reason: TranscriptViewportTelemetryObservationReason = 'observed',
@@ -224,6 +206,22 @@ export function observeTranscriptScrollIngress(
         callbacks.recordNativeScrollObservation(telemetryInput);
         callbacks.observeNativeBlankRecovery(reason, telemetryInput);
         callbacks.recordNativeVisibleWindowTelemetry(reason, telemetryInput);
+    };
+    const observeCanonicalOlderPaginationScroll = (): boolean => {
+        const trigger =
+            observation.platform === 'web'
+                ? resolveWebDomOlderLoadObservationTrigger({
+                    scrollTop: observation.scrollOffsetPx,
+                })
+                : 'scroll';
+        return callbacks.observeOlderPaginationScroll({
+            offsetY: observation.scrollOffsetPx,
+            layoutHeight: observation.layoutHeightPx,
+            contentHeight: observation.contentHeightPx,
+            distanceFromBottom: observation.distanceFromLiveTailPx,
+            webMetrics: observation.webMetrics,
+            trigger,
+        }) === true;
     };
 
     if (
@@ -246,6 +244,7 @@ export function observeTranscriptScrollIngress(
                 contentHeight: observation.contentHeightPx,
                 distanceFromBottom: observation.distanceFromLiveTailForReleasePx,
                 layoutHeight: observation.layoutHeightPx,
+                mountSettleStable: input.nativeMountSettleStable,
                 nowMs: input.nowMs,
                 offsetY: observation.scrollOffsetPx,
                 rawOffsetY: observation.rawOffsetY,
@@ -302,30 +301,35 @@ export function observeTranscriptScrollIngress(
             scrollOffsetPx: observation.webMetrics.scrollTop,
         })
     ) {
+        // Promotion consumes generic viewport publication, not the canonical
+        // pagination observation. At exact top the DOM cannot emit another
+        // upward scroll after clamping, so this frame must reach the edge owner.
+        observeCanonicalOlderPaginationScroll();
         return { consumed: true, observation };
     }
 
     const webMovement = observation.platform === 'web'
-        ? callbacks.observeWebGenuineScrollMovement({
-            distanceFromBottom: observation.distanceFromLiveTailPx,
-            isTrusted: observation.isTrusted,
-            metrics: observation.webMetrics,
-            pinThresholdPx: input.pinThresholdPx,
-            visualBottomScrollOffset: observation.visualBottomScrollOffsetPx,
-        })
+        ? {
+            webMovedSinceLastObservation: webMovementFact?.movedSinceLastObservation ?? null,
+            webObservedUpwardIntent: webMovementFact?.upwardIntent ?? false,
+            webObservedUserScrollMovement: webMovementFact?.isGenuineUserMovement ?? false,
+        }
         : {
             webMovedSinceLastObservation: null,
             webObservedUpwardIntent: false,
             webObservedUserScrollMovement: false,
         };
     const recentUserIntentBeforeObservation =
-        observation.isTrusted || input.nowMs - input.lastUserScrollIntentAtMs < input.userIntentRecentMs;
+        observation.platform === 'web'
+            ? webMovement.webObservedUserScrollMovement
+            : observation.isTrusted || input.nowMs - input.lastUserScrollIntentAtMs < input.userIntentRecentMs;
 
     if (observation.platform === 'web') {
-        if (observation.isTrusted && webMovement.webObservedUserScrollMovement) {
+        const hasWebUserAuthority = webMovement.webObservedUserScrollMovement;
+        if (hasWebUserAuthority) {
             callbacks.recordWebRouteJumpProtectionClearingMovement(input.nowMs);
         }
-        if (observation.isTrusted && webMovement.webObservedUserScrollMovement) {
+        if (hasWebUserAuthority) {
             callbacks.preemptEntryRestoreTransaction();
         } else {
             callbacks.verifyWebEntryRestoreTransaction();
@@ -339,7 +343,9 @@ export function observeTranscriptScrollIngress(
             ? webMovement.webObservedUpwardIntent
             : previousScrollOffset !== null && observation.scrollOffsetPx < previousScrollOffset;
     const movedTowardLiveTail =
-        previousScrollOffset !== null && observation.scrollOffsetPx > previousScrollOffset;
+        observation.platform === 'web'
+            ? webMovementFact?.downwardIntent ?? false
+            : previousScrollOffset !== null && observation.scrollOffsetPx > previousScrollOffset;
     const hasOpenTrustedAwayGesture =
         observation.platform === 'native' &&
         input.bottomFollowModeState.dragSession?.trusted === true &&
@@ -379,7 +385,6 @@ export function observeTranscriptScrollIngress(
             isLoaded: input.isLoaded,
             isTrusted: observation.isTrusted,
             isWarmKeepAliveInstance: input.isWarmKeepAliveInstance,
-            lastNativePinOffset: input.lastNativePinOffset,
             lastUserScrollIntentAtMs: input.lastUserScrollIntentAtMs,
             layoutHeightPx: observation.layoutHeightPx,
             movedAwayFromLiveTail,
@@ -389,7 +394,6 @@ export function observeTranscriptScrollIngress(
             nativeMountSettleDeadlineReached: input.nativeMountSettleDeadlineReached,
             nativeMountSettleStable: input.nativeMountSettleStable,
             nowMs: input.nowMs,
-            pendingBottomPin: input.pendingBottomPin,
             pinEnabled: input.pinEnabled,
             pinThresholdPx: input.pinThresholdPx,
             platform: 'native',
@@ -400,8 +404,6 @@ export function observeTranscriptScrollIngress(
             sessionEntryShouldFollowBottom: input.sessionEntry.shouldFollowBottom,
             sessionId: input.sessionId,
             userIntentRecentMs: input.userIntentRecentMs,
-            usesNativeFlashListBottomMaintenance: input.usesNativeFlashListBottomMaintenance,
-            visualBottomScrollOffset: observation.visualBottomScrollOffsetPx,
             wantsPinned: input.wantsPinned,
         });
 
@@ -418,45 +420,7 @@ export function observeTranscriptScrollIngress(
                 nowMs: input.nowMs,
                 distanceFromBottom: observation.distanceFromLiveTailPx,
             });
-            const olderLoadTrigger =
-                observation.platform === 'web'
-                    ? resolveWebDomOlderLoadObservationTrigger({
-                        scrollTop: observation.scrollOffsetPx,
-                    })
-                    : 'scroll';
-            const loadOlderInFlightAfterPaginationObservation = callbacks.observeOlderPaginationScroll({
-                offsetY: observation.scrollOffsetPx,
-                layoutHeight: observation.layoutHeightPx,
-                contentHeight: observation.contentHeightPx,
-                distanceFromBottom: observation.distanceFromLiveTailPx,
-                webMetrics: observation.webMetrics,
-                trigger: olderLoadTrigger,
-            }) === true;
-            if (input.loadOlderInFlight || loadOlderInFlightAfterPaginationObservation) {
-                callbacks.refreshInFlightWebPrependAnchor({
-                    userScrolledDuringLoad: observation.isTrusted || webMovement.webObservedUserScrollMovement,
-                });
-            }
-            const effectiveRecentUserIntent =
-                observation.platform === 'web'
-                    ? recentUserIntentBeforeObservation
-                    : recentUserIntent;
-            if (effectiveRecentUserIntent && (observation.platform === 'native' || observation.isTrusted)) {
-                callbacks.retargetPendingWebPrependAnchorForUserScroll();
-            }
-            if (
-                observation.platform === 'native' &&
-                hasNativeMountSettlePassiveDriftRepinObservation
-            ) {
-                callbacks.applyNativeMountSettlePassiveDriftRepinObservation({
-                    bottomFollowMode: input.bottomFollowModeState.mode,
-                    isTrusted: observation.isTrusted,
-                    nowMs: input.nowMs,
-                    pinThresholdPx: input.pinThresholdPx,
-                    usesNativeFlashListBottomMaintenance: input.usesNativeFlashListBottomMaintenance,
-                    wantsPinned: input.wantsPinned,
-                });
-            }
+            observeCanonicalOlderPaginationScroll();
         },
         recordNativeScrollObservation,
     });

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Platform, View } from 'react-native';
@@ -11,10 +10,13 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { SettingsActionFooter } from '@/components/ui/settingsSurface/SettingsActionFooter';
 import { TextInput } from '@/components/ui/text/Text';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import { useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExport';
 import { BUILT_IN_THEME_PROFILES, getBuiltInThemeProfileDefinition, isBuiltInThemeProfilePresetId } from '@/theme/profiles/builtInThemeProfiles';
 import type { ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
@@ -63,6 +65,7 @@ async function downloadThemeJson(fileName: string, json: string): Promise<void> 
 export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportScreen() {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const copyFeedback = useTemporaryCopyFeedback();
     const params = useLocalSearchParams();
     const [themeProfiles] = useLocalSettingMutable('themeProfiles');
     const profileId = getProfileIdParam(params.profileId);
@@ -73,8 +76,11 @@ export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportSc
 
     const copy = React.useCallback(async () => {
         if (!json) return;
-        await Clipboard.setStringAsync(json);
-    }, [json]);
+        const copied = await setClipboardStringSafe(json);
+        if (copied) {
+            copyFeedback.markCopied('theme-profile');
+        }
+    }, [copyFeedback, json]);
 
     const download = React.useCallback(async () => {
         if (!json) return;
@@ -105,6 +111,12 @@ export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportSc
                     />
                 </View>
             </ItemGroup>
+            <View style={styles.feedbackRow}>
+                <CopiedPill
+                    visible={copyFeedback.isCopied('theme-profile')}
+                    testID="settings-theme-profile-export-copy-feedback"
+                />
+            </View>
             <SettingsActionFooter
                 primaryLabel={t('settingsAppearance.themeProfiles.copyExportJson')}
                 primaryTestID="settings-theme-profile-export-copy"
@@ -134,5 +146,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 12,
         textAlignVertical: 'top',
         width: '100%',
+    },
+    feedbackRow: {
+        alignItems: 'flex-end',
+        paddingHorizontal: 16,
     },
 }));

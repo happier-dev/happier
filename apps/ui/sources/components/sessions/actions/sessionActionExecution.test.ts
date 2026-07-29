@@ -75,6 +75,40 @@ describe('executeSessionAction', () => {
         expect(archiveSession).not.toHaveBeenCalled();
     });
 
+    it('stops a recoverable preserved host before archiving an inactive session', async () => {
+        const stopArchiveFlow = vi.fn(async () => undefined);
+        const archiveSession = vi.fn(async () => ({ success: true as const }));
+
+        await executeSessionAction({
+            actionId: SESSION_ACTION_ARCHIVE_ID,
+            target: createTarget({
+                active: false,
+                metadata: {
+                    path: '/repo',
+                    terminalControlServiceabilityV1: {
+                        v: 1,
+                        state: 'recoverable_unservable',
+                        observedAt: 123,
+                        reason: 'control_descriptor_missing',
+                    },
+                },
+            }),
+            context: {
+                operations: {
+                    stopArchiveFlow,
+                    stopSession: vi.fn(async () => ({ success: true as const })),
+                    archiveSession,
+                },
+            },
+        });
+
+        expect(stopArchiveFlow).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'session_1',
+            archiveAfterStop: 'always',
+        }));
+        expect(archiveSession).not.toHaveBeenCalled();
+    });
+
     it('falls back to the active-session stop/archive flow when direct archive returns a session-active conflict', async () => {
         const stopArchiveFlow = vi.fn(async () => undefined);
         const archiveSession = vi.fn(async () => ({

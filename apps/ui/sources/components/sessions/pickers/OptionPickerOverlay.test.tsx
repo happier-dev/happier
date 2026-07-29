@@ -1,10 +1,11 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, withPopoverWebGlobals } from '@/dev/testkit';
 import { View } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { SelectionList } from '@/components/ui/selectionList';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -54,7 +55,291 @@ describe('OptionPickerOverlay', () => {
         return Object.assign({}, ...resolvedArray.filter(Boolean));
     }
 
-    it('uses a single option-card column on narrow screens', async () => {
+    function resolveInteractiveStyle(styleProp: unknown): Record<string, unknown> {
+        return flattenStyle(typeof styleProp === 'function'
+            ? (styleProp as (state: Readonly<{ pressed: boolean; hovered: boolean; focused: boolean }>) => unknown)({
+                pressed: false,
+                hovered: false,
+                focused: false,
+            })
+            : styleProp);
+    }
+
+    function hasAncestor(node: any, possibleAncestor: any): boolean {
+        let current = node?.parent;
+        while (current) {
+            if (current === possibleAncestor) return true;
+            current = current.parent;
+        }
+        return false;
+    }
+
+    function findInteractiveAncestor(node: any): any | null {
+        let current = node?.parent;
+        while (current) {
+            if (String(current.type) === 'Pressable' || current.props?.accessibilityRole === 'button') {
+                return current;
+            }
+            current = current.parent;
+        }
+        return null;
+    }
+
+    it('carries typed values with the same model id by their exact stable key', async () => {
+        type ModelRef = Readonly<{
+            agentTargetKey: string;
+            providerConnectionId: string | null;
+            modelId: string;
+        }>;
+        const native: ModelRef = {
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: null,
+            modelId: 'shared-model',
+        };
+        const external: ModelRef = {
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: 'connection-work',
+            modelId: 'shared-model',
+        };
+        const onSelect = vi.fn();
+        const onToggle = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const getValueKey = (value: ModelRef) => JSON.stringify([
+            value.agentTargetKey,
+            value.providerConnectionId,
+            value.modelId,
+        ]);
+        const externalKey = getValueKey(external);
+        const screen = await renderScreen(
+            <OptionPickerOverlay<ModelRef>
+                title="Model"
+                options={[]}
+                sections={[
+                    {
+                        id: 'native',
+                        title: 'Built-in',
+                        options: [{ value: native, label: 'Shared model' }],
+                    },
+                    {
+                        id: 'work',
+                        title: 'OpenRouter · Work',
+                        options: [{ value: external, label: 'Shared model' }],
+                    },
+                ]}
+                selectedValue={native}
+                getValueKey={getValueKey}
+                emptyText="empty"
+                canEnterCustomValue={false}
+                favoriteOptions={{
+                    values: new Set([externalKey]),
+                    onToggle,
+                }}
+                onSelect={onSelect}
+            />,
+        );
+
+        expect(screen.findByTestId('model-picker-overlay-selection-list')).toBeTruthy();
+        await screen.pressByTestIdAsync(`model-picker-overlay-option:${externalKey}`);
+        expect(onSelect).toHaveBeenCalledWith(external);
+
+        await screen.pressByTestIdAsync(`model-picker-overlay-option-favorite:${externalKey}`);
+        expect(onToggle).toHaveBeenCalledWith(expect.objectContaining({ value: external }));
+    });
+
+    it('keeps the inline custom editor available for typed callers without reconstructing a typed value', async () => {
+        type ModelRef = Readonly<{
+            agentTargetKey: string;
+            providerConnectionId: string | null;
+            modelId: string;
+        }>;
+        const selected: ModelRef = {
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: 'connection-work',
+            modelId: 'listed-model',
+        };
+        const onSubmitCustomValue = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        const screen = await renderScreen(
+            <OptionPickerOverlay<ModelRef>
+                title="Model"
+                options={[{ value: selected, label: 'Listed model' }]}
+                selectedValue={selected}
+                getValueKey={(value) => JSON.stringify([
+                    value.agentTargetKey,
+                    value.providerConnectionId,
+                    value.modelId,
+                ])}
+                emptyText="empty"
+                canEnterCustomValue
+                onSubmitCustomValue={onSubmitCustomValue}
+                onSelect={() => {}}
+            />,
+        );
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        act(() => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', '  unlisted-model  ');
+        });
+        expect(onSubmitCustomValue).toHaveBeenCalledWith('unlisted-model');
+    });
+
+    it('replaces the custom row action with the text input so interactive controls never nest', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        const screen = await renderScreen(<OptionPickerOverlay
+            title="Model"
+            options={[{ value: 'default', label: 'Default' }]}
+            selectedValue="default"
+            emptyText="empty"
+            canEnterCustomValue
+            onSelect={() => {}}
+        />);
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        const customInput = screen.findByTestId('model-picker-overlay-custom-input');
+        expect(customInput).toBeTruthy();
+        expect(findInteractiveAncestor(customInput)).toBeNull();
+    });
+
+    it('moves focus into the named 44px custom input and returns it to the trigger on Escape', async () => {
+        const triggerFocus = vi.fn();
+        const inputFocus = vi.fn();
+        const onSubmitCustomValue = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        const screen = await renderScreen(<OptionPickerOverlay
+            title="Model"
+            options={[{ value: 'default', label: 'Default' }]}
+            selectedValue="default"
+            emptyText="empty"
+            canEnterCustomValue
+            onSubmitCustomValue={onSubmitCustomValue}
+            onSelect={() => {}}
+        />, {
+            createNodeMock: (element) => {
+                const elementProps = element.props as { testID?: string };
+                if (elementProps.testID === 'model-picker-overlay-custom') return { focus: triggerFocus };
+                if (elementProps.testID === 'model-picker-overlay-custom-input') return { focus: inputFocus };
+                return {};
+            },
+        });
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        expect(inputFocus).toHaveBeenCalledOnce();
+
+        const input = screen.findByTestId('model-picker-overlay-custom-input');
+        expect(input?.props.accessibilityLabel).toBe('modelPickerOverlay.customInputA11y');
+        const inputStyle = flattenStyle(input?.props.style);
+        expect(inputStyle.minHeight ?? inputStyle.height).toBeGreaterThanOrEqual(44);
+
+        const escapeEvent = {
+            key: 'Escape',
+            nativeEvent: { key: 'Escape' },
+            preventDefault: vi.fn(),
+        };
+        await act(async () => input?.props.onKeyDown?.(escapeEvent));
+
+        expect(escapeEvent.preventDefault).toHaveBeenCalledOnce();
+        expect(screen.findByTestId('model-picker-overlay-custom-input')).toBeNull();
+        expect(screen.findByTestId('model-picker-overlay-custom')).toBeTruthy();
+        expect(triggerFocus).toHaveBeenCalledOnce();
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
+    });
+
+    it('keeps an already-selected custom value closed after Escape and returns focus to its trigger', async () => {
+        const triggerFocus = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        const screen = await renderScreen(<OptionPickerOverlay
+            title="Model"
+            options={[{ value: 'default', label: 'Default' }]}
+            selectedValue="unlisted-model"
+            emptyText="empty"
+            canEnterCustomValue
+            onSelect={() => {}}
+        />, {
+            createNodeMock: (element) => {
+                const elementProps = element.props as { testID?: string };
+                if (elementProps.testID === 'model-picker-overlay-custom') return { focus: triggerFocus };
+                return {};
+            },
+        });
+
+        const input = screen.findByTestId('model-picker-overlay-custom-input');
+        expect(input).toBeTruthy();
+
+        await act(async () => input?.props.onKeyDown?.({
+            key: 'Escape',
+            nativeEvent: { key: 'Escape' },
+            preventDefault: vi.fn(),
+        }));
+
+        expect(screen.findByTestId('model-picker-overlay-custom-input')).toBeNull();
+        expect(screen.findByTestId('model-picker-overlay-custom')?.props.accessibilityRole).toBe('button');
+        expect(triggerFocus).toHaveBeenCalledOnce();
+    });
+
+    it('owns custom-editor Escape ahead of the enclosing popover capture layer', async () => {
+        const triggerFocus = vi.fn();
+        const enclosingPopoverEscape = vi.fn(() => true);
+        const {
+            dispatchEscapeToLayerStack,
+            ESCAPE_LAYER_PRIORITIES,
+            registerEscapeLayer,
+        } = await import('@/keyboard/escape');
+        const unregisterPopover = registerEscapeLayer({
+            priority: ESCAPE_LAYER_PRIORITIES.popover,
+            allowEditableTarget: true,
+            onEscape: enclosingPopoverEscape,
+        });
+
+        try {
+            const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+            const screen = await renderScreen(<OptionPickerOverlay
+                title="Model"
+                options={[{ value: 'default', label: 'Default' }]}
+                selectedValue="default"
+                emptyText="empty"
+                canEnterCustomValue
+                onSelect={() => {}}
+            />, {
+                createNodeMock: (element) => {
+                    const elementProps = element.props as { testID?: string };
+                    if (elementProps.testID === 'model-picker-overlay-custom') return { focus: triggerFocus };
+                    return {};
+                },
+            });
+
+            await screen.pressByTestIdAsync('model-picker-overlay-custom');
+            const escapeEvent = {
+                key: 'Escape',
+                target: { tagName: 'INPUT' },
+                preventDefault: vi.fn(),
+                stopPropagation: vi.fn(),
+                stopImmediatePropagation: vi.fn(),
+            };
+            await act(async () => {
+                expect(dispatchEscapeToLayerStack(escapeEvent)).toBe(true);
+            });
+
+            expect(enclosingPopoverEscape).not.toHaveBeenCalled();
+            expect(screen.findByTestId('model-picker-overlay-custom-input')).toBeNull();
+            expect(triggerFocus).toHaveBeenCalledOnce();
+
+            await act(async () => {
+                expect(dispatchEscapeToLayerStack({
+                    key: 'Escape',
+                    target: { tagName: 'BUTTON' },
+                    preventDefault: vi.fn(),
+                    stopPropagation: vi.fn(),
+                    stopImmediatePropagation: vi.fn(),
+                })).toBe(true);
+            });
+            expect(enclosingPopoverEscape).toHaveBeenCalledOnce();
+        } finally {
+            unregisterPopover();
+        }
+    });
+
+    it('uses the canonical selection list instead of a local column renderer on narrow screens', async () => {
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
         mockEnv.windowWidth = 390;
 
@@ -74,7 +359,8 @@ describe('OptionPickerOverlay', () => {
                     onSelect={() => {}}
                 />);
 
-        expect(screen.findByTestId('model-picker-overlay-column:0')).toBeTruthy();
+        expect(screen.findByTestId('model-picker-overlay-selection-list')).toBeTruthy();
+        expect(screen.findByTestId('model-picker-overlay-column:0')).toBeNull();
         expect(screen.findByTestId('model-picker-overlay-column:1')).toBeNull();
     });
 
@@ -261,6 +547,96 @@ describe('OptionPickerOverlay', () => {
         expect(screen.findByTestId('model-picker-overlay-custom-input')).toBeTruthy();
     });
 
+    it('keeps the fallback model-list scope stable across non-structural parent rerenders', async () => {
+        await withPopoverWebGlobals(async () => {
+        const options = Array.from({ length: 100 }, (_, index) => ({
+            value: `model-${index}`,
+            label: `Model ${index}`,
+        }));
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        const renderOverlay = (
+            effectiveLabel: string,
+            renderedOptions = options,
+        ) => (
+            <OptionPickerOverlay
+                title="Model"
+                effectiveLabel={effectiveLabel}
+                options={renderedOptions}
+                selectedValue="model-0"
+                emptyText="empty"
+                canEnterCustomValue={false}
+                onSelect={() => {}}
+            />
+        );
+        const screen = await renderScreen(renderOverlay('Model 0'));
+        const rootStepBefore = screen.findByType(SelectionList).props.rootStep;
+
+        await act(async () => {
+            screen.tree.update(renderOverlay('Model 0 · refreshed'));
+        });
+
+        expect(screen.findByType(SelectionList).props.rootStep).toBe(rootStepBefore);
+
+        await act(async () => {
+            screen.tree.update(renderOverlay('Model 0 · refreshed', [
+                ...options,
+                { value: 'model-100', label: 'Model 100' },
+            ]));
+        });
+
+        expect(screen.findByType(SelectionList).props.rootStep).not.toBe(rootStepBefore);
+        });
+    });
+
+    it('keeps the explicitly sectioned model-list scope stable across non-structural parent rerenders', async () => {
+        await withPopoverWebGlobals(async () => {
+        const sections = [{
+            id: 'provider-models',
+            title: 'Provider models',
+            options: Array.from({ length: 100 }, (_, index) => ({
+                value: `model-${index}`,
+                label: `Model ${index}`,
+            })),
+        }];
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        const renderOverlay = (
+            effectiveLabel: string,
+            renderedSections = sections,
+        ) => (
+            <OptionPickerOverlay
+                title="Model"
+                effectiveLabel={effectiveLabel}
+                options={[]}
+                sections={renderedSections}
+                selectedValue="model-0"
+                emptyText="empty"
+                canEnterCustomValue={false}
+                onSelect={() => {}}
+            />
+        );
+        const screen = await renderScreen(renderOverlay('Model 0'));
+        const rootStepBefore = screen.findByType(SelectionList).props.rootStep;
+
+        await act(async () => {
+            screen.tree.update(renderOverlay('Model 0 · refreshed'));
+        });
+
+        expect(screen.findByType(SelectionList).props.rootStep).toBe(rootStepBefore);
+
+        await act(async () => {
+            screen.tree.update(renderOverlay('Model 0 · refreshed', [{
+                ...sections[0]!,
+                options: [
+                    ...sections[0]!.options,
+                    { value: 'model-100', label: 'Model 100' },
+                ],
+            }]));
+        });
+
+        expect(screen.findByType(SelectionList).props.rootStep).not.toBe(rootStepBefore);
+        });
+    });
+
     it('shows the selected listed option after async options hydrate a previously custom-looking value', async () => {
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
 
@@ -372,7 +748,7 @@ describe('OptionPickerOverlay', () => {
         // The refresh button and header accessory should stay together in the same
         // trailing title-row action group so the accessory does not float between
         // the title text and the refresh affordance.
-        expect(headerAccessory?.parent?.parent).toBe(refresh?.parent);
+        expect(hasAncestor(refresh, headerAccessory?.parent?.parent)).toBe(true);
 
         // The refresh button should still be part of the title row subtree.
         let cursor: any = refresh;
@@ -397,7 +773,7 @@ describe('OptionPickerOverlay', () => {
         expect(titleRow).toBeTruthy();
     });
 
-    it('renders selected model controls inside the selected model card and routes option changes', async () => {
+    it('renders selected model controls beside the selected row and routes option changes without nested actions', async () => {
         const onSelectOptionControlValue = vi.fn();
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
 
@@ -449,12 +825,9 @@ describe('OptionPickerOverlay', () => {
 
         const selectedCard = screen.findByTestId('model-picker-overlay-option:gpt-5.4');
         expect(selectedCard).not.toBeNull();
-        expect(
-            selectedCard?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control:reasoning_effort'),
-        ).not.toHaveLength(0);
-        expect(
-            selectedCard?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control:speed'),
-        ).not.toHaveLength(0);
+        const selectedControls = screen.findByTestId('model-picker-overlay-selected-controls');
+        expect(selectedControls).toBeTruthy();
+        expect(hasAncestor(selectedControls, selectedCard)).toBe(false);
 
         const selectedReasoningLabel = screen
             .findByTestId('model-picker-overlay-selected-option-control-option:reasoning_effort:medium')
@@ -467,7 +840,7 @@ describe('OptionPickerOverlay', () => {
 
         expect(onSelectOptionControlValue).toHaveBeenCalledWith('reasoning_effort', 'high');
 
-        const speedControl = selectedCard?.findAll((node) => (
+        const speedControl = selectedControls?.findAll((node) => (
             node.props?.testID === 'model-picker-overlay-selected-option-control:speed'
         ))[0];
         const speedSwitch = speedControl?.findAll((node) => (
@@ -477,8 +850,16 @@ describe('OptionPickerOverlay', () => {
 
         expect(speedSwitch).toBeTruthy();
         expect(
-            selectedCard?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control-switch:speed'),
+            selectedControls?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control-switch:speed'),
         ).not.toHaveLength(0);
+        expect(findInteractiveAncestor(speedSwitch)).toBeNull();
+
+        const speedSwitchTarget = screen.findByTestId('model-picker-overlay-selected-option-control-switch:speed');
+        expect(speedSwitchTarget?.props.accessibilityLabel).toBe('modelPickerOverlay.optionControlA11y');
+
+        const reasoningTab = screen.findByTestId('model-picker-overlay-selected-option-control-option:reasoning_effort:medium');
+        expect(reasoningTab?.props.accessibilityLabel).toBe('Medium');
+        expect(reasoningTab?.parent?.props.accessibilityLabel).toBe('modelPickerOverlay.optionControlA11y');
 
         await act(async () => {
             speedSwitch?.props.onValueChange?.(true);
@@ -487,7 +868,94 @@ describe('OptionPickerOverlay', () => {
         expect(onSelectOptionControlValue).toHaveBeenCalledWith('speed', 'fast');
     });
 
-    it('renders the favorite toggle only inside the selected option card and routes favorite changes separately from selection', async () => {
+    it('renders option icons beside the model title and provider subtitle', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+                    title="Favorites"
+                    effectiveLabel="Fable 5"
+                    notes={[]}
+                    options={[
+                        {
+                            value: 'claude-fable-5',
+                            label: 'Fable 5',
+                            description: 'Claude',
+                            icon: React.createElement('ProviderLogo', { testID: 'provider-logo:claude' }),
+                        },
+                    ]}
+                    selectedValue="claude-fable-5"
+                    emptyText="empty"
+                    canEnterCustomValue={false}
+                    onSelect={() => {}}
+                />);
+
+        const option = screen.findByTestId('model-picker-overlay-option:claude-fable-5');
+        expect(option).toBeTruthy();
+        expect(option?.findAll((node) => node.props?.testID === 'model-picker-overlay-option-icon:claude-fable-5')).toHaveLength(1);
+        expect(option?.findAll((node) => node.props?.testID === 'provider-logo:claude')).toHaveLength(1);
+        expect(screen.findByTestId(
+            'model-picker-overlay-option-selected-indicator:claude-fable-5',
+        )).toBeTruthy();
+        expect(option?.findAll((node) => (
+            String(node.type) === 'Text' && node.props?.children === 'Fable 5'
+        ))).toHaveLength(1);
+        expect(option?.findAll((node) => (
+            String(node.type) === 'Text' && node.props?.children === 'Claude'
+        ))).toHaveLength(1);
+    });
+
+    it('renders runtime status in the trailing selection-status group without replacing a leading provider icon', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+            title="Models"
+            options={[
+                {
+                    value: 'gpt-5.6-terra',
+                    label: 'GPT 5.6 Terra',
+                    icon: <View testID="provider-logo:terra" />,
+                    trailingStatusIcon: <View testID="runtime-status:terra" />,
+                },
+                { value: 'gpt-5.6-sol', label: 'GPT 5.6 Sol' },
+            ]}
+            selectedValue="gpt-5.6-sol"
+            emptyText="empty"
+            canEnterCustomValue={false}
+            onSelect={vi.fn()}
+        />);
+
+        expect(screen.findByTestId('model-picker-overlay-option-icon:gpt-5.6-terra')).toBeTruthy();
+        expect(screen.findByTestId('provider-logo:terra')).toBeTruthy();
+        expect(screen.findByTestId('model-picker-overlay-option-status-icon:gpt-5.6-terra')).toBeTruthy();
+        expect(screen.findByTestId('runtime-status:terra')).toBeTruthy();
+    });
+
+    it('stacks runtime status below the checkmark when the selected model is also running', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+            title="Models"
+            options={[
+                {
+                    value: 'gpt-5.6-sol',
+                    label: 'GPT 5.6 Sol',
+                    trailingStatusIcon: <View testID="runtime-status:sol" />,
+                },
+            ]}
+            selectedValue="gpt-5.6-sol"
+            emptyText="empty"
+            canEnterCustomValue={false}
+            onSelect={vi.fn()}
+        />);
+
+        const statusGroup = screen.findByTestId('model-picker-overlay-option-selection-status:gpt-5.6-sol');
+        const statusIcon = screen.findByTestId('model-picker-overlay-option-status-icon:gpt-5.6-sol');
+        expect(statusGroup).toBeTruthy();
+        expect(statusIcon?.parent).toBe(statusGroup);
+        expect(statusGroup?.children).toHaveLength(2);
+    });
+
+    it('renders the favorite toggle only beside the selected option row and routes favorite changes separately from selection', async () => {
         const onSelect = vi.fn();
         const onToggleFavorite = vi.fn();
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
@@ -520,6 +988,46 @@ describe('OptionPickerOverlay', () => {
             label: 'GPT 5.4',
         }));
         expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('uses sibling 44px favorite and refresh actions with translated names and focus tooltips', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        const screen = await renderScreen(<OptionPickerOverlay
+            title="Model"
+            options={[{
+                value: 'gpt-5.4',
+                label: 'GPT 5.4',
+                description: 'Frontier model.',
+                accessibilityLabel: 'Gateway, Work, GPT 5.4',
+            }]}
+            selectedValue="gpt-5.4"
+            emptyText="empty"
+            canEnterCustomValue={false}
+            favoriteOptions={{ values: new Set(['gpt-5.4']), onToggle: vi.fn() }}
+            probe={{ phase: 'idle', onRefresh: vi.fn() }}
+            onSelect={vi.fn()}
+        />);
+
+        const row = screen.findByTestId('model-picker-overlay-option:gpt-5.4');
+        const favoriteAction = screen.findByTestId('model-picker-overlay-option-favorite:gpt-5.4');
+        expect(row).toBeTruthy();
+        expect(favoriteAction).toBeTruthy();
+        expect(hasAncestor(favoriteAction, row)).toBe(false);
+        expect(favoriteAction?.props.accessibilityLabel).toBe('Gateway, Work, GPT 5.4, profiles.actions.removeFromFavorites');
+
+        for (const action of [favoriteAction, screen.findByTestId('model-picker-overlay-refresh')]) {
+            const targetStyle = resolveInteractiveStyle(action?.props.style);
+            expect(targetStyle.width ?? targetStyle.minWidth).toBeGreaterThanOrEqual(44);
+            expect(targetStyle.height ?? targetStyle.minHeight).toBeGreaterThanOrEqual(44);
+            expect(typeof action?.props.onFocus).toBe('function');
+            await act(async () => {
+                action?.props.onFocus?.();
+            });
+            expect(screen.findByTestId(`${action?.props.testID}-tooltip`)).toBeTruthy();
+            await act(async () => {
+                action?.props.onBlur?.();
+            });
+        }
     });
 
     it('keeps the favorite toggle hit target above option card content', async () => {
@@ -590,7 +1098,7 @@ describe('OptionPickerOverlay', () => {
         const screen = await renderScreen(<OptionPickerOverlay
                     title="Mode"
                     effectiveLabel=""
-                    notes={[]}
+                    notes={['The selected model will be used when this session resumes.']}
                     options={[
                         { value: 'build', label: 'Build', description: 'Default behavior.' },
                         { value: 'review', label: 'Review', description: 'Review and critique mode.' },
@@ -605,6 +1113,7 @@ describe('OptionPickerOverlay', () => {
                 />);
 
         expect(screen.findByTestId('agent-input-session-mode-summary')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('The selected model will be used when this session resumes.');
         expect(screen.findByTestId('agent-input-session-mode-refresh')).toBeTruthy();
         expect(screen.findByTestId('agent-input-session-mode-option:review')).toBeTruthy();
 
@@ -635,7 +1144,11 @@ describe('OptionPickerOverlay', () => {
             throw new Error('Expected option card to render');
         }
         const base = flattenStyleFromCallback(card.props.style, { pressed: false, hovered: false });
-        const hovered = flattenStyleFromCallback(card.props.style, { pressed: false, hovered: true });
+        await act(async () => {
+            card.props.onHoverIn?.();
+        });
+        const hoveredCard = screen.findByTestId('model-picker-overlay-option:review');
+        const hovered = flattenStyleFromCallback(hoveredCard?.props.style, { pressed: false, hovered: true });
         expect(hovered.backgroundColor).not.toBe(base.backgroundColor);
     });
 

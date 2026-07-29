@@ -1,133 +1,43 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
+const DELETED_LEGACY_CHAT_LIST_HARNESS_EXPORTS = [
+    ['legacy', 'ChatListHarnessState'].join(''),
+    ['render', 'LegacyChatList'].join(''),
+    ['reset', 'LegacyChatListHarness'].join(''),
+    ['trigger', 'LegacyChatListScroll'].join(''),
+    ['trigger', 'LegacyChatListInitialFill'].join(''),
+    ['trigger', 'LegacyChatListEndReached'].join(''),
+    ['get', 'CapturedFlatListProps'].join(''),
+    ['require', 'CapturedFlatListProps'].join(''),
+    ['build', 'LegacyChatListItems'].join(''),
+    ['create', 'LegacyChatListItemsModuleMock'].join(''),
+    ['create', 'LegacyChatListReactNativeMock'].join(''),
+    ['create', 'LegacyChatListStorageMock'].join(''),
+];
+
 describe('chatListHarness', () => {
-    it('captures FlashList props and drives initial fill for FlashList ChatList tests', async () => {
+    it('does not export deleted legacy ChatList harness compatibility aliases', async () => {
         const harnessModule = await import('./chatListHarness');
 
-        const resetFlashListChatListHarness = Reflect.get(harnessModule, 'resetFlashListChatListHarness');
-        const createFlashListChatListModuleMock = Reflect.get(harnessModule, 'createFlashListChatListModuleMock');
-        const requireCapturedFlashListProps = Reflect.get(harnessModule, 'requireCapturedFlashListProps');
-        const triggerFlashListChatListInitialFill = Reflect.get(harnessModule, 'triggerFlashListChatListInitialFill');
-        const triggerFlashListChatListLoad = Reflect.get(harnessModule, 'triggerFlashListChatListLoad');
-
-        expect(typeof resetFlashListChatListHarness).toBe('function');
-        expect(typeof createFlashListChatListModuleMock).toBe('function');
-        expect(typeof requireCapturedFlashListProps).toBe('function');
-        expect(typeof triggerFlashListChatListInitialFill).toBe('function');
-        expect(typeof triggerFlashListChatListLoad).toBe('function');
-
-        if (
-            typeof resetFlashListChatListHarness !== 'function' ||
-            typeof createFlashListChatListModuleMock !== 'function' ||
-            typeof requireCapturedFlashListProps !== 'function' ||
-            typeof triggerFlashListChatListInitialFill !== 'function' ||
-            typeof triggerFlashListChatListLoad !== 'function'
-        ) {
-            return;
+        for (const deletedExport of DELETED_LEGACY_CHAT_LIST_HARNESS_EXPORTS) {
+            expect(harnessModule).not.toHaveProperty(deletedExport);
         }
-
-        resetFlashListChatListHarness();
-
-        const flashListModule = await createFlashListChatListModuleMock();
-        const onLayout = vi.fn();
-        const onContentSizeChange = vi.fn();
-        const ref = React.createRef<unknown>();
-        const FlashListComponent = flashListModule.FlashList as any;
-
-        await act(async () => {
-            FlashListComponent.render?.(
-                {
-                    ref,
-                    data: [],
-                    onLayout,
-                    onContentSizeChange,
-                },
-                ref,
-            );
-        });
-
-        const capturedFlashListProps = requireCapturedFlashListProps();
-        expect(capturedFlashListProps.onLayout).toBe(onLayout);
-        expect(capturedFlashListProps.onContentSizeChange).toBe(onContentSizeChange);
-
-        await triggerFlashListChatListInitialFill({
-            layoutHeight: 320,
-            layoutWidth: 400,
-            contentHeight: 960,
-            contentWidth: 400,
-        });
-
-        expect(onLayout).toHaveBeenCalledWith({
-            nativeEvent: {
-                layout: {
-                    height: 320,
-                    width: 400,
-                },
-            },
-        });
-        expect(onContentSizeChange).toHaveBeenCalledWith(400, 960);
-    });
-
-    it('provides FlashList v2 hook mocks and an onLoad trigger for transcript mount tests', async () => {
-        const harnessModule = await import('./chatListHarness');
-        const resetFlashListChatListHarness = Reflect.get(harnessModule, 'resetFlashListChatListHarness');
-        const createFlashListChatListModuleMock = Reflect.get(harnessModule, 'createFlashListChatListModuleMock');
-        const triggerFlashListChatListLoad = Reflect.get(harnessModule, 'triggerFlashListChatListLoad');
-
-        expect(typeof resetFlashListChatListHarness).toBe('function');
-        expect(typeof createFlashListChatListModuleMock).toBe('function');
-        expect(typeof triggerFlashListChatListLoad).toBe('function');
-        if (
-            typeof resetFlashListChatListHarness !== 'function' ||
-            typeof createFlashListChatListModuleMock !== 'function' ||
-            typeof triggerFlashListChatListLoad !== 'function'
-        ) {
-            return;
-        }
-
-        resetFlashListChatListHarness();
-        const flashListModule = await createFlashListChatListModuleMock();
-        const onLoad = vi.fn();
-        const ref = React.createRef<unknown>();
-        const FlashListComponent = flashListModule.FlashList as any;
-
-        expect(typeof flashListModule.LayoutCommitObserver).toBe('function');
-        expect(typeof flashListModule.useLayoutState).toBe('function');
-        expect(typeof flashListModule.useMappingHelper).toBe('function');
-        expect(typeof flashListModule.useRecyclingState).toBe('function');
-        expect(flashListModule.useMappingHelper().getMappingKey('message-id', 4)).toBe(4);
-
-        await act(async () => {
-            FlashListComponent.render?.(
-                {
-                    ref,
-                    data: [],
-                    onLoad,
-                },
-                ref,
-            );
-        });
-
-        await triggerFlashListChatListLoad(42);
-
-        expect(onLoad).toHaveBeenCalledWith({ elapsedTimeInMs: 42 });
     });
 
     it('creates reusable fake web elements for transcript DOM anchoring scenarios', async () => {
         const harnessModule = await import('./chatListHarness');
-        const createFlashListChatListWebElement = Reflect.get(harnessModule, 'createFlashListChatListWebElement');
-        const FlashListChatListWebElement = Reflect.get(harnessModule, 'FlashListChatListWebElement');
+        const createChatListHarnessWebElement = Reflect.get(harnessModule, 'createChatListHarnessWebElement');
+        const ChatListHarnessWebElement = Reflect.get(harnessModule, 'ChatListHarnessWebElement');
 
-        expect(typeof createFlashListChatListWebElement).toBe('function');
-        expect(typeof FlashListChatListWebElement).toBe('function');
-        if (typeof createFlashListChatListWebElement !== 'function') {
+        expect(typeof createChatListHarnessWebElement).toBe('function');
+        expect(typeof ChatListHarnessWebElement).toBe('function');
+        if (typeof createChatListHarnessWebElement !== 'function') {
             return;
         }
 
-        const parent = createFlashListChatListWebElement(null, { top: 0, bottom: 400 });
-        const child = createFlashListChatListWebElement('transcript-item-u1', { top: 50, bottom: 150 });
+        const parent = createChatListHarnessWebElement(null, { top: 0, bottom: 400 });
+        const child = createChatListHarnessWebElement('transcript-item-u1', { top: 50, bottom: 150 });
 
         parent.setQuerySelectorAll('[data-testid]', [child]);
         child.parentElement = parent;
@@ -144,20 +54,20 @@ describe('chatListHarness', () => {
 
     it('creates a clamped FlashList web scroller for transcript prepend-anchor scenarios', async () => {
         const harnessModule = await import('./chatListHarness');
-        const createFlashListChatListWebScroller = Reflect.get(harnessModule, 'createFlashListChatListWebScroller');
-        const createFlashListChatListWebElement = Reflect.get(harnessModule, 'createFlashListChatListWebElement');
+        const createChatListHarnessWebScroller = Reflect.get(harnessModule, 'createChatListHarnessWebScroller');
+        const createChatListHarnessWebElement = Reflect.get(harnessModule, 'createChatListHarnessWebElement');
 
-        expect(typeof createFlashListChatListWebScroller).toBe('function');
-        expect(typeof createFlashListChatListWebElement).toBe('function');
+        expect(typeof createChatListHarnessWebScroller).toBe('function');
+        expect(typeof createChatListHarnessWebElement).toBe('function');
         if (
-            typeof createFlashListChatListWebScroller !== 'function'
-            || typeof createFlashListChatListWebElement !== 'function'
+            typeof createChatListHarnessWebScroller !== 'function'
+            || typeof createChatListHarnessWebElement !== 'function'
         ) {
             return;
         }
 
-        const anchor = createFlashListChatListWebElement('transcript-anchor-message-u1', { top: 120, bottom: 180 });
-        const scroller = createFlashListChatListWebScroller({
+        const anchor = createChatListHarnessWebElement('transcript-anchor-message-u1', { top: 120, bottom: 180 });
+        const scroller = createChatListHarnessWebScroller({
             clientHeight: 600,
             scrollHeight: 1200,
             scrollTop: 999,
@@ -176,31 +86,31 @@ describe('chatListHarness', () => {
 
     it('installs and restores a custom HTMLElement while the web scroller DOM helper runs', async () => {
         const harnessModule = await import('./chatListHarness');
-        const withFlashListChatListWebScrollerDom = Reflect.get(harnessModule, 'withFlashListChatListWebScrollerDom');
-        const createFlashListChatListWebElement = Reflect.get(harnessModule, 'createFlashListChatListWebElement');
-        const FlashListChatListWebElement = Reflect.get(harnessModule, 'FlashListChatListWebElement');
+        const withChatListHarnessWebScrollerDom = Reflect.get(harnessModule, 'withChatListHarnessWebScrollerDom');
+        const createChatListHarnessWebElement = Reflect.get(harnessModule, 'createChatListHarnessWebElement');
+        const ChatListHarnessWebElement = Reflect.get(harnessModule, 'ChatListHarnessWebElement');
 
-        expect(typeof withFlashListChatListWebScrollerDom).toBe('function');
-        expect(typeof createFlashListChatListWebElement).toBe('function');
-        expect(typeof FlashListChatListWebElement).toBe('function');
+        expect(typeof withChatListHarnessWebScrollerDom).toBe('function');
+        expect(typeof createChatListHarnessWebElement).toBe('function');
+        expect(typeof ChatListHarnessWebElement).toBe('function');
         if (
-            typeof withFlashListChatListWebScrollerDom !== 'function'
-            || typeof createFlashListChatListWebElement !== 'function'
-            || typeof FlashListChatListWebElement !== 'function'
+            typeof withChatListHarnessWebScrollerDom !== 'function'
+            || typeof createChatListHarnessWebElement !== 'function'
+            || typeof ChatListHarnessWebElement !== 'function'
         ) {
             return;
         }
 
         const previousHTMLElement = (globalThis as any).HTMLElement;
-        const scroller = createFlashListChatListWebElement(null, { top: 0, bottom: 300 });
+        const scroller = createChatListHarnessWebElement(null, { top: 0, bottom: 300 });
 
-        await withFlashListChatListWebScrollerDom(
+        await withChatListHarnessWebScrollerDom(
             scroller,
             async () => {
-                expect((globalThis as any).HTMLElement).toBe(FlashListChatListWebElement);
+                expect((globalThis as any).HTMLElement).toBe(ChatListHarnessWebElement);
                 expect((globalThis as any).document.querySelector()).toBe(scroller);
             },
-            { HTMLElement: FlashListChatListWebElement },
+            { HTMLElement: ChatListHarnessWebElement },
         );
 
         expect((globalThis as any).HTMLElement).toBe(previousHTMLElement);
@@ -213,25 +123,25 @@ describe('chatListHarness', () => {
 
         try {
             const harnessModule = await import('./chatListHarness');
-            const withRenderedFlashListChatListWebScroller = Reflect.get(harnessModule, 'withRenderedFlashListChatListWebScroller');
-            const createFlashListChatListWebScroller = Reflect.get(harnessModule, 'createFlashListChatListWebScroller');
+            const withRenderedChatListHarnessWebScroller = Reflect.get(harnessModule, 'withRenderedChatListHarnessWebScroller');
+            const createChatListHarnessWebScroller = Reflect.get(harnessModule, 'createChatListHarnessWebScroller');
 
-            expect(typeof withRenderedFlashListChatListWebScroller).toBe('function');
-            expect(typeof createFlashListChatListWebScroller).toBe('function');
+            expect(typeof withRenderedChatListHarnessWebScroller).toBe('function');
+            expect(typeof createChatListHarnessWebScroller).toBe('function');
             if (
-                typeof withRenderedFlashListChatListWebScroller !== 'function'
-                || typeof createFlashListChatListWebScroller !== 'function'
+                typeof withRenderedChatListHarnessWebScroller !== 'function'
+                || typeof createChatListHarnessWebScroller !== 'function'
             ) {
                 return;
             }
 
-            const scroller = createFlashListChatListWebScroller({
+            const scroller = createChatListHarnessWebScroller({
                 clientHeight: 400,
                 scrollHeight: 1200,
                 scrollTop: 200,
             });
 
-            await withRenderedFlashListChatListWebScroller(
+            await withRenderedChatListHarnessWebScroller(
                 scroller,
                 React.createElement('MockChatList'),
                 async (screen: any) => {
@@ -239,8 +149,7 @@ describe('chatListHarness', () => {
                     expect(screen.findByType('MockChatList')).toBeTruthy();
                 },
                 {
-                    initialFill: false,
-                    dom: { HTMLElement: Reflect.get(harnessModule, 'FlashListChatListWebElement') },
+                    dom: { HTMLElement: Reflect.get(harnessModule, 'ChatListHarnessWebElement') },
                 },
             );
         } finally {

@@ -158,6 +158,7 @@ export function SecretsList(props: SecretsListProps) {
             <ItemGroup title={groupTitle}>
                 {props.includeNoneRow && (
                     <Item
+                        testID="saved-secret:none"
                         title={t('secrets.noneTitle')}
                         subtitle={props.noneSubtitle ?? t('secrets.noneSubtitle')}
                         icon={<Ionicons name="close-circle-outline" size={29} color={theme.colors.text.secondary} />}
@@ -170,6 +171,7 @@ export function SecretsList(props: SecretsListProps) {
 
                 {props.secrets.length === 0 ? (
                     <Item
+                        testID="saved-secret:empty"
                         title={t('secrets.emptyTitle')}
                         subtitle={t('secrets.emptySubtitle')}
                         icon={<Ionicons name="key-outline" size={29} color={theme.colors.text.secondary} />}
@@ -182,6 +184,7 @@ export function SecretsList(props: SecretsListProps) {
                         return (
                             <Item
                                 key={secret.id}
+                                testID={`saved-secret:${secret.id}`}
                                 title={secret.name}
                                 subtitle={t('secrets.savedHiddenSubtitle')}
                                 icon={<Ionicons name="key-outline" size={29} color={theme.colors.button.secondary.tint} />}
@@ -194,11 +197,13 @@ export function SecretsList(props: SecretsListProps) {
                                         {props.onSetDefaultId && (
                                             <ItemRowActions
                                                 title={t('secrets.defaultLabel')}
+                                                overflowTriggerTestID={`saved-secret:${secret.id}:default-more`}
                                                 compactActionIds={['default']}
                                                 iconSize={18}
                                                 actions={[
                                                     {
                                                         id: 'default',
+                                                        inlineTestID: `saved-secret:${secret.id}:default`,
                                                         title: isDefault ? t('secrets.actions.unsetDefault') : t('secrets.actions.setDefault'),
                                                         icon: isDefault ? 'star' : 'star-outline',
                                                         color: isDefault ? theme.colors.button.primary.background : theme.colors.text.secondary,
@@ -211,11 +216,12 @@ export function SecretsList(props: SecretsListProps) {
                                         {props.allowEdit !== false && (
                                             <ItemRowActions
                                                 title={secret.name}
+                                                overflowTriggerTestID={`saved-secret:${secret.id}:more`}
                                                 compactActionIds={['edit']}
                                                 actions={[
-                                                    { id: 'edit', title: t('common.rename'), icon: 'pencil-outline', onPress: () => { void renameSecret(secret); } },
-                                                    { id: 'replace', title: t('secrets.actions.replaceValue'), icon: 'refresh-outline', onPress: () => { void replaceSecretValue(secret); } },
-                                                    { id: 'delete', title: t('common.delete'), icon: 'trash-outline', destructive: true, onPress: () => { void deleteSecret(secret); } },
+                                                    { id: 'edit', inlineTestID: `saved-secret:${secret.id}:rename`, title: t('common.rename'), icon: 'pencil-outline', onPress: () => { void renameSecret(secret); } },
+                                                    { id: 'replace', inlineTestID: `saved-secret:${secret.id}:replace`, title: t('secrets.actions.replaceValue'), icon: 'refresh-outline', onPress: () => { void replaceSecretValue(secret); } },
+                                                    { id: 'delete', inlineTestID: `saved-secret:${secret.id}:delete`, title: t('common.delete'), icon: 'trash-outline', destructive: true, onPress: () => { void deleteSecret(secret); } },
                                                 ]}
                                             />
                                         )}
@@ -240,6 +246,7 @@ export function SecretsList(props: SecretsListProps) {
             <ItemGroup footer={groupFooter}>
                 {props.allowAdd !== false ? (
                     <InlineAddExpander
+                        triggerTestID="saved-secret-add"
                         isOpen={isAddExpanded}
                         onOpenChange={setIsAddExpanded}
                         title={t('common.add')}
@@ -255,6 +262,7 @@ export function SecretsList(props: SecretsListProps) {
                         <Text style={styles.fieldLabel}>{t('secrets.fields.name')}</Text>
                         <TextInput
                             ref={nameInputRef}
+                            testID="saved-secret-add-name"
                             style={styles.textInput}
                             placeholder={t('secrets.placeholders.nameExample')}
                             placeholderTextColor={theme.colors.input.placeholder}
@@ -268,6 +276,7 @@ export function SecretsList(props: SecretsListProps) {
 
                         <Text style={styles.fieldLabel}>{t('secrets.fields.value')}</Text>
                         <TextInput
+                            testID="saved-secret-add-value"
                             style={styles.textInput}
                             placeholder={t('secrets.placeholders.valueExample')}
                             placeholderTextColor={theme.colors.input.placeholder}

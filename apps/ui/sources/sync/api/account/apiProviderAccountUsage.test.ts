@@ -51,14 +51,6 @@ function makeSnapshot(): ProviderAccountUsageSnapshotV1 {
             kind: 'providerSubject',
             id: 'acct_stable',
         },
-        aliases: [
-            {
-                kind: 'nativeCli',
-                providerId: 'codex',
-                localCredentialRef: 'codex-home',
-                accountSubjectId: 'acct_stable',
-            },
-        ],
         observedAtMs: 1,
         fetchedAtMs: 1,
         staleAfterMs: 2,

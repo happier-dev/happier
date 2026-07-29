@@ -64,6 +64,7 @@ import { RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { runMachineScmRpc, scmFallbackError } from './scm/machineScm';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { readMachineControlTargetForSession } from './sessionMachineTarget';
 
 async function callScmPreferMachine<
@@ -85,11 +86,13 @@ async function callScmPreferMachine<
     }
 
     const cwd = resolveMachineAbsolutePath({ rootPath: machineTarget.basePath, requestPath: request.cwd });
+    const serverId = resolvePreferredServerIdForSessionId(sessionId);
     try {
         return await runMachineScmRpc<T, R>(
             machineTarget.machineId,
             method,
             { ...request, cwd } as R,
+            { serverId },
         );
     } catch (error) {
         return scmFallbackError<T>(error);

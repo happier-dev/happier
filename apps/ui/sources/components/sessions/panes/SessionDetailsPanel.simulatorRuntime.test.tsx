@@ -86,6 +86,8 @@ vi.mock('@/sync/store/hooks', () => ({
 }));
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+    getMachineContributionRegistryProjectionRevision: () => 0,
+    subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machineContributionRegistryProjectionDescribe: vi.fn(async () => ({
         supported: true,
         projection: {

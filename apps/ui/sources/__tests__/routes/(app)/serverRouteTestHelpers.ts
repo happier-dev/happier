@@ -32,7 +32,6 @@ export function installServerRouteCommonModuleMocks(
         modal: options.modal,
     };
 
-    vi.mock('react-native-reanimated', () => ({}));
 
     vi.mock('react-native-typography', () => ({
         human: {},

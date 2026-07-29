@@ -16,6 +16,7 @@ const {
     modalSpies,
     routeParamsRef,
     routerPushSpy,
+    runRefreshDiagnosticActionSpy,
     stopDaemonSpy,
     stopRunSpy,
     stopSessionSpy,
@@ -30,6 +31,7 @@ const {
     },
     routeParamsRef: { current: { id: 'machine-1' } as Record<string, string> },
     routerPushSpy: vi.fn(),
+    runRefreshDiagnosticActionSpy: vi.fn(async (_context: unknown, action: () => Promise<unknown>) => action()),
     stopDaemonSpy: vi.fn<(machineId: string, options?: Record<string, unknown>) => Promise<{ message: string }>>(
         async () => ({ message: 'noop' }),
     ),
@@ -161,6 +163,10 @@ vi.mock('@/utils/errors/daemonUnavailableAlert', () => ({
     tryShowDaemonUnavailableAlertForRpcError: () => false,
     tryShowDaemonUnavailableAlertForRpcFailure: () => false,
 }));
+vi.mock('@/utils/system/userInteractionDiagnostics', () => ({
+    runRefreshDiagnosticAction: (context: unknown, action: () => Promise<unknown>) =>
+        runRefreshDiagnosticActionSpy(context, action),
+}));
 
 vi.mock('@/utils/sessions/machineUtils', () => ({ isMachineOnline: () => true }));
 vi.mock('@/utils/sessions/sessionUtils', () => ({ formatPathRelativeToHome: () => '', getSessionName: () => '', getSessionSubtitle: () => '' }));
@@ -189,6 +195,21 @@ vi.mock('@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions', ()
 }));
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readMachineTargetForSession: () => null,
+}));
+vi.mock('@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection', () => ({
+    resolvePreferredBackendTargetFromProjection: () => ({ kind: 'backend', backendId: 'codex' }),
+}));
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+    useDaemonMergedProjectionInputs: () => ({
+        phase: 'ready',
+        inputs: {
+            discoveredBackendIds: [],
+            mergedBackendProjectionById: {},
+            mergedProviderProjectionById: {},
+            pluginProjectionById: {},
+            registryDiagnostics: [],
+        },
+    }),
 }));
 
 describe('MachineDetailScreen (execution runs section)', () => {
@@ -219,6 +240,7 @@ describe('MachineDetailScreen (execution runs section)', () => {
         machineExecutionRunsListSpy.mockClear();
         stopDaemonSpy.mockClear();
         routerPushSpy.mockClear();
+        runRefreshDiagnosticActionSpy.mockClear();
         stopRunSpy.mockClear();
         stopSessionSpy.mockClear();
         modalSpies.alert.mockClear();
@@ -233,6 +255,25 @@ describe('MachineDetailScreen (execution runs section)', () => {
 
         expect(machineExecutionRunsListSpy).toHaveBeenCalledWith('machine-1', { serverId: 'server-a' });
         expect(screen.findByTestId('item-group:runs.title')).toBeTruthy();
+    });
+
+    it('wraps pull-to-refresh in refresh diagnostics', async () => {
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+        await flushHookEffects();
+        const scrollView = screen.tree.root.findAll((node) => Boolean(node.props.refreshControl))[0];
+        expect(scrollView).toBeTruthy();
+        const refreshControl = scrollView.props.refreshControl;
+
+        await act(async () => {
+            await refreshControl.props.onRefresh();
+        });
+
+        expect(runRefreshDiagnosticActionSpy).toHaveBeenCalledWith({
+            action: 'pull_to_refresh',
+            screen: 'machine_detail',
+        }, expect.any(Function));
     });
 
     it('uses the requested route server when loading execution runs', async () => {

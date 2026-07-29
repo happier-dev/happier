@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { FlatList, Platform, Pressable, View, type ViewStyle } from 'react-native';
+import { Platform, Pressable, View, type ViewStyle } from 'react-native';
+import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import { Octicons } from '@expo/vector-icons';
 
 import { SourceControlBranchSummary } from '@/components/workspaces/scm/SourceControlBranchSummary';
@@ -125,6 +126,7 @@ export const SessionRightPanelGitCommitTab = React.memo((props: SessionRightPane
                 theme={props.theme}
                 sessionId={props.sessionId}
                 sessionPath={props.sessionPath}
+                backendLabel={props.backendLabel}
                 scmStatusFiles={props.scmStatusFiles}
                 scmSnapshot={props.scmSnapshot}
                 scmWriteEnabled={props.scmWriteEnabled}
@@ -286,6 +288,7 @@ type CommitChangesSurfaceProps = Readonly<{
     theme: any;
     sessionId: string;
     sessionPath: string | null;
+    backendLabel: string;
     scmStatusFiles: ScmStatusFiles | null;
     scmSnapshot: ScmWorkingSnapshot | null;
     scmWriteEnabled?: boolean;
@@ -560,6 +563,7 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                         theme={props.theme}
                         scmStatusFiles={props.scmStatusFiles}
                         variant="rail"
+                        backendLabel={props.backendLabel}
                         branchTrigger={branchTrigger}
                     />
                 ) : null}
@@ -782,7 +786,7 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
 
     return (
         <View style={{ flex: 1, position: 'relative' }}>
-            <FlatList
+            <VirtualizedList
                 data={virtualizedChangedFiles}
                 keyExtractor={virtualizedKeyExtractor}
                 ListHeaderComponent={headerContent}

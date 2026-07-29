@@ -10,7 +10,7 @@ import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfi
  * the transport routes that through the recoverable reconnect path.
  *
  * It is the SINGLE owner of inbound-liveness detection (complementing the
- * existing outbound-bytes watchdog in `RealtimeTransport`, which detects a dead
+ * provider-owned outbound-bytes watchdog, which detects a dead
  * *outbound* mic, not a stalled *inbound* stream). It never false-fires during
  * legitimate between-turn silence: the timer is only armed while a turn is
  * active. It fires at most once per stall until re-armed by a fresh inbound

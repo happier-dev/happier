@@ -30,9 +30,7 @@ vi.mock('@/voice/runtime/daemonInference/DaemonTtsController', () => ({
 vi.mock('@/voice/runtime/daemonInference/daemonVoiceInferencePolicy', () => ({
   resolveLocalNeuralExecutionPolicy: (params: { requestedExecution?: string | null }) => {
     const requestedExecution = params.requestedExecution ?? 'auto';
-    const selectableExecution = platformOsMock.value === 'web' && requestedExecution === 'device'
-      ? 'daemon'
-      : requestedExecution;
+    const selectableExecution = requestedExecution;
     return {
       allowDeviceSelection: platformOsMock.value !== 'web',
       preferredExecution: selectableExecution === 'auto'
@@ -46,10 +44,8 @@ vi.mock('@/voice/runtime/daemonInference/daemonVoiceInferencePolicy', () => ({
   },
   resolveDaemonVoiceInferenceExecution: async (params: { requestedExecution?: string | null }) => {
     const requestedExecution = params.requestedExecution ?? 'auto';
-    if (platformOsMock.value === 'web') {
-      return requestedExecution === 'device' ? 'daemon' : 'daemon';
-    }
-    return requestedExecution === 'daemon' ? 'daemon' : 'device';
+    if (requestedExecution !== 'auto') return requestedExecution;
+    return platformOsMock.value === 'web' ? 'daemon' : 'device';
   },
 }));
 
@@ -83,17 +79,9 @@ describe('localNeuralTtsProviderSpec', () => {
 
     const cfgTts: VoiceLocalTtsSettings = {
       provider: 'local_neural',
-      openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
+      openaiCompat: { baseUrl: null, insecureLocalOriginConsent: null, insecureLocalConsentMachineId: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
       localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null, execution: 'auto' },
-      googleCloud: {
-        apiKey: null,
-        androidCertSha1: null,
-        voiceName: null,
-        languageCode: null,
-        format: 'mp3',
-        speakingRate: null,
-        pitch: null,
-      },
+      providers: {},
       autoSpeakReplies: true,
       bargeInEnabled: true,
     };
@@ -111,17 +99,9 @@ describe('localNeuralTtsProviderSpec', () => {
 
     const cfgTts: VoiceLocalTtsSettings = {
       provider: 'local_neural',
-      openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
+      openaiCompat: { baseUrl: null, insecureLocalOriginConsent: null, insecureLocalConsentMachineId: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
       localNeural: { model: 'kokoro', assetId: 'kokoro-82m-v1.0-onnx-q8-wasm', voiceId: 'af_heart', speed: 1, execution: 'auto' },
-      googleCloud: {
-        apiKey: null,
-        androidCertSha1: null,
-        voiceName: null,
-        languageCode: null,
-        format: 'mp3',
-        speakingRate: null,
-        pitch: null,
-      },
+      providers: {},
       autoSpeakReplies: true,
       bargeInEnabled: true,
     };
@@ -130,40 +110,30 @@ describe('localNeuralTtsProviderSpec', () => {
 
     expect(daemonSpeakSpy).toHaveBeenCalledWith(expect.objectContaining({
       text: 'Hello',
-      packId: 'kokoro-tts-en-v1',
+      packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
       voiceId: 'af_heart',
     }));
     expect(speakKokoroTextSpy).not.toHaveBeenCalled();
   });
 
-  it('clamps web device execution to the daemon controller for Test TTS', async () => {
+  it('preserves explicit web device execution for Test TTS', async () => {
     platformOsMock.value = 'web';
     const { localNeuralTtsProviderSpec } = await import('./localNeuralTtsProvider');
 
     const cfgTts: VoiceLocalTtsSettings = {
       provider: 'local_neural',
-      openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
+      openaiCompat: { baseUrl: null, insecureLocalOriginConsent: null, insecureLocalConsentMachineId: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
       localNeural: { model: 'kokoro', assetId: 'kokoro-82m-v1.0-onnx-q8-wasm', voiceId: 'af_heart', speed: 1, execution: 'device' },
-      googleCloud: {
-        apiKey: null,
-        androidCertSha1: null,
-        voiceName: null,
-        languageCode: null,
-        format: 'mp3',
-        speakingRate: null,
-        pitch: null,
-      },
+      providers: {},
       autoSpeakReplies: true,
       bargeInEnabled: true,
     };
 
-    await localNeuralTtsProviderSpec.test({ cfgTts, networkTimeoutMs: 15_000, sample: 'Hello from web clamp' });
+    await localNeuralTtsProviderSpec.test({ cfgTts, networkTimeoutMs: 15_000, sample: 'Hello from web device' });
 
-    expect(daemonSpeakSpy).toHaveBeenCalledWith(expect.objectContaining({
-      text: 'Hello from web clamp',
-      packId: 'kokoro-tts-en-v1',
-      voiceId: 'af_heart',
+    expect(speakKokoroTextSpy).toHaveBeenCalledWith(expect.objectContaining({
+      text: 'Hello from web device',
     }));
-    expect(speakKokoroTextSpy).not.toHaveBeenCalled();
+    expect(daemonSpeakSpy).not.toHaveBeenCalled();
   });
 });

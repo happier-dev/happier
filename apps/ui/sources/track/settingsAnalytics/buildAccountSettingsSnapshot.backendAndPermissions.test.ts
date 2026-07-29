@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { buildProviderUniverseBackendTargetKey } from '@/agents/providers/registry/providerUniverse';
+import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 
 import { buildAccountSettingsSnapshot } from './buildAccountSettingsSnapshot';
 
 describe('buildAccountSettingsSnapshot', () => {
     it('tracks backend settings through structured canonical analytics serializers', () => {
-        const claudeTargetKey = buildProviderUniverseBackendTargetKey('claude');
-        const codexTargetKey = buildProviderUniverseBackendTargetKey('codex');
+        const claudeTargetKey = buildAgentUniverseBackendTargetKey('claude');
+        const codexTargetKey = buildAgentUniverseBackendTargetKey('codex');
         const snapshot = buildAccountSettingsSnapshot({
             ...settingsDefaults,
             backendEnabledByTargetKey: {
@@ -26,12 +26,12 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties[`acct_setting__backendEnabledByTargetKey__${codexTargetKey}`]).toBe(true);
         expect(snapshot.properties[`acct_setting__backendCliSourcePreferenceByTargetKey__${codexTargetKey}`]).toBe('managed-first');
         expect(snapshot.properties[`acct_setting__backendCliSourcePreferenceByTargetKey__${claudeTargetKey}`]).toBe('system-first');
-        expect(snapshot.properties[`acct_setting__backendCliSourcePreferenceByTargetKey__${buildProviderUniverseBackendTargetKey('gemini')}`]).toBe('default');
+        expect(snapshot.properties[`acct_setting__backendCliSourcePreferenceByTargetKey__${buildAgentUniverseBackendTargetKey('gemini')}`]).toBe('default');
     });
 
     it('tracks default permission modes per agent through structured canonical analytics serializers', () => {
-        const claudeTargetKey = buildProviderUniverseBackendTargetKey('claude');
-        const codexTargetKey = buildProviderUniverseBackendTargetKey('codex');
+        const claudeTargetKey = buildAgentUniverseBackendTargetKey('claude');
+        const codexTargetKey = buildAgentUniverseBackendTargetKey('codex');
         const snapshot = buildAccountSettingsSnapshot({
             ...settingsDefaults,
             sessionDefaultPermissionModeByTargetKey: {
@@ -43,6 +43,6 @@ describe('buildAccountSettingsSnapshot', () => {
 
         expect(snapshot.properties[`acct_setting__sessionDefaultPermissionModeByTargetKey__${claudeTargetKey}`]).toBe('safe-yolo');
         expect(snapshot.properties[`acct_setting__sessionDefaultPermissionModeByTargetKey__${codexTargetKey}`]).toBe('read-only');
-        expect(snapshot.properties[`acct_setting__sessionDefaultPermissionModeByTargetKey__${buildProviderUniverseBackendTargetKey('gemini')}`]).toBe('default');
+        expect(snapshot.properties[`acct_setting__sessionDefaultPermissionModeByTargetKey__${buildAgentUniverseBackendTargetKey('gemini')}`]).toBe('default');
     });
 });

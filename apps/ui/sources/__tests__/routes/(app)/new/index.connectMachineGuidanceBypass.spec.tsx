@@ -11,7 +11,6 @@ const routeState = vi.hoisted(() => ({
     params: {} as Record<string, string | undefined>,
 }));
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');

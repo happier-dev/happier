@@ -7,6 +7,7 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import type { SessionWorkflowAgentStatusV1 } from '@happier-dev/protocol';
 import { formatTokenCount } from '@/utils/format/usageNumbers';
+import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 
 import { WorkflowAgentDetail } from './WorkflowAgentDetail';
 import { WorkflowStatusIcon } from './workflowStatusIcon';
@@ -41,6 +42,14 @@ function formatDuration(seconds: number): string {
 export const WorkflowAgentRow = React.memo<WorkflowAgentRowProps>((props) => {
     const { theme } = useUnistyles();
     const [expanded, setExpanded] = React.useState(false);
+    const rowLayoutMutation = useTranscriptRowLayoutMutation();
+    const toggleExpanded = React.useCallback(() => {
+        rowLayoutMutation({
+            reason: expanded ? 'collapse' : 'expand',
+            sourceId: `workflow-agent:${props.testID ?? props.title}`,
+        });
+        setExpanded(!expanded);
+    }, [expanded, props.testID, props.title, rowLayoutMutation]);
     const metricParts: string[] = [];
     if (props.model) metricParts.push(props.model);
     if (typeof props.tokensUsed === 'number' && props.tokensUsed > 0) {
@@ -92,7 +101,7 @@ export const WorkflowAgentRow = React.memo<WorkflowAgentRowProps>((props) => {
             <Pressable
                 accessibilityRole="button"
                 accessibilityState={{ expanded }}
-                onPress={() => setExpanded((current) => !current)}
+                onPress={toggleExpanded}
                 style={[styles.row, expanded ? styles.rowExpanded : null]}
                 testID={props.testID}
                 hitSlop={6}

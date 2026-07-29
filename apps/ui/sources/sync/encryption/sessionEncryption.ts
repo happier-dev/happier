@@ -27,6 +27,7 @@ export class SessionEncryption {
     private sessionId: string;
     private encryptor: Encryptor & Decryptor;
     private cache: EncryptionCache;
+    private readonly metadataPayloadDecryptInFlight = new Map<string, Promise<unknown | null>>();
     private readonly metadataDecryptInFlight = new Map<string, Promise<Metadata | null>>();
     private readonly agentStateDecryptInFlight = new Map<string, Promise<AgentState>>();
     private readonly snapshotStateDecryptInFlight = new Map<string, Promise<{ metadata: Metadata | null; agentState: AgentState }>>();
@@ -64,14 +65,15 @@ export class SessionEncryption {
         };
 
         const computeMessageFingerprint = (message: ApiMessage): string => {
+            const messageRole = typeof message.messageRole === 'string' ? message.messageRole : 'null';
             const content: any = (message as any)?.content;
             if (content && content.t === 'encrypted' && typeof content.c === 'string') {
-                return computeMessageCiphertextFingerprint(content.c);
+                return `${computeMessageCiphertextFingerprint(content.c)}:role:${messageRole}`;
             }
             if (content && content.t === 'plain') {
-                return computePlainValueFingerprint(content.v);
+                return `${computePlainValueFingerprint(content.v)}:role:${messageRole}`;
             }
-            return 'plain:unknown';
+            return `plain:unknown:role:${messageRole}`;
         };
 
         // Check cache for all messages first
@@ -115,11 +117,12 @@ export class SessionEncryption {
                     id: message.id,
                     seq: message.seq,
                     localId: message.localId ?? null,
+                    messageRole: message.messageRole ?? null,
                     content: parsed.success ? parsed.data : null,
                     createdAt: message.createdAt,
                 };
                 results[i] = result;
-                this.cache.setCachedMessage(message.id, result, fingerprint);
+                this.cache.setCachedMessage(message.id, result, fingerprint, this.sessionId);
             } else {
                 // Invalid content
                 invalidCount++;
@@ -127,10 +130,11 @@ export class SessionEncryption {
                     id: message.id,
                     seq: message.seq,
                     localId: message.localId ?? null,
+                    messageRole: message.messageRole ?? null,
                     content: null,
                     createdAt: message.createdAt,
                 };
-                this.cache.setCachedMessage(message.id, results[i]!, fingerprint);
+                this.cache.setCachedMessage(message.id, results[i]!, fingerprint, this.sessionId);
             }
         }
 
@@ -166,16 +170,18 @@ export class SessionEncryption {
                         id: message.id,
                         seq: message.seq,
                         localId: message.localId ?? null,
+                        messageRole: message.messageRole ?? null,
                         content: decryptedData,
                         createdAt: message.createdAt,
                     };
-                    this.cache.setCachedMessage(message.id, result, toDecrypt[i].fingerprint);
+                    this.cache.setCachedMessage(message.id, result, toDecrypt[i].fingerprint, this.sessionId);
                     results[index] = result;
                 } else {
                     const result: DecryptedMessage = {
                         id: message.id,
                         seq: message.seq,
                         localId: message.localId ?? null,
+                        messageRole: message.messageRole ?? null,
                         content: null,
                         createdAt: message.createdAt,
                     };
@@ -259,6 +265,37 @@ export class SessionEncryption {
     }
 
     /**
+     * Decrypt a metadata envelope without applying the legacy Metadata schema.
+     *
+     * Layout-aware readers must admit this raw value through their canonical
+     * layout parser. In particular, layout v1 must not pass through
+     * MetadataSchema because its legacy defaults make a strict shared envelope
+     * invalid and can resurrect owner-only legacy fields.
+     */
+    async decryptMetadataPayload(version: number, encrypted: string): Promise<unknown | null> {
+        const key = this.buildDedupeKey('metadata-payload', version, encrypted);
+        return runWithInFlightDedupe(
+            {
+                get: () => this.metadataPayloadDecryptInFlight.get(key) ?? null,
+                set: (value) => {
+                    if (value) {
+                        this.metadataPayloadDecryptInFlight.set(key, value);
+                    } else {
+                        this.metadataPayloadDecryptInFlight.delete(key);
+                    }
+                },
+            },
+            async () => {
+                const decrypted = await decryptBase64Payloads(this.encryptor, [encrypted], {
+                    decryptName: 'sync.encryption.decryptMetadata',
+                    decryptFields: { items: 1 },
+                });
+                return decrypted[0] ?? null;
+            },
+        );
+    }
+
+    /**
      * Decrypt metadata using session-specific encryption
      */
     async decryptMetadata(version: number, encrypted: string): Promise<Metadata | null> {
@@ -285,15 +322,11 @@ export class SessionEncryption {
     }
 
     private async decryptMetadataUncached(version: number, encrypted: string): Promise<Metadata | null> {
-        // Decrypt if not cached
-        const decrypted = await decryptBase64Payloads(this.encryptor, [encrypted], {
-            decryptName: 'sync.encryption.decryptMetadata',
-            decryptFields: { items: 1 },
-        });
-        if (!decrypted[0]) {
+        const decrypted = await this.decryptMetadataPayload(version, encrypted);
+        if (!decrypted) {
             return null;
         }
-        const parsed = MetadataSchema.safeParse(decrypted[0]);
+        const parsed = MetadataSchema.safeParse(decrypted);
         if (!parsed.success) {
             return null;
         }
@@ -366,7 +399,11 @@ export class SessionEncryption {
         return parsed.data;
     }
 
-    private buildDedupeKey(kind: 'metadata' | 'agentState', version: number, encrypted: string): string {
+    private buildDedupeKey(
+        kind: 'metadata-payload' | 'metadata' | 'agentState',
+        version: number,
+        encrypted: string,
+    ): string {
         return `${kind}:${this.sessionId}:${version}:${computeCiphertextFingerprint(encrypted)}`;
     }
 

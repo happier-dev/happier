@@ -1,4 +1,8 @@
-import { voiceSettingsDefaults, type VoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import {
+  readLocalConversationVoiceSettings,
+  voiceSettingsDefaults,
+} from '@/sync/domains/settings/voiceSettings';
+import type { VoiceLocalConversationSettings } from '@/voice/adapters/localConversation/settings';
 
 export type VoiceTurnStreamReadConfig = Readonly<{
   pollIntervalMs: number;
@@ -7,10 +11,11 @@ export type VoiceTurnStreamReadConfig = Readonly<{
 }>;
 
 export function resolveVoiceTurnStreamReadConfig(
-  voiceCfg: VoiceSettings['adapters']['local_conversation'] | null | undefined,
+  voiceCfg: VoiceLocalConversationSettings | null | undefined,
 ): VoiceTurnStreamReadConfig {
-  const defaults = voiceSettingsDefaults.adapters.local_conversation.streaming;
-  const networkDefault = voiceSettingsDefaults.adapters.local_conversation.networkTimeoutMs;
+  const defaultConversation = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+  const defaults = defaultConversation.streaming;
+  const networkDefault = defaultConversation.networkTimeoutMs;
 
   const networkTimeoutMsRaw = voiceCfg?.networkTimeoutMs;
   const networkTimeoutMs =

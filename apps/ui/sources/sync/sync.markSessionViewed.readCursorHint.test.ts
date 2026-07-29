@@ -129,7 +129,7 @@ function createExternalSessionWithObservedAttention(params: { sessionId: string 
             host: '',
             externalSessionV1: {
                 v: 1,
-                providerId: 'codex',
+                agentId: 'codex',
                 machineId: 'machine-1',
                 remoteSessionId: 'vendor-session-1',
                 source: { kind: 'codexHome', home: 'user' },

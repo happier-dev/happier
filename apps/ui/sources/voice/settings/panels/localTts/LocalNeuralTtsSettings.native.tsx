@@ -8,7 +8,11 @@ import { Item } from '@/components/ui/lists/Item';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { KOKORO_DEFAULT_TTS_PACK_ID } from '@happier-dev/protocol';
+import {
+  KOKORO_DEFAULT_TTS_PACK_ID,
+  getModelPackCatalogEntry,
+  isPublishedModelPackCatalogEntry,
+} from '@happier-dev/protocol';
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { getKokoroAssetSetOptions } from '@/voice/kokoro/assets/kokoroAssetSets';
 import { resolveKokoroDaemonTtsPackId } from '@/voice/kokoro/assets/resolveKokoroDaemonTtsPackId';
@@ -20,11 +24,18 @@ import { formatModelPackBuildLabel } from '@/voice/modelPacks/formatBuildLabel';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
-import { DaemonVoiceInferenceModelSection } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceModelSection';
+import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 
 import { useLocalNeuralKokoroVoiceCatalog } from './useLocalNeuralKokoroVoiceCatalog.native';
 import { useLocalNeuralModelPackState } from './useLocalNeuralModelPackState.native';
+
+const ACCESSORY_BUTTON_STYLE = {
+  width: 44,
+  height: 44,
+  alignItems: 'center',
+  justifyContent: 'center',
+} as const;
 
 export function LocalNeuralTtsSettings(props: {
   cfgKokoro: VoiceLocalTtsSettings['localNeural'];
@@ -44,9 +55,17 @@ export function LocalNeuralTtsSettings(props: {
   const effectiveAssetSetId = resolveKokoroDaemonTtsPackId(props.cfgKokoro.assetId ?? KOKORO_DEFAULT_TTS_PACK_ID);
   const usesDaemonExecution = executionPolicy.preferredExecution === 'daemon';
   const assetSets = React.useMemo(() => getKokoroAssetSetOptions().filter((s) => s.id), []);
-  const runtimeSupported = React.useMemo(() => isKokoroRuntimeSupported(), []);
+  const catalogEntry = getModelPackCatalogEntry(effectiveAssetSetId);
+  const publicationAvailable = catalogEntry === null || isPublishedModelPackCatalogEntry(catalogEntry);
+  const runtimeSupported = React.useMemo(
+    () => publicationAvailable && isKokoroRuntimeSupported(),
+    [publicationAvailable],
+  );
 
-  const manifestUrl = React.useMemo(() => resolveModelPackManifestUrl({ packId: effectiveAssetSetId }), [effectiveAssetSetId]);
+  const manifestUrl = React.useMemo(
+    () => publicationAvailable ? resolveModelPackManifestUrl({ packId: effectiveAssetSetId }) : null,
+    [effectiveAssetSetId, publicationAvailable],
+  );
 
   const { modelStatus, downloadDetail, installed, installSummary, updateCheckedRemote, prepareModel, cancelPrepare, clearAssets, checkForUpdates } =
     useLocalNeuralModelPackState({
@@ -179,10 +198,9 @@ export function LocalNeuralTtsSettings(props: {
       />
 
       {usesDaemonExecution ? (
-        <DaemonVoiceInferenceModelSection
+        <SelectedDaemonModelPackRow
           packId={effectiveAssetSetId}
-          kind="tts"
-          daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+          kind="tts_sherpa"
         />
       ) : (
         <>
@@ -212,13 +230,22 @@ export function LocalNeuralTtsSettings(props: {
             }}
             rightElement={
               modelStatus === 'downloading' ? (
-                <Pressable onPress={cancelPrepare} hitSlop={10}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t('common.cancel')}
+                  style={ACCESSORY_BUTTON_STYLE}
+                  onPress={(event) => {
+                    event.stopPropagation?.();
+                    cancelPrepare();
+                  }}
+                >
                   <Ionicons name="close" size={20} color={theme.colors.text.secondary} />
                 </Pressable>
               ) : (
                 <Ionicons name="download-outline" size={20} color={theme.colors.text.secondary} />
               )
             }
+            rightElementOutsidePressable={modelStatus === 'downloading'}
             showChevron={false}
             selected={false}
           />
@@ -253,6 +280,7 @@ export function LocalNeuralTtsSettings(props: {
         matchTriggerWidth={true}
         connectToTrigger={true}
         rowKind="item"
+        itemRowProps={{ rightElementOutsidePressable: true }}
         popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
           title: t('settingsVoice.local.kokoro.voice.title'),
@@ -267,11 +295,13 @@ export function LocalNeuralTtsSettings(props: {
           rightElement: (
             <View style={{ paddingRight: 4 }}>
               <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t('settingsVoice.realtimeProviders.catalog.preview', { voice: v.title })}
+                style={ACCESSORY_BUTTON_STYLE}
                 onPress={(e) => {
                   e.stopPropagation?.();
                   void playPreview(v.id);
                 }}
-                hitSlop={10}
               >
                 <Ionicons
                   name={previewingVoiceId === v.id ? 'pause' : 'play'}

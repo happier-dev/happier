@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from 'vitest';
 
 import { sanitizeRenderedMermaidSvg } from './mermaidSanitize';
@@ -19,6 +21,23 @@ describe('sanitizeRenderedMermaidSvg', () => {
         expect(sanitized).not.toContain('onmouseover=');
         expect(sanitized).not.toContain('onload=');
         expect(sanitized).not.toContain('javascript:');
-        expect(sanitized).toContain('href="#"');
+        expect(sanitized).not.toContain('href=');
+    });
+
+    it('removes all Mermaid navigation surfaces while preserving label content', () => {
+        const sanitized = sanitizeRenderedMermaidSvg(`
+            <svg xmlns:xlink="http://www.w3.org/1999/xlink">
+                <a href="https://attacker.example" target="_blank"><text>HTTP target</text></a>
+                <a xlink:href="happier-test://open"><text>Custom target</text></a>
+                <use href="/relative-target" />
+            </svg>
+        `);
+
+        expect(sanitized).not.toContain('<a');
+        expect(sanitized).not.toContain('href=');
+        expect(sanitized).not.toContain('xlink:href=');
+        expect(sanitized).not.toContain('target=');
+        expect(sanitized).toContain('HTTP target');
+        expect(sanitized).toContain('Custom target');
     });
 });

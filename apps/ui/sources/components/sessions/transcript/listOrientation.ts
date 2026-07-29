@@ -52,25 +52,6 @@ export function resolveOlderNeighborRenderedIndex(
     return isInRangeIndex(neighborIndex, count) ? neighborIndex : null;
 }
 
-export function resolveEntrySliceSourceBounds(
-    params: Readonly<{
-        anchorSourceIndex: number;
-        count: number;
-        orientation: TranscriptListOrientation;
-    }>,
-): Readonly<{ start: number; end: number }> {
-    const { anchorSourceIndex, count, orientation } = params;
-    if (count <= 0 || !isInRangeIndex(anchorSourceIndex, count)) {
-        return { start: 0, end: Math.max(0, count) };
-    }
-
-    if (orientation === 'inverted') {
-        return { start: 0, end: Math.min(count, anchorSourceIndex + 1) };
-    }
-
-    return { start: Math.max(0, anchorSourceIndex), end: count };
-}
-
 export function resolveOrientedListEdgeSlots<T>(
     params: Readonly<{
         orientation: TranscriptListOrientation;

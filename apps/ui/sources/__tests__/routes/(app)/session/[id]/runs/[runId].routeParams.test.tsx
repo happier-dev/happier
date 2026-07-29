@@ -6,14 +6,15 @@ import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const hydrateSessionSpy = vi.hoisted(() => vi.fn((sessionId: string, reason: string) => ({
+const hydrateSessionSpy = vi.hoisted(() => vi.fn((sessionId: string, reason: string, options?: unknown) => ({
     kind: 'available' as const,
     sessionId,
+    options,
 })));
 const detailsViewSpy = vi.hoisted(() => vi.fn<(props: any, ref?: any) => React.ReactElement>((props) => React.createElement('SessionExecutionRunDetailsView', props)));
 
 const routerMock = createExpoRouterMock({
-    params: { id: ['s1', 's2'], runId: ['run-42', 'ignored'] },
+    params: { id: ['s1', 's2'], runId: ['run-42', 'ignored'], serverId: ['server-route', 'server-ignored'] },
     router: {
         push: vi.fn(),
         back: vi.fn(),
@@ -49,7 +50,8 @@ vi.mock('@/text', async () => {
 });
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
-    useHydrateSessionForRoute: (sessionId: string, reason: string) => hydrateSessionSpy(sessionId, reason),
+    useHydrateSessionForRoute: (sessionId: string, reason: string, options?: unknown) =>
+        hydrateSessionSpy(sessionId, reason, options),
 }));
 
 vi.mock('@/components/sessions/runs/details/SessionExecutionRunDetailsView', () => ({
@@ -71,11 +73,12 @@ describe('session run details route', () => {
 
         await renderScreen(<RunDetailsRoute />);
 
-        expect(hydrateSessionSpy).toHaveBeenCalledWith('s1', 'SessionRunDetailsScreen.hydrate');
+        expect(hydrateSessionSpy).toHaveBeenCalledWith('s1', 'SessionRunDetailsScreen.hydrate', { serverId: 'server-route' });
         expect(detailsViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 sessionId: 's1',
                 runId: 'run-42',
+                serverId: 'server-route',
                 presentation: 'screen',
             }),
             undefined,

@@ -10,11 +10,18 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const chatFooterPropsSpy = vi.hoisted(() => vi.fn());
+// The Legend renderer (default transcript renderer) schedules landing verification through
+// requestAnimationFrame; this suite's bare environment does not provide one.
+if (typeof (globalThis as any).requestAnimationFrame !== 'function') {
+    (globalThis as any).requestAnimationFrame = (callback: (time: number) => void) => (
+        setTimeout(() => callback(Date.now()), 0) as unknown as number
+    );
+    (globalThis as any).cancelAnimationFrame = (handle: number) => {
+        clearTimeout(handle as unknown as ReturnType<typeof setTimeout>);
+    };
+}
 
-vi.mock('@shopify/flash-list', () => ({
-    FlashList: () => null,
-}));
+const chatFooterPropsSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -68,7 +75,7 @@ installTranscriptCommonModuleMocks({
             useSessionLatestThinkingMessageId: () => null,
             useSessionLatestThinkingMessageActivityAtMs: () => null,
             useMessage: () => null,
-            useSetting: (key: string) => (key === 'transcriptListImplementation' ? 'flatlist_legacy' : undefined),
+            useSetting: () => undefined,
         });
     },
 });
@@ -120,7 +127,7 @@ describe('ChatList footer control override', () => {
                     session={session}
                     controlledByUserOverride={false}
                     onRequestSwitchToRemote={undefined}
-                    directControlFooter={null}
+                    externalControlFooter={null}
                 />)).tree;
 
         expect(chatFooterPropsSpy).toHaveBeenCalled();

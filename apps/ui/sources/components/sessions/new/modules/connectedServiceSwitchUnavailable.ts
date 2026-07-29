@@ -57,7 +57,7 @@ function readDiagnosticReason(diagnostic: ConnectedServiceUxDiagnosticV1): strin
 }
 
 function readDiagnosticAgentId(diagnostic: ConnectedServiceUxDiagnosticV1): string {
-    return diagnostic.agentId ?? diagnostic.providerId ?? 'provider';
+    return diagnostic.agentId ?? 'agent';
 }
 
 function buildActions(

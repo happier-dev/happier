@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
+
 import { createAutomationsDomain } from './automations';
 
 type Automation = {
@@ -108,5 +110,21 @@ describe('createAutomationsDomain', () => {
 
         harness.get().removeAutomation('a1');
         expect(harness.get().automationRunsByAutomationId.a1).toBeUndefined();
+    });
+
+    it('retains only bounded newest runs per automation', () => {
+        const harness = createHarness();
+        const max = loadSyncTuning().automationRunsMaxEntriesPerAutomation;
+
+        harness.get().setAutomationRuns(
+            'a1',
+            Array.from({ length: max + 5 }, (_, index) =>
+                run({ id: `r${index + 1}`, automationId: 'a1', scheduledAt: index + 1 }),
+            ) as any,
+        );
+
+        expect(harness.get().automationRunsByAutomationId.a1).toHaveLength(max);
+        expect(harness.get().automationRunsByAutomationId.a1?.[0]?.id).toBe(`r${max + 5}`);
+        expect(harness.get().automationRunsByAutomationId.a1?.at(-1)?.id).toBe('r6');
     });
 });

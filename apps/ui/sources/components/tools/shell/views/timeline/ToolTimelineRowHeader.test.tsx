@@ -53,6 +53,23 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
 }));
 
+function flattenRevealStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map((entry) => flattenRevealStyle(entry)));
+    }
+    if (style && typeof style === 'object') {
+        return style as Record<string, unknown>;
+    }
+    return {};
+}
+
+function readRevealOpacity(style: unknown): number | undefined {
+    const opacity = flattenRevealStyle(style).opacity;
+    if (typeof opacity === 'number') return opacity;
+    const animated = opacity as { __getValue?: () => number } | undefined;
+    return typeof animated?.__getValue === 'function' ? animated.__getValue() : undefined;
+}
+
 describe('ToolTimelineRowHeader', () => {
     function readOpacity(style: unknown): number | undefined {
         const entries = Array.isArray(style) ? style : [style];
@@ -189,7 +206,7 @@ describe('ToolTimelineRowHeader', () => {
     });
 
     it('keeps the open action visually hidden until hover on web', async () => {
-        const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
+        const { ToolTimelineRowHeader, TOOL_TIMELINE_ROW_REVEAL_SLOT_TEST_ID } = await import('./ToolTimelineRowHeader');
 
         const screen = await renderScreen(
             <ToolTimelineRowHeader
@@ -203,21 +220,61 @@ describe('ToolTimelineRowHeader', () => {
             />,
         );
 
-        const getOpenSlotOpacity = () => {
-            const openButton = screen.findByTestId('tool-timeline-row-open');
-            expect(openButton).toBeTruthy();
-            return readOpacity(openButton!.parent?.parent?.props.style);
-        };
+        const readSlotOpacity = (testID: string) =>
+            readRevealOpacity(screen.findByTestId(testID)?.props.style);
 
-        const baseOpacity = getOpenSlotOpacity();
-        expect(baseOpacity).toBe(0);
+        expect(readSlotOpacity(TOOL_TIMELINE_ROW_REVEAL_SLOT_TEST_ID)).toBe(0);
 
         await act(async () => {
             screen.findByTestId('tool-timeline-row-open')?.props.onHoverIn?.();
         });
 
-        const hoverOpacity = getOpenSlotOpacity();
-        expect(hoverOpacity).toBe(1);
+        expect(readSlotOpacity(TOOL_TIMELINE_ROW_REVEAL_SLOT_TEST_ID)).toBe(1);
+    });
+
+    it('keeps a pinned row pin visible without dragging the open-details icon into view', async () => {
+        const {
+            ToolTimelineRowHeader,
+            TOOL_TIMELINE_ROW_PIN_SLOT_TEST_ID,
+            TOOL_TIMELINE_ROW_REVEAL_SLOT_TEST_ID,
+        } = await import('./ToolTimelineRowHeader');
+
+        const screen = await renderScreen(
+            <ToolTimelineRowHeader
+                density="comfortable"
+                icon={React.createElement('Text', null, 'ICON')}
+                title="Title"
+                onPress={() => {}}
+                canOpen={true}
+                onOpen={() => {}}
+                openActionTestID="tool-timeline-row-open"
+                revealAction={React.createElement('Text', { testID: 'tool-timeline-row-pin' }, 'PIN')}
+                revealActionSticky
+            />,
+        );
+
+        expect(readRevealOpacity(screen.findByTestId(TOOL_TIMELINE_ROW_PIN_SLOT_TEST_ID)?.props.style)).toBe(1);
+        expect(readRevealOpacity(screen.findByTestId(TOOL_TIMELINE_ROW_REVEAL_SLOT_TEST_ID)?.props.style)).toBe(0);
+    });
+
+    it('reserves the reveal footprint so hovering a row cannot shift its layout', async () => {
+        const { ToolTimelineRowHeader, TOOL_TIMELINE_ROW_REVEAL_SLOT_TEST_ID } = await import('./ToolTimelineRowHeader');
+
+        const screen = await renderScreen(
+            <ToolTimelineRowHeader
+                density="comfortable"
+                icon={React.createElement('Text', null, 'ICON')}
+                title="Title"
+                onPress={() => {}}
+                canOpen={true}
+                onOpen={() => {}}
+                openActionTestID="tool-timeline-row-open"
+            />,
+        );
+
+        const slot = screen.findByTestId(TOOL_TIMELINE_ROW_REVEAL_SLOT_TEST_ID);
+        expect(flattenRevealStyle(slot?.props.style).width).toBe(26);
+        expect(flattenRevealStyle(slot?.props.style).pointerEvents).toBe('none');
     });
 
     it('crossfades the left icon to a chevron-down on hover when expandable (web)', async () => {

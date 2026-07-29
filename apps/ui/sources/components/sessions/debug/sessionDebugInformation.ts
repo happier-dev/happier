@@ -1,11 +1,15 @@
 import { readNormalizedRuntimeDescriptor } from '@happier-dev/agents';
 import { resolveProviderSessionArtifactPathFromUiBehavior } from '@/agents/registry/registryUiBehavior';
+import type { Metadata } from '@/sync/domains/state/storageTypes';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 type SessionDebugMetadata = unknown;
 
 export type SessionDebugInformationSession = Readonly<{
     id: string;
-    metadata?: SessionDebugMetadata;
+    metadata?: unknown;
+    metadataLayoutVersion?: number;
+    ownerMetadataView?: unknown;
 }>;
 
 export type SessionDebugInformation = Readonly<{
@@ -55,9 +59,14 @@ export function buildSessionDebugInformation(params: Readonly<{
 }>): SessionDebugInformation {
     const providerDisplayName = normalizeString(params.providerDisplayName);
     const providerSessionId = normalizeString(params.providerSessionId);
-    const metadata = asRecord(params.session.metadata);
+    const ownerMetadata = readSessionOwnerMetadataView({
+        metadataLayoutVersion: params.session.metadataLayoutVersion,
+        metadata: params.session.metadata ?? null,
+        ownerMetadataView: params.session.ownerMetadataView,
+    });
+    const metadata = asRecord(ownerMetadata);
     const happierSessionLogPath = normalizeString(metadata?.sessionLogPath);
-    const providerSessionArtifactPath = resolveProviderSessionArtifactPath(params.session.metadata);
+    const providerSessionArtifactPath = resolveProviderSessionArtifactPath(ownerMetadata);
     const lines = [`Happier session ID: ${params.session.id}`];
 
     if (providerDisplayName && providerSessionId) {

@@ -7,6 +7,7 @@ import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers'
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.fn();
+const appPluginSurfacePlacementStackSpy = vi.hoisted(() => vi.fn());
 
 installSettingsViewCommonModuleMocks({
     reactNative: async () => {
@@ -115,9 +116,9 @@ vi.mock('@/components/settings/usage/SettingsUsageSummaryStrip', () => ({
     SettingsUsageSummaryStrip: () => null,
 }));
 
-vi.mock('@/components/settings/usage/useUsageAnalyticsSummary', () => ({
-    useUsageAnalyticsSummary: () => ({
-        summary: null,
+vi.mock('@/components/settings/usage/useUsageBannerModel', () => ({
+    useUsageBannerModel: () => ({
+        viewModel: null,
         isLoading: false,
         errorMessage: null,
     }),
@@ -133,6 +134,13 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props),
+}));
+
+vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
+    AppPluginSurfacePlacementStack: (props: unknown) => {
+        appPluginSurfacePlacementStackSpy(props);
+        return React.createElement('AppPluginSurfacePlacementStackMock', { props });
+    },
 }));
 
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
@@ -168,10 +176,6 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (fn: any) => [false, fn],
 }));
 
-vi.mock('@/sync/api/account/apiVendorTokens', () => ({
-    disconnectVendorToken: vi.fn(async () => {}),
-}));
-
 vi.mock('@/sync/domains/profiles/profile', () => ({
     getDisplayName: () => 'Test User',
     getAvatarUrl: () => null,
@@ -189,7 +193,7 @@ vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'gemini'],
     DEFAULT_AGENT_ID: 'agent_default',
-    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', label: 'Anthropic', connectRoute: null } }),
+    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', labelKey: 'agentInput.agent.claude', connectRoute: null } }),
     getAgentIconSource: () => null,
     getAgentIconTintColor: () => null,
     resolveAgentIdFromConnectedServiceId: () => null,
@@ -232,6 +236,7 @@ vi.mock('@/utils/system/requestReview', () => ({
 afterEach(() => {
     standardCleanup();
     routerPushSpy.mockClear();
+    appPluginSurfacePlacementStackSpy.mockClear();
     vi.useRealTimers();
 });
 
@@ -250,6 +255,19 @@ describe('SettingsView plugin marketplace entry', () => {
 
         marketplaceItem?.props.onPress?.();
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/plugins');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/plugins');
+    });
+
+    it('mounts app settings plugin placements through the app-shell placement stack', async () => {
+        vi.useFakeTimers();
+        const { SettingsView } = await import('./SettingsView');
+        await renderSettingsView(React.createElement(SettingsView));
+
+        await flushHookEffects({ cycles: 4, runAllTimers: true });
+
+        expect(appPluginSurfacePlacementStackSpy).toHaveBeenCalledWith(expect.objectContaining({
+            placement: 'app.settingsPage',
+            testID: 'settings-plugin-surface-placement-stack',
+        }));
     });
 });

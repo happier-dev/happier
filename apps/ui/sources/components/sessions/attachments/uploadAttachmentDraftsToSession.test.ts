@@ -1,13 +1,22 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 const sessionAttachmentsUploadFileSpy = vi.fn();
+const runTransferFinalizeRecoveryMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/domains/transfers/ops/uploadSessionAttachment', () => ({
     sessionAttachmentsUploadFile: (args: unknown) => sessionAttachmentsUploadFileSpy(args),
 }));
 
+vi.mock('@/components/transfers/recovery/runTransferFinalizeRecovery', () => ({
+    runTransferFinalizeRecovery: (...args: unknown[]) => runTransferFinalizeRecoveryMock(...args),
+}));
+
 describe('uploadAttachmentDraftsToSession', () => {
+    beforeEach(() => {
+        sessionAttachmentsUploadFileSpy.mockReset();
+        runTransferFinalizeRecoveryMock.mockReset();
+    });
     it('updates draft progress and preserves the uploaded attachment result contract', async () => {
         const { uploadAttachmentDraftsToSession } = await import('./uploadAttachmentDraftsToSession');
 
@@ -249,6 +258,59 @@ describe('uploadAttachmentDraftsToSession', () => {
             message: 'Machine target not available for session',
             rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
         });
+    });
+
+    it('finishes the exact staged attachment without reading or uploading it again', async () => {
+        const { uploadAttachmentDraftsToSession } = await import('./uploadAttachmentDraftsToSession');
+        const recovery = {
+            kind: 'transfer_finalize_recovery' as const,
+            expiresAt: Date.now() + 60_000,
+            actions: ['retry_finalize', 'discard_staged'] as const,
+            invoke: vi.fn(),
+        };
+        sessionAttachmentsUploadFileSpy.mockResolvedValueOnce({
+            success: false,
+            error: 'Finalize recovery is required',
+            errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED',
+            recovery,
+        });
+        runTransferFinalizeRecoveryMock.mockResolvedValueOnce({
+            status: 'finalized',
+            response: {
+                success: true,
+                path: '.happier/uploads/messages/m1/readme.md',
+                sizeBytes: 12,
+                sha256: 'sha256',
+            },
+        });
+
+        const result = await uploadAttachmentDraftsToSession({
+            sessionId: 's1',
+            drafts: [{
+                id: 'd1',
+                source: {
+                    kind: 'native',
+                    name: 'readme.md',
+                    mimeType: 'text/markdown',
+                    uri: 'file:///tmp/readme.md',
+                    sizeBytes: 12,
+                },
+                status: 'pending',
+            }],
+            messageLocalId: 'm1',
+            config: {
+                uploadLocation: 'workspace',
+                workspaceRelativeDir: '.happier/uploads',
+                vcsIgnoreStrategy: 'git_info_exclude',
+                vcsIgnoreWritesEnabled: true,
+                maxFileBytes: 25 * 1024 * 1024,
+            },
+            applyDraftPatch: vi.fn(),
+        });
+
+        expect(result.uploaded).toHaveLength(1);
+        expect(sessionAttachmentsUploadFileSpy).toHaveBeenCalledTimes(1);
+        expect(runTransferFinalizeRecoveryMock).toHaveBeenCalledWith(expect.objectContaining({ recovery }));
     });
 
 });

@@ -155,9 +155,16 @@ describe('createSyncSocketTransport', () => {
         expect(socket.offAny).toHaveBeenCalledTimes(1);
     });
 
-    it('does not treat the next disconnect as intentional if disconnect() was called while already disconnected', async () => {
+    it('treats disconnect() while already disconnected as idempotent and does not poison the next disconnect', async () => {
         vi.resetModules();
         const socket = createSocketStub();
+        socket.disconnect.mockImplementation(() => {
+            if (!socket.connected) {
+                throw new Error('socket has been disconnected');
+            }
+            socket.connected = false;
+            socket.__emit('disconnect', 'io client disconnect');
+        });
         vi.doMock('socket.io-client', () => ({
             io: vi.fn(() => socket),
         }));
@@ -171,8 +178,8 @@ describe('createSyncSocketTransport', () => {
         const disconnectedListener = vi.fn();
         transport.onDisconnected(disconnectedListener);
 
-        await transport.disconnect({ intentional: true });
-        expect(socket.disconnect).toHaveBeenCalledTimes(1);
+        await expect(transport.disconnect({ intentional: true })).resolves.toBeUndefined();
+        expect(socket.disconnect).not.toHaveBeenCalled();
         expect(disconnectedListener).not.toHaveBeenCalled();
 
         await transport.connect();

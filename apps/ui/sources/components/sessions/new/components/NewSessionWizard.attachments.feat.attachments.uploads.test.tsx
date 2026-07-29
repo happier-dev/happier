@@ -83,6 +83,7 @@ vi.mock('@/components/sessions/attachments/useAttachmentDraftManager', () => ({
     useAttachmentDraftManager: () => ({
         filePickerRef: { current: null },
         drafts: attachmentDraftState.drafts,
+        getDraftsSnapshot: () => attachmentDraftState.drafts,
         hasSendableAttachments: attachmentDraftState.hasSendableAttachments,
         agentInputAttachments: attachmentDraftState.agentInputAttachments,
         addWebFiles: addWebFilesSpy,
@@ -96,6 +97,14 @@ vi.mock('@/components/sessions/attachments/useAttachmentDraftManager', () => ({
 vi.mock('@/components/sessions/attachments/uploadAttachmentDraftsToSession', () => ({
     uploadAttachmentDraftsToSession: uploadAttachmentDraftsToSessionSpy,
     formatAttachmentsBlock: formatAttachmentsBlockSpy,
+    buildAttachmentMessageMeta: (uploaded: unknown) => ({
+        happier: {
+            kind: 'attachments.v1',
+            payload: {
+                attachments: uploaded,
+            },
+        },
+    }),
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -745,6 +754,9 @@ describe('NewSessionWizard (attachments.uploads)', () => {
             await afterCreated({
                 sessionId: 'sess_target',
                 effectiveSpawnServerId: 'server-a',
+                launchAttempt: {
+                    attachmentMessageLocalId: 'new-session-attachment-local-1',
+                },
             });
         });
 
@@ -754,6 +766,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
             initialMessageText: 'Investigate this bug\n\n[attachments block]',
             displayText: 'Investigate this bug',
             profileId: 'profile-work',
+            messageLocalId: 'new-session-attachment-local-1',
             metaOverrides: {
                 happier: {
                     kind: 'attachments.v1',

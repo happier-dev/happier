@@ -7,6 +7,15 @@ import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockStat
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+if (typeof (globalThis as any).requestAnimationFrame !== 'function') {
+    (globalThis as any).requestAnimationFrame = (callback: (time: number) => void) => (
+        setTimeout(() => callback(Date.now()), 0) as unknown as number
+    );
+    (globalThis as any).cancelAnimationFrame = (handle: number) => {
+        clearTimeout(handle as unknown as ReturnType<typeof setTimeout>);
+    };
+}
+
 let capturedHeaderSpacerHeight: number | null = null;
 
 function unwrapStyle(style: unknown): Record<string, unknown> | null {
@@ -57,11 +66,6 @@ installTranscriptCommonModuleMocks({
             },
             View: (props: any) => React.createElement('View', props, props.children),
             ActivityIndicator: () => React.createElement('ActivityIndicator'),
-            FlatList: (props: any) => {
-                const header = renderReactElementCandidate(props.ListHeaderComponent ?? null);
-                capturedHeaderSpacerHeight = extractFirstNumericHeight(header);
-                return React.createElement('FlatList', props, header as any);
-            },
         });
     },
     storage: async () => {
@@ -76,13 +80,45 @@ installTranscriptCommonModuleMocks({
             useSessionLatestThinkingMessageId: () => null,
             useSessionLatestThinkingMessageActivityAtMs: () => null,
             useMessage: () => null,
-            useSetting: (key: string) => (key === 'transcriptListImplementation' ? 'flatlist_legacy' : undefined),
+            useSetting: () => undefined,
         });
     },
 });
 
 vi.mock('@/utils/platform/responsive', () => ({
     useHeaderHeight: () => 40,
+}));
+
+vi.mock('@legendapp/list/react-native', () => ({
+    LegendList: React.forwardRef((props: any, ref: any) => {
+        const instance = {
+            getState: () => ({
+                contentLength: 0,
+                isAtEnd: true,
+                isNearEnd: true,
+                isWithinMaintainScrollAtEndThreshold: true,
+                positionAtIndex: () => 0,
+                scroll: 0,
+                scrollLength: 0,
+                sizeAtIndex: () => 120,
+            }),
+            scrollToEnd: () => Promise.resolve(),
+            scrollToIndex: () => Promise.resolve(),
+            scrollToOffset: () => Promise.resolve(),
+        };
+        if (typeof ref === 'function') ref(instance);
+        else if (ref && typeof ref === 'object') ref.current = instance;
+        // The visual-top slot on a newest-first frame is ListHeaderComponent; probe both slots
+        // for the transcript gutter spacer height.
+        for (const slot of [props.ListHeaderComponent, props.ListFooterComponent]) {
+            const rendered = renderReactElementCandidate(slot ?? null);
+            const height = extractFirstNumericHeight(rendered);
+            if (typeof height === 'number' && capturedHeaderSpacerHeight === null) {
+                capturedHeaderSpacerHeight = height;
+            }
+        }
+        return React.createElement('LegendList', props);
+    }),
 }));
 
 vi.mock('react-native-safe-area-context', () => ({

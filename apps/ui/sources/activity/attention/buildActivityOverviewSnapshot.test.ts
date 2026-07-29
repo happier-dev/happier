@@ -22,6 +22,7 @@ describe('buildActivityOverviewSnapshot', () => {
                 createSessionFixture({
                     id: 'unread',
                     seq: 5,
+                    latestReadyEventSeq: 5,
                     lastViewedSessionSeq: 2,
                     metadata: createMetadata({
                         summary: { text: 'Unread work', updatedAt: 1 },
@@ -32,6 +33,7 @@ describe('buildActivityOverviewSnapshot', () => {
                     active: true,
                     presence: 'online',
                     thinking: true,
+                    thinkingAt: 9_900,
                     lastViewedSessionSeq: 1,
                     metadata: createMetadata({
                         summary: { text: 'Thinking work', updatedAt: 1 },
@@ -42,12 +44,14 @@ describe('buildActivityOverviewSnapshot', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    pendingRequestObservedAt: 9_900,
                     lastViewedSessionSeq: 1,
                     metadata: createMetadata({
                         summary: { text: 'Permission work', updatedAt: 1 },
                     }),
                 }),
             ],
+            nowMs: 10_000,
         });
 
         expect(snapshot.counts).toMatchObject({
@@ -73,14 +77,17 @@ describe('buildActivityOverviewSnapshot', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    pendingRequestObservedAt: 9_900,
                     pendingCount: 3,
                     seq: 5,
+                    latestReadyEventSeq: 5,
                     lastViewedSessionSeq: 1,
                     metadata: createMetadata({
                         summary: { text: 'Stacked work', updatedAt: 1 },
                     }),
                 }),
             ],
+            nowMs: 10_000,
         });
 
         expect(snapshot.counts).toMatchObject({

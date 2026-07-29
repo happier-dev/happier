@@ -50,6 +50,7 @@ export const WorkspaceEmbeddedTerminalPane = React.memo(function WorkspaceEmbedd
                 terminalRef={terminalRendererRef}
                 toolbarActionsStart={props.toolbarActionsStart}
                 testIdPrefix="workspace-embedded-terminal"
+                nativeSurfaceKey={terminalKey}
                 showQuickKeys={Platform.OS !== 'web'}
             />
         </View>

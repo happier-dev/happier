@@ -220,7 +220,7 @@ describe('PushNotificationTroubleshootingView', () => {
         expect(deletePushTokenMock).toHaveBeenCalledWith({ token: 't', secret: 's' }, 'ExponentPushToken[stale]');
     });
 
-    it('alerts when opening settings fails while requesting permission', async () => {
+    it('routes a blocked permission to system settings and alerts when that fails', async () => {
         const Notifications = await import('expo-notifications');
         const { Linking } = await import('react-native');
 
@@ -236,6 +236,8 @@ describe('PushNotificationTroubleshootingView', () => {
         } satisfies Awaited<ReturnType<typeof Notifications.getExpoPushTokenAsync>>);
         fetchPushTokensMock.mockResolvedValue([]);
         vi.mocked(Linking.openSettings).mockRejectedValueOnce(new Error('nope'));
+        // The OS refuses further prompts, so the primed flow offers a trip to system settings.
+        modalConfirmMock.mockResolvedValue(true);
 
         const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
         const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
@@ -245,7 +247,35 @@ describe('PushNotificationTroubleshootingView', () => {
             screen.pressByTestId('settings-notifications-push-troubleshooting-request-permission');
         });
 
-        expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'settingsNotifications.pushTroubleshooting.loadError');
+        expect(modalConfirmMock).toHaveBeenCalledWith(
+            'settingsNotifications.pushPriming.blockedTitle',
+            'settingsNotifications.pushPriming.blockedBody',
+            expect.anything(),
+        );
+        expect(Linking.openSettings).toHaveBeenCalled();
+        expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'settingsNotifications.pushPriming.openSettingsFailed');
+    });
+
+    it('reports an unreachable notification runtime and keeps recovery actions usable', async () => {
+        const Notifications = await import('expo-notifications');
+        vi.mocked(Notifications.getPermissionsAsync).mockRejectedValue(new Error('native module unavailable'));
+        vi.mocked(Notifications.getExpoPushTokenAsync).mockRejectedValue(new Error('native module unavailable'));
+        fetchPushTokensMock.mockResolvedValue([]);
+
+        const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
+        const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
+        await flushHookEffects({ cycles: 20 });
+
+        // The runtime failure must be reported as such, not left indistinguishable from a pending
+        // check or a denied permission.
+        const permissionRow = screen.findRowByTitle('settingsNotifications.pushTroubleshooting.permission.title');
+        expect(permissionRow?.props.detail).toBe('settingsNotifications.pushTroubleshooting.permission.runtimeUnavailable');
+        expect(permissionRow?.props.subtitle).toBe('settingsNotifications.pushTroubleshooting.permission.runtimeUnavailableSubtitle');
+
+        // Refresh is the recovery action; a misbehaving load must never disable it.
+        const refreshRow = screen.findRow('settings-notifications-push-troubleshooting-refresh');
+        expect(refreshRow?.props.disabled).toBeFalsy();
+        expect(refreshRow?.props.loading).toBeFalsy();
     });
 
     it('alerts when re-registering fails', async () => {

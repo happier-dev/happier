@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { ConnectedServiceQuotaSnapshotV1Schema, type AccountProfile } from '@happier-dev/protocol';
 import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
 import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
+import { invalidateUsageAnalyticsQueryCache } from '@/sync/api/account/useUsageAnalyticsQuery';
 
 const authState = vi.hoisted(() => ({
     credentials: { token: 'test-token', secret: 'test-secret' },
@@ -26,6 +27,7 @@ vi.mock('@/sync/api/account/apiUsage', async (importOriginal) => {
 const useFeatureEnabledSpy = vi.fn((_featureId: string) => false);
 const useProfileSpy = vi.fn<() => Pick<AccountProfile, 'connectedServicesV2'>>(() => ({
     connectedServicesV2: [],
+    connectedServiceCredentialRevisionsV1: [],
 }));
 const useSettingsSpy = vi.fn(() => ({
     connectedServicesDefaultProfileByServiceId: {},
@@ -50,14 +52,63 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => useFeatureEnabledSpy(featureId),
 }));
 
+vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
+    useActiveServerSnapshot: () => ({
+        serverId: 'server-a',
+        serverUrl: 'https://server-a.example.test',
+        generation: 1,
+    }),
+}));
+
+vi.mock('@/sync/domains/features/featureDecisionRuntime', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/features/featureDecisionRuntime')>();
+    return {
+        ...actual,
+        useServerFeaturesRuntimeSnapshot: () => ({
+            status: 'ready',
+            features: {
+                capabilities: {
+                    connectedServices: {
+                        credentialDelete: { revisionGuard: true },
+                    },
+                },
+            },
+        }),
+    };
+});
+
 vi.mock('@/sync/store/hooks', async () => {
     const actual = await vi.importActual<typeof import('@/sync/store/hooks')>('@/sync/store/hooks');
     return {
         ...actual,
+        useAllMachines: () => [{ id: 'machine-a', active: true }],
         useProfile: () => useProfileSpy(),
         useSettings: () => useSettingsSpy(),
     };
 });
+
+vi.mock('@/sync/ops/connectedAccounts/connectedAccountDaemon', () => ({
+    runConnectedAccountControlCommand: vi.fn(async (params: {
+        command: { service: { pluginId: string; localId: string } };
+    }) => ({
+        status: 'described',
+        service: params.command.service,
+        operationTransport: {
+            kind: 'legacy',
+            peerClass: 'revisioned_v2_v3',
+            serviceId: params.command.service.localId,
+        },
+    })),
+}));
+
+vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
+    getConnectedServiceRegistryEntry: (serviceId: string) => ({
+        serviceId,
+        displayNameKey: serviceId === 'openai-codex'
+            ? 'connectedServices.names.openaiCodex'
+            : 'connectedServices.fallbackName',
+    }),
+}));
 
 vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
     fetchAccountEncryptionMode: fetchAccountEncryptionModeSpy,
@@ -71,6 +122,10 @@ vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
     getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
 }));
 
+afterEach(() => {
+    invalidateUsageAnalyticsQueryCache();
+});
+
 describe('UsagePanel', () => {
     it('renders a session drilldown frame when scoped to a specific session', async () => {
         const { UsagePanel } = await import('./UsagePanel');
@@ -83,9 +138,7 @@ describe('UsagePanel', () => {
     });
 
     it('renders connected service quota cards when quota snapshots are available', async () => {
-        useFeatureEnabledSpy.mockImplementation((featureId: string) => (
-            featureId === 'connectedServices' || featureId === 'connectedServices.quotas'
-        ));
+        useFeatureEnabledSpy.mockImplementation((featureId: string) => featureId !== 'connectedServices');
         useProfileSpy.mockReturnValue({
             connectedServicesV2: [
                 {
@@ -152,15 +205,15 @@ describe('UsagePanel', () => {
 
         await flushHookEffects({ cycles: 3, turns: 2 });
 
+        expect(useFeatureEnabledSpy).toHaveBeenCalledWith('connectedServices.quotas');
+        expect(useFeatureEnabledSpy).not.toHaveBeenCalledWith('connectedServices');
+        expect(getConnectedServiceQuotaSnapshotPlainSpy).toHaveBeenCalled();
         expect(screen.getTextContent()).toContain('Connected services');
-        expect(screen.getTextContent()).toContain('OpenAI Codex');
         expect(screen.getTextContent()).toContain('Weekly');
     });
 
     it('renders quota cards for each connected profile, not only the default profile', async () => {
-        useFeatureEnabledSpy.mockImplementation((featureId: string) => (
-            featureId === 'connectedServices' || featureId === 'connectedServices.quotas'
-        ));
+        useFeatureEnabledSpy.mockImplementation((featureId: string) => featureId !== 'connectedServices');
         useProfileSpy.mockReturnValue({
             connectedServicesV2: [
                 {
@@ -264,9 +317,7 @@ describe('UsagePanel', () => {
     });
 
     it('keeps the quota section visible when connected profiles exist but snapshots are unavailable', async () => {
-        useFeatureEnabledSpy.mockImplementation((featureId: string) => (
-            featureId === 'connectedServices' || featureId === 'connectedServices.quotas'
-        ));
+        useFeatureEnabledSpy.mockImplementation((featureId: string) => featureId !== 'connectedServices');
         useProfileSpy.mockReturnValue({
             connectedServicesV2: [
                 {

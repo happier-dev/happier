@@ -32,32 +32,32 @@ export const TranscriptEnterWrapper = React.memo(function TranscriptEnterWrapper
 }) {
     const runtime = useTranscriptMotion();
 
-    const shouldAnimateRef = React.useRef<boolean | null>(null);
-    if (shouldAnimateRef.current == null) {
-        const cfg = runtime?.config;
-        const eligible =
-            cfg != null &&
-            cfg.preset !== 'off' &&
-            cfg.animateNewItemsEnabled === true;
-        shouldAnimateRef.current = eligible
-            ? runtime!.gate.consumeFreshness({ id: props.id, createdAt: props.createdAt })
-            : false;
-    }
-    const shouldAnimate = shouldAnimateRef.current === true;
+    const shouldPrepareEnterRef = React.useRef(
+        runtime != null &&
+        runtime.config.preset !== 'off' &&
+        runtime.config.animateNewItemsEnabled === true &&
+        runtime.gate.isFresh({ id: props.id, createdAt: props.createdAt }),
+    );
 
-    if (!shouldAnimate) {
+    if (!shouldPrepareEnterRef.current || runtime == null) {
         return <>{props.children}</>;
     }
 
     return (
-        <AnimatedTranscriptEnterWrapper runtime={runtime}>
+        <AnimatedTranscriptEnterWrapper
+            id={props.id}
+            createdAt={props.createdAt}
+            runtime={runtime}
+        >
             {props.children}
         </AnimatedTranscriptEnterWrapper>
     );
 });
 
 const AnimatedTranscriptEnterWrapper = React.memo(function AnimatedTranscriptEnterWrapper(props: {
-    runtime: ReturnType<typeof useTranscriptMotion>;
+    id: string;
+    createdAt: number;
+    runtime: NonNullable<ReturnType<typeof useTranscriptMotion>>;
     children: React.ReactNode;
 }) {
     const runtime = props.runtime;
@@ -66,6 +66,21 @@ const AnimatedTranscriptEnterWrapper = React.memo(function AnimatedTranscriptEnt
     const translateY = React.useRef(new Animated.Value(animateTranslateOnWeb ? 6 : 0)).current;
     const animationStartedRef = React.useRef(false);
     const cancelScheduledStartRef = React.useRef<(() => void) | null>(null);
+    const shouldAnimateRef = React.useRef<boolean | null>(null);
+
+    React.useLayoutEffect(() => {
+        if (shouldAnimateRef.current == null) {
+            shouldAnimateRef.current = runtime.gate.consumeFreshness({
+                id: props.id,
+                createdAt: props.createdAt,
+            });
+        }
+
+        if (shouldAnimateRef.current !== true) {
+            opacity.setValue(1);
+            translateY.setValue(0);
+        }
+    }, [opacity, props.createdAt, props.id, runtime.gate, translateY]);
 
     const startEnterAnimation = React.useCallback(() => {
         if (animationStartedRef.current) return;
@@ -96,6 +111,7 @@ const AnimatedTranscriptEnterWrapper = React.memo(function AnimatedTranscriptEnt
     }, [animateTranslateOnWeb, opacity, runtime?.config.preset, translateY]);
 
     const handleLayout = React.useCallback(() => {
+        if (shouldAnimateRef.current !== true) return;
         if (animationStartedRef.current) return;
         if (cancelScheduledStartRef.current) return;
 

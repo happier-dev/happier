@@ -18,6 +18,9 @@ const {
     itemSpy,
     machineState,
     clearReplacementSpy,
+    coordinatorSpy,
+    alertSpy,
+    mutateAccountSettingsSpy,
     replaceSpy,
     refreshMachinesThrottledSpy,
     revokeSpy,
@@ -30,8 +33,17 @@ const {
     machineState: {
         currentMachine: null as any,
         machinesByServerId: {} as Record<string, any[] | null>,
+        settings: { providerSettingsV1: undefined } as Record<string, unknown>,
     },
     clearReplacementSpy: vi.fn(async (_machineId: string) => ({ ok: true as const })),
+    coordinatorSpy: vi.fn(async (_machineId: string, dependencies: any): Promise<any> => {
+        await dependencies.mutateProviderSettings((settings: unknown) => settings);
+        return { ok: true as const, machineAlreadyRevoked: false, providerCleanup: 'complete' as const };
+    }),
+    alertSpy: vi.fn(),
+    mutateAccountSettingsSpy: vi.fn(async (mutate: (raw: Record<string, unknown>) => Record<string, unknown>) => {
+        mutate({ providerSettingsV1: undefined });
+    }),
     replaceSpy: vi.fn(async (_params: any) => ({ ok: true as const })),
     refreshMachinesThrottledSpy: vi.fn(async () => {}),
     revokeSpy: vi.fn(async (_machineId: string) => ({ ok: true as const })),
@@ -51,7 +63,7 @@ installMachineDetailsCommonModuleMocks({
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({
             spies: {
-                alert: vi.fn(),
+                alert: alertSpy,
                 confirm: confirmSpy,
                 prompt: vi.fn(),
                 show: showSpy,
@@ -66,7 +78,7 @@ installMachineDetailsCommonModuleMocks({
             useMachineListByServerId: () => machineState.machinesByServerId,
             useSetting: () => false,
             useSettingMutable: () => [null, vi.fn()],
-            useSettings: () => ({}),
+            useSettings: () => machineState.settings,
             storage: {
                 getState: () => ({
                     settings: {},
@@ -115,6 +127,7 @@ vi.mock('@/sync/ops', () => ({
     machineClearReplacementFromAccount: clearReplacementSpy,
     machineReplaceInAccount: replaceSpy,
     machineRevokeFromAccount: revokeSpy,
+    machineRevokeWithProviderCleanup: coordinatorSpy,
 }));
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
@@ -131,7 +144,12 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerId: () => 'server-a',
 }));
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({ setActiveServerAndSwitch: vi.fn(async () => true) }));
-vi.mock('@/sync/sync', () => ({ sync: { refreshMachinesThrottled: refreshMachinesThrottledSpy, refreshMachines: vi.fn(), retryNow: vi.fn() } }));
+vi.mock('@/sync/sync', () => ({ sync: {
+    mutateAccountSettings: mutateAccountSettingsSpy,
+    refreshMachinesThrottled: refreshMachinesThrottledSpy,
+    refreshMachines: vi.fn(),
+    retryNow: vi.fn(),
+} }));
 vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: Promise<unknown>, options?: { onError?: (error: unknown) => void }) => {
         void promise.catch((error) => {
@@ -153,12 +171,6 @@ vi.mock('@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode', () => ({
     resolveEffectiveWindowsRemoteSessionLaunchMode: () => ({ mode: 'visible' }),
 }));
 vi.mock('@/capabilities/installablesRegistry', () => ({ getInstallablesRegistryEntries: () => [] }));
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['codex'],
-    DEFAULT_AGENT_ID: 'codex',
-    getAgentCore: () => ({ cli: { detectKey: 'codex' } }),
-    isAgentId: () => true,
-}));
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: () => null,
 }));
@@ -174,6 +186,16 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
         itemSpy.mockReset();
         showSpy.mockReset();
         confirmSpy.mockReset();
+        coordinatorSpy.mockClear();
+        coordinatorSpy.mockImplementation(async (_machineId: string, dependencies: any) => {
+            await dependencies.mutateProviderSettings((settings: unknown) => settings);
+            return { ok: true as const, machineAlreadyRevoked: false, providerCleanup: 'complete' as const };
+        });
+        alertSpy.mockReset();
+        mutateAccountSettingsSpy.mockReset();
+        mutateAccountSettingsSpy.mockImplementation(async (mutate: (raw: Record<string, unknown>) => Record<string, unknown>) => {
+            mutate({ providerSettingsV1: undefined });
+        });
         clearReplacementSpy.mockReset();
         replaceSpy.mockReset();
         refreshMachinesThrottledSpy.mockReset();
@@ -207,10 +229,10 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
                     daemonState: null,
                     daemonStateVersion: 0,
                     revokedAt: null,
-                    spawnReadinessStatus: 'ready',
                 },
             ],
         };
+        machineState.settings = { providerSettingsV1: undefined };
     });
 
     it('confirms and revokes the machine', async () => {
@@ -231,9 +253,110 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
         });
 
         expect(confirmSpy).toHaveBeenCalled();
-        expect(revokeSpy).toHaveBeenCalledWith('machine-1');
+        expect(coordinatorSpy).toHaveBeenCalledWith('machine-1', expect.objectContaining({
+            revoke: revokeSpy,
+            mutateProviderSettings: expect.any(Function),
+        }));
+        expect(mutateAccountSettingsSpy).toHaveBeenCalledTimes(1);
         expect(refreshMachinesThrottledSpy).toHaveBeenCalled();
         expect(routerBackSpy).toHaveBeenCalled();
+    });
+
+    it('keeps the user on the screen and explains retry when Provider cleanup remains pending', async () => {
+        coordinatorSpy
+            .mockResolvedValueOnce({
+                ok: false as const,
+                status: 503,
+                error: 'provider_cleanup_pending',
+                machineRevoked: true as const,
+                providerCleanup: 'pending' as const,
+                retryable: true as const,
+            })
+            .mockResolvedValueOnce({
+                ok: true as const,
+                machineAlreadyRevoked: true,
+                providerCleanup: 'complete' as const,
+            });
+        refreshMachinesThrottledSpy.mockImplementation(async () => {
+            machineState.currentMachine = { ...machineState.currentMachine, revokedAt: Date.now() };
+        });
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        await renderScreen(React.createElement(MachineDetailScreen));
+        const removeItem = itemSpy.mock.calls
+            .map(([props]) => props)
+            .find((props) => props?.title === 'machine.actions.removeMachine');
+
+        await act(async () => {
+            await removeItem.onPress();
+        });
+
+        expect(alertSpy).toHaveBeenCalledWith(
+            'common.error',
+            'settingsProviders.errors.machineCleanupPendingDescription',
+        );
+        expect(refreshMachinesThrottledSpy).toHaveBeenCalled();
+        expect(routerBackSpy).not.toHaveBeenCalled();
+
+        const retryItem = itemSpy.mock.calls
+            .map(([props]) => props)
+            .filter((props) => props?.title === 'machine.actions.removeMachine')
+            .at(-1);
+        expect(retryItem.disabled).toBe(false);
+        await act(async () => {
+            await retryItem.onPress();
+        });
+
+        expect(coordinatorSpy).toHaveBeenCalledTimes(2);
+        expect(routerBackSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('restores cleanup retry actionability from durable Provider machine state after remount', async () => {
+        machineState.currentMachine = { ...machineState.currentMachine, revokedAt: Date.now() };
+        machineState.machinesByServerId = { 'server-a': [machineState.currentMachine] };
+        machineState.settings = {
+            providerSettingsV1: {
+                v: 1,
+                connections: [{
+                    v: 1,
+                    id: 'pc_a',
+                    source: { kind: 'contribution', contributionKey: 'plugin/gateway' },
+                    role: 'default',
+                    displayName: 'Gateway',
+                    displayNameMode: 'automatic',
+                    revision: 0,
+                    createdAt: 1,
+                    updatedAt: 1,
+                }],
+                connectionTombstones: [],
+                accountGrants: [],
+                machineGrants: [{
+                    v: 1,
+                    machineId: 'machine-1',
+                    connectionId: 'pc_a',
+                    endpointSetFingerprint: 'endpoint-set:v1:a',
+                    connectionSecurityFingerprint: 'connection-security:v1:a',
+                    confirmedAt: 1,
+                }],
+                secretBindingsByConnectionId: {},
+                manualModelsByConnectionId: {},
+                modelVisibilityByRef: {},
+                defaultsByAgentTargetKey: {},
+                experimentalBindingConfirmations: [],
+            },
+        };
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        await renderScreen(React.createElement(MachineDetailScreen));
+        const retryItem = itemSpy.mock.calls
+            .map(([props]) => props)
+            .filter((props) => props?.title === 'machine.actions.removeMachine')
+            .at(-1);
+
+        expect(retryItem.subtitle).toBe('settingsProviders.errors.machineCleanupPendingDescription');
+        expect(retryItem.disabled).toBe(false);
+        await act(async () => { await retryItem.onPress(); });
+        expect(coordinatorSpy).toHaveBeenCalledOnce();
     });
 
     it('renders one replacement repair action that opens a candidate picker', async () => {
@@ -293,7 +416,7 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
     it('opens the replacement picker with candidates regardless of spawn readiness', async () => {
         machineState.machinesByServerId['server-a'] = machineState.machinesByServerId['server-a']!.map((machine) =>
             machine.id === 'machine-2'
-                ? { ...machine, active: false, activeAt: 0, spawnReadinessStatus: 'unknown' }
+                ? { ...machine, active: false, activeAt: 0 }
                 : machine,
         );
         machineState.machinesByServerId['server-loading'] = null;

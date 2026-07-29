@@ -9,6 +9,19 @@ describe('localSettingsParse', () => {
         expect(localSettingsParse(null).sessionListFocusedFolderV1).toBeNull();
     });
 
+    it('keeps collapsed session-list group state local', () => {
+        expect(localSettingsParse(null).collapsedGroupKeysV1).toEqual({});
+        expect(localSettingsParse({
+            collapsedGroupKeysV1: {
+                group_a: true,
+                group_b: false,
+            },
+        }).collapsedGroupKeysV1).toEqual({
+            group_a: true,
+            group_b: false,
+        });
+    });
+
     it('defaults the mobile brand hero dismissal timestamp to null', () => {
         expect(localSettingsParse(null).brandHeroSeenAt).toBeNull();
     });
@@ -27,7 +40,7 @@ describe('localSettingsParse', () => {
         expect(parsed.uiItemDensity).toBe('cozy');
         expect(parsed.detailsPaneTabsBehavior).toBe('preview');
         expect(parsed.settingsNavSidebarWidthPx).toBe(230);
-        expect(parsed.sessionsListStorageTab).toBe('persisted');
+        expect(parsed.sessionsListStorageFilter).toBe('all');
         expect(parsed.activityBadgesEnabled).toBe(true);
         expect(parsed.activityBadgeShowUnread).toBe(true);
         expect(parsed.activityBadgeShowPendingPermissionRequests).toBe(true);
@@ -129,7 +142,20 @@ describe('localSettingsParse', () => {
         expect((parsed as any).bottomPaneHeightPx).toBe(320);
         expect((parsed as any).bottomPaneHeightBasisPx).toBe(900);
         expect((parsed as any).embeddedTerminalDockLocation).toBe('bottom');
+        expect((parsed as any).terminalRendererPreference).toBe('auto');
         expect(parsed).not.toHaveProperty('mobileWorkspaceExperienceV1');
+    });
+
+    it('keeps terminal renderer preference local and fail-safe', () => {
+        expect(localSettingsParse({
+            terminalRendererPreference: 'xterm-webview',
+        }).terminalRendererPreference).toBe('xterm-webview');
+        expect(localSettingsParse({
+            terminalRendererPreference: 'native-experimental',
+        }).terminalRendererPreference).toBe('native-experimental');
+        expect(localSettingsParse({
+            terminalRendererPreference: 'ghostty-always',
+        }).terminalRendererPreference).toBe('auto');
     });
 
     it('returns defaults for non-object input', () => {
@@ -146,6 +172,16 @@ describe('localSettingsParse', () => {
         expect(applied.brandHeroSeenAt).toBe(1_789_000_000_000);
     });
 
+    it('applies collapsed session-list group state through local settings', () => {
+        const applied = applyLocalSettings(localSettingsDefaults, {
+            collapsedGroupKeysV1: {
+                group_a: true,
+            },
+        });
+
+        expect(applied.collapsedGroupKeysV1).toEqual({ group_a: true });
+    });
+
     it('falls back to null for malformed mobile brand hero dismissal timestamps', () => {
         expect(localSettingsParse({ brandHeroSeenAt: 'yesterday' }).brandHeroSeenAt).toBeNull();
     });
@@ -154,7 +190,7 @@ describe('localSettingsParse', () => {
         expect(localSettingsParse(null)).toMatchObject({
             themeProfiles: {
                 profiles: [],
-                activeProfileId: null,
+                activeProfileIds: { light: null, dark: null },
             },
         });
     });
@@ -167,7 +203,7 @@ describe('localSettingsParse', () => {
             themePreference: 'dark',
             themeProfiles: {
                 profiles: [],
-                activeProfileId: null,
+                activeProfileIds: { light: null, dark: null },
             },
         });
     });
@@ -196,7 +232,7 @@ describe('localSettingsParse', () => {
 
         expect(parsed.themeProfiles.profiles).toHaveLength(1);
         expect(parsed.themeProfiles.profiles[0]?.id).toBe('valid-profile');
-        expect(parsed.themeProfiles.activeProfileId).toBe('valid-profile');
+        expect(parsed.themeProfiles.activeProfileIds).toEqual({ light: 'valid-profile', dark: 'valid-profile' });
     });
 
     it('accepts built-in theme preset ids as active without storing them in custom profiles', () => {
@@ -208,7 +244,7 @@ describe('localSettingsParse', () => {
         });
 
         expect(parsed.themeProfiles).toEqual({
-            activeProfileId: 'premiumDark',
+            activeProfileIds: { light: 'premiumDark', dark: 'premiumDark' },
             profiles: [],
         });
     });
@@ -235,7 +271,7 @@ describe('localSettingsParse', () => {
         })).toMatchObject({
             themeProfiles: {
                 profiles: [],
-                activeProfileId: null,
+                activeProfileIds: { light: null, dark: null },
             },
         });
     });
@@ -262,7 +298,7 @@ describe('localSettingsParse', () => {
         })).toMatchObject({
             themeProfiles: {
                 profiles: [],
-                activeProfileId: null,
+                activeProfileIds: { light: null, dark: null },
             },
         });
     });
@@ -294,7 +330,7 @@ describe('localSettingsParse', () => {
         })).toMatchObject({
             themeProfiles: {
                 profiles: [],
-                activeProfileId: null,
+                activeProfileIds: { light: null, dark: null },
             },
         });
     });
@@ -327,7 +363,15 @@ describe('localSettingsParse', () => {
 
     it('accepts direct sessions list tab selection', () => {
         const parsed = localSettingsParse({ sessionsListStorageTab: 'direct' });
-        expect(parsed.sessionsListStorageTab).toBe('direct');
+        expect(parsed.sessionsListStorageFilter).toBe('direct');
+        expect(parsed).not.toHaveProperty('sessionsListStorageTab');
+    });
+
+    it('does not carry the retired persisted tab forward because the unified list defaults to all', () => {
+        const parsed = localSettingsParse({ sessionsListStorageTab: 'persisted' });
+
+        expect(parsed.sessionsListStorageFilter).toBe('all');
+        expect(parsed).not.toHaveProperty('sessionsListStorageTab');
     });
 
     it('accepts the middle ui item density selection', () => {

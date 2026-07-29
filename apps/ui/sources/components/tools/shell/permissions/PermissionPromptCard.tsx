@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
@@ -22,6 +22,7 @@ import {
     type ToolViewDetailLevelSetting,
 } from '@/components/tools/normalization/policy/resolveToolViewDetailDefaultsForChromeMode';
 import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
 const PROMPT_CARD_HORIZONTAL_PADDING = 12;
 const PROMPT_CARD_ICON_SIZE = 18;
@@ -40,6 +41,7 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
 }) {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
 
     const toolViewDetailLevelDefault = useSetting('toolViewDetailLevelDefault');
     const toolViewDetailLevelDefaultLocalControl = useSetting('toolViewDetailLevelDefaultLocalControl');
@@ -130,7 +132,14 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
                         onPress={onViewTool}
                         accessibilityRole="button"
                         accessibilityLabel={t('toolView.open')}
-                        style={({ pressed }) => [styles.viewButton, pressed && styles.viewButtonPressed]}
+                        style={({ pressed }) => [
+                            styles.viewButton,
+                            {
+                                minWidth: minimumInteractiveTargetSize,
+                                minHeight: minimumInteractiveTargetSize,
+                            },
+                            pressed && styles.viewButtonPressed,
+                        ]}
                     >
                         <Ionicons name="open-outline" size={18} color={theme.colors.text.secondary} />
                     </Pressable>
@@ -227,6 +236,8 @@ const styles = StyleSheet.create((theme) => ({
     viewButton: {
         padding: 6,
         borderRadius: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     viewButtonPressed: {
         backgroundColor: theme.colors.surface.pressedOverlay,

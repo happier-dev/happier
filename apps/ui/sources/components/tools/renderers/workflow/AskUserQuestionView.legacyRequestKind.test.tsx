@@ -53,6 +53,14 @@ vi.mock('@/sync/ops', () => ({
     sessionAllowWithAnswers: (...args: any[]) => sessionAllowWithAnswers(...args),
 }));
 
+vi.mock('@/components/sessions/terminal/openAttachedSessionTerminal', () => ({
+    useOpenAttachedSessionTerminal: () => ({
+        available: false,
+        unavailableReason: null,
+        open: vi.fn(),
+    }),
+}));
+
 describe('AskUserQuestionView legacy request-kind fallback', () => {
     it('allows submitting when the matching legacy request omits kind', async () => {
         sessionAllowWithAnswers.mockReset();
@@ -87,6 +95,6 @@ describe('AskUserQuestionView legacy request-kind fallback', () => {
         await pressTestInstanceAsync(submit, 'tools.askUserQuestion.submit');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
-        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', { 'Pick one': 'A' });
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', { 'Pick one': ['A'] });
     });
 });

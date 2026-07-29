@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import {
     getProviderAccountUsageSnapshotPlain,
@@ -14,25 +15,24 @@ import {
 } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache';
 import { openProviderAccountUsageSnapshot } from '@/sync/domains/connectedServices/accountUsage/openProviderAccountUsageSnapshot';
 import {
+    buildProviderAccountUsageScopeKey,
+    readProviderAccountUsageSnapshotForMode,
+} from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageLoadRoute';
+import {
     normalizeProviderAccountUsageRecordIds,
-    projectProviderAccountUsageSnapshotForConnectedServiceAlias,
     resolveProviderAccountUsageSnapshotState,
 } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageSelectors';
-import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
+import type {
+    ExpectedActiveServerFetchBasis,
+} from '@/sync/http/client';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import type {
-    ConnectedServiceQuotaSnapshotV1,
     ProviderAccountUsageRecordId,
     ProviderAccountUsageSnapshotV1,
     ProviderAccountUsageStateV1,
 } from '@happier-dev/protocol';
 import { useCredentialScopedAccountModeResolver, type CredentialScopedAccountMode } from './useCredentialScopedAccountModeResolver';
-
-export type ProviderAccountUsageSnapshotAliasRef = Readonly<{
-    serviceId: string;
-    profileId: string;
-}>;
 
 export type ProviderAccountUsageSnapshotsFetchPolicy = 'poll' | 'cache_only';
 
@@ -40,7 +40,6 @@ export type ProviderAccountUsageSnapshotsResult = Readonly<{
     snapshotsByRecordId: Readonly<Record<string, ProviderAccountUsageSnapshotV1 | null>>;
     loadingByRecordId: Readonly<Record<string, boolean>>;
     stateByRecordId: Readonly<Record<string, ProviderAccountUsageStateV1>>;
-    connectedServiceSnapshotsByKey: Readonly<Record<string, ConnectedServiceQuotaSnapshotV1 | null>>;
 }>;
 
 const PROVIDER_ACCOUNT_USAGE_POLL_MS = 30_000;
@@ -65,34 +64,51 @@ async function readProviderAccountUsageSnapshot(params: Readonly<{
     mode: CredentialScopedAccountMode;
     recordId: ProviderAccountUsageRecordId;
     signal: AbortSignal;
+    serverBasis: ExpectedActiveServerFetchBasis;
 }>): Promise<ProviderAccountUsageSnapshotV1 | null> {
-    let opened: ProviderAccountUsageSnapshotV1 | null = null;
-    if (params.mode === 'plain') {
-        opened = await getProviderAccountUsageSnapshotPlain(params.credentials, {
-            recordId: params.recordId,
-        }, { signal: params.signal });
-    }
-    if (opened || params.signal.aborted) return opened;
-
-    const sealed = await getProviderAccountUsageSnapshotSealed(params.credentials, {
-        recordId: params.recordId,
-    }, { signal: params.signal });
-    return sealed ? openProviderAccountUsageSnapshot(params.credentials, sealed.sealed) : null;
+    return await readProviderAccountUsageSnapshotForMode({
+        mode: params.mode,
+        readPlain: () => getProviderAccountUsageSnapshotPlain(
+            params.credentials,
+            { recordId: params.recordId },
+            {
+                signal: params.signal,
+                expectedActiveServer: params.serverBasis,
+            },
+        ),
+        readSealed: () => getProviderAccountUsageSnapshotSealed(
+            params.credentials,
+            { recordId: params.recordId },
+            {
+                signal: params.signal,
+                expectedActiveServer: params.serverBasis,
+            },
+        ),
+        openSealed: (sealed) => openProviderAccountUsageSnapshot(
+            params.credentials,
+            sealed.sealed,
+        ),
+    });
 }
 
 export function useProviderAccountUsageSnapshots(
     recordIds: ReadonlyArray<string>,
-    options: Readonly<{
-        aliases?: ReadonlyArray<ProviderAccountUsageSnapshotAliasRef>;
-        fetchPolicy?: ProviderAccountUsageSnapshotsFetchPolicy;
-    }> = {},
+    options: Readonly<{ fetchPolicy?: ProviderAccountUsageSnapshotsFetchPolicy }> = {},
 ): ProviderAccountUsageSnapshotsResult {
     const auth = useAuth();
     const credentials = auth.credentials;
     const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
-    const credentialScope = quotasEnabled && credentials ? resolveAuthCredentialsScopeKey(credentials) : '';
+    const activeServer = useActiveServerSnapshot();
+    const credentialScope =
+        quotasEnabled && credentials
+            ? buildProviderAccountUsageScopeKey({
+                serverId: activeServer.serverId,
+                generation: activeServer.generation,
+                credentialScope:
+                    resolveAuthCredentialsScopeKey(credentials),
+            })
+            : '';
     const fetchPolicy = options.fetchPolicy ?? 'poll';
-    const aliases = options.aliases ?? [];
     const [wakeSeq, setWakeSeq] = React.useState(0);
     const cacheState = React.useSyncExternalStore(
         subscribeProviderAccountUsageCache,
@@ -123,7 +139,13 @@ export function useProviderAccountUsageSnapshots(
     const resolveAccountMode = useCredentialScopedAccountModeResolver({ credentials, credentialScope });
 
     React.useEffect(() => {
-        if (fetchPolicy === 'cache_only' || !quotasEnabled || !credentials || normalizedRecordIds.length === 0) return;
+        if (
+            fetchPolicy === 'cache_only'
+            || !quotasEnabled
+            || !credentials
+            || !activeServer.serverId
+            || normalizedRecordIds.length === 0
+        ) return;
 
         const now = Date.now();
         let nextWakeAtMs = Number.POSITIVE_INFINITY;
@@ -187,6 +209,10 @@ export function useProviderAccountUsageSnapshots(
                             mode,
                             recordId,
                             signal: controller.signal,
+                            serverBasis: {
+                                serverId: activeServer.serverId,
+                                generation: activeServer.generation,
+                            },
                         });
                         if (controller.signal.aborted || activeCredentialScopeRef.current !== requestCredentialScope) return;
 
@@ -233,7 +259,17 @@ export function useProviderAccountUsageSnapshots(
                 controller.abort();
             }
         };
-    }, [credentialScope, credentials, fetchPolicy, normalizedRecordIds, quotasEnabled, resolveAccountMode, wakeSeq]);
+    }, [
+        activeServer.generation,
+        activeServer.serverId,
+        credentialScope,
+        credentials,
+        fetchPolicy,
+        normalizedRecordIds,
+        quotasEnabled,
+        resolveAccountMode,
+        wakeSeq,
+    ]);
 
     return React.useMemo(() => {
         if (!quotasEnabled) {
@@ -241,7 +277,6 @@ export function useProviderAccountUsageSnapshots(
                 snapshotsByRecordId: {},
                 loadingByRecordId: {},
                 stateByRecordId: {},
-                connectedServiceSnapshotsByKey: {},
             } satisfies ProviderAccountUsageSnapshotsResult;
         }
 
@@ -261,26 +296,10 @@ export function useProviderAccountUsageSnapshots(
             });
         }
 
-        const allSnapshotsByRecordId: Record<string, ProviderAccountUsageSnapshotV1 | null> = {};
-        for (const [recordId, entry] of Object.entries(cacheByRecordId)) {
-            allSnapshotsByRecordId[recordId] = entry.snapshot;
-        }
-
-        const connectedServiceSnapshotsByKey: Record<string, ConnectedServiceQuotaSnapshotV1 | null> = {};
-        for (const alias of aliases) {
-            const key = connectedServiceProfileKey(alias);
-            connectedServiceSnapshotsByKey[key] = projectProviderAccountUsageSnapshotForConnectedServiceAlias({
-                snapshotsByRecordId: allSnapshotsByRecordId,
-                serviceId: alias.serviceId,
-                profileId: alias.profileId,
-            });
-        }
-
         return {
             snapshotsByRecordId,
             loadingByRecordId,
             stateByRecordId,
-            connectedServiceSnapshotsByKey,
         } satisfies ProviderAccountUsageSnapshotsResult;
-    }, [aliases, cacheByRecordId, normalizedRecordIds, quotasEnabled]);
+    }, [cacheByRecordId, normalizedRecordIds, quotasEnabled]);
 }

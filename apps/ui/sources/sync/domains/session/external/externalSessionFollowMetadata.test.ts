@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '@/sync/domains/state/storageTypes';
@@ -13,7 +15,7 @@ function createExternalSessionMetadata(policy?: 'attached_only' | 'background_fo
         host: 'localhost',
         externalSessionV1: {
             v: 1,
-            providerId: 'codex',
+            agentId: 'codex',
             machineId: 'machine-1',
             remoteSessionId: 'remote-1',
             source: { kind: 'codexHome', home: 'user' },
@@ -23,6 +25,13 @@ function createExternalSessionMetadata(policy?: 'attached_only' | 'background_fo
 }
 
 describe('externalSessionFollowMetadata', () => {
+    it('delegates metadata merging to the protocol follow writer', async () => {
+        const source = await readFile(new URL('./externalSessionFollowMetadata.ts', import.meta.url), 'utf8');
+
+        expect(source).toContain('updateLinkedExternalSessionFollowMetadataV1');
+        expect(source).not.toContain('buildLinkedExternalSessionMetadataV1');
+    });
+
     it('defaults to attached_only when no follow policy is present', () => {
         expect(readExternalSessionFollowPolicy(createExternalSessionMetadata())).toBe('attached_only');
     });

@@ -11,6 +11,15 @@ import {
     DaemonTerminalRestartResponseSchema,
     DaemonTerminalStreamReadRequestSchema,
     DaemonTerminalStreamReadResponseSchema,
+    TerminalStreamAckRequestSchema,
+    TerminalStreamAckResponseSchema,
+    TerminalStreamBytesFrameSchema,
+    TerminalStreamInputRequestSchema,
+    TerminalStreamInputResponseSchema,
+    TerminalStreamReadRequestSchema,
+    TerminalStreamReadResponseSchema,
+    decodeTerminalStreamBytesFrame,
+    encodeTerminalStreamBytes,
     type DaemonTerminalCloseRequest,
     type DaemonTerminalCloseResponse,
     type DaemonTerminalEnsureRequest,
@@ -23,6 +32,13 @@ import {
     type DaemonTerminalRestartResponse,
     type DaemonTerminalStreamReadRequest,
     type DaemonTerminalStreamReadResponse,
+    type TerminalStreamAckRequest,
+    type TerminalStreamAckResponse,
+    type TerminalStreamBytesFrame,
+    type TerminalStreamInputRequest,
+    type TerminalStreamInputResponse,
+    type TerminalStreamReadRequest,
+    type TerminalStreamReadResponse,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -73,6 +89,74 @@ export async function machineTerminalStreamRead(
     const parsed = DaemonTerminalStreamReadResponseSchema.safeParse(response);
     if (!parsed.success) {
         throwUnsupportedResponse(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ);
+    }
+    return parsed.data;
+}
+
+export function encodeMachineTerminalBytes(bytes: Uint8Array): string {
+    return encodeTerminalStreamBytes(bytes);
+}
+
+export function decodeMachineTerminalBytesFrame(frame: TerminalStreamBytesFrame): Uint8Array {
+    return decodeTerminalStreamBytesFrame(TerminalStreamBytesFrameSchema.parse(frame));
+}
+
+export async function machineTerminalStreamReadBytes(
+    machineId: string,
+    input: TerminalStreamReadRequest,
+    opts?: MachineTerminalOpts,
+): Promise<TerminalStreamReadResponse> {
+    const payload = TerminalStreamReadRequestSchema.parse(input);
+    const response = await machineRpcWithServerScope<unknown, TerminalStreamReadRequest>({
+        machineId,
+        serverId: opts?.serverId,
+        timeoutMs: opts?.timeoutMs ?? undefined,
+        method: RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES,
+        payload,
+    });
+    const parsed = TerminalStreamReadResponseSchema.safeParse(response);
+    if (!parsed.success) {
+        throwUnsupportedResponse(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES);
+    }
+    return parsed.data;
+}
+
+export async function machineTerminalStreamAcknowledge(
+    machineId: string,
+    input: TerminalStreamAckRequest,
+    opts?: MachineTerminalOpts,
+): Promise<TerminalStreamAckResponse> {
+    const payload = TerminalStreamAckRequestSchema.parse(input);
+    const response = await machineRpcWithServerScope<unknown, TerminalStreamAckRequest>({
+        machineId,
+        serverId: opts?.serverId,
+        timeoutMs: opts?.timeoutMs ?? undefined,
+        method: RPC_METHODS.DAEMON_TERMINAL_STREAM_ACK,
+        payload,
+    });
+    const parsed = TerminalStreamAckResponseSchema.safeParse(response);
+    if (!parsed.success) {
+        throwUnsupportedResponse(RPC_METHODS.DAEMON_TERMINAL_STREAM_ACK);
+    }
+    return parsed.data;
+}
+
+export async function machineTerminalStreamSendInput(
+    machineId: string,
+    input: TerminalStreamInputRequest,
+    opts?: MachineTerminalOpts,
+): Promise<TerminalStreamInputResponse> {
+    const payload = TerminalStreamInputRequestSchema.parse(input);
+    const response = await machineRpcWithServerScope<unknown, TerminalStreamInputRequest>({
+        machineId,
+        serverId: opts?.serverId,
+        timeoutMs: opts?.timeoutMs ?? undefined,
+        method: RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT,
+        payload,
+    });
+    const parsed = TerminalStreamInputResponseSchema.safeParse(response);
+    if (!parsed.success) {
+        throwUnsupportedResponse(RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT);
     }
     return parsed.data;
 }
@@ -156,4 +240,3 @@ export async function machineTerminalRestart(
     }
     return parsed.data;
 }
-

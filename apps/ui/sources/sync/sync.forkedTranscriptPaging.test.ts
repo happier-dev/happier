@@ -71,6 +71,23 @@ import { storage } from './domains/state/storage';
 import type { Session } from './domains/state/storageTypes';
 import type { NormalizedMessage } from './typesRaw/normalize';
 
+function isMainMessagesPageRequest(path: string, params: {
+    sessionId: string;
+    beforeSeq: string;
+    limit: string;
+}): boolean {
+    const prefix = `/v1/sessions/${encodeURIComponent(params.sessionId)}/messages?`;
+    if (!path.startsWith(prefix)) return false;
+
+    const [, query = ''] = path.split('?');
+    const searchParams = new URLSearchParams(query);
+    return searchParams.get('scope') === 'main'
+        && searchParams.get('beforeSeq') === params.beforeSeq
+        && searchParams.get('limit') === params.limit
+        && !searchParams.has('afterSeq')
+        && !searchParams.has('sidechainId');
+}
+
 type SyncForkPagingTestAccess = {
     credentials: { token: string; secret: string } | null;
     encryption: {
@@ -228,7 +245,7 @@ describe('sync forked transcript paging', () => {
                 }), { status: 200, headers: { 'Content-Type': 'application/json' } });
             }
 
-            if (path.startsWith('/v1/sessions/parent/messages?beforeSeq=4')) {
+            if (isMainMessagesPageRequest(path, { sessionId: 'parent', beforeSeq: '4', limit: '150' })) {
                 return new Response(JSON.stringify({
                     messages: [
                         {
@@ -257,7 +274,11 @@ describe('sync forked transcript paging', () => {
 
         const requestedPaths = requestMock.mock.calls.map((call) => call[0]);
         expect(requestedPaths[0]).toBe('/v2/sessions/parent');
-        expect(requestedPaths).toContainEqual(expect.stringContaining('/v1/sessions/parent/messages?beforeSeq=4'));
+        expect(requestedPaths.some((path) => isMainMessagesPageRequest(String(path), {
+            sessionId: 'parent',
+            beforeSeq: '4',
+            limit: '150',
+        }))).toBe(true);
         expect(result.loaded).toBe(1);
         expect(storage.getState().sessions.parent).toBeTruthy();
         const parentMessages = storage.getState().sessionMessages.parent?.messagesById ?? {};

@@ -64,6 +64,16 @@ describe('canonical theme color shape', () => {
         expect(darkTheme.colors.composer.chipTint).toBe('#A79D97');
     });
 
+    it('uses action foreground tokens for backgroundless permission buttons', () => {
+        expect(lightTheme.colors.permissionButton.allow.text).toBe('#34C759');
+        expect(lightTheme.colors.permissionButton.deny.text).toBe('#FF3B30');
+        expect(lightTheme.colors.permissionButton.allowAll.text).toBe('#007AFF');
+
+        expect(darkTheme.colors.permissionButton.allow.text).toBe('#66DC7E');
+        expect(darkTheme.colors.permissionButton.deny.text).toBe('#EE6E6C');
+        expect(darkTheme.colors.permissionButton.allowAll.text).toBe('#9EB9FF');
+    });
+
     it('does not expose legacy groupped or flat surface tokens in the canonical color shape', () => {
         expect(lightTheme.colors).not.toHaveProperty('groupped');
         expect(lightTheme.colors).not.toHaveProperty('surfaceHigh');

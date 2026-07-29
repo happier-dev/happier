@@ -1,6 +1,3 @@
-import {
-    INVALID_NATIVE_OFFSET_RECOVERY_RAW_THRESHOLD_PX,
-} from '@/components/sessions/transcript/viewport/visibility/blankRecoveryOwner';
 import type {
     TranscriptViewportTelemetryBlankAreaSource,
     TranscriptViewportTelemetryVisibleRangeReadStatus,
@@ -38,17 +35,10 @@ export const EMPTY_NATIVE_VISIBLE_WINDOW_SNAPSHOT: NativeVisibleWindowSnapshot =
 export function resolveNativeVisibleWindowSnapshot(params: Readonly<{
     computeVisibleIndices: (() => { startIndex: number; endIndex: number } | null | undefined) | undefined;
     data: readonly { id: string }[];
-    distanceFromBottom: number | null;
     firstVisibleIndex: (() => number | null | undefined) | undefined;
     lastNativeVisibleRowsSnapshot: NativeVisibleWindowSnapshot | null;
     layoutHeight: number;
     nativeVisibleWindowSnapshot: NativeVisibleWindowSnapshot | null;
-    nativeHotEdgeVisibleRows: Readonly<{
-        firstItemId: string | null;
-        lastItemId: string | null;
-    }> | null;
-    pinThresholdPx: number;
-    rawOffsetY: number | null | undefined;
 }>): NativeTelemetryVisibleWindowResult {
     const data = params.data;
     const blankAreaPx = data.length > 0 && Number.isFinite(params.layoutHeight) && params.layoutHeight > 0
@@ -79,35 +69,6 @@ export function resolveNativeVisibleWindowSnapshot(params: Readonly<{
             visibleRenderedStartIndex?: number;
         }> = {},
     ): NativeVisibleWindowSnapshot => {
-        const nativeHotEdgeRows = params.nativeHotEdgeVisibleRows;
-        if (nativeHotEdgeRows) {
-            if (
-                (typeof params.rawOffsetY !== 'number' || params.rawOffsetY >= INVALID_NATIVE_OFFSET_RECOVERY_RAW_THRESHOLD_PX) &&
-                typeof params.distanceFromBottom === 'number' &&
-                params.distanceFromBottom <= params.pinThresholdPx
-            ) {
-                const snapshot: NativeVisibleWindowSnapshot = {
-                    blankAreaPx: 0,
-                    blankAreaSource: 'none',
-                    ...(rangeFacts.firstVisibleRenderedIndex !== undefined
-                        ? { firstVisibleRenderedIndex: rangeFacts.firstVisibleRenderedIndex }
-                        : {}),
-                    firstVisibleItemId: nativeHotEdgeRows.firstItemId ?? undefined,
-                    hasVisibleRows: true,
-                    lastVisibleItemId: nativeHotEdgeRows.lastItemId ?? undefined,
-                    ...(rangeFacts.visibleRangeReadStatus ? { visibleRangeReadStatus: rangeFacts.visibleRangeReadStatus } : {}),
-                    ...(rangeFacts.visibleRenderedEndIndex !== undefined
-                        ? { visibleRenderedEndIndex: rangeFacts.visibleRenderedEndIndex }
-                        : {}),
-                    ...(rangeFacts.visibleRenderedStartIndex !== undefined
-                        ? { visibleRenderedStartIndex: rangeFacts.visibleRenderedStartIndex }
-                        : {}),
-                    visibleWindowSource: 'native-hot-edge-slot',
-                };
-                lastNativeVisibleRowsSnapshot = snapshot;
-                return snapshot;
-            }
-        }
         const lastKnownSnapshot = resolveLastKnownVisibleRowsSnapshot();
         if (lastKnownSnapshot) {
             return {

@@ -7,7 +7,11 @@ import {
     resolveConnectedServiceProfileLabel,
 } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { deriveQuotaUtilizationPct } from '@/sync/domains/connectedServices/deriveQuotaUtilizationPct';
-import type { ConnectedServiceId, ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol';
+import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';
+import {
+    type ConnectedServiceId,
+    type ConnectedServiceQuotaMeterV1,
+} from '@happier-dev/protocol';
 
 import { useConnectedServiceQuotaSnapshots } from './useConnectedServiceQuotaSnapshots';
 
@@ -71,13 +75,12 @@ export function useConnectedServiceQuotaSummaries(): Readonly<{
     isRefreshing: boolean;
     hasConnectedProfiles: boolean;
 }> {
-    const connectedServicesEnabled = useFeatureEnabled('connectedServices');
     const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
     const profile = useProfile();
     const settings = useSettings();
 
     const connectedProfiles = React.useMemo(() => {
-        if (!connectedServicesEnabled || !quotasEnabled) {
+        if (!quotasEnabled) {
             return [] as Array<{ serviceId: ConnectedServiceId; profileId: string }>;
         }
 
@@ -85,7 +88,10 @@ export function useConnectedServiceQuotaSummaries(): Readonly<{
         const seenKeys = new Set<string>();
         for (const service of profile.connectedServicesV2) {
             for (const entry of service.profiles ?? []) {
-                if (entry.status !== 'connected') {
+                // Usage DISPLAY fails OPEN: skip a profile ONLY for an explicit,
+                // recognized needs_reauth. Absent/unknown/'' status still shows
+                // usage (single predicate shared with every quota gate).
+                if (shouldHideQuotaForCredentialStatus(entry.status)) {
                     continue;
                 }
                 const key = connectedServiceProfileKey({
@@ -104,7 +110,6 @@ export function useConnectedServiceQuotaSummaries(): Readonly<{
         }
         return next;
     }, [
-        connectedServicesEnabled,
         profile.connectedServicesV2,
         quotasEnabled,
     ]);
@@ -112,7 +117,7 @@ export function useConnectedServiceQuotaSummaries(): Readonly<{
     const { snapshotsByKey, loadingByKey } = useConnectedServiceQuotaSnapshots(connectedProfiles);
 
     const summaries = React.useMemo(() => {
-        if (!connectedServicesEnabled || !quotasEnabled) {
+        if (!quotasEnabled) {
             return [] as ConnectedServiceQuotaSummary[];
         }
 
@@ -154,7 +159,6 @@ export function useConnectedServiceQuotaSummaries(): Readonly<{
         });
     }, [
         connectedProfiles,
-        connectedServicesEnabled,
         quotasEnabled,
         settings.connectedServicesProfileLabelByKey,
         settings.connectedServicesQuotaPinnedMeterIdsByKey,

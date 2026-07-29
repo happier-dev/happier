@@ -110,6 +110,64 @@ describe('buildActionSettingsEntries', () => {
         expect(sessionMenuEntries.some((entry) => entry.targets.some((target) => target.id === 'command_palette'))).toBe(true);
     });
 
+    it('exposes terminal composer clear through the pending-message placement', async () => {
+        const { buildActionSettingsEntries } = await import('./buildActionSettingsEntries');
+
+        const entries = buildActionSettingsEntries({
+            query: '',
+            settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            availability: {
+                executionRunsEnabled: true,
+                memorySearchEnabled: true,
+                voiceEnabled: true,
+                sessionHandoffEnabled: true,
+                mcpServersEnabled: true,
+                voiceShareDeviceInventory: true,
+            },
+        });
+
+        const terminalComposerClear = entries.find((entry) => entry.actionId === 'session.terminalComposer.clear');
+        expect(terminalComposerClear).toBeTruthy();
+        expect(terminalComposerClear!.targets.some((target) => target.id === 'contextual_ui')).toBe(false);
+        expect(terminalComposerClear!.targets.find((target) => target.id === 'pending_messages')).toMatchObject({
+            id: 'pending_messages',
+            state: 'on',
+        });
+    });
+
+    it('surfaces the browser recording family once its real executor is enabled on ui/agent', async () => {
+        // FINALIZATION-PLAN §3.2/§3.3 + BA-5: the whole browser recording family now routes through a
+        // real executor (`RUNTIME_ACTION_REAL_EXECUTOR_*`) and is surfaced on `ui` + `agent`,
+        // so each leaf becomes a configurable settings entry with a `agent` target. The
+        // dangerous lifecycle leaves (`browser.recording.start`, classified `safety:'danger'`) keep an
+        // approval-floored `agent` target per the consent floor.
+        const { buildActionSettingsEntries } = await import('./buildActionSettingsEntries');
+
+        const entries = buildActionSettingsEntries({
+            query: 'browser recording',
+            settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            availability: {
+                executionRunsEnabled: true,
+                memorySearchEnabled: true,
+                voiceEnabled: true,
+                sessionHandoffEnabled: true,
+                mcpServersEnabled: true,
+                voiceShareDeviceInventory: true,
+            },
+        });
+
+        const attachRecording = entries.find((entry) => entry.actionId === 'browser.recording.attachToComposer');
+        expect(attachRecording).toBeTruthy();
+        expect(attachRecording!.targets.some((target) => target.id === 'agent')).toBe(true);
+
+        // `browser.recording.start` is now executor-backed and surfaced on `ui`/`agent`. As a
+        // danger lifecycle leaf it carries a `agent` target governed by the agent approval
+        // floor (it is not silently hidden anymore).
+        const startRecording = entries.find((entry) => entry.actionId === 'browser.recording.start');
+        expect(startRecording).toBeTruthy();
+        expect(startRecording!.targets.some((target) => target.id === 'agent')).toBe(true);
+    });
+
     it('marks run placements unavailable when this client does not surface them yet', async () => {
         const { buildActionSettingsEntries } = await import('./buildActionSettingsEntries');
 
@@ -141,5 +199,52 @@ describe('buildActionSettingsEntries', () => {
             state: 'unavailable',
             reasonKey: 'settingsActions.reasons.notAvailableInThisApp',
         });
+    });
+
+    it('surfaces real-executor runtime families while hiding no-executor fail-closed contracts', async () => {
+        // FINALIZATION-PLAN §3.2/§3.3: families with a real executor are surfaced on `ui`/
+        // `agent` and become configurable; families with no executor stay fail-closed on
+        // every surface and therefore have no settings target (hidden).
+        const { buildActionSettingsEntries } = await import('./buildActionSettingsEntries');
+
+        const entries = buildActionSettingsEntries({
+            query: '',
+            settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            availability: {
+                executionRunsEnabled: true,
+                memorySearchEnabled: true,
+                voiceEnabled: true,
+                sessionHandoffEnabled: true,
+                mcpServersEnabled: true,
+                voiceShareDeviceInventory: true,
+            },
+        });
+
+        const isConfigurable = (actionId: string): boolean =>
+            entries.some((entry) => entry.actionId === actionId);
+
+        // Real executors → now configurable (with a agent target gated by the approval floor).
+        expect(isConfigurable('browser.navigate')).toBe(true);
+        expect(isConfigurable('localServices.publicPreview.create')).toBe(true);
+        expect(isConfigurable('devices.simulator.input.tap')).toBe(true);
+        for (const actionId of ['browser.navigate', 'localServices.publicPreview.create', 'devices.simulator.input.tap']) {
+            const entry = entries.find((candidate) => candidate.actionId === actionId)!;
+            expect(entry.targets.some((target) => target.id === 'agent')).toBe(true);
+        }
+
+        // browser.diagnostics.eval is now executor-backed (live sidecar CDP interaction transport,
+        // DIAG-INTERACTION) → surfaced + configurable; its agent target stays approval-floored
+        // (danger) per the consent floor. (browser.recording.start is likewise surfaced by its lane.)
+        expect(isConfigurable('browser.diagnostics.eval')).toBe(true);
+        expect(
+            entries.find((candidate) => candidate.actionId === 'browser.diagnostics.eval')!.targets
+                .some((target) => target.id === 'agent'),
+        ).toBe(true);
+
+        // No producer → still hidden (statically-unbacked / UNSURFACED on every surface).
+        expect(isConfigurable('devices.simulator.input.orientation')).toBe(false);
+
+        // No surfaced entry should ever have zero targets.
+        expect(entries.some((entry) => entry.targets.length === 0)).toBe(false);
     });
 });

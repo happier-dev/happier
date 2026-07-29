@@ -1,3 +1,4 @@
+import { StyleSheet } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -37,6 +38,30 @@ describe('TranscriptEventRow', () => {
         modalConfirm.mockReset();
         modalConfirm.mockResolvedValue(true);
         modalAlert.mockReset();
+    });
+
+    it('visually de-emphasizes a prior-era event without muting a current-era event', async () => {
+        const event = {
+            type: 'runtime-config-outcome',
+            provider: 'claude',
+            runtime: 'claude-unified-terminal',
+            status: 'failed',
+            message: 'Failed to apply runtime controls.',
+            changes: [
+                { key: 'reasoningEffort', requested: 'medium', reason: 'not_delivered' },
+            ],
+        } as AgentEvent;
+
+        const priorEra = await renderScreen(
+            <TranscriptEventRow event={event} emphasis="deemphasized" />,
+        );
+        const currentEra = await renderScreen(<TranscriptEventRow event={event} />);
+
+        const priorEraRow = priorEra.findByProps({ testID: 'transcript-event-runtime-config-outcome-failed' });
+        const currentEraRow = currentEra.findByProps({ testID: 'transcript-event-runtime-config-outcome-failed' });
+
+        expect(StyleSheet.flatten(priorEraRow.props.style)?.opacity).toBeLessThan(1);
+        expect(StyleSheet.flatten(currentEraRow.props.style)?.opacity).toBeUndefined();
     });
 
     it('offers to clear the terminal composer for typed terminal draft blocked events', async () => {
@@ -119,7 +144,7 @@ describe('TranscriptEventRow', () => {
                     type: 'context-compaction',
                     phase: 'completed',
                     lifecycleId: 'pi:context-compaction',
-                    provider: 'pi',
+                    agentId: 'pi',
                 }}
             />,
         );
@@ -134,7 +159,7 @@ describe('TranscriptEventRow', () => {
                     lifecycleId: 'pi:context-compaction',
                     provider: 'pi',
                     continuation: 'paused',
-                    pauseReason: 'provider-idle-after-compaction',
+                    pauseReason: 'agent-idle-after-compaction',
                 }}
             />,
         );
@@ -218,7 +243,7 @@ describe('TranscriptEventRow', () => {
         const waiting = await renderScreen(
             <TranscriptEventRow
                 event={{
-                    type: 'provider-quota-wait',
+                    type: 'agent-quota-wait',
                     serviceId: 'openai-codex',
                     profileId: 'work',
                     groupId: 'codex-main',
@@ -228,12 +253,12 @@ describe('TranscriptEventRow', () => {
             />,
         );
 
-        expect(waiting.findByProps({ testID: 'transcript-event-provider-quota-wait' })).toBeTruthy();
+        expect(waiting.findByProps({ testID: 'transcript-event-agent-quota-wait' })).toBeTruthy();
 
         const recovered = await renderScreen(
             <TranscriptEventRow
                 event={{
-                    type: 'provider-quota-recovered',
+                    type: 'agent-quota-recovered',
                     serviceId: 'openai-codex',
                     profileId: 'work',
                     groupId: 'codex-main',
@@ -242,7 +267,7 @@ describe('TranscriptEventRow', () => {
             />,
         );
 
-        expect(recovered.findByProps({ testID: 'transcript-event-provider-quota-recovered' })).toBeTruthy();
+        expect(recovered.findByProps({ testID: 'transcript-event-agent-quota-recovered' })).toBeTruthy();
     });
 
     it('O1: renders connected-service-account-switch-attempt events without falling back to Unknown event', async () => {
@@ -488,7 +513,7 @@ describe('TranscriptEventRow', () => {
         const degraded = await renderScreen(
             <TranscriptEventRow
                 event={{
-                    type: 'provider-state-sharing-degraded',
+                    type: 'agent-state-sharing-degraded',
                     serviceId: 'pi',
                     code: 'import_partial',
                     requestedStateMode: 'full',
@@ -496,7 +521,7 @@ describe('TranscriptEventRow', () => {
                 }}
             />,
         );
-        expect(degraded.findByProps({ testID: 'transcript-event-provider-state-sharing-degraded' })).toBeTruthy();
+        expect(degraded.findByProps({ testID: 'transcript-event-agent-state-sharing-degraded' })).toBeTruthy();
         expect(JSON.stringify(degraded.tree.toJSON())).not.toContain('Unknown event');
     });
 });

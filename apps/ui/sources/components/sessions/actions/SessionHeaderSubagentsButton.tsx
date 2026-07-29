@@ -7,11 +7,16 @@ import { DependabotIcon } from '@/components/ui/icons/DependabotIcon';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { useOptionalSessionScreenTestId } from '../shell/sessionScreenTestIds';
+import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
 
+/**
+ * A live indicator: present exactly while agents are running in this session. `activeCount` is the
+ * whole condition — there is no second "has any" flag, because a session that ran an agent an hour
+ * ago is history, and history belongs in the overflow menu, not in a status slot.
+ */
 export const SessionHeaderSubagentsButton = React.memo((props: Readonly<{
     scopeId: string;
     activeCount: number;
-    hasAnySubagents: boolean;
 }>) => {
     const { theme } = useUnistyles();
     const pane = useAppPaneScope(props.scopeId);
@@ -22,7 +27,7 @@ export const SessionHeaderSubagentsButton = React.memo((props: Readonly<{
         pane.setRightTab('agents');
     }, [pane]);
 
-    if (!props.hasAnySubagents) return null;
+    if (props.activeCount <= 0) return null;
 
     return (
         <Pressable
@@ -32,7 +37,7 @@ export const SessionHeaderSubagentsButton = React.memo((props: Readonly<{
             style={({ pressed }) => ({
                 minWidth: 44,
                 height: 44,
-                paddingHorizontal: props.activeCount > 0 ? 10 : 0,
+                paddingHorizontal: 10,
                 alignItems: 'center',
                 justifyContent: 'center',
                 opacity: pressed ? 0.7 : 1,
@@ -40,8 +45,8 @@ export const SessionHeaderSubagentsButton = React.memo((props: Readonly<{
             accessibilityRole="button"
             accessibilityLabel={t('session.openSubagents', { count: props.activeCount })}
         >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: props.activeCount > 0 ? 6 : 0 }}>
-                <DependabotIcon size={21} color={theme.colors.chrome.header.foreground} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <DependabotIcon size={SESSION_HEADER_ICON_SIZE_PX} color={theme.colors.chrome.header.foreground} />
                 {props.activeCount > 0 ? (
                     <View
                         style={{

@@ -15,7 +15,6 @@ describe('native scroll accepted viewport paint decision', () => {
         nativeMountSettleStable: false,
         sessionEntryShouldFollowBottom: undefined,
         thresholdPx: 72,
-        usesNativeFlashListBottomMaintenance: true,
     } as const;
 
     const baseNativeObservation = {
@@ -30,12 +29,17 @@ describe('native scroll accepted viewport paint decision', () => {
         wantsPinned: true,
     } as const;
 
-    it('allows follow-bottom paint release when native bottom maintenance is not used', () => {
+    // Contract change (2026-07-28, ported from remote-dev W7/A-fix). This case previously asserted
+    // that reaching the live-tail threshold is sufficient to release the first accepted paint. That
+    // makes the reveal edge unconditional on every native open: the transcript paints wherever the
+    // list currently is and then moves once native placement settles, which is the cold-open
+    // flicker. The reveal edge on native is settle-stable, the mount-settle deadline, or the warm
+    // keep-alive allowance — never an unconditional accept.
+    it('holds follow-bottom paint release at the live tail before mount settle or deadline', () => {
         expect(resolveNativeFollowBottomObservationCanReleasePaint({
             ...baseFollowBottomObservation,
             distanceFromLiveTailPx: 72,
-            usesNativeFlashListBottomMaintenance: false,
-        })).toBe(true);
+        })).toBe(false);
     });
 
     it('blocks follow-bottom paint release when the observation is beyond the threshold', () => {
@@ -58,7 +62,7 @@ describe('native scroll accepted viewport paint decision', () => {
         })).toBe(false);
     });
 
-    it('allows native bottom-maintained paint release only after mount-settle stability or deadline', () => {
+    it('allows native paint release only after mount-settle stability or deadline', () => {
         expect(resolveNativeFollowBottomObservationCanReleasePaint({
             ...baseFollowBottomObservation,
             nativeMountSettleStable: true,
@@ -68,6 +72,21 @@ describe('native scroll accepted viewport paint decision', () => {
             nativeMountSettleDeadlineReached: true,
         })).toBe(true);
         expect(resolveNativeFollowBottomObservationCanReleasePaint(baseFollowBottomObservation)).toBe(false);
+    });
+
+    // Blank-screen guard. A settle signal that never stabilizes must not withhold the reveal: the
+    // deadline is the second, independent release edge, and its producer
+    // (`useTranscriptNativeMountSettleLifecycle`) always reaches it within
+    // `transcriptInitialFillBudgetMs + transcriptMountSettleQuiescentWindowMs`. This gate may delay
+    // a reveal; it must never be able to hang one.
+    it('releases paint on the mount-settle deadline when stability never arrives', () => {
+        expect(resolveNativeFollowBottomObservationCanReleasePaint({
+            ...baseFollowBottomObservation,
+            isWarmKeepAliveInstance: false,
+            nativeMountSettleDeadlineReached: true,
+            nativeMountSettleStable: false,
+            sessionEntryShouldFollowBottom: false,
+        })).toBe(true);
     });
 
     it('preserves the warm keep-alive follow-bottom bypass', () => {
@@ -188,7 +207,39 @@ describe('native scroll accepted viewport paint decision', () => {
         })).toEqual([]);
     });
 
-    it('creates accepted paint observation effects from follow-bottom readiness', () => {
+    it('creates accepted paint observation effects once mount settle is stable', () => {
+        expect(resolveNativeScrollAcceptedViewportPaintObservationEffects({
+            distanceFromLiveTailPx: 72,
+            entryRestoreConfirmedByObservation: false,
+            fallbackMetrics: {
+                contentHeight: 42.8,
+                distanceFromLiveTailPx: -3.4,
+                layoutHeight: 17.9,
+            },
+            hasRenderedItems: true,
+            isLoaded: true,
+            isNative: true,
+            isTrusted: false,
+            isWarmKeepAliveInstance: false,
+            nativeMountSettleDeadlineReached: false,
+            nativeMountSettleStable: true,
+            sessionEntryShouldFollowBottom: undefined,
+            sessionId: 'session-a',
+            thresholdPx: 72,
+            wantsPinned: true,
+        })).toEqual([{
+            fallbackMetrics: {
+                contentHeight: 42,
+                distanceFromLiveTailPx: 0,
+                layoutHeight: 17,
+            },
+            sessionId: 'session-a',
+            type: 'record-accepted-viewport-paint',
+        }]);
+    });
+
+    // The whole point of the port: the same observation with no settle fact is NOT a reveal.
+    it('creates no accepted paint observation effects at the live tail before mount settle', () => {
         expect(resolveNativeScrollAcceptedViewportPaintObservationEffects({
             distanceFromLiveTailPx: 72,
             entryRestoreConfirmedByObservation: false,
@@ -204,63 +255,10 @@ describe('native scroll accepted viewport paint decision', () => {
             isWarmKeepAliveInstance: false,
             nativeMountSettleDeadlineReached: false,
             nativeMountSettleStable: false,
-            sessionId: 'session-a',
             sessionEntryShouldFollowBottom: undefined,
+            sessionId: 'session-a',
             thresholdPx: 72,
-            usesNativeFlashListBottomMaintenance: false,
             wantsPinned: true,
-        })).toEqual([{
-            fallbackMetrics: {
-                contentHeight: 42,
-                distanceFromLiveTailPx: 0,
-                layoutHeight: 17,
-            },
-            sessionId: 'session-a',
-            type: 'record-accepted-viewport-paint',
-        }]);
-    });
-
-    it('preserves native bottom-maintained readiness gates in observation effects', () => {
-        const baseObservation = {
-            distanceFromLiveTailPx: 0,
-            entryRestoreConfirmedByObservation: false,
-            fallbackMetrics: {
-                contentHeight: 42,
-                distanceFromLiveTailPx: 0,
-                layoutHeight: 17,
-            },
-            hasRenderedItems: true,
-            isLoaded: true,
-            isNative: true,
-            isTrusted: false,
-            isWarmKeepAliveInstance: false,
-            nativeMountSettleDeadlineReached: false,
-            nativeMountSettleStable: false,
-            sessionId: 'session-a',
-            sessionEntryShouldFollowBottom: undefined,
-            thresholdPx: 72,
-            usesNativeFlashListBottomMaintenance: true,
-            wantsPinned: true,
-        } as const;
-
-        expect(resolveNativeScrollAcceptedViewportPaintObservationEffects(baseObservation)).toEqual([]);
-        expect(resolveNativeScrollAcceptedViewportPaintObservationEffects({
-            ...baseObservation,
-            nativeMountSettleStable: true,
-        })).toHaveLength(1);
-        expect(resolveNativeScrollAcceptedViewportPaintObservationEffects({
-            ...baseObservation,
-            nativeMountSettleDeadlineReached: true,
-        })).toHaveLength(1);
-        expect(resolveNativeScrollAcceptedViewportPaintObservationEffects({
-            ...baseObservation,
-            isWarmKeepAliveInstance: true,
-            sessionEntryShouldFollowBottom: undefined,
-        })).toHaveLength(1);
-        expect(resolveNativeScrollAcceptedViewportPaintObservationEffects({
-            ...baseObservation,
-            isWarmKeepAliveInstance: true,
-            sessionEntryShouldFollowBottom: false,
         })).toEqual([]);
     });
 
@@ -280,10 +278,9 @@ describe('native scroll accepted viewport paint decision', () => {
             isWarmKeepAliveInstance: false,
             nativeMountSettleDeadlineReached: false,
             nativeMountSettleStable: false,
-            sessionId: 'session-a',
             sessionEntryShouldFollowBottom: undefined,
+            sessionId: 'session-a',
             thresholdPx: 72,
-            usesNativeFlashListBottomMaintenance: true,
             wantsPinned: true,
         })).toHaveLength(1);
     });
@@ -304,10 +301,9 @@ describe('native scroll accepted viewport paint decision', () => {
             isWarmKeepAliveInstance: false,
             nativeMountSettleDeadlineReached: false,
             nativeMountSettleStable: false,
-            sessionId: 'session-a',
             sessionEntryShouldFollowBottom: undefined,
+            sessionId: 'session-a',
             thresholdPx: 72,
-            usesNativeFlashListBottomMaintenance: true,
             wantsPinned: false,
         })).toHaveLength(1);
     });

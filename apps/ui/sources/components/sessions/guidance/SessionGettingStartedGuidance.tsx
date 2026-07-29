@@ -6,7 +6,6 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { t } from '@/text';
 import { router } from 'expo-router';
 import { Modal } from '@/modal';
-import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import Constants from 'expo-constants';
@@ -28,6 +27,9 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import { getSessionGettingStartedSubtitle, getSessionGettingStartedTitle } from './sessionGettingStartedText';
 import { SessionGettingStartedSummary } from './SessionGettingStartedSummary';
 import { useSessionGettingStartedGuidanceBaseModel } from './useSessionGettingStartedGuidanceBaseModel';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 
 export type SessionGettingStartedGuidanceVariant = 'phone' | 'sidebar' | 'primaryPane' | 'newSessionBlocking';
@@ -286,19 +288,19 @@ function buildSteps(model: SessionGettingStartedGuidanceViewModel): SessionGetti
     }
 }
 
-async function copyTextToClipboard(params: Readonly<{ label: string; text: string }>): Promise<void> {
-    try {
-        await Clipboard.setStringAsync(params.text);
-        Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: params.label }));
-    } catch {
+async function copyTextToClipboard(text: string): Promise<boolean> {
+    const copied = await setClipboardStringSafe(text);
+    if (!copied) {
         Modal.alert(t('common.error'), t('textSelection.failedToCopy'));
     }
+    return copied;
 }
 
 function SessionGettingStartedGuidanceViewImpl(props: SessionGettingStartedGuidanceViewProps): React.ReactElement {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const { model } = props;
+    const copyFeedback = useTemporaryCopyFeedback();
 
     const title = getSessionGettingStartedTitle(model.kind);
     const subtitle = getSessionGettingStartedSubtitle(model.kind, model.targetLabel);
@@ -400,12 +402,20 @@ function SessionGettingStartedGuidanceViewImpl(props: SessionGettingStartedGuida
                                           accessibilityRole="button"
                                           accessibilityLabel={t('common.copyWithLabel', { label: step.copyLabel ?? t('common.command') })}
                                           style={styles.codeCopyButton}
-                                          onPress={() => copyTextToClipboard({ label: step.copyLabel ?? t('common.command'), text: step.command ?? '' })}
+                                          onPress={async () => {
+                                              if (await copyTextToClipboard(step.command ?? '')) {
+                                                  copyFeedback.markCopied(step.id);
+                                              }
+                                          }}
                                       >
                                           {normalizeNodeForView(
                                               <Ionicons name="copy-outline" size={16} color={theme.colors.text.secondary} />,
                                           )}
                                       </Pressable>
+                                      <CopiedPill
+                                          visible={copyFeedback.isCopied(step.id)}
+                                          testID={`session-getting-started-copy-feedback-${step.id}`}
+                                      />
                                 </View>
                             ) : null}
                         </View>

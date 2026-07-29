@@ -1,28 +1,25 @@
 import * as React from 'react';
-
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { collectRenderedTestIds, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import type { ApprovalRequestV1 } from '@happier-dev/protocol';
 
+import { collectRenderedTestIds, renderScreen } from '@/dev/testkit';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const executeAction = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
-const sessionAllow = vi.hoisted(() => vi.fn(async () => {}));
-const sessionDeny = vi.hoisted(() => vi.fn(async () => {}));
-const routerPush = vi.hoisted(() => vi.fn());
+const executeSpy = vi.fn(async () => ({ ok: true as const, result: {} }));
+const createDefaultActionExecutorSpy = vi.fn((_opts?: unknown) => ({ execute: executeSpy }));
+const sessionAllowSpy = vi.fn(async (..._args: unknown[]) => {});
+const sessionDenySpy = vi.fn(async (..._args: unknown[]) => {});
+const routerPushSpy = vi.fn();
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
-        View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('View', props, props.children),
-        Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('Text', props, props.children),
-        Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('Pressable', props, props.children),
-        ActivityIndicator: (props: Record<string, unknown>) =>
-            React.createElement('ActivityIndicator', props, null),
+        View: (props: any) => React.createElement('View', props, props.children),
+        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props, null),
     });
 });
 
@@ -32,129 +29,103 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 vi.mock('@expo/vector-icons', () => ({
-    Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
+    Ionicons: (props: any) => React.createElement('Ionicons', props, null),
 }));
 
 vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPush }),
+    useRouter: () => ({ push: routerPushSpy }),
 }));
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
+    Text: (props: any) => React.createElement('Text', props, props.children),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
+
+vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
+    createDefaultActionExecutor: (opts?: unknown) => createDefaultActionExecutorSpy(opts),
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
+    resolveServerIdForSessionIdFromLocalCache: () => 'server-from-session',
 }));
 
 vi.mock('@/sync/ops', () => ({
-    sessionAllow,
-    sessionDeny,
+    sessionAllow: (...args: unknown[]) => sessionAllowSpy(...args),
+    sessionDeny: (...args: unknown[]) => sessionDenySpy(...args),
 }));
 
-vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
-    createDefaultActionExecutor: () => ({
-        execute: executeAction,
-    }),
-}));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-    resolvePreferredServerIdForSessionId: () => 'server-from-session',
-}));
-
-function approvalArtifact(): DecryptedArtifact {
-    return {
-        id: 'approval-1',
-        header: {
-            v: 1,
-            kind: 'approval_request.v1',
-            title: 'Approve',
-            approvalStatus: 'open',
-            sessionId: 's1',
-            serverId: 'server-from-header',
-        },
-        title: 'Approve',
-        sessions: ['s1'],
-        body: null,
-        headerVersion: 1,
-        seq: 1,
-        createdAt: 1,
-        updatedAt: 1,
-        isDecrypted: true,
-    };
-}
-
-function approvalRequest() {
+function approvalRequest(): ApprovalRequestV1 {
     return {
         v: 1,
         status: 'open',
         createdAtMs: 1,
         updatedAtMs: 1,
-        createdBy: { surface: 'session_agent', sessionId: 's1' },
-        requestedSurface: 'session_agent',
+        createdBy: { surface: 'agent' as const, sessionId: 'session-1' },
+        requestedSurface: 'agent',
         actionId: 'session.list',
         actionArgs: {},
-        summary: 'List sessions',
-        preview: { summary: 'Recent sessions will be listed.' },
-    } as const;
+        summary: 'List sessions before continuing',
+        preview: { summary: 'Agent wants to inspect active sessions' },
+    };
+}
+
+function approvalArtifact(serverId?: string): Pick<DecryptedArtifact, 'id' | 'header'> {
+    return {
+        id: 'approval-1',
+        header: {
+            title: null,
+            ...(serverId ? { serverId } : {}),
+        },
+    };
 }
 
 describe('ApprovalPromptCard', () => {
-    it('renders stable approval selectors and decides through the approval action', async () => {
+    it('renders the action approval summary in inline chrome', async () => {
         const { ApprovalPromptCard } = await import('./ApprovalPromptCard');
-        executeAction.mockClear();
-        sessionAllow.mockClear();
-        sessionDeny.mockClear();
 
         const screen = await renderScreen(
             <ApprovalPromptCard
-                artifact={approvalArtifact()}
+                chrome="inline"
+                artifact={approvalArtifact('server-1')}
                 approval={approvalRequest()}
-                sessionId="s1"
-                metadata={null}
-                canApprovePermissions={true}
+                sessionId="session-1"
+                canApprove={true}
             />,
         );
 
         expect(screen.findByTestId('approval-prompt-card')).toBeTruthy();
-
-        const approve = screen.findByTestId('approval-prompt-approve');
-        expect(approve).toBeTruthy();
-        await pressTestInstanceAsync(approve, 'approval-prompt-approve');
-
-        expect(executeAction).toHaveBeenCalledWith(
-            'approval.request.decide',
-            { artifactId: 'approval-1', decision: 'approve' },
-            { surface: 'ui', serverId: 'server-from-header' },
-        );
-        expect(sessionAllow).not.toHaveBeenCalled();
-        expect(sessionDeny).not.toHaveBeenCalled();
+        expect(screen.getTextContent()).toContain('List sessions before continuing');
+        expect(screen.getTextContent()).toContain('Agent wants to inspect active sessions');
     });
 
-    it('rejects through the approval action', async () => {
+    it('opens the originating transcript tool when a location is available', async () => {
         const { ApprovalPromptCard } = await import('./ApprovalPromptCard');
-        executeAction.mockClear();
+        routerPushSpy.mockClear();
 
         const screen = await renderScreen(
             <ApprovalPromptCard
-                artifact={approvalArtifact()}
+                artifact={approvalArtifact('server-1')}
                 approval={approvalRequest()}
-                sessionId="s1"
-                metadata={null}
-                canApprovePermissions={true}
+                sessionId="session-1"
+                canApprove={true}
+                location={{ kind: 'top', messageId: 'tool:tool-1', seq: 10 }}
             />,
         );
 
-        const reject = screen.findByTestId('approval-prompt-reject');
-        expect(reject).toBeTruthy();
-        await pressTestInstanceAsync(reject, 'approval-prompt-reject');
+        await act(async () => {
+            await screen.pressByTestIdAsync('approval-prompt-view-tool');
+        });
 
-        expect(executeAction).toHaveBeenCalledWith(
-            'approval.request.decide',
-            { artifactId: 'approval-1', decision: 'reject' },
-            { surface: 'ui', serverId: 'server-from-header' },
-        );
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/session-1?jumpSeq=10');
     });
 
     it('places the primary approve action before the reject action', async () => {
@@ -162,11 +133,10 @@ describe('ApprovalPromptCard', () => {
 
         const screen = await renderScreen(
             <ApprovalPromptCard
-                artifact={approvalArtifact()}
+                artifact={approvalArtifact('server-1')}
                 approval={approvalRequest()}
-                sessionId="s1"
-                metadata={null}
-                canApprovePermissions={true}
+                sessionId="session-1"
+                canApprove={true}
             />,
         );
 
@@ -179,61 +149,61 @@ describe('ApprovalPromptCard', () => {
         );
     });
 
-    it('renders the approval preview summary', async () => {
+    it('approves through approval.request.decide using the default action executor', async () => {
         const { ApprovalPromptCard } = await import('./ApprovalPromptCard');
+        executeSpy.mockClear();
+        createDefaultActionExecutorSpy.mockClear();
+        sessionAllowSpy.mockClear();
+        sessionDenySpy.mockClear();
 
         const screen = await renderScreen(
             <ApprovalPromptCard
-                artifact={approvalArtifact()}
+                artifact={approvalArtifact('server-1')}
                 approval={approvalRequest()}
-                sessionId="s1"
-                metadata={null}
-                canApprovePermissions={true}
+                sessionId="session-1"
+                canApprove={true}
             />,
         );
 
-        expect(screen.getTextContent()).toContain('Recent sessions will be listed.');
+        await act(async () => {
+            await screen.pressByTestIdAsync('approval-prompt-approve');
+        });
+
+        expect(createDefaultActionExecutorSpy).toHaveBeenCalled();
+        expect(executeSpy).toHaveBeenCalledWith(
+            'approval.request.decide',
+            { artifactId: 'approval-1', decision: 'approve' },
+            expect.objectContaining({ surface: 'ui_button', serverId: 'server-1' }),
+        );
+        expect(sessionAllowSpy).not.toHaveBeenCalled();
+        expect(sessionDenySpy).not.toHaveBeenCalled();
     });
 
-    it('opens the originating transcript tool when a location is available', async () => {
+    it('rejects through approval.request.decide using the default action executor', async () => {
         const { ApprovalPromptCard } = await import('./ApprovalPromptCard');
-        routerPush.mockClear();
+        executeSpy.mockClear();
+        sessionAllowSpy.mockClear();
+        sessionDenySpy.mockClear();
 
         const screen = await renderScreen(
             <ApprovalPromptCard
                 artifact={approvalArtifact()}
                 approval={approvalRequest()}
-                sessionId="s1"
-                metadata={null}
-                canApprovePermissions={true}
-                location={{ kind: 'top', messageId: 'tool:tool-1', seq: 10 }}
+                sessionId="session-1"
+                canApprove={true}
             />,
         );
 
-        const viewTool = screen.findByTestId('approval-prompt-view-tool');
-        expect(viewTool).toBeTruthy();
-        await pressTestInstanceAsync(viewTool, 'approval-prompt-view-tool');
+        await act(async () => {
+            await screen.pressByTestIdAsync('approval-prompt-reject');
+        });
 
-        expect(routerPush).toHaveBeenCalledWith('/session/s1?jumpSeq=10');
-    });
-
-    it('renders a disabled explanation instead of decision controls when approval is not allowed', async () => {
-        const { ApprovalPromptCard } = await import('./ApprovalPromptCard');
-
-        const screen = await renderScreen(
-            <ApprovalPromptCard
-                artifact={approvalArtifact()}
-                approval={approvalRequest()}
-                sessionId="s1"
-                metadata={null}
-                canApprovePermissions={false}
-                disabledReason="readOnly"
-            />,
+        expect(executeSpy).toHaveBeenCalledWith(
+            'approval.request.decide',
+            { artifactId: 'approval-1', decision: 'reject' },
+            expect.objectContaining({ surface: 'ui_button', serverId: 'server-from-session' }),
         );
-
-        expect(screen.getTextContent()).toContain('session.sharing.permissionApprovalsDisabledTitle');
-        expect(screen.getTextContent()).toContain('session.sharing.permissionApprovalsDisabledReadOnly');
-        expect(screen.findByTestId('approval-prompt-approve')).toBeNull();
-        expect(screen.findByTestId('approval-prompt-reject')).toBeNull();
+        expect(sessionAllowSpy).not.toHaveBeenCalled();
+        expect(sessionDenySpy).not.toHaveBeenCalled();
     });
 });

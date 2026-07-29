@@ -47,18 +47,45 @@ export function cryptoWorkerBase64ToBytes(value: string): Uint8Array | null {
 }
 
 const LARGE_BASE64_FAST_ESTIMATE_MIN_CHARS = 1024;
-const CANONICAL_PADDED_BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const LARGE_BASE64_FAST_ESTIMATE_HEAD_SAMPLE_CHARS = 8;
+
+function isCanonicalBase64AlphabetCode(code: number): boolean {
+    return (code >= 65 && code <= 90)
+        || (code >= 97 && code <= 122)
+        || (code >= 48 && code <= 57)
+        || code === 43
+        || code === 47;
+}
 
 function estimateLargeBase64DecodedByteLength(value: string): number | null {
     if (value.length < LARGE_BASE64_FAST_ESTIMATE_MIN_CHARS) return null;
     if (value.length % 4 !== 0) return null;
-    if (!CANONICAL_PADDED_BASE64_PATTERN.test(value)) return null;
+
+    // This is a byte-budget estimate, not a validation: scanning megabyte payloads to
+    // certify canonical form costs more than the decision it informs. Our own encoder
+    // always emits canonical padded base64, so sampling the head and tail catches the
+    // realistic non-canonical shapes (edge whitespace, wrappers) and sends them to the
+    // exact lenient path. Interior noise on a 4-aligned string slips through and only
+    // overestimates, which is the safe direction for bridge batching.
+    for (let index = 0; index < LARGE_BASE64_FAST_ESTIMATE_HEAD_SAMPLE_CHARS; index += 1) {
+        if (!isCanonicalBase64AlphabetCode(value.charCodeAt(index))) return null;
+    }
 
     const lastCode = value.charCodeAt(value.length - 1);
     const secondLastCode = value.charCodeAt(value.length - 2);
+    const thirdLastCode = value.charCodeAt(value.length - 3);
+    const fourthLastCode = value.charCodeAt(value.length - 4);
     const paddingBytes = lastCode === 61
         ? (secondLastCode === 61 ? 2 : 1)
         : 0;
+    const tailDataCodes = paddingBytes === 2
+        ? [fourthLastCode, thirdLastCode]
+        : paddingBytes === 1
+            ? [fourthLastCode, thirdLastCode, secondLastCode]
+            : [fourthLastCode, thirdLastCode, secondLastCode, lastCode];
+    for (const code of tailDataCodes) {
+        if (!isCanonicalBase64AlphabetCode(code)) return null;
+    }
 
     return Math.max(0, (value.length / 4) * 3 - paddingBytes);
 }

@@ -78,6 +78,10 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
 }));
 
 import { storage } from './domains/state/storage';
+import {
+    markSessionSurfaceVisible,
+    resetSessionSurfaceVisibilityForTests,
+} from './domains/session/sessionSurfaceVisibility';
 import type { Session } from './domains/state/storageTypes';
 import type { NormalizedMessage } from './typesRaw';
 
@@ -159,6 +163,9 @@ async function seedLargeGapSession(): Promise<{ sync: typeof import('./sync').sy
     syncForTest.hasFetchedSessionsSnapshotForActiveServer = true;
     syncForTest.isForeground = true;
     syncForTest.sessionMaterializedMaxSeqById = { [SESSION_ID]: 10 };
+    // C6/D1: catch-up only runs for a live-content consumer. These cases exercise the runtime
+    // defer / tail-reset decisions, so the session must be surface-visible for the gate to pass.
+    markSessionSurfaceVisible(SESSION_ID);
     requestMock.mockImplementation(() => Promise.resolve(emptyMessagesResponse()));
     requestMock.mockClear();
     return { sync };
@@ -169,6 +176,7 @@ describe('sync live-tail catch-up decision (plan B8)', () => {
         storage.setState(initialStorageState, true);
         kvStore.clear();
         requestMock.mockReset();
+        resetSessionSurfaceVisibilityForTests();
     });
 
     it('defers forward loading on a large gap while the stored viewport is unpinned', async () => {

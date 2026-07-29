@@ -5,6 +5,7 @@ import { serverFetch } from '@/sync/http/client';
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import type { MachineDisplayCacheEntryV1 } from '@/sync/domains/state/warmCachePersistence';
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 
 type MachineEncryption = {
     decryptMetadata: (version: number, value: string) => Promise<any>;
@@ -182,6 +183,7 @@ export async function fetchAndApplyMachines(params: {
     applyMachineDisplayEntries?: (machines: MachineDisplayRenderable[], options?: { replace?: boolean }) => void;
     cachedMachineDisplayEntries?: Record<string, MachineDisplayCacheEntryV1>;
     machineDisplayHydrationConcurrencyLimit?: number;
+    machineDisplayHydrationMaxRows?: number;
     shouldContinue?: () => boolean;
     /**
      * When true, drop any locally-cached machines that are missing from the
@@ -204,6 +206,10 @@ export async function fetchAndApplyMachines(params: {
         params.request
         ?? ((path: string, init: RequestInit) => serverFetch(path, init, { includeAuth: false }));
     const concurrencyLimit = Math.max(1, Math.trunc(params.machineDisplayHydrationConcurrencyLimit ?? 4));
+    const hydrationMaxRows = Math.max(
+        1,
+        Math.trunc(params.machineDisplayHydrationMaxRows ?? loadSyncTuning().machineDisplayHydrationMaxRows),
+    );
     const shouldContinue = params.shouldContinue ?? (() => true);
     const throwOnError = params.throwOnError === true;
 
@@ -418,7 +424,15 @@ export async function fetchAndApplyMachines(params: {
         );
 
         const machinesNeedingHydration = machineEncryptionReady
-            ? machines.filter((machine) => needsMachineWarmHydration(machine))
+            ? machines
+                .filter((machine) => needsMachineWarmHydration(machine))
+                .sort((left, right) => {
+                    if (left.active !== right.active) return left.active ? -1 : 1;
+                    const leftActivity = Math.max(left.activeAt ?? 0, left.updatedAt ?? 0);
+                    const rightActivity = Math.max(right.activeAt ?? 0, right.updatedAt ?? 0);
+                    return rightActivity - leftActivity;
+                })
+                .slice(0, hydrationMaxRows)
             : [];
         if (machinesNeedingHydration.length > 0) {
             void runTasksWithLimit(

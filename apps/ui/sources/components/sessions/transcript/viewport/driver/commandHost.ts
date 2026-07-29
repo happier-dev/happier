@@ -2,19 +2,15 @@ import {
     type TranscriptViewportCommandController,
     type TranscriptViewportRejectedWrite,
 } from '@/components/sessions/transcript/viewport/createTranscriptViewportCommandController';
-import type { TranscriptViewportTransactionOutcome } from '@/components/sessions/transcript/viewport/transcriptViewportOwnership';
 import { performTranscriptViewportCommand } from '@/components/sessions/transcript/viewport/performTranscriptViewportCommand';
 import type {
-    WebTranscriptPrependAnchor,
-    WebTranscriptPrependRestoreResult,
     WebTranscriptViewportAnchor,
     WebTranscriptViewportAnchorRestoreResult,
 } from '@/components/sessions/transcript/viewport/prepend/webTranscriptPrependAnchor';
 import {
-    performWebDomPrependAnchorRestoreCommand,
     performWebDomVisibleAnchorRestoreCommand,
 } from './webDom';
-import { resolveIndexScrollWriter } from './nativeInvertedFlashList';
+import { resolveIndexScrollWriter } from './nativeStandardList';
 import type { TranscriptViewportDriverDeps } from './types';
 import type {
     TranscriptViewportCommand,
@@ -27,10 +23,6 @@ export type TranscriptViewportCommandHost = Readonly<{
     execute: (command: TranscriptViewportCommand) => boolean;
     executeWithAnimation: (command: TranscriptViewportCommand, animated: boolean) => boolean;
     resolve: (input: TranscriptViewportControllerInput) => TranscriptViewportCommand;
-    restoreWebPrependAnchor: (params: Readonly<{
-        anchor: WebTranscriptPrependAnchor;
-        sessionId: string;
-    }>) => WebTranscriptPrependRestoreResult;
     restoreWebVisibleAnchor: (params: Readonly<{
         anchor: WebTranscriptViewportAnchor;
         animated?: boolean;
@@ -41,10 +33,8 @@ export type TranscriptViewportCommandHost = Readonly<{
 }>;
 
 export type TranscriptViewportCommandHostDeps = Readonly<{
-    clearWebPrependRestoreWindow: (outcome: TranscriptViewportTransactionOutcome) => void;
     controller: TranscriptViewportCommandController;
     driverDeps: TranscriptViewportDriverDeps;
-    hasWebPrependRestoreWindow: () => boolean;
     isWeb: () => boolean;
 }>;
 
@@ -52,12 +42,9 @@ export function createTranscriptViewportCommandHost(
     deps: TranscriptViewportCommandHostDeps,
 ): TranscriptViewportCommandHost {
     const performThroughController = (
-        command: TranscriptViewportCommand,
-        perform: (commandToPerform: TranscriptViewportCommand) => boolean,
+    command: TranscriptViewportCommand,
+    perform: (commandToPerform: TranscriptViewportCommand) => boolean,
     ): boolean => deps.controller.execute(command, {
-        clearWebPrependRestoreWindow: deps.clearWebPrependRestoreWindow,
-        hasWebPrependRestoreWindow: deps.hasWebPrependRestoreWindow,
-        isWeb: deps.isWeb(),
         perform,
         recordRejectedWrite: (write) => recordRejectedWriteTelemetry(write, deps),
     });
@@ -75,24 +62,6 @@ export function createTranscriptViewportCommandHost(
         },
         resolve(input) {
             return deps.controller.resolve(input);
-        },
-        restoreWebPrependAnchor(params) {
-            let restoreResult: WebTranscriptPrependRestoreResult = {
-                didAdjustScroll: false,
-                strategy: 'none',
-            };
-            const command = deps.controller.resolve({
-                type: 'restore-web-prepend-anchor',
-                sessionId: params.sessionId,
-                anchor: params.anchor,
-                animated: false,
-            });
-            performThroughController(command, (commandToPerform) => {
-                if (commandToPerform.kind !== 'restore-web-prepend-anchor') return false;
-                restoreResult = performWebDomPrependAnchorRestoreCommand(commandToPerform, deps.driverDeps);
-                return true;
-            });
-            return restoreResult;
         },
         restoreWebVisibleAnchor(params) {
             let restoreResult: WebTranscriptViewportAnchorRestoreResult = {
@@ -134,11 +103,8 @@ export function withTranscriptViewportCommandAnimation(
         case 'restore-visible-anchor':
         case 'jump-to-seq':
         case 'recover-jump-to-seq':
-        case 'preserve-live-tail-distance':
-        case 'restore-web-prepend-anchor':
             return { ...command, animated };
         case 'none':
-        case 'skip-native-js-pin':
             return command;
     }
 }
@@ -166,12 +132,14 @@ function resolveRejectedWriteTelemetryWriter(
     command: TranscriptViewportCommand,
     deps: TranscriptViewportCommandHostDeps,
 ): TranscriptViewportTelemetryScrollWriter {
-    if (command.kind === 'none' || command.kind === 'skip-native-js-pin') return 'mvcp-skip';
+    if (command.kind === 'none') {
+        return deps.isWeb() ? 'web-dom-bottom' : 'native-scroll-to-offset';
+    }
     if (command.kind === 'restore-anchor' || command.kind === 'jump-to-seq') {
         return resolveIndexScrollWriter({ platform: deps.driverDeps.telemetryPlatform });
     }
     if (deps.isWeb()) {
-        return command.kind === 'pin-bottom' || command.mode === 'follow-bottom'
+        return command.kind === 'pin-bottom'
             ? 'web-dom-bottom'
             : 'web-dom-restore';
     }
@@ -190,14 +158,10 @@ function resolveRejectedViewportCommandTelemetryTargetOffsetY(
             return command.seq;
         case 'recover-jump-to-seq':
             return command.failedRenderedIndex * command.averageItemLengthPx;
-        case 'preserve-live-tail-distance':
-            return command.previousDistanceFromLiveTailPx;
         case 'restore-visible-anchor':
-        case 'restore-web-prepend-anchor':
         case 'restore-anchor':
         case 'pin-bottom':
         case 'none':
-        case 'skip-native-js-pin':
             return undefined;
     }
 }

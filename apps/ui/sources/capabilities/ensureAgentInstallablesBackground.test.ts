@@ -4,6 +4,8 @@ import type { MachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapab
 import type { CapabilitiesDetectRequest, CapabilitiesInvokeRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import type { MachineCapabilitiesInvokeResult } from '@/sync/ops';
+import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import type { PluginProjectionV2 } from '@happier-dev/protocol';
 
 import { buildInstallablesBackgroundActionKey, ensureAgentInstallablesBackground } from './ensureAgentInstallablesBackground';
 
@@ -23,6 +25,49 @@ function buildMissingCodexAcpResults() {
         },
     };
 }
+
+const codexAcpPluginProjection = {
+    v: 2,
+    generation: 1,
+    installedPackagesById: {},
+    agentsById: {},
+    backendsById: {},
+    actionsById: {},
+    toolsById: {},
+    commandsById: {},
+    resourcesById: {},
+    settingsById: {},
+    diagnostics: [],
+    familiesById: {
+        managedDependencies: {
+            family: 'managedDependencies',
+            entriesById: {
+                'codex-acp': {
+                    id: 'codex-acp',
+                    pluginId: 'happier.plugins.codex',
+                    key: 'codex-acp',
+                    capabilityId: 'dep.codex-acp',
+                    sourceKind: 'github_release_binary',
+                    display: { name: 'Codex ACP' },
+                    defaultPolicy: {
+                        autoInstallWhenNeeded: true,
+                        autoUpdateMode: 'auto',
+                    },
+                    experimental: true,
+                },
+            },
+        },
+    },
+} satisfies PluginProjectionV2;
+
+const loadDaemonMergedProjectionInputs = vi.fn(async (): Promise<DaemonMergedProjectionInputs> => ({
+    mergedProviderProjectionById: {},
+    mergedBackendProjectionById: {},
+    discoveredBackendIds: [],
+    pluginProjectionById: {},
+    pluginProjectionV2: codexAcpPluginProjection,
+    registryDiagnostics: [],
+}));
 
 async function withMockedNow<T>(initialNowMs: number, run: (setNowMs: (nextNowMs: number) => void) => Promise<T>): Promise<T> {
     let currentNowMs = initialNowMs;
@@ -76,6 +121,7 @@ describe('ensureAgentInstallablesBackground', () => {
                 prefetchMachineCapabilities,
                 getMachineCapabilitiesSnapshot,
                 machineCapabilitiesInvoke,
+                loadDaemonMergedProjectionInputs,
             },
         );
 
@@ -123,6 +169,7 @@ describe('ensureAgentInstallablesBackground', () => {
                 prefetchMachineCapabilities,
                 getMachineCapabilitiesSnapshot,
                 machineCapabilitiesInvoke,
+                loadDaemonMergedProjectionInputs,
             },
         );
 
@@ -148,7 +195,7 @@ describe('ensureAgentInstallablesBackground', () => {
 
         await ensureAgentInstallablesBackground(
             { agentId: 'codex', machineId: 'm_install', serverId: 's_install', settings, resumeSessionId: '' },
-            { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
+            { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
         );
 
         expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(1);
@@ -174,12 +221,12 @@ describe('ensureAgentInstallablesBackground', () => {
 
             await ensureAgentInstallablesBackground(
                 { agentId: 'codex', machineId: 'm_cooldown', serverId: 's_cooldown', settings, resumeSessionId: '' },
-                { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
+                { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
             );
 
             await ensureAgentInstallablesBackground(
                 { agentId: 'codex', machineId: 'm_cooldown', serverId: 's_cooldown', settings, resumeSessionId: '' },
-                { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
+                { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
             );
 
             expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(1);
@@ -226,11 +273,11 @@ describe('ensureAgentInstallablesBackground', () => {
 
         await ensureAgentInstallablesBackground(
             { agentId: 'codex', machineId: 'm_retry', serverId: 's_retry', settings, resumeSessionId: '' },
-            { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
+            { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
         );
         await ensureAgentInstallablesBackground(
             { agentId: 'codex', machineId: 'm_retry', serverId: 's_retry', settings, resumeSessionId: '' },
-            { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
+            { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
         );
 
         expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(2);
@@ -254,11 +301,11 @@ describe('ensureAgentInstallablesBackground', () => {
 
         await ensureAgentInstallablesBackground(
             { agentId: 'codex', machineId: 'm_nonok', serverId: 's_nonok', settings, resumeSessionId: '' },
-            { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
+            { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
         );
         await ensureAgentInstallablesBackground(
             { agentId: 'codex', machineId: 'm_nonok', serverId: 's_nonok', settings, resumeSessionId: '' },
-            { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
+            { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
         );
 
         expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(2);
@@ -282,14 +329,14 @@ describe('ensureAgentInstallablesBackground', () => {
 
             await ensureAgentInstallablesBackground(
                 { agentId: 'codex', machineId: 'm_ok_retry', serverId: 's_ok_retry', settings, resumeSessionId: '' },
-                { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
+                { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
             );
 
             setNowMs(Date.parse('2026-01-01T01:00:00.000Z'));
 
             await ensureAgentInstallablesBackground(
                 { agentId: 'codex', machineId: 'm_ok_retry', serverId: 's_ok_retry', settings, resumeSessionId: '' },
-                { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
+                { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
             );
 
             expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(2);
@@ -319,7 +366,7 @@ describe('ensureAgentInstallablesBackground', () => {
 
             const firstCall = ensureAgentInstallablesBackground(
                 { agentId: 'codex', machineId: 'm_stale', serverId: 's_stale', settings, resumeSessionId: '' },
-                { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
+                { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
             );
 
             await vi.waitFor(() => {
@@ -329,7 +376,7 @@ describe('ensureAgentInstallablesBackground', () => {
 
             await ensureAgentInstallablesBackground(
                 { agentId: 'codex', machineId: 'm_stale', serverId: 's_stale', settings, resumeSessionId: '' },
-                { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
+                { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
             );
 
             const completeInvoke = resolveInvoke as (() => void) | null;

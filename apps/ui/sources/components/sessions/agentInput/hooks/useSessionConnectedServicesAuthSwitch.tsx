@@ -17,6 +17,10 @@ import {
     type ConnectedServiceUxDiagnosticPresentation,
 } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import { buildConnectedServiceUxDiagnosticAlertButtons } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnosticAlertActions';
+import {
+    resolveConnectedServiceProfileActionRoute,
+} from '@/sync/domains/connectedServices/resolveConnectedServiceProfileActionRoute';
+import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { NewSessionConnectedServicesSelectionContent } from '@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent';
 import {
     buildConnectedServiceAccountGroupOptionsByServiceId,
@@ -74,7 +78,6 @@ export type SessionConnectedServicesAuthSwitchActionableState =
       }>
     | Readonly<{
         kind: 'reconnect_profile';
-        route: '/(app)/settings/connected-services/profile' | '/(app)/settings/connected-services/oauth';
         profileId: string;
       }>
     | Readonly<{
@@ -92,6 +95,8 @@ type ProviderSessionUnavailableDiagnosticActionState = Readonly<{
 
 type SetBindingForServiceOptions = Readonly<{
     rematerializeServiceId?: ConnectedServiceId;
+    /** The user already confirmed this exact Retry/Revert action. */
+    skipConfirm?: boolean;
     /**
      * Re-apply even when the target equals the current optimistic binding — used
      * by the partial hot-apply Revert: the optimistic binding was already reset
@@ -229,7 +234,6 @@ function resolveSessionConnectedServiceAuthSwitchActionableState(
             if (actionRequired?.kind === 'reconnect_profile' && profileId) {
                 return {
                     kind: 'reconnect_profile',
-                    route: '/(app)/settings/connected-services/profile',
                     profileId,
                 };
             }
@@ -389,7 +393,6 @@ function buildSessionSwitchPayload(params: Readonly<{
                 source: 'connected',
                 selection: 'group',
                 groupId: binding.groupId,
-                ...(binding.profileId ? { profileId: binding.profileId } : {}),
             };
             continue;
         }
@@ -491,10 +494,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
 }>): SessionConnectedServicesAuthSwitchResult {
     const accountProfile = useProfile();
     const router = useRouter();
-    const connectedServicesFeatureEnabled = useFeatureEnabled('connectedServices', {
-        scopeKind: 'spawn',
-        serverId: params.serverId ?? null,
-    });
+    const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
     const accountGroupsFeatureEnabled = useFeatureEnabled('connectedServices.accountGroups', {
         scopeKind: 'spawn',
         serverId: params.serverId ?? null,
@@ -513,10 +513,9 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
 
     const supportedConnectedServiceIds = React.useMemo<ReadonlyArray<ConnectedServiceId>>(() => (
         resolveAgentSupportedConnectedServiceIds({
-            connectedServicesFeatureEnabled,
             agentCore: params.agentCore ?? {},
         })
-    ), [connectedServicesFeatureEnabled, params.agentCore]);
+    ), [params.agentCore]);
 
     const profileOptionsByServiceId = React.useMemo(() => (
         buildConnectedServiceProfileOptionsByServiceId({
@@ -556,18 +555,20 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         ));
     }, [metadataBindingsByServiceId]);
 
-    const resolveProfileActionRoute = React.useCallback((serviceId: string, profileId: string) => {
-        const profile = profileOptionsByServiceId[serviceId]?.find((option) => option.profileId === profileId);
-        return profile?.kind === 'token'
-            ? '/(app)/settings/connected-services/profile' as const
-            : '/(app)/settings/connected-services/oauth' as const;
-    }, [profileOptionsByServiceId]);
+    const resolveProfileActionRoute = React.useCallback(
+        (serviceId: string, profileId?: string) => resolveConnectedServiceProfileActionRoute(
+            { serviceId, profileId },
+            connectedServicesRegistry.entries,
+        ),
+        [connectedServicesRegistry.entries],
+    );
 
     const setBindingForService = React.useCallback((serviceId: string, binding: ConnectedServicesServiceBinding, options?: SetBindingForServiceOptions) => {
         const agentId = typeof params.agentId === 'string' ? params.agentId.trim() : '';
+        const machineId = params.machineId;
         const rematerializeServiceId = options?.rematerializeServiceId;
         const forceReapply = options?.forceReapply ?? false;
-        if (!params.machineId || !agentId) return;
+        if (!machineId || !agentId) return;
         if (!forceReapply && !rematerializeServiceId && areServiceBindingsEqual(optimisticBindingsByServiceId[serviceId], binding)) return;
         if (!forceReapply && !agentSupportsSessionAuthSwitchTransition({
             agentCore: params.agentCore,
@@ -576,6 +577,15 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             current: optimisticBindingsByServiceId[serviceId],
             next: binding,
         })) return;
+        void (async () => {
+            if (!options?.skipConfirm && params.sessionActive !== false) {
+                const confirmed = await Modal.confirm(
+                    t('connectedServices.authSwitch.confirmTitle'),
+                    t('connectedServices.authSwitch.confirmBody'),
+                    { confirmText: t('connectedServices.authSwitch.confirmAction') },
+                );
+                if (!confirmed) return;
+            }
         const previousBindings = optimisticBindingsByServiceId;
         const nextBindings = {
             ...optimisticBindingsByServiceId,
@@ -609,7 +619,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         void setSessionConnectedServiceAuthBinding({
             sessionId: params.sessionId,
             agentId,
-            machineId: params.machineId,
+            machineId,
             serverId: params.serverId ?? null,
             bindings,
             ...(rematerializeServiceId ? { rematerializeServiceId } : {}),
@@ -674,13 +684,10 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                                 openConnectedAccounts: () => router.push('/(app)/settings/connected-services'),
                                 reconnectProfile: () => {
                                     if (diagnosticProfileId) {
-                                        router.push({
-                                            pathname: resolveProfileActionRoute(failureServiceId, diagnosticProfileId),
-                                            params: {
-                                                serviceId: failureServiceId,
-                                                profileId: diagnosticProfileId,
-                                            },
-                                        });
+                                        router.push(resolveProfileActionRoute(
+                                            failureServiceId,
+                                            diagnosticProfileId,
+                                        ));
                                         return;
                                     }
                                     router.push('/(app)/settings/connected-services');
@@ -692,7 +699,12 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                     }
                     return;
                 }
-                if ('route' in nextActionableState) {
+                if (nextActionableState.kind === 'reconnect_profile') {
+                    router.push(resolveProfileActionRoute(
+                        result.serviceId ?? serviceId,
+                        nextActionableState.profileId,
+                    ));
+                } else if ('route' in nextActionableState) {
                     router.push(nextActionableState.route);
                 }
                 return;
@@ -720,13 +732,10 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                     openConnectedAccounts: () => router.push('/(app)/settings/connected-services'),
                     reconnectProfile: () => {
                         if (diagnosticProfileId) {
-                            router.push({
-                                pathname: resolveProfileActionRoute(failureServiceId, diagnosticProfileId),
-                                params: {
-                                    serviceId: failureServiceId,
-                                    profileId: diagnosticProfileId,
-                                },
-                            });
+                            router.push(resolveProfileActionRoute(
+                                failureServiceId,
+                                diagnosticProfileId,
+                            ));
                             return;
                         }
                         router.push('/(app)/settings/connected-services');
@@ -766,6 +775,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             setOptimisticBindingsByServiceId(previousBindings);
             Modal.alert(t('common.error'), t('connectedServices.authSwitch.switchFailed'));
         });
+        })();
     }, [
         groupOptionsByServiceId,
         optimisticBindingsByServiceId,
@@ -774,6 +784,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         params.machineId,
         params.serverId,
         params.sessionId,
+        params.sessionActive,
         resolveProfileActionRoute,
         router,
         supportedConnectedServiceIds,
@@ -800,11 +811,11 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             [
                 ...(attemptedBinding ? [{
                     text: t('connectedServices.authSwitch.partialApply.retry'),
-                    onPress: () => setBindingForService(serviceId, attemptedBinding, { forceReapply: true }),
+                    onPress: () => setBindingForService(serviceId, attemptedBinding, { skipConfirm: true, forceReapply: true }),
                 }] : []),
                 {
                     text: t('connectedServices.authSwitch.partialApply.revert'),
-                    onPress: () => setBindingForService(serviceId, previousBinding, { forceReapply: true }),
+                    onPress: () => setBindingForService(serviceId, previousBinding, { skipConfirm: true, forceReapply: true }),
                 },
                 { text: t('common.cancel'), style: 'cancel' as const },
             ],
@@ -847,9 +858,9 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             }}
             defaultProfileIdByServiceId={params.settings.connectedServicesDefaultProfileByServiceId}
             resolveOptionAvailability={resolveOptionAvailability}
-            onOpenSettings={() => {
+            onOpenSettings={(serviceId) => {
                 requestClose();
-                router.push('/(app)/settings/connected-services');
+                router.push(resolveProfileActionRoute(serviceId));
             }}
             maxHeight={maxHeight}
         />
@@ -859,6 +870,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         params.settings.connectedServicesDefaultProfileByServiceId,
         profileOptionsByServiceId,
         resolveOptionAvailability,
+        resolveProfileActionRoute,
         router,
         setBindingForService,
         supportedConnectedServiceIds,
@@ -1009,16 +1021,10 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                             openConnectedAccounts: () => router.push('/(app)/settings/connected-services'),
                             reconnectProfile: () => {
                                 if (diagnosticProfileId) {
-                                    router.push({
-                                        pathname: resolveProfileActionRoute(
-                                            providerDiagnosticActionState.failureServiceId,
-                                            diagnosticProfileId,
-                                        ),
-                                        params: {
-                                            serviceId: providerDiagnosticActionState.failureServiceId,
-                                            profileId: diagnosticProfileId,
-                                        },
-                                    });
+                                    router.push(resolveProfileActionRoute(
+                                        providerDiagnosticActionState.failureServiceId,
+                                        diagnosticProfileId,
+                                    ));
                                     return;
                                 }
                                 router.push('/(app)/settings/connected-services');

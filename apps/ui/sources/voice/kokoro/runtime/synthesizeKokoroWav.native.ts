@@ -3,7 +3,12 @@ import { createSentenceStream } from '@/voice/kokoro/runtime/streamKokoroWavSent
 import { resolveKokoroSherpaSidForVoiceIdWithSpeakerCount } from '@/voice/kokoro/voices/kokoroSherpaVoiceMapping';
 import { ensureModelPackInstalled } from '@/voice/modelPacks/installer.native';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
-import { KOKORO_DEFAULT_TTS_PACK_ID, resolveCanonicalModelPackId } from '@happier-dev/protocol';
+import {
+  KOKORO_DEFAULT_TTS_PACK_ID,
+  getModelPackCatalogEntry,
+  isPublishedModelPackCatalogEntry,
+  resolveCanonicalModelPackId,
+} from '@happier-dev/protocol';
 
 type KokoroNativeModuleLike = {
   initialize(params: { assetsDir: string }): Promise<void>;
@@ -26,6 +31,13 @@ function normalizeAssetSetId(assetSetId: string | null | undefined): string {
   return resolveCanonicalModelPackId(
     typeof assetSetId === 'string' && assetSetId.trim().length > 0 ? assetSetId : DEFAULT_KOKORO_ASSET_SET_ID,
   );
+}
+
+function assertModelPackPublicationAvailable(packId: string): void {
+  const catalogEntry = getModelPackCatalogEntry(packId);
+  if (catalogEntry !== null && !isPublishedModelPackCatalogEntry(catalogEntry)) {
+    throw new Error('model_pack_publication_unavailable');
+  }
 }
 
 type NativeOverrides = {
@@ -153,13 +165,15 @@ async function prepareKokoroSynthContext(
   },
   overrides: NativeOverrides,
 ): Promise<KokoroSynthContext> {
+  const assetSetId = normalizeAssetSetId(opts.assetSetId);
+  assertModelPackPublicationAvailable(assetSetId);
+
   const native = overrides.kokoroNativeModule ?? getOptionalNativeModuleFromWorkspace();
   if (!native) {
     throw new Error('kokoro_native_module_unavailable');
   }
 
   const fs = await getFs(overrides);
-  const assetSetId = normalizeAssetSetId(opts.assetSetId);
   const manifestUrl = overrides.resolveManifestUrl
     ? overrides.resolveManifestUrl(assetSetId)
     : resolveModelPackManifestUrl({ packId: assetSetId });
@@ -274,13 +288,15 @@ export async function prepareKokoroTts(
   },
   overrides: NativeOverrides = {},
 ): Promise<void> {
+  const assetSetId = normalizeAssetSetId(opts.assetSetId ?? null);
+  assertModelPackPublicationAvailable(assetSetId);
+
   const native = overrides.kokoroNativeModule ?? getOptionalNativeModuleFromWorkspace();
   if (!native) {
     throw new Error('kokoro_native_module_unavailable');
   }
 
   const fs = await getFs(overrides);
-  const assetSetId = normalizeAssetSetId(opts.assetSetId ?? null);
   const manifestUrl = overrides.resolveManifestUrl
     ? overrides.resolveManifestUrl(assetSetId)
     : resolveModelPackManifestUrl({ packId: assetSetId });

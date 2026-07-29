@@ -2,26 +2,44 @@
  * Machine operations for remote procedure calls
  */
 
-import type { BugReportMachineDiagnosticsSnapshot, SpawnSessionResult } from '@happier-dev/protocol';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import type {
+    AgentSessionStartupInstructionsV1,
+    BugReportMachineDiagnosticsSnapshot,
+    SpawnSessionResult,
+} from '@happier-dev/protocol';
+import {
+    normalizeSpawnSessionNonceResolution,
+    SPAWN_SESSION_ERROR_CODES,
+    settleSpawnSessionNonce,
+} from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpc';
 
 import { apiSocket } from '../api/session/apiSocket';
 import type { MachineMetadata } from '../domains/state/storageTypes';
 import {
-    buildCompatibleSpawnHappySessionRpcParams,
     buildSpawnHappySessionRpcParams,
-    shouldUseLegacySpawnHappySessionRpcParams,
-    type CompatibleSpawnHappySessionRpcParams,
+    buildTrustedHiddenSystemSessionSpawnHappySessionRpcParams,
     type SpawnHappySessionRpcParams,
     type SpawnSessionOptions,
 } from '../domains/session/spawn/spawnSessionPayload';
+import { createUiSessionSpawnUserAttemptId, normalizeSpawnSessionNonce } from '../domains/session/spawn/spawnSessionNonce';
+import { createSpawnAttemptKeyForFreshSpawnOptions } from '../domains/session/spawn/spawnAttemptKey';
+import {
+    acquireSpawnAttemptCustody,
+    clearSpawnAttemptCustody,
+    markSpawnAttemptCreated,
+    markSpawnAttemptSubmitted,
+    normalizeSpawnUserAttemptId,
+    readSpawnAttemptCustodyState,
+    type PersistedSpawnAttempt,
+} from '../domains/session/spawn/spawnAttemptNonceStore';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from '../domains/session/spawn/spawnSessionRpcTimeout';
 import { storage } from '../domains/state/storage';
 import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 import { mergeMachineMetadataForVersionMismatch } from './machineMetadataMerge';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { stopSessionViaDaemonMachineRpc } from './sessionStopStrategy';
 import {
@@ -31,9 +49,47 @@ import {
 import { prepareAccountSettingsForDaemonSpawnIfNeeded } from './accountSettingsDaemonSpawnPreparation';
 import { isAccountSettingsScopeChangedDuringSpawnPreparationError } from '@/sync/engine/settings/accountSettingsSpawnPreparationError';
 import { delay } from '@/utils/timing/time';
+import {
+    isVersionSupported,
+    MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION,
+} from '@/utils/system/versionUtils';
+import {
+    isProviderSafeDaemonSessionMethodAbsent,
+    requiresProviderSafeSessionRpc,
+} from './providerDaemonSessionCompatibility';
 
 export type { SpawnHappySessionRpcParams, SpawnSessionOptions } from '../domains/session/spawn/spawnSessionPayload';
 export { buildSpawnHappySessionRpcParams } from '../domains/session/spawn/spawnSessionPayload';
+
+export type MachineSpawnAttemptCustody =
+    | Readonly<{
+        status: 'unresolved';
+        userAttemptId: string;
+        spawnNonce: string;
+        targetFingerprint: string;
+        machineId: string;
+        scope: Readonly<{ serverId: string; accountId: string }>;
+        createdSessionId: string | null;
+        firstTurnLocalId: string;
+        attachmentMessageLocalId: string;
+    }>
+    | Readonly<{
+        status: 'completed';
+        userAttemptId: string;
+        spawnNonce: string;
+        targetFingerprint: string;
+        machineId: string;
+        scope: Readonly<{ serverId: string; accountId: string }>;
+        createdSessionId: string | null;
+        firstTurnLocalId: string;
+        attachmentMessageLocalId: string;
+    }>
+    | Readonly<{ status: 'corrupt' }>
+    | Readonly<{ status: 'lock_unavailable' }>;
+
+export type MachineSpawnNewSessionResult = SpawnSessionResult & Readonly<{
+    spawnAttemptCustody?: MachineSpawnAttemptCustody;
+}>;
 
 export type MachineResolveSpawnSessionByNonceResult =
     | { status: 'success'; sessionId: string }
@@ -42,19 +98,37 @@ export type MachineResolveSpawnSessionByNonceResult =
     | { status: 'unsupported' }
     | { status: 'transport_error' };
 
-const DEFAULT_MACHINE_SPAWN_NONCE_RESOLUTION_TIMEOUT_MS = 3_000;
-const DEFAULT_MACHINE_SPAWN_NONCE_RESOLUTION_POLL_INTERVAL_MS = 200;
+const DEFAULT_MACHINE_SPAWN_NONCE_RESOLUTION_POLL_INTERVAL_MS = 1_000;
 
-function normalizeMachineResolveSpawnSessionByNonceResult(result: unknown): MachineResolveSpawnSessionByNonceResult {
-    if (!isPlainObject(result)) return { status: 'not_found' };
-    const status = typeof result.status === 'string' ? result.status.trim() : '';
-    if (status === 'pending') return { status: 'pending' };
-    if (status === 'unsupported') return { status: 'unsupported' };
-    if (status === 'success') {
-        const sessionId = typeof result.sessionId === 'string' ? result.sessionId.trim() : '';
-        return sessionId ? { status: 'success', sessionId } : { status: 'not_found' };
-    }
-    return { status: 'not_found' };
+function readAuthoritativeMachineHomeDir(params: Readonly<{
+    machineId: string;
+    effectiveServerId: string;
+    activeServerId: string;
+}>): string | null {
+    const state = storage.getState();
+    const machineId = params.machineId.trim();
+    const machine = params.effectiveServerId === params.activeServerId
+        ? state.machines[machineId]
+        : state.machineListByServerId[params.effectiveServerId]?.find((candidate) => candidate.id === machineId);
+    const homeDir = machine?.metadata?.homeDir;
+    return typeof homeDir === 'string' && homeDir.trim() ? homeDir.trim() : null;
+}
+
+function resolveSpawnAttemptTargetFingerprint(params: Readonly<{
+    options: SpawnSessionOptions;
+    effectiveServerId: string;
+    activeServerId: string;
+}>): string | null {
+    const machineHomeDir = readAuthoritativeMachineHomeDir({
+        machineId: params.options.machineId,
+        effectiveServerId: params.effectiveServerId,
+        activeServerId: params.activeServerId,
+    });
+    if (!machineHomeDir) return null;
+    return createSpawnAttemptKeyForFreshSpawnOptions({
+        ...params.options,
+        serverId: params.effectiveServerId,
+    }, machineHomeDir);
 }
 
 function readMachineDaemonCliVersion(machineId: string): string | null {
@@ -96,88 +170,475 @@ function remapLegacyDirectoryCompatibilityError(params: Readonly<{
     };
 }
 
+function readSpawnPayloadNonce(params: SpawnHappySessionRpcParams): string | null {
+    return normalizeSpawnSessionNonce(params.spawnNonce);
+}
+
+function withSpawnAttemptCustody(
+    result: SpawnSessionResult,
+    spawnAttemptCustody?: MachineSpawnAttemptCustody,
+): MachineSpawnNewSessionResult {
+    return { ...result, ...(spawnAttemptCustody ? { spawnAttemptCustody } : {}) };
+}
+
+function buildSpawnAttemptCustodyIdentity(
+    status: 'unresolved' | 'completed',
+    record: PersistedSpawnAttempt,
+): Extract<MachineSpawnAttemptCustody, { status: 'unresolved' | 'completed' }> {
+    return {
+        status,
+        userAttemptId: record.userAttemptId,
+        spawnNonce: record.nonce,
+        targetFingerprint: record.targetFingerprint,
+        machineId: record.machineId,
+        scope: record.scope,
+        createdSessionId: record.createdSessionId,
+        firstTurnLocalId: record.firstTurnLocalId,
+        attachmentMessageLocalId: record.attachmentMessageLocalId,
+    };
+}
+
+export async function completeMachineSpawnAttemptCustody(
+    custody: Extract<MachineSpawnAttemptCustody, { status: 'completed' }>,
+): Promise<boolean> {
+    return await clearSpawnAttemptCustody({
+        scope: custody.scope,
+        machineId: custody.machineId,
+        targetFingerprint: custody.targetFingerprint,
+        userAttemptId: custody.userAttemptId,
+        nonce: custody.spawnNonce,
+    });
+}
+
+export async function completePendingMachineSpawnAttemptCustodyForSession(
+    params: Readonly<{ sessionId: string; serverId?: string | null }>,
+): Promise<boolean | null> {
+    const sessionId = params.sessionId.trim();
+    const state = storage.getState();
+    const profileScope = state.profileScope;
+    if (!sessionId || !profileScope) return null;
+    const scope = {
+        serverId: params.serverId?.trim() || profileScope.serverId,
+        accountId: profileScope.accountId,
+    };
+    const custodyState = readSpawnAttemptCustodyState(scope);
+    if (custodyState.status === 'missing') return null;
+    if (custodyState.status !== 'valid') return false;
+    const matchingRecords = Object.values(custodyState.attempts)
+        .filter((record) => record.createdSessionId === sessionId);
+    if (matchingRecords.length === 0) return null;
+    if (matchingRecords.length !== 1) return false;
+    const [record] = matchingRecords;
+    return await clearSpawnAttemptCustody({
+        scope: record.scope,
+        machineId: record.machineId,
+        targetFingerprint: record.targetFingerprint,
+        userAttemptId: record.userAttemptId,
+        nonce: record.nonce,
+    });
+}
+
+function isInterruptedSpawnRpcTransportError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+    const message = error.message.toLowerCase();
+    return message.includes('socket has been disconnected')
+        || message.includes('socket connection was closed unexpectedly');
+}
+
+function isSessionWebhookTimeoutResult(result: SpawnSessionResult): boolean {
+    return result.type === 'error'
+        && result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT;
+}
+
+function isAcceptedPendingSpawnResult(result: SpawnSessionResult): boolean {
+    return result.type === 'success'
+        && !result.sessionId
+        && result.sessionIdStatus === 'pending';
+}
+
+async function recoverMachineSpawnResultByNonce(params: Readonly<{
+    result: SpawnSessionResult;
+    machineId: string;
+    spawnNonce: string | null;
+    serverId: string | null;
+}>): Promise<SpawnSessionResult> {
+    const acceptedPending = isAcceptedPendingSpawnResult(params.result);
+    if (!acceptedPending && !isSessionWebhookTimeoutResult(params.result)) {
+        return params.result;
+    }
+    if (!params.spawnNonce) {
+        return params.result;
+    }
+
+    const resolved = await machineResolveSpawnSessionByNonceUntilSettled({
+        machineId: params.machineId,
+        spawnNonce: params.spawnNonce,
+        serverId: params.serverId,
+    });
+    if (resolved.status !== 'success') {
+        return acceptedPending
+            ? {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+                errorMessage: 'Session startup is still pending for the accepted launch attempt',
+              }
+            : params.result;
+    }
+
+    return {
+        type: 'success',
+        sessionId: resolved.sessionId,
+    };
+}
+
 // Exported session operation functions
 
 /**
  * Spawn a new remote session on a specific machine
  */
-export async function machineSpawnNewSession(options: SpawnSessionOptions): Promise<SpawnSessionResult> {
+async function machineSpawnNewSessionInternal(
+    options: SpawnSessionOptions,
+    trustedHiddenSystemSessionStartupInstructions?: AgentSessionStartupInstructionsV1,
+): Promise<MachineSpawnNewSessionResult> {
+    let providerSafeRpcRequired = false;
+    let custody: Readonly<{
+        scope: Readonly<{ serverId: string; accountId: string }>;
+        machineId: string;
+        targetFingerprint: string;
+        record: PersistedSpawnAttempt;
+        serverId: string | null;
+    }> | null = null;
+    let spawnSubmitted = false;
+    let nonceRecoveryContext: Readonly<{
+        machineId: string;
+        spawnNonce: string;
+        serverId: string | null;
+    }> | null = null;
+    const clearCustody = async (): Promise<boolean> => {
+        if (!custody) return true;
+        const cleared = await clearSpawnAttemptCustody({
+            scope: custody.scope,
+            machineId: custody.machineId,
+            targetFingerprint: custody.targetFingerprint,
+            userAttemptId: custody.record.userAttemptId,
+        });
+        custody = null;
+        return cleared;
+    };
     try {
-        const preparation = await prepareAccountSettingsForDaemonSpawnIfNeeded(options.accountSettingsVersionHint);
-        const preparedOptions: SpawnSessionOptions = { ...options, ...preparation };
-        const { machineId } = preparedOptions;
-        const serverId = typeof preparedOptions.serverId === 'string' ? preparedOptions.serverId.trim() : null;
-        const daemonCliVersion = readMachineDaemonCliVersion(machineId);
-        const legacyBuiltInAgentTarget =
-            typeof preparedOptions.backendTarget === 'string'
-                ? preparedOptions.backendTarget.startsWith('agent:')
-                : preparedOptions.backendTarget.kind === 'builtInAgent'
-                    || (
-                        preparedOptions.backendTarget.kind === 'backend'
-                        && preparedOptions.backendTarget.configuredBackendId === undefined
-                    );
+        providerSafeRpcRequired = requiresProviderSafeSessionRpc({
+            modelSelection: options.modelSelection,
+        });
 
+        const preparation = await prepareAccountSettingsForDaemonSpawnIfNeeded(options.accountSettingsVersionHint);
+        const preparedOptionsWithoutNonce: SpawnSessionOptions = { ...options, ...preparation };
+        const { machineId } = preparedOptionsWithoutNonce;
+        const serverId = typeof preparedOptionsWithoutNonce.serverId === 'string'
+            ? preparedOptionsWithoutNonce.serverId.trim()
+            : null;
+        const daemonCliVersion = readMachineDaemonCliVersion(machineId);
         if (
-            shouldUseLegacySpawnHappySessionRpcParams(daemonCliVersion)
-            && !legacyBuiltInAgentTarget
+            daemonCliVersion
+            && !isVersionSupported(daemonCliVersion, MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION)
         ) {
-            const versionLabel = daemonCliVersion ?? 'unknown';
-            return {
+            return withSpawnAttemptCustody({
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
                 errorMessage:
-                    'The selected backend target requires a compatible 0.1.0-dev build or Happier CLI v0.2.0 ' +
-                    `or newer on this machine (detected ${versionLabel}).`,
-            };
+                    `This machine is running an unsupported Happier CLI (detected ${daemonCliVersion}). ` +
+                    'Update Happier CLI on the machine before starting a session.',
+            });
         }
 
-        const params = buildCompatibleSpawnHappySessionRpcParams({
-            options: preparedOptions,
-            daemonCliVersion,
+        const profileScope = storage.getState().profileScope;
+        if (!profileScope) {
+            return withSpawnAttemptCustody({
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.ACCOUNT_SCOPE_CHANGED,
+                errorMessage: 'Account scope is unavailable for durable session launch recovery.',
+            });
+        }
+        const scope = {
+            serverId: serverId || profileScope.serverId,
+            accountId: profileScope.accountId,
+        };
+        const targetFingerprint = resolveSpawnAttemptTargetFingerprint({
+            options: preparedOptionsWithoutNonce,
+            effectiveServerId: scope.serverId,
+            activeServerId: profileScope.serverId,
         });
-        const result = await machineRpcWithServerScope<unknown, CompatibleSpawnHappySessionRpcParams>({
+        if (!targetFingerprint) {
+            return withSpawnAttemptCustody({
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'The selected machine home directory is unavailable. Refresh the machine list before starting a session.',
+            });
+        }
+        const userAttemptId =
+            normalizeSpawnUserAttemptId(preparedOptionsWithoutNonce.userAttemptId)
+            ?? createUiSessionSpawnUserAttemptId();
+        const acquired = await acquireSpawnAttemptCustody({
+            scope,
             machineId,
-            method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+            targetFingerprint,
+            userAttemptId,
+            seedNonce: normalizeSpawnSessionNonce(preparedOptionsWithoutNonce.spawnNonce),
+        });
+        if (acquired.status === 'corrupt') {
+            return withSpawnAttemptCustody({
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'Saved launch recovery state is corrupt. No session was started.',
+            }, { status: 'corrupt' });
+        }
+        if (acquired.status === 'lock_unavailable') {
+            return withSpawnAttemptCustody({
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'This browser cannot safely coordinate session launch recovery. No session was started.',
+            }, { status: 'lock_unavailable' });
+        }
+        custody = {
+            scope,
+            machineId,
+            targetFingerprint,
+            record: acquired.record,
+            serverId,
+        };
+
+        if (acquired.reused) {
+            if (acquired.record.createdSessionId) {
+                return withSpawnAttemptCustody(
+                    { type: 'success', sessionId: acquired.record.createdSessionId },
+                    buildSpawnAttemptCustodyIdentity('completed', acquired.record),
+                );
+            }
+            if (acquired.record.submissionState === 'prepared') {
+                await clearCustody();
+                return await machineSpawnNewSessionInternal(
+                    options,
+                    trustedHiddenSystemSessionStartupInstructions,
+                );
+            }
+            const resolved = await machineResolveSpawnSessionByNonceUntilSettled({
+                machineId,
+                spawnNonce: acquired.record.nonce,
+                serverId,
+            });
+            if (resolved.status === 'success') {
+                const created = await markSpawnAttemptCreated({
+                    scope,
+                    machineId,
+                    targetFingerprint,
+                    userAttemptId: acquired.record.userAttemptId,
+                    nonce: acquired.record.nonce,
+                    createdSessionId: resolved.sessionId,
+                });
+                if (!created) {
+                    return withSpawnAttemptCustody({
+                        type: 'error',
+                        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                        errorMessage: 'Created session custody could not be committed.',
+                    }, buildSpawnAttemptCustodyIdentity('unresolved', acquired.record));
+                }
+                const completed = buildSpawnAttemptCustodyIdentity('completed', created);
+                return withSpawnAttemptCustody({ type: 'success', sessionId: resolved.sessionId }, completed);
+            }
+            if (resolved.status === 'not_found') {
+                await clearCustody();
+                return await machineSpawnNewSessionInternal(
+                    options,
+                    trustedHiddenSystemSessionStartupInstructions,
+                );
+            }
+            return withSpawnAttemptCustody({
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+                errorMessage: `Session startup remains ambiguous (${resolved.status}); retry will resume the original launch attempt.`,
+            }, buildSpawnAttemptCustodyIdentity('unresolved', acquired.record));
+        }
+
+        const preparedOptions: SpawnSessionOptions = {
+            ...preparedOptionsWithoutNonce,
+            spawnNonce: acquired.record.nonce,
+        };
+        const params = trustedHiddenSystemSessionStartupInstructions
+            ? buildTrustedHiddenSystemSessionSpawnHappySessionRpcParams(
+                preparedOptions,
+                trustedHiddenSystemSessionStartupInstructions,
+            )
+            : buildSpawnHappySessionRpcParams(preparedOptions);
+        const sentSpawnNonce = readSpawnPayloadNonce(params);
+        nonceRecoveryContext = sentSpawnNonce
+            ? { machineId, spawnNonce: sentSpawnNonce, serverId }
+            : null;
+        const submittedRecord = sentSpawnNonce
+            ? await markSpawnAttemptSubmitted({
+                scope,
+                machineId,
+                targetFingerprint,
+                userAttemptId: acquired.record.userAttemptId,
+                nonce: sentSpawnNonce,
+            })
+            : null;
+        if (!submittedRecord) {
+            await clearCustody();
+            return withSpawnAttemptCustody({
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                errorMessage: 'Session launch custody could not be committed before submission.',
+            });
+        }
+        custody = {
+            scope,
+            machineId,
+            targetFingerprint,
+            record: submittedRecord,
+            serverId,
+        };
+        spawnSubmitted = true;
+        const result = await machineRpcWithServerScope<unknown, SpawnHappySessionRpcParams>({
+            machineId,
+            method: providerSafeRpcRequired
+                ? RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE
+                : RPC_METHODS.SPAWN_HAPPY_SESSION,
             payload: params,
             serverId,
             timeoutMs: readSpawnSessionRpcTimeoutMsFromEnv(),
         });
-        return remapLegacyDirectoryCompatibilityError({
+        const normalizedResult = remapLegacyDirectoryCompatibilityError({
             result: normalizeSpawnSessionResult(result),
             directory: preparedOptions.directory,
             daemonCliVersion,
         });
+        const recoveredResult = await recoverMachineSpawnResultByNonce({
+            result: normalizedResult,
+            machineId,
+            spawnNonce: sentSpawnNonce,
+            serverId,
+        });
+        let settledRecord = submittedRecord;
+        if (recoveredResult.type === 'success' && recoveredResult.sessionId) {
+            settledRecord = await markSpawnAttemptCreated({
+                scope,
+                machineId,
+                targetFingerprint,
+                userAttemptId: submittedRecord.userAttemptId,
+                nonce: submittedRecord.nonce,
+                createdSessionId: recoveredResult.sessionId,
+            }) ?? submittedRecord;
+        } else if (
+            recoveredResult.type === 'error'
+            && recoveredResult.errorCode !== SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
+        ) {
+            await clearCustody();
+        }
+        return withSpawnAttemptCustody(
+            recoveredResult,
+            recoveredResult.type === 'error'
+                && recoveredResult.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
+                ? buildSpawnAttemptCustodyIdentity('unresolved', submittedRecord)
+                : recoveredResult.type === 'success'
+                    ? buildSpawnAttemptCustodyIdentity('completed', settledRecord)
+                    : undefined,
+        );
     } catch (error) {
         if (isAccountSettingsScopeChangedDuringSpawnPreparationError(error)) {
-            return {
+            if (!spawnSubmitted) await clearCustody();
+            return withSpawnAttemptCustody({
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.ACCOUNT_SCOPE_CHANGED,
                 errorMessage: 'Account changed while syncing settings. Please retry from the current account.',
-            };
+            });
         }
         const rpcErrorCode = readRpcErrorCode(error);
-        if (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
-            return {
+        if (
+            (providerSafeRpcRequired && isProviderSafeDaemonSessionMethodAbsent(error))
+            || rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+        ) {
+            await clearCustody();
+            return withSpawnAttemptCustody({
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
                 errorMessage:
                     `Daemon RPC is not available (RPC method not available). ` +
                     `The daemon may be stopped, still starting, or not connected to the server.`,
-            };
+            });
         }
-        if (isSocketIoAckTimeoutError(error)) {
-            return {
+        if (isSocketIoAckTimeoutError(error) || isInterruptedSpawnRpcTransportError(error)) {
+            const timeoutResult: SpawnSessionResult = {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
                 errorMessage: 'Session startup timed out',
             };
+            const recoveredResult = nonceRecoveryContext
+                ? await recoverMachineSpawnResultByNonce({
+                    result: timeoutResult,
+                    machineId: nonceRecoveryContext.machineId,
+                    spawnNonce: nonceRecoveryContext.spawnNonce,
+                    serverId: nonceRecoveryContext.serverId,
+                })
+                : timeoutResult;
+            let settledRecord = custody?.record ?? null;
+            if (custody && recoveredResult.type === 'success' && recoveredResult.sessionId) {
+                settledRecord = await markSpawnAttemptCreated({
+                    scope: custody.scope,
+                    machineId: custody.machineId,
+                    targetFingerprint: custody.targetFingerprint,
+                    userAttemptId: custody.record.userAttemptId,
+                    nonce: custody.record.nonce,
+                    createdSessionId: recoveredResult.sessionId,
+                }) ?? custody.record;
+                custody = { ...custody, record: settledRecord };
+            } else if (
+                recoveredResult.type === 'error'
+                && (
+                    !nonceRecoveryContext
+                    || recoveredResult.errorCode !== SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
+                )
+            ) {
+                await clearCustody();
+            }
+            return withSpawnAttemptCustody(
+                recoveredResult,
+                custody && recoveredResult.type === 'error'
+                    && recoveredResult.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
+                    ? buildSpawnAttemptCustodyIdentity('unresolved', custody.record)
+                    : settledRecord && recoveredResult.type === 'success'
+                        ? buildSpawnAttemptCustodyIdentity('completed', settledRecord)
+                        : undefined,
+            );
         }
-        return {
+        if (!spawnSubmitted) await clearCustody();
+        return withSpawnAttemptCustody({
             type: 'error',
             errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
             errorMessage: error instanceof Error ? error.message : 'Failed to spawn session'
-        };
+        }, custody && spawnSubmitted
+            ? buildSpawnAttemptCustodyIdentity('unresolved', custody.record)
+            : undefined);
     }
+}
+
+/**
+ * Spawn an ordinary user-authored session. This API intentionally has no path
+ * for callers to supply host startup instructions.
+ */
+export async function machineSpawnNewSession(
+    options: SpawnSessionOptions,
+): Promise<MachineSpawnNewSessionResult> {
+    return await machineSpawnNewSessionInternal(options);
+}
+
+/**
+ * Spawn a host-owned hidden system session with bounded developer instructions.
+ * This seam is intentionally separate from ordinary user session creation.
+ */
+export async function machineSpawnTrustedHiddenSystemSession(
+    options: SpawnSessionOptions,
+    startupInstructions: AgentSessionStartupInstructionsV1,
+): Promise<MachineSpawnNewSessionResult> {
+    return await machineSpawnNewSessionInternal(options, startupInstructions);
 }
 
 export async function machineResolveSpawnSessionByNonce(params: Readonly<{
@@ -196,7 +657,7 @@ export async function machineResolveSpawnSessionByNonce(params: Readonly<{
             serverId: params.serverId ?? null,
         });
         try {
-            return normalizeMachineResolveSpawnSessionByNonceResult(
+            return normalizeSpawnSessionNonceResolution(
                 await callResolver(RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE),
             );
         } catch (error) {
@@ -211,7 +672,7 @@ export async function machineResolveSpawnSessionByNonce(params: Readonly<{
         const legacyResult = await callResolver(RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE);
         return legacyResult === undefined
             ? { status: 'unsupported' }
-            : normalizeMachineResolveSpawnSessionByNonceResult(legacyResult);
+            : normalizeSpawnSessionNonceResolution(legacyResult);
     } catch (error) {
         const rpcErrorCode = readRpcErrorCode(error);
         if (
@@ -231,6 +692,10 @@ function normalizeMachineSpawnNonceRecoveryDuration(value: number | undefined, f
     return Math.max(0, Math.trunc(value));
 }
 
+function readDefaultMachineSpawnNonceResolutionTimeoutMs(): number {
+    return readSpawnSessionRpcTimeoutMsFromEnv();
+}
+
 export async function machineResolveSpawnSessionByNonceUntilSettled(params: Readonly<{
     machineId: string;
     spawnNonce: string;
@@ -240,23 +705,34 @@ export async function machineResolveSpawnSessionByNonceUntilSettled(params: Read
 }>): Promise<MachineResolveSpawnSessionByNonceResult> {
     const timeoutMs = normalizeMachineSpawnNonceRecoveryDuration(
         params.timeoutMs,
-        DEFAULT_MACHINE_SPAWN_NONCE_RESOLUTION_TIMEOUT_MS,
+        readDefaultMachineSpawnNonceResolutionTimeoutMs(),
     );
     const pollIntervalMs = normalizeMachineSpawnNonceRecoveryDuration(
         params.pollIntervalMs,
         DEFAULT_MACHINE_SPAWN_NONCE_RESOLUTION_POLL_INTERVAL_MS,
     );
-    const deadlineMs = Date.now() + timeoutMs;
-    let result = await machineResolveSpawnSessionByNonce(params);
+    let lastResolutionWasTransportError = false;
+    const settled = await settleSpawnSessionNonce({
+        spawnNonce: params.spawnNonce,
+        resolve: async () => {
+            const result = await machineResolveSpawnSessionByNonce(params);
+            if (result.status === 'transport_error') {
+                lastResolutionWasTransportError = true;
+                return { status: 'pending' };
+            }
+            lastResolutionWasTransportError = false;
+            return result;
+        },
+        timeoutMs,
+        pollIntervalMs: Math.max(1, pollIntervalMs),
+        sleep: async (ms) => { await delay(ms); },
+    });
 
-    while (result.status === 'pending' && Date.now() < deadlineMs) {
-        if (pollIntervalMs > 0) {
-            await delay(pollIntervalMs);
-        }
-        result = await machineResolveSpawnSessionByNonce(params);
-    }
-
-    return result;
+    return settled.status === 'timeout'
+        ? lastResolutionWasTransportError
+            ? { status: 'transport_error' }
+            : { status: 'pending' }
+        : settled;
 }
 
 /**
@@ -275,7 +751,7 @@ export async function machineStopDaemon(
 }
 
 export type MachineStopSessionResult =
-    | { ok: true }
+    | { ok: true; status: 'stopped' | 'requested' }
     | { ok: false; error: string; errorCode?: string };
 
 export type MachineBashRequest =
@@ -299,7 +775,10 @@ export async function machineStopSession(
         serverId: options?.serverId,
     });
     if (result.type === 'stopped') {
-        return { ok: true };
+        return { ok: true, status: 'stopped' };
+    }
+    if (result.type === 'requested') {
+        return { ok: true, status: 'requested' };
     }
     if (result.errorCode) {
         return {
@@ -589,7 +1068,7 @@ export async function machineUpdateMetadata(
     let currentMetadata = { ...metadata };
     let retryCount = 0;
 
-    const { sync } = await import('../sync');
+    const sync = getSyncSingleton();
     const machineEncryption = sync.encryption.getMachineEncryption(machineId);
     if (!machineEncryption) {
         throw new Error(`Machine encryption not found for ${machineId}`);

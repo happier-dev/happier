@@ -2,6 +2,7 @@ import type { WorkspaceCheckoutKind } from '@happier-dev/protocol';
 
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { isFirstPartyGitScmBackendId } from '@/scm/registry/firstPartyScmBackendIdentity';
 
 import { buildWorktreeCheckoutOptionId } from './worktreeCheckoutOptionId';
 import { canonicalizeWorktreePath } from './worktreePathComparison';
@@ -57,7 +58,8 @@ function resolvePathDisplayName(path: string): string {
 }
 
 function supportsRepoWorktreeChip(snapshot: ScmWorkingSnapshot | null): boolean {
-    return snapshot?.repo.isRepo === true && snapshot.repo.backendId === 'git';
+    return snapshot?.repo.isRepo === true
+        && isFirstPartyGitScmBackendId(snapshot.repo.backendId);
 }
 
 function resolveMainRepoWorktreePath(

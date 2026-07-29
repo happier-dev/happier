@@ -12,7 +12,7 @@ export type SessionListTreeRowKind = 'workspace-root' | 'folder' | 'session';
 
 export type SessionListInstructionBlockReason =
     | 'feature-disabled'
-    | 'direct-session'
+    | 'scope-unavailable'
     | 'unsupported-item';
 
 export type SessionListTreeDropResult = TreeDropResult & Readonly<{

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
@@ -31,6 +30,9 @@ import {
 import { t } from '@/text';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 import { MachineDoctorRuntimeInventorySection } from '@/components/machines/doctorSnapshot/MachineDoctorRuntimeInventorySection';
 import {
@@ -75,6 +77,7 @@ function doServerUrlsMismatch(left: string, right: string): boolean {
 export const SystemStatusView = React.memo(function SystemStatusView() {
   const router = useRouter();
   const { theme } = useUnistyles();
+  const copyFeedback = useTemporaryCopyFeedback();
 
   const activeServerSnapshot = getActiveServerSnapshot();
   const activeServerUrl = React.useMemo(
@@ -224,8 +227,12 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
       machineListStatusByServerId,
     };
 
-    await Clipboard.setStringAsync(JSON.stringify(payload, null, 2));
-    Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: t('settings.systemStatus') }));
+    const copied = await setClipboardStringSafe(JSON.stringify(payload, null, 2));
+    if (!copied) {
+      Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
+      return;
+    }
+    copyFeedback.markCopied('system-status');
   });
 
   const machineGroups = React.useMemo(() => {
@@ -257,7 +264,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
             copy={appRuntimeInfo.appVersion ?? false}
           />
           <Item
-            title={t('settingsProviders.releaseChannelTitle')}
+            title={t('settingsAgents.releaseChannelTitle')}
             detail={appRuntimeInfo.updateChannel ?? t('status.unknown')}
             icon={<Ionicons name="git-branch-outline" size={24} color={theme.colors.accent.blue} />}
             copy={appRuntimeInfo.updateChannel ?? false}
@@ -477,6 +484,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
             subtitle={t('systemStatus.actions.copyJsonSubtitle')}
             icon={<Ionicons name="copy-outline" size={24} color={theme.colors.accent.indigo} />}
             onPress={copySystemStatusJson}
+            rightElement={<CopiedPill visible={copyFeedback.isCopied('system-status')} testID="system-status-copy-feedback" />}
             loading={copying}
             showChevron={false}
           />

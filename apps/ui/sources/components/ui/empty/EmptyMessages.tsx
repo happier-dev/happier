@@ -7,6 +7,7 @@ import { useSessionStatus, formatPathRelativeToHome } from '@/utils/sessions/ses
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -88,7 +89,8 @@ function formatRelativeTime(timestamp: number): string {
 export function EmptyMessages({ session }: EmptyMessagesProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const osIcon = getOSIcon(session.metadata?.os);
+    const metadata = readSessionOwnerMetadataView(session);
+    const osIcon = getOSIcon(metadata?.os);
     const sessionStatus = useSessionStatus(session);
     const startedTime = formatRelativeTime(session.createdAt);
     
@@ -101,15 +103,15 @@ export function EmptyMessages({ session }: EmptyMessagesProps) {
                 style={styles.iconContainer}
             />
             
-            {session.metadata?.host && (
+            {metadata?.host && (
                 <Text style={styles.hostText}>
-                    {session.metadata.host}
+                    {metadata.host}
                 </Text>
             )}
             
-            {session.metadata?.path && (
+            {metadata?.path && (
                 <Text style={styles.pathText}>
-                    {formatPathRelativeToHome(session.metadata.path, session.metadata.homeDir)}
+                    {formatPathRelativeToHome(metadata.path, metadata.homeDir)}
                 </Text>
             )}
             

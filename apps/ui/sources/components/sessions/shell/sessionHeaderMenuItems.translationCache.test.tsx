@@ -32,6 +32,8 @@ describe('session header menu item translation caching', () => {
             showFolderViewMode: true,
             folderViewMode: 'tree',
             folderSortMode: 'foldersFirst',
+            showStorageFilter: true,
+            storageFilter: 'all',
             actionIconColor: '#000',
         });
 
@@ -47,6 +49,8 @@ describe('session header menu item translation caching', () => {
             showFolderViewMode: true,
             folderViewMode: 'tree',
             folderSortMode: 'foldersFirst',
+            showStorageFilter: true,
+            storageFilter: 'all',
             actionIconColor: '#000',
         });
 
@@ -68,6 +72,8 @@ describe('session header menu item translation caching', () => {
             showFolderViewMode: true,
             folderViewMode: 'tree',
             folderSortMode: 'foldersFirst',
+            showStorageFilter: true,
+            storageFilter: 'all',
             actionIconColor: '#000',
         });
 
@@ -88,6 +94,8 @@ describe('session header menu item translation caching', () => {
             showFolderViewMode: true,
             folderViewMode: 'tree',
             folderSortMode: 'foldersFirst',
+            showStorageFilter: true,
+            storageFilter: 'all',
             actionIconColor: '#000',
         });
 
@@ -101,6 +109,34 @@ describe('session header menu item translation caching', () => {
                 testID: 'session-folder-sort-mode-mixed',
             }),
         ]));
+    });
+
+    it('exposes the unified All, Happier, and External filter in one category', () => {
+        setPreferredLanguageFromSettings('en');
+        const items = resolveSessionsListHeaderMenuItems({
+            orderingMode: 'custom',
+            sectionMode: 'activity',
+            activeGrouping: 'project',
+            inactiveGrouping: 'date',
+            isHideInactiveSessionsEnabled: false,
+            showFolderViewMode: true,
+            folderViewMode: 'tree',
+            folderSortMode: 'foldersFirst',
+            showStorageFilter: true,
+            storageFilter: 'direct',
+            actionIconColor: '#000',
+        });
+        const filters = items.filter((item) => item.id.startsWith('sessionListStorageFilter'));
+
+        expect(filters.map((item) => item.id)).toEqual([
+            'sessionListStorageFilterAll',
+            'sessionListStorageFilterPersisted',
+            'sessionListStorageFilterDirect',
+        ]);
+        expect(filters.map((item) => item.title)).toEqual(['All', 'Happier', 'External']);
+        expect(new Set(filters.map((item) => item.category))).toHaveLength(1);
+        expect(filters.find((item) => item.id === 'sessionListStorageFilterDirect')?.rightElement).toBeTruthy();
+        expect(filters.find((item) => item.id === 'sessionListStorageFilterAll')?.rightElement).toBeUndefined();
     });
 
     it('refreshes project group header labels after the preferred language changes', () => {

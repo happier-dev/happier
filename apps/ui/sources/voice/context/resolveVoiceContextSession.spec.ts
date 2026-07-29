@@ -119,4 +119,34 @@ describe('resolveVoiceContextSessionFromState', () => {
       },
     });
   });
+
+  it('keeps a layout-v1 hydrated owner session instead of substituting a shared list projection', () => {
+    const ownerMetadataView = {
+      path: '/owner/path',
+      machineId: 'owner-machine',
+    };
+    const state = {
+      sessions: {
+        s1: {
+          id: 's1',
+          metadataLayoutVersion: 1,
+          metadata: { v: 1, path: '/shared/private-lookalike' },
+          ownerMetadataView,
+        },
+      },
+      sessionListRenderables: {
+        s1: {
+          id: 's1',
+          updatedAt: 99,
+          metadataLayoutVersion: 1,
+          metadata: { summaryText: 'Shared summary', path: '/shared/list-lookalike' },
+        },
+      },
+      sessionListIndexByServerId: {
+        server: [{ type: 'session', sessionId: 's1', serverId: 'server' }],
+      },
+    };
+
+    expect(resolveVoiceContextSessionFromState('s1', state)?.ownerMetadataView).toBe(ownerMetadataView);
+  });
 });

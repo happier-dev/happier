@@ -187,6 +187,57 @@ describe('useHydrateSessionForRoute', () => {
         expect(ensureSessionVisibleForMessageRouteSpy).not.toHaveBeenCalled();
     });
 
+    it('does not treat layout-v1 shared metadata as an authoritative owner hydration', async () => {
+        const deferred = createDeferred<unknown>();
+        ensureSessionVisibleForMessageRouteSpy.mockReturnValueOnce(deferred.promise);
+        await storeSession({
+            id: 'session-1',
+            metadataLayoutVersion: 1,
+            metadata: {
+                v: 1,
+                summary: {
+                    text: 'Shared title',
+                    updatedAt: 1,
+                },
+            } as never,
+            ownerMetadataView: null,
+            encryptionMode: 'plain',
+        });
+
+        const hook = await renderHook(() => useHydrateSessionForRoute('session-1', 'route.hydrate'));
+
+        expect(hook.getCurrent()).toMatchObject({
+            kind: 'loading',
+            sessionId: 'session-1',
+        });
+        expect(ensureSessionVisibleForMessageRouteSpy).toHaveBeenCalledTimes(1);
+
+        await storeSession({
+            id: 'session-1',
+            metadataLayoutVersion: 1,
+            metadata: {
+                v: 1,
+                summary: {
+                    text: 'Shared title',
+                    updatedAt: 1,
+                },
+            } as never,
+            ownerMetadataView: {
+                path: '/private/repo',
+                host: 'private-host',
+                machineId: 'private-machine',
+            },
+            encryptionMode: 'plain',
+        });
+        deferred.resolve({ kind: 'available', sessionId: 'session-1' });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(hook.getCurrent()).toMatchObject({
+            kind: 'available',
+            sessionId: 'session-1',
+        });
+    });
+
     it('keeps cached available route hydration state referentially stable across parent rerenders', async () => {
         await storeSession({
             id: 'session-1',

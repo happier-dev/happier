@@ -172,6 +172,7 @@ export const AttachmentImagePreviewModal = React.memo(function AttachmentImagePr
         title: currentImage.title,
         testID: 'attachment-image-preview-modal',
         titleTestID: 'attachment-image-preview-title',
+        ...(Platform.OS === 'web' ? { scrollHost: 'body' as const } : {}),
         dimensions: chromeDimensions,
     }), [chromeDimensions, currentImage.title]);
 

@@ -5,6 +5,7 @@ import { machineCapabilitiesInvoke } from '@/sync/ops';
 import { getAgentResumeExperimentsFromSettings, getNewSessionRelevantInstallableDepKeys, type AgentId } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { resolveInstallablePolicy } from '@happier-dev/protocol/installablesPolicy';
+import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 
 import { getInstallablesRegistryEntries } from './installablesRegistry';
 import { planInstallablesBackgroundActions } from './installablesBackgroundPlan';
@@ -15,6 +16,7 @@ type Deps = Readonly<{
     getMachineCapabilitiesSnapshot: (machineId: string, serverId?: string | null) => MachineCapabilitiesSnapshotLike;
     prefetchMachineCapabilities: typeof prefetchMachineCapabilities;
     machineCapabilitiesInvoke: typeof machineCapabilitiesInvoke;
+    loadDaemonMergedProjectionInputs: typeof loadDaemonMergedProjectionInputs;
 }>;
 
 const BACKGROUND_INVOKE_SUCCESS_COOLDOWN_MS = 10 * 60_000;
@@ -98,6 +100,7 @@ export async function ensureAgentInstallablesBackground(
         getMachineCapabilitiesSnapshot: depsOverrides.getMachineCapabilitiesSnapshot ?? getMachineCapabilitiesSnapshot,
         prefetchMachineCapabilities: depsOverrides.prefetchMachineCapabilities ?? prefetchMachineCapabilities,
         machineCapabilitiesInvoke: depsOverrides.machineCapabilitiesInvoke ?? machineCapabilitiesInvoke,
+        loadDaemonMergedProjectionInputs: depsOverrides.loadDaemonMergedProjectionInputs ?? loadDaemonMergedProjectionInputs,
     };
 
     const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings);
@@ -109,7 +112,22 @@ export async function ensureAgentInstallablesBackground(
     });
     if (relevantKeys.length === 0) return;
 
-    const entries = getInstallablesRegistryEntries().filter((e) => relevantKeys.includes(e.key));
+    let entries = getInstallablesRegistryEntries().filter((entry) => relevantKeys.includes(entry.key));
+    if (entries.length < relevantKeys.length) {
+        try {
+            const projectionInputs = await deps.loadDaemonMergedProjectionInputs({
+                machineId: opts.machineId,
+                serverId: opts.serverId,
+            });
+            if (projectionInputs?.pluginProjectionV2) {
+                entries = getInstallablesRegistryEntries({
+                    pluginProjection: projectionInputs.pluginProjectionV2,
+                }).filter((entry) => relevantKeys.includes(entry.key));
+            }
+        } catch {
+            // Best-effort compatibility with older daemons or temporarily unavailable projections.
+        }
+    }
     if (entries.length === 0) return;
 
     const readResults = () => readResultsFromSnapshot(deps.getMachineCapabilitiesSnapshot(opts.machineId, opts.serverId));

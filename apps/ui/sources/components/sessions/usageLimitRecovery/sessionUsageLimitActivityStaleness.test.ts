@@ -12,7 +12,7 @@ function usageLimitIssue(occurredAt: number): SessionRuntimeIssueV1 {
         code: 'usage_limit',
         source: 'usage_limit',
         occurredAt,
-        provider: 'pi',
+        agentId: 'pi',
         usageLimit: {
             v: 1,
             resetAtMs: null,

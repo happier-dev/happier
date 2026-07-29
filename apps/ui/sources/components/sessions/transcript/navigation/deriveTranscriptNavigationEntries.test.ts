@@ -9,7 +9,6 @@ import type {
     TranscriptNavigationDerivationMode,
     TranscriptNavigationLoadedMessage,
     TranscriptNavigationPin,
-    TranscriptNavigationRemoteUserTurn,
 } from './transcriptNavigationTypes';
 
 function loadedMessage(
@@ -28,12 +27,20 @@ function loadedMessage(
     };
 }
 
-function remoteTurn(overrides: Partial<TranscriptNavigationRemoteUserTurn> & Pick<TranscriptNavigationRemoteUserTurn, 'seq' | 'text'>): TranscriptNavigationRemoteUserTurn {
+function remoteMessage(
+    overrides: Partial<TranscriptNavigationLoadedMessage> & Pick<TranscriptNavigationLoadedMessage, 'seq' | 'text'>,
+): TranscriptNavigationLoadedMessage {
+    const seq = Number(overrides.seq);
     return {
         sessionId: 's1',
-        seq: overrides.seq,
+        messageId: overrides.messageId ?? `remote-${seq}`,
+        routeMessageId: overrides.routeMessageId ?? `server:remote-${seq}`,
+        seq,
+        transcriptBlockIndex: null,
+        role: overrides.role ?? 'user',
         text: overrides.text,
-        createdAtMs: overrides.createdAtMs ?? overrides.seq * 100,
+        createdAtMs: overrides.createdAtMs ?? seq * 100,
+        loaded: false,
     };
 }
 
@@ -55,14 +62,14 @@ function pin(
 function derive(params: Readonly<{
     mode?: TranscriptNavigationDerivationMode;
     loadedMessages?: readonly TranscriptNavigationLoadedMessage[];
-    remoteUserTurns?: readonly TranscriptNavigationRemoteUserTurn[];
+    remoteMessages?: readonly TranscriptNavigationLoadedMessage[];
     pins?: readonly TranscriptNavigationPin[];
 }>) {
     return deriveTranscriptNavigationEntries({
         sessionId: 's1',
         mode: params.mode ?? 'all',
         loadedMessages: params.loadedMessages ?? [],
-        remoteUserTurns: params.remoteUserTurns ?? [],
+        remoteMessages: params.remoteMessages ?? [],
         pins: params.pins ?? [],
     });
 }
@@ -114,8 +121,8 @@ describe('deriveTranscriptNavigationEntries', () => {
                 loadedMessage({ messageId: 'u1', role: 'user', seq: 1, transcriptBlockIndex: null, text: 'Question' }),
                 loadedMessage({ messageId: 'a1', role: 'assistant', seq: 1, transcriptBlockIndex: 1, text: 'Answer' }),
             ],
-            remoteUserTurns: [
-                remoteTurn({ seq: 0, text: 'Remote prompt' }),
+            remoteMessages: [
+                remoteMessage({ seq: 0, text: 'Remote prompt' }),
             ],
         });
 
@@ -191,15 +198,17 @@ describe('deriveTranscriptNavigationEntries', () => {
         ]);
     });
 
-    it('merges remote user-history turns as unloaded prompt-only anchors without assistant previews', () => {
+    it('gives unloaded remote turns the same reply preview as loaded turns', () => {
         const entries = derive({
-            remoteUserTurns: [
-                remoteTurn({ seq: 1, text: 'Earlier prompt' }),
-                remoteTurn({ seq: 2, text: 'Middle prompt' }),
+            remoteMessages: [
+                remoteMessage({ seq: 1, text: 'Earlier prompt' }),
+                remoteMessage({ seq: 2, role: 'assistant', text: 'Earlier answer' }),
+                remoteMessage({ seq: 3, text: 'Middle prompt' }),
+                remoteMessage({ seq: 4, role: 'assistant', text: 'Middle answer' }),
             ],
             loadedMessages: [
-                loadedMessage({ messageId: 'u3', role: 'user', seq: 3, text: 'Loaded prompt' }),
-                loadedMessage({ messageId: 'a3', role: 'assistant', seq: 3, transcriptBlockIndex: 1, text: 'Loaded answer' }),
+                loadedMessage({ messageId: 'u5', role: 'user', seq: 5, text: 'Loaded prompt' }),
+                loadedMessage({ messageId: 'a5', role: 'assistant', seq: 5, transcriptBlockIndex: 1, text: 'Loaded answer' }),
             ],
         });
 
@@ -210,47 +219,85 @@ describe('deriveTranscriptNavigationEntries', () => {
             responsePreview: entry.responsePreview,
             loaded: entry.loaded,
         }))).toEqual([
-            { id: 's1:user-turn:1', seq: 1, promptPreview: 'Earlier prompt', responsePreview: null, loaded: false },
-            { id: 's1:user-turn:2', seq: 2, promptPreview: 'Middle prompt', responsePreview: null, loaded: false },
-            { id: 's1:user-turn:3', seq: 3, promptPreview: 'Loaded prompt', responsePreview: 'Loaded answer', loaded: true },
+            { id: 's1:user-turn:1', seq: 1, promptPreview: 'Earlier prompt', responsePreview: 'Earlier answer', loaded: false },
+            { id: 's1:user-turn:3', seq: 3, promptPreview: 'Middle prompt', responsePreview: 'Middle answer', loaded: false },
+            { id: 's1:user-turn:5', seq: 5, promptPreview: 'Loaded prompt', responsePreview: 'Loaded answer', loaded: true },
         ]);
     });
 
-    it('drops remote-seeded turns whose seq falls inside the loaded window coverage', () => {
+    it('falls back to the last tool description when a turn produced no agent text', () => {
         const entries = derive({
             loadedMessages: [
-                loadedMessage({ messageId: 'u10', role: 'user', seq: 10, text: 'We have been working on some refactoring' }),
-                loadedMessage({ messageId: 'a11', role: 'assistant', seq: 11, transcriptBlockIndex: 1, text: 'Refactor reply' }),
-                loadedMessage({ messageId: 'u14', role: 'user', seq: 14, text: 'Next question' }),
-            ],
-            remoteUserTurns: [
-                // Same seq as the loaded user row: merged by the loaded row.
-                remoteTurn({ seq: 10, text: 'We have been working on some refactoring' }),
-                // Same seq as a loaded assistant row: phantom, must not appear.
-                remoteTurn({ seq: 11, text: 'We have been working on some refactoring' }),
-                // Inside the loaded coverage but with no loaded row: phantom, must not appear.
-                remoteTurn({ seq: 13, text: 'We have been working on some refactoring' }),
-                // Genuinely older than the loaded window: kept as an unloaded anchor.
-                remoteTurn({ seq: 4, text: 'Genuinely older prompt' }),
+                loadedMessage({ messageId: 'u1', role: 'user', seq: 1, text: 'Fix the build' }),
+                loadedMessage({ messageId: 't1', role: 'tool', seq: 2, transcriptBlockIndex: 1, text: 'Read package.json' }),
+                loadedMessage({ messageId: 't2', role: 'tool', seq: 3, transcriptBlockIndex: 2, text: 'Run the build' }),
+                loadedMessage({ messageId: 'u2', role: 'user', seq: 4, text: 'And now the tests' }),
+                loadedMessage({ messageId: 't3', role: 'tool', seq: 5, transcriptBlockIndex: 1, text: 'Run the tests' }),
+                loadedMessage({ messageId: 'a2', role: 'assistant', seq: 6, transcriptBlockIndex: 2, text: 'Tests pass' }),
             ],
         });
 
-        expect(entries.map((entry) => ({ id: entry.id, seq: entry.seq, loaded: entry.loaded }))).toEqual([
-            { id: 's1:user-turn:4', seq: 4, loaded: false },
-            { id: 's1:user-turn:10', seq: 10, loaded: true },
-            { id: 's1:user-turn:14', seq: 14, loaded: true },
+        expect(entries.map((entry) => [entry.seq, entry.responsePreview])).toEqual([
+            [1, 'Run the build'],
+            // Agent text wins over the tool description whenever the turn produced any.
+            [4, 'Tests pass'],
         ]);
     });
 
-    it('merges remote-seeded turns with loaded rows by route id when available', () => {
+    it('pairs a head-partial turn whose user row sits just outside the loaded window', () => {
+        const entries = derive({
+            loadedMessages: [
+                loadedMessage({ messageId: 'a11', role: 'assistant', seq: 11, transcriptBlockIndex: 1, text: 'Answer to the missing prompt' }),
+                loadedMessage({ messageId: 'u12', role: 'user', seq: 12, text: 'Next question' }),
+            ],
+            remoteMessages: [
+                remoteMessage({ seq: 10, text: 'Prompt just outside the window' }),
+            ],
+        });
+
+        expect(entries.map((entry) => ({
+            seq: entry.seq,
+            promptPreview: entry.promptPreview,
+            responsePreview: entry.responsePreview,
+            loaded: entry.loaded,
+        }))).toEqual([
+            { seq: 10, promptPreview: 'Prompt just outside the window', responsePreview: 'Answer to the missing prompt', loaded: false },
+            { seq: 12, promptPreview: 'Next question', responsePreview: null, loaded: true },
+        ]);
+    });
+
+    it('keeps remote turns inside an unloaded gap between non-contiguous loaded ranges', () => {
+        const entries = derive({
+            loadedMessages: [
+                // Two disjoint ranges, as the store holds them after a target-window jump.
+                loadedMessage({ messageId: 'u4', role: 'user', seq: 4, text: 'Oldest loaded prompt' }),
+                loadedMessage({ messageId: 'u20', role: 'user', seq: 20, text: 'Newest loaded prompt' }),
+            ],
+            remoteMessages: [
+                // Same seq as a loaded row: the loaded row wins.
+                remoteMessage({ seq: 4, text: 'Oldest loaded prompt' }),
+                // Inside the global loaded seq range but inside an unloaded gap: must survive.
+                remoteMessage({ seq: 12, text: 'Gap prompt' }),
+                remoteMessage({ seq: 13, role: 'assistant', text: 'Gap answer' }),
+            ],
+        });
+
+        expect(entries.map((entry) => ({ id: entry.id, seq: entry.seq, responsePreview: entry.responsePreview, loaded: entry.loaded }))).toEqual([
+            { id: 's1:user-turn:4', seq: 4, responsePreview: null, loaded: true },
+            { id: 's1:user-turn:12', seq: 12, responsePreview: 'Gap answer', loaded: false },
+            { id: 's1:user-turn:20', seq: 20, responsePreview: null, loaded: true },
+        ]);
+    });
+
+    it('merges remote rows with loaded rows by route id when the seq drifted', () => {
         const entries = derive({
             loadedMessages: [
                 loadedMessage({ messageId: 'u20', role: 'user', seq: 20, text: 'Loaded prompt', routeMessageId: 'server:u20' }),
             ],
-            remoteUserTurns: [
+            remoteMessages: [
                 // Seq drifted below the loaded coverage but identifies the same message by route id.
-                { sessionId: 's1', seq: 3, text: 'Loaded prompt', createdAtMs: 300, routeMessageId: 'server:u20' },
-                remoteTurn({ seq: 2, text: 'Different earlier prompt' }),
+                remoteMessage({ seq: 3, text: 'Loaded prompt', routeMessageId: 'server:u20' }),
+                remoteMessage({ seq: 2, text: 'Different earlier prompt' }),
             ],
         });
 
@@ -366,7 +413,7 @@ describe('deriveTranscriptNavigationEntries', () => {
 
     it('does not synthesize assistant previews for unloaded pinned assistant entries', () => {
         const entries = derive({
-            remoteUserTurns: [remoteTurn({ seq: 4, text: 'Remote prompt context' })],
+            remoteMessages: [remoteMessage({ seq: 4, text: 'Remote prompt context' })],
             pins: [
                 pin({
                     seq: 4,
@@ -490,9 +537,9 @@ describe('deriveTranscriptNavigationEntries', () => {
 
     it('orders entries chronologically and suppresses duplicate remote turns and duplicate pins', () => {
         const entries = derive({
-            remoteUserTurns: [
-                remoteTurn({ seq: 2, text: 'Remote duplicate should lose' }),
-                remoteTurn({ seq: 1, text: 'Older remote prompt' }),
+            remoteMessages: [
+                remoteMessage({ seq: 2, text: 'Remote duplicate should lose' }),
+                remoteMessage({ seq: 1, text: 'Older remote prompt' }),
             ],
             loadedMessages: [
                 loadedMessage({ messageId: 'u2', role: 'user', seq: 2, text: 'Loaded prompt wins' }),

@@ -41,6 +41,7 @@ installPickerCommonModuleMocks({
             Platform: { OS: 'ios' },
         }),
     reactNavigationNative: async () => ({
+        ...(await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock(),
         CommonActions: {
             setParams: (params: Record<string, unknown>) => ({ type: 'SET_PARAMS', payload: { params } }),
         },
@@ -60,12 +61,9 @@ installPickerCommonModuleMocks({
             }).module,
             useNavigation: () => navigationMock,
         }),
-    storage: async (importOriginal) =>
-        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSettings: () => settingsState.value as any,
-            },
+    storage: async () =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleStub({
+            useSettings: () => settingsState.value as any,
         }),
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
     unistyles: async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),

@@ -9,26 +9,32 @@ import type {
     MergedBackendProjectionEntry,
     MergedProviderProjectionEntry,
 } from './mergedProjectionTypes';
+import type { PluginProjectionV2 } from '@happier-dev/protocol';
 
 export type DaemonMergedProjectionInputs = Readonly<{
     mergedProviderProjectionById: Readonly<Record<string, MergedProviderProjectionEntry>>;
     mergedBackendProjectionById: Readonly<Record<string, MergedBackendProjectionEntry>>;
     discoveredBackendIds: readonly string[];
     pluginProjectionById: Readonly<Record<string, PluginProjectionEntry>>;
+    pluginProjectionV2: PluginProjectionV2 | null;
     registryDiagnostics: readonly PluginProjectionDiagnostic[];
 }>;
 
 type ProjectionCacheEntry =
     | Readonly<{ kind: 'ready'; fetchedAtMs: number; inputs: DaemonMergedProjectionInputs }>
     | Readonly<{ kind: 'unsupported'; fetchedAtMs: number }>
-    | Readonly<{ kind: 'error'; fetchedAtMs: number }>;
+    | Readonly<{
+        kind: 'error';
+        fetchedAtMs: number;
+        inputs?: DaemonMergedProjectionInputs;
+    }>;
 
 const PROJECTION_CACHE = new Map<string, ProjectionCacheEntry>();
-const PROJECTION_INFLIGHT = new Map<string, Promise<ProjectionCacheEntry>>();
+const LATEST_PROJECTION_REQUEST = new Map<string, Promise<ProjectionCacheEntry>>();
 
 export function clearDaemonMergedProjectionCacheForTests(): void {
     PROJECTION_CACHE.clear();
-    PROJECTION_INFLIGHT.clear();
+    LATEST_PROJECTION_REQUEST.clear();
 }
 
 function normalizeKeyPart(value: string | null | undefined): string {
@@ -60,6 +66,7 @@ function toInputs(params: Readonly<{
     mergedProviderProjectionById: Readonly<Record<string, MergedProviderProjectionEntry>>;
     mergedBackendProjectionById: Readonly<Record<string, MergedBackendProjectionEntry>>;
     pluginProjectionById: Readonly<Record<string, PluginProjectionEntry>>;
+    pluginProjectionV2: PluginProjectionV2 | null;
     registryDiagnostics: readonly PluginProjectionDiagnostic[];
 }>): DaemonMergedProjectionInputs {
     return {
@@ -67,6 +74,7 @@ function toInputs(params: Readonly<{
         mergedBackendProjectionById: params.mergedBackendProjectionById,
         discoveredBackendIds: Object.keys(params.mergedBackendProjectionById ?? {}),
         pluginProjectionById: params.pluginProjectionById,
+        pluginProjectionV2: params.pluginProjectionV2,
         registryDiagnostics: params.registryDiagnostics,
     };
 }
@@ -76,40 +84,52 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
     serverId?: string | null;
 }>): Promise<ProjectionCacheEntry> {
     const cacheKey = buildCacheKey(params.machineId, params.serverId);
-    const inflight = PROJECTION_INFLIGHT.get(cacheKey);
-    if (inflight) {
-        return await inflight;
-    }
-
-    const request = (async (): Promise<ProjectionCacheEntry> => {
+    let request!: Promise<ProjectionCacheEntry>;
+    const publishIfLatest = (entry: ProjectionCacheEntry): ProjectionCacheEntry => {
+        if (LATEST_PROJECTION_REQUEST.get(cacheKey) !== request) {
+            return PROJECTION_CACHE.get(cacheKey) ?? entry;
+        }
+        PROJECTION_CACHE.set(cacheKey, entry);
+        return entry;
+    };
+    request = (async () => {
         const fetchedAtMs = Date.now();
         const res = await machineContributionRegistryProjectionDescribe(params.machineId, {
             ...(params.serverId ? { serverId: params.serverId } : {}),
             timeoutMs: 10_000,
         });
         if (res.supported !== true) {
-            const entry: ProjectionCacheEntry = res.reason === 'not-supported'
+            const previous = PROJECTION_CACHE.get(cacheKey);
+            return publishIfLatest(res.reason === 'not-supported'
                 ? { kind: 'unsupported', fetchedAtMs }
-                : { kind: 'error', fetchedAtMs };
-            PROJECTION_CACHE.set(cacheKey, entry);
-            return entry;
+                : {
+                    kind: 'error',
+                    fetchedAtMs,
+                    ...(
+                        previous?.kind === 'ready' || previous?.kind === 'error'
+                            ? { inputs: previous.inputs }
+                            : {}
+                    ),
+                });
         }
 
         const adapted = adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(res.projection);
-        const entry: ProjectionCacheEntry = {
+        return publishIfLatest({
             kind: 'ready',
             fetchedAtMs,
-            inputs: toInputs(adapted),
-        };
-        PROJECTION_CACHE.set(cacheKey, entry);
-        return entry;
+            inputs: toInputs({
+                ...adapted,
+                pluginProjectionV2: res.projection.v === 2 ? res.projection : null,
+            }),
+        });
     })();
-
-    PROJECTION_INFLIGHT.set(cacheKey, request);
+    LATEST_PROJECTION_REQUEST.set(cacheKey, request);
     try {
         return await request;
     } finally {
-        PROJECTION_INFLIGHT.delete(cacheKey);
+        if (LATEST_PROJECTION_REQUEST.get(cacheKey) === request) {
+            LATEST_PROJECTION_REQUEST.delete(cacheKey);
+        }
     }
 }
 

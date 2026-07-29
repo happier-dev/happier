@@ -18,6 +18,13 @@ import {
 
 const stableCredentials = { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } as const;
 let currentCredentials: Readonly<{ token: string; secret: string }> = stableCredentials;
+const activeServerSnapshotState = {
+    current: {
+        serverId: 'server-a',
+        serverUrl: 'https://server-a.example.test',
+        generation: 1,
+    },
+};
 
 const useFeatureEnabledSpy = vi.fn((_featureId: string) => true);
 
@@ -43,6 +50,10 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => useFeatureEnabledSpy(featureId),
+}));
+
+vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
+    useActiveServerSnapshot: () => activeServerSnapshotState.current,
 }));
 
 vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
@@ -75,21 +86,6 @@ function makeUsageSnapshot(params: Readonly<{
             kind: 'providerSubject',
             id: recordKey.accountSubjectId,
         },
-        aliases: [
-            {
-                kind: 'connectedServiceProfile',
-                providerId: 'codex',
-                serviceId: 'openai-codex',
-                profileId: 'work',
-                accountSubjectId: recordKey.accountSubjectId,
-            },
-            {
-                kind: 'nativeCli',
-                providerId: 'codex',
-                localCredentialRef: 'codex-home',
-                accountSubjectId: recordKey.accountSubjectId,
-            },
-        ],
         observedAtMs: fetchedAtMs,
         fetchedAtMs,
         staleAfterMs: params.staleAfterMs ?? 60_000,
@@ -127,6 +123,11 @@ async function loadHook() {
 describe('useProviderAccountUsageSnapshots', () => {
     beforeEach(() => {
         currentCredentials = stableCredentials;
+        activeServerSnapshotState.current = {
+            serverId: 'server-a',
+            serverUrl: 'https://server-a.example.test',
+            generation: 1,
+        };
         vi.resetModules();
         vi.clearAllMocks();
         useFeatureEnabledSpy.mockReturnValue(true);
@@ -137,22 +138,171 @@ describe('useProviderAccountUsageSnapshots', () => {
         vi.useRealTimers();
     });
 
-    it('loads canonical usage by record id and exposes connected-service alias projections', async () => {
+    it('loads canonical usage by record id without exposing connected-service quota projections', async () => {
         const snapshot = makeUsageSnapshot();
         getProviderAccountUsageSnapshotPlainSpy.mockResolvedValue(snapshot);
 
         const { useProviderAccountUsageSnapshots } = await loadHook();
-        const hook = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId], {
-            aliases: [{ serviceId: 'openai-codex', profileId: 'work' }],
-        }));
+        const hook = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId]));
         await flushHookEffects({ cycles: 5, turns: 5 });
 
         expect(getProviderAccountUsageSnapshotPlainSpy).toHaveBeenCalledWith(stableCredentials, {
             recordId: snapshot.recordId,
-        }, { signal: expect.any(AbortSignal) });
+        }, {
+            signal: expect.any(AbortSignal),
+            expectedActiveServer: {
+                serverId: 'server-a',
+                generation: 1,
+            },
+        });
         expect(hook.getCurrent().snapshotsByRecordId[snapshot.recordId]?.recordId).toBe(snapshot.recordId);
         expect(hook.getCurrent().stateByRecordId[snapshot.recordId]).toBe('loaded_data');
-        expect(hook.getCurrent().connectedServiceSnapshotsByKey['openai-codex/work']?.activeAccountId).toBe('acct_stable');
+        expect('connectedServiceSnapshotsByKey' in hook.getCurrent()).toBe(false);
+        await hook.unmount();
+    });
+
+    it('selects the plaintext route exclusively even when that route has no snapshot', async () => {
+        const snapshot = makeUsageSnapshot();
+        getProviderAccountUsageSnapshotPlainSpy.mockResolvedValue(null);
+
+        const { useProviderAccountUsageSnapshots } = await loadHook();
+        const hook = await renderHook(() =>
+            useProviderAccountUsageSnapshots([snapshot.recordId]));
+        await flushHookEffects({ cycles: 5, turns: 5 });
+
+        expect(getProviderAccountUsageSnapshotPlainSpy).toHaveBeenCalledOnce();
+        expect(
+            getProviderAccountUsageSnapshotSealedSpy,
+        ).not.toHaveBeenCalled();
+        expect(
+            hook.getCurrent().snapshotsByRecordId[snapshot.recordId],
+        ).toBeNull();
+        await hook.unmount();
+    });
+
+    it('does not expose or reuse a prior server cache after the active server changes', async () => {
+        const serverASnapshot = makeUsageSnapshot({ meterId: 'server-a' });
+        const serverBSnapshot = ProviderAccountUsageSnapshotV1Schema.parse({
+            ...serverASnapshot,
+            meters: [{
+                ...serverASnapshot.meters[0]!,
+                meterId: 'server-b',
+                label: 'server-b',
+            }],
+        });
+        getProviderAccountUsageSnapshotPlainSpy.mockImplementation(
+            async (_credentials, _params, options) =>
+                options?.expectedActiveServer?.serverId === 'server-b'
+                    ? serverBSnapshot
+                    : serverASnapshot,
+        );
+
+        const { useProviderAccountUsageSnapshots } = await loadHook();
+        const hook = await renderHook(() =>
+            useProviderAccountUsageSnapshots([serverASnapshot.recordId]));
+        await flushHookEffects({ cycles: 5, turns: 5 });
+        expect(
+            hook.getCurrent().snapshotsByRecordId[
+                serverASnapshot.recordId
+            ]?.meters[0]?.meterId,
+        ).toBe('server-a');
+
+        activeServerSnapshotState.current = {
+            serverId: 'server-b',
+            serverUrl: 'https://server-b.example.test',
+            generation: 2,
+        };
+        await hook.rerender();
+        expect(
+            hook.getCurrent().snapshotsByRecordId[
+                serverASnapshot.recordId
+            ]?.meters[0]?.meterId,
+        ).not.toBe('server-a');
+        await flushHookEffects({ cycles: 5, turns: 5 });
+
+        expect(
+            hook.getCurrent().snapshotsByRecordId[
+                serverASnapshot.recordId
+            ]?.meters[0]?.meterId,
+        ).toBe('server-b');
+        expect(
+            getProviderAccountUsageSnapshotPlainSpy,
+        ).toHaveBeenLastCalledWith(
+            stableCredentials,
+            { recordId: serverASnapshot.recordId },
+            {
+                signal: expect.any(AbortSignal),
+                expectedActiveServer: {
+                    serverId: 'server-b',
+                    generation: 2,
+                },
+            },
+        );
+        await hook.unmount();
+    });
+
+    it('does not commit a prior generation under the same active server', async () => {
+        const generationOneSnapshot =
+            makeUsageSnapshot({ meterId: 'generation-1' });
+        const generationTwoSnapshot =
+            ProviderAccountUsageSnapshotV1Schema.parse({
+                ...generationOneSnapshot,
+                meters: [{
+                    ...generationOneSnapshot.meters[0]!,
+                    meterId: 'generation-2',
+                    label: 'generation-2',
+                }],
+            });
+        getProviderAccountUsageSnapshotPlainSpy.mockImplementation(
+            async (_credentials, _params, options) =>
+                options?.expectedActiveServer?.generation === 2
+                    ? generationTwoSnapshot
+                    : generationOneSnapshot,
+        );
+
+        const { useProviderAccountUsageSnapshots } = await loadHook();
+        const hook = await renderHook(() =>
+            useProviderAccountUsageSnapshots([
+                generationOneSnapshot.recordId,
+            ]));
+        await flushHookEffects({ cycles: 5, turns: 5 });
+        expect(
+            hook.getCurrent().snapshotsByRecordId[
+                generationOneSnapshot.recordId
+            ]?.meters[0]?.meterId,
+        ).toBe('generation-1');
+
+        activeServerSnapshotState.current = {
+            serverId: 'server-a',
+            serverUrl: 'https://server-a.example.test',
+            generation: 2,
+        };
+        await hook.rerender();
+        expect(
+            hook.getCurrent().snapshotsByRecordId[
+                generationOneSnapshot.recordId
+            ]?.meters[0]?.meterId,
+        ).not.toBe('generation-1');
+        await flushHookEffects({ cycles: 5, turns: 5 });
+
+        expect(
+            hook.getCurrent().snapshotsByRecordId[
+                generationOneSnapshot.recordId
+            ]?.meters[0]?.meterId,
+        ).toBe('generation-2');
+        expect(
+            getProviderAccountUsageSnapshotPlainSpy,
+        ).toHaveBeenLastCalledWith(
+            stableCredentials,
+            { recordId: generationOneSnapshot.recordId },
+            {
+                signal: expect.any(AbortSignal),
+                expectedActiveServer: {
+                    serverId: 'server-a',
+                    generation: 2,
+                },
+            },
+        );
         await hook.unmount();
     });
 
@@ -178,7 +328,7 @@ describe('useProviderAccountUsageSnapshots', () => {
         await hook.unmount();
     });
 
-    it('serves connected-service projections from the canonical cache without refetching', async () => {
+    it('serves canonical cache entries in cache-only mode without refetching', async () => {
         const snapshot = makeUsageSnapshot();
         getProviderAccountUsageSnapshotPlainSpy.mockResolvedValue(snapshot);
 
@@ -196,14 +346,11 @@ describe('useProviderAccountUsageSnapshots', () => {
         await flushHookEffects({ cycles: 5, turns: 5 });
         expect(getProviderAccountUsageSnapshotPlainSpy).toHaveBeenCalledTimes(1);
 
-        const hook = await renderHook(() => useProviderAccountUsageSnapshots([], {
-            aliases: [{ serviceId: 'openai-codex', profileId: 'work' }],
+        const hook = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId], {
             fetchPolicy: 'cache_only',
         }));
 
-        const projected = hook.getCurrent().connectedServiceSnapshotsByKey['openai-codex/work'];
-        expect(projected && 'recordKey' in projected).toBe(false);
-        expect(projected?.activeAccountId).toBe('acct_stable');
+        expect(hook.getCurrent().snapshotsByRecordId[snapshot.recordId]?.recordId).toBe(snapshot.recordId);
         expect(getProviderAccountUsageSnapshotPlainSpy).toHaveBeenCalledTimes(1);
         await hook.unmount();
         await act(async () => {

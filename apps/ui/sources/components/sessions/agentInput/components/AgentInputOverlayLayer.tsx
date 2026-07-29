@@ -326,6 +326,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
                     onRequestClose={props.onAgentPickerRequestClose}
                     applyLabel={props.agentPickerApplyLabel}
                     detailPaneHeaderAccessory={props.agentPickerDetailPaneHeaderAccessory}
+                    detailContentOwnsScroll
                     // Keep the popover narrower when the detail rail is hidden so stacked layouts
                     // don't waste horizontal space.
                     maxWidthCap={shouldShowAgentInputChipPickerRail(props.agentPickerOptions, props.screenWidth) ? 720 : 570}

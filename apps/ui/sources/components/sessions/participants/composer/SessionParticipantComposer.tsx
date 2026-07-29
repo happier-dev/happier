@@ -6,6 +6,11 @@ import { AgentInput } from '@/components/sessions/agentInput';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { Modal } from '@/modal';
 import { resolveParticipantRoutedSend } from '@/sync/domains/input/participants/resolveParticipantRoutedSend';
+import type { BrowserContextState } from '@/sync/domains/browser/context';
+import {
+    hasBrowserContextComposerAttachments,
+    mergeBrowserContextMessageMetaOverrides,
+} from '@/sync/domains/session/input/browserContext';
 import { isExecutionRunNotRunningSendError, sessionExecutionRunSend } from '@/sync/ops/sessionExecutionRuns';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
@@ -19,6 +24,7 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
     recipient: ParticipantRecipientV1 | null;
     executionRunDelivery?: ExecutionRunDelivery;
     extraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
+    browserContextState?: BrowserContextState | null;
     onExecutionRunUnavailable?: () => void;
 }>) => {
     const [composerText, setComposerText] = React.useState('');
@@ -43,6 +49,19 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
                 setComposerText('');
 
                 fireAndForget((async () => {
+                    const mergeBrowserContextMeta = (metaOverrides?: Record<string, unknown>): Record<string, unknown> | undefined | null => {
+                        const result = mergeBrowserContextMessageMetaOverrides({
+                            state: props.browserContextState ?? null,
+                            metaOverrides,
+                        });
+                        if (result.ok) {
+                            return result.metaOverrides;
+                        }
+                        setComposerText(previousMessage);
+                        Modal.alert(t('common.error'), t('browserContext.composer.contextUnavailable'));
+                        return null;
+                    };
+
                     const routed =
                         props.recipient
                             ? resolveParticipantRoutedSend({
@@ -53,6 +72,12 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
                             : null;
 
                     if (routed?.type === 'execution_run_send') {
+                        if (hasBrowserContextComposerAttachments(props.browserContextState)) {
+                            setComposerText(previousMessage);
+                            Modal.alert(t('common.error'), t('browserContext.composer.contextUnavailable'));
+                            return;
+                        }
+
                         const result = await sessionExecutionRunSend(props.sessionId, {
                             runId: routed.runId,
                             message: routed.message,
@@ -70,12 +95,16 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
 
                     try {
                         if (routed?.type === 'session_message') {
-                            await sync.submitMessage(props.sessionId, routed.text, routed.displayText, routed.metaOverrides, {
+                            const metaOverrides = mergeBrowserContextMeta(routed.metaOverrides);
+                            if (metaOverrides === null) return;
+                            await sync.submitMessage(props.sessionId, routed.text, routed.displayText, metaOverrides, {
                                 callerSurface: 'participant_composer',
                             });
                             return;
                         }
-                        await sync.submitMessage(props.sessionId, text, undefined, undefined, {
+                        const metaOverrides = mergeBrowserContextMeta();
+                        if (metaOverrides === null) return;
+                        await sync.submitMessage(props.sessionId, text, undefined, metaOverrides, {
                             callerSurface: 'participant_composer',
                         });
                     } catch (error) {

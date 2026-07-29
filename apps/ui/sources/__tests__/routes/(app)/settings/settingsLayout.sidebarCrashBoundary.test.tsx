@@ -106,8 +106,8 @@ describe('/settings/_layout sidebar crash boundary', () => {
 
         await renderScreen(React.createElement(Layout));
 
-        expect(declaredScreenNames).toContain('providers');
-        expect(declaredScreenNames).toContain('providers/[providerId]');
-        expect(declaredScreenNames).not.toContain('providers/index');
+        expect(declaredScreenNames).toContain('agents/index');
+        expect(declaredScreenNames).toContain('agents/[agentId]');
+        expect(declaredScreenNames).not.toContain('providers');
     });
 });

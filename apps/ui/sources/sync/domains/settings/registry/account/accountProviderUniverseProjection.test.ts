@@ -5,8 +5,8 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@happier-dev/agents')>();
     return {
         ...actual,
-        getAllProviderDefinitions: () => [
-            ...actual.getAllProviderDefinitions(),
+        getAllAgentCatalogDefinitions: () => [
+            ...actual.getAllAgentCatalogDefinitions(),
             { id: 'acme.review.backend' },
         ],
     };
@@ -94,6 +94,29 @@ describe('account provider universe projection', () => {
         expect(migrated.newSessionDefaultPersistenceModeByTargetKeyV1).toMatchObject({
             [claudeTargetKey]: 'direct',
             [acmeTargetKey]: 'persisted',
+        });
+    });
+
+    it('normalizes predecessor Oh My Pi account target keys through the generic V2 owner', async () => {
+        vi.resetModules();
+        const { ACCOUNT_BACKEND_SETTING_DEFINITIONS } = await import('./accountBackendSettingDefinitions');
+        const { ACCOUNT_PERMISSION_SETTING_DEFINITIONS } = await import('./accountPermissionSettingDefinitions');
+        const qualifiedKey = 'agent:happier.agent.ohmypi/ohmypi';
+
+        expect(ACCOUNT_BACKEND_SETTING_DEFINITIONS.backendEnabledByTargetKey.schema.parse({
+            'agent:ohMyPi': false,
+        })).toEqual({
+            [qualifiedKey]: false,
+        });
+        expect(ACCOUNT_BACKEND_SETTING_DEFINITIONS.backendCliSourcePreferenceByTargetKey.schema.parse({
+            'agent:ohMyPi': 'managed-first',
+        })).toEqual({
+            [qualifiedKey]: 'managed-first',
+        });
+        expect(ACCOUNT_PERMISSION_SETTING_DEFINITIONS.sessionDefaultPermissionModeByTargetKey.schema.parse({
+            'agent:ohMyPi': 'read-only',
+        })).toEqual({
+            [qualifiedKey]: 'read-only',
         });
     });
 });

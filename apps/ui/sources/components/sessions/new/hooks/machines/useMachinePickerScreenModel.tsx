@@ -165,11 +165,17 @@ export function useMachinePickerScreenModel() {
             setIsRefreshing(false);
         }
     }, [activeServerId, isRefreshing, selectedMachineId, selectedServerId]);
+    const handleBack = React.useCallback(() => {
+        safeRouterBack({ router, navigation, fallbackHref: '/new' });
+    }, [navigation, router]);
+    const handleRefreshPress = React.useCallback(() => {
+        fireAndForget(handleRefresh(), { tag: 'MachinePickerScreen.refreshMachinesAndCapabilities' });
+    }, [handleRefresh]);
 
     const screenOptions = useMachinePickerScreenOptions({
         title: t('newSession.selectMachineTitle'),
-        onBack: () => safeRouterBack({ router, navigation, fallbackHref: '/new' }),
-        onRefresh: () => { fireAndForget(handleRefresh(), { tag: 'MachinePickerScreen.refreshMachinesAndCapabilities' }); },
+        onBack: handleBack,
+        onRefresh: handleRefreshPress,
         isRefreshing,
         theme,
     });

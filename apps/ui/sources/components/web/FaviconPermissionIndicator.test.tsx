@@ -184,7 +184,7 @@ describe('FaviconPermissionIndicator', () => {
         expect(updateFaviconWithNotification).toHaveBeenCalledTimes(1);
     });
 
-    it('does not signal stale projected permissions without runtime freshness', async () => {
+    it('signals an unresolved projected permission after transient runtime freshness expires', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date(1_000_000));
         setGlobalWindow({});
@@ -217,11 +217,10 @@ describe('FaviconPermissionIndicator', () => {
         const { FaviconPermissionIndicator } = await import('./FaviconPermissionIndicator');
         await renderScreen(<FaviconPermissionIndicator />);
 
-        expect(updateFaviconWithNotification).not.toHaveBeenCalled();
-        expect(resetFavicon).toHaveBeenCalled();
+        expect(updateFaviconWithNotification).toHaveBeenCalledTimes(1);
     });
 
-    it('resets when projected permission freshness expires without a storage update', async () => {
+    it('does not reset while a projected permission remains unresolved', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date(1_000));
         setGlobalWindow({});
@@ -261,6 +260,6 @@ describe('FaviconPermissionIndicator', () => {
             await vi.advanceTimersByTimeAsync(SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 1);
         });
 
-        expect(resetFavicon).toHaveBeenCalled();
+        expect(resetFavicon).not.toHaveBeenCalled();
     });
 });

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Image, Pressable, ScrollView, View } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -7,6 +7,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { PinIcon, PinSlashIcon } from '@/components/sessions/shell/sessionPinIcons';
 import { FileIcon } from '@/components/ui/media/FileIcon';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -19,12 +20,26 @@ export type DetailsTabStripTestIds = Readonly<{
     tabPin?: (tabKey: string) => string | null | undefined;
     tabUnpin?: (tabKey: string) => string | null | undefined;
     tabClose?: (tabKey: string) => string | null | undefined;
+    tabFavicon?: (tabKey: string) => string | null | undefined;
+    tabSpinner?: (tabKey: string) => string | null | undefined;
+}>;
+
+/**
+ * Generic, kind-agnostic per-tab leading-glyph presentation. A consumer surface (e.g. the browser
+ * `browser-view` tab) supplies a live favicon URL and/or loading flag per tab; the canonical strip
+ * renders a spinner while loading, then the favicon, falling back to the per-kind icon. This is the
+ * single home for tab leading chrome — the browser no longer ships a bespoke tab strip.
+ */
+export type DetailsTabPresentation = Readonly<{
+    faviconUrl?: string | null;
+    isLoading?: boolean;
 }>;
 
 export type DetailsTabStripProps = Readonly<{
     pane: AppPaneScopeApi;
     group: DetailsWorkspaceGroupView;
     resolveTabIconName?: ((tab: DetailsTabState) => string | null | undefined) | null;
+    resolveTabPresentation?: ((tab: DetailsTabState) => DetailsTabPresentation | null | undefined) | null;
     testIds?: DetailsTabStripTestIds;
 }>;
 
@@ -74,6 +89,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 6,
     },
+    favicon: {
+        width: 14,
+        height: 14,
+        borderRadius: 3,
+    },
 }));
 
 export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
@@ -85,6 +105,7 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
             {props.group.tabs.map((tab) => {
                 const isActive = props.group.activeTabKey ? tab.key === props.group.activeTabKey : false;
                 const safeTabKey = toTestIdSafeValue(tab.key);
+                const presentation = props.resolveTabPresentation?.(tab) ?? null;
                 const iconName =
                     props.resolveTabIconName?.(tab)
                     ?? (
@@ -124,7 +145,19 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
                             accessibilityRole="button"
                             accessibilityLabel={t('session.detailsPanel.openTabA11y', { title: tab.title })}
                         >
-                            {tab.kind === 'file' ? (
+                            {presentation?.isLoading ? (
+                                <ActivitySpinner
+                                    size="small"
+                                    color={theme.colors.text.secondary}
+                                    testID={props.testIds?.tabSpinner?.(safeTabKey) ?? undefined}
+                                />
+                            ) : presentation?.faviconUrl ? (
+                                <Image
+                                    source={{ uri: presentation.faviconUrl }}
+                                    style={styles.favicon}
+                                    testID={props.testIds?.tabFavicon?.(safeTabKey) ?? undefined}
+                                />
+                            ) : tab.kind === 'file' ? (
                                 <FileIcon
                                     fileName={tab.title}
                                     size={14}

@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createRootLayoutFeaturesResponse, renderSettingsView } from '@/dev/testkit';
@@ -182,13 +181,13 @@ describe('FeaturesSettingsScreen gating', () => {
         expect(voiceAgentItem).toBeTruthy();
     });
 
-    it('turning off connectedServices also disables connectedServices.quotas', async () => {
+    it('does not expose a master Connected Accounts toggle and keeps the optional quotas toggle independent', async () => {
         vi.resetModules();
         const setFeatureToggles = vi.fn();
 
         useSettingMutableMock.mockImplementation((key: string) => {
             if (key === 'experiments') return createNoopMutable(true);
-            if (key === 'featureToggles') return [{ connectedServices: true, 'connectedServices.quotas': true }, setFeatureToggles] as const;
+            if (key === 'featureToggles') return [{ 'connectedServices.quotas': true }, setFeatureToggles] as const;
             if (key === 'useProfiles') return createNoopMutable(false);
             if (key === 'agentInputEnterToSend') return createNoopMutable(false);
             if (key === 'agentInputHistoryScope') return createNoopMutable('perSession');
@@ -204,45 +203,11 @@ describe('FeaturesSettingsScreen gating', () => {
         const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
 
         const screen = await renderSettingsView(React.createElement(FeaturesSettingsScreen));
-        const connectedServicesItem = screen.findRowByTitle('settingsFeatures.expConnectedServices');
-        expect(connectedServicesItem).toBeTruthy();
-
-        await act(async () => {
-            connectedServicesItem!.props.rightElement.props.onValueChange(false);
-        });
-
-        expect(setFeatureToggles).toHaveBeenCalledWith(expect.objectContaining({
-            connectedServices: false,
-            'connectedServices.quotas': false,
-        }));
-    });
-
-    it('disables the connectedServices.quotas toggle when connectedServices is disabled', async () => {
-        vi.resetModules();
-        const setFeatureToggles = vi.fn();
-
-        useSettingMutableMock.mockImplementation((key: string) => {
-            if (key === 'experiments') return createNoopMutable(true);
-            if (key === 'featureToggles') return [{ connectedServices: false, 'connectedServices.quotas': true }, setFeatureToggles] as const;
-            if (key === 'useProfiles') return createNoopMutable(false);
-            if (key === 'agentInputEnterToSend') return createNoopMutable(false);
-            if (key === 'agentInputHistoryScope') return createNoopMutable('perSession');
-            if (key === 'hideInactiveSessions') return createNoopMutable(false);
-            if (key === 'groupInactiveSessionsByProject') return createNoopMutable(false);
-            if (key === 'showEnvironmentBadge') return createNoopMutable(false);
-            if (key === 'useEnhancedSessionWizard') return createNoopMutable(false);
-            if (key === 'useMachinePickerSearch') return createNoopMutable(false);
-            if (key === 'usePathPickerSearch') return createNoopMutable(false);
-            return createNoopMutable(null);
-        });
-
-        const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
-
-        const screen = await renderSettingsView(React.createElement(FeaturesSettingsScreen));
+        expect(screen.findRowByTitle('settingsFeatures.expConnectedServices')).toBeNull();
         const quotasItem = screen.findRowByTitle('settingsFeatures.expConnectedServicesQuotas');
         expect(quotasItem).toBeTruthy();
-        expect(quotasItem!.props.rightElement.props.disabled).toBe(true);
-        expect(quotasItem!.props.rightElement.props.value).toBe(false);
+        expect(quotasItem!.props.rightElement.props.disabled).toBe(false);
+        expect(quotasItem!.props.rightElement.props.value).toBe(true);
     });
 
     it('shows embedded terminal dock location setting when terminal.embeddedPty is enabled', async () => {

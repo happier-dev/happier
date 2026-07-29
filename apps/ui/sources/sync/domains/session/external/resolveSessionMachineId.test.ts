@@ -8,7 +8,7 @@ describe('resolveSessionMachineId', () => {
       machineId: ' machine-top ',
       externalSessionV1: {
         v: 1,
-        providerId: 'claude',
+        agentId: 'claude',
         machineId: 'machine-direct',
         remoteSessionId: 'remote-1',
         source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
@@ -20,7 +20,7 @@ describe('resolveSessionMachineId', () => {
     expect(resolveSessionMachineId({
       externalSessionV1: {
         v: 1,
-        providerId: 'claude',
+        agentId: 'claude',
         machineId: ' machine-direct ',
         remoteSessionId: 'remote-1',
         source: { kind: 'claudeConfig', configDir: '/tmp/claude' },

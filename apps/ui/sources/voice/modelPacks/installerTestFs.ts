@@ -50,6 +50,9 @@ export function createMemFs(): MemFs {
       }
       return false;
     }
+    get name(): string {
+      return this.uri.slice(this.uri.lastIndexOf('/') + 1);
+    }
     create() {
       // Directories are implicit (defined by the files they contain).
     }
@@ -76,6 +79,20 @@ export function createMemFs(): MemFs {
       }
       this.uri = destUri;
     }
+    list() {
+      const prefix = `${this.uri}/`;
+      const children = new Map<string, boolean>();
+      for (const key of files.keys()) {
+        if (!key.startsWith(prefix)) continue;
+        const remainder = key.slice(prefix.length);
+        const [name, ...rest] = remainder.split('/');
+        if (!name) continue;
+        children.set(name, (children.get(name) ?? false) || rest.length > 0);
+      }
+      return [...children.entries()].map(([name, isDirectory]) => (
+        isDirectory ? new Directory(this, name) : new File(this, name)
+      ));
+    }
   }
 
   class File {
@@ -85,6 +102,9 @@ export function createMemFs(): MemFs {
     }
     get exists(): boolean {
       return files.has(this.uri);
+    }
+    get name(): string {
+      return this.uri.slice(this.uri.lastIndexOf('/') + 1);
     }
     get size(): number {
       return files.get(this.uri)?.byteLength ?? 0;

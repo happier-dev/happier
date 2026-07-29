@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fileDelete = vi.fn(() => new Promise<void>(() => {}));
 const playbackState: {
@@ -6,6 +6,16 @@ const playbackState: {
 } = {
   playbackStatusListener: null,
 };
+const { playbackLeaseRelease, acquirePlaybackLease } = vi.hoisted(() => {
+  const release = vi.fn(async () => undefined);
+  return {
+    playbackLeaseRelease: release,
+    acquirePlaybackLease: vi.fn(async () => Object.freeze({ release })),
+  };
+});
+const nativePlayerPlay = vi.hoisted(() => vi.fn(() => undefined));
+
+vi.mock('@/voice/runtime/voiceAudioMode', () => ({ acquireVoicePlaybackAudioMode: acquirePlaybackLease }));
 
 async function waitForPlaybackStatusListener() {
   await vi.waitFor(() => {
@@ -51,17 +61,41 @@ vi.mock('expo-audio', () => ({
       playbackState.playbackStatusListener = cb;
       return { remove() {} };
     },
-    play: () => undefined,
+    play: nativePlayerPlay,
     remove() {},
   }),
 }));
 
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
+import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
 
 describe('playAudioBytesWithStopper (native)', () => {
+  beforeEach(() => {
+    acquirePlaybackLease.mockClear();
+    playbackLeaseRelease.mockClear();
+    nativePlayerPlay.mockClear();
+  });
+  it('does not start native audio when a stale attempt is rejected during registration', async () => {
+    playbackState.playbackStatusListener = null;
+    const controller = createVoicePlaybackController();
+    const staleAttempt = controller.registerStopper.captureAttempt?.() ?? controller.registerStopper;
+    controller.interrupt();
+
+    await playAudioBytesWithStopper({
+      bytes: new Uint8Array([1, 2, 3]).buffer,
+      format: 'mp3',
+      registerPlaybackStopper: staleAttempt,
+    });
+
+    expect(nativePlayerPlay).not.toHaveBeenCalled();
+    expect(playbackState.playbackStatusListener).toBeNull();
+  });
+
   it('resolves promptly when playback finishes even if temp-file cleanup stalls', async () => {
     playbackState.playbackStatusListener = null;
     fileDelete.mockClear();
+    acquirePlaybackLease.mockClear();
+    playbackLeaseRelease.mockClear();
 
     const promise = playAudioBytesWithStopper({
       bytes: new Uint8Array([1, 2, 3]).buffer,
@@ -84,6 +118,9 @@ describe('playAudioBytesWithStopper (native)', () => {
       expect(resolved).toBe(true);
     });
     await observedResolution;
+
+    expect(acquirePlaybackLease).toHaveBeenCalledTimes(1);
+    expect(playbackLeaseRelease).toHaveBeenCalledTimes(1);
 
     await waitForFileDeleteCall();
     expect(fileDelete).toHaveBeenCalledTimes(1);
@@ -110,8 +147,33 @@ describe('playAudioBytesWithStopper (native)', () => {
     notify({ didJustFinish: false, error: 'decode_failed' });
 
     await expect(promise).rejects.toThrow('audio_playback_failed');
+    expect(playbackLeaseRelease).toHaveBeenCalledTimes(1);
     expect(onPlaybackStarted).not.toHaveBeenCalled();
     await waitForFileDeleteCall();
+  });
+
+  it('releases the playback lease and ignores queued status callbacks when explicitly stopped', async () => {
+    playbackState.playbackStatusListener = null;
+    playbackLeaseRelease.mockClear();
+    const onPlaybackStarted = vi.fn();
+    const stopperRef: { current: (() => void) | null } = { current: null };
+    const promise = playAudioBytesWithStopper({
+      bytes: new Uint8Array([1, 2, 3]).buffer,
+      format: 'mp3',
+      registerPlaybackStopper: (next) => { stopperRef.current = next; return () => {}; },
+      onPlaybackStarted,
+    });
+
+    await waitForPlaybackStatusListener();
+    const queuedStatusCallback = playbackState.playbackStatusListener as ((status: any) => void) | null;
+    const registeredStop = stopperRef.current;
+    if (!registeredStop) throw new Error('Expected playback stopper to be registered');
+    registeredStop();
+    await promise;
+    queuedStatusCallback?.({ didJustFinish: false, playing: true });
+
+    expect(playbackLeaseRelease).toHaveBeenCalledTimes(1);
+    expect(onPlaybackStarted).not.toHaveBeenCalled();
   });
 
   it('calls onPlaybackStarted after native playback status proves playback started', async () => {

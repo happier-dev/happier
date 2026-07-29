@@ -1,12 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import semver from 'semver';
 
 import './runVitestShards.test.mjs';
+
+const require = createRequire(import.meta.url);
+const { parsePatchFile } = require('patch-package/dist/patch/parse');
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, 'utf-8'));
@@ -17,6 +21,21 @@ function readPodVersion(podfileLockContents, podName) {
   const match = podfileLockContents.match(new RegExp(`^  - ${escapedPodName} \\(([^)]+)\\):?`, 'm'));
   return match?.[1] ?? null;
 }
+
+test('apps/ui vendor patches are syntactically valid patch-package inputs', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const patchDir = join(dirname(scriptsDir), 'patches');
+  const patchFileNames = (await readdir(patchDir)).filter((fileName) => fileName.endsWith('.patch'));
+
+  assert.ok(patchFileNames.length > 0, 'expected at least one UI vendor patch');
+  for (const patchFileName of patchFileNames) {
+    const patchContents = await readFile(join(patchDir, patchFileName), 'utf-8');
+    assert.doesNotThrow(
+      () => parsePatchFile(patchContents),
+      `${patchFileName} must be parseable by the patch-package version used by postinstall`,
+    );
+  }
+});
 
 test('apps/ui direct @react-navigation/native range satisfies navigator peer requirements', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -52,24 +71,46 @@ test('apps/ui direct @react-navigation/native range satisfies navigator peer req
   }
 });
 
-test('apps/ui fast test lane includes the navigation package contract check', async () => {
+test('apps/ui fast test lane is read-only and leaves patch/vendor mutation to install', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir);
 
   const packageJson = await readJson(join(packageRoot, 'package.json'));
   const testScript = packageJson?.scripts?.test;
   const unitTestScript = packageJson?.scripts?.['test:unit'];
-  const patchScript = packageJson?.scripts?.['postinstall:patches'];
+  const installScript = packageJson?.scripts?.['postinstall:real'];
 
   assert.equal(typeof testScript, 'string');
   assert.match(testScript, /\btest:unit\b/);
   assert.match(testScript, /navigationPackageContract\.test\.mjs/);
-  assert.equal(typeof patchScript, 'string');
-  assert.match(patchScript, /HAPPIER_UI_VENDOR_WEB_ASSETS=0/);
-  assert.match(patchScript, /tools\/postinstall\.mjs/);
+  assert.equal(packageJson?.scripts?.['postinstall:patches'], undefined);
+  assert.match(installScript, /tools\/postinstall\.mjs/);
   assert.equal(typeof unitTestScript, 'string');
-  assert.match(unitTestScript, /\bpostinstall:patches\b/);
+  assert.doesNotMatch(unitTestScript, /\bpostinstall(?::patches)?\b/);
   assert.match(unitTestScript, /runVitestShards\.mjs/);
+});
+
+test('apps/ui declares patch and vendor sources as install freshness inputs', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const packageJson = await readJson(join(packageRoot, 'package.json'));
+  const freshnessInputs = packageJson?.happier?.installFreshnessInputs;
+
+  assert.ok(Array.isArray(freshnessInputs));
+  assert.ok(freshnessInputs.includes('patches'));
+  assert.ok(freshnessInputs.includes('tools/postinstall.mjs'));
+  assert.ok(freshnessInputs.includes('tools/resolveUiPostinstallTasks.mjs'));
+  assert.ok(freshnessInputs.includes('tools/react-native-enriched-markdown'));
+  assert.ok(freshnessInputs.includes('tools/diffs'));
+  assert.ok(freshnessInputs.includes('tools/codemirror'));
+  assert.ok(freshnessInputs.includes('tools/xterm'));
+  assert.ok(freshnessInputs.includes('tools/tiptap'));
+  for (const relativePath of freshnessInputs) {
+    await assert.doesNotReject(
+      () => stat(join(packageRoot, relativePath)),
+      `install freshness input must exist: ${relativePath}`,
+    );
+  }
 });
 
 test('apps/ui patched expo-router web modal layout enables the experimental modal stack', async () => {
@@ -120,7 +161,149 @@ test('apps/ui patched expo-router web modal stack guards missing preloadedRoutes
   );
 });
 
-test('apps/ui postinstall verifies the current expo-router web modal patch target', async () => {
+test('apps/ui patched expo-router web modal keeps critical layout when Metro omits CSS-module injection', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+
+  const modalRouteDrawerPath = join(
+    packageRoot,
+    'node_modules',
+    'expo-router',
+    'build',
+    'modal',
+    'web',
+    'ModalStackRouteDrawer.js',
+  );
+  const modalRouteDrawerContents = await readFile(modalRouteDrawerPath, 'utf-8');
+
+  assert.match(
+    modalRouteDrawerContents,
+    /HAPPIER PATCH\(expo-router-web-modal-critical-inline-layout\)/,
+    'Expo Router web route modals should retain an owner marker for the Metro CSS-module fallback',
+  );
+  assert.match(
+    modalRouteDrawerContents,
+    /criticalDrawerContentStyle/,
+    'the route-modal drawer should keep its fixed viewport boundary without relying only on CSS modules',
+  );
+  assert.match(
+    modalRouteDrawerContents,
+    /criticalModalDesktopStyle/,
+    'desktop route-modal content should keep its centered interactive card boundary',
+  );
+  assert.match(
+    modalRouteDrawerContents,
+    /criticalModalBodyStyle/,
+    'route-modal screen content should remain a scrollable interactive body',
+  );
+});
+
+test('apps/ui patched expo-router linking rolls browser history back when route removal is prevented', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const useLinkingPath = join(
+    packageRoot,
+    'node_modules',
+    'expo-router',
+    'build',
+    'fork',
+    'useLinking.js',
+  );
+  const useLinkingContents = await readFile(useLinkingPath, 'utf-8');
+
+  assert.match(
+    useLinkingContents,
+    /rollbackHistoryIfPrevented/,
+    'expo-router useLinking should preserve the React Navigation history rollback owner',
+  );
+  assert.match(
+    useLinkingContents,
+    /__unsafe_event__[\s\S]*beforeRemove[\s\S]*defaultPrevented/,
+    'expo-router useLinking should observe prevented route removals before committing browser history',
+  );
+  assert.match(
+    useLinkingContents,
+    /history\.go\(delta\)/,
+    'expo-router useLinking should replay the exact inverse browser-history delta after prevention',
+  );
+  assert.match(
+    useLinkingContents,
+    /pendingPopStateDeltaRef/,
+    'expo-router useLinking should account for the browser delta when a prevented action synchronously continues',
+  );
+  assert.match(
+    useLinkingContents,
+    /CommonActions\.goBack\(\)/,
+    'expo-router useLinking should dispatch a real back action through the navigation removal owner',
+  );
+  assert.match(
+    useLinkingContents,
+    /previousState === rootState/,
+    'expo-router useLinking should compare unchanged navigation state at the internal-slot root owner',
+  );
+  assert.match(
+    useLinkingContents,
+    /record\?\.path === path/,
+    'expo-router useLinking should preserve the existing hash-only traversal branch',
+  );
+  assert.match(
+    useLinkingContents,
+    /const currentState = store\.state \?\? navigation\.getRootState\(\)/,
+    'expo-router useLinking should compare its focused history records with the focused store state',
+  );
+  assert.match(
+    useLinkingContents,
+    /HAPPIER PATCH\(expo-router-root-focused-history-ownership\)/,
+    'expo-router useLinking should expose a durable marker for the root/focused history ownership patch',
+  );
+  assert.match(
+    useLinkingContents,
+    /previousStateRef\.current = rootState/,
+    'expo-router useLinking should retain internal-slot root state for ordinary in-app history synchronization',
+  );
+  assert.match(
+    useLinkingContents,
+    /findMatchingState\(previousState, rootState\)/,
+    'expo-router useLinking should compute in-app history deltas from like-shaped internal-slot root states',
+  );
+  assert.doesNotMatch(
+    useLinkingContents,
+    /history\.go\(historyDelta\)/,
+    'expo-router useLinking should not apply a focused-state delta to unrelated document history',
+  );
+});
+
+test('apps/ui patched expo-router memory history settles rollback against the resolved entry', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const memoryHistoryPath = join(
+    packageRoot,
+    'node_modules',
+    'expo-router',
+    'build',
+    'fork',
+    'createMemoryHistory.js',
+  );
+  const memoryHistoryContents = await readFile(memoryHistoryPath, 'utf-8');
+
+  assert.match(
+    memoryHistoryContents,
+    /const foundIndex = pending\.findIndex/,
+    'expo-router createMemoryHistory should not shadow the mutable history index in its timeout fallback',
+  );
+  assert.match(
+    memoryHistoryContents,
+    /pending\[foundIndex\]\?\.cb\(\)/,
+    'expo-router createMemoryHistory should settle the matching pending rollback callback',
+  );
+  assert.match(
+    memoryHistoryContents,
+    /index = this\.index/,
+    'expo-router createMemoryHistory should resynchronize its internal index after rollback',
+  );
+});
+
+test('apps/ui postinstall verifies every current expo-router patch target', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir);
 
@@ -146,6 +329,61 @@ test('apps/ui postinstall verifies the current expo-router web modal patch targe
     postinstallContents,
     /preloadedRoutes: state\.preloadedRoutes \?\? \[\]/,
     'postinstall should verify the preloadedRoutes ModalStack guard',
+  );
+  assert.match(
+    postinstallContents,
+    /build['"], ['"]modal['"], ['"]web['"], ['"]ModalStackRouteDrawer\.js/,
+    'postinstall should verify the Expo Router web route-modal drawer patch target',
+  );
+  assert.match(
+    postinstallContents,
+    /HAPPIER PATCH\(expo-router-web-modal-critical-inline-layout\)/,
+    'postinstall should verify the critical inline route-modal layout marker',
+  );
+  assert.match(
+    postinstallContents,
+    /build['"], ['"]fork['"], ['"]useLinking\.js/,
+    'postinstall should verify the Expo Router linking patch target',
+  );
+  assert.match(
+    postinstallContents,
+    /rollbackHistoryIfPrevented/,
+    'postinstall should verify the prevented-removal browser-history marker',
+  );
+  assert.match(
+    postinstallContents,
+    /const currentState = store\.state \?\? navigation\.getRootState\(\)/,
+    'postinstall should verify Expo Router focused-state history ownership',
+  );
+  assert.match(
+    postinstallContents,
+    /previousStateRef\.current = rootState/,
+    'postinstall should verify ordinary Expo in-app history retains its internal-slot comparison owner',
+  );
+  assert.match(
+    postinstallContents,
+    /forbiddenMarkers:\s*\[['"]history\.go\(historyDelta\)['"]\]/,
+    'postinstall should reject the unsafe focused-delta fallback',
+  );
+  assert.match(
+    postinstallContents,
+    /build['"], ['"]fork['"], ['"]createMemoryHistory\.js/,
+    'postinstall should verify the Expo Router memory-history patch target',
+  );
+  assert.match(
+    postinstallContents,
+    /const foundIndex = pending\.findIndex/,
+    'postinstall should verify the non-shadowing timeout fallback marker',
+  );
+  assert.match(
+    postinstallContents,
+    /build['"], ['"]fork['"], ['"]native-stack['"], ['"]createNativeStackNavigator\.js/,
+    'postinstall should verify the Expo Router native-stack patch target',
+  );
+  assert.match(
+    postinstallContents,
+    /isLiquidGlassNavigatorAvailable/,
+    'postinstall should verify the liquid-glass availability guard',
   );
 });
 

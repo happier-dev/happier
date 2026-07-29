@@ -9,14 +9,14 @@ describe('readSessionRuntimePublicationState', () => {
         expect(readSessionRuntimePublicationState({
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
+                agentId: 'codex',
                 provider: {
                     backendMode: 'appServer',
                 },
             },
             agentRuntimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
+                agentId: 'codex',
                 provider: {
                     backendMode: 'acp',
                 },
@@ -24,7 +24,7 @@ describe('readSessionRuntimePublicationState', () => {
         })).toEqual({
             descriptor: {
                 v: 1,
-                providerId: 'codex',
+                agentId: 'codex',
                 provider: {
                     backendMode: 'appServer',
                 },
@@ -40,7 +40,7 @@ describe('readSessionRuntimePublicationState', () => {
             host: 'localhost',
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'acme.provider',
+                agentId: 'acme.provider',
                 provider: {
                     backendMode: 'native',
                 },
@@ -62,7 +62,7 @@ describe('readSessionRuntimePublicationState', () => {
         expect(readSessionRuntimePublicationState(metadata)).toEqual({
             descriptor: {
                 v: 1,
-                providerId: 'acme.provider',
+                agentId: 'acme.provider',
                 provider: {
                     backendMode: 'native',
                 },
@@ -86,7 +86,7 @@ describe('readSessionRuntimePublicationState', () => {
         expect(readSessionRuntimePublicationState({
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'acme.provider',
+                agentId: 'acme.provider',
                 provider: {
                     backendMode: 'native',
                 },
@@ -105,7 +105,7 @@ describe('readSessionRuntimePublicationState', () => {
         })).toEqual({
             descriptor: {
                 v: 1,
-                providerId: 'acme.provider',
+                agentId: 'acme.provider',
                 provider: {
                     backendMode: 'native',
                 },

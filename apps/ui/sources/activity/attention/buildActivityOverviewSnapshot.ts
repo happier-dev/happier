@@ -30,7 +30,7 @@ export function buildActivityOverviewSnapshot(params: BuildActivityOverviewSnaps
     for (const candidate of candidates) {
         if (candidate.reasons.hasUnread) unread += 1;
         if (candidate.reasons.hasPendingPermissionRequests) permissionRequired += 1;
-        if (candidate.reasons.hasPendingUserActionRequests) actionRequired += 1;
+        if (candidate.reasons.hasPendingUserActionRequests || candidate.reasons.hasBlockedPendingDelivery) actionRequired += 1;
         if (candidate.reasons.isThinking) thinking += 1;
         if (candidate.hasAttention) totalAttention += 1;
     }

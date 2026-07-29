@@ -21,7 +21,15 @@ export function createCapturingComponent(
 }
 
 export function createPassThroughModule(componentNames: readonly string[]) {
+    const names = new Set(componentNames);
+    if (names.has('ItemList')) {
+        names.add('ItemListStatic');
+    }
+    if (names.has('ItemListStatic')) {
+        names.add('ItemList');
+    }
+
     return Object.fromEntries(
-        componentNames.map((componentName) => [componentName, createPassThroughComponent(componentName)]),
+        Array.from(names).map((componentName) => [componentName, createPassThroughComponent(componentName)]),
     );
 }

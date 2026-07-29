@@ -47,3 +47,6 @@ export function primeWebAudioPlayback(): void {
   }
 }
 
+export function resetWebAudioContextForTests(): void {
+  cachedWebAudioContext = null;
+}

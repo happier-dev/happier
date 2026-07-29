@@ -5,6 +5,7 @@ import { buildSnapshotSignature, clearSearchCacheForProject, getRepoScopeSession
 
 const getStateMock = vi.hoisted(() => vi.fn());
 const clearSuggestionFileSearchCacheMock = vi.hoisted(() => vi.fn());
+const clearCachedRepositoryDirectoryEntriesMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -21,6 +22,11 @@ vi.mock('@/sync/domains/input/suggestionFile', () => {
 
 vi.mock('@/sync/domains/input/suggestionFileCacheInvalidation', () => ({
     clearSuggestionFileSearchCache: (sessionId: string) => clearSuggestionFileSearchCacheMock(sessionId),
+}));
+
+vi.mock('@/sync/domains/input/repositoryDirectory', () => ({
+    clearCachedRepositoryDirectoryEntries: (input: { sessionId: string }) =>
+        clearCachedRepositoryDirectoryEntriesMock(input),
 }));
 
 function makeSnapshot(
@@ -132,6 +138,7 @@ describe('buildSnapshotSignature', () => {
 describe('clearSearchCacheForProject', () => {
   it('clears matching session caches without loading the full file-search module', async () => {
     clearSuggestionFileSearchCacheMock.mockClear();
+    clearCachedRepositoryDirectoryEntriesMock.mockClear();
 
     await clearSearchCacheForProject(new Map([
       ['s1', 'project-a'],
@@ -142,6 +149,9 @@ describe('clearSearchCacheForProject', () => {
     expect(clearSuggestionFileSearchCacheMock).toHaveBeenCalledTimes(2);
     expect(clearSuggestionFileSearchCacheMock).toHaveBeenNthCalledWith(1, 's1');
     expect(clearSuggestionFileSearchCacheMock).toHaveBeenNthCalledWith(2, 's3');
+    expect(clearCachedRepositoryDirectoryEntriesMock).toHaveBeenCalledTimes(2);
+    expect(clearCachedRepositoryDirectoryEntriesMock).toHaveBeenNthCalledWith(1, { sessionId: 's1' });
+    expect(clearCachedRepositoryDirectoryEntriesMock).toHaveBeenNthCalledWith(2, { sessionId: 's3' });
   });
 });
 
@@ -173,6 +183,33 @@ describe('getRepoScopeSessionIds', () => {
     expect(scoped).toEqual(['s1', 's2']);
   });
 
+  it('groups layout-v1 repo sessions by owner workspace scope instead of shared metadata', () => {
+    getStateMock.mockReturnValue({
+      sessions: {
+        s1: {
+          id: 's1',
+          metadataLayoutVersion: 1,
+          metadata: { v: 1, host: 'shared-decoy', path: '/shared-decoy' },
+          ownerMetadataView: { host: 'DEVBOX.local', path: '/repo' },
+        },
+        s2: {
+          id: 's2',
+          metadataLayoutVersion: 1,
+          metadata: { v: 1, host: 'other-shared-decoy', path: '/other-shared-decoy' },
+          ownerMetadataView: { host: 'devbox', path: '/repo/apps/ui' },
+        },
+        s3: {
+          id: 's3',
+          metadataLayoutVersion: 1,
+          metadata: { v: 1, host: 'shared-decoy', path: '/shared-decoy' },
+          ownerMetadataView: { host: 'other.local', path: '/repo/apps/server' },
+        },
+      },
+    });
+
+    expect(getRepoScopeSessionIds('s1', '/repo').sort()).toEqual(['s1', 's2']);
+  });
+
   it('returns only the reference session when scope is unknown', () => {
     getStateMock.mockReturnValue({
       sessions: {
@@ -202,7 +239,7 @@ describe('getRepoScopeSessionIds', () => {
       },
     });
 
-    expect(getRepoScopeSessionIds('s1', '/repo')).toEqual(['s1']);
+    expect(getRepoScopeSessionIds('s1', '/repo').sort()).toEqual(['s1', 's2']);
   });
 
   it('groups direct-session repo scopes by the linked direct machine id', () => {
@@ -214,7 +251,7 @@ describe('getRepoScopeSessionIds', () => {
             path: '/repo',
             externalSessionV1: {
               v: 1,
-              providerId: 'codex',
+              agentId: 'codex',
               machineId: 'machine-direct',
               remoteSessionId: 'remote-1',
               source: { kind: 'codexHome', home: 'user' },
@@ -227,7 +264,7 @@ describe('getRepoScopeSessionIds', () => {
             path: '/repo/apps/ui',
             externalSessionV1: {
               v: 1,
-              providerId: 'codex',
+              agentId: 'codex',
               machineId: 'machine-direct',
               remoteSessionId: 'remote-2',
               source: { kind: 'codexHome', home: 'user' },
@@ -240,7 +277,7 @@ describe('getRepoScopeSessionIds', () => {
             path: '/repo/apps/server',
             externalSessionV1: {
               v: 1,
-              providerId: 'codex',
+              agentId: 'codex',
               machineId: 'machine-other',
               remoteSessionId: 'remote-3',
               source: { kind: 'codexHome', home: 'user' },

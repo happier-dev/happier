@@ -16,24 +16,29 @@ export const PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE = {
             digest: 'sha256:test-fixture',
         },
     },
-    providersById: {
+    agentsById: {
         'acme.review.provider': {
             id: 'acme.review.provider',
+            identity: {
+                pluginId: 'acme.review',
+                localId: 'provider',
+            },
             title: 'Acme Review Provider',
             subtitle: 'Plugin provider',
             channel: 'plugin',
             isBuiltIn: false,
-            providerAgentId: 'claude',
+            catalogAgentId: 'claude',
             iconAgentId: 'codex',
+            providerOwnedEnvironmentKeys: [],
         },
     },
     backendsById: {
         'acme.review.backend': {
             id: 'acme.review.backend',
-            providerId: 'acme.review.provider',
+            agentId: 'acme.review.provider',
             title: 'Acme Review Backend',
             subtitle: 'Plugin-backed review engine',
-            providerAgentId: 'claude',
+            catalogAgentId: 'claude',
             iconAgentId: 'codex',
             capabilities: normalizePluginBackendCapabilitiesV1({
                 executionRun: { supported: true },
@@ -42,46 +47,26 @@ export const PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE = {
     },
     actionsById: {},
     familiesById: {},
-    hooksById: {},
     toolsById: {},
     commandsById: {},
     resourcesById: {},
-    uiDescriptorsById: {
-        'acme.review.setup': {
-            id: 'acme.review.setup',
-            pluginId: 'acme.review',
-            surface: 'settings',
-            title: 'Setup',
-            fields: [
-                {
-                    id: 'reviewHooks',
-                    type: 'boolean',
-                    title: 'Review hooks',
-                    options: [],
-                },
-            ],
-        },
-        'acme.review.runtime': {
-            id: 'acme.review.runtime',
-            pluginId: 'acme.review',
-            surface: 'status',
-            title: 'Runtime',
-            fields: [
-                {
-                    id: 'generation',
-                    type: 'text',
-                    title: 'Registry generation',
-                    options: [],
-                },
-            ],
-        },
-    },
+    settingsById: {},
     diagnostics: [
         {
-            severity: 'info',
-            code: 'fixture.loaded',
-            message: 'Loaded from test fixture',
-            pluginId: 'acme.review',
+            version: 1,
+            id: 'acme.review:normalization:plugin:0',
+            data: {
+                severity: 'info',
+                code: 'fixture.loaded',
+                message: 'Loaded from test fixture',
+            },
+            plugin: { id: 'acme.review', version: '1.0.0', source: 'localPath' },
+            stage: 'normalization',
+            generation: '7',
+            host: 'daemon',
+            platform: 'darwin',
+            occurredAtMs: 1,
+            resolution: { state: 'current' },
         },
     ],
 } as const satisfies PluginProjectionV2;

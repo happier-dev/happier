@@ -1,4 +1,3 @@
-import { ConnectedServiceOauthView } from '@/components/settings/connectedServices/ConnectedServiceOauthView';
+import { ConnectedAccountLegacyRouteRedirect } from '@/components/settings/connectedServices/account/ConnectedAccountLegacyRouteRedirect';
 
-export default ConnectedServiceOauthView;
-
+export default ConnectedAccountLegacyRouteRedirect;

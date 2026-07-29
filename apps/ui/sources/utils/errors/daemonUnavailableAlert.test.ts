@@ -182,6 +182,13 @@ describe('daemonUnavailableAlert', () => {
             kind: 'retryable',
             reason: 'session_target_unavailable',
         });
+        expect(classifyLaunchRetryFailure({
+            phase: 'send',
+            failure: new Error('Created session is not active locally yet'),
+        })).toMatchObject({
+            kind: 'retryable',
+            reason: 'session_target_unavailable',
+        });
     });
 
     it('classifies domain errors as fatal and spawn webhook timeouts as retryable', async () => {
@@ -205,7 +212,9 @@ describe('daemonUnavailableAlert', () => {
             failure: { errorCode: 'SESSION_WEBHOOK_TIMEOUT' },
         })).toMatchObject({
             kind: 'retryable',
-            reason: 'daemon_unavailable',
+            reason: 'launch_still_pending',
+            titleKey: 'newSession.launchStillPendingTitle',
+            bodyKey: 'newSession.launchStillPendingBody',
         });
     });
 

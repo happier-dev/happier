@@ -110,7 +110,7 @@ function computeDynamicSessionModePickerControlInternal(params: {
         readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODES_STATE_KEY, LEGACY_ACP_SESSION_MODES_STATE_KEY),
     );
     if (!state) return null;
-    if (state.provider !== params.agentId) return null;
+    if (state.agentId !== params.agentId) return null;
     if (state.availableModes.length === 0) return null;
 
     const options = state.availableModes;

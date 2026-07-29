@@ -2,6 +2,7 @@ import type { StoreApi } from 'zustand/vanilla';
 
 import { voiceSessionBindingStore } from './voiceConversationBindingStore';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import type { VoiceConversationTargeting } from '@/voice/session/types';
 import type { VoiceConversationBindingResolution, VoiceSessionBinding } from './voiceConversationBindingTypes';
 
 type VoiceSessionBindingStoreLike = StoreApi<Readonly<{
@@ -42,6 +43,9 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
     resolveExistingBindingByConversationSessionId?: (
         conversationSessionId: string,
     ) => VoiceSessionBinding | null;
+    resolveConversationTargeting?: (
+        adapterId: string,
+    ) => VoiceConversationTargeting;
     appendTargetSwitchNote?: (params: Readonly<{
         conversationSessionId: string;
         previousTargetSessionId: string | null;
@@ -55,6 +59,8 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
     const persistBinding = deps.persistBinding ?? (() => {});
     const resolveExistingBindingByConversationSessionId =
         deps.resolveExistingBindingByConversationSessionId ?? (() => null);
+    const resolveConversationTargeting =
+        deps.resolveConversationTargeting ?? (() => 'route_target');
 
     const ensureBound = async (params: Readonly<{
         adapterId: string;
@@ -87,8 +93,8 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
             updatedAt: nowMs(),
         };
 
+        await Promise.resolve(persistBinding(nextBinding));
         store.getState().bind(nextBinding);
-        await Promise.resolve(persistBinding(nextBinding)).catch(() => {});
 
         if (
             previous
@@ -120,12 +126,21 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
         activeAdapterId: string | null;
         providerId: string;
         requestedTargetSessionId: string | null;
-    }>): Promise<{ conversationSessionId: string } | null> => {
+    }>): Promise<{ conversationSessionId: string | null } | null> => {
         const openConversationSessionId = normalizeNonEmptyString(params.openConversationSessionId);
         if (!openConversationSessionId) return null;
 
         const requestedTargetSessionId = normalizeTargetSessionId(params.requestedTargetSessionId);
         const existing = resolveExistingBindingByConversationSessionId(openConversationSessionId);
+        if (existing?.lifetime === 'runtime_attempt') {
+            return { conversationSessionId: normalizeTargetSessionId(existing.targetSessionId) };
+        }
+        if (
+            existing
+            && resolveConversationTargeting(existing.adapterId) === 'bound_conversation'
+        ) {
+            return { conversationSessionId: openConversationSessionId };
+        }
         const shouldRebind =
             !existing
             || normalizeTargetSessionId(existing.targetSessionId) !== requestedTargetSessionId;
@@ -146,14 +161,14 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
             adapterId: rebindAdapterId,
             controlSessionId,
             requestedTargetSessionId,
-        }).catch(() => null);
+        });
         return { conversationSessionId: rebound?.conversationSessionId ?? openConversationSessionId };
     };
 
-    const syncTargetSession = (params: Readonly<{
+    const syncTargetSession = async (params: Readonly<{
         controlSessionId: string;
         targetSessionId: string | null;
-    }>): VoiceSessionBinding | null => {
+    }>): Promise<VoiceSessionBinding | null> => {
         const controlSessionId = normalizeNonEmptyString(params.controlSessionId);
         if (!controlSessionId) return null;
         const previous = store.getState().getByControlSessionId(controlSessionId);
@@ -166,8 +181,8 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
             targetSessionId,
             updatedAt: nowMs(),
         };
+        await Promise.resolve(persistBinding(nextBinding));
         store.getState().bind(nextBinding);
-        Promise.resolve(persistBinding(nextBinding)).catch(() => {});
         appendTargetSwitchNote({
             conversationSessionId: nextBinding.conversationSessionId,
             previousTargetSessionId: previous.targetSessionId,

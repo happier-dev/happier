@@ -1,14 +1,20 @@
 import { defineConfig } from 'vitest/config'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating'
 import {
     createWorkspacePackageSourcesPlugin,
+    readBundledPluginWorkspacePackageSpecs,
     type WorkspacePackageSpec,
 } from '../../scripts/testing/vitestWorkspacePackageResolution'
 
+const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
+const MAX_VITEST_FORKS = 6;
 const maxForksEnv = Number.parseInt(process.env.VITEST_UI_MAX_FORKS ?? '', 10);
-const maxForks = Number.isFinite(maxForksEnv) && maxForksEnv > 0 ? maxForksEnv : 1;
+const maxForks = Number.isFinite(maxForksEnv) && maxForksEnv > 0
+    ? Math.min(maxForksEnv, MAX_VITEST_FORKS)
+    : MAX_VITEST_FORKS;
 
 function resolveExpoNodeModuleStub(id: string, importer?: string): string | null {
     if (
@@ -56,6 +62,7 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
         packageName: '@happier-dev/connection-supervisor',
         packageSourceRoot: resolve('../../packages/connection-supervisor/src'),
     },
+    ...readBundledPluginWorkspacePackageSpecs(repoRoot),
 ] as const;
 
 const workspaceSourcesPlugin = createWorkspacePackageSourcesPlugin(
@@ -74,12 +81,12 @@ const expoNodeModuleStubsPlugin = {
 
 export default defineConfig({
     define: {
-        __DEV__: false,
+        __DEV__: true,
     },
     optimizeDeps: {
             // Workspace packages (like `@happier-dev/protocol`) can change frequently during development.
             // Excluding them ensures Vitest doesn't keep using stale optimized dependency caches.
-            exclude: ['@happier-dev/protocol', '@happier-dev/agents', '@happier-dev/cli-common', '@happier-dev/connection-supervisor'],
+            exclude: workspacePackages.map(({ packageName }) => packageName),
     },
     test: {
         // Ensure per-file module isolation so test-local `vi.mock(...)` does not leak
@@ -102,6 +109,14 @@ export default defineConfig({
         hookTimeout: 60_000,
         globals: false,
         environment: 'node',
+        server: {
+            deps: {
+                // React Navigation carries a nested React Native peer in this Yarn v1 layout.
+                // Inline it so Vite applies the node-safe React Native alias instead of asking
+                // Node to parse the peer's untransformed Flow entrypoint.
+                inline: [/@react-navigation\/native/],
+            },
+        },
         env: {
             HAPPIER_FEATURE_POLICY_ENV: '',
             NODE_ENV: 'test',
@@ -131,6 +146,9 @@ export default defineConfig({
         },
     },
     resolve: {
+        // Inlined React Navigation otherwise resolves its own Yarn v1 peer copy of React,
+        // which produces an invalid-hook-call split brain with react-test-renderer.
+        dedupe: ['react', 'react-dom'],
         // IMPORTANT: keep `@` after more specific `@/...` aliases (Vite resolves aliases in-order).
         alias: [
             // Reanimated's package exports can resolve to ESM internals with extensionless relative imports.
@@ -162,13 +180,13 @@ export default defineConfig({
             // `react-native-gesture-handler` imports React Native internals (Flow syntax) in node.
             { find: 'react-native-gesture-handler', replacement: resolve('./sources/dev/reactNativeGestureHandlerStub.ts') },
             // `react-native-webview` depends on RN native modules and internals.
-            { find: 'react-native-webview', replacement: resolve('./sources/dev/reactNativeWebviewStub.ts') },
+            { find: /^react-native-webview$/, replacement: resolve('./sources/dev/reactNativeWebviewStub.ts') },
             // Some dependencies accidentally pull in `expo` (which expects bundler-only runtime modules).
             { find: /^expo$/, replacement: resolve('./sources/dev/expoStub.ts') },
             // `expo-notifications` executes side-effectful native registration at import time.
-            { find: 'expo-notifications', replacement: resolve('./sources/dev/expoNotificationsStub.ts') },
+            { find: /^expo-notifications$/, replacement: resolve('./sources/dev/expoNotificationsStub.ts') },
             // `expo-task-manager` is native runtime plumbing for background notification tasks.
-            { find: 'expo-task-manager', replacement: resolve('./sources/dev/expoTaskManagerStub.ts') },
+            { find: /^expo-task-manager$/, replacement: resolve('./sources/dev/expoTaskManagerStub.ts') },
             // `expo-audio` is native and throws in node/Vitest.
             { find: 'expo-audio', replacement: resolve('./sources/dev/expoAudioStub.ts') },
             // `expo-speech` and `expo-speech-recognition` are not reliably node-safe (and are hard to mock
@@ -190,13 +208,18 @@ export default defineConfig({
             // Some deps import the abort-controller polyfill, which uses extensionless ESM imports that Node can't resolve.
             { find: /^abort-controller\/polyfill$/, replacement: resolve('./sources/dev/abortControllerPolyfillStub.ts') },
             { find: /^abort-controller\/polyfill\.mjs$/, replacement: resolve('./sources/dev/abortControllerPolyfillStub.ts') },
+            // `@expo/vector-icons` and icon-set subpaths can resolve through React Native Flow/JSX sources in node.
+            { find: /^@expo\/vector-icons(?:\/.*)?$/, replacement: resolve('./sources/dev/expoVectorIconsStub.ts') },
             // `rn-encryption` selects a native implementation in node tests and can pull in React Native's Flow sources.
             { find: 'rn-encryption', replacement: resolve('./sources/dev/rnEncryptionStub.ts') },
             // RevenueCat native SDKs depend on RN native modules.
             { find: 'react-native-purchases', replacement: resolve('./sources/dev/reactNativePurchasesStub.ts') },
             { find: 'react-native-purchases-ui', replacement: resolve('./sources/dev/reactNativePurchasesUiStub.ts') },
-            { find: '@shopify/flash-list', replacement: resolve('./sources/dev/shopifyFlashListStub.ts') },
             { find: 'react-native-mmkv', replacement: resolve('./sources/dev/reactNativeMmkvStub.ts') },
+            // The pure web streaming-reveal module stays REAL under the stub below: it is the
+            // shared word classifier for both streaming surfaces and its gate tests must
+            // exercise the patched package logic, not a stub.
+            { find: 'react-native-enriched-markdown/lib/module/web/streamingReveal.js', replacement: resolve('./node_modules/react-native-enriched-markdown/lib/module/web/streamingReveal.js') },
             { find: 'react-native-enriched-markdown', replacement: resolve('./sources/dev/reactNativeEnrichedMarkdownStub.tsx') },
             // PostHog React Native eagerly loads optional Expo native packages in node. Keep route/unit tests node-safe.
             { find: 'posthog-react-native', replacement: resolve('./sources/dev/posthogReactNativeStub.tsx') },

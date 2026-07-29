@@ -92,4 +92,73 @@ describe('local service preview store', () => {
         expect(mod.selectLocalServicePreviewRows(refreshing)).toHaveLength(1);
         expect(refreshing.refreshState).toBe('refreshing');
     });
+
+    it('keeps registered previews visible when a refresh fails', async () => {
+        const mod = await loadPreviewStoreModule();
+
+        expect(mod?.applyLocalServicePreviewRefreshFailed).toBeTypeOf('function');
+        if (!mod) return;
+
+        const resource = createPreviewResource();
+        const hydrated = mod.applyLocalServicePreviewSnapshot(mod.createLocalServicePreviewState(), {
+            generatedAt: 1_000,
+            refreshState: 'idle',
+            previews: [{
+                previewId: resource.previewId,
+                resource,
+                accessUrl: 'https://preview-1.preview.happier.test/',
+                expiresAt: 2_000,
+                diagnostics: [],
+            }],
+            diagnostics: [],
+        });
+
+        const failed = mod.applyLocalServicePreviewRefreshFailed(hydrated, 1_500);
+
+        expect(mod.selectLocalServicePreviewRows(failed)).toHaveLength(1);
+        expect(failed.generatedAt).toBe(1_500);
+        expect(failed.refreshState).toBe('error');
+    });
+
+    it('normalizes preview diagnostics to the protocol schema and drops unsafe ad hoc entries', async () => {
+        const mod = await loadPreviewStoreModule();
+
+        expect(mod?.applyLocalServicePreviewSnapshot).toBeTypeOf('function');
+        if (!mod) return;
+
+        const resource = createPreviewResource();
+        const safeDiagnostic = {
+            v: 1,
+            code: 'path_mode_degraded',
+            severity: 'warning',
+            scope: 'privatePreview',
+            previewId: resource.previewId,
+            details: {
+                originMode: 'path',
+            },
+        };
+        const unsafeDiagnostic = {
+            code: 'cookie_stripped',
+            severity: 'warning',
+            previewToken: 'raw-preview-token',
+        };
+
+        const state = mod.applyLocalServicePreviewSnapshot(mod.createLocalServicePreviewState(), {
+            generatedAt: 1_000,
+            refreshState: 'idle',
+            previews: [{
+                previewId: resource.previewId,
+                resource,
+                accessUrl: 'https://preview-1.preview.happier.test/',
+                expiresAt: 2_000,
+                diagnostics: [safeDiagnostic, unsafeDiagnostic],
+            }],
+            diagnostics: [safeDiagnostic, unsafeDiagnostic],
+        });
+
+        const row = mod.selectLocalServicePreviewRows(state)[0];
+        expect(row?.diagnostics).toEqual([safeDiagnostic]);
+        expect(state.diagnostics).toEqual([safeDiagnostic]);
+        expect(JSON.stringify(row?.diagnostics)).not.toContain('raw-preview-token');
+    });
 });

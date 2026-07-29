@@ -28,13 +28,24 @@ type EnsureSessionVisibleForMessageRouteMock = (
     options?: Readonly<{ forceRefresh?: boolean; serverId?: string; includeTurnsProjection?: boolean }>,
 ) => Promise<EnsureSessionVisibleForRouteResult>;
 
+type ConfiguredBackendStorageState = Readonly<{
+    settings: Record<string, unknown>;
+    machines: Record<string, Readonly<{ id: string }>>;
+    sessions: Record<string, Readonly<{ id: string; active?: boolean }>>;
+    updateSessionPermissionMode: ReturnType<typeof vi.fn>;
+    updateSessionModelMode: ReturnType<typeof vi.fn>;
+    updateSessionDraft: ReturnType<typeof vi.fn>;
+    markSessionOptimisticThinking: ReturnType<typeof vi.fn>;
+    upsertPendingMessage: ReturnType<typeof vi.fn>;
+}>;
+
 const applySettingsMock = vi.hoisted(() => vi.fn());
 const clearNewSessionDraftMock = vi.hoisted(() => vi.fn());
 const prepareAccountSettingsForDaemonSpawnMock = vi.hoisted(() => vi.fn(async () => ({})));
 const configuredBackendHarnessModuleState = vi.hoisted(() => ({
     captured: null as { value: SpawnPayloadCapture } | null,
     createdAutomationTemplate: null as { value: Record<string, unknown> | null } | null,
-    storageState: null as any,
+    storageState: null as ConfiguredBackendStorageState | null,
     spawnSuccess: false,
     followUpPending: Promise.resolve() as Promise<void>,
     ensureSessionVisibleForMessageRoute: vi.fn<EnsureSessionVisibleForMessageRouteMock>(async (sessionId) => ({
@@ -47,10 +58,10 @@ async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
     const captured: { value: SpawnPayloadCapture } = { value: null };
     const createdAutomationTemplate: { value: Record<string, unknown> | null } = { value: null };
     const routerReplaceSpy = vi.fn();
-    const storageState = {
+    const storageState: ConfiguredBackendStorageState = {
         settings: {},
         machines: { m1: { id: 'm1' } },
-        sessions: {} as Record<string, any>,
+        sessions: {},
         updateSessionPermissionMode: vi.fn(),
         updateSessionModelMode: vi.fn(),
         updateSessionDraft: vi.fn(),
@@ -310,6 +321,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -383,6 +395,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -449,6 +462,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -528,6 +542,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -600,6 +615,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -704,6 +720,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -752,12 +769,13 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         });
     });
 
-    it('replaces the route to the created session before the follow-up send resolves', async () => {
+    it('waits for the canonical first-turn Pending follow-up before opening the created session', async () => {
         const {
             useCreateNewSession,
             routerReplaceSpy,
             resolveFollowUp,
             captured,
+            storageState,
             ensureSessionVisibleForMessageRouteSpy,
         } = await setupHarness({
             deferFollowUp: true,
@@ -780,6 +798,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: routerReplaceSpy },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -822,19 +841,29 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
 
         expect(handleCreateSession).toBeTruthy();
         const createPromise = handleCreateSession!();
-        for (let attempt = 0; attempt < 200 && routerReplaceSpy.mock.calls.length === 0; attempt += 1) {
+        for (let attempt = 0; attempt < 40; attempt += 1) {
             await new Promise((resolve) => setTimeout(resolve, 25));
         }
 
         expect(captured.value).not.toBeNull();
-        expect(ensureSessionVisibleForMessageRouteSpy).toHaveBeenCalled();
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
+        expect(ensureSessionVisibleForMessageRouteSpy).not.toHaveBeenCalled();
+        expect(routerReplaceSpy).not.toHaveBeenCalled();
+        expect(storageState.upsertPendingMessage).not.toHaveBeenCalled();
         expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
         expect(disableDraftPersistence).not.toHaveBeenCalled();
 
         resolveFollowUp();
         await createPromise;
 
+        expect(storageState.upsertPendingMessage).toHaveBeenCalledWith(
+            'session-created',
+            expect.objectContaining({
+                text: 'launch the session',
+                displayText: 'launch the session',
+                deliveryStatus: 'queued',
+            }),
+        );
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
         expect(clearNewSessionDraftMock).toHaveBeenCalledTimes(1);
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
     });
@@ -879,6 +908,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: routerReplaceSpy },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -963,6 +993,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',

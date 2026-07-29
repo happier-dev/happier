@@ -1,8 +1,14 @@
 import type { MachineDisplayRenderable } from '../machines/machineDisplayRenderable';
 import type { SessionListViewItem } from '../session/listing/sessionListViewData';
 import { getSessionStorageKind, type SessionStorageKind } from '../session/sessionStorageKind';
-import type { SessionFolderWorkspaceRefV1 } from '../session/folders';
-import type { SessionListAttentionPlacementReason } from '../session/listing/sessionListAttentionPlacementTypes';
+import {
+    compareSessionFolderWorkspaceRefs,
+    type SessionFolderWorkspaceRefV1,
+} from '../session/folders';
+import type {
+    SessionListAttentionPlacementReason,
+    SessionListWorkingPlacementReason,
+} from '../session/listing/sessionListAttentionPlacementTypes';
 
 export type SessionListIndexItem =
     | Readonly<{
@@ -33,7 +39,7 @@ export type SessionListIndexItem =
         archivedAt?: number | null;
         keepVisibleWhenInactive?: boolean;
         attentionPlacementReason?: SessionListAttentionPlacementReason;
-        workingPlacementReason?: 'working';
+        workingPlacementReason?: SessionListWorkingPlacementReason;
         serverId?: string;
         serverName?: string;
         folderId?: string | null;
@@ -41,21 +47,23 @@ export type SessionListIndexItem =
         workspace?: SessionFolderWorkspaceRefV1;
     }>;
 
-export type SessionListIndexFolderDragEligibilityReason =
+export type SessionListItemOrganizationEligibilityReason =
     | 'eligible'
     | 'feature-disabled'
-    | 'direct-session'
+    | 'destination-scope-mismatch'
+    | 'scope-unavailable'
     | 'unsupported-item';
 
-export type SessionListIndexFolderDragEligibility = Readonly<{
+export type SessionListItemOrganizationEligibility = Readonly<{
     canUseSessionFolders: boolean;
     foldersFeatureEnabled: boolean;
     storageKind: SessionStorageKind | null;
-    reason: SessionListIndexFolderDragEligibilityReason;
+    reason: SessionListItemOrganizationEligibilityReason;
 }>;
 
-export type ResolveSessionListIndexFolderDragEligibilityOptions = Readonly<{
+export type ResolveSessionListItemOrganizationEligibilityOptions = Readonly<{
     foldersFeatureEnabled: boolean;
+    destinationWorkspace?: SessionFolderWorkspaceRefV1 | null;
 }>;
 
 function areMachineDisplayRenderablesEqual(
@@ -180,10 +188,10 @@ export function buildSessionListIndexNodeId(item: SessionListIndexItem): string 
     return `session:${sessionId}`;
 }
 
-export function resolveSessionListIndexFolderDragEligibility(
+export function resolveSessionListItemOrganizationEligibility(
     item: SessionListIndexItem,
-    options: ResolveSessionListIndexFolderDragEligibilityOptions,
-): SessionListIndexFolderDragEligibility {
+    options: ResolveSessionListItemOrganizationEligibilityOptions,
+): SessionListItemOrganizationEligibility {
     const foldersFeatureEnabled = options.foldersFeatureEnabled === true;
     if (!foldersFeatureEnabled) {
         return {
@@ -204,12 +212,24 @@ export function resolveSessionListIndexFolderDragEligibility(
     }
 
     const storageKind = item.storageKind ?? 'persisted';
-    if (storageKind !== 'persisted') {
+    if (!item.serverId || !item.workspace) {
         return {
             canUseSessionFolders: false,
             foldersFeatureEnabled,
             storageKind,
-            reason: 'direct-session',
+            reason: 'scope-unavailable',
+        };
+    }
+
+    if (
+        options.destinationWorkspace
+        && !compareSessionFolderWorkspaceRefs(item.workspace, options.destinationWorkspace)
+    ) {
+        return {
+            canUseSessionFolders: false,
+            foldersFeatureEnabled,
+            storageKind,
+            reason: 'destination-scope-mismatch',
         };
     }
 

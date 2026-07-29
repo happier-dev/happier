@@ -8,6 +8,7 @@ import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draf
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 function resolveResumeSupportSubtitle(availability: ExistingSessionAutomationAuthoringContext['availability']): string | null {
     if (availability.kind !== 'ready') {
@@ -15,8 +16,8 @@ function resolveResumeSupportSubtitle(availability: ExistingSessionAutomationAut
     }
 
     return availability.eligibility.strategy === 'happy_attach'
-        ? t('settingsProviders.resumeSupportSupportedExperimental')
-        : t('settingsProviders.resumeSupportSupported');
+        ? t('settingsAgents.resumeSupportSupportedExperimental')
+        : t('settingsAgents.resumeSupportSupported');
 }
 
 function resolveMcpSelectionCount(selection: SessionAuthoringDraft['mcpSelection']): number {
@@ -63,6 +64,7 @@ export function ExistingSessionAutomationContextSection(props: Readonly<{
 }>): React.JSX.Element | null {
     const { context } = props;
     const capabilities = context.capabilities;
+    const ownerMetadata = readSessionOwnerMetadataView(context.session);
 
     const rows: React.JSX.Element[] = [];
     if (capabilities.backend === 'inherited') {
@@ -109,11 +111,11 @@ export function ExistingSessionAutomationContextSection(props: Readonly<{
         }
     }
     if (capabilities.machine === 'inherited' && context.availability.kind === 'ready') {
-        const displayName = typeof context.session.metadata?.displayName === 'string'
-            ? context.session.metadata.displayName
+        const displayName = typeof ownerMetadata?.displayName === 'string'
+            ? ownerMetadata.displayName
             : null;
-        const host = typeof context.session.metadata?.host === 'string'
-            ? context.session.metadata.host
+        const host = typeof ownerMetadata?.host === 'string'
+            ? ownerMetadata.host
             : null;
         const machineLabel = getMachineDisplayName({
             id: context.availability.machineId,
@@ -186,7 +188,7 @@ export function ExistingSessionAutomationContextSection(props: Readonly<{
             rows.push(
                 <Item
                     key="resume-support"
-                    title={t('settingsProviders.resumeSupportTitle')}
+                    title={t('settingsAgents.resumeSupportTitle')}
                     subtitle={subtitle}
                     mode="info"
                     showChevron={false}

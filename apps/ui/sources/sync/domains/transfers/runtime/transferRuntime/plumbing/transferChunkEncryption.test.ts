@@ -34,4 +34,5 @@ describe('transferChunkEncryption', () => {
         });
         expect(new TextDecoder().decode(decrypted)).toBe(vector.payloadUtf8);
     });
+
 });

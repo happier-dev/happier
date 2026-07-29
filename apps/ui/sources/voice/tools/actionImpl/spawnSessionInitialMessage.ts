@@ -3,7 +3,6 @@ import { normalizeNonEmptyString } from './shared';
 
 export type VoiceInitialMessageCustody = Readonly<{
   initialMessage: string | null;
-  daemonInitialPrompt: string | null;
   initialMessageMetaOverrides: Record<string, unknown> | null;
 }>;
 
@@ -17,7 +16,6 @@ export function resolveVoiceInitialMessageCustody(params: Readonly<{
   if (!initialMessage) {
     return {
       initialMessage: null,
-      daemonInitialPrompt: null,
       initialMessageMetaOverrides: null,
     };
   }
@@ -29,14 +27,8 @@ export function resolveVoiceInitialMessageCustody(params: Readonly<{
     }),
     modelId: params.modelId,
   });
-  const daemonInitialPrompt =
-    initialMessage.startsWith('/') || initialMessageMetaOverrides
-      ? null
-      : initialMessage;
-
   return {
     initialMessage,
-    daemonInitialPrompt,
     initialMessageMetaOverrides,
   };
 }

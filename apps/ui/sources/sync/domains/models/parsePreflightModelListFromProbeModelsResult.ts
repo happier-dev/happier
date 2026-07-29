@@ -6,6 +6,7 @@ export function parsePreflightModelListFromProbeModelsResult(raw: unknown): Pref
     const rec = raw as Record<string, unknown>;
     const modelsRaw = (rec as any).availableModels;
     const supportsFreeformRaw = (rec as any).supportsFreeform;
+    const sourceRaw = typeof rec.source === 'string' ? rec.source : null;
     if (!Array.isArray(modelsRaw)) return null;
 
     const parsed: PreflightModelList = {
@@ -20,8 +21,15 @@ export function parsePreflightModelListFromProbeModelsResult(raw: unknown): Pref
                     : {}),
             })),
         supportsFreeform: Boolean(supportsFreeformRaw),
+        ...(sourceRaw === 'unavailable' ? { unavailable: true } : {}),
     };
 
-    if (parsed.availableModels.length === 0 && parsed.supportsFreeform !== true) return null;
+    if (
+        parsed.availableModels.length === 0
+        && parsed.supportsFreeform !== true
+        && parsed.unavailable !== true
+    ) {
+        return null;
+    }
     return parsed;
 }

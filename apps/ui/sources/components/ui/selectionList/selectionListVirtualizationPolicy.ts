@@ -3,8 +3,10 @@
  *
  * Owns the decision logic that picks between three rendering paths:
  *  - 0 eligible sections → plain ScrollView path
- *  - 1 eligible section → `SelectionListVirtualizedSection` per-section path
- *  - ≥2 eligible OR ≥1 stale-eligible → single flat FlashList path
+ *  - 1 eligible section with no neighboring sections →
+ *    `SelectionListVirtualizedSection` per-section path
+ *  - any eligible section with neighboring sections, or ≥1 stale-eligible →
+ *    single flat virtualized list path
  *
  * No JSX, no React state. The body component imports these predicates and
  * dispatches to the appropriate renderer.
@@ -68,15 +70,15 @@ function countVirtualizationEligibleSections(plan: ReadonlyArray<SectionRenderPl
 
 /**
  * Decide whether the rendered plan contains AT LEAST ONE section that will
- * own its own scroll container (FlashList). When true, the body MUST NOT
- * wrap in an outer ScrollView — FlashList owns the scroll.
+ * own its own scroll container (virtualized list). When true, the body MUST NOT
+ * wrap in an outer ScrollView — virtualized list owns the scroll.
  *
  * RV-9 / FRESH-3 — Previously this predicate returned `false` for
  * MULTI-eligible plans (the body then wrapped the body in ScrollView AND
  * still rendered the first section through `SelectionListVirtualizedSection`,
- * producing a nested FlashList-in-ScrollView anti-pattern). The new
- * single-FlashList multi-section path covers ALL sections in one FlashList,
- * so the predicate now signals "FlashList owns scroll" for any
+ * producing a nested virtualized list-in-ScrollView anti-pattern). The new
+ * single virtualized list multi-section path covers ALL sections in one virtualized list,
+ * so the predicate now signals "virtualized list owns scroll" for any
  * virtualization-eligible plan (single OR multi).
  */
 export function planHasVirtualizedSection(plan: ReadonlyArray<SectionRenderPlan>): boolean {
@@ -101,23 +103,30 @@ export function planHasEligibleStaleDynamicSection(
 
 /**
  * RV-9 / FRESH-3: predicate that decides whether the body collapses ALL
- * sections into a single flat FlashList (true) or keeps the section-scoped
- * `SelectionListVirtualizedSection` path (false). Returns true when 2+
- * sections are virtualization-eligible.
+ * sections into a single flat virtualized list (true) or keeps the section-scoped
+ * `SelectionListVirtualizedSection` path (false).
+ *
+ * A section-scoped virtualized list can own the body scroll only when it is the
+ * body's sole section. If neighboring sections exist, they otherwise sit
+ * outside that scroll owner: keyboard focus can be revealed inside the
+ * virtualized section while the section itself remains clipped below the
+ * body viewport. In that topology the flat virtualized list must own every section,
+ * including non-virtualized neighbors.
  *
  * FR4-3: also returns true when an eligible section is in a stale
  * `dynamicState` (`loading` / `error` with prior options preserved). The
  * single-section `SelectionListVirtualizedSection` path's loading/error
  * branches render through `PlanSuccessRows` (mapped, non-virtualized), so a
- * stale section must go through the flat-FlashList renderer instead — its
- * `flattenRenderPlanForFlashList` already knows how to emit
- * loading-with-stale and error-with-stale rows through the FlashList
+ * stale section must go through the flat-virtualized list renderer instead — its
+ * `flattenRenderPlanForVirtualizedList` already knows how to emit
+ * loading-with-stale and error-with-stale rows through the virtualized list
  * recycler.
  */
-export function planHasMultipleVirtualizedSections(
+export function planRequiresFlatVirtualizedList(
     plan: ReadonlyArray<SectionRenderPlan>,
 ): boolean {
-    if (countVirtualizationEligibleSections(plan) >= 2) return true;
+    if (countVirtualizationEligibleSections(plan) === 0) return false;
+    if (plan.length > 1) return true;
     return planHasEligibleStaleDynamicSection(plan);
 }
 
@@ -125,7 +134,7 @@ export function planHasMultipleVirtualizedSections(
  * Single-virtualized-section helper retained for the single-eligible path.
  * Returns the (at-most-one) section id that should render through
  * `SelectionListVirtualizedSection`. Multi-eligible plans go through the
- * single-FlashList flat path instead and do not consult this helper.
+ * single virtualized list flat path instead and do not consult this helper.
  */
 export function resolveVirtualizedSectionIds(
     plan: ReadonlyArray<SectionRenderPlan>,
@@ -168,7 +177,7 @@ export function maybeWarnAboutMultipleVirtualizedSections(
     // eslint-disable-next-line no-console
     console.warn(
         `[SelectionList] Step has multiple virtualized-eligible sections (${signature}); ` +
-            'collapsing them into a single FlashList for the entire body. Consider whether ' +
+            'collapsing them into a single virtualized list for the entire body. Consider whether ' +
             'these sections can be combined into one or set virtualization: "never" on ' +
             'all-but-one section at the descriptor level.',
     );

@@ -65,6 +65,18 @@ export type AccountSettingsSavedSecretMutation =
       approvedRecipientContractDigest?: string;
     }>
   | Readonly<{
+      kind: 'approveVoiceCredentialRecipientContract';
+      target: Readonly<{
+        settingsKey: 'voice' | 'voiceSettingsV1';
+        providerId: string;
+        credentialSlotId: string;
+        machineId: string | null;
+      }>;
+      expectedSecretId: string;
+      expectedSecretUpdatedAt: number;
+      approvedRecipientContractDigest: string;
+    }>
+  | Readonly<{
       kind: 'removeVoiceCredentialSecret';
       target: Readonly<{
         settingsKey: 'voice' | 'voiceSettingsV1';
@@ -773,6 +785,7 @@ export function applyAccountSettingsSavedSecretMutation(
     && mutationKind !== 'rotateGlobal'
     && mutationKind !== 'delete'
     && mutationKind !== 'replaceVoiceCredentialSecret'
+    && mutationKind !== 'approveVoiceCredentialRecipientContract'
     && mutationKind !== 'removeVoiceCredentialSecret'
   ) {
     throw new AccountSettingsSavedSecretMutationError(
@@ -867,6 +880,40 @@ export function applyAccountSettingsSavedSecretMutation(
             keepPrevious || candidate.id !== mutation.expectedSecretId
           )),
         ]),
+      }),
+    });
+  }
+  if (mutation.kind === 'approveVoiceCredentialRecipientContract') {
+    if (mutation.approvedRecipientContractDigest.trim().length === 0) {
+      throw new AccountSettingsSavedSecretMutationError(
+        'saved_secret_invalid',
+        'Voice credential recipient contract digest is invalid',
+      );
+    }
+    const targetState = readVoiceCredentialTarget(settings, mutation.target);
+    if (targetState.exactSecretId !== mutation.expectedSecretId) {
+      throw new AccountSettingsSavedSecretMutationError(
+        'saved_secret_conflict',
+        'Target-local Voice credential changed',
+      );
+    }
+    findSecret(
+      secrets,
+      mutation.expectedSecretId,
+      mutation.expectedSecretUpdatedAt,
+    );
+    const approved = writeVoiceCredentialTarget({
+      settings,
+      target: mutation.target,
+      state: targetState,
+      secretId: mutation.expectedSecretId,
+      approvedRecipientContractDigest:
+        mutation.approvedRecipientContractDigest,
+    });
+    return Object.freeze({
+      settings: Object.freeze({
+        ...approved,
+        secrets: Object.freeze([...secrets]),
       }),
     });
   }

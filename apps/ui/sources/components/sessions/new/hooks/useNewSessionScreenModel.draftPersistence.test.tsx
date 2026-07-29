@@ -2,12 +2,14 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlushHookEffectsOptions } from '@/dev/testkit';
-import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { buildRememberedEngineSelectionScopeKey } from '@/sync/domains/session/authoring/rememberedEngineSelections';
+import { ProviderConnectionIdSchema, SessionModelSelectionV1Schema } from '@happier-dev/protocol';
+import type { SessionModelProjectionGroup } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import {
     findCheckoutChip as findSelectionListCheckoutChip,
@@ -167,6 +169,7 @@ const platformOsState = vi.hoisted(() => ({
 }));
 const modalShowMock = vi.hoisted(() => vi.fn());
 const modalAlertMock = vi.hoisted(() => vi.fn());
+const modalConfirmMock = vi.hoisted(() => vi.fn(async () => false));
 const openExternalSessionsResumeIdPickerModalMock = vi.hoisted(() => vi.fn<(args: unknown) => Promise<string | null>>(async () => 'session-picked'));
 const fireAndForgetState = vi.hoisted(() => ({
     promises: [] as Promise<unknown>[],
@@ -178,7 +181,49 @@ const featureFlags = vi.hoisted(() => ({
     mcpServersEnabled: false,
     automationsEnabled: false,
     externalSessionsEnabled: false,
+    providersEnabled: false,
 }));
+const describeProviderModelsMock = vi.hoisted(() => vi.fn());
+
+function retainedProviderProjectionGroup(): SessionModelProjectionGroup {
+    const connectionId = ProviderConnectionIdSchema.parse('pc_stale');
+    return {
+        connectionId,
+        providerName: 'Gateway',
+        connectionName: 'Stale cache',
+        connectionRole: 'named',
+        connectionDisplayNameMode: 'custom',
+        connectionRevision: 1,
+        authorization: { authorized: true },
+        manualModelPolicy: 'allowed',
+        supportsFreeformModelIds: true,
+        suppressedConnectedServiceIds: [],
+        modelLoadAction: 'descriptor_absent',
+        rows: [{
+            ref: {
+                agentTargetKey: 'agent:claude',
+                providerConnectionId: connectionId,
+                modelId: 'stale-provider-model',
+            },
+            descriptor: { id: 'stale-provider-model', name: 'Stale Provider model' },
+            sources: { manual: false, static: true, probe: false },
+            confidence: 'verified_static',
+            compatibility: {
+                result: {
+                    status: 'verified',
+                    selectedProtocol: 'openai-responses',
+                    evidence: { sourceUrls: ['https://example.test'], verifiedAt: '2026-07-12' },
+                },
+                compatibilityFingerprint: 'compatibility:v1:stale',
+                confirmed: true,
+            },
+            endpointHealth: 'available',
+            catalog: { stale: false },
+            loadState: 'unknown',
+            visibility: 'visible',
+        }],
+    };
+}
 const persistDraftNowRef = vi.hoisted(() => ({
     current: null as null | (() => void),
 }));
@@ -501,6 +546,7 @@ installNewSessionScreenModelCommonModuleMocks({
             spies: {
                 show: modalShowMock,
                 alert: modalAlertMock,
+                confirm: modalConfirmMock,
             },
         }).module;
     },
@@ -584,6 +630,8 @@ vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
 });
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+    getMachineContributionRegistryProjectionRevision: () => 0,
+    subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machineContributionRegistryProjectionDescribe: (...args: unknown[]) =>
         machineContributionRegistryProjectionDescribeMock(...args),
 }));
@@ -749,9 +797,19 @@ vi.mock('@/components/sessions/new/hooks/useNewSessionWizardProps', () => ({
         agent: {
             setAgentType: params.setAgentType,
             onAgentPickerSelect: params.onAgentPickerSelect,
+            agentPickerOptions: params.agentPickerOptions,
+            modelSelection: params.modelSelection,
+            setModelSelection: params.setModelSelection,
+            providerModelGroups: params.providerModelGroups,
+            providerModelProjectionAuthoritative: params.providerModelProjectionAuthoritative,
+            providerModelProjectionError: params.providerModelProjectionError,
+            retryProviderModelProjection: params.retryProviderModelProjection,
+            experimentalModelConfirmation: params.experimentalModelConfirmation,
         },
         machine: {},
-        footer: {},
+        footer: {
+            canCreate: params.canCreate,
+        },
     }),
 }));
 
@@ -795,8 +853,14 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => {
         if (featureId === 'mcp.servers') return featureFlags.mcpServersEnabled;
         if (featureId === 'sessions.direct') return featureFlags.externalSessionsEnabled;
+        if (featureId === 'providers') return featureFlags.providersEnabled;
         return false;
     },
+}));
+
+vi.mock('@/providers/rpc/client', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/providers/rpc/client')>(),
+    describeProviderModels: (...args: unknown[]) => describeProviderModelsMock(...args),
 }));
 
 vi.mock('@/sync/ops/machineMcpServers', () => ({
@@ -939,6 +1003,8 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         platformOsState.value = 'web';
         modalShowMock.mockReset();
         modalAlertMock.mockReset();
+        modalConfirmMock.mockReset();
+        modalConfirmMock.mockResolvedValue(false);
         openExternalSessionsResumeIdPickerModalMock.mockReset();
         openExternalSessionsResumeIdPickerModalMock.mockResolvedValue('session-picked');
         fireAndForgetState.promises = [];
@@ -954,6 +1020,13 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         featureFlags.mcpServersEnabled = false;
         featureFlags.automationsEnabled = false;
         featureFlags.externalSessionsEnabled = false;
+        featureFlags.providersEnabled = false;
+        describeProviderModelsMock.mockReset();
+        describeProviderModelsMock.mockResolvedValue({
+            status: 'success',
+            agentTargetKey: 'agent:claude',
+            groups: [],
+        });
         persistDraftNowRef.current = null;
         saveNewSessionDraftMock.mockClear();
         clearNewSessionDraftMock.mockClear();
@@ -1249,7 +1322,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
                             providerId: 'codex',
                             title: 'Codex (Projected)',
                             subtitle: null,
-                            providerAgentId: null,
+                            catalogAgentId: null,
                             iconAgentId: null,
                         },
                     },
@@ -1278,7 +1351,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
                         providerId: 'codex',
                         title: options?.serverId === 'server-b' ? 'Codex (Projected B)' : 'Codex (Projected A)',
                         subtitle: null,
-                        providerAgentId: null,
+                        catalogAgentId: null,
                         iconAgentId: null,
                     },
                 },
@@ -1345,7 +1418,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
                             subtitle: null,
                             channel: 'plugin',
                             isBuiltIn: false,
-                            providerAgentId: 'claude',
+                            catalogAgentId: 'claude',
                             iconAgentId: 'claude',
                         },
                     },
@@ -1355,7 +1428,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
                             providerId: 'plugin:acme.review',
                             title: 'Acme Review Backend',
                             subtitle: null,
-                            providerAgentId: 'claude',
+                            catalogAgentId: 'claude',
                             iconAgentId: 'claude',
                         },
                     },
@@ -1384,7 +1457,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
                         providerId: 'codex',
                         title: 'Codex (Projected)',
                         subtitle: null,
-                        providerAgentId: null,
+                        catalogAgentId: null,
                         iconAgentId: null,
                     },
                 },
@@ -1460,6 +1533,158 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect((settingsState as any).lastEngineSelectionsByScopeV1?.[scopeKey]?.acpSessionModeId).toBeNull();
     });
 
+    it('does not expose a retained Provider projection after the spawn-scoped feature decision disables Providers', async () => {
+        settingsState.useEnhancedSessionWizard = true;
+        featureFlags.providersEnabled = true;
+        const retainedGroup = retainedProviderProjectionGroup();
+        const providerProjection = createDeferred<{
+            status: 'success';
+            agentTargetKey: string;
+            groups: readonly SessionModelProjectionGroup[];
+        }>();
+        describeProviderModelsMock.mockReturnValue(providerProjection.promise);
+
+        type CapturedWizardModel = Readonly<{
+            wizardProps?: Readonly<{
+                agent?: Readonly<{
+                    providerModelGroups?: readonly SessionModelProjectionGroup[];
+                    providerModelProjectionAuthoritative?: boolean;
+                    modelSelection?: ReturnType<typeof SessionModelSelectionV1Schema.parse> | null;
+                    setModelSelection?: (selection: ReturnType<typeof SessionModelSelectionV1Schema.parse> | null) => void;
+                }>;
+            }>;
+        }>;
+        const renderedModels: CapturedWizardModel[] = [];
+        const hook = await renderNewSessionScreenModel((nextModel) => {
+            renderedModels.push(nextModel as CapturedWizardModel);
+        });
+        expect(renderedModels.at(-1)?.wizardProps?.agent?.providerModelProjectionAuthoritative).toBe(false);
+
+        providerProjection.resolve({
+            status: 'success',
+            agentTargetKey: 'agent:claude',
+            groups: [retainedGroup],
+        });
+        await settleNewSessionScreenModel();
+        expect(renderedModels.at(-1)?.wizardProps?.agent?.providerModelGroups).toEqual([retainedGroup]);
+        expect(renderedModels.at(-1)?.wizardProps?.agent?.providerModelProjectionAuthoritative).toBe(true);
+
+        const exactSelection = SessionModelSelectionV1Schema.parse({
+            v: 1,
+            updatedAt: 100,
+            ref: {
+                ...retainedGroup.rows[0]?.ref,
+                agentTargetKey: 'backend:claude',
+            },
+        });
+        await act(async () => {
+            renderedModels.at(-1)?.wizardProps?.agent?.setModelSelection?.(exactSelection);
+        });
+        await settleNewSessionScreenModel({ cycles: 2, turns: 2 });
+
+        const disabledRenderStart = renderedModels.length;
+        featureFlags.providersEnabled = false;
+        await hook.rerender();
+        await settleNewSessionScreenModel();
+
+        const disabledRenders = renderedModels.slice(disabledRenderStart);
+        expect(disabledRenders.length).toBeGreaterThan(0);
+        expect(disabledRenders.every((model) => (
+            (model.wizardProps?.agent?.providerModelGroups ?? []).length === 0
+        ))).toBe(true);
+        expect(disabledRenders.every((model) => (
+            model.wizardProps?.agent?.providerModelProjectionAuthoritative === false
+        ))).toBe(true);
+        expect(disabledRenders.at(-1)?.wizardProps?.agent?.modelSelection).toEqual(exactSelection);
+    }, 120_000);
+
+    it('shares the pending experimental-model transaction with compact agent-picker details', async () => {
+        settingsState.useEnhancedSessionWizard = true;
+        featureFlags.providersEnabled = true;
+        const modalResult = createDeferred<boolean>();
+        modalConfirmMock.mockReturnValueOnce(modalResult.promise);
+
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+        await settleNewSessionScreenModel();
+
+        const initialOption = model?.wizardProps?.agent?.agentPickerOptions?.find?.(
+            (option: { id: string }) => option.id === 'backend:claude',
+        );
+        const initialConfirmation = model?.wizardProps?.agent?.experimentalModelConfirmation;
+        expect(initialOption).toBeTruthy();
+        expect(initialConfirmation).toBeTruthy();
+
+        let confirmationResult!: Promise<boolean>;
+        await act(async () => {
+            confirmationResult = initialConfirmation.confirm({
+                kind: 'confirm-experimental',
+                connectionId: ProviderConnectionIdSchema.parse('pc_work'),
+                expectedConnectionRevision: 1,
+                agentTargetKey: initialOption.id,
+                modelId: 'experimental-model',
+                compatibilityFingerprint: 'compatibility:v1:experimental',
+                providerName: 'Gateway',
+                modelName: 'Experimental model',
+            }, vi.fn());
+            await Promise.resolve();
+        });
+        await settleNewSessionScreenModel({ cycles: 1, turns: 1 });
+
+        const pendingConfirmation = model?.wizardProps?.agent?.experimentalModelConfirmation;
+        const pendingOption = model?.wizardProps?.agent?.agentPickerOptions?.find?.(
+            (option: { id: string }) => option.id === initialOption.id,
+        );
+        const detail = pendingOption?.renderDetailContent?.();
+        expect(pendingConfirmation?.pending).toBe(true);
+        expect(model?.wizardProps?.footer?.canCreate).toBe(false);
+        expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
+            authoringCommitPending: true,
+        }));
+        expect(React.isValidElement<{ experimentalConfirmation?: unknown }>(detail)).toBe(true);
+        if (!React.isValidElement<{ experimentalConfirmation?: unknown }>(detail)) {
+            throw new Error('Expected the compact agent picker to render an engine detail');
+        }
+        expect(detail.props.experimentalConfirmation).toBe(pendingConfirmation);
+
+        await act(async () => {
+            modalResult.resolve(false);
+            await confirmationResult;
+        });
+    });
+
+    it('remembers the exact Provider-bound model selection chosen in the enhanced wizard', async () => {
+        const backendTarget = { kind: 'backend' as const, backendId: 'codex' as const };
+        const scopeKey = buildRememberedEngineSelectionScopeKey({ serverId: null, backendTarget });
+        (settingsState as any).rememberLastEngineSelectionsV1 = true;
+        (settingsState as any).useEnhancedSessionWizard = true;
+        persistedDraft.agentType = 'codex';
+        persistedDraft.backendTarget = backendTarget as any;
+        const selection = SessionModelSelectionV1Schema.parse({
+            v: 1,
+            updatedAt: 100,
+            ref: {
+                agentTargetKey: 'backend:codex',
+                providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+                modelId: 'shared-model',
+            },
+        });
+
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => { model = nextModel; });
+        expect(model?.variant).toBe('wizard');
+        expect(typeof model?.wizardProps?.agent?.setModelSelection).toBe('function');
+        await act(async () => {
+            model?.wizardProps?.agent?.setModelSelection?.(selection);
+        });
+        await settleNewSessionScreenModel({ cycles: 2, turns: 2 });
+        standardCleanup();
+
+        expect((settingsState as any).lastEngineSelectionsByScopeV1?.[scopeKey]?.modelSelection).toEqual(selection);
+    });
+
     it('does not remember stale engine state when route params select a different backend', async () => {
         const codexTarget = { kind: 'backend' as const, backendId: 'codex' as const };
         const opencodeTarget = { kind: 'backend' as const, backendId: 'opencode' as const };
@@ -1519,6 +1744,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect(model?.simpleProps?.machineName).toBe('Machine Two');
         expect(typeof model?.simpleProps?.machinePopover?.renderContent).toBe('function');
         expect(model?.simpleProps?.selectedPath).toBe('/repo/custom');
+        expect(useCreateNewSessionArgsRef.current?.launchIntentSignature).toEqual(expect.any(String));
         expect(model?.simpleProps?.checkoutCreationDraft).toEqual({
             kind: 'git_worktree',
             displayName: 'feature/auth',

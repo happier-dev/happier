@@ -43,12 +43,10 @@ vi.mock('@/agents/catalog/catalog', () => ({
   isAgentId: (value: unknown) => value === 'codex',
 }));
 
-vi.mock('@/agents/registry/registryUiBehavior', () => ({
-  resolveAgentUiBehavior: () => ({}),
-  resolveAgentUiBehaviorFromFlavor: () => ({}),
-  supportsDetectedMcpConfigScan: () => false,
-  supportsEditableSessionGoals: () => false,
-}));
+vi.mock('@/agents/registry/registryUiBehavior', async () => {
+  const { createRegistryUiBehaviorModuleMock } = await import('@/dev/testkit/mocks/registryUiBehavior');
+  return createRegistryUiBehaviorModuleMock();
+});
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
   usePreferredServerIdForSession: () => 'server-1',

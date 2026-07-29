@@ -31,10 +31,17 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: Platform.select({ ios: 13, default: 13 }),
         lineHeight: 18,
     },
+    flooredReason: {
+        color: theme.colors.text.secondary,
+        fontSize: Platform.select({ ios: 12, default: 12 }),
+        lineHeight: 16,
+        marginTop: 6,
+    },
 }));
 
 export type ActionSettingsTargetModeControlProps = Readonly<{
     controlState: ActionSettingsTargetControlState;
+    accessibilityLabel: string;
     disabled?: boolean;
     layout?: 'inline' | 'stacked';
     testIDPrefix: string;
@@ -43,11 +50,20 @@ export type ActionSettingsTargetModeControlProps = Readonly<{
 
 export const ActionSettingsTargetModeControl = React.memo(function ActionSettingsTargetModeControl(props: ActionSettingsTargetModeControlProps) {
     const styles = stylesheet;
-    const approvalTabs = React.useMemo<readonly SegmentedTab<ActionSettingsApprovalControlValue>[]>(() => [
-        { id: 'off', label: t('settingsActions.modes.off') },
-        { id: 'ask_first', label: t('settingsActions.modes.askFirst') },
-        { id: 'allowed', label: t('settingsActions.modes.allowed') },
-    ], []);
+    // CON-5: when the action is floored on the agent surface, the `allowed` option is forbidden (the
+    // policy requires human consent), so it is dropped from the segmented control and a reason is
+    // shown below. `ask_first` becomes the lowest selectable state.
+    const floored = props.controlState.kind === 'approval' && props.controlState.floored === true;
+    const approvalTabs = React.useMemo<readonly SegmentedTab<ActionSettingsApprovalControlValue>[]>(() => {
+        const tabs: SegmentedTab<ActionSettingsApprovalControlValue>[] = [
+            { id: 'off', label: t('settingsActions.modes.off') },
+            { id: 'ask_first', label: t('settingsActions.modes.askFirst') },
+        ];
+        if (!floored) {
+            tabs.push({ id: 'allowed', label: t('settingsActions.modes.allowed') });
+        }
+        return tabs;
+    }, [floored]);
 
     if (props.controlState.kind === 'unavailable') {
         return (
@@ -61,6 +77,7 @@ export const ActionSettingsTargetModeControl = React.memo(function ActionSetting
         return (
             <Switch
                 compact
+                accessibilityLabel={props.accessibilityLabel}
                 disabled={props.disabled}
                 testID={`${props.testIDPrefix}:enabled`}
                 value={props.controlState.value === 'on'}
@@ -86,6 +103,11 @@ export const ActionSettingsTargetModeControl = React.memo(function ActionSetting
                 activeTabId={props.controlState.value}
                 onSelectTab={props.onChange}
             />
+            {floored ? (
+                <Text testID={`${props.testIDPrefix}:floored-reason`} style={styles.flooredReason}>
+                    {t('settingsActions.reasons.requiredByAgentPolicy')}
+                </Text>
+            ) : null}
         </View>
     );
 });

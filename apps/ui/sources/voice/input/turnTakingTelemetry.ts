@@ -12,7 +12,8 @@ import type { TurnEndpointSignalSource } from '@/voice/runtime/input/TurnEndpoin
  *
  * DELIBERATE non-goals (kept off this path on purpose):
  *  - NO high-frequency level / amplitude / RMS data. The acoustic level lives on
- *    a Reanimated `SharedValue` (`voiceLevelShared`) and never enters telemetry.
+ *    the runtime level store and its Reanimated SharedValue bridge; it never
+ *    enters telemetry.
  *  - NO `console` logging path. Discrete events only; a dev snapshot accessor is
  *    the inspection surface.
  */

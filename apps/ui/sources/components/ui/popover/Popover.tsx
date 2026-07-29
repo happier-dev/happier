@@ -30,6 +30,7 @@ import type {
     ResolvedPopoverPlacement,
 } from './_types';
 import { getFallbackBoundaryRect, measureInWindow, measureLayoutRelativeTo } from './measure';
+import { resolvePortalRelativeAnchorRect } from './resolvePortalRelativeAnchor';
 import { resolvePlacement } from './positioning';
 import { PopoverBackdrop } from './backdrop';
 import { tryRenderWebPortal, useNativeOverlayPortalNode } from './portal';
@@ -53,6 +54,14 @@ type WindowRect = PopoverWindowRect;
 
 const RECT_UPDATE_TOLERANCE = 1;
 const NATIVE_PORTAL_SHADOW_OUTSET = 16;
+const WEB_POPOVER_FOCUSABLE_SELECTOR = [
+    'button:not([disabled])',
+    '[href]',
+    'input:not([disabled])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])',
+].join(',');
 
 function readNumericStyleValue(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -124,6 +133,8 @@ function areWindowRectsEqual(a: WindowRect | null, b: WindowRect | null): boolea
 
 type PopoverCommonProps = Readonly<{
     open: boolean;
+    /** Web-only: move focus to the first interactive descendant after the popover opens. */
+    autoFocusOnOpen?: boolean;
     anchorRef?: React.RefObject<any>;
     anchor?: PopoverAnchor;
     focusReturnRef?: React.RefObject<any>;
@@ -203,6 +214,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         children,
     } = props;
     const keyboardBottomInsetProp = props.keyboardBottomInset;
+    const autoFocusOnOpen = props.autoFocusOnOpen === true;
     const resolvedAnchorMode: 'view' | 'rect' = anchorProp ? anchorProp.kind : 'view';
     const emptyRefStable = React.useRef(null);
     const anchorRef: React.RefObject<any> = (() => {
@@ -370,6 +382,48 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         return null;
     }, [getDomElementFromNode, shouldPortalWeb]);
 
+    React.useEffect(() => {
+        if (Platform.OS !== 'web' || !open || !autoFocusOnOpen || typeof document === 'undefined') {
+            return;
+        }
+
+        let cancelled = false;
+        let retryTimer: ReturnType<typeof setTimeout> | null = null;
+        let attemptsRemaining = 5;
+
+        const focusFirstInteractiveDescendant = () => {
+            if (cancelled) return;
+
+            const content = getContentDomElement();
+            const activeElement = document.activeElement;
+            if (content && activeElement && content.contains(activeElement)) {
+                return;
+            }
+
+            const target = content
+                ? Array.from(content.querySelectorAll<HTMLElement>(WEB_POPOVER_FOCUSABLE_SELECTOR)).find((candidate) => (
+                    candidate.getAttribute('aria-disabled') !== 'true'
+                    && !candidate.hasAttribute('disabled')
+                )) ?? null
+                : null;
+            if (target) {
+                target.focus();
+                return;
+            }
+
+            if (attemptsRemaining > 0) {
+                attemptsRemaining -= 1;
+                retryTimer = setTimeout(focusFirstInteractiveDescendant, 16);
+            }
+        };
+
+        focusFirstInteractiveDescendant();
+        return () => {
+            cancelled = true;
+            if (retryTimer !== null) clearTimeout(retryTimer);
+        };
+    }, [autoFocusOnOpen, getContentDomElement, open]);
+
     const getBoundaryDomElement = React.useCallback((): HTMLElement | null => {
         const boundaryNode = boundaryRef?.current as any;
         if (!boundaryNode) return null;
@@ -465,7 +519,8 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     const [boundaryRectState, setBoundaryRectState] = React.useState<WindowRect | null>(null);
     const [contentRectState, setContentRectState] = React.useState<WindowRect | null>(null);
     const isMountedRef = React.useRef(true);
-    React.useEffect(() => {
+    React.useLayoutEffect(() => {
+        isMountedRef.current = true;
         return () => {
             isMountedRef.current = false;
         };
@@ -605,39 +660,18 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 const deltaRect = deltaResult?.deltaRect ?? null;
                 const anchorWindowRect = deltaResult?.anchorWindowRect ?? null;
 
-                // Choose the portal-relative rect that is most plausible for the portal root.
-                //
-                // iOS/react-native-screens quirk:
-                // Some contained presentations can report anchor coordinates that are already
-                // portal-relative via `measureInWindow`. If we blindly subtract the portal root
-                // window origin, the popover ends up rendered too high (double-applied offset).
-                //
-                // When `measureLayout` is available (portal-relative by definition), use it as an
-                // arbiter: whichever candidate better matches the layout-based measurement wins.
-                const chosen = (() => {
-                    // If we don't have a layout-based measurement to arbitrate, but we do have a known
-                    // portal layout, detect the "double offset" case by looking for negative deltas.
-                    // In contained iOS presentations, `measureInWindow` can sometimes return portal-
-                    // relative coords already; subtracting the portal root origin yields negatives and
-                    // clamps the popover to the top of the portal.
-                    if (!layoutRect && hasPortalLayout && deltaRect && anchorWindowRect) {
-                        const tolerance = 16;
-                        const deltaLooksDoubleOffset = deltaRect.x < -tolerance || deltaRect.y < -tolerance;
-                        if (deltaLooksDoubleOffset && withinPortalLayout(anchorWindowRect)) {
-                            return anchorWindowRect;
-                        }
-                    }
-                    if (deltaRect && withinPortalLayout(deltaRect)) {
-                        if (layoutRect && withinPortalLayout(layoutRect) && anchorWindowRect && withinPortalLayout(anchorWindowRect)) {
-                            const errDelta = Math.abs(deltaRect.x - layoutRect.x) + Math.abs(deltaRect.y - layoutRect.y);
-                            const errRaw = Math.abs(anchorWindowRect.x - layoutRect.x) + Math.abs(anchorWindowRect.y - layoutRect.y);
-                            if (keyboardHeight <= 0 && errRaw + 8 < errDelta) return anchorWindowRect;
-                        }
-                        return deltaRect;
-                    }
-                    if (layoutRect && withinPortalLayout(layoutRect)) return layoutRect;
-                    return deltaRect ?? layoutRect;
-                })();
+                // Choose the portal-relative anchor rect. The iOS `measureLayout` arbiter is
+                // intentionally scoped to iOS; on Android the window-delta is authoritative.
+                // See `resolvePortalRelativeAnchorRect` for the full coordinate-space rationale.
+                const chosen = resolvePortalRelativeAnchorRect({
+                    deltaRect,
+                    layoutRect,
+                    anchorWindowRect,
+                    hasPortalLayout,
+                    withinPortalLayout,
+                    keyboardHeight,
+                    platformOS: Platform.OS,
+                });
 
                 if (chosen) {
                     anchorRect = chosen;
@@ -807,7 +841,22 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             // In some test/non-browser environments, rAF may be missing.
             // Prefer rAF when available so layout has a chance to settle.
             if (typeof requestAnimationFrame === 'function') {
-                requestAnimationFrame(cb);
+                let didRun = false;
+                let fallbackTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+                    fallbackTimer = null;
+                    if (didRun) return;
+                    didRun = true;
+                    cb();
+                }, 50);
+                requestAnimationFrame(() => {
+                    if (fallbackTimer !== null) {
+                        clearTimeout(fallbackTimer);
+                        fallbackTimer = null;
+                    }
+                    if (didRun) return;
+                    didRun = true;
+                    cb();
+                });
                 return;
             }
             if (typeof queueMicrotask === 'function') {
@@ -1158,18 +1207,38 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         if (!open) return;
         if (!shouldPortalWeb) return;
 
-        const contentEl = getContentDomElement();
-        if (!contentEl) return;
-        if (typeof contentEl.getBoundingClientRect !== 'function') return;
-
         let isCancelled = false;
+        let cancelScheduledMeasure: (() => void) | null = null;
+        let resizeObserver: ResizeObserver | null = null;
+        let observedContentEl: HTMLElement | null = null;
+
+        const observeContent = (contentEl: HTMLElement) => {
+            if (observedContentEl === contentEl) return;
+            resizeObserver?.disconnect();
+            resizeObserver = null;
+            observedContentEl = contentEl;
+            try {
+                resizeObserver = new ResizeObserver(() => {
+                    measure();
+                });
+                resizeObserver.observe(contentEl);
+            } catch {
+                // Best-effort only: ResizeObserver isn't available in every environment.
+            }
+        };
 
         const measure = () => {
-            if (isCancelled) return;
+            if (isCancelled) return false;
+            // A web portal is committed outside the source subtree. The first
+            // layout effect can run before that DOM node is discoverable, so
+            // resolve it on every bounded retry instead of failing permanently.
+            const contentEl = getContentDomElement();
+            if (!contentEl || typeof contentEl.getBoundingClientRect !== 'function') return false;
+            observeContent(contentEl);
             const rect = contentEl.getBoundingClientRect();
             const width = rect?.width;
             const height = rect?.height;
-            if (![width, height].every((n) => Number.isFinite(n)) || width <= 0 || height <= 0) return;
+            if (![width, height].every((n) => Number.isFinite(n)) || width <= 0 || height <= 0) return false;
 
             const next: WindowRect = { x: 0, y: 0, width, height };
             // Avoid rerender loops from tiny float changes
@@ -1180,29 +1249,46 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 }
                 return prev;
             });
+            return true;
         };
 
-        // Read after initial paint so the element has a stable box even when portaled.
-        const raf = (globalThis.requestAnimationFrame ?? ((cb: FrameRequestCallback) => {
-            cb(0);
-            return 0;
-        }))(measure);
+        const scheduleMeasure = (attempt: number) => {
+            if (isCancelled) return;
+            let didRun = false;
+            let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+            let frameHandle: number | null = null;
+            const runOnce = () => {
+                if (didRun || isCancelled) return;
+                didRun = true;
+                if (fallbackTimer !== null) clearTimeout(fallbackTimer);
+                fallbackTimer = null;
+                if (frameHandle !== null && typeof globalThis.cancelAnimationFrame === 'function') {
+                    globalThis.cancelAnimationFrame(frameHandle);
+                }
+                frameHandle = null;
+                cancelScheduledMeasure = null;
+                if (!measure() && attempt < 5) scheduleMeasure(attempt + 1);
+            };
+            if (typeof globalThis.requestAnimationFrame === 'function') {
+                frameHandle = globalThis.requestAnimationFrame(runOnce);
+                fallbackTimer = setTimeout(runOnce, 50);
+            } else {
+                fallbackTimer = setTimeout(runOnce, 0);
+            }
+            cancelScheduledMeasure = () => {
+                didRun = true;
+                if (fallbackTimer !== null) clearTimeout(fallbackTimer);
+                if (frameHandle !== null && typeof globalThis.cancelAnimationFrame === 'function') {
+                    globalThis.cancelAnimationFrame(frameHandle);
+                }
+            };
+        };
 
-        let resizeObserver: ResizeObserver | null = null;
-        try {
-            resizeObserver = new ResizeObserver(() => {
-                measure();
-            });
-            resizeObserver.observe(contentEl);
-        } catch {
-            // Best-effort only: ResizeObserver isn't available in every environment.
-        }
+        scheduleMeasure(0);
 
         return () => {
             isCancelled = true;
-            if (typeof globalThis.cancelAnimationFrame === 'function') {
-                globalThis.cancelAnimationFrame(raf);
-            }
+            cancelScheduledMeasure?.();
             resizeObserver?.disconnect();
         };
     }, [getContentDomElement, open, shouldPortalWeb]);
@@ -1211,6 +1297,14 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         // Expo Router (Vaul/Radix) modals on web often install document-level scroll-lock listeners
         // that `preventDefault()` wheel/touch scroll, which breaks scrolling inside portaled popovers.
         // Stopping propagation here keeps the event within the popover subtree so native scrolling works.
+        if (Platform.OS !== 'web') return;
+        if (!shouldPortalWeb) return;
+        if (typeof event?.stopPropagation === 'function') event.stopPropagation();
+    }, [shouldPortalWeb]);
+    const stopPortaledInteractionPropagationOnWeb = React.useCallback((event: any) => {
+        // React events bubble through the logical component tree even when the popover is rendered
+        // into a DOM portal. If an option closes and unmounts the portal during the same click,
+        // Expo Router's parent modal layer can otherwise receive that click and dismiss the route.
         if (Platform.OS !== 'web') return;
         if (!shouldPortalWeb) return;
         if (typeof event?.stopPropagation === 'function') event.stopPropagation();
@@ -1271,6 +1365,9 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     const backdropAnchorOverlay = typeof backdrop === 'object' && backdrop ? backdrop.anchorOverlay : undefined;
     const backdropStyle = typeof backdrop === 'object' && backdrop ? backdrop.style : undefined;
     const closeOnBackdropPan = typeof backdrop === 'object' && backdrop ? (backdrop.closeOnPan ?? false) : false;
+    const backdropPointerEventsEnabled =
+        !overlayPresence.exiting
+        && (!(shouldPortalWeb || shouldPortalNative) || portalOpacity !== 0);
 
     useEscapeLayer({
         enabled: Platform.OS === 'web' && open && typeof onRequestClose === 'function',
@@ -1344,6 +1441,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 backdrop={backdropEnabled ? backdrop : false}
                 backdropBlocksOutsidePointerEvents={backdropBlocksOutsidePointerEvents}
                 backdropOutsidePointerEventsMode={backdropOutsidePointerEventsMode}
+                backdropPointerEventsEnabled={backdropPointerEventsEnabled}
                 backdropEffect={resolvedBackdropEffect}
                 backdropBlurOnWeb={backdropBlurOnWeb}
                 backdropSpotlight={backdropSpotlight}
@@ -1367,7 +1465,13 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             <ViewWithWheel
                 ref={contentContainerRef}
                 {...(shouldPortalWeb
-                    ? ({ onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb } as any)
+                    ? ({
+                        onClick: stopPortaledInteractionPropagationOnWeb,
+                        onPointerDown: stopPortaledInteractionPropagationOnWeb,
+                        onTouchStart: stopPortaledInteractionPropagationOnWeb,
+                        onWheel: stopScrollEventPropagationOnWeb,
+                        onTouchMove: stopScrollEventPropagationOnWeb,
+                    } as any)
                     : {})}
                 {...(Platform.OS === 'web' && shouldPortalWeb
                     ? ({ nativeID: portalIdRef.current, testID: portalIdRef.current } as any)

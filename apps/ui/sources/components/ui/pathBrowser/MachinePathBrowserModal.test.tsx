@@ -10,6 +10,7 @@ import {
     PATH_BROWSER_MODAL_TEST_ID,
 } from './pathBrowserTestIds';
 import { flushHookEffects, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 
 
@@ -76,6 +77,17 @@ const machineRipgrepMock = vi.hoisted(() => vi.fn<(machineId: string, args: read
 const modalPromptMock = vi.hoisted(() => vi.fn<(...args: any[]) => Promise<string | null>>(async () => null));
 const modalAlertMock = vi.hoisted(() => vi.fn());
 const itemRenderCounts = vi.hoisted(() => new Map<string, number>());
+
+const { module: capturedLegendList } = createCapturingLegendListMock({
+    renderItems: true,
+    refHandle: {
+        scrollToIndex: flatListScrollToIndexMock,
+        scrollToOffset: vi.fn(),
+    },
+});
+vi.mock('@legendapp/list/react-native', () => ({
+    LegendList: capturedLegendList.LegendList,
+}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');

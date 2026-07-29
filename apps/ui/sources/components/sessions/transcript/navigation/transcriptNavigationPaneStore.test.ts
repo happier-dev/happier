@@ -1,31 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { TranscriptNavigationEntry } from './transcriptNavigationTypes';
 import {
+    awaitTranscriptNavigationJumpHandler,
     createEmptyTranscriptNavigationPaneSnapshot,
     createTranscriptNavigationPaneStore,
+    readTranscriptNavigationJumpHandler,
+    transcriptNavigationPaneStore,
 } from './transcriptNavigationPaneStore';
-
-function entry(overrides: Partial<TranscriptNavigationEntry> & Pick<TranscriptNavigationEntry, 'id' | 'sessionId' | 'seq'>): TranscriptNavigationEntry {
-    const { id, sessionId, seq, ...rest } = overrides;
-    return {
-        id,
-        sessionId,
-        seq,
-        routeMessageId: null,
-        transcriptBlockIndex: null,
-        kind: 'user-turn',
-        role: 'user',
-        label: id,
-        promptPreview: id,
-        responsePreview: null,
-        createdAtMs: null,
-        pinned: false,
-        pinnedAtMs: null,
-        loaded: true,
-        ...rest,
-    };
-}
 
 describe('transcript navigation pane store', () => {
     it('starts with an empty per-session snapshot', () => {
@@ -35,26 +16,25 @@ describe('transcript navigation pane store', () => {
         expect(store.get('s1')).toBe(store.get('s1'));
     });
 
-    it('notifies subscribers when a session snapshot changes and resets on null', () => {
+    it('carries only the session jump handler, never entries or the reader position', () => {
+        const store = createTranscriptNavigationPaneStore();
+        const onEntryPress = vi.fn();
+
+        store.set('s1', { onEntryPress });
+
+        expect(Object.keys(store.get('s1')).sort()).toEqual(['onEntryPress', 'sessionId']);
+        expect(store.get('s1').onEntryPress).toBe(onEntryPress);
+    });
+
+    it('notifies subscribers when a session handler changes and resets on null', () => {
         const store = createTranscriptNavigationPaneStore();
         const listener = vi.fn();
         const unsubscribe = store.subscribe('s1', listener);
-        const entries = [entry({ id: 'turn-1', sessionId: 's1', seq: 1 })];
         const onEntryPress = vi.fn();
 
-        store.set('s1', {
-            activeEntryId: 'turn-1',
-            entries,
-            onEntryPress,
-        });
+        store.set('s1', { onEntryPress });
 
         expect(listener).toHaveBeenCalledTimes(1);
-        expect(store.get('s1')).toMatchObject({
-            activeEntryId: 'turn-1',
-            entries,
-            sessionId: 's1',
-        });
-        expect(store.get('s1').onEntryPress).toBe(onEntryPress);
 
         store.set('s1', null);
 
@@ -62,11 +42,7 @@ describe('transcript navigation pane store', () => {
         expect(store.get('s1')).toEqual(createEmptyTranscriptNavigationPaneSnapshot('s1'));
 
         unsubscribe();
-        store.set('s1', {
-            activeEntryId: null,
-            entries,
-            onEntryPress,
-        });
+        store.set('s1', { onEntryPress });
         expect(listener).toHaveBeenCalledTimes(2);
     });
 
@@ -74,16 +50,11 @@ describe('transcript navigation pane store', () => {
         const store = createTranscriptNavigationPaneStore();
         const s1Listener = vi.fn();
         const s2Listener = vi.fn();
-        const entries = [entry({ id: 'turn-1', sessionId: 's1', seq: 1 })];
 
         store.subscribe('s1', s1Listener);
         store.subscribe('s2', s2Listener);
 
-        store.set('s1', {
-            activeEntryId: null,
-            entries,
-            onEntryPress: vi.fn(),
-        });
+        store.set('s1', { onEntryPress: vi.fn() });
 
         expect(s1Listener).toHaveBeenCalledTimes(1);
         expect(s2Listener).not.toHaveBeenCalled();
@@ -91,29 +62,38 @@ describe('transcript navigation pane store', () => {
     });
 });
 
-describe('transcript navigation pane subscriber signal', () => {
-    it('reports per-session subscriber presence reactively as consumers attach and detach', () => {
-        const store = createTranscriptNavigationPaneStore();
-        const countListener = vi.fn();
+describe('awaitTranscriptNavigationJumpHandler', () => {
+    it('yields a task before taking an already-registered handler so a reveal can commit first', async () => {
+        transcriptNavigationPaneStore.set('await-1', null);
+        const onEntryPress = vi.fn();
+        transcriptNavigationPaneStore.set('await-1', { onEntryPress });
 
-        expect(store.hasSubscribers('s1')).toBe(false);
-        const stopCountWatch = store.subscribeSubscriberPresence('s1', countListener);
+        const pending = awaitTranscriptNavigationJumpHandler('await-1');
+        let settled = false;
+        void pending.then(() => {
+            settled = true;
+        });
 
-        const unsubscribeA = store.subscribe('s1', vi.fn());
-        expect(store.hasSubscribers('s1')).toBe(true);
-        expect(countListener).toHaveBeenCalledTimes(1);
+        expect(settled).toBe(false);
+        expect(await pending).toBe(onEntryPress);
+        transcriptNavigationPaneStore.set('await-1', null);
+    });
 
-        const unsubscribeB = store.subscribe('s1', vi.fn());
-        expect(store.hasSubscribers('s1')).toBe(true);
+    it('resolves with the handler a revealed host publishes after the press', async () => {
+        transcriptNavigationPaneStore.set('await-2', null);
+        expect(readTranscriptNavigationJumpHandler('await-2')).toBeNull();
 
-        unsubscribeA();
-        expect(store.hasSubscribers('s1')).toBe(true);
-        unsubscribeB();
-        expect(store.hasSubscribers('s1')).toBe(false);
-        expect(countListener).toHaveBeenCalledTimes(countListener.mock.calls.length);
-        expect(countListener.mock.calls.length).toBeGreaterThanOrEqual(2);
+        const pending = awaitTranscriptNavigationJumpHandler('await-2');
+        const onEntryPress = vi.fn();
+        transcriptNavigationPaneStore.set('await-2', { onEntryPress });
 
-        stopCountWatch();
-        expect(store.hasSubscribers('s2')).toBe(false);
+        expect(await pending).toBe(onEntryPress);
+        transcriptNavigationPaneStore.set('await-2', null);
+    });
+
+    it('gives up with null once the wait budget expires so the press can report not-found', async () => {
+        transcriptNavigationPaneStore.set('await-3', null);
+
+        expect(await awaitTranscriptNavigationJumpHandler('await-3', { timeoutMs: 0 })).toBeNull();
     });
 });

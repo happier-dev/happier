@@ -1,5 +1,7 @@
 import type { Settings } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { normalizeTrimmedString } from '@/sync/domains/session/listing/normalizeTrimmedString';
 import { createReducer } from '@/sync/reducer/reducer';
 import type { StorageState } from '@/sync/store/types';
 import type { StoreApi, UseBoundStore } from 'zustand';
@@ -33,7 +35,20 @@ const defaultProfile: Profile = Object.freeze({
     linkedProviders: [],
     connectedServices: [],
     connectedServicesV2: [],
+    connectedServiceCredentialRevisionsV1: [],
+    connectedAccountsV4: [],
+    connectedAccountGroupsV4: [],
 });
+
+const buildSessionListReachabilityRenderableKey: StorageModule['buildSessionListReachabilityRenderableKey'] = (
+    serverId,
+    sessionId,
+) => {
+    const normalizedServerId = normalizeTrimmedString(serverId);
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    if (!normalizedServerId || !normalizedSessionId) return null;
+    return `${normalizedServerId}\u0000${normalizedSessionId}`;
+};
 
 function resolveMutableSetterFactory(options?: StorageRuntimeOptions): StorageMutableSetterFactory {
     return options?.createMutableSetter ?? createDefaultMutableSetter;
@@ -71,6 +86,7 @@ export function createStorageModuleStub<TOverrides extends object>(
     const allSessionListAttentionRows = [] as ReturnType<StorageModule['useAllSessionListAttentionRows']>;
     const sessionTranscriptIds = [] as string[];
     const sessionMessagesById = {} as ReturnType<StorageModule['useSessionMessagesById']>;
+    const messagesByRefs = [] as ReturnType<StorageModule['useMessagesByRefs']>;
     const sessionMessagesReducerState = createReducer();
     const sessionListRenderablesById = {} as ReturnType<StorageModule['useSessionListRenderablesById']>;
     const sessionListRowStateByServerId = {} as ReturnType<StorageModule['useSessionListRowStateByServerId']>;
@@ -112,6 +128,10 @@ export function createStorageModuleStub<TOverrides extends object>(
         useLocalSetting,
         useLocalSettingMutable,
         useActiveServerAccountScope: () => null,
+        useSessionLastMobileSurface: () => null,
+        usePersistSessionLastMobileSurface: () => () => undefined,
+        useProjectLastMobileSurface: () => null,
+        usePersistProjectLastMobileSurface: () => () => undefined,
         useProfile: () => store.getState().profile ?? defaultProfile,
         useIsDataReady: () => true,
         useRealtimeStatus: () => 'connected',
@@ -119,6 +139,7 @@ export function createStorageModuleStub<TOverrides extends object>(
         useSessionMessages: () => ({ messages: [], isLoaded: true } as const),
         useSessionMessagesReducerState: () => sessionMessagesReducerState,
         useSessionMessagesById: () => sessionMessagesById,
+        useMessagesByRefs: () => messagesByRefs,
         useSessionMessagesVersion: () => 0,
         useSessionTranscriptIds: () => ({ ids: sessionTranscriptIds, isLoaded: true } as const),
         useSessionVisibleReadSeq: () => 0,
@@ -127,10 +148,12 @@ export function createStorageModuleStub<TOverrides extends object>(
             latestReadyEventAt: null,
         }),
         useSessionUsage: () => null,
+        useSessionProjectScmSnapshot: () => null,
         useSessionSubagentSourceMessages: () => [],
         useMachineCliDetectionTarget: () => ({ daemonStateVersion: 0, isOnline: false }),
         useSessionForkSupportSource: () => null,
         useSessionChatFooterState: () => null,
+        useSessionCatchingUpNewer: () => false,
         useHasUnreadMessages: () => false,
         useSessionLatestThinkingMessageActivityAtMs: () => null,
         useSessionListMeaningfulActivityAt: () => null,
@@ -156,13 +179,17 @@ export function createStorageModuleStub<TOverrides extends object>(
         },
         useSessionListRenderable: () => null,
         useSessionListRenderableWithServerScope: () => null,
+        buildSessionListReachabilityRenderableKey,
         useSessionListReachabilityRenderablesForItems: () => new Map(),
         useSessionListRowRenderablesForItems: () => new Map(),
         useSessionListRenderablesById: () => sessionListRenderablesById,
         useSessionListRowStateByServerId: () => sessionListRowStateByServerId,
         useSessionListIndexByServerId: () => sessionListIndexByServerId,
+        useSessionOrganizationProjection: () => null,
         useArtifacts: () => [],
         useOpenApprovalSessionIds: () => [],
+        useOpenApprovalArtifactsForSession: () => [],
+        useEnabledAutomationsCountForSession: () => 0,
         useWorkspaceReviewCommentsDrafts: () => [],
         useMachineListByServerId: () => ({}),
         useMachineListStatusByServerId: () => ({}),
@@ -185,6 +212,7 @@ export function createStorageModuleStub<TOverrides extends object>(
             lastDisconnectedAt: null,
             lastErrorMessage: null,
         }),
+        useEndpointStatus: () => 'online',
         useSyncError: () => null,
     } satisfies Partial<StorageModule>;
 
@@ -270,6 +298,7 @@ export function createStorageStoreMock(state: Partial<StorageState>): UseBoundSt
         sessionMessages: {},
         sessionPending: {},
         sessionListRenderables: {},
+        sessionTailContiguousFloorSeq: {},
         ...state,
         localSettings: state.localSettings ?? localSettingsDefaults,
     } as StorageState;
@@ -280,6 +309,38 @@ export function createStorageStoreMock(state: Partial<StorageState>): UseBoundSt
         {
             getState: () => snapshot,
             getInitialState: () => snapshot,
+            setState: () => undefined,
+            subscribe: () => () => undefined,
+            destroy: () => undefined,
+        } satisfies Pick<StoreApi<StorageState>, 'getState' | 'getInitialState' | 'setState' | 'subscribe'> & {
+            destroy: () => void;
+        },
+    );
+}
+
+export function createLiveStorageStoreMock(readState: () => Partial<StorageState>): UseBoundStore<StoreApi<StorageState>> {
+    const getSnapshot = (): StorageState => {
+        const state = readState();
+        return {
+            sessions: {},
+            machines: {},
+            sessionMessages: {},
+            sessionPending: {},
+            sessionListRenderables: {},
+            sessionTailContiguousFloorSeq: {},
+            ...state,
+            localSettings: state.localSettings ?? localSettingsDefaults,
+        } as StorageState;
+    };
+
+    return Object.assign(
+        ((selector?: (value: StorageState) => unknown) => {
+            const snapshot = getSnapshot();
+            return typeof selector === 'function' ? selector(snapshot) : snapshot;
+        }) as UseBoundStore<StoreApi<StorageState>>,
+        {
+            getState: getSnapshot,
+            getInitialState: getSnapshot,
             setState: () => undefined,
             subscribe: () => () => undefined,
             destroy: () => undefined,

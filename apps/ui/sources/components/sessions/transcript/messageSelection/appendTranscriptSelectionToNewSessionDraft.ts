@@ -40,7 +40,7 @@ function createNewSessionDraft(params: Readonly<{
         selectedSecretId: null,
         agentType: DEFAULT_AGENT_ID,
         permissionMode: 'default',
-        modelMode: 'default',
+        modelSelection: null,
         acpSessionModeId: null,
         ...(params.sourceServerId ? { targetServerId: params.sourceServerId } : {}),
         updatedAt: params.updatedAt,

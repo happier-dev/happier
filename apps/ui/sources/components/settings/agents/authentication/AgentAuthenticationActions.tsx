@@ -1,0 +1,53 @@
+import * as React from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { useUnistyles } from 'react-native-unistyles';
+
+import { Item } from '@/components/ui/lists/Item';
+import { t } from '@/text';
+
+export const AgentAuthenticationActions = React.memo(function AgentAuthenticationActions(props: Readonly<{
+    canCheckNow: boolean;
+    canLaunchLogin: boolean;
+    loginActionKind: 'login' | 'reauthenticate';
+    docsUrl?: string | null;
+    onCheckNow: () => void;
+    onLaunchLogin: () => void;
+}>) {
+    const { theme } = useUnistyles();
+    return (
+        <>
+            {props.canLaunchLogin ? (
+                <Item
+                    testID="settings-provider-auth-login"
+                    title={props.loginActionKind === 'reauthenticate'
+                        ? t('settingsAgents.authentication.reauthenticateTitle')
+                        : t('settingsAgents.authentication.logInTitle')}
+                    subtitle={props.loginActionKind === 'reauthenticate'
+                        ? t('settingsAgents.authentication.reauthenticateSubtitle')
+                        : t('settingsAgents.authentication.logInSubtitle')}
+                    icon={<Ionicons name="log-in-outline" size={22} color={theme.colors.text.secondary} />}
+                    onPress={props.onLaunchLogin}
+                />
+            ) : null}
+            {props.canCheckNow ? (
+                <Item
+                    testID="settings-provider-auth-check-now"
+                    title={t('settingsAgents.authentication.checkNowTitle')}
+                    subtitle={t('settingsAgents.authentication.checkNowSubtitle')}
+                    icon={<Ionicons name="refresh-outline" size={22} color={theme.colors.text.secondary} />}
+                    onPress={props.onCheckNow}
+                />
+            ) : null}
+            {props.docsUrl ? (
+                <Item
+                    testID="settings-provider-auth-docs-url"
+                    title={t('settingsAgents.setupGuideUrlTitle')}
+                    subtitle={props.docsUrl}
+                    icon={<Ionicons name="link-outline" size={22} color={theme.colors.text.secondary} />}
+                    mode="info"
+                    copy={props.docsUrl}
+                />
+            ) : null}
+        </>
+    );
+});

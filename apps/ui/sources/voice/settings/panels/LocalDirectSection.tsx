@@ -4,12 +4,17 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Modal } from '@/modal';
-import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import {
+  readLocalDirectVoiceSettings,
+  voiceSettingsParse,
+  writeLocalDirectVoiceSettings,
+  type VoiceSettings,
+} from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
 import { parseLocalVoiceSttSettings } from '@/voice/local/localVoiceSettings';
 import { LocalVoiceTtsGroup } from '@/voice/settings/panels/localTts/LocalVoiceTtsGroup';
 import { LocalVoiceSttGroup } from '@/voice/settings/panels/localStt/LocalVoiceSttGroup';
-import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
+import { resolveVoiceProviderIdFromSettings } from '@/voice/settings/resolveVoiceProviderId';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 
@@ -19,19 +24,14 @@ export function LocalDirectSection(props: {
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
 }) {
-  const enabled = resolveVoiceProviderId(props.voice.providerId) === 'local_direct';
+  const voice = voiceSettingsParse(props.voice);
+  const enabled = resolveVoiceProviderIdFromSettings(voice) === 'local_direct';
   if (!enabled) return null;
 
-  const cfg = props.voice.adapters.local_direct;
+  const cfg = readLocalDirectVoiceSettings(voice);
 
   const setCfg = (patch: Partial<typeof cfg>) => {
-    props.setVoice({
-      ...props.voice,
-      adapters: {
-        ...props.voice.adapters,
-        local_direct: { ...cfg, ...patch },
-      },
-    });
+    props.setVoice(writeLocalDirectVoiceSettings(voice, { ...cfg, ...patch }));
   };
 
   const sttProvider = parseLocalVoiceSttSettings(cfg.stt).provider;
@@ -51,6 +51,7 @@ export function LocalDirectSection(props: {
             title={t('settingsVoice.local.conversation.handsFree.enableTitle')}
             rightElement={
               <Switch
+                accessibilityLabel={t('settingsVoice.local.conversation.handsFree.enableTitle')}
                 value={cfg.handsFree.enabled}
                 onValueChange={(v) => setCfg({ handsFree: { ...cfg.handsFree, enabled: v } })}
               />

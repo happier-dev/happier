@@ -31,20 +31,29 @@ type SpawnNewSessionTestResult =
       type: 'error';
       errorCode:
         | typeof SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE
-        | typeof SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT;
+        | typeof SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
+        | typeof SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST;
       errorMessage: string;
-      usedInitialPrompt?: boolean;
+      spawnAttemptCustody?: SpawnAttemptCustodyTestResult;
     }>
   | Readonly<{
       type: 'success';
       sessionId: string;
-      usedInitialPrompt?: boolean;
+      spawnAttemptCustody?: SpawnAttemptCustodyTestResult;
     }>;
+
+type SpawnAttemptCustodyTestResult = Readonly<{
+  status: 'unresolved' | 'completed';
+  userAttemptId: string;
+  spawnNonce: string;
+  targetFingerprint: string;
+}>;
 
 const activeHarnessStorageState: { current: NewSessionHarnessStorageState | null } = { current: null };
 
 async function setupHarness() {
   const modalAlertSpy = vi.fn((..._args: unknown[]) => {});
+  const completeMachineSpawnAttemptCustodySpy = vi.fn(async () => true);
   const machineSpawnNewSessionSpy = vi.fn(async (_options: unknown): Promise<SpawnNewSessionTestResult> => ({
     type: 'error',
     errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
@@ -213,6 +222,7 @@ async function setupHarness() {
   vi.doMock('@/agents/runtime/resumeCapabilities', () => ({ canAgentResume: vi.fn(() => false) }));
   vi.doMock('@/components/sessions/new/modules/formatResumeSupportDetailCode', () => ({ formatResumeSupportDetailCode: vi.fn(() => '') }));
   vi.doMock('@/sync/ops', () => ({
+    completeMachineSpawnAttemptCustody: completeMachineSpawnAttemptCustodySpy,
     machineSpawnNewSession: machineSpawnNewSessionSpy,
     machineResolveSpawnSessionByNonce: machineResolveSpawnSessionByNonceSpy,
     machineResolveSpawnSessionByNonceUntilSettled: machineResolveSpawnSessionByNonceUntilSettledSpy,
@@ -222,6 +232,7 @@ async function setupHarness() {
   return {
     useCreateNewSession,
     modalAlertSpy,
+    completeMachineSpawnAttemptCustodySpy,
     machineSpawnNewSessionSpy,
     machineResolveSpawnSessionByNonceSpy,
     machineResolveSpawnSessionByNonceUntilSettledSpy,
@@ -257,6 +268,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -319,6 +331,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     const hook = await renderHook(
       ({ selectedMachineId }: { selectedMachineId: string | null }) =>
         useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
           router: { push: vi.fn(), replace: vi.fn() },
           selectedMachineId,
           selectedPath: '/tmp',
@@ -383,6 +396,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     const hook = await renderHook(
       ({ selectedPath, triggerCreate }: { selectedPath: string; triggerCreate: boolean }) => {
         const createHook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
           router: { push: vi.fn(), replace: vi.fn() },
           selectedMachineId: 'm1',
           selectedPath,
@@ -451,6 +465,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/home/happier',
@@ -509,6 +524,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -579,6 +595,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -616,7 +633,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(modalAlertSpy).toHaveBeenCalled();
   });
 
-  it('confirms an eligible daemon initialPrompt first turn through the post-spawn send path', async () => {
+  it('spawns first and enqueues the first turn with the launch attempt local id', async () => {
     const { useCreateNewSession, modalAlertSpy, machineSpawnNewSessionSpy, storageState } = await setupHarness();
     const followUpModule = await import('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession');
     const followUpSpy = vi.mocked(followUpModule.followUpSpawnedSessionWithServerScope);
@@ -625,7 +642,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     machineSpawnNewSessionSpy.mockResolvedValueOnce({
       type: 'success',
       sessionId: 'session-created',
-      usedInitialPrompt: true,
     });
 
     const settings = { experiments: false } as unknown as Settings;
@@ -640,6 +656,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router,
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -673,17 +690,14 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     });
     await flushHookEffects({ runAllTimers: true });
 
-    expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
+    const spawnOptions = machineSpawnNewSessionSpy.mock.calls[0]?.[0];
+    expect(spawnOptions).toEqual(expect.objectContaining({
       spawnNonce: expect.stringMatching(/^new-session-spawn-/),
-      initialPrompt: 'Start here',
     }));
+    expect(spawnOptions).not.toHaveProperty('initialPrompt');
     expect(followUpSpy).toHaveBeenCalledWith(expect.objectContaining({
       initialMessageText: 'Start here',
-      messageLocalId: 'daemon-initial-prompt:session-created',
-      metaOverrides: expect.objectContaining({
-        source: 'daemon-initial-prompt',
-        sentFrom: 'ui',
-      }),
+      messageLocalId: expect.stringMatching(/^spawn-first-turn:new-session-spawn-/),
     }));
     const spawnNonce = (machineSpawnNewSessionSpy.mock.calls[0]?.[0] as any)?.spawnNonce;
     const firstTurnLocalId = (followUpSpy.mock.calls[0]?.[0] as any)?.messageLocalId;
@@ -693,7 +707,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await hook.unmount();
   });
 
-  it('projects a daemon-owned first prompt into pending state before opening the created session route', async () => {
+  it('projects a Pending-owned first prompt before opening the created session route', async () => {
     const { useCreateNewSession, machineSpawnNewSessionSpy, storageState } = await setupHarness();
     const callOrder: string[] = [];
     storageState.upsertPendingMessage = vi.fn(() => {
@@ -705,7 +719,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     machineSpawnNewSessionSpy.mockResolvedValueOnce({
       type: 'success',
       sessionId: 'session-created',
-      usedInitialPrompt: true,
     });
 
     const settings = { experiments: false } as unknown as Settings;
@@ -725,6 +738,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router,
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -762,7 +776,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(storageState.upsertPendingMessage).toHaveBeenCalledWith(
       'session-created',
       expect.objectContaining({
-        localId: 'daemon-initial-prompt:session-created',
+        localId: expect.stringMatching(/^spawn-first-turn:new-session-spawn-/),
         source: 'local_outbound',
         deliveryStatus: 'queued',
         text: 'Start here',
@@ -794,6 +808,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router,
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -848,7 +863,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       spawnDeferred.resolve({
         type: 'success',
         sessionId: 'session-created',
-        usedInitialPrompt: true,
       });
       await act(async () => {
         await createPromise;
@@ -873,7 +887,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     machineSpawnNewSessionSpy.mockResolvedValueOnce({
       type: 'success',
       sessionId: 'session-created',
-      usedInitialPrompt: false,
     });
 
     const settings = { experiments: false } as unknown as Settings;
@@ -893,6 +906,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router,
         selectedMachineId: 'm1',
         selectedPath: '/tmp/built-in-first-turn',
@@ -928,12 +942,10 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await flushHookEffects({ runAllTimers: true });
     await createPromise!;
 
-    expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
-      initialPrompt: 'Built-in start here',
-    }));
+    expect(machineSpawnNewSessionSpy.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
     expect(followUpSpy).toHaveBeenCalledTimes(1);
     const firstTurnLocalId = (followUpSpy.mock.calls[0]?.[0] as any)?.messageLocalId;
-    expect(firstTurnLocalId).toMatch(/^new-session-first-turn-/);
+    expect(firstTurnLocalId).toMatch(/^spawn-first-turn:new-session-spawn-/);
     expect(storageState.markSessionOptimisticThinking).toHaveBeenCalledWith('session-created');
     expect(storageState.upsertPendingMessage).toHaveBeenCalledWith(
       'session-created',
@@ -961,7 +973,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     machineSpawnNewSessionSpy.mockResolvedValueOnce({
       type: 'success',
       sessionId: 'session-created',
-      usedInitialPrompt: true,
     });
     followUpSpy.mockRejectedValueOnce(new Error('first turn failed'));
 
@@ -977,6 +988,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router,
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -1010,17 +1022,11 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     });
     await flushHookEffects({ runAllTimers: true });
 
-    expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
-      initialPrompt: 'Start here',
-    }));
+    expect(machineSpawnNewSessionSpy.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
     expect(followUpSpy).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'session-created',
       initialMessageText: 'Start here',
-      messageLocalId: 'daemon-initial-prompt:session-created',
-      metaOverrides: expect.objectContaining({
-        source: 'daemon-initial-prompt',
-        sentFrom: 'ui',
-      }),
+      messageLocalId: expect.stringMatching(/^spawn-first-turn:new-session-spawn-/),
     }));
     expect(router.replace).not.toHaveBeenCalled();
     expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'first turn failed');
@@ -1045,7 +1051,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
       errorMessage: 'Session startup timed out',
-      usedInitialPrompt: true,
     });
 
     const settings = { experiments: false } as unknown as Settings;
@@ -1060,6 +1065,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router,
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -1098,14 +1104,12 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(machineResolveSpawnSessionByNonceUntilSettledSpy).not.toHaveBeenCalled();
     expect(machineResolveSpawnSessionByNonceSpy).not.toHaveBeenCalled();
     expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
-    expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
-      initialPrompt: 'Start here',
-    }));
+    expect(machineSpawnNewSessionSpy.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
     expect(followUpSpy).not.toHaveBeenCalled();
     expect(router.replace).not.toHaveBeenCalled();
     expect(modalAlertSpy).toHaveBeenCalledWith(
-      'newSession.daemonRpcUnavailableTitle',
-      expect.any(String),
+      'newSession.launchStillPendingTitle',
+      expect.stringContaining('newSession.launchStillPendingBody'),
       expect.arrayContaining([expect.objectContaining({ text: 'common.retry' })]),
     );
 
@@ -1139,6 +1143,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router,
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -1172,9 +1177,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     });
     await flushHookEffects({ runAllTimers: true });
 
-    expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
-      initialPrompt: 'Start here',
-    }));
+    expect(machineSpawnNewSessionSpy.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
     expect(followUpSpy).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'session-created',
       initialMessageText: 'Start here',
@@ -1202,12 +1205,11 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
         errorMessage: 'Session startup timed out',
-        usedInitialPrompt: true,
+      })
+      .mockResolvedValueOnce({
+        type: 'success',
+        sessionId: 'session-after-retry',
       });
-    machineResolveSpawnSessionByNonceSpy.mockResolvedValueOnce({
-      status: 'success',
-      sessionId: 'session-after-retry',
-    });
 
     const settings = { experiments: false } as unknown as Settings;
     const machineEnvPresence: UseMachineEnvPresenceResult = {
@@ -1221,6 +1223,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router,
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -1256,10 +1259,9 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     expect(router.replace).not.toHaveBeenCalled();
     const firstSpawnOptions = machineSpawnNewSessionSpy.mock.calls[0]?.[0] as {
-      initialPrompt?: string;
       spawnNonce?: string;
     };
-    expect(firstSpawnOptions.initialPrompt).toBe('Retry same nonce');
+    expect(firstSpawnOptions).not.toHaveProperty('initialPrompt');
     const retryAlertCall = modalAlertSpy.mock.calls.find((call) => {
       const buttons = call[2];
       return Array.isArray(buttons) && buttons.some((button) => button?.text === 'common.retry');
@@ -1274,39 +1276,48 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     });
 
     expect(machineResolveSpawnSessionByNonceUntilSettledSpy).not.toHaveBeenCalled();
-    expect(machineResolveSpawnSessionByNonceSpy).toHaveBeenCalledTimes(1);
-    expect(machineResolveSpawnSessionByNonceSpy).toHaveBeenLastCalledWith(expect.objectContaining({
-      machineId: 'm1',
+    expect(machineResolveSpawnSessionByNonceSpy).not.toHaveBeenCalled();
+    expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(2);
+    expect(machineSpawnNewSessionSpy.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
       spawnNonce: firstSpawnOptions.spawnNonce,
-      serverId: 'server-a',
     }));
-    expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
     expect(followUpSpy).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'session-after-retry',
       initialMessageText: 'Retry same nonce',
-      messageLocalId: 'daemon-initial-prompt:session-after-retry',
-      metaOverrides: expect.objectContaining({
-        source: 'daemon-initial-prompt',
-        sentFrom: 'ui',
-      }),
+      messageLocalId: `spawn-first-turn:${String(firstSpawnOptions.spawnNonce)}`,
     }));
     expect(router.replace).toHaveBeenCalledWith('/session/session-after-retry?serverId=server-a', expect.anything());
 
     await hook.unmount();
   });
 
-  it('reuses the same spawn attempt key and nonce across a remounted retry for the same launch scope', async () => {
+  it('adopts the operation-owned nonce and user attempt id without a hook-level resolver', async () => {
     const {
       useCreateNewSession,
       machineSpawnNewSessionSpy,
     } = await setupHarness();
 
     machineSpawnNewSessionSpy
-      .mockResolvedValue({
+      .mockResolvedValueOnce({
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
         errorMessage: 'Session startup timed out',
-        usedInitialPrompt: true,
+        spawnAttemptCustody: {
+          status: 'unresolved',
+          userAttemptId: 'attempt-a',
+          spawnNonce: 'actual-nonce-a',
+          targetFingerprint: 'target-a',
+        },
+      })
+      .mockResolvedValueOnce({
+        type: 'success',
+        sessionId: 'session-from-operation-settlement',
+        spawnAttemptCustody: {
+          status: 'completed',
+          userAttemptId: 'attempt-a',
+          spawnNonce: 'actual-nonce-a',
+          targetFingerprint: 'target-a',
+        },
       });
 
     const settings = { experiments: false } as unknown as Settings;
@@ -1318,8 +1329,10 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       refresh: () => {},
     };
 
+    let durableUserAttemptId: string | null = null;
     const createHook = () =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -1345,6 +1358,10 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         selectedMachineCapabilities: {},
         targetServerId: null,
         allowedTargetServerIds: undefined,
+        launchUserAttemptId: durableUserAttemptId,
+        onLaunchUserAttemptIdChange: (next) => {
+          durableUserAttemptId = next;
+        },
       });
 
     const firstHook = await renderHook(createHook);
@@ -1354,11 +1371,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await flushHookEffects({ runAllTimers: true });
     await firstHook.unmount();
 
-    const firstSpawnOptions = machineSpawnNewSessionSpy.mock.calls[0]?.[0] as {
-      spawnAttemptKey?: string;
-      spawnNonce?: string;
-    };
-
     const secondHook = await renderHook(createHook);
     await act(async () => {
       await secondHook.getCurrent().handleCreateSession();
@@ -1367,16 +1379,14 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await secondHook.unmount();
 
     const secondSpawnOptions = machineSpawnNewSessionSpy.mock.calls[1]?.[0] as {
-      spawnAttemptKey?: string;
       spawnNonce?: string;
+      userAttemptId?: string;
     };
 
-    expect(firstSpawnOptions.spawnAttemptKey).toEqual(expect.stringContaining('new-session.launch:'));
-    expect(secondSpawnOptions.spawnAttemptKey).toBe(firstSpawnOptions.spawnAttemptKey);
-    expect(secondSpawnOptions.spawnNonce).toBe(firstSpawnOptions.spawnNonce);
+    expect(secondSpawnOptions.userAttemptId).toBe('attempt-a');
   });
 
-  it('does not reuse a timed-out spawn nonce after remounting with a changed prompt on the same launch scope', async () => {
+  it('keeps the unresolved launch barrier after remounting with a changed prompt on the same launch scope', async () => {
     const {
       useCreateNewSession,
       machineSpawnNewSessionSpy,
@@ -1387,7 +1397,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
         errorMessage: 'Session startup timed out',
-        usedInitialPrompt: true,
       });
 
     const settings = { experiments: false } as unknown as Settings;
@@ -1401,10 +1410,11 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const createHook = (sessionPrompt: string) =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
-        selectedMachineId: 'm1',
+        selectedMachineId: 'm-remount-prompt',
         selectedPath: '/tmp',
-        selectedMachine: { id: 'm1', active: true, activeAt: Date.now(), metadata: { host: 'devbox' } },
+        selectedMachine: { id: 'm-remount-prompt', active: true, activeAt: Date.now(), metadata: { host: 'devbox' } },
         setIsCreating: vi.fn(),
         setIsResumeSupportChecking: vi.fn(),
         settings,
@@ -1436,7 +1446,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await firstHook.unmount();
 
     const firstSpawnOptions = machineSpawnNewSessionSpy.mock.calls[0]?.[0] as {
-      spawnAttemptKey?: string;
       spawnNonce?: string;
     };
 
@@ -1448,15 +1457,14 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await secondHook.unmount();
 
     const secondSpawnOptions = machineSpawnNewSessionSpy.mock.calls[1]?.[0] as {
-      spawnAttemptKey?: string;
       spawnNonce?: string;
     };
 
-    expect(secondSpawnOptions.spawnAttemptKey).not.toBe(firstSpawnOptions.spawnAttemptKey);
+    expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(2);
     expect(secondSpawnOptions.spawnNonce).not.toBe(firstSpawnOptions.spawnNonce);
   });
 
-  it('does not reuse a timed-out spawn nonce after editing the prompt on the same mounted screen', async () => {
+  it('rotates the action identity when the canonical launch intent changes on the same mounted screen', async () => {
     const {
       useCreateNewSession,
       machineSpawnNewSessionSpy,
@@ -1468,7 +1476,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
         errorMessage: 'Session startup timed out',
-        usedInitialPrompt: true,
       });
 
     const settings = { experiments: false } as unknown as Settings;
@@ -1481,12 +1488,12 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     };
 
     const hook = await renderHook(
-      ({ sessionPrompt }: { sessionPrompt: string }) =>
+      ({ launchIntentSignature }: { launchIntentSignature: string }) =>
         useCreateNewSession({
           router: { push: vi.fn(), replace: vi.fn() },
-          selectedMachineId: 'm1',
+          selectedMachineId: 'm-mounted-prompt',
           selectedPath: '/tmp',
-          selectedMachine: { id: 'm1', active: true, activeAt: Date.now(), metadata: { host: 'devbox' } },
+          selectedMachine: { id: 'm-mounted-prompt', active: true, activeAt: Date.now(), metadata: { host: 'devbox' } },
           setIsCreating: vi.fn(),
           setIsResumeSupportChecking: vi.fn(),
           settings,
@@ -1497,7 +1504,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
           agentType: 'opencode' as any,
           permissionMode: 'default' as PermissionMode,
           modelMode: 'default' as ModelMode,
-          sessionPrompt,
+          sessionPrompt: 'Unchanged prompt',
           resumeSessionId: '',
           agentNewSessionOptions: null,
           machineEnvPresence,
@@ -1508,8 +1515,10 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
           selectedMachineCapabilities: {},
           targetServerId: null,
           allowedTargetServerIds: undefined,
+          launchUserAttemptId: 'persisted-attempt-a',
+          launchIntentSignature,
         }),
-      { initialProps: { sessionPrompt: 'First timed-out prompt' } },
+      { initialProps: { launchIntentSignature: 'intent-a' } },
     );
 
     await act(async () => {
@@ -1518,24 +1527,23 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await flushHookEffects({ runAllTimers: true });
 
     const firstSpawnOptions = machineSpawnNewSessionSpy.mock.calls[0]?.[0] as {
-      spawnAttemptKey?: string;
       spawnNonce?: string;
+      userAttemptId?: string;
     };
 
-    await hook.rerender({ sessionPrompt: 'Changed prompt on same screen' });
+    await hook.rerender({ launchIntentSignature: 'intent-b' });
     await act(async () => {
       await hook.getCurrent().handleCreateSession();
     });
     await flushHookEffects({ runAllTimers: true });
 
-    const secondSpawnOptions = machineSpawnNewSessionSpy.mock.calls[1]?.[0] as {
-      spawnAttemptKey?: string;
-      spawnNonce?: string;
-    };
-
     expect(machineResolveSpawnSessionByNonceSpy).not.toHaveBeenCalled();
     expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(2);
-    expect(secondSpawnOptions.spawnAttemptKey).not.toBe(firstSpawnOptions.spawnAttemptKey);
+    const secondSpawnOptions = machineSpawnNewSessionSpy.mock.calls[1]?.[0] as {
+      spawnNonce?: string;
+      userAttemptId?: string;
+    };
+    expect(secondSpawnOptions.userAttemptId).not.toBe(firstSpawnOptions.userAttemptId);
     expect(secondSpawnOptions.spawnNonce).not.toBe(firstSpawnOptions.spawnNonce);
 
     await hook.unmount();
@@ -1561,9 +1569,12 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
         errorMessage: 'Session startup timed out',
-        usedInitialPrompt: true,
+      })
+      .mockResolvedValueOnce({
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+        errorMessage: 'Session startup timed out',
       });
-    machineResolveSpawnSessionByNonceSpy.mockResolvedValueOnce({ status: resolveStatus });
 
     const settings = { experiments: false } as unknown as Settings;
     const machineEnvPresence: UseMachineEnvPresenceResult = {
@@ -1577,6 +1588,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router,
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -1612,10 +1624,9 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     expect(router.replace).not.toHaveBeenCalled();
     const firstSpawnOptions = machineSpawnNewSessionSpy.mock.calls[0]?.[0] as {
-      initialPrompt?: string;
       spawnNonce?: string;
     };
-    expect(firstSpawnOptions.initialPrompt).toBe(`Retry after ${resolveStatus}`);
+    expect(firstSpawnOptions).not.toHaveProperty('initialPrompt');
     const retryAlertCall = modalAlertSpy.mock.calls.find((call) => {
       const buttons = call[2];
       return Array.isArray(buttons) && buttons.some((button) => button?.text === 'common.retry');
@@ -1630,12 +1641,11 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     });
 
     expect(machineResolveSpawnSessionByNonceUntilSettledSpy).not.toHaveBeenCalled();
-    expect(machineResolveSpawnSessionByNonceSpy).toHaveBeenCalledWith(expect.objectContaining({
-      machineId: 'm1',
+    expect(machineResolveSpawnSessionByNonceSpy).not.toHaveBeenCalled();
+    expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(2);
+    expect(machineSpawnNewSessionSpy.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
       spawnNonce: firstSpawnOptions.spawnNonce,
-      serverId: 'server-a',
     }));
-    expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
     expect(followUpSpy).not.toHaveBeenCalled();
     expect(router.replace).not.toHaveBeenCalled();
 
@@ -1669,6 +1679,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router,
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -1765,6 +1776,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -1841,6 +1853,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     const hook = await renderHook(
       ({ targetServerId }: { targetServerId: string | null }) =>
         useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
           router,
           selectedMachineId: 'm1',
           selectedPath: '/tmp',
@@ -1915,6 +1928,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     const hook = await renderHook(
       ({ selectedPath }: { selectedPath: string }) =>
         useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
           router,
           selectedMachineId: 'm1',
           selectedPath,
@@ -1997,6 +2011,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router,
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -2070,6 +2085,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     const hook = await renderHook(
       ({ useProfiles }: { useProfiles: boolean }) =>
         useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
           router,
           selectedMachineId: 'm1',
           selectedPath: '/tmp',
@@ -2139,6 +2155,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router,
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -2228,6 +2245,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const hook = await renderHook(() =>
       useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -2310,6 +2328,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     const hook = await renderHook(
       ({ triggerCreate }: { triggerCreate: boolean }) => {
         const createHook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
           router: { push: vi.fn(), replace: vi.fn() },
           selectedMachineId: 'm1',
           selectedPath: '/tmp',

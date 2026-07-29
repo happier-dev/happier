@@ -7,6 +7,10 @@ const updateStatusState = vi.hoisted(() => ({
     visible: false,
 }));
 
+const popoverState = vi.hoisted(() => ({
+    props: [] as Array<Record<string, unknown>>,
+}));
+
 vi.mock('@/updates/useAppUpdateStatus', () => ({
     useAppUpdateStatus: () => ({
         model: updateStatusState.visible
@@ -27,7 +31,10 @@ vi.mock('@/updates/useAppUpdateStatus', () => ({
 }));
 
 vi.mock('@/components/ui/feedback/AppUpdateStatusPopover', () => ({
-    AppUpdateStatusPopover: () => null,
+    AppUpdateStatusPopover: (props: Record<string, unknown>) => {
+        popoverState.props.push(props);
+        return React.createElement('AppUpdateStatusPopover', props);
+    },
 }));
 
 vi.mock('@/text', () => ({
@@ -37,6 +44,7 @@ vi.mock('@/text', () => ({
 describe('AppUpdateStatusTag', () => {
     afterEach(() => {
         updateStatusState.visible = false;
+        popoverState.props = [];
         standardCleanup();
     });
 
@@ -59,5 +67,22 @@ describe('AppUpdateStatusTag', () => {
         );
 
         expect(screen.findByProps({ children: 'Update' })).toBeTruthy();
+    });
+
+    it('does not mount the popover until the update tag is opened', async () => {
+        updateStatusState.visible = true;
+        const { AppUpdateStatusTag } = await import('./AppUpdateStatusTag');
+
+        const screen = await renderScreen(
+            <AppUpdateStatusTag labelVariant="short" testID="compact-update-tag" />,
+        );
+
+        expect(popoverState.props).toHaveLength(0);
+
+        await screen.pressByTestIdAsync('compact-update-tag');
+
+        expect(screen.findByType('AppUpdateStatusPopover' as never)).toBeTruthy();
+        expect(popoverState.props).toHaveLength(1);
+        expect(popoverState.props[0]?.open).toBe(true);
     });
 });

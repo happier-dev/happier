@@ -126,6 +126,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
             code={code}
             language={syntax.language}
             selectable={selectable}
+            wrap={wrap}
         />
     ) : (
         <Text

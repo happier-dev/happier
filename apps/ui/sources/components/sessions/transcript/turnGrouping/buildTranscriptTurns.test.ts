@@ -41,7 +41,7 @@ function contextCompactionEventMessage(
             type: 'context-compaction',
             phase: opts.phase,
             lifecycleId: opts.lifecycleId,
-            source: 'provider-event',
+            source: 'agent-event',
         },
     };
 }

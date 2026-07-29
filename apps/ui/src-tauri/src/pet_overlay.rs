@@ -121,10 +121,7 @@ impl NativeMousePollController {
     }
 
     fn is_enabled(&self) -> bool {
-        self.gate
-            .lock()
-            .map(|gate| gate.enabled)
-            .unwrap_or(false)
+        self.gate.lock().map(|gate| gate.enabled).unwrap_or(false)
     }
 }
 
@@ -149,9 +146,7 @@ struct AppliedDesktopPetOverlayPayload {
 impl Default for DesktopPetOverlayState {
     fn default() -> Self {
         Self(
-            Arc::new(Mutex::new(
-                DesktopPetOverlayRuntimeState::default(),
-            )),
+            Arc::new(Mutex::new(DesktopPetOverlayRuntimeState::default())),
             #[cfg(target_os = "macos")]
             Arc::new(NativeMousePollController::default()),
         )

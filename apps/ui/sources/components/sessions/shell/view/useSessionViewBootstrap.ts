@@ -30,13 +30,20 @@ export type UseSessionViewBootstrapInput = Readonly<{
 export type UseSessionViewBootstrapResult = Readonly<{
     pane: ReturnType<typeof useAppPaneScope>;
     machineReachable: boolean;
+    machineReachability: 'reachable' | 'unreachable' | 'unknown';
     isSurfaceFocused: boolean;
 }>;
 
 export function useSessionViewBootstrap(input: UseSessionViewBootstrapInput): UseSessionViewBootstrapResult {
     const router = useRouter();
     const pane = useAppPaneScope(input.paneScopeId);
-    const { machineReachable, machineOnline } = useSessionMachineReachability(input.sessionId);
+    const {
+        machineReachable,
+        machineOnline,
+        machineReachability: observedMachineReachability,
+    } = useSessionMachineReachability(input.sessionId);
+    const machineReachability = observedMachineReachability
+        ?? (machineReachable ? 'reachable' : 'unreachable');
 
     useSessionPaneUrlSync({
         enabled: input.paneUrlSyncRouteActive && input.multiPaneEnabled && Platform.OS === 'web',
@@ -69,9 +76,13 @@ export function useSessionViewBootstrap(input: UseSessionViewBootstrapInput): Us
         pane,
     ]);
 
+    const visibleSurfaceCanSync = input.surfaceFocused || input.routeAnchor;
     const activation = useSessionSurfaceActivation({
         sessionId: input.sessionId,
         serverId: input.serverId,
+        onSessionVisible: input.sessionAccepted && visibleSurfaceCanSync
+            ? sync.onSessionVisible
+            : undefined,
         surfaceFocused: input.surfaceFocused,
         surfaceRetained: input.surfaceRetained,
         surfaceVisible: input.surfaceVisible,
@@ -84,17 +95,10 @@ export function useSessionViewBootstrap(input: UseSessionViewBootstrapInput): Us
         machineOnline: input.sessionAccepted ? machineOnline : false,
     });
 
-    const visibleSurfaceCanSync = input.surfaceFocused || input.routeAnchor;
-    React.useLayoutEffect(() => {
-        if (!input.sessionAccepted || !input.surfaceVisible || !visibleSurfaceCanSync) {
-            return;
-        }
-        sync.onSessionVisible(input.sessionId);
-    }, [input.sessionAccepted, input.sessionId, input.surfaceVisible, visibleSurfaceCanSync]);
-
     return {
         pane,
         machineReachable,
+        machineReachability,
         isSurfaceFocused: activation.isSurfaceFocused,
     };
 }

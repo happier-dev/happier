@@ -1,4 +1,5 @@
 import type {
+    ConnectedServiceQuotaRecoveryCreditsV1,
     PrimaryTurnStatusV1,
     SessionRuntimeIssueV1,
     SessionUsageLimitRecoveryV1,
@@ -6,6 +7,7 @@ import type {
 import { SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol';
 
 import type { AgentInputStatusBadge, AgentInputStatusBadgeTone } from '@/components/sessions/agentInput/agentInputContracts';
+import { summarizeConnectedServiceQuotaRecoveryCredits } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 
 export const SESSION_USAGE_LIMIT_RECOVERY_BADGE_KEY = 'usage-limit-recovery';
 
@@ -28,6 +30,7 @@ export type SessionUsageLimitRecoveryActionKind =
     | 'resume_now'
     | 'switch_fallback_now'
     | 'switch_account_now'
+    | 'consume_reset_credit'
     | 'retry_temporary_throttle'
     | 'remember'
     | 'forget';
@@ -46,12 +49,14 @@ export type SessionUsageLimitRecoveryTranslationKey =
     | 'session.usageLimitRecovery.banner.waitingBody'
     | 'session.usageLimitRecovery.banner.readyTitle'
     | 'session.usageLimitRecovery.banner.readyBody'
+    | 'session.usageLimitRecovery.banner.resetCreditSummary'
     | 'session.usageLimitRecovery.actions.enable'
     | 'session.usageLimitRecovery.actions.cancel'
     | 'session.usageLimitRecovery.actions.checkNow'
     | 'session.usageLimitRecovery.actions.resumeNow'
     | 'session.usageLimitRecovery.actions.switchFallbackNow'
     | 'session.usageLimitRecovery.actions.switchAccountNow'
+    | 'session.usageLimitRecovery.actions.consumeResetCredit'
     | 'session.usageLimitRecovery.actions.retryTemporaryThrottle'
     | 'session.usageLimitRecovery.actions.remember'
     | 'session.usageLimitRecovery.actions.forget'
@@ -59,7 +64,16 @@ export type SessionUsageLimitRecoveryTranslationKey =
     | 'session.usageLimitRecovery.status.resumeReady'
     | 'session.usageLimitRecovery.status.checking'
     | 'session.usageLimitRecovery.status.waiting'
+    | 'session.usageLimitRecovery.status.waitingForQuotaReset'
+    | 'session.usageLimitRecovery.status.accountRotationPending'
     | 'session.usageLimitRecovery.status.temporaryThrottle';
+
+export type SessionUsageLimitRecoveryTranslationParams = Readonly<{
+    'session.usageLimitRecovery.banner.resetCreditSummary': Readonly<{
+        count: number;
+        expiresAt: string | null;
+    }>;
+}>;
 
 export type SessionUsageLimitRecoveryBannerPresentation = Readonly<{
     testID: string;
@@ -74,12 +88,19 @@ export type SessionUsageLimitRecoveryBannerPresentation = Readonly<{
 
 export type SessionUsageLimitRecoveryPresentation = Readonly<{
     issueFingerprint: string;
+    armedAtMs: number;
+    runtimeAuthRecoveryAttemptId?: string;
     waiting: boolean;
     banner: SessionUsageLimitRecoveryBannerPresentation;
     statusBadge: AgentInputStatusBadge;
 }>;
 
-type Translate = (key: SessionUsageLimitRecoveryTranslationKey) => string;
+export type SessionUsageLimitRecoveryTranslate = <K extends SessionUsageLimitRecoveryTranslationKey>(
+    key: K,
+    ...params: K extends keyof SessionUsageLimitRecoveryTranslationParams
+        ? [params: SessionUsageLimitRecoveryTranslationParams[K]]
+        : []
+) => string;
 
 function isUsageLimitIssue(issue: SessionRuntimeIssueV1 | null | undefined): issue is SessionRuntimeIssueV1 {
     return issue?.source === 'usage_limit' || issue?.code === 'usage_limit';
@@ -93,6 +114,7 @@ export function isSessionUsageLimitRecoveryCheckNowAction(kind: SessionUsageLimi
     return kind === 'check_now'
         || kind === 'switch_fallback_now'
         || kind === 'switch_account_now'
+        || kind === 'consume_reset_credit'
         || kind === 'retry_temporary_throttle';
 }
 
@@ -103,6 +125,7 @@ export function isSessionUsageLimitRecoveryCheckingOperationAction(kind: Session
         || kind === 'resume_now'
         || kind === 'switch_fallback_now'
         || kind === 'switch_account_now'
+        || kind === 'consume_reset_credit'
         || kind === 'retry_temporary_throttle'
         || kind === 'remember'
         || kind === 'forget';
@@ -130,11 +153,20 @@ export function readSessionUsageLimitRecoveryFromMetadata(metadata: unknown): Se
 
 function buildIssueFingerprint(issue: SessionRuntimeIssueV1): string {
     const seq = typeof issue.sessionSeq === 'number' ? issue.sessionSeq : issue.occurredAt;
-    return `usage-limit:${issue.provider ?? 'provider'}:${seq}`;
+    return `usage-limit:${issue.agentId ?? 'agent'}:${seq}`;
 }
 
 function resolveBadgeTone(waiting: boolean): AgentInputStatusBadgeTone {
     return waiting ? 'active' : 'warning';
+}
+
+function resolveWaitingStatusLabelKey(
+    recoveryState: SessionUsageLimitRecoveryState | null,
+    resetAtMs: number | null,
+): SessionUsageLimitRecoveryTranslationKey {
+    if (resetAtMs !== null) return 'session.usageLimitRecovery.status.waitingForQuotaReset';
+    if (recoveryState?.selectedAuth.kind === 'group') return 'session.usageLimitRecovery.status.accountRotationPending';
+    return 'session.usageLimitRecovery.status.waiting';
 }
 
 function readUsageLimitResetAtMs(
@@ -152,6 +184,14 @@ function hasResetElapsed(resetAtMs: number | null, nowMs: number | null | undefi
         && typeof nowMs === 'number'
         && Number.isFinite(nowMs)
         && nowMs >= resetAtMs;
+}
+
+function formatRecoveryCreditExpiry(expiresAtMs: number | null): string | null {
+    if (expiresAtMs === null) return null;
+    return new Date(expiresAtMs).toLocaleString(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+    });
 }
 
 function isExhaustedGroupRecoveryForIssue(
@@ -226,12 +266,13 @@ export function buildSessionUsageLimitRecoveryPresentation(params: Readonly<{
     recoveryState: SessionUsageLimitRecoveryState | null;
     operationStatus?: UsageLimitRecoveryOperationStatus | null;
     checkNowSupported?: boolean;
+    recoveryCredits?: ConnectedServiceQuotaRecoveryCreditsV1 | null;
     runtimeWorking?: boolean;
     hasActivityAfterRuntimeIssue?: boolean;
     hasInterruptedWorkToResume?: boolean;
     nowMs?: number | null;
     settings: UsageLimitRecoverySettings;
-    translate: Translate;
+    translate: SessionUsageLimitRecoveryTranslate;
 }>): SessionUsageLimitRecoveryPresentation | null {
     if (!params.featureEnabled) return null;
     // A live "thinking"/in-progress signal is NOT provider-outcome proof: after a local account
@@ -254,6 +295,10 @@ export function buildSessionUsageLimitRecoveryPresentation(params: Readonly<{
     const checking = !ready && params.operationStatus === 'checking';
     const waiting = checking || (!ready && isActiveRecoveryStatus(params.recoveryState?.status));
     const checkNowSupported = params.checkNowSupported === true;
+    const recoveryCreditSummary = summarizeConnectedServiceQuotaRecoveryCredits(
+        params.recoveryCredits ?? params.recoveryState?.recoveryCredits ?? null,
+        typeof params.nowMs === 'number' && Number.isFinite(params.nowMs) ? params.nowMs : Date.now(),
+    );
     const issueFingerprint = params.recoveryState?.issueFingerprint ?? buildIssueFingerprint(lastRuntimeIssue);
     const mode = resolvePrimaryAction({
         issue: lastRuntimeIssue,
@@ -274,6 +319,13 @@ export function buildSessionUsageLimitRecoveryPresentation(params: Readonly<{
         : params.translate('session.usageLimitRecovery.banner.body');
     const actionLabel = params.translate(actionLabelKeyForMode(mode));
     const checkNowLabel = params.translate('session.usageLimitRecovery.actions.checkNow');
+    const consumeResetCreditLabel = params.translate('session.usageLimitRecovery.actions.consumeResetCredit');
+    const bodyWithRecoveryCreditSummary = recoveryCreditSummary
+        ? `${body}\n${params.translate('session.usageLimitRecovery.banner.resetCreditSummary', {
+            count: recoveryCreditSummary.availableCount,
+            expiresAt: formatRecoveryCreditExpiry(recoveryCreditSummary.nextExpiresAtMs),
+        })}`
+        : body;
     const rememberActionKind = params.settings.mode === 'auto_wait' ? 'forget' : 'remember';
     const rememberLabel = params.translate(
         rememberActionKind === 'forget'
@@ -285,7 +337,7 @@ export function buildSessionUsageLimitRecoveryPresentation(params: Readonly<{
         : checking
         ? params.translate('session.usageLimitRecovery.status.checking')
         : waiting
-        ? params.translate('session.usageLimitRecovery.status.waiting')
+        ? params.translate(resolveWaitingStatusLabelKey(params.recoveryState, resetAtMs))
         : temporaryThrottle
         ? params.translate('session.usageLimitRecovery.status.temporaryThrottle')
         : params.translate('session.usageLimitRecovery.status.ready');
@@ -293,16 +345,26 @@ export function buildSessionUsageLimitRecoveryPresentation(params: Readonly<{
 
     return {
         issueFingerprint,
+        armedAtMs: params.recoveryState?.armedAtMs ?? lastRuntimeIssue.occurredAt,
+        ...(params.recoveryState?.runtimeAuthRecoveryAttemptId
+            ? { runtimeAuthRecoveryAttemptId: params.recoveryState.runtimeAuthRecoveryAttemptId }
+            : {}),
         waiting,
         banner: {
             testID: 'session-usageLimit-recovery',
             actionTestID: actionTestIdForMode(mode),
             title,
-            body,
+            body: bodyWithRecoveryCreditSummary,
             actionLabel,
             actionAccessibilityLabel: actionLabel,
             mode,
             secondaryActions: [
+                ...(recoveryCreditSummary && !ready && checkNowSupported ? [{
+                    kind: 'consume_reset_credit' as const,
+                    label: consumeResetCreditLabel,
+                    accessibilityLabel: consumeResetCreditLabel,
+                    testID: 'session-usageLimit-recovery-consumeResetCredit',
+                }] : []),
                 ...(!ready && checkNowSupported && !isSessionUsageLimitRecoveryCheckNowAction(mode) ? [{
                     kind: 'check_now' as const,
                     label: checkNowLabel,

@@ -9,6 +9,7 @@ import { resolveViewportMinEdgePx, VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX } from
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 
 import { SettingsSidebar } from '@/components/settings/shell/SettingsSidebar';
+import { SettingsModalFloatingControls } from '@/components/settings/shell/SettingsModalFloatingControls';
 import {
     SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX,
     SETTINGS_NAV_SIDEBAR_MAX_WIDTH_PX,
@@ -103,34 +104,49 @@ export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{
     const ResizableDockedPaneComponent = isRenderableElementType(ResizableDockedPane) ? ResizableDockedPane : null;
     const SettingsSidebarComponent = isRenderableElementType(SettingsSidebar) ? SettingsSidebar : null;
 
-    if (!enabled || sidebarFallbackActive || !ResizableDockedPaneComponent || !SettingsSidebarComponent) {
+    const showRail = enabled && !sidebarFallbackActive && !!ResizableDockedPaneComponent && !!SettingsSidebarComponent;
+
+    // Phone / non-modal: the navigator header still provides chrome, so render content
+    // full-screen with no floating controls.
+    if (!isTabletViewport) {
         return <View style={styles.root}>{props.children}</View>;
+    }
+
+    // Modal mode (tablet/desktop): the navigator header is removed, so the content pane
+    // carries floating close/back controls above the scrollable content.
+    const contentPane = (
+        <View style={styles.content}>
+            {props.children}
+            <SettingsModalFloatingControls />
+        </View>
+    );
+
+    if (!showRail) {
+        return <View style={styles.root}>{contentPane}</View>;
     }
 
     return (
         <View style={styles.root}>
             <View style={styles.row}>
-                <View style={styles.content}>
-                    {props.children}
-                </View>
-
                 <SettingsShellSidebarCrashBoundary onSidebarError={handleSidebarRenderError}>
                     <ResizableDockedPaneComponent
                         testID="settings-shell.sidebarPane"
                         widthPx={effectiveSidebarWidthPx}
                         minWidthPx={SETTINGS_NAV_SIDEBAR_MIN_WIDTH_PX}
                         maxWidthPx={SETTINGS_NAV_SIDEBAR_MAX_WIDTH_PX}
-                        resizeEdge="left"
+                        resizeEdge="right"
                         onCommitWidthPx={(nextWidthPx) => {
                             setSidebarWidthPx(nextWidthPx);
                             setSidebarWidthBasisPx(windowWidth);
                         }}
                     >
-                        <View style={{ flex: 1, minHeight: 0, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: theme.colors.border.default }}>
+                        <View style={{ flex: 1, minHeight: 0, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: theme.colors.border.default }}>
                             <SettingsSidebarComponent />
                         </View>
                     </ResizableDockedPaneComponent>
                 </SettingsShellSidebarCrashBoundary>
+
+                {contentPane}
             </View>
         </View>
     );

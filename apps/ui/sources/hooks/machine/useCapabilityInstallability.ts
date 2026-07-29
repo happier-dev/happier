@@ -57,13 +57,13 @@ export function resetCapabilityInstallabilityCacheForTests(): void {
 export function useCapabilityInstallability(params: Readonly<{
     machineId: string | null;
     serverId?: string | null;
-    capabilityId: CapabilityId;
+    capabilityId: CapabilityId | null;
     timeoutMs?: number;
 }>): CapabilityInstallability {
     const [state, setState] = React.useState<CapabilityInstallability>({ kind: 'unknown' });
 
     React.useEffect(() => {
-        if (!params.machineId) {
+        if (!params.machineId || !params.capabilityId) {
             setState({ kind: 'unknown' });
             return;
         }

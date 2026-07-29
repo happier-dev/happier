@@ -1,11 +1,10 @@
 import { Platform } from 'react-native';
-
-import { sync } from '@/sync/sync';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
-import { fetchWithTimeout, resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
-import { guessAudioMimeType } from '@/voice/input/guessAudioMimeType';
-import { buildOpenAiTranscriptionRequest } from '@/voice/local/openaiCompat';
 import { RecordingPresets } from 'expo-audio';
+
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { guessAudioMimeType } from '@/voice/input/guessAudioMimeType';
+import { resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
+import { OpenAiCompatDaemonClient } from '@/voice/local/openaiCompat/client';
 
 export class MissingSttBaseUrlError extends Error {
   constructor() {
@@ -14,77 +13,70 @@ export class MissingSttBaseUrlError extends Error {
   }
 }
 
-export async function transcribeRecordedAudioWithHttpStt(params: {
+function normalizeSupportedMimeType(value: string): 'audio/wav' | 'audio/mpeg' | 'audio/mp4' | 'audio/webm' | 'audio/ogg' {
+  const normalized = value.split(';', 1)[0]?.trim().toLowerCase();
+  if (normalized === 'audio/wav' || normalized === 'audio/mpeg' || normalized === 'audio/mp4' || normalized === 'audio/webm' || normalized === 'audio/ogg') {
+    return normalized;
+  }
+  return 'audio/mp4';
+}
+
+export async function transcribeRecordedAudioWithHttpStt(params: Readonly<{
   uri: string;
   settings: any;
-  decryptSecretValue?: (value: unknown) => string | null;
-  /** Aborts in-flight transcription work (D8 `SttController` contract). */
   signal?: AbortSignal;
-}): Promise<string | null> {
+  client?: Pick<OpenAiCompatDaemonClient, 'transcribe'>;
+}>): Promise<string | null> {
   const { uri, settings, signal } = params;
-  if (signal?.aborted) {
-    return null;
-  }
-  const voice = settings?.voice ?? null;
-  const providerId = typeof voice?.providerId === 'string' ? voice.providerId.trim() : voice?.providerId;
-  const adapter =
-    providerId === 'local_direct'
-      ? voice?.adapters?.local_direct
-      : voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct;
+  if (signal?.aborted) return null;
 
-  const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(adapter?.networkTimeoutMs, 15_000);
-  const stt = adapter?.stt ?? null;
-  const openaiCompat = (stt?.openaiCompat ?? stt) as any;
-
-  const sttBaseUrl = (openaiCompat?.baseUrl ?? '').trim();
-  if (!sttBaseUrl) {
-    throw new MissingSttBaseUrlError();
-  }
-
-  const decryptSecretValue = params.decryptSecretValue ?? ((value: unknown) => sync.decryptSecretValue(value as any));
-  const sttApiKey = openaiCompat?.apiKey ? (decryptSecretValue(openaiCompat.apiKey) ?? null) : null;
-  const sttModel = typeof openaiCompat?.model === 'string' && openaiCompat.model.trim()
+  const adapter = resolveLocalVoiceAdapterSettings(settings).config;
+  const openaiCompat = (adapter?.stt?.openaiCompat ?? adapter?.stt ?? null) as any;
+  const baseUrl = typeof openaiCompat?.baseUrl === 'string' ? openaiCompat.baseUrl.trim() : '';
+  if (!baseUrl) throw new MissingSttBaseUrlError();
+  const model = typeof openaiCompat?.model === 'string' && openaiCompat.model.trim()
     ? openaiCompat.model.trim()
     : 'whisper-1';
+  const extension = (RecordingPresets.HIGH_QUALITY as any)?.extension;
+  const defaultName = extension ? `recording${extension}` : 'recording.m4a';
+  const client = params.client ?? new OpenAiCompatDaemonClient();
 
-  const fileName = (RecordingPresets.HIGH_QUALITY as any)?.extension
-    ? `recording${(RecordingPresets.HIGH_QUALITY as any).extension}`
-    : 'recording.m4a';
-
-	  const transcriptionReq = await (async () => {
-	    if (Platform.OS === 'web' && uri.startsWith('blob:')) {
-	      const blob = await (await runtimeFetch(uri)).blob();
-	      return buildOpenAiTranscriptionRequest({
-	        baseUrl: sttBaseUrl,
-	        apiKey: sttApiKey,
-	        model: sttModel,
-	        file: { kind: 'web', blob, name: fileName.replace(/\.m4a$/i, '.webm') },
-	      });
-	    }
-    return buildOpenAiTranscriptionRequest({
-      baseUrl: sttBaseUrl,
-      apiKey: sttApiKey,
-      model: sttModel,
-      file: { kind: 'native', uri, name: fileName, mimeType: guessAudioMimeType(fileName) },
-    });
-  })();
-
-  let response: Response;
   try {
-    response = await fetchWithTimeout(transcriptionReq.url, transcriptionReq.init, networkTimeoutMs, 'stt_timeout', signal);
-  } catch (error) {
-    // A caller-driven abort cancels the turn gracefully (no transcript); other
-    // failures (timeout, network) keep propagating as before.
-    if (signal?.aborted) {
-      return null;
+    if (Platform.OS === 'web' && uri.startsWith('blob:')) {
+      const blob = await (await runtimeFetch(uri, { signal })).blob();
+      if (signal?.aborted) return null;
+      const mimeType = normalizeSupportedMimeType(blob.type || 'audio/webm');
+      const fileName = defaultName.replace(/\.m4a$/iu, mimeType === 'audio/webm' ? '.webm' : '.audio');
+      const file = new File([blob], fileName, { type: mimeType });
+      const text = await client.transcribe({
+        baseUrl,
+        insecureLocalOriginConsent: openaiCompat?.insecureLocalOriginConsent ?? null,
+        insecureLocalConsentMachineId: openaiCompat?.insecureLocalConsentMachineId ?? null,
+        credentialKind: 'stt_api_key',
+        model,
+        source: { kind: 'web', file },
+        mimeType,
+        fileName,
+        signal,
+      });
+      return text.trim() || null;
     }
+
+    const mimeType = normalizeSupportedMimeType(guessAudioMimeType(defaultName));
+    const text = await client.transcribe({
+      baseUrl,
+      insecureLocalOriginConsent: openaiCompat?.insecureLocalOriginConsent ?? null,
+      insecureLocalConsentMachineId: openaiCompat?.insecureLocalConsentMachineId ?? null,
+      credentialKind: 'stt_api_key',
+      model,
+      source: { kind: 'native', uri },
+      mimeType,
+      fileName: defaultName,
+      signal,
+    });
+    return text.trim() || null;
+  } catch (error) {
+    if (signal?.aborted) return null;
     throw error;
   }
-  if (!response.ok) {
-    return null;
-  }
-
-  const json = await response.json().catch(() => null);
-  const text = json && typeof json.text === 'string' ? json.text.trim() : '';
-  return text || null;
 }

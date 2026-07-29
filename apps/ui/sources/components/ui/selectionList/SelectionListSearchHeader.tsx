@@ -1,11 +1,10 @@
 import * as React from 'react';
-import { View, Platform, TextInput as RNTextInput, type NativeSyntheticEvent, type StyleProp, type TextInputKeyPressEventData, type TextStyle, type ViewStyle } from 'react-native';
+import { Animated, View, Platform, TextInput as RNTextInput, type NativeSyntheticEvent, type StyleProp, type TextInputKeyPressEventData, type TextStyle, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { TextInput } from '@/components/ui/text/Text';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
-import { SelectionListInputGhost } from './SelectionListInputGhost';
 import { SelectionListInputMirror } from './SelectionListInputMirror';
 import { SelectionListSearchHeaderLeadingSlot } from './SelectionListSearchHeaderLeadingSlot';
 import { SelectionListStartEllipsisInputValue } from './SelectionListStartEllipsisInputValue';
@@ -73,10 +72,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
     },
     /**
-     * RUX-10: input-wrap is the row-level container that absorbs the
-     * remaining horizontal space and lays out the input-cell + (legacy
-     * native sibling ghost) in a row. On web the ghost is delivered via
-     * the layered mirror INSIDE the cell, not as a sibling.
+     * RUX-10/RUX-15: input-wrap is the row-level container that absorbs the
+     * remaining horizontal space and lays out the input cell. Web can render
+     * rich visual mirrors inside that cell; native keeps only a standard
+     * editable TextInput.
      */
     inputWrap: {
         flex: 1,
@@ -84,12 +83,18 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 0,
     },
+    inputWrapFocused: {
+        ...(Platform.select({
+            web: {
+                boxShadow: `0 0 0 2px ${theme.colors.border.strong}`,
+            },
+            default: {},
+        }) as object),
+    },
     /**
-     * RUX-10: input-cell is the LAYERING container for the editable
-     * TextInput + the visual mirror beneath it (web). On native (no
-     * `caretColor` support) the cell only hosts the TextInput; the ghost is
-     * rendered as a flex-row sibling next to the cell, preserving RUX-2's
-     * behaviour for v1.
+     * RUX-10/RUX-15: input-cell is the LAYERING container for the editable
+     * TextInput + the visual mirror beneath it (web). On native the cell only
+     * hosts the standard TextInput so soft-keyboard editing remains native.
      *
      * `position: relative` anchors the absolutely-positioned TextInput
      * overlay on web. `overflow: hidden` clips the mirror identically to
@@ -137,15 +142,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         }) as object),
     },
     /**
-     * RUX-10: native fallback — no mirror, ghost rendered as a flex
-     * sibling. The input shrink-fits its content so the ghost sits flush
-     * to the right of the typed text (the previous behaviour). On web this
-     * shape is unused.
+     * Standard native/web input: an opaque, flexing TextInput with no visual
+     * mirror. Native mobile uses this path even for path-like values so the
+     * soft keyboard, caret, selection handles, and platform text editing stay
+     * fully owned by React Native.
      */
-    inputNativeShrinkFit: {
-        flex: 0,
-        flexShrink: 1,
-        flexBasis: 'auto',
+    inputStandardInline: {
+        flex: 1,
     },
     /**
      * RUX-10: web overlay — the editable TextInput floats above the mirror
@@ -162,22 +165,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: 'transparent',
         caretColor: theme.colors.input.text,
     } satisfies WebOverlayInputStyle,
-    inputOverlayNative: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'transparent',
-        color: 'transparent',
-    } satisfies TextStyle,
-    /**
-     * RUX-10: when the ghost is absent the layered approach is overkill —
-     * the TextInput renders as a normal opaque inline element again.
-     */
-    inputWebInline: {
-        flex: 1,
-    },
     inputSuffixSlot: {
         marginLeft: 8,
         alignItems: 'center',
@@ -199,6 +186,7 @@ export type SelectionListSearchHeaderProps = Readonly<{
     /** Override the reduced-motion preference (test/escape hatch). */
     reducedMotion?: boolean;
     testID?: string;
+    inputTestID?: string;
     style?: StyleProp<ViewStyle>;
     /** Hook the underlying TextInput ref so the parent can imperatively focus. */
     inputRef?: React.Ref<RNTextInput>;
@@ -239,6 +227,13 @@ export type SelectionListSearchHeaderProps = Readonly<{
      * the field (functional actions, e.g. tree-browser button).
      */
     inputSuffix?: React.ReactNode;
+    /**
+     * Value-mode commit on native. Wired to the TextInput's `onSubmitEditing`
+     * so the soft-keyboard return key commits the typed value (native has no
+     * hardware Enter reaching the keydown bridge). Suppressed on web, where the
+     * keydown listener already handles Enter — wiring both would double-commit.
+     */
+    onSubmitEditing?: () => void;
     /** Phase 2.7: caret-at-end tracking for keyboard nav. */
     onCaretAtEndChange?: (caretAtEnd: boolean) => void;
     /** Phase 2.7: IME composition status (web only). */
@@ -246,6 +241,13 @@ export type SelectionListSearchHeaderProps = Readonly<{
     /** Phase 2.10: combobox role wiring (web). */
     listboxId?: string;
     activeDescendantId?: string;
+    /**
+     * Monotonic counter that triggers a brief left/right "shake" of the header
+     * to draw attention to the input (e.g. when the user activates a value row
+     * that needs a typed value first). Each increment runs one shake; respects
+     * reduced-motion. `0`/undefined never animates.
+     */
+    attentionNonce?: number;
 }>;
 
 /**
@@ -265,6 +267,33 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
     const styles = stylesheet;
     const detectedReducedMotion = useReducedMotionPreference();
     const reducedMotion = props.reducedMotion ?? detectedReducedMotion;
+    const [isInputFocused, setIsInputFocused] = React.useState(false);
+
+    // Attention shake: each `attentionNonce` increment plays one brief
+    // left/right wobble of the whole header row (transform-only, native-driven),
+    // signalling "type a value here". Skipped under reduced-motion (the parent
+    // still focuses the field, which is the functional part).
+    const shakeValue = React.useRef(new Animated.Value(0)).current;
+    const lastAttentionNonceRef = React.useRef(props.attentionNonce ?? 0);
+    React.useEffect(() => {
+        const nonce = props.attentionNonce ?? 0;
+        if (nonce === lastAttentionNonceRef.current) return;
+        lastAttentionNonceRef.current = nonce;
+        if (nonce === 0 || reducedMotion) return;
+        shakeValue.setValue(0);
+        Animated.sequence([
+            Animated.timing(shakeValue, { toValue: 1, duration: 55, useNativeDriver: true }),
+            Animated.timing(shakeValue, { toValue: -1, duration: 55, useNativeDriver: true }),
+            Animated.timing(shakeValue, { toValue: 0.6, duration: 50, useNativeDriver: true }),
+            Animated.timing(shakeValue, { toValue: -0.6, duration: 50, useNativeDriver: true }),
+            Animated.timing(shakeValue, { toValue: 0, duration: 45, useNativeDriver: true }),
+        ]).start();
+    }, [props.attentionNonce, reducedMotion, shakeValue]);
+    const shakeTranslateX = shakeValue.interpolate({
+        inputRange: [-1, 1],
+        outputRange: [-6, 6],
+    });
+
     const inputNodeRef = React.useRef<RNTextInput | null>(null);
     const setInputNodeRef = React.useCallback((node: RNTextInput | null) => {
         inputNodeRef.current = node;
@@ -299,10 +328,13 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
     // stays a generic container.
     const ghostSuffix = props.ghostSuffix ?? '';
     const hasGhost = ghostSuffix.length > 0;
-    // RUX-10: the layered-mirror approach is web-only (depends on
-    // `caretColor`). On native we keep RUX-2's sibling-ghost layout.
+    // Rich input painting is web-only. Native mobile must keep the actual
+    // TextInput visible/inline instead of using a transparent overlay or
+    // sibling ghost; otherwise soft-keyboard editing and selection can drift
+    // from the visible text.
     const useLayeredMirror = IS_WEB && hasGhost;
-    const useStartEllipsisValueMirror = props.inputValueEllipsizeMode === 'head'
+    const useStartEllipsisValueMirror = IS_WEB
+        && props.inputValueEllipsizeMode === 'head'
         && props.value.length > 0
         && !useLayeredMirror;
     const useOverlayInput = useLayeredMirror || useStartEllipsisValueMirror;
@@ -364,26 +396,20 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
         };
     }, [props.onKeyPress]);
 
-    // RUX-10: select the input style based on layering mode. When the
-    // layered mirror is active, the input floats above the mirror with
-    // transparent text + caretColor. Otherwise the input is opaque inline
-    // (web w/o ghost) or shrink-fit (native, ghost or not).
+    // RUX-10/RUX-15: select the input style based on presentation mode.
+    // Rich web presentations float the editable TextInput over a visual
+    // mirror. Native mobile always uses an opaque standard TextInput.
     let inputStyle: StyleProp<TextStyle>;
     if (useOverlayInput) {
-        inputStyle = [
-            styles.input,
-            (IS_WEB ? styles.inputOverlay : styles.inputOverlayNative) as TextStyle,
-        ];
-    } else if (IS_WEB) {
-        inputStyle = [styles.input, styles.inputWebInline];
+        inputStyle = [styles.input, styles.inputOverlay as TextStyle];
     } else {
-        inputStyle = [styles.input, styles.inputNativeShrinkFit];
+        inputStyle = [styles.input, styles.inputStandardInline];
     }
 
     return (
-        <View
+        <Animated.View
             testID={props.testID}
-            style={[styles.container, props.style]}
+            style={[styles.container, props.style, { transform: [{ translateX: shakeTranslateX }] }]}
         >
             <SelectionListSearchHeaderLeadingSlot
                 rootTestID={props.testID}
@@ -401,15 +427,14 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
                 </View>
             ) : null}
             {/*
-              * RUX-10: input-wrap hosts the input-cell (layering container)
-              * and — on native — the sibling ghost. The wrap absorbs the
-              * remaining horizontal space; the suffix slot below stays a
-              * sibling of the wrap so functional buttons (e.g. browse
+              * RUX-10/RUX-15: input-wrap hosts the input-cell. The wrap
+              * absorbs the remaining horizontal space; the suffix slot below
+              * stays a sibling of the wrap so functional buttons (e.g. browse
               * folder) remain anchored to the far right of the header.
               */}
             <View
                 testID={selectionListTestId(props.testID, 'input-wrap')}
-                style={styles.inputWrap}
+                style={[styles.inputWrap, isInputFocused ? styles.inputWrapFocused : null]}
             >
                 <View
                     testID={selectionListTestId(props.testID, 'input-cell')}
@@ -436,17 +461,24 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
                     ) : null}
                     <TextInput
                         ref={setInputNodeRef}
-                        testID={selectionListTestId(props.testID, 'input')}
+                        testID={props.inputTestID ?? selectionListTestId(props.testID, 'input')}
                         style={inputStyle}
                         value={props.value}
                         onChangeText={props.onChangeText}
                         placeholder={props.placeholder}
+                        accessibilityLabel={props.placeholder}
                         placeholderTextColor={theme.colors.input.placeholder}
                         cursorColor={useOverlayInput ? theme.colors.input.text : undefined}
                         selectionColor={useOverlayInput ? theme.colors.input.text : undefined}
                         autoCapitalize="none"
                         autoCorrect={false}
+                        onFocus={() => setIsInputFocused(true)}
+                        onBlur={() => setIsInputFocused(false)}
                         onKeyPress={nativeKeyPress}
+                        // Web commits via the keydown listener (Enter); wiring
+                        // onSubmitEditing there too would double-fire. Native has
+                        // no keydown bridge, so the return key relies on this.
+                        onSubmitEditing={IS_WEB ? undefined : props.onSubmitEditing}
                         onSelectionChange={handleSelectionChange as never}
                         // Web composition handlers + combobox ARIA are passed through
                         // RN-web to the underlying DOM input; not part of RN's typed
@@ -459,19 +491,6 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
                         } as Record<string, unknown>)}
                     />
                 </View>
-                {/*
-                  * RUX-10: native sibling ghost — only rendered when we are
-                  * NOT using the layered mirror (i.e. native, or web w/o
-                  * ghost). On web with ghost the mirror inside the cell
-                  * provides the visual suffix.
-                  */}
-                {!useLayeredMirror && hasGhost ? (
-                    <SelectionListInputGhost
-                        testID={selectionListTestId(props.testID, 'input', 'ghost')}
-                        inputValue={props.value}
-                        ghostSuffix={ghostSuffix}
-                    />
-                ) : null}
             </View>
             {props.inputSuffix != null ? (
                 <View
@@ -482,6 +501,6 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
                 </View>
             ) : null}
             {props.rightAdornment != null ? <View>{props.rightAdornment}</View> : null}
-        </View>
+        </Animated.View>
     );
 }

@@ -6,8 +6,11 @@ import type {
   DaemonVoiceInferenceSttStreamFinishResponse,
   DaemonVoiceInferenceSttStreamStartRequest,
   DaemonVoiceInferenceSttStreamStartResponse,
+  VoiceSpeechDiagnosticsCaptureContextV1,
 } from '@happier-dev/protocol';
 import { DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT } from '@happier-dev/protocol';
+
+import type { DaemonSpeechStreamTransportKind } from './daemonSpeechStreamDiagnostics';
 
 import {
   createDaemonSpeechStreamRpcCompatibilityCarrierAdapter,
@@ -41,20 +44,31 @@ export type DaemonSpeechStreamSenderOptions = Readonly<{
   requestId: string;
   packId?: string | null;
   language?: string | null;
+  diagnostics?: VoiceSpeechDiagnosticsCaptureContextV1;
   maxBufferedChunks?: number;
+  maxBufferedBytes?: number;
+  maxInFlightChunks?: number;
+  maxInFlightBytes?: number;
   finishTimeoutMs?: number;
   carrierAdapter?: DaemonSpeechStreamCarrierAdapter;
   transport: DaemonSpeechStreamTransport;
+  transportKind?: Extract<DaemonSpeechStreamTransportKind, 'binary_tunnel' | 'json_rpc_compat'>;
 }>;
 
 type PendingChunk = {
   readonly seq: number;
-  readonly pcm16Bytes: Uint8Array;
+  pcm16Bytes: Uint8Array;
+  scheduledGeneration: number | null;
+  acknowledged: boolean;
+  responseEvents: readonly DaemonVoiceInferenceSttStreamEvent[] | null;
   resolve: (events: readonly DaemonVoiceInferenceSttStreamEvent[]) => void;
   reject: (error: unknown) => void;
 };
 
 const DEFAULT_MAX_BUFFERED_CHUNKS = 64;
+const DEFAULT_MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
+const DEFAULT_MAX_IN_FLIGHT_CHUNKS = 8;
+const DEFAULT_MAX_IN_FLIGHT_BYTES = 256 * 1024;
 const DEFAULT_FINISH_TIMEOUT_MS = 10_000;
 
 function createSenderError(code: string): Error & { code: string } {
@@ -69,10 +83,15 @@ function throwIfErrorResponse(response: Readonly<{ ok: boolean; errorCode?: stri
 }
 
 export class DaemonSpeechStreamSender {
+  readonly transportKind: Extract<DaemonSpeechStreamTransportKind, 'binary_tunnel' | 'json_rpc_compat'>;
   private readonly requestId: string;
   private readonly packId: string | null;
   private readonly language: string | null;
+  private readonly diagnostics: VoiceSpeechDiagnosticsCaptureContextV1 | undefined;
   private readonly maxBufferedChunks: number;
+  private readonly maxBufferedBytes: number;
+  private readonly maxInFlightChunks: number;
+  private readonly maxInFlightBytes: number;
   private readonly finishTimeoutMs: number;
   private readonly carrierAdapter: DaemonSpeechStreamCarrierAdapter;
   private readonly transport: DaemonSpeechStreamTransport;
@@ -82,14 +101,23 @@ export class DaemonSpeechStreamSender {
   private localOwnerGeneration = 0;
   private nextSeq = 0;
   private lastAckSeq = -1;
+  private highestSentSeq = -1;
   private readonly pendingChunks = new Map<number, PendingChunk>();
-  private sendTail: Promise<void> = Promise.resolve();
+  private pendingBytes = 0;
+  private inFlightChunks = 0;
+  private inFlightBytes = 0;
+  private readonly drainWaiters = new Set<() => void>();
 
   constructor(options: DaemonSpeechStreamSenderOptions) {
+    this.transportKind = options.transportKind ?? 'json_rpc_compat';
     this.requestId = options.requestId;
     this.packId = options.packId ?? null;
     this.language = options.language ?? null;
+    this.diagnostics = options.diagnostics;
     this.maxBufferedChunks = Math.max(1, Math.trunc(options.maxBufferedChunks ?? DEFAULT_MAX_BUFFERED_CHUNKS));
+    this.maxBufferedBytes = Math.max(1, Math.trunc(options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES));
+    this.maxInFlightChunks = Math.max(1, Math.trunc(options.maxInFlightChunks ?? DEFAULT_MAX_IN_FLIGHT_CHUNKS));
+    this.maxInFlightBytes = Math.max(1, Math.trunc(options.maxInFlightBytes ?? DEFAULT_MAX_IN_FLIGHT_BYTES));
     this.finishTimeoutMs = Math.max(1, Math.trunc(options.finishTimeoutMs ?? DEFAULT_FINISH_TIMEOUT_MS));
     this.carrierAdapter = options.carrierAdapter ?? createDaemonSpeechStreamRpcCompatibilityCarrierAdapter();
     this.transport = options.transport;
@@ -106,6 +134,7 @@ export class DaemonSpeechStreamSender {
       language: this.language,
       streamingMode: 'runtime',
       format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT,
+      ...(this.diagnostics ? { diagnostics: this.diagnostics } : {}),
     });
     if (ownerGeneration !== this.localOwnerGeneration || this.closed) {
       throw createSenderError('daemon_speech_stream_stale_start');
@@ -118,8 +147,11 @@ export class DaemonSpeechStreamSender {
       streamId: response.streamId,
       generation: response.generation,
     };
+    this.inFlightChunks = 0;
+    this.inFlightBytes = 0;
+    this.highestSentSeq = response.ackSeq;
     this.applyAck(response.ackSeq);
-    this.flushPending(ownerGeneration);
+    this.pump(ownerGeneration);
   }
 
   async restart(): Promise<void> {
@@ -133,7 +165,11 @@ export class DaemonSpeechStreamSender {
     if (this.closed) {
       return Promise.reject(createSenderError('daemon_speech_stream_closed'));
     }
-    if (this.pendingChunks.size >= this.maxBufferedChunks) {
+    if (
+      this.pendingChunks.size >= this.maxBufferedChunks
+      || this.pendingBytes + pcm16Bytes.byteLength > this.maxBufferedBytes
+      || pcm16Bytes.byteLength > this.maxInFlightBytes
+    ) {
       return Promise.reject(createSenderError('daemon_speech_stream_backpressure'));
     }
     const seq = this.nextSeq++;
@@ -141,18 +177,26 @@ export class DaemonSpeechStreamSender {
       this.pendingChunks.set(seq, {
         seq,
         pcm16Bytes: new Uint8Array(pcm16Bytes),
+        scheduledGeneration: null,
+        acknowledged: false,
+        responseEvents: null,
         resolve,
         reject,
       });
     });
+    this.pendingBytes += pcm16Bytes.byteLength;
     if (this.activeStream) {
-      this.scheduleChunk(seq, this.localOwnerGeneration);
+      this.pump(this.localOwnerGeneration);
     }
     return promise;
   }
 
   async waitForDrain(): Promise<void> {
-    await this.sendTail;
+    if (this.isDrained()) return;
+    await new Promise<void>((resolve) => {
+      this.drainWaiters.add(resolve);
+      this.resolveDrainIfNeeded();
+    });
   }
 
   async finish(): Promise<DaemonVoiceInferenceSttStreamFinishResponse> {
@@ -199,30 +243,39 @@ export class DaemonSpeechStreamSender {
     this.activeStream = null;
     ++this.localOwnerGeneration;
     this.closePending(createSenderError('daemon_speech_stream_closed'));
-    this.sendTail = Promise.resolve();
+    this.inFlightChunks = 0;
+    this.inFlightBytes = 0;
+    this.resolveDrainIfNeeded();
     if (active) {
       await this.transport.cancel(active);
     }
   }
 
-  private flushPending(ownerGeneration: number): void {
-    for (const seq of [...this.pendingChunks.keys()].sort((a, b) => a - b)) {
-      this.scheduleChunk(seq, ownerGeneration);
+  private pump(ownerGeneration: number): void {
+    if (!this.activeStream || this.closed || ownerGeneration !== this.localOwnerGeneration) return;
+    for (const pending of [...this.pendingChunks.values()].sort((a, b) => a.seq - b.seq)) {
+      if (pending.acknowledged) continue;
+      if (pending.scheduledGeneration === ownerGeneration) continue;
+      if (this.inFlightChunks >= this.maxInFlightChunks) break;
+      if (this.inFlightBytes + pending.pcm16Bytes.byteLength > this.maxInFlightBytes) break;
+      pending.scheduledGeneration = ownerGeneration;
+      const sentByteLength = pending.pcm16Bytes.byteLength;
+      this.highestSentSeq = Math.max(this.highestSentSeq, pending.seq);
+      this.inFlightChunks += 1;
+      this.inFlightBytes += sentByteLength;
+      void this.sendChunk(pending, ownerGeneration).finally(() => {
+        if (ownerGeneration !== this.localOwnerGeneration) return;
+        this.inFlightChunks = Math.max(0, this.inFlightChunks - 1);
+        this.inFlightBytes = Math.max(0, this.inFlightBytes - sentByteLength);
+        this.pump(ownerGeneration);
+        this.resolveDrainIfNeeded();
+      });
     }
   }
 
-  private scheduleChunk(seq: number, ownerGeneration: number): void {
-    this.sendTail = this.sendTail
-      .catch(() => undefined)
-      .then(async () => {
-        await this.sendChunk(seq, ownerGeneration);
-      });
-  }
-
-  private async sendChunk(seq: number, ownerGeneration: number): Promise<void> {
-    const pending = this.pendingChunks.get(seq);
+  private async sendChunk(pending: PendingChunk, ownerGeneration: number): Promise<void> {
     const active = this.activeStream;
-    if (!pending || !active || ownerGeneration !== this.localOwnerGeneration || this.closed) {
+    if (!active || ownerGeneration !== this.localOwnerGeneration || this.closed) {
       return;
     }
     try {
@@ -248,25 +301,42 @@ export class DaemonSpeechStreamSender {
       if (!response.ok) {
         return;
       }
+      pending.responseEvents = response.events;
       this.applyAck(response.ackSeq);
-      pending.resolve(response.events);
+      this.settlePendingIfComplete(pending);
     } catch (error) {
       if (ownerGeneration === this.localOwnerGeneration && !this.closed) {
-        pending.reject(error);
+        this.failActiveStream(error);
       }
     }
   }
 
   private applyAck(ackSeq: number): void {
+    if (!Number.isSafeInteger(ackSeq) || ackSeq < -1 || ackSeq > this.highestSentSeq) {
+      throw createSenderError('daemon_speech_stream_invalid_ack');
+    }
     if (ackSeq <= this.lastAckSeq) {
       return;
     }
     this.lastAckSeq = ackSeq;
-    for (const [seq] of this.pendingChunks) {
+    for (const [seq, pending] of this.pendingChunks) {
       if (seq <= ackSeq) {
-        this.pendingChunks.delete(seq);
+        if (!pending.acknowledged) {
+          pending.acknowledged = true;
+          this.pendingBytes = Math.max(0, this.pendingBytes - pending.pcm16Bytes.byteLength);
+          pending.pcm16Bytes = new Uint8Array(0);
+        }
+        this.settlePendingIfComplete(pending);
       }
     }
+    this.resolveDrainIfNeeded();
+  }
+
+  private settlePendingIfComplete(pending: PendingChunk): void {
+    if (!pending.acknowledged || pending.responseEvents === null) return;
+    if (this.pendingChunks.get(pending.seq) !== pending) return;
+    this.pendingChunks.delete(pending.seq);
+    pending.resolve(pending.responseEvents);
   }
 
   private closePending(error: unknown): void {
@@ -274,6 +344,29 @@ export class DaemonSpeechStreamSender {
       pending.reject(error);
     }
     this.pendingChunks.clear();
+    this.pendingBytes = 0;
+  }
+
+  private failActiveStream(error: unknown): void {
+    const active = this.activeStream;
+    this.closed = true;
+    this.activeStream = null;
+    ++this.localOwnerGeneration;
+    this.closePending(error);
+    this.inFlightChunks = 0;
+    this.inFlightBytes = 0;
+    this.resolveDrainIfNeeded();
+    if (active) void this.transport.cancel(active).catch(() => undefined);
+  }
+
+  private isDrained(): boolean {
+    return this.pendingChunks.size === 0 && this.inFlightChunks === 0;
+  }
+
+  private resolveDrainIfNeeded(): void {
+    if (!this.isDrained()) return;
+    for (const resolve of this.drainWaiters) resolve();
+    this.drainWaiters.clear();
   }
 
   private async withFinishTimeout<T>(operation: Promise<T>): Promise<T> {

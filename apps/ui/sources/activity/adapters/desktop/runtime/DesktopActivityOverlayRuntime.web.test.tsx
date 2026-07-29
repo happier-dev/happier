@@ -78,6 +78,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
         ),
         sessionListIndexByServerId: sessionListIndexState.value,
         sessionListRenderables: {},
+        sessionMessages: {},
         concurrentSessionListCacheByServerId: {},
         localSettings: localSettingsState.value,
     });

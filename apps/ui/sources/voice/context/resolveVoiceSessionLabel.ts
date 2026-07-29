@@ -4,11 +4,15 @@ import {
   type SessionMetadataLike,
 } from '@/sync/domains/session/listing/sessionListLookupState';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import type { VoiceContextFormatterPrefs } from '@/voice/context/contextFormatters';
+import type { ResolvedVoiceContextFormatterPrefs } from '@/voice/context/contextFormatters';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 
-type VoiceSessionLabelPrefs = Readonly<Pick<VoiceContextFormatterPrefs, 'voiceShareSessionSummary' | 'voiceShareFilePaths'>>;
+type VoiceSessionLabelPrefs = Readonly<Pick<
+  ResolvedVoiceContextFormatterPrefs,
+  'voiceShareSessionSummary' | 'voiceShareFilePaths'
+>>;
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -17,26 +21,32 @@ function normalizeNonEmptyString(value: unknown): string | null {
 }
 
 function redactIfNeeded(value: string, prefs: VoiceSessionLabelPrefs): string {
-  return prefs.voiceShareFilePaths !== false ? value : redactVoicePathLikeString(value);
+  return prefs?.voiceShareFilePaths === true ? value : redactVoicePathLikeString(value);
 }
 
-function labelFromMetadata(
+function summaryLabelFromMetadata(
   metadata: SessionMetadataLike,
   prefs: VoiceSessionLabelPrefs,
 ): string | null {
   const summary =
     normalizeNonEmptyString(metadata?.summary?.text)
     ?? normalizeNonEmptyString(metadata?.summaryText);
-  if (prefs.voiceShareSessionSummary !== false && summary) {
+  if (prefs?.voiceShareSessionSummary === true && summary) {
     return redactIfNeeded(summary, prefs);
   }
+  return null;
+}
 
+function ownerLabelFromMetadata(
+  metadata: SessionMetadataLike,
+  prefs: VoiceSessionLabelPrefs,
+): string | null {
   const name = normalizeNonEmptyString(metadata?.name);
-  if (name) {
+  if (prefs?.voiceShareSessionSummary === true && name) {
     return redactIfNeeded(name, prefs);
   }
 
-  if (prefs.voiceShareFilePaths === false) return null;
+  if (prefs?.voiceShareFilePaths !== true) return null;
   const path = normalizeNonEmptyString(metadata?.path);
   if (!path) return null;
   const lastSegment = path.split('/').filter(Boolean).at(-1);
@@ -54,10 +64,12 @@ export function resolveVoiceSessionLabel(
   const state: any = storage.getState();
   const session = (state?.sessions?.[sessionId] ?? null) as Session | null;
   const lookupMetadata = resolveSessionListPreferredSessionMetadataFromState(state, sessionId);
+  const ownerMetadata = readVoiceSessionOwnerMetadataFromState(state, sessionId);
   const label =
-    labelFromMetadata(lookupMetadata, prefs)
-    ?? labelFromMetadata(session?.metadata, prefs)
-    ?? labelFromMetadata(options?.metadata, prefs);
+    summaryLabelFromMetadata(lookupMetadata ?? session?.metadata ?? null, prefs)
+    ?? summaryLabelFromMetadata(options?.metadata, prefs)
+    ?? ownerLabelFromMetadata(ownerMetadata, prefs)
+    ?? (!session ? ownerLabelFromMetadata(options?.metadata, prefs) : null);
 
   if (label === sessionId) {
     return options?.fallbackLabel ?? 'the current session';

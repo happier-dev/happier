@@ -1,6 +1,6 @@
 import { getConfig } from '@expo/config';
 import { describe, expect, it } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,27 @@ const DEFAULT_UPDATES_URL = `https://u.expo.dev/${DEFAULT_EAS_PROJECT_ID}`;
 
 function getUiDir(): string {
     return join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+}
+
+function readUiPackageJson(): any {
+    return JSON.parse(readFileSync(join(getUiDir(), 'package.json'), 'utf8'));
+}
+
+function listFirstPartyExpoNativeModules(): string[] {
+    const pkg = readUiPackageJson();
+    const workspaceNativeModules = Object.keys(pkg?.dependencies ?? {})
+        .filter((name) => name.startsWith('@happier-dev/'))
+        .map((name) => name.split('/')[1])
+        .filter((workspace): workspace is string => typeof workspace === 'string' && workspace.length > 0)
+        .filter((workspace) =>
+            existsSync(join(getUiDir(), '..', '..', 'packages', workspace, 'expo-module.config.json'))
+        );
+    const localNativeModules = readdirSync(join(getUiDir(), 'modules'), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .filter((moduleName) => existsSync(join(getUiDir(), 'modules', moduleName, 'expo-module.config.json')));
+
+    return [...workspaceNativeModules, ...localNativeModules].sort();
 }
 
 function clearDynamicConfigModuleCache(): void {
@@ -184,6 +205,15 @@ describe('app.config.js', () => {
         });
     });
 
+    it('keeps Android microphone permission enabled across native config plugins', () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+
+        expect(exp.android?.permissions).toContain('android.permission.RECORD_AUDIO');
+        expect(getPluginOptions(exp, 'expo-image-picker')).not.toEqual(
+            expect.objectContaining({ microphonePermission: false })
+        );
+    });
+
     it('allows disabling Android cleartext traffic explicitly via env override', () => {
         const exp = withCleanEnv(() => {
             process.env.HAPPIER_ANDROID_USES_CLEARTEXT_TRAFFIC = 'false';
@@ -294,6 +324,30 @@ describe('app.config.js', () => {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const pkg = require('../../../package.json');
         expect(exp.runtimeVersion).toBe(pkg.happierExpoRuntimeVersion);
+    });
+
+    it('bumps the non-publicdev runtime train when first-party Expo native modules are part of the shipped app surface', () => {
+        const pkg = readUiPackageJson();
+        const nativeModules = listFirstPartyExpoNativeModules();
+
+        expect(nativeModules).toEqual(expect.arrayContaining([
+            'audio-stream-native',
+            'happier-crypto-worker',
+            'happier-hardware-keyboard-shortcuts',
+            'happier-live-activity-authorization',
+            'sherpa-native',
+        ]));
+        expect(pkg.happierExpoRuntimeVersion).not.toBe('0.2.0-native');
+    });
+
+    it('allows forcing an Expo runtime policy for development diagnostics', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'production';
+            process.env.HAPPIER_EXPO_RUNTIME_VERSION_POLICY = 'appVersion';
+            return getPublicConfig();
+        });
+
+        expect(exp.runtimeVersion).toEqual({ policy: 'appVersion' });
     });
 
     it('allows forcing an explicit Expo runtime version for maintenance OTA trains', () => {

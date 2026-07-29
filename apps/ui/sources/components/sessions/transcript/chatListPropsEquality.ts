@@ -11,7 +11,7 @@ function areChatListNonSessionPropsEqual(left: ChatListProps, right: ChatListPro
         && left.controlledByUserOverride === right.controlledByUserOverride
         && left.controlSwitchTo === right.controlSwitchTo
         && left.onRequestSwitchToRemote === right.onRequestSwitchToRemote
-        && left.directControlFooter === right.directControlFooter
+        && left.externalControlFooter === right.externalControlFooter
         && left.approvalRequests === right.approvalRequests
         && left.jumpToSeq === right.jumpToSeq
         && left.followBottomIntentKey === right.followBottomIntentKey

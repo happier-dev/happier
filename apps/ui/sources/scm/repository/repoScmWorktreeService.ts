@@ -119,6 +119,7 @@ export class RepoScmWorktreeService {
         displayName?: string | null;
         baseRef?: string | null;
         branchMode?: 'new' | 'existing';
+        serverId?: string | null;
     }>): Promise<ScmWorktreeCreateResponse> {
         const request = resolveRepoScmMachinePathRequest({ machineId: input.machineId, path: input.path });
         if (!request) {
@@ -131,15 +132,20 @@ export class RepoScmWorktreeService {
             };
         }
 
-        return await machineScmWorktreeCreate(request.machineId, {
+        const worktreeRequest = {
             cwd: request.resolvedPath,
             displayName: input.displayName?.trim() || generateWorktreeName(),
             baseRef: input.baseRef?.trim() || undefined,
             branchMode: input.branchMode ?? 'new',
-        });
+        };
+        if (input.serverId) {
+            return await machineScmWorktreeCreate(request.machineId, worktreeRequest, { serverId: input.serverId });
+        }
+        return await machineScmWorktreeCreate(request.machineId, worktreeRequest);
     }
 
     async removeWorktreeForMachinePath(input: Readonly<{
+        serverId?: string | null;
         machineId: string;
         path: string;
         worktreePath: string;
@@ -154,15 +160,19 @@ export class RepoScmWorktreeService {
             };
         }
 
-        return await machineScmWorktreeRemove(request.machineId, {
+        const worktreeRemoveRequest = {
             cwd: request.resolvedPath,
             worktreePath: input.worktreePath,
-            confirmed: true,
+            confirmed: true as const,
             authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
-        });
+        };
+        return input.serverId
+            ? await machineScmWorktreeRemove(request.machineId, worktreeRemoveRequest, { serverId: input.serverId })
+            : await machineScmWorktreeRemove(request.machineId, worktreeRemoveRequest);
     }
 
     async pruneWorktreesForMachinePath(input: Readonly<{
+        serverId?: string | null;
         machineId: string;
         path: string;
     }>): Promise<ScmWorktreePruneResponse> {
@@ -176,9 +186,12 @@ export class RepoScmWorktreeService {
             };
         }
 
-        return await machineScmWorktreePrune(request.machineId, {
+        const worktreePruneRequest = {
             cwd: request.resolvedPath,
-        });
+        };
+        return input.serverId
+            ? await machineScmWorktreePrune(request.machineId, worktreePruneRequest, { serverId: input.serverId })
+            : await machineScmWorktreePrune(request.machineId, worktreePruneRequest);
     }
 }
 

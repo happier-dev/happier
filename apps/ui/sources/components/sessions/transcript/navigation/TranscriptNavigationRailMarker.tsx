@@ -3,10 +3,10 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import {
+    resolveTranscriptNavigationRailMarkerTransitionStyle,
     transcriptNavigationRailMarkerMotionEquals,
     type TranscriptNavigationRailMarkerMotion,
 } from './resolveTranscriptNavigationRailMotion';
-import type { TranscriptNavigationRailMarkerLineHandle } from './transcriptNavigationRailMotionWrite';
 
 type WebMarkerViewProps = React.ComponentPropsWithRef<typeof View> & {
     onClick?: () => void;
@@ -22,27 +22,25 @@ export type TranscriptNavigationRailMarkerProps = Readonly<{
     anchorId: string;
     index: number;
     label: string;
-    lineRef: (anchorId: string, handle: TranscriptNavigationRailMarkerLineHandle | null) => void;
     markerHeightPx: number;
     motion: TranscriptNavigationRailMarkerMotion;
     onFocusFromPointer: (index: number, event: unknown) => void;
     onPress: (index: number) => void;
     pinned: boolean;
+    reducedMotion: boolean;
     topPx: number;
     visible: boolean;
 }>;
 
 function TranscriptNavigationRailMarkerComponent(props: TranscriptNavigationRailMarkerProps) {
     const styles = stylesheet;
+    const { index, onFocusFromPointer, onPress } = props;
     const handlePointerEnter = React.useCallback((event: unknown) => {
-        props.onFocusFromPointer(props.index, event);
-    }, [props]);
+        onFocusFromPointer(index, event);
+    }, [index, onFocusFromPointer]);
     const handleClick = React.useCallback(() => {
-        props.onPress(props.index);
-    }, [props]);
-    const handleLineRef = React.useCallback((handle: TranscriptNavigationRailMarkerLineHandle | null) => {
-        props.lineRef(props.anchorId, handle);
-    }, [props]);
+        onPress(index);
+    }, [index, onPress]);
 
     return (
         <WebMarkerView
@@ -64,12 +62,12 @@ function TranscriptNavigationRailMarkerComponent(props: TranscriptNavigationRail
             ]}
         >
             <View
-                ref={handleLineRef}
                 testID={`transcript-navigation-rail.marker-line:${props.anchorId}`}
                 style={[
                     styles.markerLine,
                     props.active ? styles.markerLineActive : null,
                     props.visible && !props.active ? styles.markerLineVisible : null,
+                    resolveTranscriptNavigationRailMarkerTransitionStyle(props.reducedMotion),
                     {
                         height: props.markerHeightPx,
                         opacity: props.motion.opacity,
@@ -98,12 +96,12 @@ export const TranscriptNavigationRailMarker = React.memo(
         left.anchorId === right.anchorId &&
         left.index === right.index &&
         left.label === right.label &&
-        left.lineRef === right.lineRef &&
         left.markerHeightPx === right.markerHeightPx &&
         transcriptNavigationRailMarkerMotionEquals(left.motion, right.motion) &&
         left.onFocusFromPointer === right.onFocusFromPointer &&
         left.onPress === right.onPress &&
         left.pinned === right.pinned &&
+        left.reducedMotion === right.reducedMotion &&
         left.topPx === right.topPx &&
         left.visible === right.visible
     ),

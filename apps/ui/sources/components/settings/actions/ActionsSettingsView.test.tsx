@@ -1,8 +1,10 @@
 import * as React from 'react';
 
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks, resetSettingsViewCommonModuleMockState } from '../settingsViewTestHelpers';
+import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -10,6 +12,7 @@ const capture = vi.hoisted(() => ({
     items: [] as Array<Record<string, unknown>>,
     searchHeaders: [] as Array<Record<string, unknown>>,
     statusTexts: [] as Array<Record<string, unknown>>,
+    groupTitles: [] as Array<unknown>,
     windowWidth: 800,
     setRawSettings: vi.fn(),
     routerPush: vi.fn(),
@@ -17,6 +20,7 @@ const capture = vi.hoisted(() => ({
         this.items = [];
         this.searchHeaders = [];
         this.statusTexts = [];
+        this.groupTitles = [];
         this.windowWidth = 800;
         this.setRawSettings.mockReset();
         this.routerPush.mockReset();
@@ -52,8 +56,8 @@ installSettingsViewCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettingMutable: () => [{ v: 1, actions: {} }, capture.setRawSettings] as const,
-                useSetting: () => ({ privacy: { shareDeviceInventory: true } }),
+                useSettingMutable: createUseSettingMutableMockFromReader(() => [{ v: 1, actions: {} }, capture.setRawSettings] as const),
+                useSetting: createUseSettingMock({ fallback: () => ({ privacy: { shareDeviceInventory: true } }) }),
             },
         });
     },
@@ -67,7 +71,7 @@ vi.mock('@/components/ui/forms/SearchHeader', () => ({
 }));
 
 vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: () => null,
+    Switch: (props: Record<string, unknown>) => React.createElement('Switch', props),
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
@@ -75,7 +79,12 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
+    ItemGroup: ({ children, title }: { children?: React.ReactNode; title?: unknown }) => {
+        if (title !== undefined) {
+            capture.groupTitles.push(title);
+        }
+        return React.createElement(React.Fragment, null, children);
+    },
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -118,6 +127,46 @@ describe('ActionsSettingsView', () => {
         expect(capture.items.every((item) => String(item.testID).startsWith('settings-actions:action:'))).toBe(true);
     });
 
+    it('exposes browser recording attach in action settings now its executor is wired (§3.2)', async () => {
+        // FINALIZATION-PLAN §3.2/§3.3: `browser.recording.attachToComposer` has a real executor and
+        // is surfaced on ui/agent, so it is now a configurable settings row. The no-executor
+        // related executor-backed recording actions are configurable; unrelated families stay hidden.
+        capture.reset();
+        const { ActionsSettingsView } = await import('./ActionsSettingsView');
+
+        await renderScreen(<ActionsSettingsView />);
+
+        const searchHeader = capture.searchHeaders[0];
+        expect(typeof searchHeader?.onChangeText).toBe('function');
+
+        capture.items = [];
+        await act(async () => {
+            (searchHeader?.onChangeText as (value: string) => void)('browser');
+        });
+
+        expect(capture.items.some((item) => item.testID === 'settings-actions:action:browser.recording.attachToComposer')).toBe(true);
+        expect(capture.items.some((item) => item.testID === 'settings-actions:action:browser.recording.start')).toBe(true);
+        expect(capture.items.some((item) => item.testID === 'settings-actions:action:review.start')).toBe(false);
+    });
+
+    it('groups actions into runtime family sections with localized headers (§3.3)', async () => {
+        capture.reset();
+        const { ActionsSettingsView } = await import('./ActionsSettingsView');
+
+        await renderScreen(<ActionsSettingsView />);
+
+        const searchHeader = capture.searchHeaders[0];
+        capture.groupTitles = [];
+        capture.items = [];
+        await act(async () => {
+            (searchHeader?.onChangeText as (value: string) => void)('browser');
+        });
+
+        // A Browser family section header is rendered, and the grouped rows are browser actions.
+        expect(capture.groupTitles).toContain('settingsActions.families.browser.title');
+        expect(capture.items.some((item) => item.testID === 'settings-actions:action:browser.navigate')).toBe(true);
+    });
+
     it('opens an action detail page from the action row without toggling action enablement', async () => {
         capture.reset();
         const { ActionsSettingsView } = await import('./ActionsSettingsView');
@@ -144,8 +193,10 @@ describe('ActionsSettingsView', () => {
         const reviewRow = capture.items.find((item) => item.testID === 'settings-actions:action:review.start');
         expect(reviewRow).toBeTruthy();
         expect(reviewRow?.showChevron).toBe(false);
+        expect(reviewRow?.rightElementOutsidePressable).toBe(true);
         expect(await screen.findByTestId('settings-actions:action:review.start:status')).toBeTruthy();
         expect(await screen.findByTestId('settings-actions:action:review.start:configure')).toBeTruthy();
+        expect((await screen.findByTestId('settings-actions:action:review.start:enabled'))?.props.accessibilityLabel).toBe(reviewRow?.title);
     });
 
     it('moves compact status into the text column on narrow mobile widths', async () => {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred, findTestInstanceByTypeWithProps, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installToolShellCommonModuleMocks } from './ToolView.testHelpers';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -50,7 +51,7 @@ installToolShellCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => settings[key],
+                useSetting: createUseSettingMock({ fallback: (key) => settings[key] }),
             },
         });
     },
@@ -235,7 +236,7 @@ describe('ToolTimelineRow (tap action)', () => {
         expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(0);
     });
 
-    it('suppresses open-details routing when tool navigation is disabled, even if the tool has its own id', async () => {
+    it('expands without routing or hydrating the sidechain when tool navigation is disabled', async () => {
         settings.toolViewTapAction = 'open';
 
         const screen = await renderToolTimelineRow({
@@ -252,12 +253,14 @@ describe('ToolTimelineRow (tap action)', () => {
         await act(async () => {
             screen.pressByTestId('tool-timeline-row');
         });
+        await flushHookEffects();
 
         expect(pushSpy).not.toHaveBeenCalled();
         expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(1);
+        expect(ensureSidechainMessagesLoadedMock).not.toHaveBeenCalled();
     });
 
-    it('auto-expands and shows action-required status for pending user-action tools', async () => {
+    it('auto-expands and shows waiting-for-response status for pending questions', async () => {
         const screen = await renderToolTimelineRow({
             tool: {
                 name: 'AskUserQuestion',
@@ -275,7 +278,28 @@ describe('ToolTimelineRow (tap action)', () => {
 
         expect(screen.findByTestId('tool-timeline-body')).not.toBeNull();
         expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(1);
+        expect(screen.getTextContent()).toContain('status.waitingForYourResponse');
+        expect(screen.getTextContent()).not.toContain('status.actionRequired');
+    });
+
+    it('keeps action-required status for pending non-question user actions', async () => {
+        const screen = await renderToolTimelineRow({
+            tool: {
+                name: 'ExitPlanMode',
+                state: 'running',
+                completedAt: null,
+                permission: {
+                    id: 'perm-plan-1',
+                    status: 'pending',
+                    kind: 'user_action',
+                },
+            },
+            sessionId: 's1',
+            messageId: 'm-plan-1',
+        });
+
         expect(screen.getTextContent()).toContain('status.actionRequired');
+        expect(screen.getTextContent()).not.toContain('status.waitingForYourResponse');
     });
 
     it('shows a header error indicator only for failed tool rows', async () => {

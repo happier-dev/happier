@@ -1,4 +1,10 @@
-import type { AgentCore, ConnectedServiceId, ConnectedServiceKind } from '@happier-dev/agents';
+import {
+  filterConnectedServiceV2ProfilesForAgent as filterConnectedServiceV2ProfilesForAgentShared,
+  isConnectedServiceProfileKindSupportedForAgent as isConnectedServiceProfileKindSupportedForAgentShared,
+  type AgentCore,
+  type ConnectedServiceId,
+  type ConnectedServiceKind,
+} from '@happier-dev/agents';
 
 type ConnectedServiceV2ProfileProjection = Readonly<{
   profileId: string;
@@ -12,11 +18,7 @@ export function filterConnectedServiceV2ProfilesForAgent(params: Readonly<{
   serviceId: ConnectedServiceId;
   profiles: ReadonlyArray<ConnectedServiceV2ProfileProjection>;
 }>): ReadonlyArray<ConnectedServiceV2ProfileProjection> {
-  return params.profiles.filter((profile) => isConnectedServiceProfileKindSupportedForAgent({
-    agentCore: params.agentCore,
-    serviceId: params.serviceId,
-    kind: profile.kind ?? null,
-  }));
+  return filterConnectedServiceV2ProfilesForAgentShared(params) as ReadonlyArray<ConnectedServiceV2ProfileProjection>;
 }
 
 export function isConnectedServiceProfileKindSupportedForAgent(params: Readonly<{
@@ -24,10 +26,5 @@ export function isConnectedServiceProfileKindSupportedForAgent(params: Readonly<
   serviceId: ConnectedServiceId;
   kind: ConnectedServiceKind | null;
 }>): boolean {
-  const allowedKinds = params.agentCore?.connectedServices?.supportedKindsByServiceId?.[params.serviceId];
-  if (!Array.isArray(allowedKinds) || allowedKinds.length === 0) return true;
-  if (!params.kind) return true;
-
-  const allowed = new Set<ConnectedServiceKind>(allowedKinds);
-  return allowed.has(params.kind);
+  return isConnectedServiceProfileKindSupportedForAgentShared(params);
 }

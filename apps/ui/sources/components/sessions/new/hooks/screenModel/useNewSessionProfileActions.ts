@@ -7,9 +7,8 @@ import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibil
 export function useNewSessionProfileActions(params: Readonly<{
     hasUserTouchedProfileSelectionRef: React.MutableRefObject<boolean>;
     setSelectedProfileId: React.Dispatch<React.SetStateAction<string | null>>;
-    profiles: AIBackendProfile[];
     selectedProfileId: string | null;
-    setProfiles: (value: AIBackendProfile[]) => void;
+    deleteProfile: (profileId: string) => void;
 }>): Readonly<{
     onPressDefaultEnvironment: () => void;
     handleDeleteProfile: (profile: AIBackendProfile) => void;
@@ -29,8 +28,7 @@ export function useNewSessionProfileActions(params: Readonly<{
                     text: t('profiles.delete.confirm'),
                     style: 'destructive',
                     onPress: () => {
-                        const updatedProfiles = params.profiles.filter((candidate: AIBackendProfile) => candidate.id !== profile.id);
-                        params.setProfiles(updatedProfiles);
+                        params.deleteProfile(profile.id);
                         if (params.selectedProfileId === profile.id) {
                             params.setSelectedProfileId(null);
                         }
@@ -38,7 +36,7 @@ export function useNewSessionProfileActions(params: Readonly<{
                 },
             ],
         );
-    }, [params.profiles, params.selectedProfileId, params.setProfiles, params.setSelectedProfileId]);
+    }, [params.deleteProfile, params.selectedProfileId, params.setSelectedProfileId]);
 
     return {
         onPressDefaultEnvironment,

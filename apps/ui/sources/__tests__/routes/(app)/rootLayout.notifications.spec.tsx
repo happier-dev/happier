@@ -125,19 +125,24 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerUrl: () => mockState.activeServerUrl,
-    listServerProfiles: () => mockState.serverProfilesValue.map((p) => ({ ...p, name: p.id, createdAt: 0, updatedAt: 0, lastUsedAt: 0 })),
-    getServerProfilesGeneration: () => 0,
-    subscribeServerProfiles: () => () => {},
-    getActiveServerSnapshot: () => ({
-        serverId: 'server-1',
-        serverUrl: mockState.activeServerUrl,
-        kind: 'custom',
-        generation: 1,
-    }),
-    subscribeActiveServer: () => () => {},
-}));
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+    const { createPartialServerProfilesModuleMock } = await import('@/dev/testkit/mocks/serverProfiles');
+    return createPartialServerProfilesModuleMock(importOriginal, {
+        listServerProfiles: () => mockState.serverProfilesValue,
+        overrides: {
+            getActiveServerUrl: () => mockState.activeServerUrl,
+            getServerProfilesGeneration: () => 0,
+            subscribeServerProfiles: () => () => {},
+            getActiveServerSnapshot: () => ({
+                serverId: 'server-1',
+                serverUrl: mockState.activeServerUrl,
+                kind: 'custom',
+                generation: 1,
+            }),
+            subscribeActiveServer: () => () => {},
+        },
+    });
+});
 
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     normalizeServerUrl: (value: string) => String(value ?? '').trim().replace(/\/+$/, ''),

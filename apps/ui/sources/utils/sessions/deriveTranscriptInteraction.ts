@@ -1,6 +1,12 @@
 export type TranscriptInteraction = Readonly<{
     canSendMessages: boolean;
     canApprovePermissions: boolean;
+    /** Action grant for creating a fork from this transcript surface. Missing grants fail closed. */
+    canFork?: boolean;
+    /** Grant for opening session/workspace file surfaces. Missing grants fail closed. */
+    canOpenFiles?: boolean;
+    /** Grant for resolving and opening session media previews. Missing grants fail closed. */
+    canPreviewMedia?: boolean;
     permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     disableToolNavigation?: boolean;
 }>;
@@ -45,6 +51,9 @@ export function deriveTranscriptInteraction(
         return {
             canSendMessages: false,
             canApprovePermissions: false,
+            canFork: false,
+            canOpenFiles: false,
+            canPreviewMedia: false,
             permissionDisabledReason: 'public',
             disableToolNavigation: input.disableToolNavigation,
         };
@@ -68,6 +77,9 @@ export function deriveTranscriptInteraction(
     return {
         canSendMessages,
         canApprovePermissions,
+        canFork: canSendMessages,
+        canOpenFiles: true,
+        canPreviewMedia: true,
         permissionDisabledReason,
         disableToolNavigation: input.disableToolNavigation,
     };

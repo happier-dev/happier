@@ -10,6 +10,7 @@ import { resolveSessionListReadableSeq } from '@/sync/domains/session/listing/se
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { deriveSessionAttentionState } from './deriveSessionAttentionState';
 import { deriveSessionRuntimePresentationState } from './runtimePresentation';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 export { deriveSessionAttentionState } from './deriveSessionAttentionState';
 export type { SessionAttentionState } from './types';
 
@@ -32,10 +33,11 @@ export function deriveSessionAttentionFlags(
     options?: SessionAttentionOptions,
 ): SessionAttentionFlags {
     const isSessionActive = session.active === true;
+    const ownerMetadata = readSessionOwnerMetadataView(session);
     const pendingFlags = derivePendingRequestFlagsFromSession(session);
-    const hasExternalSessionLink = Boolean(readExternalSessionLink(session.metadata));
+    const hasExternalSessionLink = Boolean(readExternalSessionLink(ownerMetadata));
     const externalSessionHasUnread = hasExternalSessionLink
-        ? deriveExternalSessionAttentionHasUnread(session.metadata)
+        ? deriveExternalSessionAttentionHasUnread(ownerMetadata)
         : null;
 
     const hasUnread = options?.showUnread === false
@@ -46,7 +48,7 @@ export function deriveSessionAttentionFlags(
                 : resolveSessionListReadableSeq(session, undefined),
             pendingActivityAt: 0,
             lastViewedSessionSeq: resolveLastViewedSessionSeq(session),
-            lastViewedPendingActivityAt: session.metadata?.readStateV1?.pendingActivityAt,
+            lastViewedPendingActivityAt: ownerMetadata?.readStateV1?.pendingActivityAt,
         });
 
     const runtimePresentation = deriveSessionRuntimePresentationState({
@@ -55,6 +57,8 @@ export function deriveSessionAttentionFlags(
         presence: session.presence,
         thinking: session.thinking,
         thinkingAt: session.thinkingAt,
+        optimisticThinkingAt: session.optimisticThinkingAt ?? null,
+        hasPendingUserMessages: (session.pendingCount ?? 0) > 0,
         latestTurnStatus: session.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: session.latestTurnStatusObservedAt ?? null,
         meaningfulActivityAt: session.meaningfulActivityAt ?? null,
@@ -91,6 +95,8 @@ export function hasSessionAttention(session: Session, options?: SessionAttention
         presence: session.presence,
         thinking: session.thinking,
         thinkingAt: session.thinkingAt,
+        optimisticThinkingAt: session.optimisticThinkingAt ?? null,
+        hasPendingUserMessages: (session.pendingCount ?? 0) > 0,
         latestTurnStatus: session.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: session.latestTurnStatusObservedAt ?? null,
         meaningfulActivityAt: session.meaningfulActivityAt ?? null,

@@ -5,6 +5,10 @@ import { sessionAttachmentsUploadFile } from '@/sync/domains/transfers/ops/uploa
 import type { AttachmentsUploadFileSource } from '@/sync/domains/attachments/attachmentsUploadFileSource';
 import { RpcError } from '@/sync/runtime/rpcErrors';
 import { randomUUID } from '@/platform/randomUUID';
+import { runTransferFinalizeRecovery } from '@/components/transfers/recovery/runTransferFinalizeRecovery';
+import { t } from '@/text';
+import { isTransferFinalizeRecoveryFailure } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/directTransferFinalizeRecovery';
+import type { SessionAttachmentsUploadFinalizeResponse } from '@/sync/domains/transfers/runtime/transferRuntime/families/sessionAttachmentTransfers';
 
 import type { AttachmentDraft } from './attachmentDraftModel';
 
@@ -167,7 +171,7 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
                 ? { uploadedBytes: 0, totalBytes: described.sizeBytes }
                 : undefined;
         args.applyDraftPatch(stillPresent.id, { status: 'uploading', error: undefined, uploadProgress: initialProgress });
-        const uploadRes = await sessionAttachmentsUploadFile({
+        let uploadRes = await sessionAttachmentsUploadFile({
             sessionId: args.sessionId,
             file: stillPresent.source,
             messageLocalId,
@@ -176,6 +180,25 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
                 args.applyDraftPatch(stillPresent.id, { uploadProgress: progress });
             },
         });
+        if (isTransferFinalizeRecoveryFailure<SessionAttachmentsUploadFinalizeResponse>(uploadRes)) {
+            const recoveryResult = await runTransferFinalizeRecovery({
+                recovery: uploadRes.recovery,
+                title: t('transferRecovery.title'),
+                message: t('transferRecovery.message'),
+            });
+            if (recoveryResult?.status === 'finalized') {
+                uploadRes = recoveryResult.response;
+            } else {
+                uploadRes = {
+                    success: false,
+                    error: recoveryResult?.status === 'unavailable'
+                        ? t('transferRecovery.unavailable')
+                        : recoveryResult?.status === 'discarded'
+                            ? t('transferRecovery.discarded')
+                            : uploadRes.error,
+                };
+            }
+        }
         if (!uploadRes.success) {
             args.applyDraftPatch(stillPresent.id, { status: 'error', error: uploadRes.error });
             throw createAttachmentUploadFailureError(uploadRes);

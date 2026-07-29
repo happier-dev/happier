@@ -46,6 +46,12 @@ vi.mock('react-native-reanimated', async () => {
         }
         return value;
     };
+    const withTiming = <T,>(value: T, _config?: unknown, callback?: (finished?: boolean) => void) => {
+        if (callback) {
+            reanimatedControls.pendingCallbacks.push(() => callback(true));
+        }
+        return value;
+    };
     const Animated = {
         View: 'Animated.View',
         ScrollView: 'Animated.ScrollView',
@@ -62,6 +68,7 @@ vi.mock('react-native-reanimated', async () => {
         useAnimatedStyle,
         useSharedValue,
         withSpring,
+        withTiming,
     };
 });
 

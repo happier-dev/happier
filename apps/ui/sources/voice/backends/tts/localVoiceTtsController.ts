@@ -1,5 +1,6 @@
 import {
   createDefaultLocalVoiceTtsProviderControllers,
+  speakWithBundledSpeechTts,
   type LocalVoiceTtsController,
   type LocalVoiceTtsProviderController,
   type LocalVoiceTtsProviderId,
@@ -8,17 +9,20 @@ import {
 export function createLocalVoiceTtsController(options?: Readonly<{
   controllers?: Partial<Record<LocalVoiceTtsProviderId, LocalVoiceTtsProviderController>>;
 }>): LocalVoiceTtsController {
-  const defaultControllers = createDefaultLocalVoiceTtsProviderControllers();
-  const controllers: Record<LocalVoiceTtsProviderId, LocalVoiceTtsProviderController> = {
-    device: options?.controllers?.device ?? defaultControllers.device,
-    google_cloud: options?.controllers?.google_cloud ?? defaultControllers.google_cloud,
-    local_neural: options?.controllers?.local_neural ?? defaultControllers.local_neural,
-    openai_compat: options?.controllers?.openai_compat ?? defaultControllers.openai_compat,
-  };
+  const controllers = new Map(createDefaultLocalVoiceTtsProviderControllers());
+  for (const [providerId, controller] of Object.entries(options?.controllers ?? {})) {
+    if (controller) controllers.set(providerId, controller);
+  }
 
   return {
     speak: async (ctx) => {
-      await controllers[ctx.tts.provider].speak(ctx);
+      const controller = controllers.get(ctx.tts.provider);
+      if (controller) {
+        await controller.speak(ctx);
+        return;
+      }
+      if (await speakWithBundledSpeechTts(ctx.tts.provider, ctx)) return;
+      throw Object.assign(new Error('voice_tts_provider_unavailable'), { code: 'provider_unavailable' });
     },
   };
 }

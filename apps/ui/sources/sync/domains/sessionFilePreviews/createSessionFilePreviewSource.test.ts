@@ -72,6 +72,59 @@ describe('createSessionFilePreviewSource', () => {
         expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview-1');
     });
 
+    it('creates revocable Blob object URLs for supported video evidence references on web', async () => {
+        vi.doMock('react-native', () => ({ Platform: { OS: 'web' } }));
+
+        const createObjectURL = vi.fn(() => 'blob:recording-preview-1');
+        const revokeObjectURL = vi.fn();
+        vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
+        vi.stubGlobal('Blob', class Blob {
+            readonly parts: unknown[];
+            readonly type: string;
+
+            constructor(parts: unknown[], options?: { type?: string }) {
+                this.parts = parts;
+                this.type = options?.type ?? '';
+            }
+        });
+
+        downloadDaemonWorkspaceFileToDestinationMock.mockImplementation(async (params: {
+            destination: {
+                writeBytes: (bytes: Uint8Array) => Promise<void>;
+                close: () => Promise<void>;
+            };
+            onInit?: ((init: { name: string; sizeBytes: number }) => Promise<void | { success: false; error: string }>) | null;
+        }) => {
+            await params.onInit?.({ name: 'recording.webm', sizeBytes: 8 });
+            await params.destination.writeBytes(new Uint8Array([1, 2, 3, 4]));
+            await params.destination.writeBytes(new Uint8Array([5, 6, 7, 8]));
+            await params.destination.close();
+            return { ok: true, name: 'recording.webm', sizeBytes: 8 };
+        });
+
+        const { createSessionFilePreviewSource } = await import('./createSessionFilePreviewSource');
+        const source = await createSessionFilePreviewSource({
+            scope: { serverId: 'server-1', machineId: 'm1', rootPath: '/repo' },
+            filePath: '.happier/uploads/artifacts/session-1/message-1/recording.webm',
+            mimeType: 'video/webm',
+            maxBytes: 16,
+            cacheIdentity: 'sha-video-1',
+        });
+
+        expect(source.ok).toBe(true);
+        if (!source.ok) throw new Error(source.error);
+        expect(source.source).toMatchObject({
+            kind: 'object-url',
+            uri: 'blob:recording-preview-1',
+            byteLength: 8,
+            mimeType: 'video/webm',
+        });
+        if (source.source.kind !== 'object-url') throw new Error('Expected object-url preview source');
+
+        source.source.revoke();
+        expect(revokeObjectURL).toHaveBeenCalledWith('blob:recording-preview-1');
+    });
+
     it('writes native previews through the shared cache file sink and deletes them on cleanup', async () => {
         vi.doMock('react-native', () => ({ Platform: { OS: 'ios' } }));
 
@@ -138,7 +191,7 @@ describe('createSessionFilePreviewSource', () => {
             cacheIdentity: 'sha-svg',
         });
 
-        expect(source).toEqual({ ok: false, error: 'Unsupported image preview type' });
+        expect(source).toEqual({ ok: false, error: 'Unsupported preview type' });
         expect(downloadDaemonWorkspaceFileToDestinationMock).not.toHaveBeenCalled();
     });
 });

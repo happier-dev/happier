@@ -1,10 +1,14 @@
 import { MMKV } from 'react-native-mmkv';
+import { Platform } from 'react-native';
 import * as Sentry from '@sentry/react-native';
+import Constants from 'expo-constants';
+import * as Application from 'expo-application';
 import type { ComponentType } from 'react';
 import { parseOptionalBooleanEnv, type FeatureId } from '@happier-dev/protocol';
 import { config } from '@/config';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
+import { redactSentryPublicShareTelemetry } from '@/utils/system/sentryPublicShareRedaction';
 
 declare global {
     // eslint-disable-next-line no-var
@@ -14,6 +18,7 @@ declare global {
 }
 
 const CRASH_REPORTS_FEATURE_ID = 'app.crashReports' as const satisfies FeatureId;
+const IOS_REPLAY_DEFAULT_DISABLED_MAJOR_VERSION = 26;
 let cachedReplayIntegration: any | null = null;
 const isWebRuntime = typeof window !== 'undefined' && typeof document !== 'undefined';
 
@@ -34,6 +39,7 @@ const STATIC_SENTRY_DSN_TAURI = process.env.EXPO_PUBLIC_SENTRY_DSN_TAURI;
 const STATIC_SENTRY_SEND_DEFAULT_PII = process.env.EXPO_PUBLIC_SENTRY_SEND_DEFAULT_PII;
 const STATIC_SENTRY_ENABLE_LOGS = process.env.EXPO_PUBLIC_SENTRY_ENABLE_LOGS;
 const STATIC_SENTRY_ENABLE_REPLAY = process.env.EXPO_PUBLIC_SENTRY_ENABLE_REPLAY;
+const STATIC_SENTRY_ALLOW_REPLAY_ON_IOS_26 = process.env.EXPO_PUBLIC_SENTRY_ALLOW_REPLAY_ON_IOS_26;
 const STATIC_SENTRY_ENABLE_SPOTLIGHT = process.env.EXPO_PUBLIC_SENTRY_ENABLE_SPOTLIGHT;
 const STATIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE = process.env.EXPO_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE;
 const STATIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE = process.env.EXPO_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE;
@@ -44,6 +50,29 @@ function isTauriRuntime(): boolean {
     if (typeof window === 'undefined') return false;
     const w = window as unknown as Record<string, unknown>;
     return Boolean((w as any).__TAURI__ || (w as any).__TAURI_INTERNALS__);
+}
+
+function parseRuntimeMajorVersion(version: unknown): number | null {
+    if (typeof version === 'number') {
+        return Number.isFinite(version) ? Math.trunc(version) : null;
+    }
+    if (typeof version !== 'string') return null;
+    const match = /^(\d+)/.exec(version.trim());
+    if (!match) return null;
+    const parsed = Number.parseInt(match[1] ?? '', 10);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isIosReplayDefaultDisabledRuntime(): boolean {
+    if (Platform.OS !== 'ios') return false;
+    const majorVersion = parseRuntimeMajorVersion(Platform.Version);
+    return majorVersion !== null && majorVersion >= IOS_REPLAY_DEFAULT_DISABLED_MAJOR_VERSION;
+}
+
+function resolveReplayEnabled(): boolean {
+    if (!parseBooleanEnv(STATIC_SENTRY_ENABLE_REPLAY, false)) return false;
+    if (!isIosReplayDefaultDisabledRuntime()) return true;
+    return parseBooleanEnv(STATIC_SENTRY_ALLOW_REPLAY_ON_IOS_26, false);
 }
 
 function readPersistedCrashReportsOptOut(): boolean {
@@ -84,7 +113,7 @@ function resolveSentryEnv() {
 
     const sendDefaultPii = parseBooleanEnv(STATIC_SENTRY_SEND_DEFAULT_PII, false);
     const enableLogs = parseBooleanEnv(STATIC_SENTRY_ENABLE_LOGS, false);
-    const enableReplay = parseBooleanEnv(STATIC_SENTRY_ENABLE_REPLAY, false);
+    const enableReplay = resolveReplayEnabled();
     const spotlight = parseBooleanEnv(STATIC_SENTRY_ENABLE_SPOTLIGHT, false);
 
     const replaysSessionSampleRate = parseRateEnv(STATIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE, 0.1);
@@ -104,6 +133,74 @@ function resolveSentryEnv() {
         environment,
         release,
     };
+}
+
+function readStringValue(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readBooleanValue(value: unknown): boolean | undefined {
+    return typeof value === 'boolean' ? value : undefined;
+}
+
+function readRuntimeContext(): Record<string, string | boolean> {
+    const constants = Constants as unknown as Record<string, unknown>;
+    const expoConfig = (
+        constants.expoConfig && typeof constants.expoConfig === 'object' && !Array.isArray(constants.expoConfig)
+            ? constants.expoConfig
+            : {}
+    ) as Record<string, unknown>;
+    const identityVariant = readStringValue((config as { identityVariant?: unknown }).identityVariant);
+
+    return {
+        ...(readStringValue(config.variant) ? { variant: readStringValue(config.variant)! } : {}),
+        ...(identityVariant ? { identityVariant } : {}),
+        ...(readStringValue(Application.applicationId) ? { applicationId: readStringValue(Application.applicationId)! } : {}),
+        ...(readStringValue(Application.nativeApplicationVersion)
+            ? { nativeApplicationVersion: readStringValue(Application.nativeApplicationVersion)! }
+            : {}),
+        ...(readStringValue(Application.nativeBuildVersion) ? { nativeBuildVersion: readStringValue(Application.nativeBuildVersion)! } : {}),
+        ...(readStringValue(constants.appOwnership) ? { appOwnership: readStringValue(constants.appOwnership)! } : {}),
+        ...(readStringValue(constants.executionEnvironment)
+            ? { executionEnvironment: readStringValue(constants.executionEnvironment)! }
+            : {}),
+        ...(readBooleanValue(constants.isDevice) !== undefined ? { isDevice: readBooleanValue(constants.isDevice)! } : {}),
+        ...(readBooleanValue(constants.debugMode) !== undefined ? { debugMode: readBooleanValue(constants.debugMode)! } : {}),
+        ...(readStringValue(expoConfig.version) ? { expoVersion: readStringValue(expoConfig.version)! } : {}),
+        ...(readStringValue(expoConfig.runtimeVersion) ? { runtimeVersion: readStringValue(expoConfig.runtimeVersion)! } : {}),
+        ...(readStringValue(expoConfig.sdkVersion) ? { sdkVersion: readStringValue(expoConfig.sdkVersion)! } : {}),
+        platform: Platform.OS,
+        platformVersion: String(Platform.Version),
+    };
+}
+
+function setSentryTag(key: string, value: unknown): void {
+    const tagValue = readStringValue(value);
+    if (!tagValue) return;
+    try {
+        Sentry.setTag(key, tagValue);
+    } catch {
+        // ignore reporting failures
+    }
+}
+
+function applySentryRuntimeContext(): void {
+    const context = readRuntimeContext();
+
+    setSentryTag('happier.variant', context.variant);
+    setSentryTag('happier.identity_variant', context.identityVariant);
+    setSentryTag('happier.app_ownership', context.appOwnership);
+    setSentryTag('happier.execution_environment', context.executionEnvironment);
+    setSentryTag('happier.platform', context.platform);
+    setSentryTag('happier.native_build', context.nativeBuildVersion);
+
+    try {
+        Sentry.setContext('happier.runtime', context);
+    } catch {
+        // ignore reporting failures
+    }
 }
 
 export function initializeSentryOnce(): void {
@@ -137,6 +234,10 @@ export function initializeSentryOnce(): void {
         ...(resolved.release ? { release: resolved.release } : null),
         sendDefaultPii: resolved.sendDefaultPii,
         enableLogs: resolved.enableLogs,
+        beforeSend: redactSentryPublicShareTelemetry,
+        beforeSendTransaction: redactSentryPublicShareTelemetry,
+        beforeBreadcrumb: redactSentryPublicShareTelemetry,
+        ...(resolved.enableLogs ? { beforeSendLog: redactSentryPublicShareTelemetry } : null),
         ...(resolved.enableReplay
             ? {
                   replaysSessionSampleRate: resolved.replaysSessionSampleRate,
@@ -146,6 +247,7 @@ export function initializeSentryOnce(): void {
             : null),
         spotlight: __DEV__ && resolved.spotlight,
     });
+    applySentryRuntimeContext();
 
     if (cachedReplayIntegration && typeof cachedReplayIntegration.startBuffering === 'function') {
         // Prefer privacy-preserving buffered mode when sessions aren't sampled.

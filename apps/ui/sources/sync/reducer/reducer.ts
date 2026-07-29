@@ -82,6 +82,10 @@
  * - **Timestamp Preservation**: NEVER change a message's createdAt timestamp. The timestamp
  *   represents when the message was originally created and must be preserved throughout all
  *   processing phases. This is critical for maintaining correct message ordering.
+ * - **Transcript Ordering Reconciliation**: AgentState permission placeholders are created before
+ *   their transcript row exists. When the matching tool-call row arrives, missing transcript
+ *   ordering coordinates (`seq`, `transcriptBlockIndex`) may be filled in without changing the
+ *   placeholder's original `createdAt`.
  * 
  * ## Permission Matching Algorithm:
  * 
@@ -126,7 +130,17 @@ import { runModeSwitchEventsPhase } from "./phases/modeSwitchEvents";
 import { equalOptionalStringArrays } from "./helpers/arrays";
 import { coerceStreamingToolResultChunk, mergeExistingStdStreamsIntoFinalResultIfMissing, mergeStreamingChunkIntoResult } from "./helpers/streamingToolResult";
 import type { OrphanToolResultBucket } from "./helpers/orphanToolResults";
+import type { ReducerStoredPermission } from "./helpers/toolCallProjection";
 import { isDebugFlagEnabled } from "./helpers/debugFlags";
+import { compareIncomingTranscriptRowsOldestFirst, normalizeTranscriptSeq } from "../domains/messages/transcriptOrdering";
+import {
+    SessionContextUsageSnapshotV1Schema,
+    type SessionContextUsageSnapshotV1,
+} from '@happier-dev/protocol';
+import {
+    applyTranscriptObservationMetadata,
+    type TranscriptObservationMetadata,
+} from '../domains/messages/transcriptObservationProvenance';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -173,6 +187,7 @@ export type ReducerMessage = {
     id: string;
     realID: string | null;
     seq: number | null;
+    transcriptBlockIndex?: number | null;
     localId: string | null;
     createdAt: number;
     role: 'user' | 'agent';
@@ -181,27 +196,12 @@ export type ReducerMessage = {
     event: AgentEvent | null;
     tool: ToolCall | null;
     meta?: MessageMeta;
-}
-
-type StoredPermission = {
-    tool: string;
-    arguments: any;
-    createdAt: number;
-    completedAt?: number;
-    status: 'pending' | 'approved' | 'denied' | 'canceled';
-    reason?: string;
-    mode?: string;
-    allowedTools?: string[];
-    // Backward-compatible field name used by some clients/agents.
-    allowTools?: string[];
-    suggestions?: unknown;
-    decision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
-};
+} & TranscriptObservationMetadata;
 
 export type ReducerState = {
     toolIdToMessageId: Map<string, string>; // toolId/permissionId -> messageId (since they're the same now)
     sidechainToolIdToMessageId: Map<string, string>; // toolId -> sidechain messageId (for dual tracking)
-    permissions: Map<string, StoredPermission>; // Store permission details by ID for quick lookup
+    permissions: Map<string, ReducerStoredPermission>; // Store permission details by ID for quick lookup
     orphanToolResults: Map<string, OrphanToolResultBucket>; // Buffer tool results that arrive before their tool call
     localIds: Map<string, string>;
     messageIds: Map<string, string>; // originalId -> internalId
@@ -242,6 +242,8 @@ export type ReducerState = {
         cacheRead: number;
         contextSize: number;
         contextWindowTokens?: number;
+        contextSnapshot: SessionContextUsageSnapshotV1;
+        contextSnapshotStale: boolean;
         timestamp: number;
     };
 };
@@ -261,6 +263,23 @@ export function createReducer(): ReducerState {
         thinkingMergeCursor: null,
         thinkingSegmentKeyToMessageId: new Map(),
         sidechainThinkingMergeCursors: new Map(),
+    };
+}
+
+export function reconcileLatestUsageContextSnapshotModel(
+    state: ReducerState,
+    activeModelId: string | null | undefined,
+): void {
+    const latestUsage = state.latestUsage;
+    const normalizedActiveModelId = typeof activeModelId === 'string' ? activeModelId.trim() : '';
+    const snapshotModelId = latestUsage?.contextSnapshot.modelId?.trim() ?? '';
+    if (!latestUsage || !normalizedActiveModelId || !snapshotModelId) return;
+
+    const contextSnapshotStale = snapshotModelId !== normalizedActiveModelId;
+    if (latestUsage.contextSnapshotStale === contextSnapshotStale) return;
+    state.latestUsage = {
+        ...latestUsage,
+        contextSnapshotStale,
     };
 }
 
@@ -330,10 +349,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     for (const [mid, m] of state.messages) {
         if (sidechainMessageIds.has(mid)) continue;
 
-        const nextSeq =
-            typeof m.seq === 'number' && Number.isFinite(m.seq)
-                ? Math.trunc(m.seq)
-                : null;
+        const nextSeq = normalizeTranscriptSeq(m.seq);
 
         if (lastMainMessageId === null) {
             lastMainMessageId = mid;
@@ -402,49 +418,15 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     const orderedIncomingMessages = (() => {
         if (messages.length <= 1) return messages;
 
-        const seqValue = (msg: NormalizedMessage): number | null => {
-            const raw = msg.seq;
-            if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
-            return Math.trunc(raw);
-        };
-
-        const createdAtValue = (msg: NormalizedMessage): number | null => {
-            const raw = msg.createdAt;
-            if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
-            return raw;
-        };
-
         const indexed = messages.map((msg, index) => ({
             msg,
-            index,
-            seq: seqValue(msg),
-            createdAt: createdAtValue(msg),
+            id: msg.id,
+            seq: normalizeTranscriptSeq(msg.seq),
+            createdAt: msg.createdAt,
+            inputIndex: index,
         }));
 
-        indexed.sort((a, b) => {
-            const aSeq = a.seq;
-            const bSeq = b.seq;
-            if (aSeq !== null && bSeq !== null) {
-                if (aSeq !== bSeq) return aSeq - bSeq;
-            } else if (aSeq !== null && bSeq === null) {
-                return -1;
-            } else if (aSeq === null && bSeq !== null) {
-                return 1;
-            }
-
-            const aCreatedAt = a.createdAt;
-            const bCreatedAt = b.createdAt;
-            if (aCreatedAt !== null && bCreatedAt !== null) {
-                if (aCreatedAt !== bCreatedAt) return aCreatedAt - bCreatedAt;
-            } else if (aCreatedAt !== null && bCreatedAt === null) {
-                return -1;
-            } else if (aCreatedAt === null && bCreatedAt !== null) {
-                return 1;
-            }
-
-            // Stable tie-breaker so arrival order doesn't affect merge behavior.
-            return a.index - b.index;
-        });
+        indexed.sort(compareIncomingTranscriptRowsOldestFirst);
 
         return indexed.map((e) => e.msg);
     })();
@@ -550,6 +532,24 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
         allocateId,
     });
 
+    const incomingObservationMetadataById = new Map(
+        orderedIncomingMessages.map((message) => [message.id, message] as const),
+    );
+    const incomingObservationMetadataByLocalId = new Map(
+        orderedIncomingMessages
+            .filter((message): message is typeof message & { localId: string } => typeof message.localId === 'string')
+            .map((message) => [message.localId, message] as const),
+    );
+    const applyIncomingObservationMetadata = (message: ReducerMessage): void => {
+        const source = (message.realID ? incomingObservationMetadataById.get(message.realID) : undefined)
+            ?? (message.localId ? incomingObservationMetadataByLocalId.get(message.localId) : undefined);
+        applyTranscriptObservationMetadata(message, source);
+    };
+    for (const id of changed) {
+        const message = state.messages.get(id);
+        if (message) applyIncomingObservationMetadata(message);
+    }
+
     //
     // Collect changed messages (only root-level messages)
     //
@@ -558,7 +558,10 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     // sidechain state only and are rendered under the owning tool-call when that tool-call exists.
     const sidechainChildIds = new Set<string>();
     for (const chain of state.sidechains.values()) {
-        for (const m of chain) sidechainChildIds.add(m.id);
+        for (const m of chain) {
+            sidechainChildIds.add(m.id);
+            if (changed.has(m.id)) applyIncomingObservationMetadata(m);
+        }
     }
 
     const filteredSidechainChildIds: string[] = [];
@@ -635,6 +638,33 @@ function readContextUsedTokensFromUsage(usage: UsageData): number | null {
     return readContextUsageTelemetryNumber(usage, 'context_used_tokens');
 }
 
+function readContextSnapshotFromUsage(usage: UsageData): SessionContextUsageSnapshotV1 | null {
+    const usageRecord = asRecord(usage);
+    const result = SessionContextUsageSnapshotV1Schema.safeParse(
+        usageRecord?.contextSnapshot ?? usageRecord?.context_snapshot,
+    );
+    return result.success ? result.data : null;
+}
+
+function buildDerivedContextSnapshot(params: Readonly<{
+    usedTokens: number;
+    windowTokens: number | null;
+    observedAtMs: number;
+}>): SessionContextUsageSnapshotV1 {
+    return {
+        v: 1,
+        modelId: null,
+        usedTokens: params.usedTokens,
+        windowTokens: params.windowTokens,
+        totalProcessedTokens: null,
+        baselineTokens: null,
+        isAutoCompactEnabled: null,
+        categories: null,
+        observedAtMs: params.observedAtMs,
+        source: 'derived_estimate',
+    };
+}
+
 function processUsageData(state: ReducerState, usage: UsageData, timestamp: number) {
     // Only update if this is newer than the current latest usage
     if (!state.latestUsage || timestamp > state.latestUsage.timestamp) {
@@ -644,13 +674,47 @@ function processUsageData(state: ReducerState, usage: UsageData, timestamp: numb
         const contextSize =
             readContextUsedTokensFromUsage(usage) ??
             (reportedContextWindowTokens !== null ? state.latestUsage?.contextSize ?? 0 : derivedContextSize);
+        const incomingProviderSnapshot = readContextSnapshotFromUsage(usage);
+        const previousProviderSnapshot = state.latestUsage && state.latestUsage.contextSnapshot.source !== 'derived_estimate'
+            ? state.latestUsage.contextSnapshot
+            : null;
+        // Prefer the snapshot the provider observed most recently. Record timestamps and
+        // snapshot observedAtMs ride the same monotonic clock, but a transport reorder of a
+        // turn-end vs on-demand snapshot could otherwise let a newer-arriving-but-staler
+        // reading overwrite a fresher one. Tiebreak on observedAtMs (R-L2 F-R-L2-1).
+        const providerSnapshot = incomingProviderSnapshot
+            && (!previousProviderSnapshot
+                || incomingProviderSnapshot.observedAtMs >= previousProviderSnapshot.observedAtMs)
+            ? incomingProviderSnapshot
+            : null;
+        const contextSnapshot = providerSnapshot
+            ?? previousProviderSnapshot
+            ?? buildDerivedContextSnapshot({
+                usedTokens: contextSize,
+                windowTokens: contextWindowTokens,
+                observedAtMs: timestamp,
+            });
+        // Context-only records (Claude on-demand/live `getContextUsage()`)
+        // carry no token counts; keep the previous turn's totals and update
+        // only the context truth.
+        const isContextOnly = asRecord(usage)?.context_only === true;
         state.latestUsage = {
-            inputTokens: usage.input_tokens,
-            outputTokens: usage.output_tokens,
-            cacheCreation: usage.cache_creation_input_tokens || 0,
-            cacheRead: usage.cache_read_input_tokens || 0,
-            contextSize,
-            ...(contextWindowTokens !== null ? { contextWindowTokens } : {}),
+            inputTokens: isContextOnly ? state.latestUsage?.inputTokens ?? 0 : usage.input_tokens,
+            outputTokens: isContextOnly ? state.latestUsage?.outputTokens ?? 0 : usage.output_tokens,
+            cacheCreation: isContextOnly ? state.latestUsage?.cacheCreation ?? 0 : usage.cache_creation_input_tokens || 0,
+            cacheRead: isContextOnly ? state.latestUsage?.cacheRead ?? 0 : usage.cache_read_input_tokens || 0,
+            contextSize: contextSnapshot.usedTokens,
+            ...(contextSnapshot.windowTokens !== null
+                ? { contextWindowTokens: contextSnapshot.windowTokens }
+                : contextWindowTokens !== null
+                    ? { contextWindowTokens }
+                    : {}),
+            contextSnapshot,
+            contextSnapshotStale: providerSnapshot
+                ? false
+                : previousProviderSnapshot
+                    ? state.latestUsage?.contextSnapshotStale === true
+                    : false,
             timestamp: timestamp
         };
     }
@@ -658,30 +722,44 @@ function processUsageData(state: ReducerState, usage: UsageData, timestamp: numb
 
 
 function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: ReducerState): Message | null {
+    const observationMetadata: TranscriptObservationMetadata = {
+        ...(reducerMsg.sourceCreatedAt !== undefined ? { sourceCreatedAt: reducerMsg.sourceCreatedAt } : {}),
+        ...(reducerMsg.sourceUpdatedAt !== undefined ? { sourceUpdatedAt: reducerMsg.sourceUpdatedAt } : {}),
+        ...(reducerMsg.transcriptObservationProvenance !== undefined
+            ? { transcriptObservationProvenance: reducerMsg.transcriptObservationProvenance }
+            : {}),
+        ...(reducerMsg.deliveryResolution !== undefined
+            ? { deliveryResolution: reducerMsg.deliveryResolution }
+            : {}),
+    };
     if (reducerMsg.role === 'user' && reducerMsg.text !== null) {
         const displayText = typeof reducerMsg.meta?.displayText === 'string' ? reducerMsg.meta.displayText : undefined;
         return {
             id: reducerMsg.id,
             realID: reducerMsg.realID,
             ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
+            ...(typeof reducerMsg.transcriptBlockIndex === 'number' ? { transcriptBlockIndex: reducerMsg.transcriptBlockIndex } : {}),
             localId: reducerMsg.localId,
             createdAt: reducerMsg.createdAt,
             kind: 'user-text',
             text: reducerMsg.text,
             ...(displayText !== undefined ? { displayText } : {}),
-            meta: reducerMsg.meta
+            meta: reducerMsg.meta,
+            ...observationMetadata,
         };
     } else if (reducerMsg.role === 'agent' && reducerMsg.text !== null) {
         return {
             id: reducerMsg.id,
             realID: reducerMsg.realID,
             ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
+            ...(typeof reducerMsg.transcriptBlockIndex === 'number' ? { transcriptBlockIndex: reducerMsg.transcriptBlockIndex } : {}),
             localId: reducerMsg.localId,
             createdAt: reducerMsg.createdAt,
             kind: 'agent-text',
             text: reducerMsg.text,
             ...(reducerMsg.isThinking && { isThinking: true }),
-            meta: reducerMsg.meta
+            meta: reducerMsg.meta,
+            ...observationMetadata,
         };
     } else if (reducerMsg.role === 'agent' && reducerMsg.tool !== null) {
         // Convert children recursively
@@ -703,22 +781,26 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
             id: reducerMsg.id,
             realID: reducerMsg.realID,
             ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
+            ...(typeof reducerMsg.transcriptBlockIndex === 'number' ? { transcriptBlockIndex: reducerMsg.transcriptBlockIndex } : {}),
             localId: reducerMsg.localId,
             createdAt: reducerMsg.createdAt,
             kind: 'tool-call',
             tool: { ...reducerMsg.tool },
             children: childMessages,
-            meta: reducerMsg.meta
+            meta: reducerMsg.meta,
+            ...observationMetadata,
         };
     } else if (reducerMsg.role === 'agent' && reducerMsg.event !== null) {
         return {
             id: reducerMsg.id,
             realID: reducerMsg.realID,
             ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
+            ...(typeof reducerMsg.transcriptBlockIndex === 'number' ? { transcriptBlockIndex: reducerMsg.transcriptBlockIndex } : {}),
             createdAt: reducerMsg.createdAt,
             kind: 'agent-event',
             event: reducerMsg.event,
-            meta: reducerMsg.meta
+            meta: reducerMsg.meta,
+            ...observationMetadata,
         };
     }
 

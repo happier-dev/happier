@@ -36,7 +36,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     error: {
         ...Typography.default(),
         color: theme.colors.state.danger.foreground,
-        textAlign: 'center',
+        textAlign: 'left',
     },
 }));
 
@@ -295,12 +295,11 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
                         execution: checklist.executionById[item.id] ?? null,
                     };
                     const copied = await setClipboardStringSafe(JSON.stringify(payload, null, 2));
-                    Modal.alert(
-                        copied ? t('common.copied') : t('common.error'),
-                        copied
-                            ? t('items.copiedToClipboard', { label: t('common.details') })
-                            : t('items.failedToCopyToClipboard'),
-                    );
+                    if (!copied) {
+                        Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
+                        return false;
+                    }
+                    return true;
                 }}
             />
         </View>

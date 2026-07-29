@@ -110,12 +110,12 @@ const createVoiceAgentPersistenceTestState = (): any => {
     settings: {
       voice: {
         providerId: 'local_conversation',
-        adapters: {
-          local_conversation: {
+        providers: {
+          local_conversation: { schemaVersion: 1, config: {
             streaming: { enabled: false },
             agent: { backend: 'daemon', transcript: { persistenceMode: 'persistent', epoch: 1 } },
             networkTimeoutMs: 15_000,
-          },
+          } },
         },
       },
     },
@@ -312,10 +312,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
     state = createVoiceAgentPersistenceTestState();
     state.applySettingsLocal = applySettingsLocal;
 
-    state.settings.voice.adapters.local_conversation.agent.resumabilityMode = 'replay';
-    state.settings.voice.adapters.local_conversation.agent.machineTargetMode = 'auto';
-    state.settings.voice.adapters.local_conversation.agent.machineTargetId = null;
-    state.settings.voice.adapters.local_conversation.agent.autoTargetMachineId = null;
+    state.settings.voice.providers.local_conversation.config.agent.resumabilityMode = 'replay';
+    state.settings.voice.executionMachine = { mode: 'auto', machineId: null, autoMachineId: null };
   });
 
   it('persists runId and resumeHandle into carrier session metadata when transcript persistence is enabled', async () => {
@@ -385,7 +383,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
   });
 
   it('persists run metadata even when transcript persistence is ephemeral so active runs can be reattached after reload', async () => {
-    state.settings.voice.adapters.local_conversation.agent.transcript = { persistenceMode: 'ephemeral', epoch: 1 };
+    state.settings.voice.providers.local_conversation.config.agent.transcript = { persistenceMode: 'ephemeral', epoch: 1 };
 
     const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
     const controller = createVoiceAgentSessionController();
@@ -403,7 +401,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
   });
 
   it('does not migrate or stop a legacy global daemon run during startup when persisted metadata predates the hidden transcript contract', async () => {
-    state.settings.voice.adapters.local_conversation.agent.transcript = { persistenceMode: 'ephemeral', epoch: 1 };
+    state.settings.voice.providers.local_conversation.config.agent.transcript = { persistenceMode: 'ephemeral', epoch: 1 };
     state.sessions.sys_voice.metadata.voiceAgentRunV1 = {
       v: 1,
       runId: 'run_legacy',
@@ -629,7 +627,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
   });
 
   it('reuses persisted runId for ephemeral global voice sessions after controller recreation', async () => {
-    state.settings.voice.adapters.local_conversation.agent.transcript = { persistenceMode: 'ephemeral', epoch: 1 };
+    state.settings.voice.providers.local_conversation.config.agent.transcript = { persistenceMode: 'ephemeral', epoch: 1 };
 
     const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
 
@@ -713,7 +711,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
   });
 
   it('starts a fresh run when an ephemeral persisted runId can no longer be reattached', async () => {
-    state.settings.voice.adapters.local_conversation.agent.transcript = { persistenceMode: 'ephemeral', epoch: 1 };
+    state.settings.voice.providers.local_conversation.config.agent.transcript = { persistenceMode: 'ephemeral', epoch: 1 };
     state.sessions.sys_voice.metadata.voiceAgentRunV1 = {
       v: 1,
       runId: 'run_prev',
@@ -804,7 +802,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
   });
 
   it('provider-resume mode starts a new run with resumeHandle when the previous runId is not found', async () => {
-    state.settings.voice.adapters.local_conversation.agent.resumabilityMode = 'provider_resume';
+    state.settings.voice.providers.local_conversation.config.agent.resumabilityMode = 'provider_resume';
     state.sessions.sys_voice.metadata.voiceAgentRunV1 = {
       v: 1,
       runId: 'run_prev',
@@ -834,7 +832,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
   });
 
   it('fails closed to a fresh start when provider-resume is configured but runtime publication does not expose transcriptSource', async () => {
-    state.settings.voice.adapters.local_conversation.agent.resumabilityMode = 'provider_resume';
+    state.settings.voice.providers.local_conversation.config.agent.resumabilityMode = 'provider_resume';
     delete state.sessions.sys_voice.metadata.agentRuntimeFacetsV1;
     state.sessions.sys_voice.metadata.voiceAgentRunV1 = {
       v: 1,
@@ -879,7 +877,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
   });
 
   it('clears a stale cached handle when immediate welcome fails with the plain Voice agent not found message', async () => {
-    state.settings.voice.adapters.local_conversation.agent.welcome = {
+    state.settings.voice.welcome = {
       enabled: true,
       mode: 'immediate',
       templateId: null,
@@ -902,7 +900,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
   });
 
   it('persists welcomedEpoch after an immediate welcome and suppresses duplicate welcome after controller recreation', async () => {
-    state.settings.voice.adapters.local_conversation.agent.welcome = {
+    state.settings.voice.welcome = {
       enabled: true,
       mode: 'immediate',
       templateId: null,
@@ -931,7 +929,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
   });
 
   it('treats the hidden global voice conversation session as resumable and retries it with resumeHandle when the persisted run is not resumable anymore', async () => {
-    state.settings.voice.adapters.local_conversation.agent.resumabilityMode = 'provider_resume';
+    state.settings.voice.providers.local_conversation.config.agent.resumabilityMode = 'provider_resume';
     state.sessions.sys_voice.metadata.voiceAgentRunV1 = {
       v: 1,
       runId: 'run_prev',
@@ -1274,7 +1272,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
     expect(start).toHaveBeenCalled();
   });
 
-  it('switches away from a sticky global voice machine when the reused hidden voice session returns daemon RPC unavailable', async () => {
+  it('switches away from a sticky global voice machine before starting when its daemon is unavailable', async () => {
     const nextSysVoice = {
       id: 'sys_voice',
       serverId: 'server-a',
@@ -1287,6 +1285,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
         machineId: 'm_old',
         path: '/old/.happier/voice-agent',
         systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+        voiceConversationScopeV1: { v: 1, kind: 'voice_home' },
       },
     };
     state = {
@@ -1349,12 +1348,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
       'server-a': Object.values(state.machines),
     };
     state.settings.recentMachinePaths = [];
-	    state.settings.voice.adapters.local_conversation.agent.machineTargetMode = 'auto';
-	    state.settings.voice.adapters.local_conversation.agent.machineTargetId = null;
-	    state.settings.voice.adapters.local_conversation.agent.autoTargetMachineId = 'm_old';
-	    start
-	      .mockRejectedValueOnce(Object.assign(new Error('voice agent runtime unavailable'), { code: 'VOICE_AGENT_RUNTIME_UNAVAILABLE' }))
-	      .mockResolvedValueOnce({ voiceAgentId: 'run_new' });
+	    state.settings.voice.executionMachine = { mode: 'auto', machineId: null, autoMachineId: 'm_old' };
+	    start.mockResolvedValueOnce({ voiceAgentId: 'run_new' });
 		    modalConfirm
 		      .mockResolvedValueOnce(true)
 		      .mockResolvedValueOnce(true);
@@ -1399,21 +1394,19 @@ describe('VoiceAgentSessionController (persistence)', () => {
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello after switch');
 
     expect(modalConfirm).toHaveBeenCalledTimes(2);
-    expect(start).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      sessionId: 'sys_voice',
-    }));
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'm_new',
       directory: '/new/.happier/voice-agent',
     }));
-    expect(start).toHaveBeenNthCalledWith(2, expect.objectContaining({
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'sys_voice_new',
       replay: expect.objectContaining({
         kind: 'voice_session.v1',
         previousSessionId: 'sys_voice',
       }),
     }));
-    expect(state.settings.voice.adapters.local_conversation.agent.autoTargetMachineId).toBe('m_new');
+    expect(state.settings.voice.executionMachine.autoMachineId).toBe('m_new');
   });
 
   it('refreshes machines before prompting to switch away from a stale sticky global voice machine', async () => {
@@ -1429,6 +1422,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
         machineId: 'm_old',
         path: '/old/.happier/voice-agent',
         systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+        voiceConversationScopeV1: { v: 1, kind: 'voice_home' },
       },
     };
     state = {
@@ -1485,9 +1479,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       'server-a': [state.machines.m_old],
       'active-server': [state.machines.m_old],
     };
-    state.settings.voice.adapters.local_conversation.agent.machineTargetMode = 'auto';
-    state.settings.voice.adapters.local_conversation.agent.machineTargetId = null;
-    state.settings.voice.adapters.local_conversation.agent.autoTargetMachineId = 'm_old';
+    state.settings.voice.executionMachine = { mode: 'auto', machineId: null, autoMachineId: 'm_old' };
     start
       .mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' }))
       .mockResolvedValueOnce({ voiceAgentId: 'run_new' });
@@ -1567,7 +1559,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       machineId: 'm_new',
       directory: '/new/.happier/voice-agent',
     }));
-    expect(state.settings.voice.adapters.local_conversation.agent.autoTargetMachineId).toBe('m_new');
+    expect(state.settings.voice.executionMachine.autoMachineId).toBe('m_new');
   });
 
 });

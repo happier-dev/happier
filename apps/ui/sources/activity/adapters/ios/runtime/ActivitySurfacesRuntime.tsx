@@ -927,9 +927,11 @@ export function ActivitySurfacesRuntime(): React.ReactElement | null {
                         widgetSnapshot: widgetSnapshotRef.current,
                         liveSnapshots: liveSnapshotsRef.current,
                     })) {
+                        const serverId = resolveRouteServerId(command.identity?.serverId ?? command.target.serverId);
                         void actionExecutorRef.current.execute(command.actionId as ActionId, command.payload, {
                             surface: 'ui',
                             defaultSessionId: command.defaultSessionId,
+                            ...(serverId ? { serverId } : {}),
                         }).catch(() => undefined);
                         return;
                     }

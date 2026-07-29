@@ -52,6 +52,11 @@ installSessionDetailsPanelCommonModuleMocks({
         return createStorageModuleStub({
             useLocalSetting: () => null,
             useLocalSettingMutable: () => [false, vi.fn()],
+            useEndpointStatus: () => 'online',
+            useMachineCliDetectionTarget: () => ({
+                isOnline: true,
+                daemonStateVersion: 1,
+            }),
         });
     },
 });

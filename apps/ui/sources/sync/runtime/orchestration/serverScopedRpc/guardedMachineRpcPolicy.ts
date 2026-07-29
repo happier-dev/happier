@@ -13,6 +13,7 @@ const GUARDED_MACHINE_RPC_METHODS = new Set<string>([
     RPC_METHODS.WRITE_FILE,
     // Direct import/export prepare methods negotiate transfer endpoints and should follow transfer policy.
     RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE,
+    RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT,
     RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
     // Canonical bulk transfer control-plane methods must follow transfer policy.
     RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT,
@@ -37,6 +38,8 @@ const GUARDED_MACHINE_RPC_METHODS = new Set<string>([
     RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_CHUNK,
     RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_FINALIZE,
     RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_ABORT,
+    // Installed plugin UI artifact bytes.
+    RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ,
 ]);
 
 export function isGuardedMachineRpcMethod(method: string): boolean {

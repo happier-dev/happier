@@ -38,7 +38,6 @@ export function installNewPickRouteCommonModuleMocks(
         unistyles: options.unistyles,
     };
 
-    vi.mock('react-native-reanimated', () => ({}));
 
     vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');

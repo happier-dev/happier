@@ -28,7 +28,7 @@ export function CommandPaletteItem({ command, isSelected, onPress, onHover }: Co
                     <Ionicons
                         name={command.icon as any}
                         size={20}
-                        color={isSelected ? theme.colors.accent.blue : theme.colors.text.secondary}
+                        color={isSelected ? theme.colors.text.primary : theme.colors.text.secondary}
                     />
                 </View>
             ) : null}

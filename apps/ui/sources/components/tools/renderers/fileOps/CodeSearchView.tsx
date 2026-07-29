@@ -15,6 +15,11 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 type SearchMatch = { filePath?: string; line?: number; excerpt?: string };
 
+type SearchSummary = Readonly<{
+    detailsUnavailable: boolean;
+    explicitZero: boolean;
+}>;
+
 function getMatches(result: unknown): SearchMatch[] {
     const record = coerceToolResultRecord(result);
     const matches = record?.matches;
@@ -33,10 +38,24 @@ function getMatches(result: unknown): SearchMatch[] {
     return out;
 }
 
+function readSearchSummary(result: unknown, matches: readonly SearchMatch[]): SearchSummary {
+    const record = coerceToolResultRecord(result);
+    const aggregateCounts = [record?.totalMatches, record?.totalFiles]
+        .filter((value): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0);
+    return {
+        // `matchDetailsUnavailable` is the short-lived producer alias from the
+        // initial dev port. Keep it read-compatible for already materialized rows;
+        // new CLI normalization writes the canonical `detailsUnavailable` field.
+        detailsUnavailable: record?.detailsUnavailable === true || record?.matchDetailsUnavailable === true,
+        explicitZero: matches.length === 0 && aggregateCounts.length > 0 && aggregateCounts.every((count) => count === 0),
+    };
+}
+
 export const CodeSearchView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
     if (tool.state !== 'completed') return null;
     const matches = getMatches(tool.result);
-    if (matches.length === 0) return null;
+    const summary = readSearchSummary(tool.result, matches);
+    if (matches.length === 0 && !summary.detailsUnavailable && !summary.explicitZero) return null;
 
     const isFullView = detailLevel === 'full';
     const shown = matches.slice(0, isFullView ? 20 : 6);
@@ -45,6 +64,8 @@ export const CodeSearchView = React.memo<ToolViewProps>(({ tool, detailLevel }) 
     return (
         <ToolSectionView fullWidth={isFullView}>
             <View style={styles.container}>
+                {summary.detailsUnavailable ? <Text style={styles.summary}>{t('tools.workflowActivityView.unavailable')}</Text> : null}
+                {summary.explicitZero ? <Text style={styles.summary}>{t('common.noMatches')}</Text> : null}
                 {shown.map((m, idx) => {
                     const label = m.filePath
                         ? `${m.filePath}${typeof m.line === 'number' ? `:${m.line}` : ''}`
@@ -68,6 +89,10 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 8,
         backgroundColor: theme.colors.surface.inset,
         gap: 10,
+    },
+    summary: {
+        fontSize: 13,
+        color: theme.colors.text.secondary,
     },
     row: {
         gap: 4,

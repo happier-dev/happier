@@ -91,6 +91,7 @@ export function useAuthEntryOptions(): AuthEntryOptions {
     const activeServerSnapshot = useActiveServerSnapshot();
     const [serverAvailability, setServerAvailability] = React.useState<AuthEntryServerAvailability>('loading');
     const [serverCheckNonce, setServerCheckNonce] = React.useState(0);
+    const consumedForcedServerCheckNonceRef = React.useRef(0);
     const [options, setOptions] = React.useState<Pick<
         AuthEntryOptions,
         | 'showAuthActions'
@@ -142,10 +143,15 @@ export function useAuthEntryOptions(): AuthEntryOptions {
         () => createServerUrlComparableKey(activeServerSnapshot?.serverUrl ?? '') ?? '',
         [activeServerSnapshot?.serverUrl],
     );
+    const activeServerGeneration = activeServerSnapshot?.generation ?? 0;
 
     React.useEffect(() => {
         let mounted = true;
         let retryTimer: ReturnType<typeof setTimeout> | null = null;
+        const forceServerCheck = serverCheckNonce > consumedForcedServerCheckNonceRef.current;
+        if (forceServerCheck) {
+            consumedForcedServerCheckNonceRef.current = serverCheckNonce;
+        }
 
         const scheduleInitialServerCheckRetry = (): boolean => {
             if (serverCheckNonce > 0) return false;
@@ -169,7 +175,12 @@ export function useAuthEntryOptions(): AuthEntryOptions {
 
                 const featuresSnapshot = await getServerFeaturesSnapshot({
                     timeoutMs: readWelcomeServerCheckTimeoutMs(),
-                    force: serverCheckNonce > 0,
+                    // A retry nonce grants one forced revalidation. Keeping force
+                    // sticky after the retry succeeds turns an identity update into
+                    // a request loop: the response advances the active generation,
+                    // this effect re-runs, and another forced response advances it
+                    // again. Generation-only rechecks consume the canonical cache.
+                    force: forceServerCheck,
                 });
 
                 if (featuresSnapshot.status === 'error') {
@@ -343,7 +354,12 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                 clearTimeout(retryTimer);
             }
         };
-    }, [activeServerComparableKey, serverCheckNonce]);
+    // A server lifecycle can leave and restore the same canonical URL (the
+    // onboarding demo relay is one example) while invalidating the feature
+    // snapshot for that server. URL equality alone would retain the previous
+    // unavailable result forever. The active-server owner increments generation
+    // for that lifecycle transition, so re-run the canonical feature probe.
+    }, [activeServerComparableKey, activeServerGeneration, serverCheckNonce]);
 
     return {
         serverAvailability,

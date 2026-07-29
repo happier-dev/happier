@@ -1,5 +1,6 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
 
 function resolveActiveServerMachineSource(state: any): readonly Machine[] | null {
@@ -15,8 +16,22 @@ function resolveActiveServerMachineSource(state: any): readonly Machine[] | null
         && typeof machineListByServerId === 'object'
         && Object.prototype.hasOwnProperty.call(machineListByServerId, activeServerId),
     );
+    const activeServerMachines = hasActiveServerMachineList ? machineListByServerId[activeServerId] : undefined;
+    if (Array.isArray(activeServerMachines) && activeServerMachines.length > 0) return activeServerMachines;
+
+    if (machineListByServerId && typeof machineListByServerId === 'object') {
+        const equivalentEntry = Object.entries(machineListByServerId).find(([serverId, machines]) => (
+            areServerProfileIdentifiersEquivalent(serverId, activeServerId)
+            && Array.isArray(machines)
+            && machines.length > 0
+        ));
+        if (equivalentEntry) {
+            const [, equivalentMachines] = equivalentEntry;
+            return Array.isArray(equivalentMachines) ? equivalentMachines : [];
+        }
+    }
+
     if (hasActiveServerMachineList) {
-        const activeServerMachines = machineListByServerId[activeServerId];
         return Array.isArray(activeServerMachines) ? activeServerMachines : [];
     }
 

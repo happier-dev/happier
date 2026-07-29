@@ -2,10 +2,6 @@ import {
     configureTranscriptViewportTelemetryFromTuning,
     type TranscriptViewportTelemetryTuning,
 } from '@/components/sessions/transcript/scroll/transcriptViewportTelemetry';
-import { deriveNativeTranscriptVisibleAnchorFacts } from '@/components/sessions/transcript/viewport/visibility/nativeTranscriptVisibleAnchorFacts';
-import { getTranscriptNavigationVisibilityStore } from '@/components/sessions/transcript/viewport/visibility/transcriptNavigationVisibilityStore';
-import type { TranscriptNavigationRuntimeAnchor } from '@/components/sessions/transcript/viewport/visibility/transcriptNavigationRuntimeAnchors';
-import type { TranscriptListOrientation } from '@/components/sessions/transcript/listOrientation';
 import type { NativeVisibleWindowSnapshot } from './nativeVisibleWindow';
 
 export type NativeViewableTranscriptItem = Readonly<{
@@ -14,31 +10,22 @@ export type NativeViewableTranscriptItem = Readonly<{
     item?: { id: string } | null;
 }>;
 
+/**
+ * Viewability telemetry only. Navigation visibility is NOT derived here: it is
+ * published from the renderer's visible index window by the one visibility
+ * owner, and viewability is merely one of the triggers that asks it to re-run
+ * (it fires on layout-only changes that never produce a scroll event).
+ */
 export function resolveNativeViewabilityTelemetry(params: Readonly<{
     info: Readonly<{ viewableItems?: readonly NativeViewableTranscriptItem[] }>;
     itemCount: number;
     layoutHeight: number;
-    listOrientation: TranscriptListOrientation;
-    runtimeAnchors: readonly TranscriptNavigationRuntimeAnchor[];
-    sessionId: string;
     syncTuning: TranscriptViewportTelemetryTuning;
 }>): Readonly<{
     observeBlankRecovery: boolean;
     snapshot: NativeVisibleWindowSnapshot;
 }> | null {
     const viewableItems = Array.isArray(params.info.viewableItems) ? params.info.viewableItems : [];
-    const visibilityStore = getTranscriptNavigationVisibilityStore(params.sessionId);
-    if (params.runtimeAnchors.length > 0 && visibilityStore.hasSubscribers()) {
-        visibilityStore.set(deriveNativeTranscriptVisibleAnchorFacts({
-            anchors: params.runtimeAnchors,
-            itemCount: params.itemCount,
-            orientation: params.listOrientation,
-            preferUserTurnAnchor: true,
-            viewableItems,
-        }));
-    } else if (visibilityStore.hasSubscribers()) {
-        visibilityStore.set(null);
-    }
     configureTranscriptViewportTelemetryFromTuning(params.syncTuning);
     const visibleItems = viewableItems
         .filter((item) => item.isViewable !== false)

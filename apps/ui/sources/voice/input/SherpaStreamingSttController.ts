@@ -1,6 +1,10 @@
 import { randomUUID } from '@/platform/randomUUID';
-import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
-import { getOptionalHappierAudioStreamNativeModule } from '@happier-dev/audio-stream-native';
+import {
+  getSharedVoicePcmCapture,
+  type AudioStreamFrameEvent,
+  type VoicePcmCapture,
+  type VoicePcmCaptureLease,
+} from '@happier-dev/audio-stream-native';
 import { getOptionalHappierSherpaNativeModule } from '@happier-dev/sherpa-native';
 import { ensureModelPackInstalled } from '@/voice/modelPacks/installer.native';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
@@ -13,38 +17,23 @@ import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineErr
 import { VOICE_RUNTIME_STT_PCM_FORMAT } from '@happier-dev/protocol';
 
 import { resolveLocalNeuralSttCaptureSettings } from './resolveLocalNeuralSttCaptureSettings';
-import type { SttController, SttStartParams } from './sttController';
+import type { SttController, SttStartParams, SttStopResult } from './sttController';
 
-type AudioStreamFrameEvent = {
-  streamId: string;
-  pcm16leBase64: string;
-  sampleRate: number;
-  channels: number;
-};
-
-type AudioStreamModuleLike = {
-  start(params: { sampleRate: number; channels: number; frameMs: number }): Promise<{ streamId: string }>;
-  stop(params: { streamId: string }): Promise<void>;
-  addListener(eventName: 'audioFrame', cb: (event: AudioStreamFrameEvent) => void): { remove(): void };
-};
-
-type SherpaNativeModuleLike = {
+type SherpaNativeModuleLike = Readonly<{
   createStreamingRecognizer(params: { jobId: string; assetsDir: string; sampleRate: number; channels: number; language: string | null }): Promise<void>;
   pushAudioFrame(params: { jobId: string; pcm16leBase64: string; sampleRate: number; channels: number }): Promise<{ text: string; isEndpoint: boolean }>;
   finishStreaming(params: { jobId: string }): Promise<{ text: string }>;
   cancel(params: { jobId: string }): Promise<void>;
-};
+}>;
 
 type SherpaSttHandle = {
   sessionId: string;
   jobId: string;
-  streamId: string;
+  capture: VoicePcmCapture;
+  captureLease: VoicePcmCaptureLease;
   transcript: string;
-  subscriptions: { remove(): void }[];
   abortController: AbortController;
-  pushing: boolean;
-  queuedFrames: Array<{ pcm16leBase64: string; sampleRate: number; channels: number }>;
-  pushLoop: Promise<void> | null;
+  pushTail: Promise<void>;
   audioStarted: boolean;
   abortCleanup: () => void;
 };
@@ -57,129 +46,104 @@ export type CreateSherpaStreamingSttControllerDeps = {
   endpointController?: TurnEndpointController;
 };
 
-function getOptionalAudioStreamModule(): AudioStreamModuleLike | null {
-  return (getOptionalHappierAudioStreamNativeModule() as unknown as AudioStreamModuleLike | null) ?? null;
-}
-
 function getOptionalSherpaNativeModule(): SherpaNativeModuleLike | null {
   return (getOptionalHappierSherpaNativeModule() as unknown as SherpaNativeModuleLike | null) ?? null;
 }
 
 export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSttControllerDeps): SherpaStreamingSttController {
   let handle: SherpaSttHandle | null = null;
+  let clearHandleAttempt: Promise<void> | null = null;
+  let stopping: Promise<SttStopResult> | null = null;
   const MAX_QUEUED_FRAMES = 8;
   const endpointController = deps.endpointController ?? createTurnEndpointController({
-    onSignal: (signal) => {
-      deps.onEndpointSignal?.(signal);
-    },
+    onSignal: (signal) => deps.onEndpointSignal?.(signal),
   });
 
-  const uriToFilePath = (uri: string): string => {
-    return uri.startsWith('file://') ? uri.slice('file://'.length) : uri;
-  };
+  const uriToFilePath = (uri: string): string => uri.startsWith('file://') ? uri.slice('file://'.length) : uri;
 
-  const clearHandle = async () => {
-    const h = handle;
-    if (!h) return;
-    handle = null;
-    endpointController.clearSession(h.sessionId);
-    try {
-      h.abortController.abort();
-    } catch {
-      // ignore
-    }
-    h.abortCleanup();
-    try {
-      h.subscriptions.forEach((s) => s.remove());
-    } catch {
-      // ignore
-    }
-    const audioStream = getOptionalAudioStreamModule();
-    if (audioStream) {
-      try {
-        await audioStream.stop({ streamId: h.streamId });
-      } catch {
-        // ignore
-      }
-    }
-    const sherpa = getOptionalSherpaNativeModule();
-    if (sherpa) {
-      try {
-        await sherpa.cancel({ jobId: h.jobId });
-      } catch {
-        // ignore
-      }
-    }
-  };
-
-  const start = async ({ micSession, sink, signal }: SttStartParams) => {
-    if (signal?.aborted) {
+  const clearHandle = async (expected?: SherpaSttHandle): Promise<void> => {
+    if (stopping) {
+      await stopping;
       return;
     }
-    if (!micSession) {
-      throw new Error('mic_session_required');
+    if (clearHandleAttempt) {
+      await clearHandleAttempt;
+      return;
     }
+    const current = handle;
+    if (!current || (expected && current !== expected)) return;
+    handle = null;
+    const attempt = (async () => {
+      endpointController.clearSession(current.sessionId);
+      current.abortController.abort();
+      current.abortCleanup();
+      await current.captureLease.release().catch(() => {});
+      await current.captureLease.waitForDrain().catch(() => {});
+      await current.pushTail.catch(() => {});
+      const sherpa = getOptionalSherpaNativeModule();
+      await sherpa?.cancel({ jobId: current.jobId }).catch(() => {});
+    })();
+    clearHandleAttempt = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (clearHandleAttempt === attempt) {
+        clearHandleAttempt = null;
+      }
+    }
+  };
+
+  const start = async ({ micSession, sink, signal }: SttStartParams): Promise<void> => {
+    if (signal?.aborted) return;
+    if (!micSession) throw new Error('mic_session_required');
     const normalizedSessionId = `local-neural-${Date.now()}-${Math.random()}`;
 
-    const permission = await requestMicrophonePermission();
-    if (!permission.granted) {
-      showMicrophonePermissionDeniedAlert(permission.canAskAgain);
-      throw new Error('mic_permission_denied');
-    }
-
     await clearHandle();
-
-    const audioStream = getOptionalAudioStreamModule();
+    const capture = getSharedVoicePcmCapture();
     const sherpa = getOptionalSherpaNativeModule();
-    if (!audioStream || !sherpa) {
+    if (!capture || !sherpa) {
       sink.onError(createVoiceMachineError({ kind: 'provider_error', reason: 'local_neural_stt_unavailable' }));
       return;
     }
 
-    // Single transactional cleanup path for ANY startup failure after the mic is
-    // active: releases every native resource staged so far (recognizer, audio
-    // stream, frame subscriptions) AND the injected mic capture, so a failed start
-    // never leaks mic/audio. Mic teardown is also performed by the capture owner
-    // (the mic's lifecycle owner) for the device path; both are best-effort and
-    // idempotent so a defence-in-depth double-release cannot strand state.
-    let startupStreamId: string | null = null;
+    let startupLease: VoicePcmCaptureLease | null = null;
     let startupRecognizerJobId: string | null = null;
     let abortCleanup = (): void => {};
-    const startupSubscriptions: SherpaSttHandle['subscriptions'] = [];
+    const abortController = new AbortController();
     const releaseStartupResources = async (): Promise<void> => {
       abortCleanup();
-      try {
-        startupSubscriptions.forEach((s) => s.remove());
-      } catch {
-        // ignore
-      }
-      startupSubscriptions.length = 0;
-      if (startupRecognizerJobId !== null) {
-        try {
-          await sherpa.cancel({ jobId: startupRecognizerJobId });
-        } catch {
-          // ignore
-        }
+      const lease = startupLease;
+      startupLease = null;
+      await lease?.release().catch(() => {});
+      await lease?.waitForDrain().catch(() => {});
+      if (startupRecognizerJobId) {
+        await sherpa.cancel({ jobId: startupRecognizerJobId }).catch(() => {});
         startupRecognizerJobId = null;
-      }
-      if (startupStreamId !== null) {
-        try {
-          await audioStream.stop({ streamId: startupStreamId });
-        } catch {
-          // ignore
-        }
-        startupStreamId = null;
       }
       try {
         micSession.setMuted(false);
         await micSession.teardown();
       } catch {
-        // ignore
+        // Best-effort rollback of the caller-owned permission/mic facade.
       }
     };
 
-    await micSession.ensureActive();
+    if (signal) {
+      if (signal.aborted) {
+        abortController.abort();
+        await releaseStartupResources();
+        return;
+      }
+      const abortFromExternalSignal = (): void => abortController.abort();
+      signal.addEventListener('abort', abortFromExternalSignal, { once: true });
+      abortCleanup = () => signal.removeEventListener('abort', abortFromExternalSignal);
+    }
 
+    await micSession.ensureActive();
+    if (abortController.signal.aborted) {
+      await releaseStartupResources();
+      return;
+    }
     const { packId, language } = resolveLocalNeuralSttCaptureSettings(deps.getSettings());
     if (!packId) {
       await releaseStartupResources();
@@ -187,207 +151,187 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
       return;
     }
 
-    const abortController = new AbortController();
-    if (signal) {
-      if (signal.aborted) {
-        abortController.abort();
-        await releaseStartupResources();
-        return;
-      }
-      const abortFromExternalSignal = () => abortController.abort();
-      signal.addEventListener('abort', abortFromExternalSignal, { once: true });
-      abortCleanup = () => {
-        signal.removeEventListener('abort', abortFromExternalSignal);
-      };
-    }
-    const manifestUrl = resolveModelPackManifestUrl({ packId });
     let packDirUri: string;
     try {
       const installed = await ensureModelPackInstalled({
         packId,
         mode: 'require_installed',
-        manifestUrl,
+        manifestUrl: resolveModelPackManifestUrl({ packId }),
         timeoutMs: 10_000,
         signal: abortController.signal,
       });
       packDirUri = installed.packDirUri;
     } catch {
       await releaseStartupResources();
+      if (abortController.signal.aborted) {
+        return;
+      }
       sink.onError(createVoiceMachineError({ kind: 'provider_error', reason: 'local_neural_pack_not_installed' }));
       return;
     }
-
-    const assetsDir = uriToFilePath(packDirUri);
+    if (abortController.signal.aborted) {
+      await releaseStartupResources();
+      return;
+    }
 
     const sampleRate = VOICE_RUNTIME_STT_PCM_FORMAT.sampleRateHz;
     const channels = VOICE_RUNTIME_STT_PCM_FORMAT.channelCount;
-    const frameMs = 20;
-
-    let jobId: string;
+    const jobId = randomUUID();
     try {
-      const started = await audioStream.start({ sampleRate, channels, frameMs });
-      startupStreamId = started.streamId;
-      jobId = randomUUID();
-      await sherpa.createStreamingRecognizer({ jobId, assetsDir, sampleRate, channels, language });
+      await sherpa.createStreamingRecognizer({
+        jobId,
+        assetsDir: uriToFilePath(packDirUri),
+        sampleRate,
+        channels,
+        language,
+      });
       startupRecognizerJobId = jobId;
+      if (abortController.signal.aborted) {
+        await releaseStartupResources();
+        return;
+      }
+
+      const processFrame = async (frame: AudioStreamFrameEvent): Promise<void> => {
+        const active = handle;
+        if (!active || active.sessionId !== normalizedSessionId || active.jobId !== jobId || active.abortController.signal.aborted) return;
+        if (!active.audioStarted) {
+          active.audioStarted = true;
+          sink.onAudioStarted();
+        }
+        const result = await sherpa.pushAudioFrame({
+          jobId,
+          pcm16leBase64: frame.pcm16leBase64,
+          sampleRate: frame.sampleRate,
+          channels: frame.channels,
+        });
+        const after = handle;
+        if (!after || after.sessionId !== normalizedSessionId || after.jobId !== jobId || after.abortController.signal.aborted) return;
+        const text = typeof result.text === 'string' ? result.text.trim() : '';
+        if (text) {
+          after.transcript = text;
+          sink.onPartial(text);
+        }
+        if (result.isEndpoint) {
+          sink.onFinal(after.transcript);
+          sink.onEndpoint('vad');
+          endpointController.signalEndpointDetected({
+            sessionId: normalizedSessionId,
+            source: 'native_stream',
+            transcript: after.transcript,
+          });
+        }
+      };
+
+      startupLease = await capture.acquire({
+        ownerId: `sherpa-streaming-stt:${normalizedSessionId}`,
+        format: { sampleRate, channels, frameMs: 20 },
+        audioSession: {
+          mode: 'conversation',
+          input: true,
+          output: true,
+          aec: 'preferred',
+        },
+        maxQueuedFrames: MAX_QUEUED_FRAMES,
+        shouldDeliver: () => !abortController.signal.aborted && !micSession.isMuted(),
+        onFrame: async (frame) => {
+          const active = handle;
+          if (!active || active.jobId !== jobId) return;
+          const operation = active.pushTail.catch(() => {}).then(() => processFrame(frame));
+          active.pushTail = operation;
+          await operation;
+        },
+        onDroppedFrames: () => {
+          const failedHandle = handle;
+          if (!failedHandle || failedHandle.jobId !== jobId) return;
+          void clearHandle(failedHandle).then(() => {
+            sink.onError(createVoiceMachineError({ kind: 'provider_error', reason: 'local_neural_stt_pcm_backpressure' }));
+          });
+        },
+        onError: () => {
+          const failedHandle = handle;
+          if (!failedHandle || failedHandle.jobId !== jobId) return;
+          void clearHandle(failedHandle).then(() => {
+            sink.onError(createVoiceMachineError({ kind: 'provider_error', reason: 'local_neural_stt_pcm_frame_failed' }));
+          });
+        },
+      });
+      if (abortController.signal.aborted) {
+        await releaseStartupResources();
+        return;
+      }
     } catch (error) {
-      // Half-open startup (stream up, recognizer down — or vice versa): release
-      // every staged resource + the mic before propagating, so nothing leaks.
       await releaseStartupResources();
       throw error;
     }
-    if (startupStreamId === null) {
-      // Defensive: the successful try guarantees a stream id; treat its absence as
-      // a startup failure rather than committing a handle with no stream.
+
+    const captureLease = startupLease;
+    if (!captureLease) {
       await releaseStartupResources();
-      throw new Error('local_neural_audio_stream_missing');
+      throw new Error('local_neural_audio_capture_lease_missing');
     }
-    const streamId: string = startupStreamId;
-
-    const processFrame = async (frame: { pcm16leBase64: string; sampleRate: number; channels: number }) => {
-      const active = handle;
-      if (!active || active.sessionId !== normalizedSessionId || active.jobId !== jobId) return;
-      if (active.abortController.signal.aborted) return;
-
-      const res = await sherpa.pushAudioFrame({
-        jobId,
-        pcm16leBase64: frame.pcm16leBase64,
-        sampleRate: frame.sampleRate,
-        channels: frame.channels,
-      });
-
-      const after = handle;
-      if (!after || after.sessionId !== normalizedSessionId || after.jobId !== jobId) return;
-      const text = typeof res?.text === 'string' ? res.text : '';
-      if (text.trim().length > 0) {
-        const trimmed = text.trim();
-        after.transcript = trimmed;
-        sink.onPartial(trimmed);
-      }
-      if (res?.isEndpoint === true) {
-        sink.onFinal(after.transcript);
-        sink.onEndpoint('vad');
-        endpointController.signalEndpointDetected({
-          sessionId: normalizedSessionId,
-          source: 'native_stream',
-          transcript: after.transcript,
-        });
-      }
-    };
-
-    const startPushLoop = (first: { pcm16leBase64: string; sampleRate: number; channels: number }) => {
-      const active = handle;
-      if (!active || active.sessionId !== normalizedSessionId || active.jobId !== jobId) return;
-      if (active.pushing) return;
-      active.pushing = true;
-
-      active.pushLoop = (async () => {
-        let currentFrame: { pcm16leBase64: string; sampleRate: number; channels: number } | null = first;
-        while (currentFrame) {
-          try {
-            await processFrame(currentFrame);
-          } catch {
-            // ignore
-          }
-
-          const after = handle;
-          if (!after || after.sessionId !== normalizedSessionId || after.jobId !== jobId) return;
-          if (after.abortController.signal.aborted) return;
-          currentFrame = after.queuedFrames.shift() ?? null;
-        }
-      })().finally(() => {
-        const after = handle;
-        if (!after || after.sessionId !== normalizedSessionId || after.jobId !== jobId) return;
-        after.pushing = false;
-        after.pushLoop = null;
-      });
-    };
-
-    const subscriptions: SherpaSttHandle['subscriptions'] = startupSubscriptions;
-    subscriptions.push(
-      audioStream.addListener('audioFrame', (event) => {
-        if (!handle || handle.sessionId !== normalizedSessionId || handle.streamId !== event.streamId) return;
-        if (!handle.audioStarted) {
-          handle.audioStarted = true;
-          sink.onAudioStarted();
-        }
-        const frame = {
-          pcm16leBase64: String(event.pcm16leBase64 ?? ''),
-          sampleRate: event.sampleRate ?? sampleRate,
-          channels: event.channels ?? channels,
-        };
-
-        // Serialize frames into a bounded queue to prevent unbounded concurrent native work.
-        if (handle.pushing) {
-          handle.queuedFrames.push(frame);
-          while (handle.queuedFrames.length > MAX_QUEUED_FRAMES) {
-            handle.queuedFrames.shift();
-          }
-          return;
-        }
-
-        startPushLoop(frame);
-      }),
-    );
-
     handle = {
       sessionId: normalizedSessionId,
       jobId,
-      streamId,
+      capture,
+      captureLease,
       transcript: '',
-      subscriptions,
       abortController,
-      pushing: false,
-      queuedFrames: [],
-      pushLoop: null,
+      pushTail: Promise.resolve(),
       audioStarted: false,
       abortCleanup,
     };
+    startupLease = null;
+    startupRecognizerJobId = null;
     endpointController.startSession(normalizedSessionId);
   };
 
-  const stop = async () => {
-    if (!handle) return { finalText: '' };
+  const stop = async (): Promise<SttStopResult> => {
+    if (stopping) {
+      return stopping;
+    }
     const current = handle;
-    const normalizedSessionId = current.sessionId;
-    endpointController.clearSession(normalizedSessionId);
-
-    try {
-      current.subscriptions.forEach((s) => s.remove());
-    } catch {
-      // ignore
+    if (!current) {
+      await clearHandleAttempt?.catch(() => {});
+      return { finalText: '' };
     }
-
-    const audioStream = getOptionalAudioStreamModule();
-    if (audioStream) {
+    const pending = (async (): Promise<SttStopResult> => {
       try {
-        await audioStream.stop({ streamId: current.streamId });
-      } catch {
-        // ignore
-      }
-    }
+        endpointController.clearSession(current.sessionId);
+        await current.captureLease.release();
+        await current.captureLease.waitForDrain();
+        await current.pushTail;
 
-    const sherpa = getOptionalSherpaNativeModule();
-    if (sherpa) {
-      try {
-        await current.pushLoop?.catch(() => {});
+        const sherpa = getOptionalSherpaNativeModule();
+        if (!sherpa) {
+          throw new Error('local_neural_stt_runtime_unavailable_during_finalization');
+        }
         const final = await sherpa.finishStreaming({ jobId: current.jobId });
-        const text = typeof final?.text === 'string' ? final.text.trim() : '';
+        const text = typeof final.text === 'string' ? final.text.trim() : '';
         if (text) current.transcript = text;
+        return { finalText: current.transcript.trim() };
       } catch {
-        // ignore
+        const sherpa = getOptionalSherpaNativeModule();
+        await sherpa?.cancel({ jobId: current.jobId }).catch(() => {});
+        return {
+          error: createVoiceMachineError({
+            kind: 'provider_error',
+            reason: 'local_neural_stt_finalization_failed',
+          }),
+        };
+      } finally {
+        if (handle === current) handle = null;
+        current.abortCleanup();
+      }
+    })();
+    stopping = pending;
+    try {
+      return await pending;
+    } finally {
+      if (stopping === pending) {
+        stopping = null;
       }
     }
-
-    if (handle && handle.sessionId === normalizedSessionId) {
-      handle = null;
-    }
-    current.abortCleanup();
-    return { finalText: current.transcript.trim() };
   };
 
-  return {
-    start,
-    stop,
-  };
+  return { start, stop };
 }

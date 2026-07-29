@@ -148,6 +148,36 @@ describe('SelectableMenuResults', () => {
         expect(item.props.subtitle).toBe('Selected subtitle');
     });
 
+    it('stretches every item row frame to the popover content width', async () => {
+        const { SelectableMenuResults } = await import('./SelectableMenuResults');
+
+        const screen = await renderScreen(<SelectableMenuResults
+                    categories={[
+                        { id: 'c1', title: '', items: [{ id: 'short', title: 'Short' }, { id: 'long', title: 'A much longer option label' }] },
+                    ]}
+                    selectedIndex={0}
+                    onSelectionChange={() => {}}
+                    onPressItem={() => {}}
+                    rowVariant="slim"
+                    rowKind="item"
+                />);
+
+        const frames = [
+            screen.findByTestId('dropdown-option-short:scroll-frame'),
+            screen.findByTestId('dropdown-option-long:scroll-frame'),
+        ];
+        expect(frames.every((frame) => frame?.props.style?.width === '100%')).toBe(true);
+        expect(screen.findAllByType('Item').every((item) => (
+            Array.isArray(item.props.pressableStyle)
+            && item.props.pressableStyle.some((style: unknown) => (
+                style !== null
+                && typeof style === 'object'
+                && 'width' in style
+                && style.width === '100%'
+            ))
+        ))).toBe(true);
+    });
+
     it('registers row layouts for the dropdown scroll owner', async () => {
         const registerItemLayout = vi.fn((key: string) => (event: unknown) => {
             void key;

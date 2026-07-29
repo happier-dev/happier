@@ -33,7 +33,7 @@ export function listVisibleSessionActionIds(params: Readonly<{
         ids.push(SESSION_ACTION_RENAME_ID);
     }
 
-    if (target.isActive && target.canStop) {
+    if (target.canStop && (target.isActive || target.hasRecoverableTerminalHost)) {
         ids.push(SESSION_ACTION_STOP_ID);
     }
 

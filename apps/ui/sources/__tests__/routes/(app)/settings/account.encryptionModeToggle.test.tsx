@@ -17,7 +17,6 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
 
 installAccountSettingsRouteModuleMocks();
 
@@ -41,8 +40,12 @@ vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => useAuthMock(),
 }));
 
+const buildContentKeyBindingMock = vi.hoisted(() => vi.fn(async () => ({
+    contentPublicKey: 'content-public-key',
+    contentPublicKeySig: 'content-public-key-signature',
+})));
 vi.mock('@/auth/oauth/contentKeyBinding', () => ({
-    buildContentKeyBinding: async () => null,
+    buildContentKeyBinding: buildContentKeyBindingMock,
 }));
 
 vi.mock('@/auth/flows/challenge', () => ({
@@ -73,6 +76,11 @@ describe('Settings → Account (encryption mode toggle)', () => {
     afterEach(() => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
+        buildContentKeyBindingMock.mockReset();
+        buildContentKeyBindingMock.mockResolvedValue({
+            contentPublicKey: 'content-public-key',
+            contentPublicKeySig: 'content-public-key-signature',
+        });
     });
 
     it('does not fetch account encryption mode when the feature gate is disabled', async () => {
@@ -158,6 +166,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
                     connectedServices: { action: 'assert_empty' },
                     automations: { action: 'assert_empty' },
                 }));
+                expect(body).not.toHaveProperty('sessions');
                 return {
                     ok: true,
                     json: async () => ({ success: true, mode: 'plain', settingsVersion: 8 }),
@@ -306,8 +315,11 @@ describe('Settings → Account (encryption mode toggle)', () => {
                         publicKey: expect.any(String),
                         challenge: expect.any(String),
                         signature: expect.any(String),
+                        contentPublicKey: 'content-public-key',
+                        contentPublicKeySig: 'content-public-key-signature',
                     }),
                 }));
+                expect(body).not.toHaveProperty('sessions');
                 return {
                     ok: true,
                     json: async () => ({ success: true, mode: 'e2ee', settingsVersion: 8 }),
@@ -332,6 +344,80 @@ describe('Settings → Account (encryption mode toggle)', () => {
             });
 
             expect(loginSpy).toHaveBeenCalledWith('t', expect.any(String));
+            expect(alertSpy).toHaveBeenCalled();
+        } finally {
+            await screen?.unmount();
+        }
+    });
+
+    it('aborts before the migration request when e2ee content-key binding construction fails', async () => {
+        useFeatureEnabledMock.mockReturnValue(true);
+        buildContentKeyBindingMock.mockRejectedValueOnce(new Error('binding unavailable'));
+        useAuthMock.mockReturnValue({
+            isAuthenticated: true,
+            credentials: {
+                token: 't',
+                encryption: {
+                    publicKey: 'pk',
+                    machineKey: Buffer.from(
+                        new Uint8Array(32).fill(4),
+                    ).toString('base64'),
+                },
+            },
+            logout: vi.fn(),
+            login: vi.fn(),
+        });
+        storage.getState().applyProfile({ ...profileDefaults, linkedProviders: [], username: null });
+        storage.getState().replaceSettings({ analyticsOptOut: false } as any, 7);
+
+        const { Modal } = await import('@/modal');
+        const alertSpy = vi.spyOn(Modal, 'alertAsync').mockResolvedValue();
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = getRequestUrl(input);
+            const method = (init?.method ?? 'GET').toUpperCase();
+            if (url.endsWith('/health') && method === 'GET') return createReachabilityProbeResponse();
+            if (url.endsWith('/v1/auth/ping') && method === 'GET') return createReachabilityProbeResponse();
+            if (isFeaturesRequest(url)) {
+                return {
+                    ok: true,
+                    json: async () => createAccountFeaturesResponse({ encryptionAccountOptOutEnabled: true }),
+                };
+            }
+            if (url.endsWith('/v1/account/encryption') && method === 'GET') {
+                return {
+                    ok: true,
+                    json: async () => ({ mode: 'plain', updatedAt: 1 }),
+                };
+            }
+            if (url.endsWith('/v1/account/encryption/migrate') && method === 'POST') {
+                throw new Error('migration request must not be sent');
+            }
+            throw new Error(`Unexpected fetch: ${url} (${method})`);
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+        let screen: Awaited<ReturnType<typeof renderSettingsView>> | undefined;
+        try {
+            screen = await renderSettingsView(<AccountScreen />);
+            await act(async () => {});
+            await vi.waitFor(() => {
+                expect(
+                    findEncryptionModeSwitch(screen!)?.props.disabled,
+                ).toBe(false);
+            });
+            const encryptionSwitch =
+                findEncryptionModeSwitch(screen);
+            expect(encryptionSwitch).toBeTruthy();
+            await act(async () => {
+                await encryptionSwitch?.props.onValueChange(true);
+            });
+
+            expect(fetchMock.mock.calls.some(([input, init]) =>
+                getRequestUrl(input).endsWith('/v1/account/encryption/migrate')
+                && (init?.method ?? 'GET').toUpperCase() === 'POST',
+            )).toBe(false);
+            expect(buildContentKeyBindingMock).toHaveBeenCalledTimes(1);
             expect(alertSpy).toHaveBeenCalled();
         } finally {
             await screen?.unmount();

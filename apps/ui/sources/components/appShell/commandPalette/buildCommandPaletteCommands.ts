@@ -9,6 +9,8 @@ import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings'
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { t } from '@/text';
+import { readSessionDisplayTitleField } from '@/sync/state/selectors';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 function normalizeId(value: unknown): string {
   return String(value ?? '').trim();
@@ -24,9 +26,11 @@ function extractRecentSessionIds(sessionsById: Record<string, any>): string[] {
 }
 
 function readSessionLabel(session: any): Readonly<{ title: string; subtitle: string }> {
-  const name = typeof session?.metadata?.name === 'string' ? session.metadata.name.trim() : '';
-  const title = name || t('commandPalette.commands.sessionFallbackTitle', { id: String(session?.id ?? '').slice(0, 6) });
-  const path = typeof session?.metadata?.path === 'string' ? session.metadata.path.trim() : '';
+  const metadata = readSessionOwnerMetadataView(session);
+  const legacyName = typeof metadata?.name === 'string' ? metadata.name.trim() : '';
+  const title = readSessionDisplayTitleField(session).value
+    ?? (legacyName || t('commandPalette.commands.sessionFallbackTitle', { id: String(session?.id ?? '').slice(0, 6) }));
+  const path = typeof metadata?.path === 'string' ? metadata.path.trim() : '';
   const subtitle = path || t('commandPalette.commands.sessionFallbackSubtitle');
   return { title, subtitle };
 }

@@ -1,11 +1,13 @@
 import { HappyError } from '@/utils/errors/errors';
 import { storage } from '@/sync/domains/state/storage';
 import { delay } from '@/utils/timing/time';
+import { t } from '@/text';
 
 type SessionMutationResult = Readonly<{
     success: boolean;
     message?: string;
     code?: string;
+    recovery?: 'wait_for_inactive' | 'upgrade_runtime';
 }>;
 
 export type StopSessionAndMaybeArchiveParams = Readonly<{
@@ -29,14 +31,32 @@ function readSessionArchiveAfterStopRetryDelayMsFromEnv(): number {
 
 function readSessionArchiveAfterStopTimeoutMsFromEnv(): number {
     const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SESSION_ARCHIVE_AFTER_STOP_TIMEOUT_MS ?? '').trim();
-    if (!raw) return 10_000;
+    if (!raw) return 75_000;
     const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed)) return 10_000;
-    return Math.max(0, Math.min(60_000, parsed));
+    if (!Number.isFinite(parsed)) return 75_000;
+    return Math.max(0, Math.min(5 * 60_000, parsed));
 }
 
 export function isSessionActiveArchiveResult(result: SessionMutationResult): boolean {
     return result.success === false && result.code === 'session_active';
+}
+
+export function isAcceptedPendingSessionStop(result: SessionMutationResult): boolean {
+    return (
+        result.success === false
+        && result.code === 'session_stop_requested'
+        && result.recovery === 'wait_for_inactive'
+    );
+}
+
+export function resolveSessionStopFailureMessage(
+    result: SessionMutationResult,
+    fallbackMessage: string,
+): string {
+    if (result.recovery === 'upgrade_runtime') {
+        return t('sessionInfo.stopSessionUpgradeRequired');
+    }
+    return result.message || fallbackMessage;
 }
 
 async function archiveAfterStopWithRetry(params: Readonly<{
@@ -86,11 +106,11 @@ export async function stopSessionAndMaybeArchive(params: StopSessionAndMaybeArch
     }
 
     const stopResult = await params.stopSession();
-    if (!stopResult.success) {
+    if (!stopResult.success && !isAcceptedPendingSessionStop(stopResult)) {
         if (keepVisibleWhenStopping) {
             clearSessionVisibleWhenInactive(params.sessionId);
         }
-        throw new HappyError(stopResult.message || params.stopErrorMessage, false);
+        throw new HappyError(resolveSessionStopFailureMessage(stopResult, params.stopErrorMessage), false);
     }
 
     if (params.archiveAfterStop === 'never') {

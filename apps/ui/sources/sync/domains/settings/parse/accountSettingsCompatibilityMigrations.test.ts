@@ -42,6 +42,40 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
         expect(migrated.schemaVersion).toBe(7);
     });
 
+    it('carries the legacy tab-bar blur preference into the generalized glass surface keys', () => {
+        const migrated = applyAccountSettingsCompatibilityMigrations({
+            input: {
+                tabBarBlurEnabled: false,
+                tabBarBlurIntensity: 'strong',
+            },
+            settings: {
+                ...settingsDefaults,
+            },
+            inputSchemaVersion: 7,
+            supportedSchemaVersion: 7,
+        });
+
+        expect(migrated.glassBlurEnabled).toBe(false);
+        expect(migrated.glassBlurIntensity).toBe('strong');
+    });
+
+    it('keeps the new glass blur preference when both legacy and new keys are present', () => {
+        const migrated = applyAccountSettingsCompatibilityMigrations({
+            input: {
+                tabBarBlurEnabled: false,
+                glassBlurEnabled: true,
+            },
+            settings: {
+                ...settingsDefaults,
+                glassBlurEnabled: true,
+            },
+            inputSchemaVersion: 7,
+            supportedSchemaVersion: 7,
+        });
+
+        expect(migrated.glassBlurEnabled).toBe(true);
+    });
+
     it('normalizes invalid server selection state to null', () => {
         const migrated = applyAccountSettingsCompatibilityMigrations({
             input: {
@@ -108,33 +142,4 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
         });
     });
 
-    it('canonicalizes legacy mcp codex backend mode when migrating a pre-v6 payload', () => {
-        const migrated = applyAccountSettingsCompatibilityMigrations({
-            input: {
-                codexBackendMode: 'mcp',
-            },
-            settings: {
-                ...settingsDefaults,
-            },
-            inputSchemaVersion: 5,
-            supportedSchemaVersion: 6,
-        });
-
-        expect(migrated.codexBackendMode).toBe('appServer');
-    });
-
-    it('normalizes legacy codex backend mode aliases and whitespace when migrating a pre-v6 payload', () => {
-        const migrated = applyAccountSettingsCompatibilityMigrations({
-            input: {
-                codexBackendMode: '  mcp_resume  ',
-            },
-            settings: {
-                ...settingsDefaults,
-            },
-            inputSchemaVersion: 5,
-            supportedSchemaVersion: 6,
-        });
-
-        expect(migrated.codexBackendMode).toBe('acp');
-    });
 });

@@ -80,7 +80,7 @@ const TERMINAL_DECISION_REASONS: ReadonlySet<TranscriptViewportTelemetryObservat
 ]);
 
 function isCommittedScrollWrite(event: TranscriptViewportTelemetryEvent): event is ScrollWriteEvent {
-    return event.type === 'scroll-write' && event.writer !== 'mvcp-skip';
+    return event.type === 'scroll-write';
 }
 
 function isObservationEvent(event: TranscriptViewportTelemetryEvent): event is ObservationEvent {
@@ -126,25 +126,15 @@ function collectMissingWebWregFields(event: WebWregDiagnosticEvent): string[] {
         'domScrollTop',
         'domScrollHeight',
         'domClientHeight',
-        'flashListContentHeight',
-        'flashListLayoutHeight',
+        'listContentHeight',
+        'listLayoutHeight',
         'scrollable',
         'distanceFromBottom',
         'paginationPhase',
         'paginationSuspendedReasons',
-        'coldCount',
-        'hotCount',
-        'pendingWebPrependAnchorKind',
         'programmaticWebWrite',
     ];
     const missing = required.filter((field) => !hasOwn(event, field));
-    if (
-        event.pendingWebPrependAnchorKind !== undefined &&
-        event.pendingWebPrependAnchorKind !== 'none'
-    ) {
-        if (!hasOwn(event, 'pendingWebPrependAnchorId')) missing.push('pendingWebPrependAnchorId');
-        if (!hasOwn(event, 'pendingWebPrependAnchorIndex')) missing.push('pendingWebPrependAnchorIndex');
-    }
     if (
         event.type === 'restore-decision' ||
         event.trigger === 'restore' ||
@@ -327,27 +317,6 @@ function assertWarmReopen(events: readonly TranscriptViewportTelemetryEvent[]): 
         failWithEvents('Invariant B violated: prepend writes issued during entry restore:', prependWrites);
     }
     const entryWrites = writes.filter((event) => deriveViewportWriteOwner(event) === 'entry');
-    // N2b slice-from-anchor (NATIVE only — web keeps its write-based restore path):
-    // anchored native entries land write-free (the data window starts at the anchor;
-    // the observe-only transaction confirms by observation). An anchored entry is
-    // identified by its slice decision pair (pending/restored, mode restore-anchor);
-    // anchor-mode native entry WRITES no longer exist at all. The degraded
-    // identity-less distance one-shot (missing-anchor lookups → restore-distance
-    // write) keeps the legacy ≤2 budget below.
-    const anchoredNativeEntryDecision = events.some((event) =>
-        event.type === 'restore-decision' &&
-        event.mode === 'restore-anchor' &&
-        (event.reason === 'pending' || event.reason === 'restored') &&
-        event.platform !== 'web');
-    const anchorModeNativeEntryWrites = entryWrites.filter((event) =>
-        event.mode === 'restore-anchor' && event.platform !== 'web');
-    const nativeEntryWrites = entryWrites.filter((event) => event.platform !== 'web');
-    if ((anchoredNativeEntryDecision || anchorModeNativeEntryWrites.length > 0) && nativeEntryWrites.length > 0) {
-        failWithEvents(
-            `Invariant B violated: anchored entry must land write-free (N2b slice) but issued writes=${nativeEntryWrites.length}:`,
-            nativeEntryWrites,
-        );
-    }
     const distinctTargets = distinctTargetCount(entryWrites);
     if (entryWrites.length > 2 || distinctTargets > 2) {
         failWithEvents(

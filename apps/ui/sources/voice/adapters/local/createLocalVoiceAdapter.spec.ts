@@ -52,8 +52,12 @@ describe('createLocalVoiceAdapter', () => {
 
     const withText = createLocalVoiceAdapter('local_conversation', { contextUpdates: true, textTurns: true });
     expect(withText.sendTextTurn).toBeTypeOf('function');
-    await withText.sendTextTurn?.({ controlSessionId: 's1', conversationSessionId: 'voice-home', text: 'hi' });
-    expect(sendLocalVoiceAgentTextTurn).toHaveBeenCalledWith({ controlSessionId: 's1', text: 'hi' });
+    await withText.sendTextTurn?.({ controlSessionId: 's1', conversationSessionId: 'voice-home', text: 'hi', localId: 'voice-local-1', deliveryCommand: 'interrupt_and_send' });
+    expect(sendLocalVoiceAgentTextTurn).toHaveBeenCalledWith({
+      controlSessionId: 's1',
+      text: 'hi',
+      durableDispatch: { localId: 'voice-local-1', deliveryCommand: 'interrupt_and_send' },
+    });
 
     const withoutText = createLocalVoiceAdapter('local_direct', { contextUpdates: false, textTurns: false });
     expect('sendTextTurn' in withoutText).toBe(false);
@@ -66,8 +70,10 @@ describe('createLocalVoiceAdapter', () => {
     await adapter.toggle({ sessionId: 's1' });
     await adapter.stop({ sessionId: 's1' });
     await adapter.interrupt({ sessionId: 's1' });
+    await adapter.bargeIn?.({ sessionId: 's1' });
     await adapter.setMuted({ sessionId: 's1', muted: true });
 
+    expect(toggleLocalVoiceTurn).toHaveBeenCalledTimes(2);
     expect(toggleLocalVoiceTurn).toHaveBeenCalledWith('s1');
     expect(stopLocalVoiceSession).toHaveBeenCalledTimes(1);
     expect(abortLocalVoiceTurn).toHaveBeenCalledWith('s1');

@@ -1,10 +1,12 @@
 import { vi } from 'vitest';
 
+import type { Settings } from '@/sync/domains/settings/settings';
 import type { StorageState } from '@/sync/store/types';
 import type { StoreApi, UseBoundStore } from 'zustand';
 
 import {
     createStorageModuleStub as createStorageModuleRuntimeStub,
+    createLiveStorageStoreMock as createLiveStorageRuntimeStoreMock,
     createStorageStoreMock as createStorageRuntimeStoreMock,
     createUseLocalSettingMock as createUseLocalSettingRuntimeMock,
     createUseLocalSettingMutableMock as createUseLocalSettingRuntimeMutableMock,
@@ -18,9 +20,11 @@ import {
 import { mergeModuleMock, type MergeModuleMockOptions } from './_shared';
 
 type StorageModule = typeof import('@/sync/domains/state/storage');
+type StorageStoreModule = typeof import('@/sync/domains/state/storageStore');
 type MutableSetter = (value: unknown) => void;
 
 export type CreateStorageModuleMockOptions = MergeModuleMockOptions<StorageModule>;
+export type CreateStorageStoreModuleMockOptions = MergeModuleMockOptions<StorageStoreModule>;
 export type CreateUseSettingMockOptions = CreateUseSettingRuntimeMockOptions;
 export type CreateUseLocalSettingMockOptions = CreateUseLocalSettingRuntimeMockOptions;
 
@@ -39,6 +43,9 @@ export async function createStorageModuleMock(options: CreateStorageModuleMockOp
             getStorage: () => storage,
         };
     }
+    if (typeof (options.overrides as { getStorage?: unknown }).getStorage === 'function') {
+        return module;
+    }
     return {
         ...module,
         getStorage: () => module.storage,
@@ -55,6 +62,12 @@ export async function createPartialStorageModuleMock(
     });
 }
 
+export async function createStorageStoreModuleMock(
+    options: CreateStorageStoreModuleMockOptions,
+): Promise<StorageStoreModule> {
+    return mergeModuleMock<StorageStoreModule>(options);
+}
+
 export function createStorageModuleStub<TOverrides extends object>(overrides: TOverrides): StorageModule {
     return createStorageModuleRuntimeStub(overrides, {
         createMutableSetter: createVitestMutableSetter,
@@ -67,6 +80,23 @@ export function createUseSettingMutableMock(useSetting: StorageModule['useSettin
     return createUseSettingRuntimeMutableMock(useSetting, {
         createMutableSetter: createVitestMutableSetter,
     });
+}
+
+type UseSettingMutableMockReader = (
+    key: keyof Settings,
+) => readonly [unknown, (...args: never[]) => unknown];
+
+export function createUseSettingMutableMockFromReader(
+    reader: UseSettingMutableMockReader,
+): StorageModule['useSettingMutable'] {
+    return ((key: keyof Settings) => {
+        const result = reader(key);
+        if (!Array.isArray(result) || result.length !== 2 || typeof result[1] !== 'function') {
+            throw new TypeError(`Mutable setting fixture '${String(key)}' must return a value/setter tuple`);
+        }
+        // Test boundary: the reader is key-constrained above; production retains its exact generic hook contract.
+        return result;
+    }) as StorageModule['useSettingMutable'];
 }
 
 export const createUseLocalSettingMock = createUseLocalSettingRuntimeMock;
@@ -85,4 +115,8 @@ export function installPartialStorageModuleMock(overrides: object) {
 
 export function createStorageStoreMock(state: Partial<StorageState>): UseBoundStore<StoreApi<StorageState>> {
     return createStorageRuntimeStoreMock(state);
+}
+
+export function createLiveStorageStoreMock(readState: () => Partial<StorageState>): UseBoundStore<StoreApi<StorageState>> {
+    return createLiveStorageRuntimeStoreMock(readState);
 }

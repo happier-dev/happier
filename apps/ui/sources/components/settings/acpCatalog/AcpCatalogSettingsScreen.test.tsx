@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { installAcpCatalogSettingsCommonModuleMocks } from './acpCatalogSettingsTestHelpers';
+import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -50,13 +51,13 @@ installAcpCatalogSettingsCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettingMutable: (key: string) => {
+                useSettingMutable: createUseSettingMutableMockFromReader((key) => {
                     if (key === 'acpCatalogSettingsV1') {
                         return [shared.settingsState.value, shared.setAcpSettingsSpy];
                     }
                     if (key === 'secrets') return [[], vi.fn()];
                     return [null, vi.fn()];
-                },
+                }),
             },
         });
     },
@@ -136,7 +137,7 @@ describe('AcpCatalogSettingsScreen', () => {
         const addPresetRow = screen.findRow('settings.acpCatalog.addPreset');
         const emptyBackendsRow = screen.findRow('settings.acpCatalog.backends.empty');
 
-        expect(builtInKiroRow).toBeTruthy();
+        expect(builtInKiroRow).toBeNull();
         expect(builtInCustomAcpRow).toBeNull();
         expect(builtInOhMyPiRow).toBeTruthy();
         expect(backendRow).toBeTruthy();

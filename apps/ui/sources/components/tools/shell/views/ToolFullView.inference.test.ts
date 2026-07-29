@@ -97,7 +97,12 @@ describe('ToolFullView (inference + view selection)', () => {
             description: 'Run echo hello',
         });
 
-        const screen = await renderScreen(React.createElement(ToolFullView, { tool, metadata: null, messages: [] }));
+        const screen = await renderScreen(React.createElement(ToolFullView, {
+            tool,
+            owningMessageId: 'tool-message-1',
+            metadata: null,
+            messages: [],
+        }));
 
         expect(screen.findAllByType('FullToolView' as any)).toHaveLength(1);
         expect(renderedFullViewSpy).toHaveBeenCalled();
@@ -117,7 +122,12 @@ describe('ToolFullView (inference + view selection)', () => {
             result: { content: 'hello' },
         });
 
-        const screen = await renderScreen(React.createElement(ToolFullView, { tool, metadata: null, messages: [] }));
+        const screen = await renderScreen(React.createElement(ToolFullView, {
+            tool,
+            owningMessageId: 'tool-message-2',
+            metadata: null,
+            messages: [],
+        }));
 
         expect(screen.findAllByType('ToolView' as any)).toHaveLength(1);
         expect(renderedViewSpy).toHaveBeenCalled();

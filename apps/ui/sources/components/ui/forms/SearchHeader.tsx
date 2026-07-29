@@ -11,6 +11,7 @@ import { TextInput } from '@/components/ui/text/Text';
 
 
 export interface SearchHeaderProps {
+    testID?: string;
     value: string;
     onChangeText: (text: string) => void;
     placeholder: string;
@@ -73,6 +74,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 export function SearchHeader({
+    testID,
     value,
     onChangeText,
     placeholder,
@@ -88,7 +90,7 @@ export function SearchHeader({
     const styles = stylesheet;
 
     return (
-        <View style={[styles.container, containerStyle]}>
+        <View testID={testID} style={[styles.container, containerStyle]}>
             <View style={[styles.content, { maxWidth }]}>
                 <View style={styles.inputWrapper}>
                     {normalizeNodeForView(
@@ -100,6 +102,7 @@ export function SearchHeader({
                         />,
                     )}
                     <TextInput
+                        testID={testID ? `${testID}:input` : undefined}
                         ref={inputRef}
                         value={value}
                         onChangeText={onChangeText}

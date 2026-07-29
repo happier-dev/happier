@@ -2,6 +2,15 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
+const reducedMotionState = vi.hoisted(() => ({ reads: 0, value: false }));
+
+vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
+    useReducedMotionPreference: () => {
+        reducedMotionState.reads += 1;
+        return reducedMotionState.value;
+    },
+}));
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
@@ -48,6 +57,7 @@ describe('StatusDot', () => {
     });
 
     it('can show a pulsing-state web dot without scheduling a CSS pulse animation', async () => {
+        reducedMotionState.reads = 0;
         const { StatusDot } = await import('./StatusDot');
         const screen = await renderScreen(React.createElement(StatusDot, {
             color: 'red',
@@ -61,5 +71,27 @@ describe('StatusDot', () => {
         expect(style.animationName).toBeUndefined();
         expect(style.animationIterationCount).toBeUndefined();
         expect(style.backgroundColor).toBe('red');
+        expect(reducedMotionState.reads).toBe(0);
+    });
+
+    it('renders a static semantic web status when reduced motion is enabled', async () => {
+        reducedMotionState.value = true;
+        const { StatusDot } = await import('./StatusDot');
+        const screen = await renderScreen(React.createElement(StatusDot, {
+            color: 'red',
+            isPulsing: true,
+            accessibilityLabel: 'Agent working',
+            testID: 'status-dot',
+        }));
+
+        const dot = screen.findByTestId('status-dot');
+        const style = flattenStyle(dot?.props.style);
+        expect(dot?.type).toBe('View');
+        expect(dot?.props.accessibilityRole).toBe('image');
+        expect(dot?.props.accessibilityLabel).toBe('Agent working');
+        expect(style.animationName).toBeUndefined();
+        expect(style.animationIterationCount).toBeUndefined();
+
+        reducedMotionState.value = false;
     });
 });

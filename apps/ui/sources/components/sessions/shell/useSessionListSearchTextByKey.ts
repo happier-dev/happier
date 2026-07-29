@@ -8,6 +8,8 @@ import { readSessionListRowForServerId } from '@/sync/domains/session/listing/se
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import type { StorageState } from '@/sync/store/types';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 import { sessionTagKey } from './sessionTagUtils';
 
@@ -68,43 +70,77 @@ function collectSessionKeys(items: ReadonlyArray<SessionListIndexItem>): Readonl
     return keys;
 }
 
+function buildSearchTextBySessionKey(
+    state: StorageState,
+    sessionKeys: ReadonlyArray<SessionSearchKey>,
+): Readonly<Record<string, string>> {
+    const out: Record<string, string> = {};
+    for (const entry of sessionKeys) {
+        const parts: string[] = [];
+        appendText(parts, entry.sessionId);
+        appendRenderableText(
+            parts,
+            readSessionListRowForServerId(state.sessionListRowStateByServerId, entry.serverId, entry.sessionId)
+                ?? state.sessionListRenderables?.[entry.sessionId]
+                ?? null,
+        );
+        const session = state.sessions?.[entry.sessionId] ?? null;
+        appendSessionMetadataText(parts, session ? readSessionOwnerMetadataView(session) : null);
+
+        for (const message of readStoredSessionMessages(state, entry.sessionId)) {
+            appendText(parts, readMessageText(message));
+        }
+
+        const pending = state.sessionPending?.[entry.sessionId];
+        for (const pendingMessage of (pending?.messages ?? []) as PendingMessage[]) {
+            appendText(parts, pendingMessage.displayText ?? pendingMessage.text);
+        }
+        for (const discardedMessage of (pending?.discarded ?? []) as PendingMessage[]) {
+            appendText(parts, discardedMessage.displayText ?? discardedMessage.text);
+        }
+
+        if (parts.length > 0) {
+            out[entry.key] = parts.join('\n');
+        }
+    }
+
+    return Object.keys(out).length > 0 ? out : EMPTY_SEARCH_TEXT_BY_SESSION_KEY;
+}
+
+export function createSessionListSearchTextSelector(
+    items: ReadonlyArray<SessionListIndexItem>,
+    enabled: boolean,
+): (state: StorageState) => Readonly<Record<string, string>> {
+    const sessionKeys = collectSessionKeys(items);
+    let previousDeltaRevision: number | null = null;
+    let previousResult: Readonly<Record<string, string>> | null = null;
+
+    return (state) => {
+        if (!enabled || sessionKeys.length === 0) return EMPTY_SEARCH_TEXT_BY_SESSION_KEY;
+        const renderableDelta = state.sessionListRenderableDelta;
+        if (
+            previousResult
+            && renderableDelta
+            && previousDeltaRevision !== null
+            && renderableDelta.revision !== previousDeltaRevision
+            && renderableDelta.rebuiltSessionListIndex !== true
+            && renderableDelta.changedSessionIds.length === 0
+            && renderableDelta.removedSessionIds.length === 0
+        ) {
+            previousDeltaRevision = renderableDelta.revision;
+            return previousResult;
+        }
+
+        previousResult = buildSearchTextBySessionKey(state, sessionKeys);
+        previousDeltaRevision = renderableDelta?.revision ?? null;
+        return previousResult;
+    };
+}
+
 export function useSessionListSearchTextByKey(
     items: ReadonlyArray<SessionListIndexItem>,
     enabled: boolean,
 ): Readonly<Record<string, string>> {
-    const sessionKeys = React.useMemo(() => collectSessionKeys(items), [items]);
-    return getStorage()(useShallow((state) => {
-        if (!enabled || sessionKeys.length === 0) return EMPTY_SEARCH_TEXT_BY_SESSION_KEY;
-
-        const out: Record<string, string> = {};
-        for (const entry of sessionKeys) {
-            const parts: string[] = [];
-            appendText(parts, entry.sessionId);
-            appendRenderableText(
-                parts,
-                readSessionListRowForServerId(state.sessionListRowStateByServerId, entry.serverId, entry.sessionId)
-                    ?? state.sessionListRenderables?.[entry.sessionId]
-                    ?? null,
-            );
-            appendSessionMetadataText(parts, state.sessions?.[entry.sessionId]?.metadata ?? null);
-
-            for (const message of readStoredSessionMessages(state, entry.sessionId)) {
-                appendText(parts, readMessageText(message));
-            }
-
-            const pending = state.sessionPending?.[entry.sessionId];
-            for (const pendingMessage of (pending?.messages ?? []) as PendingMessage[]) {
-                appendText(parts, pendingMessage.displayText ?? pendingMessage.text);
-            }
-            for (const discardedMessage of (pending?.discarded ?? []) as PendingMessage[]) {
-                appendText(parts, discardedMessage.displayText ?? discardedMessage.text);
-            }
-
-            if (parts.length > 0) {
-                out[entry.key] = parts.join('\n');
-            }
-        }
-
-        return Object.keys(out).length > 0 ? out : EMPTY_SEARCH_TEXT_BY_SESSION_KEY;
-    }));
+    const selector = React.useMemo(() => createSessionListSearchTextSelector(items, enabled), [enabled, items]);
+    return getStorage()(useShallow(selector));
 }

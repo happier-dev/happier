@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createProviderSettingsRoute } from '@/agents/providers/shared/providerSettingsRoutes';
+import { createPluginAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
 import { renderSettingsView } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
@@ -11,7 +11,7 @@ let executionRunsEnabledState = false;
 let guidanceEntriesState: any[] = [];
 let guidanceEnabledState: boolean | null = null;
 let guidanceMaxCharsState: number | null = null;
-let providerSubagentSectionsState: any[] = [];
+let pluginProjectionByIdState: Record<string, any> = {};
 const routerPushSpy = vi.fn();
 
 installSettingsViewCommonModuleMocks({
@@ -112,8 +112,10 @@ vi.mock('@/sync/domains/settings/executionRunsGuidance', () => ({
     coerceExecutionRunsGuidanceEntries: (value: any) => value,
 }));
 
-vi.mock('@/agents/providers/registry/providerSubagentSettingsRegistry', () => ({
-    listProviderSubagentSettingsSections: () => providerSubagentSectionsState,
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+    useDaemonMergedProjectionInputs: () => ({
+        inputs: { pluginProjectionById: pluginProjectionByIdState },
+    }),
 }));
 
 vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
@@ -124,7 +126,7 @@ vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
             kind: 'configuredBackend',
             backendId: 'custom-review',
             providerId: 'custom-review',
-            providerAgentId: null,
+            catalogAgentId: null,
             builtInAgentId: null,
             iconAgentId: 'customAcp',
             title: 'Custom Review Bot',
@@ -158,7 +160,7 @@ describe('SubAgentSettingsView', () => {
         guidanceEnabledState = null;
         guidanceMaxCharsState = null;
         guidanceEntriesState = [];
-        providerSubagentSectionsState = [];
+        pluginProjectionByIdState = {};
         routerPushSpy.mockReset();
     });
 
@@ -180,7 +182,7 @@ describe('SubAgentSettingsView', () => {
 
         screen.pressRowByTitle('subAgentGuidance.settings.overview.happierStatusTitle');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/features');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/features');
     });
 
     it('renders related subagent settings links and routes to Session settings', async () => {
@@ -193,7 +195,7 @@ describe('SubAgentSettingsView', () => {
 
         screen.pressRowByTitle('subAgentGuidance.settings.related.sessionTitle');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/session');
     });
 
     it('routes the related custom ACP backends entry to the providers settings screen', async () => {
@@ -206,7 +208,7 @@ describe('SubAgentSettingsView', () => {
 
         screen.pressRowByTitle('subAgentGuidance.settings.related.backendsTitle');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/providers');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/agents');
     });
 
     it('renders configured ACP backend titles in rule subtitles', async () => {
@@ -228,22 +230,31 @@ describe('SubAgentSettingsView', () => {
         expect(ruleItem!.props.subtitle).toContain('subAgentGuidance.settings.rules.meta.target: Custom Review Bot');
     });
 
-    it('renders provider-contributed subagent settings sections and routes to their target screen', async () => {
-        providerSubagentSectionsState = [{
-            providerId: 'claude',
-            section: {
-                id: 'claudeTeams',
-                title: 'Claude teams',
-                footer: 'Manage Claude-specific subagent behavior.',
-                items: [{
-                    id: 'claude-team-settings',
-                    title: 'Agent Teams',
-                    subtitle: 'Open Claude provider settings',
-                    route: createProviderSettingsRoute('claude'),
-                    iconIonName: 'people-outline',
+    it('renders agent-contributed subagent settings sections and routes to their target screen', async () => {
+        pluginProjectionByIdState = {
+            claude: {
+                editableSettingsGroups: [{
+                    target: {
+                        kind: 'agent',
+                        agent: { pluginId: 'claude', localId: 'claude' },
+                    },
+                    presentation: {
+                        subagentSections: [{
+                            id: 'claudeTeams',
+                            title: 'Claude teams',
+                            description: 'Manage Claude-specific subagent behavior.',
+                            items: [{
+                                id: 'claude-team-settings',
+                                title: 'Agent Teams',
+                                description: 'Open Claude provider settings',
+                                route: createPluginAgentSettingsRoute('claude'),
+                                iconIonName: 'people-outline',
+                            }],
+                        }],
+                    },
                 }],
             },
-        }];
+        };
 
         const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
 
@@ -253,6 +264,6 @@ describe('SubAgentSettingsView', () => {
 
         screen.pressRowByTitle('Agent Teams');
 
-        expect(routerPushSpy).toHaveBeenCalledWith(createProviderSettingsRoute('claude'));
+        expect(routerPushSpy).toHaveBeenCalledWith(createPluginAgentSettingsRoute('claude'));
     });
 });

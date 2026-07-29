@@ -4,8 +4,8 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@happier-dev/agents')>();
     return {
         ...actual,
-        getAllProviderDefinitions: () => [
-            ...actual.getAllProviderDefinitions(),
+        getAllAgentCatalogDefinitions: () => [
+            ...actual.getAllAgentCatalogDefinitions(),
             { id: 'acme.review.backend' },
         ],
     };

@@ -1,29 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const {
-  mockSend,
   mockResolvePreferredServerIdForSessionId,
-  mockResolveServerScopedSessionContext,
   mockSessionRpcWithServerScope,
 } = vi.hoisted(() => ({
-  mockSend: vi.fn(),
   mockResolvePreferredServerIdForSessionId: vi.fn(),
-  mockResolveServerScopedSessionContext: vi.fn(),
   mockSessionRpcWithServerScope: vi.fn(),
-}));
-
-vi.mock('../../api/session/apiSocket', () => ({
-  apiSocket: {
-    send: mockSend,
-  },
 }));
 
 vi.mock('../../runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
   resolvePreferredServerIdForSessionId: mockResolvePreferredServerIdForSessionId,
-}));
-
-vi.mock('../../runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext', () => ({
-  resolveServerScopedSessionContext: mockResolveServerScopedSessionContext,
 }));
 
 vi.mock('../../runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
@@ -47,53 +33,37 @@ import { RpcError } from '@happier-dev/protocol/rpcErrors';
 
 describe('sessionStop', () => {
   beforeEach(() => {
-    mockSend.mockReset();
     mockResolvePreferredServerIdForSessionId.mockReset();
-    mockResolveServerScopedSessionContext.mockReset();
     mockSessionRpcWithServerScope.mockReset();
   });
 
-  it('falls back to session-end when RPC method is unavailable (errorCode)', async () => {
+  it('returns an explicit upgrade recovery when the runner stop RPC is unavailable', async () => {
     mockResolvePreferredServerIdForSessionId.mockReturnValue('server-a');
     mockSessionRpcWithServerScope.mockRejectedValue(new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE));
-    mockResolveServerScopedSessionContext.mockResolvedValue({
-      scope: 'active',
-      targetServerUrl: 'https://active.example',
-      targetServerId: 'server-a',
-      token: 'tok',
-      timeoutMs: 1000,
-      encryption: null,
-    });
-
     const res = await sessionStop('sid-1');
-    expect(res).toEqual({ success: true });
+    expect(res).toEqual({
+      success: false,
+      message: 'RPC method not available',
+      code: 'session_stop_unsupported',
+      recovery: 'upgrade_runtime',
+    });
     expect(mockSessionRpcWithServerScope).toHaveBeenCalledWith({
       method: 'killSession',
       payload: {},
       serverId: 'server-a',
       sessionId: 'sid-1',
     });
-    expect(mockSend).toHaveBeenCalledWith(
-      'session-end',
-      expect.objectContaining({ sid: 'sid-1', time: expect.any(Number) }),
-    );
   });
 
   it('does not fall back to session-end when the errorCode is missing (legacy message-only)', async () => {
     mockResolvePreferredServerIdForSessionId.mockReturnValue('server-b');
     mockSessionRpcWithServerScope.mockRejectedValue(new Error('RPC method not available'));
-    mockResolveServerScopedSessionContext.mockResolvedValue({
-      scope: 'active',
-      targetServerUrl: 'https://active.example',
-      targetServerId: 'server-b',
-      token: 'tok',
-      timeoutMs: 1000,
-      encryption: null,
-    });
-
     const res = await sessionStop('sid-2');
-    expect(res).toEqual({ success: false, message: 'RPC method not available' });
-    expect(mockSend).not.toHaveBeenCalled();
+    expect(res).toEqual({
+      success: false,
+      message: 'RPC method not available',
+      code: 'session_stop_failed',
+    });
   });
 
   it('returns an error for non-RPC-method-unavailable failures', async () => {
@@ -101,7 +71,6 @@ describe('sessionStop', () => {
     mockSessionRpcWithServerScope.mockRejectedValue(new Error('boom'));
 
     const res = await sessionStop('sid-3');
-    expect(res).toEqual({ success: false, message: 'boom' });
-    expect(mockSend).not.toHaveBeenCalled();
+    expect(res).toEqual({ success: false, message: 'boom', code: 'session_stop_failed' });
   });
 });

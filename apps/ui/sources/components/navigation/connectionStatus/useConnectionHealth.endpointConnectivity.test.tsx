@@ -9,6 +9,7 @@ import { installConnectionStatusCommonModuleMocks } from './connectionStatusTest
 
 const connectionState = vi.hoisted(() => ({
     endpointStatus: 'online' as import('@happier-dev/connection-supervisor').ManagedConnectionPhase,
+    endpointReason: null as import('@happier-dev/connection-supervisor').ManagedConnectionReason,
     socketStatus: 'connected' as import('./connectionHealthTypes').ConnectionSocketStatus,
     syncErrorKind: null as 'auth' | 'network' | null,
     syncErrorServerId: null as string | null,
@@ -66,7 +67,7 @@ installConnectionStatusCommonModuleMocks({
         return createPartialStorageModuleMock(importOriginal, {
             useEndpointConnectivity: () => ({
                 status: connectionState.endpointStatus,
-                reason: null,
+                reason: connectionState.endpointReason,
                 attempt: 0,
                 nextRetryAt: null,
                 lastConnectedAt: null,
@@ -95,6 +96,7 @@ installConnectionStatusCommonModuleMocks({
 describe('useConnectionHealth (endpoint connectivity integration)', () => {
     it('prioritizes endpoint offline over socket connected + sync errors', async () => {
         connectionState.endpointStatus = 'offline';
+        connectionState.endpointReason = null;
         connectionState.socketStatus = 'connected';
         connectionState.syncErrorKind = 'network';
         connectionState.machines = [];
@@ -105,8 +107,28 @@ describe('useConnectionHealth (endpoint connectivity integration)', () => {
         expect(hook.getCurrent().kind).toBe('server_unreachable');
     });
 
+    it('renders planned server restarts as neutral reconnect with known machine state', async () => {
+        connectionState.endpointStatus = 'offline';
+        connectionState.endpointReason = 'server_restarting';
+        connectionState.socketStatus = 'disconnected';
+        connectionState.syncErrorKind = null;
+        connectionState.syncErrorServerId = null;
+        connectionState.machines = [
+            { id: 'm1', active: true, activeAt: Date.now(), revokedAt: null, daemonState: { status: 'running' } },
+        ];
+
+        const { useConnectionHealth } = await import('./useConnectionHealth');
+        const hook = await renderHook(() => useConnectionHealth());
+
+        expect(hook.getCurrent().kind).toBe('server_restarting');
+        expect(hook.getCurrent().tone).toBe('neutral');
+        expect(hook.getCurrent().statusLabelKey).toBe('status.connecting');
+        expect(hook.getCurrent().machineLabelKey).toBe('status.online');
+    });
+
     it('surfaces auth_required when endpoint auth_failed', async () => {
         connectionState.endpointStatus = 'auth_failed';
+        connectionState.endpointReason = null;
         connectionState.socketStatus = 'connected';
         connectionState.syncErrorKind = null;
         connectionState.machines = [];
@@ -120,6 +142,7 @@ describe('useConnectionHealth (endpoint connectivity integration)', () => {
 
     it('surfaces auth_required when a terminal auth sync error is present', async () => {
         connectionState.endpointStatus = 'online';
+        connectionState.endpointReason = null;
         connectionState.socketStatus = 'error';
         connectionState.syncErrorKind = 'auth';
         connectionState.syncErrorServerId = null;
@@ -134,6 +157,7 @@ describe('useConnectionHealth (endpoint connectivity integration)', () => {
 
     it('ignores auth sync errors that belong to a different server profile', async () => {
         connectionState.endpointStatus = 'online';
+        connectionState.endpointReason = null;
         connectionState.socketStatus = 'connected';
         connectionState.syncErrorKind = 'auth';
         connectionState.syncErrorServerId = 'server-b';
@@ -147,6 +171,7 @@ describe('useConnectionHealth (endpoint connectivity integration)', () => {
 
     it('surfaces machine_not_ready when machines are online but none are ready', async () => {
         connectionState.endpointStatus = 'online';
+        connectionState.endpointReason = null;
         connectionState.socketStatus = 'connected';
         connectionState.syncErrorKind = null;
         connectionState.machines = [
@@ -164,6 +189,7 @@ describe('useConnectionHealth (endpoint connectivity integration)', () => {
 
     it('exposes primaryMachineLabel when exactly one machine is visible', async () => {
         connectionState.endpointStatus = 'online';
+        connectionState.endpointReason = null;
         connectionState.socketStatus = 'connected';
         connectionState.syncErrorKind = null;
         connectionState.machines = [

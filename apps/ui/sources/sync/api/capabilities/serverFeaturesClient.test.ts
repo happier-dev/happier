@@ -1,3 +1,4 @@
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let activeServerSnapshot = {
@@ -8,6 +9,7 @@ let activeServerSnapshot = {
 
 let featuresFetchMock: ReturnType<typeof vi.fn>;
 let setServerProfileIdentityForUrlMock: ReturnType<typeof vi.fn>;
+let learnedServerIdentityId: string | null;
 
 const frozenServerFeaturesTime = new Date('2026-02-13T00:00:00.000Z');
 const frozenServerFeaturesTimeAfterCooldown = new Date('2026-02-13T00:01:00.000Z');
@@ -18,15 +20,32 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
+    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => {
+        const normalize = (value: unknown) => {
+            const id = String(value ?? '').trim();
+            return learnedServerIdentityId && id === learnedServerIdentityId ? 'server-a' : id;
+        };
+        return normalize(left) === normalize(right);
+    },
     getServerProfileById: (idRaw: string) => {
         const id = String(idRaw ?? '').trim();
         if (!id) return null;
-        if (id === 'server-a') return { id, serverUrl: 'https://active.example.test' };
+        if (id === 'server-a' || (learnedServerIdentityId && id === learnedServerIdentityId)) {
+            return {
+                id: 'server-a',
+                serverUrl: 'https://active.example.test',
+                ...(learnedServerIdentityId ? { serverIdentityId: learnedServerIdentityId } : {}),
+            };
+        }
         if (id === 'server-b') return { id, serverUrl: 'https://other.example.test' };
         return null;
     },
-    resolveServerProfileScopeIdForIdentifier: (idRaw: unknown) => String(idRaw ?? '').trim(),
+    resolveServerProfileScopeIdForIdentifier: (idRaw: unknown) => {
+        const id = String(idRaw ?? '').trim();
+        return learnedServerIdentityId && (id === 'server-a' || id === learnedServerIdentityId)
+            ? learnedServerIdentityId
+            : id;
+    },
     setServerProfileIdentityForUrl: (...args: unknown[]) => setServerProfileIdentityForUrlMock(...args),
 }));
 
@@ -57,7 +76,15 @@ describe('serverFeaturesClient', () => {
             generation: 1,
         };
         featuresFetchMock = vi.fn();
-        setServerProfileIdentityForUrlMock = vi.fn();
+        learnedServerIdentityId = null;
+        setServerProfileIdentityForUrlMock = vi.fn((_url: string, identity: string) => {
+            learnedServerIdentityId = identity;
+            activeServerSnapshot = {
+                ...activeServerSnapshot,
+                serverId: identity,
+                generation: activeServerSnapshot.generation + 1,
+            };
+        });
         globalThis.fetch = vi.fn(async (...args: any[]) => {
             const url = String(args[0] ?? '');
             if (url.endsWith('/health')) {
@@ -106,7 +133,10 @@ describe('serverFeaturesClient', () => {
                 }),
         );
 
-        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        const {
+            getServerFeaturesSnapshot,
+            resetServerFeaturesClientForTests,
+        } = await import('./serverFeaturesClient');
         resetServerFeaturesClientForTests();
 
         const first = getServerFeaturesSnapshot({ force: true, timeoutMs: 2000 });
@@ -123,6 +153,65 @@ describe('serverFeaturesClient', () => {
 
         expect(a.status).toBe('ready');
         expect(b.status).toBe('ready');
+    });
+
+    it('uses a primed feature snapshot without issuing a feature request', async () => {
+        const primed = {
+            status: 'ready' as const,
+            features: FeaturesResponseSchema.parse({
+                features: {
+                    sessions: {
+                        enabled: true,
+                        folders: { enabled: false },
+                    },
+                },
+                capabilities: {},
+            }),
+        };
+
+        const {
+            getServerFeaturesSnapshot,
+            primeServerFeaturesSnapshot,
+            resetServerFeaturesClientForTests,
+        } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+
+        primeServerFeaturesSnapshot({ serverId: 'server-a', snapshot: primed });
+
+        const result = await getServerFeaturesSnapshot({ serverId: 'server-a' });
+
+        expect(result).toBe(primed);
+        expect(featuresFetchMock).not.toHaveBeenCalled();
+    });
+
+    it('deletes a primed feature snapshot for a server', async () => {
+        const primed = {
+            status: 'ready' as const,
+            features: FeaturesResponseSchema.parse({
+                features: {
+                    sessions: {
+                        enabled: true,
+                        folders: { enabled: false },
+                    },
+                },
+                capabilities: {},
+            }),
+        };
+
+        const {
+            deleteServerFeaturesSnapshot,
+            getCachedServerFeaturesSnapshot,
+            primeServerFeaturesSnapshot,
+            resetServerFeaturesClientForTests,
+        } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+
+        primeServerFeaturesSnapshot({ serverId: 'server-a', snapshot: primed });
+        expect(getCachedServerFeaturesSnapshot({ serverId: 'server-a' })).toBe(primed);
+
+        deleteServerFeaturesSnapshot({ serverId: 'server-a' });
+
+        expect(getCachedServerFeaturesSnapshot({ serverId: 'server-a' })).toBeNull();
     });
 
     it('stores the server identity advertised by the active server features payload', async () => {
@@ -148,7 +237,10 @@ describe('serverFeaturesClient', () => {
             },
         }));
 
-        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        const {
+            getServerFeaturesSnapshot,
+            resetServerFeaturesClientForTests,
+        } = await import('./serverFeaturesClient');
         resetServerFeaturesClientForTests();
 
         const result = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
@@ -158,6 +250,39 @@ describe('serverFeaturesClient', () => {
             'https://active.example.test',
             'srv_active_identity',
         );
+    });
+
+    it('rekeys a ready feature snapshot when learning the active server identity', async () => {
+        const payload = FeaturesResponseSchema.parse({
+            features: {
+                machines: {
+                    enabled: true,
+                    rpc: {
+                        enabled: true,
+                        directPeer: { enabled: true },
+                    },
+                },
+            },
+            capabilities: {
+                serverIdentity: {
+                    serverIdentityId: 'srv_active_identity',
+                },
+            },
+        });
+        featuresFetchMock.mockResolvedValueOnce(createResponse(200, payload));
+
+        const {
+            getCachedServerFeaturesSnapshot,
+            getServerFeaturesSnapshot,
+            resetServerFeaturesClientForTests,
+        } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+
+        const fetched = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
+
+        expect(fetched).toMatchObject({ status: 'ready' });
+        expect(activeServerSnapshot.serverId).toBe('srv_active_identity');
+        expect(getCachedServerFeaturesSnapshot({ serverId: 'srv_active_identity' })).toBe(fetched);
     });
 
     it('classifies 404 features endpoint as unsupported', async () => {
@@ -294,7 +419,11 @@ describe('serverFeaturesClient', () => {
             .mockRejectedValueOnce(new Error('network down'))
             .mockResolvedValueOnce(createResponse(200, payload));
 
-        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        const {
+            getServerFeaturesSnapshot,
+            getServerFeaturesSnapshotRetryDelayMs,
+            resetServerFeaturesClientForTests,
+        } = await import('./serverFeaturesClient');
         resetServerFeaturesClientForTests();
 
         useFrozenServerFeaturesClock();
@@ -304,6 +433,9 @@ describe('serverFeaturesClient', () => {
         const first = await firstPromise;
         expect(first.status).toBe('error');
         expect(featuresFetchMock.mock.calls.length).toBe(1);
+
+        setFrozenServerFeaturesClock(new Date(frozenServerFeaturesTime.getTime() + 4_000));
+        expect(getServerFeaturesSnapshotRetryDelayMs({ snapshot: first })).toBe(1_000);
 
         // Within the short error TTL, we should not refetch.
         const secondPromise = getServerFeaturesSnapshot({ timeoutMs: 50 });

@@ -48,7 +48,6 @@ export function transitionVoiceRuntimeToIdle(params: Readonly<{
         error: createVoiceMachineError({
             kind: resolveVoiceMachineErrorKind(reason, params.kind),
             reason,
-            recoverable: true,
         }),
     });
 }

@@ -1,7 +1,16 @@
 export type SessionWorkStateStatus = 'pending' | 'active' | 'paused' | 'blocked' | 'complete' | 'cancelled' | 'unknown';
-export type SessionWorkStateStatusReason = 'budgetLimited';
+export type SessionWorkStateStatusReason = 'blocked' | 'usageLimited' | 'budgetLimited' | 'interrupted';
 export type SessionWorkStateKind = 'goal' | 'task' | 'todo';
 export type SessionWorkStateOrigin = 'vendor' | 'happier' | 'derived';
+
+// Provider-derived goal capabilities (mirrors protocol `SessionWorkStateGoalCapabilitiesV1`). The
+// owning provider publishes these; the UI gates goal actions on them instead of branching on
+// provider id (Claude exposes edit/clear only; absent capabilities = legacy full control).
+export type SessionWorkStateGoalCapabilities = Readonly<{
+    canEdit?: boolean;
+    canStop?: boolean;
+    canClear?: boolean;
+}>;
 
 export type SessionWorkStateItem = Readonly<{
     id: string;
@@ -16,6 +25,7 @@ export type SessionWorkStateItem = Readonly<{
     vendorRef?: string;
     order?: number;
     priority?: string;
+    goalCapabilities?: SessionWorkStateGoalCapabilities;
     tokenBudget?: number | null;
     tokensUsed?: number;
     timeUsedSeconds?: number;

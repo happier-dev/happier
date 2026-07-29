@@ -1,9 +1,50 @@
 import { describe, expect, test } from 'vitest';
 
-import { canAgentResume, canContinueSessionWithFreshSpawn, canResumeSession, canResumeSessionWithOptions, getAgentVendorResumeId } from './resumeCapabilities';
+import {
+    canAgentResume,
+    canContinueSessionWithFreshSpawn,
+    canResumeOrContinueSessionWithOptions,
+    canResumeSession,
+    canResumeSessionWithOptions,
+    getAgentSessionId,
+    getAgentVendorResumeId,
+} from './resumeCapabilities';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 describe('getAgentVendorResumeId', () => {
+    const currentAntigravityAgent = {
+        identity: {
+            pluginId: 'happier.agent.antigravity',
+            localId: 'antigravity',
+        },
+        sourceKinds: ['antigravityCliPrint'],
+    };
+    const linkedAntigravityMetadata = {
+        flavor: 'antigravity',
+        antigravitySessionId: 'conversation-1',
+        externalSessionV1: {
+            v: 1,
+            agentId: 'antigravity',
+            machineId: 'machine-1',
+            remoteSessionId: 'conversation-1',
+            source: {
+                kind: 'antigravityCliPrint',
+                brainDir: '/tmp/antigravity-brain',
+            },
+            qualifiedIdentity: {
+                v: 1,
+                agent: {
+                    pluginId: 'happier.agent.antigravity',
+                    localId: 'antigravity',
+                },
+                source: {
+                    kind: 'antigravityCliPrint',
+                    contractVersion: 1,
+                },
+            },
+        },
+    };
+
     test('returns null when metadata missing', () => {
         expect(getAgentVendorResumeId(null, 'claude')).toBeNull();
     });
@@ -12,8 +53,12 @@ describe('getAgentVendorResumeId', () => {
         expect(getAgentVendorResumeId({ claudeSessionId: 'c1' }, 'gemini')).toBeNull();
     });
 
-    test('returns Claude session id when agent is claude', () => {
-        expect(getAgentVendorResumeId({ claudeSessionId: 'c1' }, 'claude')).toBe('c1');
+    test('returns Claude session id only with transcript-backed metadata', () => {
+        expect(getAgentVendorResumeId({ claudeSessionId: 'c1' }, 'claude')).toBeNull();
+        expect(getAgentVendorResumeId({
+            claudeSessionId: 'c1',
+            claudeTranscriptPath: '/tmp/c1.jsonl',
+        }, 'claude')).toBe('c1');
     });
 
     test('returns null for Codex vendor resume when disabled by settings', () => {
@@ -68,7 +113,10 @@ describe('getAgentVendorResumeId', () => {
 
     test('treats empty ids as missing and trims non-empty strings', () => {
         expect(getAgentVendorResumeId({ claudeSessionId: '' }, 'claude')).toBeNull();
-        expect(getAgentVendorResumeId({ claudeSessionId: ' c1 ' }, 'claude')).toBe('c1');
+        expect(getAgentVendorResumeId({
+            claudeSessionId: ' c1 ',
+            claudeTranscriptPath: ' /tmp/c1.jsonl ',
+        }, 'claude')).toBe('c1');
         expect(getAgentVendorResumeId(
             { codexSessionId: '   ' },
             'codex',
@@ -98,9 +146,127 @@ describe('getAgentVendorResumeId', () => {
             ).toBe('x1');
         }
     });
+
+    test('uses canonical runtime metadata before stale flavor when reading session id', () => {
+        expect(getAgentSessionId({
+            flavor: 'claude',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'opencode',
+                provider: {
+                    providerSessionId: 'opencode-1',
+                },
+            },
+            claudeSessionId: 'claude-1',
+            opencodeSessionId: 'opencode-1',
+        })).toBe('opencode-1');
+    });
+
+    test('does not return a vendor resume id when explicit agent conflicts with declared runtime owner', () => {
+        expect(getAgentVendorResumeId({
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'opencode',
+                provider: {
+                    providerSessionId: 'opencode-1',
+                },
+            },
+            claudeSessionId: 'claude-1',
+            opencodeSessionId: 'opencode-1',
+        }, 'claude')).toBeNull();
+    });
+
+    test('does not return a vendor resume id when explicit agent conflicts with direct session owner', () => {
+        expect(getAgentVendorResumeId({
+            directSessionV1: {
+                v: 1,
+                providerId: 'opencode',
+                machineId: 'machine-1',
+                remoteSessionId: 'opencode-1',
+                source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096' },
+            },
+            claudeSessionId: 'claude-1',
+            opencodeSessionId: 'opencode-1',
+        }, 'claude')).toBeNull();
+    });
+
+    test('does not return a vendor resume id when explicit agent conflicts with canonical external-session owner', () => {
+        expect(getAgentVendorResumeId({
+            externalSessionV1: {
+                v: 1,
+                agentId: 'opencode',
+                machineId: 'machine-1',
+                remoteSessionId: 'opencode-1',
+                source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096' },
+            },
+            claudeSessionId: 'claude-1',
+            opencodeSessionId: 'opencode-1',
+        }, 'claude')).toBeNull();
+    });
+
+    test('fails linked vendor resume closed without the current daemon Agent identity', () => {
+        expect(getAgentVendorResumeId(
+            linkedAntigravityMetadata,
+            'antigravity',
+        )).toBeNull();
+        expect(canResumeSessionWithOptions(linkedAntigravityMetadata)).toBe(false);
+    });
+
+    test('rejects stale linked ids and allows a fully current linked resume identity', () => {
+        expect(getAgentVendorResumeId(
+            {
+                ...linkedAntigravityMetadata,
+                antigravitySessionId: 'stale-conversation',
+            },
+            'antigravity',
+            { linkedSessionCurrentAgent: currentAntigravityAgent },
+        )).toBeNull();
+        expect(getAgentVendorResumeId(
+            linkedAntigravityMetadata,
+            'antigravity',
+            { linkedSessionCurrentAgent: currentAntigravityAgent },
+        )).toBe('conversation-1');
+        expect(canResumeSessionWithOptions(
+            linkedAntigravityMetadata,
+            { linkedSessionCurrentAgent: currentAntigravityAgent },
+        )).toBe(true);
+    });
 });
 
 describe('configured ACP resume capability', () => {
+    test('does not let configured ACP attach bypass canonical linked-session identity', () => {
+        expect(canResumeSessionWithOptions({
+            flavor: 'acp:custom-backend',
+            acpConfiguredBackendV1: {
+                v: 1,
+                updatedAt: 123,
+                backendId: 'custom-backend',
+                title: 'Custom Backend',
+            },
+            pluginSessionId: 'plugin-session-1',
+            externalSessionV1: {
+                v: 1,
+                agentId: 'plugin-provider',
+                machineId: 'machine-1',
+                remoteSessionId: 'plugin-session-1',
+                source: {
+                    kind: 'pluginTranscript',
+                },
+                qualifiedIdentity: {
+                    v: 1,
+                    agent: {
+                        pluginId: 'acme.plugin-provider',
+                        localId: 'plugin-provider',
+                    },
+                    source: {
+                        kind: 'pluginTranscript',
+                        contractVersion: 1,
+                    },
+                },
+            },
+        })).toBe(false);
+    });
+
     test('treats configured ACP flavors as resumable attach targets without vendor resume ids', () => {
         expect(canAgentResume('acp:custom-backend')).toBe(true);
         expect(canAgentResume('acp:')).toBe(false);
@@ -136,7 +302,7 @@ describe('configured ACP resume capability', () => {
             },
             agentRuntimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
+                agentId: 'codex',
                 provider: {
                     providerSessionId: 'x1',
                 },
@@ -159,7 +325,7 @@ describe('configured ACP resume capability', () => {
             },
             agentRuntimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
+                agentId: 'codex',
                 provider: {
                     providerSessionId: 'x1',
                 },
@@ -215,8 +381,90 @@ describe('configured ACP resume capability', () => {
 });
 
 describe('canContinueSessionWithFreshSpawn', () => {
+    test('does not bypass linked-session resume identity by treating a missing top-level id as pre-start', () => {
+        const metadata = {
+            flavor: 'antigravity',
+            externalSessionV1: {
+                v: 1,
+                agentId: 'antigravity',
+                machineId: 'machine-1',
+                remoteSessionId: 'conversation-1',
+                source: {
+                    kind: 'antigravityCliPrint',
+                    brainDir: '/tmp/antigravity-brain',
+                },
+                qualifiedIdentity: {
+                    v: 1,
+                    agent: {
+                        pluginId: 'happier.agent.antigravity',
+                        localId: 'antigravity',
+                    },
+                    source: {
+                        kind: 'antigravityCliPrint',
+                        contractVersion: 1,
+                    },
+                },
+            },
+        };
+
+        expect(canContinueSessionWithFreshSpawn(metadata)).toBe(false);
+        expect(canResumeOrContinueSessionWithOptions(metadata, {
+            linkedSessionCurrentAgent: {
+                identity: {
+                    pluginId: 'happier.agent.antigravity',
+                    localId: 'antigravity',
+                },
+                sourceKinds: ['antigravityCliPrint'],
+            },
+        })).toBe(false);
+    });
+
     test('continuable when the agent supports vendor resume but no vendor id was ever persisted (pre-SessionStart death, QA A-F5)', () => {
         expect(canContinueSessionWithFreshSpawn({ flavor: 'claude' })).toBe(true);
+    });
+
+    test('not continuable for a replay fork after the replay seed was consumed without a vendor resume id', () => {
+        expect(canContinueSessionWithFreshSpawn({
+            flavor: 'claude',
+            forkV1: {
+                v: 1,
+                parentSessionId: 'parent-session',
+                parentCutoffSeqInclusive: 7,
+                createdAtMs: 1000,
+                strategy: 'replay',
+                providerHint: { providerId: 'claude' },
+            },
+            replaySeedV1: {
+                v: 1,
+                seedText: '',
+                sourceSessionId: 'parent-session',
+                sourceCutoffSeqInclusive: 7,
+                createdAtMs: 1000,
+                appliedToLocalId: 'local-1',
+                appliedAtMs: 2000,
+            },
+        })).toBe(false);
+    });
+
+    test('continuable for a replay fork while the replay seed is still unconsumed', () => {
+        expect(canContinueSessionWithFreshSpawn({
+            flavor: 'claude',
+            forkV1: {
+                v: 1,
+                parentSessionId: 'parent-session',
+                parentCutoffSeqInclusive: 7,
+                createdAtMs: 1000,
+                strategy: 'replay',
+                providerHint: { providerId: 'claude' },
+            },
+            replaySeedV1: {
+                v: 1,
+                seedText: 'Replay context',
+                sourceSessionId: 'parent-session',
+                sourceCutoffSeqInclusive: 7,
+                createdAtMs: 1000,
+            },
+        })).toBe(true);
     });
 
     test('not the fresh-spawn case once a vendor resume id exists', () => {

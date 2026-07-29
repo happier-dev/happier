@@ -28,7 +28,10 @@ export async function decryptBase64Payloads(
     values: readonly string[],
     telemetry: Base64PayloadDecryptTelemetry,
 ): Promise<(any | null)[]> {
-    if (hasBase64Decryptor(decryptor)) {
+    if (
+        hasBase64Decryptor(decryptor)
+        && (decryptor.decryptBase64.shouldDecryptBase64?.(values) ?? true)
+    ) {
         return await syncPerformanceTelemetry.measureAsync(
             telemetry.decryptName,
             telemetry.decryptFields,

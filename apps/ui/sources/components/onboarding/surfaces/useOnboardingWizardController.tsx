@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Platform, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
@@ -36,7 +37,6 @@ import type { RelayHostLocalChecklistRuntimeStatus } from '../checklists/relayHo
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 
-import { WizardChoiceRow } from '../ui/WizardChoiceRow';
 import { WebDesktopRelayHostHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopRelayHostHandoffContent';
 import { WebDesktopBackgroundServiceHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopBackgroundServiceHandoffContent';
 import { resolveWizardCapabilities } from '../capabilities/resolveWizardCapabilities';
@@ -49,11 +49,17 @@ import { useEndpointReadinessMap } from '../hooks/useEndpointReadinessMap';
 import {
     setOnboardingWizardAwaitingAuthResumeIntent,
 } from '../state/wizardResume';
-import { getWizardStepDefinition } from '../state/wizardStepRegistry';
+import { getWizardStepDefinition, wizardStepRegistry } from '../state/wizardStepRegistry';
+import {
+    resolveWizardAdvance,
+    type WizardAdvanceResolution,
+} from '../state/wizardAdvance';
 import { renderOnboardingWizardStepBody } from './OnboardingWizardSurface.renderWizardStepBody';
 import { onboardingWizardSurfaceStylesheet } from './OnboardingWizardSurface.styles';
+import { renderWizardChoiceList, type WizardChoiceListItem } from './WizardChoiceList';
 import {
     buildDefaultRelaySelection,
+    ensureCanonicalCloudRelayProfile,
     isWebMixedContentBlockedEndpoint,
     resolveCanonicalCloudRelayProfile,
     resolveRelayProfileIdForServerUrl,
@@ -79,7 +85,6 @@ export type OnboardingWizardSurfaceProps = Readonly<{
     onCreateAccountViaProvider: (providerId: string) => Promise<void> | void;
     onLoginWithKeylessProvider: (providerId: string) => Promise<void> | void;
     onLoginWithMtls: () => Promise<void> | void;
-    onChangeRelayViaServerConfig: () => void;
 }>;
 
 export type OnboardingWizardController = Readonly<{
@@ -226,6 +231,45 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 locked: false,
             },
         });
+    }, [dispatch]);
+
+    const applyWizardAdvanceResolution = React.useCallback(async (resolution: WizardAdvanceResolution) => {
+        for (const effect of resolution.effects) {
+            switch (effect.type) {
+                case 'activateServerUrl':
+                    await upsertActivateAndSwitchServer({
+                        serverUrl: effect.serverUrl,
+                        source: effect.source,
+                        scope: effect.scope,
+                    });
+                    break;
+                case 'activateServerProfile':
+                    await setActiveServerAndSwitch({
+                        serverId: effect.serverId,
+                        scope: effect.scope,
+                    });
+                    break;
+                case 'setRelaySelection':
+                    dispatch({ type: 'wizard/setRelaySelection', relaySelection: effect.relaySelection });
+                    break;
+                case 'persistOnboardingIntent':
+                    setOnboardingWizardAwaitingAuthResumeIntent(effect.relayUrl);
+                    break;
+                case 'clearRelayAccessDraft':
+                    setRelayAccessTarget(null);
+                    setRelayAccessShareUrl(null);
+                    break;
+                case 'setRelayRuntimeCandidate':
+                case 'setPendingSetupIntent':
+                case 'exitSetup':
+                case 'navigate':
+                    break;
+            }
+        }
+
+        if (resolution.nextStepId) {
+            dispatch({ type: 'wizard/goToStep', stepId: resolution.nextStepId });
+        }
     }, [dispatch]);
 
     const stepId = state.currentStepId;
@@ -451,34 +495,12 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     }, [profileChoices, state.context.relaySelection.locked, state.context.relaySelection.relayProfileId]);
 
     const selectRelayChoice = React.useCallback((choiceId: WizardChoice['id']) => {
-        const next: WizardRelaySelection =
-            choiceId === 'cloud'
-                ? {
-                    choiceId,
-                    serverUrl: canonicalCloudUrl || null,
-                    relayProfileId: null,
-                    locked: false,
-                }
-                : choiceId === 'thisComputer'
-                    ? {
-                        choiceId,
-                        serverUrl: null,
-                        relayProfileId: null,
-                        locked: false,
-                    }
-                    : choiceId === 'remoteComputer'
-                        ? {
-                            choiceId,
-                            serverUrl: null,
-                            relayProfileId: null,
-                            locked: false,
-                        }
-                    : {
-                        choiceId,
-                        serverUrl: null,
-                        relayProfileId: null,
-                        locked: state.context.relaySelection.locked,
-                    };
+        const next: WizardRelaySelection = {
+            choiceId,
+            serverUrl: choiceId === 'cloud' ? (canonicalCloudUrl || null) : null,
+            relayProfileId: null,
+            locked: choiceId === 'customUrl' ? state.context.relaySelection.locked : false,
+        };
         setRelayAccessTarget(null);
         setRelayAccessShareUrl(null);
         dispatch({ type: 'wizard/setRelaySelection', relaySelection: next });
@@ -498,7 +520,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         });
     }, [state.context.relaySelection.locked]);
 
-    const renderRelayChoiceRow = (choice: WizardChoice | WizardProfileChoice) => {
+    const buildRelayChoiceItem = (choice: WizardChoice | WizardProfileChoice): WizardChoiceListItem => {
         if ((choice as WizardProfileChoice).kind === 'profile') {
             const profile = choice as WizardProfileChoice;
             const selected = state.context.relaySelection.choiceId === 'customUrl'
@@ -509,33 +531,31 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             const disabled = Boolean(profile.disabled)
                 || state.context.relaySelection.locked
                 ;
-            return (
-                <WizardChoiceRow
-                    key={`profile:${profile.id}`}
-                    testID={`${props.testID ?? 'onboarding-wizard'}-relay:profile:${profile.id}`}
-                    selected={selected}
-                    disabled={disabled}
-                    dimmed={unavailable || blocked}
-                    onPress={() => selectProfileRelay(profile)}
-                    icon="link-outline"
-                    title={profile.name}
-                    subtitle={toServerUrlDisplay(profile.serverUrl)}
-                    badge={blocked ? t('common.blocked') : unavailable ? t('common.unreachable') : undefined}
-                    menuActions={[
-                        ...((unavailable || blocked) ? [{
-                            id: 'retry',
-                            title: t('common.retry'),
-                            onPress: () => retryEndpoint(profile.serverUrl),
-                        }] : []),
-                        ...(profile.id !== 'active' ? [{
-                            id: 'remove',
-                            title: t('common.remove'),
-                            destructive: true,
-                            onPress: () => { void handleRemoveRelayProfile(profile.id); },
-                        }] : []),
-                    ]}
-                />
-            );
+            return {
+                itemKey: `profile:${profile.id}`,
+                testID: `${props.testID ?? 'onboarding-wizard'}-relay:profile:${profile.id}`,
+                selected,
+                disabled,
+                dimmed: unavailable || blocked,
+                onPress: () => selectProfileRelay(profile),
+                icon: 'link-outline',
+                title: profile.name,
+                subtitle: toServerUrlDisplay(profile.serverUrl),
+                badge: blocked ? t('common.blocked') : unavailable ? t('common.unreachable') : undefined,
+                menuActions: [
+                    ...((unavailable || blocked) ? [{
+                        id: 'retry',
+                        title: t('common.retry'),
+                        onPress: () => retryEndpoint(profile.serverUrl),
+                    }] : []),
+                    ...(profile.id !== 'active' ? [{
+                        id: 'remove',
+                        title: t('common.remove'),
+                        destructive: true,
+                        onPress: () => { void handleRemoveRelayProfile(profile.id); },
+                    }] : []),
+                ],
+            };
         }
 
         const fixed = choice as WizardChoice;
@@ -552,30 +572,28 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         const disabled = Boolean(fixed.disabled)
             || state.context.relaySelection.locked
             || (fixed.id === 'cloud' && (cloudUnavailable || cloudBlocked) && !selected);
-        return (
-            <WizardChoiceRow
-                key={fixed.id}
-                testID={`${props.testID ?? 'onboarding-wizard'}-relay:${fixed.id}`}
-                selected={selected}
-                disabled={disabled}
-                dimmed={cloudUnavailable || cloudBlocked}
-                onPress={() => {
-                    selectRelayChoice(fixed.id);
-                }}
-                icon={fixed.icon}
-                title={fixed.title}
-                subtitle={fixed.subtitle}
-                badge={cloudBlocked ? t('common.blocked') : cloudUnavailable ? t('common.unreachable') : fixed.badge}
-                secondaryAction={(cloudUnavailable || cloudBlocked) ? {
-                    testID: `${props.testID ?? 'onboarding-wizard'}-relay:${fixed.id}-retry`,
-                    title: t('common.retry'),
-                    onPress: () => retryEndpoint(cloudReadinessEndpoint!),
-                } : undefined}
-            />
-        );
+        return {
+            itemKey: fixed.id,
+            testID: `${props.testID ?? 'onboarding-wizard'}-relay:${fixed.id}`,
+            selected,
+            disabled,
+            dimmed: cloudUnavailable || cloudBlocked,
+            onPress: () => {
+                selectRelayChoice(fixed.id);
+            },
+            icon: fixed.icon,
+            title: fixed.title,
+            subtitle: fixed.subtitle,
+            badge: cloudBlocked ? t('common.blocked') : cloudUnavailable ? t('common.unreachable') : fixed.badge,
+            secondaryAction: (cloudUnavailable || cloudBlocked) ? {
+                testID: `${props.testID ?? 'onboarding-wizard'}-relay:${fixed.id}-retry`,
+                title: t('common.retry'),
+                onPress: () => retryEndpoint(cloudReadinessEndpoint!),
+            } : undefined,
+        };
     };
 
-    const renderManualRelayChoiceRow = () => {
+    const buildManualRelayChoiceItem = (): WizardChoiceListItem | null => {
         if (!setupPolicy.relay.allowRelaySelection || !setupPolicy.relay.allowCustomRelayUrl) {
             return null;
         }
@@ -586,105 +604,93 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             && !state.context.relaySelection.relayProfileId
             && !selectedSavedRelayProfile;
 
-        return (
-            <WizardChoiceRow
-                testID={`${props.testID ?? 'onboarding-wizard'}-relay:customUrl`}
-                selected={selected}
-                disabled={state.context.relaySelection.locked && !selected}
-                onPress={() => {
-                    setRelayAccessTarget(null);
-                    setRelayAccessShareUrl(null);
-                    dispatch({
-                        type: 'wizard/setRelaySelection',
-                        relaySelection: {
-                            choiceId: 'customUrl',
-                            serverUrl: rawServerUrl || null,
-                            relayProfileId: null,
-                            locked: state.context.relaySelection.locked,
-                        },
-                    });
-                }}
-                icon="link-outline"
-                title={t('setupOnboarding.relayCustomUrlTitle')}
-                subtitle={t('setupOnboarding.relayCustomUrlSubtitle')}
-            />
-        );
+        return {
+            itemKey: 'customUrl',
+            testID: `${props.testID ?? 'onboarding-wizard'}-relay:customUrl`,
+            selected,
+            disabled: state.context.relaySelection.locked && !selected,
+            onPress: () => {
+                setRelayAccessTarget(null);
+                setRelayAccessShareUrl(null);
+                dispatch({
+                    type: 'wizard/setRelaySelection',
+                    relaySelection: {
+                        choiceId: 'customUrl',
+                        serverUrl: rawServerUrl || null,
+                        relayProfileId: null,
+                        locked: state.context.relaySelection.locked,
+                    },
+                });
+            },
+            icon: 'link-outline',
+            title: t('setupOnboarding.relayCustomUrlTitle'),
+            subtitle: t('setupOnboarding.relayCustomUrlSubtitle'),
+        };
     };
 
-    const handleAdvance = React.useCallback(async () => {
-        if (stepId !== 'relay_select') {
-            dispatch({ type: 'wizard/advance' });
-            return;
-        }
-
+    const resolveStateForAdvance = React.useCallback(() => {
         const selection = state.context.relaySelection;
-        if (selection.choiceId === 'customUrl') {
-            if (!selection.relayProfileId) {
-                dispatch({ type: 'wizard/goToStep', stepId: 'relay_enter_url' });
-                return;
-            }
-            const selectedServerUrlRaw = selection.serverUrl ? String(selection.serverUrl).trim() : '';
-            const resolved = selectedServerUrlRaw ? normalizeServerUrl(selectedServerUrlRaw) : null;
+        if (stepId !== 'relay_select' || selection.choiceId !== 'customUrl' || !selection.relayProfileId) {
+            return state;
+        }
 
-            if (!resolved) {
-                dispatch({ type: 'wizard/goToStep', stepId: 'relay_enter_url' });
-                return;
-            }
-
-            const snapshot = getActiveServerSnapshot();
-            if (!isSameServerUrl(snapshot.serverUrl, resolved)) {
-                await upsertActivateAndSwitchServer({ serverUrl: resolved, source: 'url', scope: 'device' });
-            }
-            const relayProfileId = selection.relayProfileId ?? resolveRelayProfileIdForServerUrl({ serverUrl: resolved, canonicalCloudUrl });
-            dispatch({
-                type: 'wizard/setRelaySelection',
+        // The default active selection deliberately keeps `serverUrl` dynamic so an
+        // external relay change is reflected until the user commits. Materialize the
+        // currently selected profile URL at that commit boundary; otherwise a valid
+        // preselected profile is mistaken for manual URL entry and S1 immediately
+        // synchronizes the resulting relay-enter step back to relay selection.
+        const selectedServerUrlRaw = selection.serverUrl
+            ? String(selection.serverUrl).trim()
+            : String(selectedSavedRelayProfile?.serverUrl ?? '').trim();
+        const resolved = selectedServerUrlRaw ? normalizeServerUrl(selectedServerUrlRaw) : null;
+        return {
+            ...state,
+            context: {
+                ...state.context,
                 relaySelection: {
-                    choiceId: 'customUrl',
+                    ...selection,
                     serverUrl: resolved,
-                    relayProfileId,
-                    locked: selection.locked,
                 },
-            });
-            setOnboardingWizardAwaitingAuthResumeIntent(resolved);
-            dispatch({ type: 'wizard/goToStep', stepId: state.context.authIntent === 'restore' ? 'auth_restore' : 'auth' });
-            return;
-        }
+            },
+        };
+    }, [selectedSavedRelayProfile?.serverUrl, state, stepId]);
 
-        const snapshot = getActiveServerSnapshot();
-        if (selection.choiceId === 'cloud') {
-            if (canonicalCloudProfile && !isSameServerUrl(snapshot.serverUrl, canonicalCloudProfile.serverUrl)) {
-                await setActiveServerAndSwitch({ serverId: canonicalCloudProfile.serverId, scope: 'device' });
-            }
-            dispatch({
-                type: 'wizard/setRelaySelection',
-                relaySelection: {
-                    choiceId: 'cloud',
-                    serverUrl: canonicalCloudProfile?.serverUrl ?? null,
-                    relayProfileId: null,
-                    locked: false,
-                },
-            });
-            dispatch({ type: 'wizard/goToStep', stepId: 'auth' });
-            return;
-        }
+    const handleAdvance = React.useCallback(async () => {
+        const stateForAdvance = resolveStateForAdvance();
+        const selection = stateForAdvance.context.relaySelection;
+        const selectedServerUrl = selection.serverUrl ? String(selection.serverUrl).trim() : '';
+        const ensuredCloudProfile = stepId === 'relay_select' && selection.choiceId === 'cloud'
+            ? ensureCanonicalCloudRelayProfile()
+            : null;
+        const cloudRelay = ensuredCloudProfile
+            ?? (canonicalCloudProfile?.serverId
+                ? { serverId: canonicalCloudProfile.serverId, serverUrl: canonicalCloudProfile.serverUrl }
+                : null);
+        const activeSnapshot = getActiveServerSnapshot();
+        const activeServerMatchesSelectedRelay = selectedServerUrl
+            ? isSameServerUrl(activeSnapshot.serverUrl, selectedServerUrl)
+            : cloudRelay
+                ? isSameServerUrl(activeSnapshot.serverUrl, cloudRelay.serverUrl)
+                : undefined;
 
-        if (selection.choiceId === 'thisComputer') {
-            if (props.isDesktopShell) {
-                dispatch({ type: 'wizard/goToStep', stepId: 'host_relay_local' });
-                return;
-            }
-
-            dispatch({ type: 'wizard/goToStep', stepId: 'desktop_handoff' });
-            return;
-        }
-
-        if (selection.choiceId === 'remoteComputer') {
-            dispatch({ type: 'wizard/goToStep', stepId: 'host_relay_remote' });
-            return;
-        }
-
-        dispatch({ type: 'wizard/goToStep', stepId: 'auth' });
-    }, [canonicalCloudProfile, props.isDesktopShell, state.context.relaySelection, stepId]);
+        await applyWizardAdvanceResolution(resolveWizardAdvance(
+            stateForAdvance,
+            wizardStepRegistry,
+            {
+                type: 'primary',
+                isDesktopShell: props.isDesktopShell,
+                activeServerMatchesSelectedRelay,
+                cloudRelay,
+            },
+        ));
+    }, [
+        applyWizardAdvanceResolution,
+        canonicalCloudProfile?.serverId,
+        canonicalCloudProfile?.serverUrl,
+        props.isDesktopShell,
+        resolveStateForAdvance,
+        stepId,
+    ]);
 
     const handleRemoteRelayRuntimeCompletedChange = React.useCallback((payload: Readonly<{
         machineId: string | null;
@@ -722,8 +728,11 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     }, []);
 
     const handleBack = React.useCallback(() => {
+        if (stepId === 'scan_code') {
+            dispatch({ type: 'wizard/setScanStepEnabled', enabled: false });
+        }
         dispatch({ type: 'wizard/back' });
-    }, []);
+    }, [stepId]);
 
     const handleBackToWelcome = React.useCallback(() => {
         dispatch({ type: 'wizard/goToStep', stepId: 'welcome' });
@@ -794,30 +803,25 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             await Modal.alert(t('common.error'), t('modals.invalidAuthUrl'));
             return;
         }
-        await upsertActivateAndSwitchServer({ serverUrl: normalized, source: 'url', scope: 'device' });
-        const nextChoiceId =
-            state.context.platform === 'web' && state.context.relaySelection.choiceId === 'thisComputer'
-                ? 'thisComputer'
-                : 'customUrl';
-        const relayProfileId = nextChoiceId === 'customUrl'
-            ? resolveRelayProfileIdForServerUrl({ serverUrl: normalized, canonicalCloudUrl })
-            : null;
-        setRelayAccessTarget(null);
-        setRelayAccessShareUrl(null);
-        dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: nextChoiceId, serverUrl: normalized, relayProfileId, locked: false } });
-        setOnboardingWizardAwaitingAuthResumeIntent(normalized);
-        const nextStepId =
-            state.context.platform === 'web' && nextChoiceId === 'thisComputer'
-                ? 'auth'
-                : state.context.authIntent === 'restore'
-                    ? 'auth_restore'
-                    : 'auth';
-        dispatch({ type: 'wizard/goToStep', stepId: nextStepId });
-    }, [canonicalCloudUrl, state.context.authIntent, state.context.platform, state.context.relaySelection.choiceId, urlDraft]);
+        const isThisComputerHandoff =
+            (state.context.platform === 'web' || state.context.platform === 'native')
+            && state.context.relaySelection.choiceId === 'thisComputer';
+        const relayProfileId = isThisComputerHandoff
+            ? null
+            : resolveRelayProfileIdForServerUrl({ serverUrl: normalized, canonicalCloudUrl });
+        await applyWizardAdvanceResolution(resolveWizardAdvance(
+            state,
+            wizardStepRegistry,
+            {
+                type: 'saveCustomRelayUrl',
+                relayUrl: normalized,
+                relayProfileId,
+            },
+        ));
+    }, [applyWizardAdvanceResolution, canonicalCloudUrl, state, urlDraft]);
 
     const showBack = stepId !== 'welcome';
     const showSkip = canSkipWizardStep(state.context, stepId)
-        && stepId !== 'auth'
         && !(
             stepId === 'welcome'
             && welcomeHasKnownRelay
@@ -1053,8 +1057,13 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         if (isSameServerUrl(snapshot.serverUrl, normalized)) return;
 
         if (canonicalCloudProfile && isSameServerUrl(canonicalCloudProfile.serverUrl, normalized)) {
-            await setActiveServerAndSwitch({ serverId: canonicalCloudProfile.serverId, scope: 'device' });
-            return;
+            const ensuredCloudProfile = canonicalCloudProfile.serverId
+                ? { serverId: canonicalCloudProfile.serverId, serverUrl: canonicalCloudProfile.serverUrl }
+                : ensureCanonicalCloudRelayProfile();
+            if (ensuredCloudProfile) {
+                await setActiveServerAndSwitch({ serverId: ensuredCloudProfile.serverId, scope: 'device' });
+                return;
+            }
         }
 
         await upsertActivateAndSwitchServer({ serverUrl: normalized, source: 'url', scope: 'device' });
@@ -1068,15 +1077,11 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         await ensureActiveServerForAuth();
         dispatch({ type: 'wizard/goToStep', stepId: 'auth_restore' });
     }, [ensureActiveServerForAuth, welcomeRelayUrl]);
+    const handleOpenRestore = handleWelcomeLogin;
 
-    const handleOpenRestore = React.useCallback(async () => {
-        const relayUrl = welcomeRelayUrl;
-        if (relayUrl) {
-            setOnboardingWizardAwaitingAuthResumeIntent(relayUrl);
-        }
-        await ensureActiveServerForAuth();
-        dispatch({ type: 'wizard/goToStep', stepId: 'auth_restore' });
-    }, [ensureActiveServerForAuth, welcomeRelayUrl]);
+    const handleOpenSetup = React.useCallback(() => {
+        router.push('/setup');
+    }, []);
 
     const handleOpenLostAccess = React.useCallback(async () => {
         const relayUrl = welcomeRelayUrl;
@@ -1310,19 +1315,20 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         relayAccessShareUrl,
         relayAccessTarget,
     });
-    const relaySelectBody = (
-        <View>
-            {profileChoices.map(renderRelayChoiceRow)}
-            {relayChoices.map(renderRelayChoiceRow)}
-            {renderManualRelayChoiceRow()}
-        </View>
-    );
+    const relaySelectBody = renderWizardChoiceList({
+        items: [
+            ...profileChoices.map(buildRelayChoiceItem),
+            ...relayChoices.map(buildRelayChoiceItem),
+            buildManualRelayChoiceItem(),
+        ],
+    });
     body = renderOnboardingWizardStepBody({
         stepId,
         testIDPrefix: props.testID ?? 'onboarding-wizard',
         styles,
         theme,
         layout: props.layout,
+        isDesktopShell: props.isDesktopShell,
         authEntryOptions: props.authEntryOptions,
         canScanQr,
         welcomeHasKnownRelay,
@@ -1377,7 +1383,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         onScan: handleScan,
         onOpenRelaySelectionFromWelcome: handleOpenRelaySelectionFromWelcome,
         onOpenRelaySelectionFromAuth: handleOpenRelaySelectionPreservingSelection,
-        onChangeRelayViaServerConfig: props.onChangeRelayViaServerConfig,
+        onOpenSetup: handleOpenSetup,
         onOpenRestore: handleOpenRestore,
         onOpenLostAccess: handleOpenLostAccess,
         onOpenSecretKeyLogin: handleOpenSecretKeyLogin,

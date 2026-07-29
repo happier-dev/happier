@@ -20,6 +20,7 @@ import {
     buildActionSettingsEntries,
     type ActionSettingsEntry,
 } from './buildActionSettingsEntries';
+import { groupActionSettingsEntriesByFamily } from './groupActionSettingsEntriesByFamily';
 import {
     setActionEnabled,
 } from './actionSettingsTargets';
@@ -89,6 +90,7 @@ function ActionSettingsRowAccessory(props: Readonly<{
             ) : null}
             <Switch
                 testID={`${props.testIDPrefix}:enabled`}
+                accessibilityLabel={props.entry.title}
                 value={props.entry.enabled}
                 onValueChange={props.onEnabledChange}
             />
@@ -151,6 +153,11 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
         translate: t,
     }), [availability, searchQuery, settings]);
 
+    // Group actions into runtime FAMILY sections (FINALIZATION-PLAN §3.3) so the user can scan and
+    // configure each family (browser, simulator, plugins, local services, …) together. The per-row
+    // enable toggle + per-action approval controls (detail view) are unchanged.
+    const familySections = React.useMemo(() => groupActionSettingsEntriesByFamily(entries), [entries]);
+
     const commitSettings = React.useCallback((next: unknown) => {
         setRawSettings(normalizeActionsSettings(next));
     }, [setRawSettings]);
@@ -163,6 +170,49 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
         router.push(`/settings/actions/${encodeURIComponent(actionId)}`);
     }, [router]);
 
+    const renderEntryRow = React.useCallback((entry: ActionSettingsEntry) => {
+        const actionEnabled = entry.enabled;
+        const actionTestIdPrefix = `settings-actions:action:${entry.actionId}`;
+        const statusText = getActionSettingsEntryStatusText(entry, settings);
+
+        return (
+            <Item
+                key={entry.actionId}
+                testID={actionTestIdPrefix}
+                title={entry.title}
+                subtitle={entry.description ?? t('settingsActions.noDescription')}
+                subtitleAccessory={compactLayout && statusText ? (
+                    <Text
+                        testID={`${actionTestIdPrefix}:status`}
+                        style={styles.actionStatusSubtitle}
+                        numberOfLines={1}
+                    >
+                        {statusText}
+                    </Text>
+                ) : null}
+                icon={(
+                    <Ionicons
+                        name={actionEnabled ? 'flash-outline' : 'flash-off-outline'}
+                        size={29}
+                        color={actionEnabled ? theme.colors.state.success.foreground : theme.colors.state.danger.foreground}
+                    />
+                )}
+                rightElement={(
+                    <ActionSettingsRowAccessory
+                        entry={entry}
+                        compactLayout={compactLayout}
+                        statusText={statusText}
+                        testIDPrefix={actionTestIdPrefix}
+                        onEnabledChange={(nextValue) => handleActionEnabledChange(entry.actionId, nextValue)}
+                    />
+                )}
+                showChevron={false}
+                rightElementOutsidePressable
+                onPress={() => openActionDetails(entry.actionId)}
+            />
+        );
+    }, [compactLayout, handleActionEnabledChange, openActionDetails, settings, styles.actionStatusSubtitle, theme.colors.state.danger.foreground, theme.colors.state.success.foreground]);
+
     return (
         <ItemList style={{ paddingTop: 0 }}>
             <SearchHeader
@@ -171,7 +221,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                 placeholder={t('settingsActions.searchPlaceholder')}
             />
 
-            {entries.length === 0 ? (
+            {familySections.length === 0 ? (
                 <ItemGroup>
                     <View style={styles.emptyState}>
                         <Text style={styles.emptyText}>{t('settingsActions.noResults')}</Text>
@@ -179,51 +229,15 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                 </ItemGroup>
             ) : null}
 
-            {entries.length > 0 ? (
-                <ItemGroup title={t('common.actions')} footer={t('settingsActions.aboutFooter')}>
-                    {entries.map((entry) => {
-                        const actionEnabled = entry.enabled;
-                        const actionTestIdPrefix = `settings-actions:action:${entry.actionId}`;
-                        const statusText = getActionSettingsEntryStatusText(entry, settings);
-
-                        return (
-                        <Item
-                            key={entry.actionId}
-                            testID={actionTestIdPrefix}
-                            title={entry.title}
-                            subtitle={entry.description ?? t('settingsActions.noDescription')}
-                            subtitleAccessory={compactLayout && statusText ? (
-                                <Text
-                                    testID={`${actionTestIdPrefix}:status`}
-                                    style={styles.actionStatusSubtitle}
-                                    numberOfLines={1}
-                                >
-                                    {statusText}
-                                </Text>
-                            ) : null}
-                            icon={(
-                                <Ionicons
-                                    name={actionEnabled ? 'flash-outline' : 'flash-off-outline'}
-                                    size={29}
-                                    color={actionEnabled ? theme.colors.state.success.foreground : theme.colors.state.danger.foreground}
-                                />
-                            )}
-                            rightElement={(
-                                <ActionSettingsRowAccessory
-                                    entry={entry}
-                                    compactLayout={compactLayout}
-                                    statusText={statusText}
-                                    testIDPrefix={actionTestIdPrefix}
-                                    onEnabledChange={(nextValue) => handleActionEnabledChange(entry.actionId, nextValue)}
-                                />
-                            )}
-                            showChevron={false}
-                            onPress={() => openActionDetails(entry.actionId)}
-                        />
-                        );
-                    })}
+            {familySections.map((section, index) => (
+                <ItemGroup
+                    key={section.family}
+                    title={t(section.titleKey)}
+                    footer={index === familySections.length - 1 ? t('settingsActions.aboutFooter') : undefined}
+                >
+                    {section.entries.map((entry) => renderEntryRow(entry))}
                 </ItemGroup>
-            ) : null}
+            ))}
         </ItemList>
     );
 });

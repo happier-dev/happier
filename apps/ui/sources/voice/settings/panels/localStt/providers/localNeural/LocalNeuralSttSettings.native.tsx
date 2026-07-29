@@ -18,9 +18,16 @@ import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
 import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 import { getSherpaStreamingSttPackOptions } from '@/voice/sherpa/stt/sherpaStreamingSttPacks';
 import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
-import { DaemonVoiceInferenceModelSection } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceModelSection';
+import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
 
 type Progress = { loaded: number; total: number; file?: string };
+
+const ACCESSORY_BUTTON_STYLE = {
+  width: 44,
+  height: 44,
+  alignItems: 'center',
+  justifyContent: 'center',
+} as const;
 
 export function LocalNeuralSttSettings(props: {
   cfg: VoiceLocalSttSettings;
@@ -294,10 +301,9 @@ export function LocalNeuralSttSettings(props: {
       />
 
       {usesDaemonExecution ? (
-        <DaemonVoiceInferenceModelSection
+        <SelectedDaemonModelPackRow
           packId={effectivePackId}
-          kind="stt"
-          daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+          kind="stt_sherpa"
         />
       ) : (
         <>
@@ -308,13 +314,22 @@ export function LocalNeuralSttSettings(props: {
             onPress={() => void prepareModel()}
             rightElement={
               modelStatus === 'downloading' ? (
-                <Pressable onPress={cancelPrepare} hitSlop={10}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t('common.cancel')}
+                  style={ACCESSORY_BUTTON_STYLE}
+                  onPress={(event) => {
+                    event.stopPropagation?.();
+                    cancelPrepare();
+                  }}
+                >
                   <Ionicons name="close" size={20} color={theme.colors.text.secondary} />
                 </Pressable>
               ) : (
                 <Ionicons name="download-outline" size={20} color={theme.colors.text.secondary} />
               )
             }
+            rightElementOutsidePressable={modelStatus === 'downloading'}
             showChevron={false}
             selected={false}
           />

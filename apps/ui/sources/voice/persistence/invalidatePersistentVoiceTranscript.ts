@@ -1,9 +1,16 @@
 import { storage } from '@/sync/domains/state/storage';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import {
+    readLocalConversationVoiceSettings,
+    voiceSettingsParse,
+    writeLocalConversationVoiceSettings,
+} from '@/sync/domains/settings/voiceSettings';
 
 export function invalidatePersistentVoiceTranscript(): number | null {
     const state: any = storage.getState();
-    const transcriptCfg = state?.settings?.voice?.adapters?.local_conversation?.agent?.transcript ?? null;
+    const voice = voiceSettingsParse(state?.settings?.voice);
+    const localConversation = readLocalConversationVoiceSettings(voice);
+    const transcriptCfg = localConversation.agent.transcript;
     if (normalizeNonEmptyString(transcriptCfg?.persistenceMode) !== 'persistent') return null;
     if (typeof state?.applySettingsLocal !== 'function') return null;
 
@@ -12,17 +19,16 @@ export function invalidatePersistentVoiceTranscript(): number | null {
     const nextEpoch = currentEpoch + 1;
 
     state.applySettingsLocal({
-        voice: {
-            adapters: {
-                local_conversation: {
-                    agent: {
-                        transcript: {
-                            epoch: nextEpoch,
-                        },
-                    },
+        voice: writeLocalConversationVoiceSettings(voice, {
+            ...localConversation,
+            agent: {
+                ...localConversation.agent,
+                transcript: {
+                    ...localConversation.agent.transcript,
+                    epoch: nextEpoch,
                 },
             },
-        },
+        }),
     });
 
     return nextEpoch;

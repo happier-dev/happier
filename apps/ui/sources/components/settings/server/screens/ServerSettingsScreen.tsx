@@ -121,10 +121,10 @@ export function ServerSettingsScreen() {
                             <LocalRelayAccessControlSection upstreamUrl={localRelayUrl ?? knownLocalRelayUrl} />
                         </>
                     ) : isWeb ? null : (
-                        <ItemGroup title={t('settingsProviders.localControlTitle')}>
+                        <ItemGroup title={t('settingsAgents.localControlTitle')}>
                             <Item
                                 testID="settings.server.localControl.desktopOnlyNotice"
-                                title={t('settingsProviders.localControlTitle')}
+                                title={t('settingsAgents.localControlTitle')}
                                 subtitle={t('settings.systemTaskBridgeUnavailable')}
                                 showChevron={false}
                                 mode="info"

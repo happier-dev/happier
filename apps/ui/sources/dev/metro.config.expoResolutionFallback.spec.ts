@@ -111,7 +111,7 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         expect(config?.resolver?.useWatchman).toBe(false);
     });
 
-    it('resolves internal workspace subpath exports through root node_modules in stack builds', () => {
+    it('resolves internal workspace subpath exports through the real workspace package in stack builds', () => {
         process.env.HAPPIER_STACK_STACK = 'qa-test';
         delete process.env.CI;
         delete process.env.EXPO_NO_METRO_WORKSPACE_ROOT;
@@ -122,7 +122,71 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         const relayAccessCatalogResult = config.resolver.resolveRequest({}, '@happier-dev/cli-common/relayAccess/catalog', 'web');
         expect(relayAccessCatalogResult).toEqual({
             type: 'sourceFile',
-            filePath: path.resolve(__dirname, '../../../../node_modules/@happier-dev/cli-common/dist/relayAccess/catalog.js'),
+            filePath: path.resolve(__dirname, '../../../../packages/cli-common/src/relayAccess/catalog.ts'),
+        });
+
+        const sessionMetadataResult = config.resolver.resolveRequest(
+            {},
+            '@happier-dev/cli-common/sessionMetadata',
+            'web',
+        );
+        expect(sessionMetadataResult).toEqual({
+            type: 'sourceFile',
+            filePath: path.resolve(
+                __dirname,
+                '../../../../packages/cli-common/src/sessionMetadata/index.ts',
+            ),
+        });
+
+        const opencodePluginResult = config.resolver.resolveRequest({}, '@happier-dev/plugins-opencode', 'web');
+        expect(opencodePluginResult).toEqual({
+            type: 'sourceFile',
+            filePath: path.resolve(__dirname, '../../../../packages/plugins/opencode/src/index.ts'),
+        });
+    });
+
+    it('resolves browser-safe plugin leaf exports without pulling broad agent barrels', () => {
+        process.env.HAPPIER_STACK_STACK = 'qa-test';
+        delete process.env.CI;
+        delete process.env.EXPO_NO_METRO_WORKSPACE_ROOT;
+        delete process.env.HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS;
+
+        const config = requireFreshMetroConfig();
+
+        const permissionSourceResult = config.resolver.resolveRequest(
+            {},
+            '@happier-dev/plugins-claude/agent/permissions/requestSource',
+            'web',
+        );
+
+        expect(permissionSourceResult).toEqual({
+            type: 'sourceFile',
+            filePath: path.resolve(__dirname, '../../../../packages/plugins/claude/src/agent/permissions/requestSource.ts'),
+        });
+    });
+
+    it('preserves platform conditions when resolving internal workspace exports from source', () => {
+        process.env.HAPPIER_STACK_STACK = 'qa-test';
+        delete process.env.CI;
+        delete process.env.EXPO_NO_METRO_WORKSPACE_ROOT;
+        delete process.env.HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS;
+
+        const config = requireFreshMetroConfig();
+
+        const nativeVoiceResult = config.resolver.resolveRequest(
+            {},
+            '@happier-dev/plugins-elevenlabs/ui/voice',
+            'android',
+        );
+        expect(nativeVoiceResult).toEqual({
+            type: 'sourceFile',
+            filePath: path.resolve(__dirname, '../../../../packages/plugins/elevenlabs/src/ui/voice/index.native.ts'),
+        });
+
+        const browserSdkResult = config.resolver.resolveRequest({}, '@happier-dev/plugin-sdk', 'web');
+        expect(browserSdkResult).toEqual({
+            type: 'sourceFile',
+            filePath: path.resolve(__dirname, '../../../../packages/plugin-sdk/src/index.browser.ts'),
         });
     });
 
@@ -159,7 +223,7 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         fs.rmSync(sandboxDir, { recursive: true, force: true });
     });
 
-    it('resolves internal workspace packages through root node_modules symlink paths when Metro workspace root is disabled', () => {
+    it('resolves internal workspace packages through real workspace package paths when Metro workspace root is disabled', () => {
         process.env.CI = '1';
         process.env.EXPO_NO_METRO_WORKSPACE_ROOT = '1';
         process.env.HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS = '1';
@@ -171,13 +235,104 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         const protocolResult = config.resolver.resolveRequest({}, '@happier-dev/protocol', 'web');
         expect(protocolResult).toEqual({
             type: 'sourceFile',
-            filePath: path.resolve(__dirname, '../../../../node_modules/@happier-dev/protocol/dist/index.js'),
+            filePath: path.resolve(__dirname, '../../../../packages/protocol/src/index.ts'),
         });
 
         const socketRpcResult = config.resolver.resolveRequest({}, '@happier-dev/protocol/socketRpc', 'web');
         expect(socketRpcResult).toEqual({
             type: 'sourceFile',
-            filePath: path.resolve(__dirname, '../../../../node_modules/@happier-dev/protocol/dist/socketRpc.js'),
+            filePath: path.resolve(__dirname, '../../../../packages/protocol/src/rpc/socket.ts'),
+        });
+    });
+
+    it('falls back from missing internal workspace dist subpath exports to source files', () => {
+        process.env.HAPPIER_STACK_STACK = 'qa-test';
+        delete process.env.CI;
+        delete process.env.EXPO_NO_METRO_WORKSPACE_ROOT;
+        delete process.env.HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS;
+
+        const realExistsSync = fs.existsSync.bind(fs);
+        vi.spyOn(fs, 'existsSync').mockImplementation((candidate) => {
+            if (path.normalize(String(candidate)).endsWith(path.normalize('packages/protocol/dist/actions/index.js'))) {
+                return false;
+            }
+            return realExistsSync(candidate);
+        });
+
+        const config = requireFreshMetroConfig();
+
+        const actionsResult = config.resolver.resolveRequest({}, '@happier-dev/protocol/actions', 'web');
+        expect(actionsResult).toEqual({
+            type: 'sourceFile',
+            filePath: path.resolve(__dirname, '../../../../packages/protocol/src/actions/index.ts'),
+        });
+    });
+
+    it('maps explicit internal workspace source .js imports to their TypeScript source files', () => {
+        process.env.HAPPIER_STACK_STACK = 'qa-test';
+        delete process.env.CI;
+        delete process.env.EXPO_NO_METRO_WORKSPACE_ROOT;
+        delete process.env.HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS;
+
+        const config = requireFreshMetroConfig();
+        const originModulePath = path.resolve(__dirname, '../../../../packages/protocol/src/actions/index.ts');
+
+        const result = config.resolver.resolveRequest(
+            { originModulePath },
+            './actionSpecs.js',
+            'web',
+        );
+
+        expect(result).toEqual({
+            type: 'sourceFile',
+            filePath: path.resolve(__dirname, '../../../../packages/protocol/src/actions/actionSpecs.ts'),
+        });
+    });
+
+    it('maps explicit internal workspace source .js imports during local native development', () => {
+        delete process.env.CI;
+        delete process.env.HAPPIER_STACK_STACK;
+        delete process.env.HAPPIER_STACK_TUI;
+
+        const config = requireFreshMetroConfig();
+        const originModulePath = path.resolve(__dirname, '../../../../packages/agents/src/index.ts');
+
+        const result = config.resolver.resolveRequest(
+            { originModulePath },
+            './manifest.js',
+            'android',
+        );
+
+        expect(result).toEqual({
+            type: 'sourceFile',
+            filePath: path.resolve(__dirname, '../../../../packages/agents/src/manifest.ts'),
+        });
+    });
+
+    it('does not apply the CI browser .node.js rewrite during local native development', () => {
+        delete process.env.CI;
+        delete process.env.HAPPIER_STACK_STACK;
+        delete process.env.HAPPIER_STACK_TUI;
+
+        const config = requireFreshMetroConfig();
+        const originModulePath = path.resolve(
+            __dirname,
+            '../../../../node_modules/engine.io-client/build/esm/index.js',
+        );
+        const nativeTargetPath = path.resolve(path.dirname(originModulePath), './globals.node.js');
+
+        const result = config.resolver.resolveRequest(
+            {
+                originModulePath,
+                resolveRequest: () => ({ type: 'sourceFile', filePath: nativeTargetPath }),
+            },
+            './globals.node.js',
+            'android',
+        );
+
+        expect(result).toEqual({
+            type: 'sourceFile',
+            filePath: nativeTargetPath,
         });
     });
 

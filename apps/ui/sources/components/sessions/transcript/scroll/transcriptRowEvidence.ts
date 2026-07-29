@@ -48,6 +48,7 @@ export function resolveTranscriptRowViewportRelation(params: Readonly<{
 export function resolveTranscriptRowContentCount(item: TranscriptRowShellItem): number | undefined {
     if (item.kind === 'message') return 1;
     if (item.kind === 'pending-user-action') return 1;
+    if (item.kind === 'external-session-operation') return 1;
     // N2c stable virtualization units: each unit row renders exactly one content entry,
     // so tool-group growth becomes between-row insertion and row-mutated events ~ 0.
     if (

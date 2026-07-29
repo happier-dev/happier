@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import * as Clipboard from 'expo-clipboard';
 
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 import {
     PlanChecklistCard,
@@ -33,11 +33,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     hint: {
         color: theme.colors.text.secondary,
-        textAlign: 'center',
+        textAlign: 'left',
     },
     error: {
         color: theme.colors.state.danger.foreground,
-        textAlign: 'center',
+        textAlign: 'left',
     },
 }));
 
@@ -184,7 +184,7 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
         retryRef.current = controller.retry;
     }, [controller.continue, controller.retry, props.onNeedsAuth, props.onRequestAdvance, props.onWizardPrimaryChange]);
 
-    const handleCopyDiagnostics = React.useCallback(async (itemId: string) => {
+    const handleCopyDiagnostics = React.useCallback(async (itemId: string): Promise<boolean> => {
         const payload = buildThisComputerChecklistDiagnosticsPayload({
             itemId,
             selectedIds: controller.selectedIds,
@@ -192,8 +192,12 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
             activeTaskSnapshot,
             executionById,
         });
-        await Clipboard.setStringAsync(JSON.stringify(payload, null, 2));
-        Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: t('common.details') }));
+        const copied = await setClipboardStringSafe(JSON.stringify(payload, null, 2));
+        if (!copied) {
+            Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
+            return false;
+        }
+        return true;
     }, [activeTaskSnapshot, controller.selectedIds, executionById, preflight]);
 
     React.useLayoutEffect(() => {
@@ -294,7 +298,7 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
                 executionById={executionById}
                 expandedIds={controller.expandedIds}
                 onToggleExpanded={controller.toggleExpanded}
-                onCopyDiagnostics={(item) => void handleCopyDiagnostics(item.id)}
+                onCopyDiagnostics={(item) => handleCopyDiagnostics(item.id)}
             />
             {controller.phase === 'select' && !startError ? (
                 <Text style={styles.hint}>{t('setupOnboarding.thisComputerStages.footerHint')}</Text>

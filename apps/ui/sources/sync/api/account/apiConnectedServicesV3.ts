@@ -2,18 +2,16 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
-import { throwConnectedServiceApiError } from './connectedServiceApiError';
 
 import {
+  assertConnectedServiceCredentialRecordBinding,
   ConnectedServiceCredentialRecordV1Schema,
   StoredJsonContentEnvelopeSchema,
+  readConnectedServiceCredentialRevisionBoundaryV1,
+  type ConnectedServiceCredentialRevisionBoundaryV1,
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
-
-type ConnectedServiceReconnectInput = Readonly<{
-  allowProviderIdentityChange: true;
-}>;
 
 function extractErrorCode(json: unknown): string | null {
   if (!json || typeof json !== 'object') return null;
@@ -21,90 +19,12 @@ function extractErrorCode(json: unknown): string | null {
   return typeof maybe.error === 'string' ? maybe.error : null;
 }
 
-export async function registerConnectedServiceCredentialPlain(
-  credentials: AuthCredentials,
-  params: Readonly<{
-    serviceId: ConnectedServiceId;
-    profileId: string;
-    record: ConnectedServiceCredentialRecordV1;
-    reconnect?: ConnectedServiceReconnectInput;
-  }>,
-): Promise<void> {
-  await backoff(async () => {
-    const response = await serverFetch(
-      `/v3/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/credential`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${credentials.token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          content: { t: 'plain', v: params.record },
-          ...(params.reconnect ? { reconnect: params.reconnect } : {}),
-        }),
-      },
-      { includeAuth: false },
-    );
-
-    if (!response.ok) {
-      if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
-        let message = `Failed to connect ${params.serviceId}`;
-        try {
-          const json = await response.json();
-          message = extractErrorCode(json) ?? message;
-        } catch {
-          // ignore
-        }
-        throw new HappyError(message, false, { status: response.status, kind: 'server' });
-      }
-      throw new Error(`Failed to connect ${params.serviceId}: ${response.status}`);
-    }
-
-    const json = await response.json().catch(() => null);
-    if (!json || (json as any).success !== true) {
-      throw new HappyError('invalid response', false, { status: response.status, kind: 'server' });
-    }
-  });
-}
-
-export async function deleteConnectedServiceCredentialV3(
-  credentials: AuthCredentials,
-  params: Readonly<{ serviceId: ConnectedServiceId; profileId: string; cleanupGroupReferences?: boolean }>,
-): Promise<void> {
-  await backoff(async () => {
-    const query = params.cleanupGroupReferences ? '?cleanupGroupReferences=true' : '';
-    const response = await serverFetch(
-      `/v3/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/credential${query}`,
-      {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${credentials.token}`,
-        },
-      },
-      { includeAuth: false },
-    );
-
-    // Disconnect should be idempotent: if the credential is already gone, treat it as disconnected.
-    if (response.status === 404) {
-      return;
-    }
-
-    if (!response.ok) {
-      await throwConnectedServiceApiError(response);
-    }
-
-    const json = await response.json().catch(() => null);
-    if (!json || (json as any).success !== true) {
-      throw new HappyError('invalid response', false, { status: response.status, kind: 'server' });
-    }
-  });
-}
-
 export async function getConnectedServiceCredentialPlain(
   credentials: AuthCredentials,
   params: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>,
-): Promise<Readonly<{ content: Readonly<{ t: 'plain'; v: ConnectedServiceCredentialRecordV1 }> }>> {
+): Promise<Readonly<{
+  content: Readonly<{ t: 'plain'; v: ConnectedServiceCredentialRecordV1 }>;
+}> & ConnectedServiceCredentialRevisionBoundaryV1> {
   return await backoff(async () => {
     const response = await serverFetch(
       `/v3/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/credential`,
@@ -144,10 +64,23 @@ export async function getConnectedServiceCredentialPlain(
     }
 
     const record = ConnectedServiceCredentialRecordV1Schema.safeParse(parsed.data.v);
-    if (!record.success) {
+    const revision = readConnectedServiceCredentialRevisionBoundaryV1(
+      json as { credentialRevision?: unknown },
+    );
+    if (!record.success || !revision) {
       throw new HappyError('invalid response', false, { status: response.status, kind: 'server' });
     }
 
-    return { content: { t: 'plain', v: record.data } };
+    let boundRecord: ConnectedServiceCredentialRecordV1;
+    try {
+      boundRecord = assertConnectedServiceCredentialRecordBinding({
+        binding: { serviceId: params.serviceId, profileId: params.profileId },
+        record: record.data,
+      });
+    } catch {
+      throw new HappyError('invalid response', false, { status: response.status, kind: 'server' });
+    }
+
+    return { ...revision, content: { t: 'plain', v: boundRecord } };
   });
 }

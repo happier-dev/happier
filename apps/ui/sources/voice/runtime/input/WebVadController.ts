@@ -6,6 +6,8 @@ import type { TurnPolicy } from './turnPolicyMachine';
 type WebVadControllerDeps = Readonly<{
     now?: () => number;
     onEndpointSignal: (signal: TurnEndpointSignal) => void;
+    onSpeechCandidateStart?: (input: Readonly<{ sessionId: string; source: 'web_vad' }>) => void;
+    onSpeechCandidateFalseAlarm?: (input: Readonly<{ sessionId: string; source: 'web_vad' }>) => void;
     turnPolicy?: Partial<TurnPolicy>;
     getLatestPartialTranscript?: () => string | null | undefined;
 }>;

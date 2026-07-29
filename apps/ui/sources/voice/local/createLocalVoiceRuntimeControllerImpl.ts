@@ -18,7 +18,8 @@ export function createLocalVoiceRuntimeControllerImpl(): LocalVoiceRuntimeContro
         appendAgentContextUpdate: (sessionId, update) => appendLocalVoiceAgentContextUpdate(sessionId, update),
         isAgentActive: (sessionId) => isLocalVoiceAgentActive(sessionId),
         setMuted: async (sessionId, muted) => await setLocalVoiceMuted(sessionId, muted),
-        sendAgentTextTurn: async ({ controlSessionId, text }) => await sendLocalVoiceAgentTextTurn(controlSessionId, text),
+        sendAgentTextTurn: async ({ controlSessionId, text, durableDispatch }) =>
+            await sendLocalVoiceAgentTextTurn(controlSessionId, text, durableDispatch),
         sendAgentTextUpdate: async (sessionId, update) => await sendLocalVoiceAgentTextUpdate(sessionId, update),
         stopSession: async () => await stopLocalVoiceSession(),
         toggleTurn: async (sessionId) => await toggleLocalVoiceTurn(sessionId),

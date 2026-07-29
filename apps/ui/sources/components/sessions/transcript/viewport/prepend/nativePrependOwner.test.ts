@@ -86,7 +86,6 @@ function unchangedObservation(): PrependPostCommitObservation {
 function observationInput(overrides?: Partial<NativePrependObservationInput>): NativePrependObservationInput {
     return {
         activeOwner: 'prepend',
-        nowMs: 1_000,
         postCommit: preservedObservation(),
         sessionId: 'session-a',
         ...overrides,
@@ -188,28 +187,16 @@ describe('native prepend owner', () => {
         expect(owner.telemetryState('session-a')).toBe('closed');
     });
 
-    it('needs-fallback waits for quiet gate before issuing exactly one apply-history-correction command', () => {
+    it('needs-fallback issues exactly one apply-history-correction command from the conclusive observation', () => {
         const owner = createNativePrependOwner();
         owner.begin(beginInput());
         owner.armCommit({ layoutTimeoutMs: 750, sessionId: 'session-a' });
 
-        const first = owner.observe(observationInput({
-            nowMs: 1_000,
+        const effects = owner.observe(observationInput({
             postCommit: misalignedObservation(),
         }));
 
-        expect(executeEffects(first)).toEqual([]);
-        const quietSchedule = effectsOfType(first, 'schedule-quiet-reobserve')[0];
-        expect(quietSchedule).toMatchObject({ sessionId: 'session-a', type: 'schedule-quiet-reobserve' });
-        expect(quietSchedule.delayMs).toBeGreaterThan(0);
-        expect(owner.hasOpenTransaction('session-a')).toBe(true);
-
-        const second = owner.runQuietReobserve(observationInput({
-            nowMs: 1_000 + quietSchedule.delayMs,
-            postCommit: misalignedObservation(),
-        }));
-
-        expect(executeEffects(second)).toEqual([
+        expect(executeEffects(effects)).toEqual([
             {
                 command: {
                     animated: false,
@@ -221,26 +208,21 @@ describe('native prepend owner', () => {
                 type: 'execute-command',
             },
         ]);
-        expect(effectsOfType(second, 'close-prepend-ownership')).toEqual([
+        expect(effectsOfType(effects, 'close-prepend-ownership')).toEqual([
             { outcome: 'fallback-restored', sessionId: 'session-a', type: 'close-prepend-ownership' },
         ]);
 
         const afterClose = owner.observe(observationInput({
-            nowMs: 2_000,
             postCommit: misalignedObservation(),
         }));
         expect(executeEffects(afterClose)).toEqual([]);
     });
 
-    it('corrector-covered residual closes mvcp-preserved and clears quiet/corrector timers', () => {
+    it('corrector-covered residual closes mvcp-preserved and clears the corrector timer', () => {
         const owner = createNativePrependOwner();
         owner.begin(beginInput());
         owner.armCommit({ layoutTimeoutMs: 750, sessionId: 'session-a' });
 
-        owner.observe(observationInput({
-            nowMs: 1_000,
-            postCommit: misalignedObservation(),
-        }));
         const correctorEffects = owner.recordCorrectorCorrection({
             diffPx: 820,
             sessionId: 'session-a',
@@ -251,7 +233,6 @@ describe('native prepend owner', () => {
         ]);
 
         const effects = owner.runCorrectorReobserve(observationInput({
-            nowMs: 1_001,
             postCommit: misalignedObservation(),
         }));
 
@@ -267,7 +248,6 @@ describe('native prepend owner', () => {
             sessionId: 'session-a',
             type: 'record-restore-decision-for-session',
         }));
-        expect(effectTypes(effects)).toContain('clear-quiet-reobserve');
         expect(effectTypes(effects)).toContain('clear-corrector-reobserve');
     });
 
@@ -331,7 +311,6 @@ describe('native prepend owner', () => {
         conclusive.armCommit({ layoutTimeoutMs: 750, sessionId: 'session-a' });
 
         const conclusiveEffects = conclusive.runLayoutTimeout(observationInput({
-            nowMs: 1_750,
             postCommit: misalignedObservation(),
         }));
 
@@ -356,7 +335,6 @@ describe('native prepend owner', () => {
         abandoned.armCommit({ layoutTimeoutMs: 750, sessionId: 'session-a' });
 
         const abandonedEffects = abandoned.runLayoutTimeout(observationInput({
-            nowMs: 1_750,
             postCommit: unchangedObservation(),
         }));
 

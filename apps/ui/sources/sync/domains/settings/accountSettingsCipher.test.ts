@@ -20,7 +20,7 @@ describe('account settings cipher', () => {
         expect(fallbackDecryptRaw).not.toHaveBeenCalled();
     });
 
-    it('falls back to decryptRaw when ciphertext is not in the canonical format', async () => {
+    it('does not admit an untagged raw object without an authenticated settings domain', async () => {
         const machineKey = new Uint8Array(32).fill(9);
         const fallbackDecryptRaw = vi.fn(async () => ({
             analyticsOptOut: false,
@@ -33,12 +33,8 @@ describe('account settings cipher', () => {
             fallbackDecryptRaw,
         });
 
-        expect(opened?.format).toBe('unknown');
-        expect(opened?.value).toEqual({
-            analyticsOptOut: false,
-            claudeLocalPermissionBridgeEnabled: true,
-        });
-        expect(fallbackDecryptRaw).toHaveBeenCalledTimes(1);
+        expect(opened).toBeNull();
+        expect(fallbackDecryptRaw).not.toHaveBeenCalled();
     });
 
     it('returns null when ciphertext cannot be decrypted to an object', async () => {
@@ -51,4 +47,3 @@ describe('account settings cipher', () => {
         expect(opened).toBeNull();
     });
 });
-

@@ -88,7 +88,7 @@ export function installSettingsViewCommonModuleMocks(
             icons && typeof icons === 'object' && 'Ionicons' in icons
                 ? (icons as { Ionicons?: unknown }).Ionicons
                 : undefined;
-        return { default: Ionicons };
+        return { default: Ionicons, Ionicons };
     });
 
     vi.mock('react-native-unistyles', async () => {

@@ -10,6 +10,7 @@ import {
 export type ProjectRouteSegment = 'details' | 'files' | 'git';
 export const PROJECT_ROUTE_ROOT_SENTINEL = '@root';
 export const PROJECT_ROUTE_WORKTREE_ID_QUERY_PARAM = 'worktreeId';
+export type ProjectDetailsSourceSurface = Exclude<ProjectMobileSurface, 'overview' | 'tabs'>;
 
 export function readProjectRouteStringParam(raw: string | string[] | undefined): string | null {
     if (typeof raw === 'string') {
@@ -108,6 +109,53 @@ export function resolveProjectRouteActiveRootParam(
     return trimmedWorktreeId ?? undefined;
 }
 
+export function resolveProjectRouteSelectionQuery(input: Readonly<{
+    activeRootPath: string;
+    defaultRootPath: string;
+    activeWorktreeId?: string | null;
+}>): Readonly<{
+    rawWorktreeId: string | null;
+    rawActiveRootPath: string | null;
+}> {
+    const rawWorktreeId = resolveProjectRouteActiveRootParam(
+        input.activeRootPath,
+        input.defaultRootPath,
+        input.activeWorktreeId,
+    ) ?? null;
+    if (rawWorktreeId) {
+        return {
+            rawWorktreeId,
+            rawActiveRootPath: null,
+        };
+    }
+    const trimmedActiveRootPath = readProjectRouteStringParam(input.activeRootPath);
+    if (trimmedActiveRootPath && trimmedActiveRootPath !== input.defaultRootPath) {
+        return {
+            rawWorktreeId: null,
+            rawActiveRootPath: trimmedActiveRootPath,
+        };
+    }
+    return {
+        rawWorktreeId: null,
+        rawActiveRootPath: null,
+    };
+}
+
+export function normalizeProjectDetailsSourceSurface(value: unknown): ProjectDetailsSourceSurface | null {
+    const raw = Array.isArray(value) ? value[0] : value;
+    const normalized = typeof raw === 'string' ? raw.trim() : '';
+    if (
+        normalized === 'browse'
+        || normalized === 'git'
+        || normalized === 'terminal'
+        || normalized === 'browser'
+        || normalized === 'services'
+    ) {
+        return normalized;
+    }
+    return null;
+}
+
 export function buildProjectRouteHref(input: Readonly<{
     workspaceRefId: string;
     segment?: ProjectRouteSegment;
@@ -115,6 +163,7 @@ export function buildProjectRouteHref(input: Readonly<{
     defaultRootPath: string;
     activeWorktreeId?: string | null;
     showWorktrees?: boolean;
+    sourceSurface?: ProjectDetailsSourceSurface | null;
 }>): string {
     const basePath = input.segment
         ? `/projects/${encodeURIComponent(input.workspaceRefId)}/${input.segment}`
@@ -130,6 +179,9 @@ export function buildProjectRouteHref(input: Readonly<{
     }
     if (input.showWorktrees === true) {
         queryParams.set('showWorktrees', '1');
+    }
+    if (input.segment === 'details' && input.sourceSurface) {
+        queryParams.set('sourceSurface', input.sourceSurface);
     }
     const query = queryParams.toString();
     if (!query) return basePath;

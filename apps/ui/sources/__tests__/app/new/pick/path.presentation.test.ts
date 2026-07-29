@@ -12,6 +12,7 @@ import {
     installPickerCommonModuleMocks,
     PICKER_THEME_COLORS,
 } from './testHarness';
+import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 enableReactActEnvironment();
 
@@ -55,12 +56,12 @@ installPickerCommonModuleMocks({
                 // Boundary fixture: this picker only needs the selected machine homeDir.
                 useAllMachines: (() => [{ id: 'm1', metadata: { homeDir: '/home' } }]) as any,
                 useAllSessionListRenderables: () => [],
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'recentMachinePaths') return [];
                     if (key === 'usePathPickerSearch') return false;
                     return null;
-                },
-                useSettingMutable: () => [[], vi.fn()],
+                } }),
+                useSettingMutable: createUseSettingMutableMockFromReader(() => [[], vi.fn()]),
             },
         }),
 });
@@ -98,7 +99,14 @@ describe('PathPickerScreen (iOS presentation)', () => {
 
         const backButton = options?.headerLeft?.();
         expect(typeof backButton?.props?.onPress).toBe('function');
+        expect(backButton?.props?.accessibilityRole).toBe('button');
+        expect(backButton?.props?.accessibilityLabel).toBe('common.back');
         backButton?.props?.onPress?.();
         expect(navigationMock.goBack).toHaveBeenCalledTimes(1);
+
+        const confirmButton = options?.headerRight?.();
+        expect(typeof confirmButton?.props?.onPress).toBe('function');
+        expect(confirmButton?.props?.accessibilityRole).toBe('button');
+        expect(confirmButton?.props?.accessibilityLabel).toBe('common.done');
     });
 });

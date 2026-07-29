@@ -1,4 +1,5 @@
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
+import { resolveSessionListItemOrganizationEligibility } from '@/sync/domains/sessionList/sessionListIndex';
 
 import {
     createSessionBulkActionProgressTracker,
@@ -48,17 +49,6 @@ function normalizeTags(tags: readonly string[] | undefined): string[] {
         if (!normalized || seen.has(normalized)) continue;
         seen.add(normalized);
         out.push(normalized);
-    }
-    return out;
-}
-
-function uniqueStrings(values: readonly string[]): string[] {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const value of values) {
-        if (!value || seen.has(value)) continue;
-        seen.add(value);
-        out.push(value);
     }
     return out;
 }
@@ -211,44 +201,6 @@ async function executeNetworkTargets(params: Readonly<{
     });
 }
 
-async function executeAggregateSettingsAction(params: Readonly<{
-    actionId: SessionBulkActionId;
-    targets: readonly SessionBulkActionTarget[];
-    apply: () => Promise<void>;
-}>): Promise<SessionBulkActionExecutionResult> {
-    const tracker = createSessionBulkActionProgressTracker({
-        total: params.targets.length,
-    });
-
-    try {
-        await params.apply();
-        const results = params.targets.map((target) => {
-            tracker.start();
-            tracker.succeed();
-            return createTargetResult(target, 'succeeded');
-        });
-        return buildExecutionResult({
-            actionId: params.actionId,
-            targetCount: params.targets.length,
-            results,
-            progress: tracker.snapshot(),
-        });
-    } catch (error) {
-        const reason = reasonFromUnknown(error, 'Failed to update settings');
-        const results = params.targets.map((target) => {
-            tracker.start();
-            tracker.fail();
-            return createTargetResult(target, 'failed', { reason });
-        });
-        return buildExecutionResult({
-            actionId: params.actionId,
-            targetCount: params.targets.length,
-            results,
-            progress: tracker.snapshot(),
-        });
-    }
-}
-
 function requireOperation<T>(
     operation: T | undefined,
     name: string,
@@ -264,21 +216,19 @@ async function executePinAction(params: Readonly<{
     targets: readonly SessionBulkActionTarget[];
     context: SessionBulkActionExecutionContext;
 }>): Promise<SessionBulkActionExecutionResult> {
-    const setPinnedSessionKeysV1 = requireOperation(
-        params.context.setPinnedSessionKeysV1,
-        'setPinnedSessionKeysV1',
+    const setSessionPin = requireOperation(
+        params.context.setSessionPin,
+        'setSessionPin',
     );
-    const current = uniqueStrings([...(params.context.pinnedSessionKeysV1 ?? [])]);
-    const selectedKeys = new Set(params.targets.map((target) => target.key));
-    const next = params.actionId === SESSION_BULK_ACTION_IDS.pin
-        ? uniqueStrings([...current, ...params.targets.map((target) => target.key)])
-        : current.filter((key) => !selectedKeys.has(key));
+    const pinned = params.actionId === SESSION_BULK_ACTION_IDS.pin;
 
-    return executeAggregateSettingsAction({
+    return executeNetworkTargets({
         actionId: params.actionId,
         targets: params.targets,
-        apply: async () => {
-            await setPinnedSessionKeysV1(next);
+        context: params.context,
+        runTarget: async (target) => {
+            await setSessionPin({ target, pinned });
+            return createTargetResult(target, 'succeeded');
         },
     });
 }
@@ -288,42 +238,29 @@ async function executeTagAction(params: Readonly<{
     targets: readonly SessionBulkActionTarget[];
     context: SessionBulkActionExecutionContext;
 }>): Promise<SessionBulkActionExecutionResult> {
-    const setSessionTagsV1 = requireOperation(params.context.setSessionTagsV1, 'setSessionTagsV1');
+    const setSessionTagAssignments = requireOperation(
+        params.context.setSessionTagAssignments,
+        'setSessionTagAssignments',
+    );
     const actionTags = normalizeTags(params.action.tags);
-    const selectedKeys = new Set(params.targets.map((target) => target.key));
-    const next: Record<string, string[]> = {};
 
-    for (const [key, tags] of Object.entries(params.context.sessionTagsV1 ?? {})) {
-        if (!selectedKeys.has(key)) {
-            const normalized = normalizeTags(tags);
-            if (normalized.length > 0) next[key] = normalized;
-        }
-    }
-
-    for (const target of params.targets) {
-        const existing = normalizeTags((params.context.sessionTagsV1 ?? {})[target.key] ?? target.tags);
-        let merged: string[];
-        if (params.action.id === SESSION_BULK_ACTION_IDS.tagsAdd) {
-            merged = normalizeTags([...existing, ...actionTags]);
-        } else if (params.action.id === SESSION_BULK_ACTION_IDS.tagsRemove) {
-            const toRemove = new Set(actionTags);
-            merged = existing.filter((tag) => !toRemove.has(tag));
-        } else {
-            merged = actionTags;
-        }
-
-        if (merged.length > 0) {
-            next[target.key] = merged;
-        } else {
-            delete next[target.key];
-        }
-    }
-
-    return executeAggregateSettingsAction({
+    return executeNetworkTargets({
         actionId: params.action.id,
         targets: params.targets,
-        apply: async () => {
-            await setSessionTagsV1(next);
+        context: params.context,
+        runTarget: async (target) => {
+            const existing = normalizeTags(target.tags);
+            let tags: string[];
+            if (params.action.id === SESSION_BULK_ACTION_IDS.tagsAdd) {
+                tags = normalizeTags([...existing, ...actionTags]);
+            } else if (params.action.id === SESSION_BULK_ACTION_IDS.tagsRemove) {
+                const toRemove = new Set(actionTags);
+                tags = existing.filter((tag) => !toRemove.has(tag));
+            } else {
+                tags = actionTags;
+            }
+            await setSessionTagAssignments({ target, tags });
+            return createTargetResult(target, 'succeeded');
         },
     });
 }
@@ -371,14 +308,14 @@ async function executeStopAction(params: Readonly<{
         targets: params.targets,
         context: params.context,
         runTarget: async (target) => {
-            if (target.canStop === false) {
-                return createPermissionDeniedResult(target);
-            }
             if (target.active === false) {
                 return createTargetResult(target, 'skipped', {
                     reasonCode: 'session_inactive',
                     reason: 'Session is already inactive',
                 });
+            }
+            if (target.canStop !== true) {
+                return createPermissionDeniedResult(target);
             }
             return resultFromMutation(
                 target,
@@ -402,14 +339,14 @@ async function executeArchiveAction(params: Readonly<{
         targets: params.targets,
         context: params.context,
         runTarget: async (target) => {
-            if (target.canArchive === false) {
-                return createPermissionDeniedResult(target);
-            }
             if (target.archived === true) {
                 return createTargetResult(target, 'skipped', {
                     reasonCode: 'already_archived',
                     reason: 'Session is already archived',
                 });
+            }
+            if (target.canArchive !== true) {
+                return createPermissionDeniedResult(target);
             }
 
             if (target.active === true) {
@@ -453,14 +390,14 @@ async function executeUnarchiveAction(params: Readonly<{
         targets: params.targets,
         context: params.context,
         runTarget: async (target) => {
-            if (target.hasAdminAccess === false) {
-                return createPermissionDeniedResult(target);
-            }
-            if (target.archived === false) {
+            if (target.archived !== true) {
                 return createTargetResult(target, 'skipped', {
                     reasonCode: 'not_archived',
                     reason: 'Session is not archived',
                 });
+            }
+            if (target.hasAdminAccess !== true) {
+                return createPermissionDeniedResult(target);
             }
             return resultFromMutation(
                 target,
@@ -515,6 +452,30 @@ async function executeMoveToFolderAction(params: Readonly<{
         });
     }
 
+    if (!params.action.destinationWorkspace) {
+        return skipAll({
+            actionId: SESSION_BULK_ACTION_IDS.moveToFolder,
+            targets: params.targets,
+            reasonCode: 'folder_destination_scope_unavailable',
+            reason: 'The destination folder scope is unavailable',
+        });
+    }
+
+    const eligibilityByTarget = new Map(
+        params.targets.map((target) => [
+            target,
+            resolveSessionListItemOrganizationEligibility({
+                type: 'session',
+                sessionId: target.sessionId,
+                serverId: target.serverId ?? undefined,
+                workspace: target.workspace ?? undefined,
+            }, {
+                foldersFeatureEnabled: true,
+                destinationWorkspace: params.action.destinationWorkspace,
+            }),
+        ] as const),
+    );
+
     const setSessionFolderAssignment = requireOperation(
         params.context.setSessionFolderAssignment,
         'setSessionFolderAssignment',
@@ -525,6 +486,18 @@ async function executeMoveToFolderAction(params: Readonly<{
         targets: params.targets,
         context: params.context,
         runTarget: async (target) => {
+            const eligibility = eligibilityByTarget.get(target);
+            if (target.canMoveToFolder !== true || !eligibility?.canUseSessionFolders) {
+                const destinationScopeMismatch = eligibility?.reason === 'destination-scope-mismatch';
+                return createTargetResult(target, 'skipped', {
+                    reasonCode: destinationScopeMismatch
+                        ? 'folder_destination_scope_mismatch'
+                        : 'folder_move_unavailable',
+                    reason: destinationScopeMismatch
+                        ? 'Session belongs to a different workspace'
+                        : 'Session cannot be moved to this folder',
+                });
+            }
             await setSessionFolderAssignment({
                 target,
                 folderId: params.action.folderId,

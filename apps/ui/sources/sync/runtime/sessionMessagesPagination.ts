@@ -30,6 +30,32 @@ export function computeSessionMessagesPaginationUpdateFromPage(params: Readonly<
     const page = params.page;
 
     if (!Array.isArray(page.messages) || page.messages.length === 0) {
+        // An empty older/initial page is a COMPLETE answer, not an unknown: there are no
+        // older messages. Leaving hasMoreOlder=null here starved every consumer that
+        // requires a resolved "no more older" signal — live S-F (2026-07-11): a forked
+        // session with zero own messages never opened the fork parent-context prefetch
+        // gate, so the pre-fork parent transcript never rendered. An explicit page.hasMore
+        // contract field always wins over the inference.
+        if (params.direction === 'older') {
+            let nextHasMoreOlder = prev.hasMoreOlder;
+            if (typeof page.hasMore === 'boolean') {
+                nextHasMoreOlder = page.hasMore;
+            } else if (params.allowHasMoreInference && prev.hasMoreOlder == null) {
+                nextHasMoreOlder = false;
+            }
+            if (nextHasMoreOlder !== prev.hasMoreOlder) {
+                return {
+                    next: {
+                        beforeSeq: prev.beforeSeq,
+                        hasMoreOlder: nextHasMoreOlder,
+                        paginationSupported: typeof page.hasMore === 'boolean'
+                            ? true
+                            : prev.paginationSupported,
+                    },
+                    maxSeq: null,
+                };
+            }
+        }
         return { next: prev, maxSeq: null };
     }
 

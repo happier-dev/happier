@@ -1,9 +1,11 @@
 import * as React from 'react';
-import { Text } from 'react-native';
+import { Platform, Text } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
+import { stageVisualTokens } from '../tour/stage/stageVisualTokens';
+import { StagePane } from './StagePane';
 import { UnauthenticatedSplitShell } from './UnauthenticatedSplitShell';
 import { useUnauthShellLayout, type UnauthShellLayout } from './useUnauthShellLayout';
 
@@ -14,6 +16,21 @@ const deviceState = vi.hoisted(() => ({
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
+});
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
+
+vi.mock('@/text/index', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
+
+vi.mock('@/text/i18n', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
 });
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -57,7 +74,7 @@ describe('UnauthenticatedSplitShell', () => {
         deviceState.safeAreaInsets = { top: 0, bottom: 0, left: 0, right: 0 };
     });
 
-    it('renders both brand and workflow panes in split layout', async () => {
+    it('renders brand stage left and workflow right in split layout (R1 order)', async () => {
         mockLayout('split');
         const screen = await renderScreen(
             <UnauthenticatedSplitShell
@@ -74,6 +91,20 @@ describe('UnauthenticatedSplitShell', () => {
         expect(screen.findByTestId('unauth-shell-brand-pane')).toBeTruthy();
         expect(screen.findByTestId('unauth-shell-workflow-pane')).toBeTruthy();
         expect(screen.findByTestId('fake-step-body')).toBeTruthy();
+
+        // R1 reference order (and D5): planet/brand pane LEFT, workflow column
+        // RIGHT. A mirrored shell (column-left) is a regression.
+        const splitRoot = screen.findByTestId('unauth-shell-split');
+        const paneOrder = splitRoot
+            ?.findAll((node) => (
+                node.props?.testID === 'unauth-shell-workflow-pane'
+                || node.props?.testID === 'unauth-shell-stage-pane'
+            ))
+            .map((node) => node.props.testID);
+        expect(paneOrder).toEqual([
+            'unauth-shell-stage-pane',
+            'unauth-shell-workflow-pane',
+        ]);
     });
 
     it('keeps the workflow pane shrinkable so nested setup and restore scroll views can scroll', async () => {
@@ -282,5 +313,83 @@ describe('UnauthenticatedSplitShell', () => {
 
         screen.pressByTestId('welcome-footer-relay-action');
         expect(onOpenRelayCustomFlow).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('StagePane', () => {
+    beforeEach(() => {
+        deviceState.safeAreaInsets = { top: 0, bottom: 0, left: 0, right: 0 };
+    });
+
+    it('renders the existing brand panel in brand mode', async () => {
+        const screen = await renderScreen(<StagePane mode="brand" />);
+
+        expect(screen.findByTestId('unauth-shell-stage-pane')).toBeTruthy();
+        expect(screen.findByTestId('unauth-shell-brand-pane')).toBeTruthy();
+    });
+
+    it('renders stage children over the receded planet wallpaper without mounting the brand panel in stage mode', async () => {
+        const screen = await renderScreen(
+            <StagePane
+                mode="stage"
+                accentHue="#FFB14A"
+                planetOpacity={0.58}
+                planetScale={0.9}
+            >
+                <Text testID="future-demo-stage">demo stage</Text>
+            </StagePane>,
+        );
+
+        expect(screen.findByTestId('unauth-shell-stage-pane')).toBeTruthy();
+        expect(screen.findByTestId('unauth-shell-stage-sky')).toBeTruthy();
+        expect(screen.findByTestId('unauth-shell-stage-atmosphere')).toBeTruthy();
+        expect(screen.findByTestId('unauth-shell-stage-bloom')).toBeTruthy();
+        expect(screen.findByTestId('unauth-shell-stage-noise')).toBeTruthy();
+        expect(screen.findByTestId('unauth-shell-stage-wallpaper-host')).toBeTruthy();
+        expect(screen.findByTestId('planet-background-desktop')).toBeTruthy();
+        expect(screen.findByTestId('future-demo-stage')).toBeTruthy();
+        expect(screen.findAllByTestId('unauth-shell-brand-pane')).toEqual([]);
+        expect(screen.findByTestId('unauth-shell-stage-wallpaper-wash')).toBeNull();
+
+        const skyStyle = flattenStyle(screen.findByTestId('unauth-shell-stage-sky')?.props.style);
+        expect(skyStyle.backgroundColor).toBe(stageVisualTokens.horizon.light.backgroundColor);
+        expect(skyStyle.backgroundImage).toBe(stageVisualTokens.horizon.light.skyGradient);
+
+        const atmosphereStyle = flattenStyle(screen.findByTestId('unauth-shell-stage-atmosphere')?.props.style);
+        const bloomStyle = flattenStyle(screen.findByTestId('unauth-shell-stage-bloom')?.props.style);
+        const noiseStyle = flattenStyle(screen.findByTestId('unauth-shell-stage-noise')?.props.style);
+        expect(atmosphereStyle.backgroundColor).toBe(
+            Platform.OS === 'web' ? 'transparent' : stageVisualTokens.horizon.light.atmosphereColor,
+        );
+        expect(bloomStyle.backgroundColor).toBe(
+            Platform.OS === 'web' ? 'transparent' : stageVisualTokens.horizon.light.bloomColor,
+        );
+        if (Platform.OS === 'web') {
+            expect(noiseStyle.backgroundImage).toContain(stageVisualTokens.horizon.noiseTileDataUri);
+            expect(noiseStyle.backgroundRepeat).toBe('repeat');
+        }
+
+        const planet = screen.findByTestId('planet-background-desktop');
+        expect(planet?.props.contentPosition).toMatchObject({ left: '50%', top: '86%' });
+
+        const wallpaperHost = screen.findByTestId('unauth-shell-stage-wallpaper-host');
+        const style = flattenStyle(wallpaperHost?.props.style);
+        expect(style.opacity).toBe(0.58);
+        expect(style.transform).toEqual([{ scale: 0.9 }]);
+    });
+
+    it('applies the planet recede opacity and scale to brand mode', async () => {
+        const screen = await renderScreen(
+            <StagePane
+                mode="brand"
+                planetOpacity={0.42}
+                planetScale={0.94}
+            />,
+        );
+
+        const brandHost = screen.findByTestId('unauth-shell-stage-brand-host');
+        const style = flattenStyle(brandHost?.props.style);
+        expect(style.opacity).toBe(0.42);
+        expect(style.transform).toEqual([{ scale: 0.94 }]);
     });
 });

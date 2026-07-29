@@ -35,15 +35,16 @@ describe('getProfileSupportedAgentIds', () => {
 
 describe('getBuiltInProfileNameKey', () => {
     it('returns the translation key for known built-in profile ids', () => {
-        expect(getBuiltInProfileNameKey('anthropic')).toBe('profiles.builtInNames.anthropic');
-        expect(getBuiltInProfileNameKey('deepseek')).toBe('profiles.builtInNames.deepseek');
-        expect(getBuiltInProfileNameKey('zai')).toBe('profiles.builtInNames.zai');
-        expect(getBuiltInProfileNameKey('openai')).toBe('profiles.builtInNames.openai');
         expect(getBuiltInProfileNameKey('azure-openai')).toBe('profiles.builtInNames.azureOpenai');
+        expect(getBuiltInProfileNameKey('gemini-api-key')).toBe('profiles.builtInNames.geminiApiKey');
+        expect(getBuiltInProfileNameKey('gemini-vertex')).toBe('profiles.builtInNames.geminiVertex');
     });
 
-    it('returns null for unknown ids', () => {
+    it('returns null for unknown and retired built-in profile ids', () => {
         expect(getBuiltInProfileNameKey('unknown')).toBeNull();
+        for (const id of ['anthropic', 'codex', 'gemini', 'deepseek', 'zai', 'openai']) {
+            expect(getBuiltInProfileNameKey(id)).toBeNull();
+        }
     });
 });
 

@@ -7,6 +7,12 @@ import { t, type TranslationKey } from '@/text';
 import { formatLastSeen } from '@/utils/sessions/sessionUtils';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import {
+    INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+    SESSION_MACHINE_TARGET_UNAVAILABLE_ERROR,
+    SESSION_MACHINE_TARGET_UNAVAILABLE_ERROR_CODE,
+} from '@/sync/runtime/sessionMachineRpcErrorCodes';
+import { isCreatedSessionLocalReadinessErrorMessage } from '@/sync/runtime/sessionMessageDeliveryErrors';
 
 export type MachineStatusLineInput =
     | Readonly<{
@@ -165,10 +171,6 @@ export function tryShowDaemonUnavailableAlertForRpcFailure(params: Readonly<{
 
 export const DAEMON_UNAVAILABLE_RPC_ERROR_CODE = RPC_ERROR_CODES.METHOD_NOT_AVAILABLE;
 
-const SESSION_MACHINE_TARGET_UNAVAILABLE_ERROR_CODE = 'SESSION_MACHINE_TARGET_UNAVAILABLE';
-const SESSION_MACHINE_TARGET_UNAVAILABLE_ERROR = 'Machine target not available for session';
-const INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR = 'Session RPC unavailable for inactive session';
-
 const DAEMON_UNAVAILABLE_ALERT_ERROR_CODES = new Set<string>([
     DAEMON_UNAVAILABLE_RPC_ERROR_CODE,
     SESSION_MACHINE_TARGET_UNAVAILABLE_ERROR_CODE,
@@ -205,16 +207,12 @@ const DOMAIN_FATAL_ERROR_MESSAGES = new Set<string>([
     'Server-routed transfer is disabled on the selected server',
 ]);
 
-const SESSION_TARGET_RETRYABLE_ERROR_MESSAGES = new Set<string>([
-    'Created session is not available locally yet',
-]);
-
 export type LaunchRetryFailurePhase = 'spawn' | 'upload' | 'send';
 
 export type LaunchRetryFailureClassification =
     | Readonly<{
         kind: 'retryable';
-        reason: 'daemon_unavailable' | 'session_target_unavailable';
+        reason: 'daemon_unavailable' | 'session_target_unavailable' | 'launch_still_pending';
         titleKey: TranslationKey;
         bodyKey: TranslationKey;
         retryButtonKey: TranslationKey;
@@ -277,7 +275,14 @@ export function classifyLaunchRetryFailure(params: Readonly<{
         params.phase === 'spawn'
         && normalizedCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
     ) {
-        return buildRetryableLaunchFailureClassification(params.phase, 'daemon_unavailable');
+        return {
+            kind: 'retryable',
+            reason: 'launch_still_pending',
+            titleKey: 'newSession.launchStillPendingTitle',
+            bodyKey: 'newSession.launchStillPendingBody',
+            retryButtonKey: 'common.retry',
+            cancelButtonKey: 'common.cancel',
+        };
     }
 
     if (
@@ -307,7 +312,7 @@ export function classifyLaunchRetryFailure(params: Readonly<{
         normalizedCode === SESSION_MACHINE_TARGET_UNAVAILABLE_ERROR_CODE
         || message === SESSION_MACHINE_TARGET_UNAVAILABLE_ERROR
         || message === INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR
-        || (message ? SESSION_TARGET_RETRYABLE_ERROR_MESSAGES.has(message) : false)
+        || (message ? isCreatedSessionLocalReadinessErrorMessage(message) : false)
     ) {
         return buildRetryableLaunchFailureClassification(params.phase, 'session_target_unavailable');
     }

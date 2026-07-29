@@ -50,4 +50,22 @@ describe('SimpleSyntaxHighlighter', () => {
         expect(outerStyle).toEqual(expect.objectContaining({ whiteSpace: 'pre' }));
         expect(outerStyle).toEqual(expect.objectContaining({ display: 'inline-block' }));
     });
+
+    it('wraps long lines when the wrap variant is requested (spec §2 / F-W13-1)', async () => {
+        const { SimpleSyntaxHighlighter } = await import('./SimpleSyntaxHighlighter');
+
+        const tree = (await renderScreen(
+            <SimpleSyntaxHighlighter code={'curl -fsSL https://happier.dev/install | bash'} language={'bash'} selectable={true} wrap />,
+        )).tree;
+
+        const view = tree.findByType('View');
+        expect(view.props.style).not.toEqual(expect.objectContaining({ flexShrink: 0 }));
+
+        const texts = tree.findAllByType('Text');
+        const outerText = texts[0];
+        const outerStyle = Array.isArray(outerText.props.style) ? Object.assign({}, ...outerText.props.style) : outerText.props.style;
+        expect(outerStyle).toEqual(expect.objectContaining({ whiteSpace: 'pre-wrap' }));
+        expect(outerStyle).toEqual(expect.objectContaining({ wordBreak: 'break-word' }));
+        expect(outerStyle).not.toEqual(expect.objectContaining({ flexShrink: 0 }));
+    });
 });

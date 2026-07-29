@@ -14,13 +14,42 @@ const profile = (id: string): ThemeProfileV1 => ({
 });
 
 describe('theme profile persistence', () => {
+    it('migrates a legacy active profile id into both visual mode selections', () => {
+        const result = parseThemeProfilesLocalState({
+            activeProfileId: 'ocean',
+            profiles: [profile('ocean')],
+        });
+
+        expect(result.state).toEqual({
+            activeProfileIds: { light: 'ocean', dark: 'ocean' },
+            profiles: [expect.objectContaining({ id: 'ocean' })],
+        });
+        expect(result.changed).toBe(true);
+    });
+
+    it('sanitizes invalid per-mode active profile ids independently', () => {
+        const result = parseThemeProfilesLocalState({
+            activeProfileIds: {
+                light: 'ocean',
+                dark: 'missing',
+            },
+            profiles: [profile('ocean')],
+        });
+
+        expect(result.state.activeProfileIds).toEqual({
+            light: 'ocean',
+            dark: null,
+        });
+        expect(result.changed).toBe(true);
+    });
+
     it('drops persisted custom profiles that use ids reserved for base themes', () => {
         const result = parseThemeProfilesLocalState({
             activeProfileId: 'light',
             profiles: [profile('light')],
         });
 
-        expect(result.state).toEqual({ activeProfileId: null, profiles: [] });
+        expect(result.state).toEqual({ activeProfileIds: { light: null, dark: null }, profiles: [] });
         expect(result.changed).toBe(true);
     });
 
@@ -30,7 +59,7 @@ describe('theme profile persistence', () => {
             profiles: [profile('new')],
         });
 
-        expect(result.state).toEqual({ activeProfileId: null, profiles: [] });
+        expect(result.state).toEqual({ activeProfileIds: { light: null, dark: null }, profiles: [] });
         expect(result.changed).toBe(true);
     });
 });

@@ -12,7 +12,7 @@ import { t } from '@/text';
 
 export function ReviewCommentsMessageCard(props: {
     payload: ReviewCommentsV1;
-    onJumpToAnchor: (target: { filePath: string; source: ReviewCommentSource; anchor: ReviewCommentAnchor }) => void;
+    onJumpToAnchor?: (target: { filePath: string; source: ReviewCommentSource; anchor: ReviewCommentAnchor }) => void;
 }) {
     const comments = props.payload.comments;
     const byFile = React.useMemo(() => {
@@ -41,14 +41,16 @@ export function ReviewCommentsMessageCard(props: {
                                     <Text selectable numberOfLines={1} style={styles.anchorText}>
                                         {formatReviewCommentAnchorLabel(c)}
                                     </Text>
-                                    <Pressable
-                                        testID={`review-comments-jump:${c.id}`}
-                                        accessibilityRole="button"
-                                        onPress={() => props.onJumpToAnchor({ filePath: c.filePath, source: c.source, anchor: c.anchor })}
-                                        style={styles.jumpButton}
-                                    >
-                                        <Text style={styles.jumpText}>{t('files.reviewComments.jump')}</Text>
-                                    </Pressable>
+                                    {props.onJumpToAnchor ? (
+                                        <Pressable
+                                            testID={`review-comments-jump:${c.id}`}
+                                            accessibilityRole="button"
+                                            onPress={() => props.onJumpToAnchor?.({ filePath: c.filePath, source: c.source, anchor: c.anchor })}
+                                            style={styles.jumpButton}
+                                        >
+                                            <Text style={styles.jumpText}>{t('files.reviewComments.jump')}</Text>
+                                        </Pressable>
+                                    ) : null}
                                 </View>
                                 <View style={styles.commentBody}>
                                     {c.snapshot.beforeContext.map((line, idx) => (

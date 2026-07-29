@@ -9,7 +9,6 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
 
 const routerReplaceSpy = vi.fn();
 let localSearchParams: Record<string, unknown> = {};

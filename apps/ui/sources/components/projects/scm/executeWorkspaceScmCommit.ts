@@ -46,6 +46,8 @@ export async function executeWorkspaceScmCommit(input: Readonly<{
                     message: input.commitMessage,
                     ...(requestScope ? { scope: requestScope } : {}),
                     ...(includePatches ? { patches: input.commitSelectionPatches } : {}),
+                }, {
+                    serverId: input.scope.serverId,
                 });
                 if (!response.success) {
                     const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({

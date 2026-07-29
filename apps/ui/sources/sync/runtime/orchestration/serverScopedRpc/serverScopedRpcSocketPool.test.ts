@@ -5,7 +5,7 @@ import { createServerScopedRpcSocketPool } from './serverScopedRpcSocketPool';
 
 type Listener = (...args: any[]) => void;
 
-function createFakeSocket(options: Readonly<{ disconnectEventDelayMs?: number }> = {}): Readonly<{
+function createFakeSocket(options: Readonly<{ disconnectEventDelayMs?: number; connectionId?: string }> = {}): Readonly<{
     socket: any;
     connectSpy: ReturnType<typeof vi.fn>;
     disconnectSpy: ReturnType<typeof vi.fn>;
@@ -33,6 +33,10 @@ function createFakeSocket(options: Readonly<{ disconnectEventDelayMs?: number }>
 
     const connectSpy = vi.fn(() => {
         socket.connected = true;
+        // socket.io-client assigns `id` once the handshake completes.
+        if (typeof options.connectionId === 'string') {
+            socket.id = options.connectionId;
+        }
         emit('connect');
     });
 
@@ -101,6 +105,65 @@ describe('serverScopedRpcSocketPool', () => {
             }),
         );
 
+        await pool.stopAll();
+        pool.resetForTests();
+    });
+
+    it('surfaces the underlying socket.io connection id so per-tab transports can target this socket', async () => {
+        const ioSpy = vi.fn();
+        const { socket } = createFakeSocket({ connectionId: 'conn-xyz' });
+        ioSpy.mockReturnValue(socket);
+
+        const pool = createServerScopedRpcSocketPool({
+            createSocket: () => ioSpy(),
+            reachability: {
+                waitForReachable: async () => {},
+                startReachability: async () => {},
+                reportUnreachable: () => {},
+                subscribeNetworkAllowed: () => () => {},
+            },
+            readIdleDisconnectMs: () => 0,
+        });
+
+        const client: ScopedSocketClient = await pool.acquire({
+            serverUrl: 'https://server.example.test',
+            token: 'token-id',
+            timeoutMs: 1000,
+        });
+
+        expect(client.getSocketId()).toBe('conn-xyz');
+
+        client.disconnect();
+        await pool.stopAll();
+        pool.resetForTests();
+    });
+
+    it('returns an empty connection id when the socket has not completed a handshake', async () => {
+        const ioSpy = vi.fn();
+        const { socket } = createFakeSocket();
+        // A fake socket whose connect handshake never assigns `id`.
+        ioSpy.mockReturnValue(socket);
+
+        const pool = createServerScopedRpcSocketPool({
+            createSocket: () => ioSpy(),
+            reachability: {
+                waitForReachable: async () => {},
+                startReachability: async () => {},
+                reportUnreachable: () => {},
+                subscribeNetworkAllowed: () => () => {},
+            },
+            readIdleDisconnectMs: () => 0,
+        });
+
+        const client: ScopedSocketClient = await pool.acquire({
+            serverUrl: 'https://server.example.test',
+            token: 'token-noid',
+            timeoutMs: 1000,
+        });
+
+        expect(client.getSocketId()).toBe('');
+
+        client.disconnect();
         await pool.stopAll();
         pool.resetForTests();
     });

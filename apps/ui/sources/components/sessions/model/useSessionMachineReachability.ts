@@ -5,7 +5,11 @@ import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { getStorage } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
-import { resolveSessionMachineReachability } from '@/components/sessions/model/resolveSessionMachineReachability';
+import {
+    resolveSessionMachineReachability,
+    resolveSessionMachineReachabilityState,
+    type SessionMachineReachability,
+} from '@/components/sessions/model/resolveSessionMachineReachability';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 
 type SessionMachineReachabilityStorageState = Readonly<{
@@ -21,6 +25,7 @@ export function useSessionMachineReachability(sessionId: string): Readonly<{
     machineReachable: boolean;
     machineOnline: boolean;
     machineRpcTargetAvailable: boolean;
+    machineReachability: SessionMachineReachability;
 }> {
     const machineTarget = useSessionReachableMachineTarget(sessionId);
     const resolvedMachineId = machineTarget?.machineId ?? null;
@@ -41,6 +46,10 @@ export function useSessionMachineReachability(sessionId: string): Readonly<{
         machineIsKnown: machineStatus.machineKnown,
         machineIsOnline: machineStatus.machineOnline,
     });
+    const machineReachability = resolveSessionMachineReachabilityState({
+        machineIsKnown: machineStatus.machineKnown,
+        machineIsOnline: machineStatus.machineOnline,
+    });
 
     const machineRpcTargetAvailable = Boolean(machineTarget?.basePath);
 
@@ -48,5 +57,6 @@ export function useSessionMachineReachability(sessionId: string): Readonly<{
         machineReachable,
         machineOnline: machineStatus.machineOnline,
         machineRpcTargetAvailable,
-    }), [machineReachable, machineRpcTargetAvailable, machineStatus.machineOnline]);
+        machineReachability,
+    }), [machineReachability, machineReachable, machineRpcTargetAvailable, machineStatus.machineOnline]);
 }

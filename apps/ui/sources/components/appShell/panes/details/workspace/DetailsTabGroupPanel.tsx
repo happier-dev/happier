@@ -10,7 +10,7 @@ import { resolveWebScrollableElementWithin } from '@/components/ui/scroll/resolv
 import { t } from '@/text';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import type { DetailsTabState, DetailsWorkspaceGroupView } from './detailsWorkspaceTypes';
-import { DetailsTabStrip, type DetailsTabStripTestIds } from './DetailsTabStrip';
+import { DetailsTabStrip, type DetailsTabPresentation, type DetailsTabStripTestIds } from './DetailsTabStrip';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type ScrollPropagationEvent = Readonly<{ stopPropagation?: () => void }>;
@@ -160,6 +160,7 @@ export type DetailsTabGroupPanelProps = Readonly<{
         root?: string;
     }> & DetailsTabStripTestIds;
     resolveTabIconName?: ((tab: DetailsTabState) => string | null | undefined) | null;
+    resolveTabPresentation?: ((tab: DetailsTabState) => DetailsTabPresentation | null | undefined) | null;
     renderTabContent: (tab: DetailsTabState) => React.ReactNode;
     renderHeaderLeadingActions?: (() => React.ReactNode) | null;
     renderHeaderActions?: (() => React.ReactNode) | null;
@@ -210,6 +211,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                         pane={props.pane}
                         group={props.group}
                         resolveTabIconName={props.resolveTabIconName}
+                        resolveTabPresentation={props.resolveTabPresentation}
                         testIds={props.testIds}
                     />
                 ) : (

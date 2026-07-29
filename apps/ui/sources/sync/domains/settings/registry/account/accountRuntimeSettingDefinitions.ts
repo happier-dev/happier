@@ -1,4 +1,4 @@
-import { getAllProviderDefinitions } from '@happier-dev/agents';
+import { getAllAgentCatalogDefinitions } from '@happier-dev/agents';
 import {
     AcpCatalogSettingsV1Schema,
     BackendTargetRefV2Schema,
@@ -10,7 +10,7 @@ import {
 } from '@happier-dev/protocol';
 import { z } from 'zod';
 
-const BUILT_IN_BACKEND_IDS = new Set<string>(getAllProviderDefinitions().map((entry) => entry.id));
+const BUILT_IN_BACKEND_IDS = new Set<string>(getAllAgentCatalogDefinitions().map((entry) => entry.id));
 
 function buildExecutionRunsGuidanceSummaryProperties(value: unknown): Record<string, number> {
     const entries = Array.isArray(value) ? value : [];

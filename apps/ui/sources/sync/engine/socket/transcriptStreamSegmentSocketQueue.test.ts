@@ -6,6 +6,7 @@ import { SessionEncryption } from '@/sync/encryption/sessionEncryption';
 import { createSessionMessageApplyCoalescer } from '@/sync/engine/sessions/sessionMessageApplyCoalescer';
 import type { NormalizedMessage } from '@/sync/typesRaw';
 
+import { resetTranscriptStreamSegmentAssemblyForTests } from '@/sync/engine/sessions/transcriptStreamSegmentAssembly';
 import {
     createTranscriptStreamSegmentSocketQueueController,
     type TranscriptStreamSegmentSocketQueueEntry,
@@ -36,7 +37,7 @@ function buildRawTranscriptStreamSegmentRecord(text: string, localId: string) {
         role: 'agent',
         content: {
             type: 'acp',
-            provider: 'codex',
+            agentId: 'codex',
             data: { type: 'message', message: text },
         },
         meta: {
@@ -355,5 +356,125 @@ describe('createTranscriptStreamSegmentSocketQueueController', () => {
         expect(applyMessages.mock.calls[0]?.[1]).toEqual([
             expect.objectContaining({ localId: 'visible-segment' }),
         ]);
+    });
+
+    describe('delta composition', () => {
+        beforeEach(() => {
+            resetTranscriptStreamSegmentAssemblyForTests();
+        });
+
+        afterEach(() => {
+            resetTranscriptStreamSegmentAssemblyForTests();
+        });
+
+        function buildPlainSnapshotEntry(sessionId: string, text: string, opts: { localId?: string; tick: number }): TranscriptStreamSegmentSocketQueueEntry {
+            const localId = opts.localId ?? 'segment-1';
+            return {
+                update: {
+                    type: 'transcript-stream-segment',
+                    sessionId,
+                    message: {
+                        localId,
+                        messageRole: 'agent',
+                        tick: opts.tick,
+                        content: {
+                            t: 'plain',
+                            v: buildRawTranscriptStreamSegmentRecord(text, localId),
+                        },
+                        createdAt: 1_000,
+                        updatedAt: 1_010,
+                    },
+                } as never,
+                shouldContinue: () => true,
+                getSessionEncryption: () => null,
+                getSession: () => buildSession(sessionId, 'plain'),
+            };
+        }
+
+        function buildPlainDeltaEntry(sessionId: string, deltaText: string, opts: { localId?: string; tick: number; baseLength: number }): TranscriptStreamSegmentSocketQueueEntry {
+            const localId = opts.localId ?? 'segment-1';
+            return {
+                update: {
+                    type: 'transcript-stream-segment-delta',
+                    sessionId,
+                    message: {
+                        localId,
+                        messageRole: 'agent',
+                        tick: opts.tick,
+                        baseLength: opts.baseLength,
+                        content: {
+                            t: 'plain',
+                            v: buildRawTranscriptStreamSegmentRecord(deltaText, localId),
+                        },
+                        createdAt: 1_000,
+                        updatedAt: 1_040,
+                    },
+                } as never,
+                shouldContinue: () => true,
+                getSessionEncryption: () => null,
+                getSession: () => buildSession(sessionId, 'plain'),
+            };
+        }
+
+        function extractAppliedTexts(applied: NormalizedMessage[][]): string[] {
+            return applied.map((messages) => {
+                const blocks = (messages[0]?.content ?? []) as Array<{ type: string; text?: string }>;
+                return blocks.find((entry) => entry.type === 'text')?.text ?? '';
+            });
+        }
+
+        it('drops deltas for hidden sessions immediately without deferring or collapsing them', async () => {
+            const sessionId = 'hidden-delta-session';
+            const droppedHidden = vi.fn();
+            const applied: NormalizedMessage[][] = [];
+            const coalescer = createSessionMessageApplyCoalescer({
+                getConfig: () => ({ enabled: true, windowMs: 50, maxBatchSize: 1_000 }),
+                applyBatch: (_appliedSessionId, messages) => {
+                    applied.push(messages);
+                },
+            });
+            const controller = createTranscriptStreamSegmentSocketQueueController({
+                getConfig: () => ({ enabled: true, windowMs: 50, maxBatchSize: 1_000 }),
+                isSessionVisible: () => false,
+                messageCoalescer: coalescer,
+                onDeferredRawDroppedHidden: droppedHidden,
+            });
+
+            await controller.handle(buildPlainDeltaEntry(sessionId, ' wor', { tick: 2, baseLength: 5 }));
+            await controller.handle(buildPlainDeltaEntry(sessionId, 'ld', { tick: 3, baseLength: 9 }));
+
+            expect(droppedHidden).toHaveBeenCalledTimes(2);
+            expect(droppedHidden).toHaveBeenCalledWith({ messages: 1 });
+
+            await vi.runAllTimersAsync();
+            await controller.flush(sessionId);
+
+            expect(applied).toEqual([]);
+        });
+
+        it('flushes deferred snapshots before applying a visible delta so reconstruction stays ordered', async () => {
+            const sessionId = 'visible-delta-session';
+            let visible = false;
+            const applied: NormalizedMessage[][] = [];
+            const coalescer = createSessionMessageApplyCoalescer({
+                getConfig: () => ({ enabled: true, windowMs: 50, maxBatchSize: 1_000 }),
+                applyBatch: (_appliedSessionId, messages) => {
+                    applied.push(messages);
+                },
+            });
+            const controller = createTranscriptStreamSegmentSocketQueueController({
+                getConfig: () => ({ enabled: true, windowMs: 50, maxBatchSize: 1_000 }),
+                isSessionVisible: () => visible,
+                messageCoalescer: coalescer,
+            });
+
+            await controller.handle(buildPlainSnapshotEntry(sessionId, 'Hello', { tick: 1 }));
+            expect(applied).toEqual([]);
+
+            visible = true;
+            await controller.handle(buildPlainDeltaEntry(sessionId, ' world', { tick: 2, baseLength: 5 }));
+
+            expect(extractAppliedTexts(applied)).toEqual(['Hello', 'Hello world']);
+        });
     });
 });

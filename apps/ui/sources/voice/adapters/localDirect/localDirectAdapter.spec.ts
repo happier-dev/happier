@@ -35,6 +35,26 @@ describe('local direct voice adapter', () => {
     });
   });
 
+  it('owns session-scoped surface semantics and fails closed when unselected', async () => {
+    const { createLocalDirectVoiceAdapter } = await import('./localDirectAdapter');
+    const adapter = createLocalDirectVoiceAdapter();
+    const selected = {
+      providerId: 'local_direct',
+      providers: {
+        local_direct: { schemaVersion: 1, config: {} },
+      },
+    };
+
+    expect(adapter.resolveSurfaceCapabilities?.(selected)).toEqual({
+      allowsGlobalStart: false,
+      controlSessionScope: 'surface',
+      requiresVoiceAgentFeature: false,
+      bargeInEnabled: false,
+      cancelResponse: 'immediate',
+    });
+    expect(adapter.resolveSurfaceCapabilities?.({ ...selected, providerId: 'local_conversation' })).toBeNull();
+  });
+
   it('projects an explicit connected runtime snapshot as a connected local session snapshot', async () => {
     const { transitionVoiceRuntimeToIdle } = await import('@/voice/runtime/machine/voiceConversationRuntimeHelpers');
     transitionVoiceRuntimeToIdle({ controlSessionId: 's1' });

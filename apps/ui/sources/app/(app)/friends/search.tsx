@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import type { ScrollView, ScrollViewProps } from 'react-native';
-import { View, FlatList } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { UserSearchResult } from '@/components/friends/UserSearchResult';
 import { searchUsersByUsername, sendFriendRequest } from '@/sync/api/social/apiFriends';
@@ -153,14 +153,14 @@ export default function SearchFriendsScreen() {
                                     <Text style={styles.loadingText}>{t('friends.searching')}</Text>
                                 </View>
                             ) : searchResults.length > 0 ? (
-                                <FlatList
-                                    data={searchResults}
-                                    renderItem={renderUserItem}
-                                    ItemSeparatorComponent={renderSeparator}
-                                    keyExtractor={(item) => item.id}
-                                    scrollEnabled={false}
-                                    contentContainerStyle={styles.resultsList}
-                                />
+                                <View style={styles.resultsList}>
+                                    {searchResults.map((item, index) => (
+                                        <React.Fragment key={item.id}>
+                                            {index > 0 ? renderSeparator() : null}
+                                            {renderUserItem({ item })}
+                                        </React.Fragment>
+                                    ))}
+                                </View>
                             ) : hasSearched ? (
                                 <View style={styles.noResultsContainer}>
                                     <Text style={styles.noResultsText}>

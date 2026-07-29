@@ -1,3 +1,5 @@
+import type { LocalServiceActionKindV1 } from '@happier-dev/protocol';
+
 export type ManagedLocalServiceRow = Readonly<{
     id: string;
     ownerLabel?: string;
@@ -7,11 +9,13 @@ export type ManagedLocalServiceRow = Readonly<{
     inventoryId?: string;
     port?: number;
     url?: string;
+    supportedActions: readonly LocalServiceActionKindV1[];
     diagnostics: readonly unknown[];
     updatedAt: number;
 }>;
 
 export type ManagedLocalServicesSnapshot = Readonly<{
+    machineId?: string;
     generatedAt: number;
     refreshState: 'idle' | 'refreshing' | 'error';
     rows: readonly ManagedLocalServiceRow[];
@@ -32,6 +36,13 @@ function rowKey(row: ManagedLocalServiceRow): string {
 
 function areRowsEquivalent(a: ManagedLocalServiceRow | undefined, b: ManagedLocalServiceRow): boolean {
     return Boolean(a) && rowKey(a as ManagedLocalServiceRow) === rowKey(b);
+}
+
+function normalizeManagedLocalServiceRow(row: ManagedLocalServiceRow): ManagedLocalServiceRow {
+    return {
+        ...row,
+        supportedActions: [...new Set(row.supportedActions ?? [])],
+    };
 }
 
 export function createManagedLocalServicesState(): ManagedLocalServicesState {
@@ -61,7 +72,8 @@ export function applyManagedLocalServicesSnapshot(
 ): ManagedLocalServicesState {
     const rowsById = new Map<string, ManagedLocalServiceRow>();
     const rowIds: string[] = [];
-    for (const row of snapshot.rows) {
+    for (const rawRow of snapshot.rows) {
+        const row = normalizeManagedLocalServiceRow(rawRow);
         rowIds.push(row.id);
         const previous = state.rowsById.get(row.id);
         rowsById.set(row.id, areRowsEquivalent(previous, row) ? previous as ManagedLocalServiceRow : row);
@@ -72,6 +84,21 @@ export function applyManagedLocalServicesSnapshot(
         rowIds,
         rowsById,
         diagnostics: snapshot.diagnostics,
+    };
+}
+
+export function failManagedLocalServicesRefresh(
+    state: ManagedLocalServicesState,
+    input: Readonly<{ generatedAt: number; reasonCode: string }>,
+): ManagedLocalServicesState {
+    return {
+        ...state,
+        generatedAt: input.generatedAt,
+        refreshState: 'error',
+        diagnostics: [{
+            code: input.reasonCode,
+            severity: 'warning',
+        }],
     };
 }
 

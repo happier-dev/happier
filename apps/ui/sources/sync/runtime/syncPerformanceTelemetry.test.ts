@@ -76,6 +76,30 @@ describe('sync performance telemetry', () => {
         ]);
     });
 
+    it('supports lazy count fields so disabled telemetry adds no field construction work', () => {
+        const fields = vi.fn(() => ({ renderables: 42 }));
+        const telemetry = createSyncPerformanceTelemetry({
+            enabled: false,
+            now: () => 0,
+        });
+
+        telemetry.countLazy('sync.store.sessions.warmCache.schedule', fields);
+
+        expect(fields).not.toHaveBeenCalled();
+        expect(telemetry.snapshot().events).toEqual([]);
+
+        telemetry.configure({ enabled: true });
+        telemetry.countLazy('sync.store.sessions.warmCache.schedule', fields);
+
+        expect(fields).toHaveBeenCalledTimes(1);
+        expect(telemetry.snapshot().events).toEqual([
+            expect.objectContaining({
+                name: 'sync.store.sessions.warmCache.schedule',
+                fields: { renderables: 42 },
+            }),
+        ]);
+    });
+
     it('keeps field max and last values for repeated static knobs', () => {
         const telemetry = createSyncPerformanceTelemetry({
             enabled: true,

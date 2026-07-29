@@ -377,11 +377,19 @@ export function useWorkspaceFileEditorState(input: Readonly<{
 
                 setEditorOriginalText(latestText);
                 setEditorOriginalHash(response.hash);
+                setFileChangedExternally(false);
+                const liveTextAfterWrite = editorHandleRef.current?.getValue?.() ?? editorTextRef.current;
+                if (liveTextAfterWrite !== latestText) {
+                    // The user kept typing while the write was in flight. Seeding the editor
+                    // with the saved snapshot would replace the live document and reset the
+                    // cursor. Keep editing dirty; the newer text saves on the next pass.
+                    setEditorDirty(true);
+                    return;
+                }
                 setEditorSeedText(latestText);
                 setEditorByteSize(() => new Blob([latestText]).size);
                 setIsEditingFile(false);
                 setEditorDirty(false);
-                setFileChangedExternally(false);
                 workspaceFileEditorDraftCache.setDraft({
                     workspaceCacheKey,
                     filePath: latestInput.filePath,

@@ -1,5 +1,5 @@
 import { createAttemptGuard } from '@/utils/timing/attemptGuard';
-import { fetchOpenAiCompatSpeechAudio } from '@/voice/local/fetchOpenAiCompatSpeechAudio';
+import { OpenAiCompatDaemonClient } from '@/voice/local/openaiCompat/client';
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
 
@@ -50,6 +50,8 @@ export type TtsPlaybackControllerDeps<TPayload = TtsAudioChunkPayload> = Readonl
     confirmPlayback?: (chunk: TtsChunk<TPayload>) => Promise<void> | void;
     /** Optional notification when playback fails; the queue still advances. */
     onPlaybackError?: (chunk: TtsChunk<TPayload>, error: unknown) => Promise<void> | void;
+    /** Optional terminal notification when remote playback confirmation fails. */
+    onConfirmationError?: (chunk: TtsChunk<TPayload>, error: unknown) => Promise<void> | void;
     /** Bounded prefetch depth (how many chunks ahead to request). Default 2. */
     prefetchDepth?: number;
     /** Notified with the bounded count of chunks to prefetch. */
@@ -86,8 +88,8 @@ function chunkKey(groupId: string, chunkIndex: number): string {
  *
  * - Buffers out-of-order chunks per `groupId` and advances only on a contiguous
  *   `chunkIndex` run.
- * - Per-chunk playback-confirm backpressure: the next chunk only plays after the
- *   current chunk's playback resolves.
+ * - Playback remains contiguous: the next ready chunk starts after local
+ *   playback resolves, without waiting for remote confirmation RTT.
  * - Bounded prefetch (default ~2) requested via `onPrefetch`.
  * - Late confirms (arriving after a group is retired) are tolerated and dropped
  *   after `lateConfirmTtlMs`.
@@ -108,6 +110,7 @@ export function createTtsPlaybackController<TPayload = TtsAudioChunkPayload>(
     let finished = false;
     let resolveDone: (() => void) | null = null;
     const retiredGroups = new Set<string>();
+    const pendingConfirmations = new Set<Promise<void>>();
 
     const settleDone = () => {
         if (finished) return;
@@ -127,6 +130,18 @@ export function createTtsPlaybackController<TPayload = TtsAudioChunkPayload>(
     const groupIsFinished = (g: QueueGroup<TPayload>): boolean =>
         g.finalChunkIndex !== null && g.nextChunkToPlay > g.finalChunkIndex;
 
+    const settleWhenConfirmationsComplete = (generation: number) => {
+        if (pendingConfirmations.size === 0) {
+            settleDone();
+            return;
+        }
+        void Promise.allSettled([...pendingConfirmations]).then(() => {
+            if (generation === activeEpoch && (aborted || group === null)) {
+                settleDone();
+            }
+        });
+    };
+
     const processQueue = async () => {
         if (processing) return;
         processing = true;
@@ -142,7 +157,7 @@ export function createTtsPlaybackController<TPayload = TtsAudioChunkPayload>(
                         retiredGroups.add(g.groupId);
                         scheduleRetirementExpiry(g.groupId);
                         group = null;
-                        settleDone();
+                        settleWhenConfirmationsComplete(generation);
                     }
                     // Otherwise wait for the contiguous chunk to arrive.
                     return;
@@ -169,11 +184,21 @@ export function createTtsPlaybackController<TPayload = TtsAudioChunkPayload>(
                 const key = chunkKey(nextChunk.groupId, nextChunk.chunkIndex);
                 if (playbackSucceeded && !g.confirmedChunkKeys.has(key)) {
                     g.confirmedChunkKeys.add(key);
-                    try {
-                        await deps.confirmPlayback?.(nextChunk);
-                    } catch {
-                        // Confirmation is best-effort.
-                    }
+                    let confirmation: Promise<void>;
+                    confirmation = Promise.resolve(deps.confirmPlayback?.(nextChunk))
+                        .catch(async (error) => {
+                            if (generation !== activeEpoch || aborted) return;
+                            aborted = true;
+                            group = null;
+                            await deps.onConfirmationError?.(nextChunk, error);
+                        })
+                        .finally(() => {
+                            pendingConfirmations.delete(confirmation);
+                            if (generation === activeEpoch && (aborted || group === null)) {
+                                settleWhenConfirmationsComplete(generation);
+                            }
+                        });
+                    pendingConfirmations.add(confirmation);
                 }
 
                 if (aborted || generation !== activeEpoch) return;
@@ -182,6 +207,24 @@ export function createTtsPlaybackController<TPayload = TtsAudioChunkPayload>(
         } finally {
             if (generation === activeEpoch) {
                 processing = false;
+                // An enqueue can race the narrow window after the loop observes
+                // a missing contiguous chunk but before this flag is cleared.
+                // That enqueue correctly sees `processing === true`; once the
+                // owner is idle, re-check the queue so a terminal marker or the
+                // next contiguous chunk cannot remain stranded forever.
+                const pendingGroup = group;
+                if (
+                    pendingGroup
+                    && !aborted
+                    && (
+                        pendingGroup.chunks.has(pendingGroup.nextChunkToPlay)
+                        || groupIsFinished(pendingGroup)
+                    )
+                ) {
+                    queueMicrotask(() => {
+                        void processQueue();
+                    });
+                }
             }
         }
     };
@@ -196,10 +239,12 @@ export function createTtsPlaybackController<TPayload = TtsAudioChunkPayload>(
     return {
         speak: () => {
             // Advance the generation: any in-flight chunks for the old epoch drop.
+            settleDone();
             activeEpoch = epochGuard.next();
             aborted = false;
             finished = false;
             processing = false;
+            pendingConfirmations.clear();
             group = null;
             const epoch = activeEpoch;
             const done = new Promise<void>((resolve) => {
@@ -250,27 +295,57 @@ export function createTtsPlaybackController<TPayload = TtsAudioChunkPayload>(
 
 export async function speakOpenAiCompatText(opts: {
   baseUrl: string;
-  apiKey: string | null;
+  insecureLocalOriginConsent: string | null;
+  insecureLocalConsentMachineId?: string | null;
+  credentialKind: string;
   model: string;
   voice: string;
   format: 'mp3' | 'wav';
   input: string;
-  timeoutMs: number;
   registerPlaybackStopper: VoicePlaybackStopperRegistrar;
+  onPlaybackStarted?: () => void;
+  signal?: AbortSignal | null;
+  client?: Pick<OpenAiCompatDaemonClient, 'synthesize'>;
 }): Promise<void> {
-  const buffer = await fetchOpenAiCompatSpeechAudio({
-    baseUrl: opts.baseUrl,
-    apiKey: opts.apiKey,
-    model: opts.model,
-    voice: opts.voice,
-    format: opts.format,
-    input: opts.input,
-    timeoutMs: opts.timeoutMs,
-  });
+  const controller = new AbortController();
+  let stopPlayback: (() => void) | null = null;
+  let clearStopper: () => void = () => undefined;
+  const abort = () => controller.abort();
+  if (opts.signal?.aborted) abort();
+  else opts.signal?.addEventListener('abort', abort, { once: true });
 
-  return await playAudioBytesWithStopper({
-    bytes: buffer,
-    format: opts.format,
-    registerPlaybackStopper: opts.registerPlaybackStopper,
-  });
+  try {
+    clearStopper = opts.registerPlaybackStopper(() => {
+      abort();
+      stopPlayback?.();
+    });
+    const synthesized = await (opts.client ?? new OpenAiCompatDaemonClient()).synthesize({
+      baseUrl: opts.baseUrl,
+      insecureLocalOriginConsent: opts.insecureLocalOriginConsent,
+      insecureLocalConsentMachineId: opts.insecureLocalConsentMachineId ?? null,
+      credentialKind: opts.credentialKind,
+      model: opts.model,
+      voice: opts.voice,
+      responseFormat: opts.format,
+      text: opts.input,
+      signal: controller.signal,
+    });
+    const buffer = new Uint8Array(synthesized.bytes).buffer;
+    const registerPlaybackOnly: VoicePlaybackStopperRegistrar = (stopper) => {
+      stopPlayback = stopper;
+      return () => {
+        if (stopPlayback === stopper) stopPlayback = null;
+      };
+    };
+
+    return await playAudioBytesWithStopper({
+      bytes: buffer,
+      format: opts.format,
+      registerPlaybackStopper: registerPlaybackOnly,
+      onPlaybackStarted: opts.onPlaybackStarted,
+    });
+  } finally {
+    opts.signal?.removeEventListener('abort', abort);
+    clearStopper();
+  }
 }

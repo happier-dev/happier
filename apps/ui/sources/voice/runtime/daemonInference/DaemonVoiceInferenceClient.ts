@@ -1,5 +1,6 @@
 import {
     DaemonVoiceInferenceModelsInstallResponseSchema,
+    DaemonVoiceInferenceModelLicenseAcceptResponseSchema,
     DaemonVoiceInferenceModelsListResponseSchema,
     DaemonVoiceInferenceModelsRemoveResponseSchema,
     DaemonVoiceInferenceModelsStatusResponseSchema,
@@ -23,6 +24,7 @@ import {
     DaemonVoiceInferenceSttTranscribeResponseSchema,
     type DaemonVoiceInferenceAudioOutput,
     type DaemonVoiceInferenceModelStatus,
+    type DaemonVoiceInferenceModelLicenseAcceptRequest,
     type DaemonVoiceInferenceStatusResponse,
     type DaemonVoiceInferenceTtsSynthesizeResponse,
     type DaemonVoiceInferenceTtsStreamEvent,
@@ -38,8 +40,12 @@ import { openLocalUploadSourceReader } from '@/sync/runtime/files/localUploadSou
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { downloadInChunks, uploadInChunks } from '@/sync/domains/transfers/runtime/transferRuntime/carriers/chunkTransferClient';
 import { randomUUID } from '@/platform/randomUUID';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { ensureVoiceConversationSessionForVoiceHome } from '@/voice/persistence/voiceConversationSession';
+import {
+    resolveVoiceHomeDaemonMachineId,
+} from '@/voice/persistence/voiceConversationSession';
+import {
+    resolveVoiceDiagnosticsCaptureContext,
+} from '@/voice/diagnostics/capturePolicy';
 
 import {
     createDaemonSpeechStreamRpcCompatibilityCarrierAdapter,
@@ -53,6 +59,11 @@ import {
 } from './DaemonSpeechStreamSender';
 import { createProductionDaemonSpeechStreamingSttTransport } from './DaemonSpeechStreamProductionTunnelTransport';
 import { createDaemonVoiceInferenceClientError } from './daemonVoiceInferenceErrors';
+import { resolveDaemonStreamingSttJsonRpcCompatibilityAllowed } from './daemonVoiceInferenceConfig';
+import {
+    daemonSpeechStreamDiagnostics,
+    type DaemonSpeechStreamTransportSelection,
+} from './daemonSpeechStreamDiagnostics';
 
 function parseSchema<T>(schema: Readonly<{ parse: (input: unknown) => T }>, value: unknown): T {
     try {
@@ -104,14 +115,21 @@ function decodeBase64Bytes(value: string): Uint8Array {
 }
 
 export type DaemonVoiceInferenceMachineTarget = Readonly<{
-    sessionId: string;
     machineId: string;
-    basePath: string;
+}>;
+
+/**
+ * Captured host-global execution target for machine-only model operations.
+ * Supplying it makes a settings mutation fail closed if selection changed
+ * before the feature/machine preflight completed, instead of roaming to the
+ * newly-selected daemon.
+ */
+export type DaemonVoiceInferenceModelMachineScope = Readonly<{
+    machineId: string;
 }>;
 
 export type DaemonVoiceInferenceClientDeps = Readonly<{
-    ensureVoiceConversationSessionForVoiceHome: typeof ensureVoiceConversationSessionForVoiceHome;
-    readMachineTargetForSession: typeof readMachineTargetForSession;
+    resolveVoiceHomeDaemonMachineId: typeof resolveVoiceHomeDaemonMachineId;
     machineRpcWithServerScope: typeof machineRpcWithServerScope;
     isRuntimeFeatureEnabled: typeof isRuntimeFeatureEnabled;
     openLocalUploadSourceReader: typeof openLocalUploadSourceReader;
@@ -119,6 +137,9 @@ export type DaemonVoiceInferenceClientDeps = Readonly<{
     createStreamingSttTransport: (
         input: DaemonVoiceInferenceStreamingSttTransportFactoryInput,
     ) => Promise<DaemonVoiceInferenceStreamingSttTransportSelection | null> | DaemonVoiceInferenceStreamingSttTransportSelection | null;
+    allowStreamingSttJsonRpcCompatibility: () => boolean;
+    recordStreamingSttTransportSelection: (selection: DaemonSpeechStreamTransportSelection) => void;
+    resolveDiagnosticsCaptureContext: typeof resolveVoiceDiagnosticsCaptureContext;
 }>;
 
 export type DaemonVoiceInferenceStreamingSttTransportSelection = Readonly<{
@@ -164,13 +185,15 @@ export class DaemonVoiceInferenceClient {
 
     constructor(deps?: Partial<DaemonVoiceInferenceClientDeps>) {
         this.deps = {
-            ensureVoiceConversationSessionForVoiceHome,
-            readMachineTargetForSession,
+            resolveVoiceHomeDaemonMachineId,
             machineRpcWithServerScope,
             isRuntimeFeatureEnabled,
             openLocalUploadSourceReader,
             createRequestId: randomUUID,
             createStreamingSttTransport: createProductionDaemonSpeechStreamingSttTransport,
+            allowStreamingSttJsonRpcCompatibility: resolveDaemonStreamingSttJsonRpcCompatibilityAllowed,
+            recordStreamingSttTransportSelection: daemonSpeechStreamDiagnostics.record,
+            resolveDiagnosticsCaptureContext: resolveVoiceDiagnosticsCaptureContext,
             ...deps,
         };
     }
@@ -184,26 +207,30 @@ export class DaemonVoiceInferenceClient {
         }
     }
 
-    private async resolveMachineTarget(): Promise<DaemonVoiceInferenceMachineTarget> {
+    private async resolveMachineId(scope?: DaemonVoiceInferenceModelMachineScope): Promise<string> {
         await this.assertFeatureEnabled();
-        const sessionId = await this.deps.ensureVoiceConversationSessionForVoiceHome();
-        const machineTarget = this.deps.readMachineTargetForSession(sessionId);
-        if (!machineTarget?.machineId || !machineTarget?.basePath) {
+        const machineId = this.deps.resolveVoiceHomeDaemonMachineId();
+        if (!machineId || (scope && machineId !== scope.machineId)) {
             throw createDaemonVoiceInferenceClientError('machine_unreachable');
         }
-        return {
-            sessionId,
-            machineId: machineTarget.machineId,
-            basePath: machineTarget.basePath,
-        };
+        return scope?.machineId ?? machineId;
+    }
+
+    private async resolveMachineTarget(): Promise<DaemonVoiceInferenceMachineTarget> {
+        await this.assertFeatureEnabled();
+        const machineId = this.deps.resolveVoiceHomeDaemonMachineId();
+        if (!machineId) {
+            throw createDaemonVoiceInferenceClientError('machine_unreachable');
+        }
+        return { machineId };
     }
 
     async getStatus(): Promise<Extract<DaemonVoiceInferenceStatusResponse, { ok: true }>> {
-        const machineTarget = await this.resolveMachineTarget();
+        const machineId = await this.resolveMachineId();
         const response = parseSchema(
             DaemonVoiceInferenceStatusResponseSchema,
             await this.deps.machineRpcWithServerScope({
-                machineId: machineTarget.machineId,
+                machineId,
                 method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS,
                 payload: {},
             }),
@@ -212,12 +239,12 @@ export class DaemonVoiceInferenceClient {
         return response;
     }
 
-    async listModels(): Promise<readonly DaemonVoiceInferenceModelStatus[]> {
-        const machineTarget = await this.resolveMachineTarget();
+    async listModels(scope?: DaemonVoiceInferenceModelMachineScope): Promise<readonly DaemonVoiceInferenceModelStatus[]> {
+        const machineId = await this.resolveMachineId(scope);
         const response = parseSchema(
             DaemonVoiceInferenceModelsListResponseSchema,
             await this.deps.machineRpcWithServerScope({
-                machineId: machineTarget.machineId,
+                machineId,
                 method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LIST,
                 payload: {},
             }),
@@ -226,12 +253,15 @@ export class DaemonVoiceInferenceClient {
         return response.models;
     }
 
-    async getModelsStatus(packIds?: readonly string[] | null): Promise<readonly DaemonVoiceInferenceModelStatus[]> {
-        const machineTarget = await this.resolveMachineTarget();
+    async getModelsStatus(
+        packIds?: readonly string[] | null,
+        scope?: DaemonVoiceInferenceModelMachineScope,
+    ): Promise<readonly DaemonVoiceInferenceModelStatus[]> {
+        const machineId = await this.resolveMachineId(scope);
         const response = parseSchema(
             DaemonVoiceInferenceModelsStatusResponseSchema,
             await this.deps.machineRpcWithServerScope({
-                machineId: machineTarget.machineId,
+                machineId,
                 method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_STATUS,
                 payload: packIds && packIds.length > 0 ? { packIds } : {},
             }),
@@ -242,12 +272,12 @@ export class DaemonVoiceInferenceClient {
 
     async installModel(params: Readonly<{
         packId: string;
-    }>): Promise<DaemonVoiceInferenceModelStatus> {
-        const machineTarget = await this.resolveMachineTarget();
+    }>, scope?: DaemonVoiceInferenceModelMachineScope): Promise<DaemonVoiceInferenceModelStatus> {
+        const machineId = await this.resolveMachineId(scope);
         const response = parseSchema(
             DaemonVoiceInferenceModelsInstallResponseSchema,
             await this.deps.machineRpcWithServerScope({
-                machineId: machineTarget.machineId,
+                machineId,
                 method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL,
                 payload: { packId: params.packId },
             }),
@@ -256,12 +286,29 @@ export class DaemonVoiceInferenceClient {
         return response.model;
     }
 
-    async removeModel(packId: string): Promise<void> {
-        const machineTarget = await this.resolveMachineTarget();
+    async acceptModelPackLicense(
+        input: DaemonVoiceInferenceModelLicenseAcceptRequest,
+        scope?: DaemonVoiceInferenceModelMachineScope,
+    ): Promise<DaemonVoiceInferenceModelStatus> {
+        const machineId = await this.resolveMachineId(scope);
+        const response = parseSchema(
+            DaemonVoiceInferenceModelLicenseAcceptResponseSchema,
+            await this.deps.machineRpcWithServerScope({
+                machineId,
+                method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LICENSE_ACCEPT,
+                payload: input,
+            }),
+        );
+        throwIfErrorResponse(response);
+        return response.model;
+    }
+
+    async removeModel(packId: string, scope?: DaemonVoiceInferenceModelMachineScope): Promise<void> {
+        const machineId = await this.resolveMachineId(scope);
         const response = parseSchema(
             DaemonVoiceInferenceModelsRemoveResponseSchema,
             await this.deps.machineRpcWithServerScope({
-                machineId: machineTarget.machineId,
+                machineId,
                 method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_REMOVE,
                 payload: { packId },
             }),
@@ -280,6 +327,11 @@ export class DaemonVoiceInferenceClient {
     }>): Promise<Readonly<{ bytes: Uint8Array; output: DaemonVoiceInferenceAudioOutput }>> {
         const machineTarget = await this.resolveMachineTarget();
         const requestId = this.deps.createRequestId();
+        const diagnostics = this.deps.resolveDiagnosticsCaptureContext({
+            sessionId: params.sessionId,
+            direction: 'tts_output',
+            durationMs: null,
+        });
         const cancelRequest = async () => {
             try {
                 await this.deps.machineRpcWithServerScope({
@@ -309,6 +361,7 @@ export class DaemonVoiceInferenceClient {
                         voiceId: params.voiceId,
                         speed: params.speed,
                         output: params.output,
+                        ...(diagnostics ? { diagnostics } : {}),
                     },
                     // Thread the D12 abort signal so barge-in/cancel terminates the in-flight
                     // synthesis RPC immediately; the explicit tts.cancel above remains the
@@ -384,6 +437,11 @@ export class DaemonVoiceInferenceClient {
         const machineTarget = await this.resolveMachineTarget();
         const requestId = this.deps.createRequestId();
         const rpcSignal = params.signal ?? null;
+        const diagnostics = this.deps.resolveDiagnosticsCaptureContext({
+            sessionId: params.sessionId,
+            direction: 'tts_output',
+            durationMs: null,
+        });
         const started = parseSchema(
             DaemonVoiceInferenceTtsStreamStartResponseSchema,
             await this.deps.machineRpcWithServerScope({
@@ -397,6 +455,7 @@ export class DaemonVoiceInferenceClient {
                     speed: params.speed,
                     output: params.output,
                     prefetchDepth: 2,
+                    ...(diagnostics ? { diagnostics } : {}),
                 },
                 ...(rpcSignal ? { signal: rpcSignal } : {}),
             }),
@@ -509,6 +568,7 @@ export class DaemonVoiceInferenceClient {
 
     async transcribeRecordedAudio(params: Readonly<{
         sessionId?: string | null;
+        durationMs?: number | null;
         source: LocalUploadSource;
         inputMimeType: string;
         packId: string | null;
@@ -522,6 +582,14 @@ export class DaemonVoiceInferenceClient {
     }>> {
         const machineTarget = await this.resolveMachineTarget();
         const requestId = this.deps.createRequestId();
+        const durationMs = typeof params.durationMs === 'number' && Number.isFinite(params.durationMs)
+            ? Math.max(0, params.durationMs)
+            : null;
+        const diagnostics = this.deps.resolveDiagnosticsCaptureContext({
+            sessionId: params.sessionId,
+            direction: 'stt_input',
+            durationMs,
+        });
         const cancelRequest = async () => {
             try {
                 await this.deps.machineRpcWithServerScope({
@@ -612,6 +680,7 @@ export class DaemonVoiceInferenceClient {
                             strategy: 'daemon_decode',
                             systemFfmpegAllowed: false,
                         },
+                        ...(diagnostics ? { diagnostics } : {}),
                     },
                     // Thread the D12 abort signal so cancel terminates the in-flight transcription
                     // RPC immediately; the explicit stt.cancel above remains the daemon-side terminator.
@@ -631,6 +700,7 @@ export class DaemonVoiceInferenceClient {
     }
 
     async createStreamingSttSender(params: Readonly<{
+        sessionId?: string | null;
         packId: string | null;
         language: string | null;
         signal?: AbortSignal | null;
@@ -638,6 +708,13 @@ export class DaemonVoiceInferenceClient {
         const machineTarget = await this.resolveMachineTarget();
         const requestId = this.deps.createRequestId();
         const rpcSignal = params.signal ?? null;
+        const diagnostics = params.sessionId
+            ? this.deps.resolveDiagnosticsCaptureContext({
+                sessionId: params.sessionId,
+                direction: 'stt_input',
+                durationMs: null,
+            })
+            : undefined;
         const compatibilityTransport: DaemonSpeechStreamTransport = {
             start: async (payload) =>
                 parseSchema(
@@ -677,12 +754,31 @@ export class DaemonVoiceInferenceClient {
             signal: rpcSignal,
             compatibilityTransport,
         });
+        if (!selectedTransport && !this.deps.allowStreamingSttJsonRpcCompatibility()) {
+            this.deps.recordStreamingSttTransportSelection({
+                sessionId: params.sessionId?.trim() || machineTarget.machineId,
+                machineId: machineTarget.machineId,
+                transport: 'json_rpc_compat_forbidden',
+            });
+            throw createDaemonVoiceInferenceClientError(
+                'stream_transport_unavailable',
+                'daemon_voice_inference_stream_transport_unavailable',
+            );
+        }
+        const transport = selectedTransport ? 'binary_tunnel' : 'json_rpc_compat';
+        this.deps.recordStreamingSttTransportSelection({
+            sessionId: params.sessionId?.trim() || machineTarget.machineId,
+            machineId: machineTarget.machineId,
+            transport,
+        });
         return createDaemonSpeechStreamSender({
             requestId,
             packId: params.packId,
             language: params.language,
+            ...(diagnostics ? { diagnostics } : {}),
             carrierAdapter: selectedTransport?.carrierAdapter ?? createDaemonSpeechStreamRpcCompatibilityCarrierAdapter(),
             transport: selectedTransport?.transport ?? compatibilityTransport,
+            transportKind: transport,
         });
     }
 

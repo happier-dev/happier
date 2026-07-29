@@ -22,6 +22,7 @@ import {
 } from '@/voice/persistence/voiceAgentRunMetadata';
 
 import type { VoiceAgentHandle, VoiceAgentStartParams } from './types';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
 function resolvePreferredVoiceAgentSessionFromState(sessionId: string): Readonly<{
     active?: boolean;
@@ -37,10 +38,11 @@ export function assertActiveDaemonTargetSession(sessionId: string): void {
     const state = storage.getState();
     const session: any = resolvePreferredVoiceAgentSessionFromState(sessionId);
     if (!session) return;
-    const agentId = resolveAgentIdFromSessionMetadata(session?.metadata) ?? DEFAULT_AGENT_ID;
+    const metadata = readVoiceSessionOwnerMetadataFromState(state, sessionId);
+    const agentId = resolveAgentIdFromSessionMetadata(metadata) ?? DEFAULT_AGENT_ID;
     if (!supportsEffectiveLocalControlForSession({
         agentId,
-        metadata: session?.metadata,
+        metadata,
         accountSettings: state.settings,
     })) {
         throw Object.assign(
@@ -60,7 +62,7 @@ export function assertActiveDaemonTargetSession(sessionId: string): void {
             { code: 'VOICE_AGENT_TARGET_SESSION_OFFLINE' },
         );
     }
-    const machineId = normalizeNonEmptyString(session?.metadata?.machineId);
+    const machineId = normalizeNonEmptyString(metadata?.machineId);
     const machine = machineId ? resolveMachineForActiveServerFromState(storage.getState(), machineId) : null;
     if (machine && isMachineOnline(machine) !== true) {
         throw Object.assign(
@@ -81,7 +83,9 @@ function isReusableDaemonConversationSessionId(sessionId: string | null): sessio
     const session: any = resolvePreferredVoiceAgentSessionFromState(sessionId);
     if (session?.active !== true) return false;
 
-    const machineId = normalizeNonEmptyString(session?.metadata?.machineId);
+    const machineId = normalizeNonEmptyString(
+        readVoiceSessionOwnerMetadataFromState(storage.getState() as any, sessionId)?.machineId,
+    );
     if (!machineId) return true;
 
     const machine: any = resolveMachineForActiveServerFromState(storage.getState(), machineId);

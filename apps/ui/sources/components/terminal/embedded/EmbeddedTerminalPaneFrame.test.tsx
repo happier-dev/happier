@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installEmbeddedTerminalPaneCommonModuleMocks } from './embeddedTerminalPaneTestHelpers';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 installEmbeddedTerminalPaneCommonModuleMocks({
     reactNative: async () => {
@@ -81,8 +81,10 @@ describe('EmbeddedTerminalPaneFrame', () => {
             error: null,
             detectedUrl: null,
             onInput: () => {},
+            onPaste: () => {},
             onResize: () => {},
             onReady: () => {},
+            onWriteComplete: () => {},
             clearTerminal: () => {},
             requestRestart: () => {},
             retryConnect: () => {},
@@ -112,8 +114,10 @@ describe('EmbeddedTerminalPaneFrame', () => {
             error: null,
             detectedUrl: null,
             onInput: () => {},
+            onPaste: () => {},
             onResize: () => {},
             onReady: () => {},
+            onWriteComplete: () => {},
             clearTerminal: () => {},
             requestRestart: () => {},
             retryConnect: () => {},
@@ -134,5 +138,37 @@ describe('EmbeddedTerminalPaneFrame', () => {
 
         const surface = screen.findByTestId('embedded-terminal-surface');
         expect(flattenStyle(surface?.props.style).marginBottom).toBe(216);
+    });
+
+    it('does not add a second keyboard inset on Android because the window already resizes', async () => {
+        const controller: EmbeddedTerminalPaneController = {
+            status: 'connected',
+            error: null,
+            detectedUrl: null,
+            onInput: () => {},
+            onPaste: () => {},
+            onResize: () => {},
+            onReady: () => {},
+            onWriteComplete: () => {},
+            clearTerminal: () => {},
+            requestRestart: () => {},
+            retryConnect: () => {},
+            dismissDetectedUrl: () => {},
+        };
+
+        const screen = await renderScreen(
+            React.createElement(EmbeddedTerminalPaneFrame, {
+                title: 'Terminal',
+                controller,
+                surface: React.createElement('TerminalSurface'),
+                footer: React.createElement('QuickKeys'),
+                testIdPrefix: 'embedded-terminal',
+                platformOS: 'android',
+                keyboardBottomInset: 216,
+            }),
+        );
+
+        const surface = screen.findByTestId('embedded-terminal-surface');
+        expect(flattenStyle(surface?.props.style).marginBottom).toBeUndefined();
     });
 });

@@ -14,6 +14,7 @@ export interface AlertButton {
 export interface BaseModalConfig {
     id: string;
     type: ModalType;
+    accessibilityLabel?: string;
     webPortalTarget?: ModalPortalTarget;
 }
 
@@ -91,6 +92,12 @@ export interface CustomModalConfig<P extends CustomModalInjectedProps = any> ext
     component: ComponentType<P>;
     props?: Omit<P, keyof CustomModalInjectedProps>;
     /**
+     * When false, shared dismissal surfaces (backdrop, Escape/native back, and
+     * card close button) are disabled. The component may still finish its
+     * bounded flow through the injected `onClose`.
+     */
+    dismissible?: boolean;
+    /**
      * Invoked when the modal is dismissed through shared close surfaces (backdrop/escape/close button).
      *
      * Notes:
@@ -98,6 +105,12 @@ export interface CustomModalConfig<P extends CustomModalInjectedProps = any> ext
      * - Prefer this over threading `onRequestClose` through component props.
      */
     onRequestClose?: () => void;
+    /**
+     * Synchronously settles modal-owned work when this provider is removed.
+     * It is not a user choice and must not perform the modal's destructive or
+     * committing action.
+     */
+    onHostUnmount?: () => void;
     chrome?: CustomModalChromeConfig;
     /**
      * Whether tapping the backdrop should close the modal.

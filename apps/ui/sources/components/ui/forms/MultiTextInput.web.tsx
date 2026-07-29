@@ -7,6 +7,7 @@ import { scaleTextStyle } from '@/components/ui/text/uiFontScale';
 import { useLocalSetting } from '@/sync/store/hooks';
 import { extractWebAttachmentFilesFromDataTransfer } from '@/utils/files/webAttachmentDataTransfer';
 import { normalizeKeyboardKeyPressEvent, type KeyPressEvent as KeyboardKeyPressEvent } from '@/keyboard/events';
+import { recordLargeTextInputDiagnostic } from '@/utils/system/userInteractionDiagnostics';
 import { MULTI_TEXT_INPUT_BASE_FONT_SIZE } from './multiTextInputTypography';
 import {
     TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS,
@@ -90,6 +91,13 @@ interface MultiTextInputProps {
 
 const DEFAULT_TEXT_STYLE: TextStyle = { fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE };
 
+// The oversized-text round-trip is deferred (input debounce + parent sync
+// deferral), so more than one of our own emissions can be in flight through
+// React at once; remembering only the latest emission lets a superseded one
+// replay late and be mistaken for external content. The cap only needs to
+// cover emissions still in flight — a handful, not a history.
+const RECENT_EMITTED_VALUES_LIMIT = 8;
+
 type WebTextStyleOverride = Readonly<{
     color?: string;
     fontFamily?: string;
@@ -160,9 +168,14 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     const isComposingRef = React.useRef(false);
     const liveValueRef = React.useRef(value);
     const lastEmittedValueRef = React.useRef(value);
+    // Superseded-replay watermark for the DEFERRED pipeline only: holds recent
+    // oversized emissions still potentially in flight. Small emissions are
+    // synchronous and cannot be reordered, so they are never tracked.
+    const recentEmittedValuesRef = React.useRef<string[]>([]);
     const pendingChangeTextRef = React.useRef<string | null>(null);
     const pendingChangeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastScrollRestoreKeyRef = React.useRef<string | null>(null);
+    const lastReportedContentHeightRef = React.useRef<number | null>(null);
     const normalizedMaxHeight = normalizeWebTextareaMaxHeight(maxHeight);
     const [textareaHeight, setTextareaHeight] = React.useState<number | undefined>(
         () => (value.length > WEB_TEXTAREA_AUTOSIZE_VALUE_LENGTH_LIMIT ? normalizedMaxHeight : undefined),
@@ -208,6 +221,15 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         clearPendingChangeTimer();
         pendingChangeTextRef.current = null;
         lastEmittedValueRef.current = text;
+        if (isLargeTextInputValueLength(text.length)) {
+            const recentEmittedValues = recentEmittedValuesRef.current;
+            if (recentEmittedValues[recentEmittedValues.length - 1] !== text) {
+                recentEmittedValues.push(text);
+                if (recentEmittedValues.length > RECENT_EMITTED_VALUES_LIMIT) {
+                    recentEmittedValues.shift();
+                }
+            }
+        }
         onChangeText(text);
     }, [clearPendingChangeTimer, onChangeText]);
 
@@ -238,21 +260,70 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         return text;
     }, [emitChangeText]);
 
+    const notifyContentHeightChange = React.useCallback((height: number) => {
+        if (!onContentHeightChange) return;
+        if (lastReportedContentHeightRef.current === height) return;
+        lastReportedContentHeightRef.current = height;
+        onContentHeightChange(height);
+    }, [onContentHeightChange]);
+
     const applyTextareaHeight = React.useCallback((node: HTMLTextAreaElement, nextValueLength = liveValueRef.current.length) => {
         if (nextValueLength > WEB_TEXTAREA_AUTOSIZE_VALUE_LENGTH_LIMIT) {
-            onContentHeightChange?.(normalizedMaxHeight);
+            // No collapse-to-measure for oversized text (that double reflow is
+            // what this branch avoids), but consumers still need the TRUE
+            // content height — the expand toggle only appears when it exceeds
+            // the collapsed max height, and reporting the clamped height made
+            // the toggle vanish for >50k-char messages. A plain scrollHeight
+            // read before any style write adds no extra reflow: the box height
+            // is already explicit, so this is the same layout the browser
+            // flushes at paint.
+            const measuredContentHeight = Number.isFinite(node.scrollHeight) && node.scrollHeight > 0
+                ? Math.ceil(node.scrollHeight)
+                : normalizedMaxHeight;
+            notifyContentHeightChange(Math.max(measuredContentHeight, normalizedMaxHeight));
             node.style.height = `${normalizedMaxHeight}px`;
             setTextareaHeight((current) => (current === normalizedMaxHeight ? current : normalizedMaxHeight));
             return;
         }
 
-        node.style.height = 'auto';
-        const measuredHeight = Number.isFinite(node.scrollHeight) ? Math.ceil(node.scrollHeight) : normalizedMaxHeight;
-        onContentHeightChange?.(measuredHeight);
-        const nextHeight = Math.min(normalizedMaxHeight, Math.max(0, measuredHeight));
-        node.style.height = `${nextHeight}px`;
-        setTextareaHeight((current) => (current === nextHeight ? current : nextHeight));
-    }, [normalizedMaxHeight, onContentHeightChange]);
+        // Collapse-to-measure forces a synchronous reflow at the `scrollHeight`
+        // read. Without a lock, that one reflow shrinks the composer row to the
+        // collapsed textarea height, the transcript's flex sibling grows by the
+        // freed pixels, and the browser natively clamps its scrollTop — a tail
+        // jump per keystroke/composer scroll event that survives the height
+        // restore (live capture 2026-07-20). Pixel-lock the wrapper for the
+        // whole non-explicit-height window so siblings only ever see the final
+        // measured height.
+        const wrapper = node.parentElement;
+        const previousWrapperHeight = wrapper ? wrapper.style.height : '';
+        // The collapse also destroys the textarea's OWN scroll offset: while the
+        // box fits its content its maximum scroll offset is 0, so the browser
+        // clamps scrollTop away and the visible text jumps to the top of the
+        // draft on every keystroke once the text overflows. Carry it across the
+        // whole non-explicit-height window — this runs inside one synchronous
+        // layout pass, so no paint ever observes the collapsed offset.
+        const previousScrollTop = node.scrollTop;
+        if (wrapper) {
+            wrapper.style.height = `${wrapper.offsetHeight}px`;
+        }
+        try {
+            node.style.height = 'auto';
+            const measuredHeight = Number.isFinite(node.scrollHeight) ? Math.ceil(node.scrollHeight) : normalizedMaxHeight;
+            notifyContentHeightChange(measuredHeight);
+            const nextHeight = Math.min(normalizedMaxHeight, Math.max(0, measuredHeight));
+            node.style.height = `${nextHeight}px`;
+            setTextareaHeight((current) => (current === nextHeight ? current : nextHeight));
+        } finally {
+            if (wrapper) {
+                wrapper.style.height = previousWrapperHeight;
+            }
+            // Re-apply after the final height so the browser clamps against the
+            // restored box: a shorter draft legitimately caps the offset.
+            if (node.scrollTop !== previousScrollTop) {
+                node.scrollTop = previousScrollTop;
+            }
+        }
+    }, [normalizedMaxHeight, notifyContentHeightChange]);
 
     React.useLayoutEffect(() => {
         const node = textareaRef.current;
@@ -262,14 +333,73 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             return;
         }
 
+        const pendingText = pendingChangeTextRef.current;
+        if (
+            pendingText !== null
+            && pendingText === liveValueRef.current
+            && value !== pendingText
+            && value !== lastEmittedValueRef.current
+        ) {
+            recordLargeTextInputDiagnostic({
+                phase: 'web-stale-props-skip',
+                platform: 'web',
+                surface: 'agentInput',
+                textLength: pendingText.length,
+                valueLength: value.length,
+                liveTextLength: liveValueRef.current.length,
+                lastEmittedTextLength: lastEmittedValueRef.current.length,
+                pendingTextLength: pendingText.length,
+            });
+            applyTextareaHeight(node, pendingText.length);
+            return;
+        }
+
+        // Reconcile adopts EXTERNAL values only. A value this input itself
+        // emitted is a superseded round-trip replay (the deferred pipeline can
+        // deliver an older emission after a newer one was already flushed);
+        // adopting it would roll the live text back and jump the caret.
+        if (recentEmittedValuesRef.current.includes(value)) {
+            recordLargeTextInputDiagnostic({
+                phase: 'web-stale-props-skip',
+                platform: 'web',
+                surface: 'agentInput',
+                textLength: liveValueRef.current.length,
+                valueLength: value.length,
+                liveTextLength: liveValueRef.current.length,
+                lastEmittedTextLength: lastEmittedValueRef.current.length,
+                pendingTextLength: pendingChangeTextRef.current?.length,
+            });
+            applyTextareaHeight(node);
+            return;
+        }
+
         clearPendingChangeTimer();
+        recordLargeTextInputDiagnostic({
+            phase: 'web-props-reconcile',
+            platform: 'web',
+            surface: 'agentInput',
+            textLength: value.length,
+            valueLength: value.length,
+            liveTextLength: liveValueRef.current.length,
+            lastEmittedTextLength: lastEmittedValueRef.current.length,
+            pendingTextLength: pendingChangeTextRef.current?.length,
+        });
         pendingChangeTextRef.current = null;
         liveValueRef.current = value;
         lastEmittedValueRef.current = value;
+        recentEmittedValuesRef.current = [];
+        // The node.value write below resets the browser's scroll position, so
+        // any already-consumed scroll restore must become applicable again
+        // against the adopted content (session open applies the restore before
+        // the async draft text lands).
+        lastScrollRestoreKeyRef.current = null;
         node.value = value;
         applyTextareaHeight(node, value.length);
     }, [applyTextareaHeight, clearPendingChangeTimer, textareaStyle, value]);
 
+    // `value` is a dependency so the restore re-applies in the same commit an
+    // external adoption resets scrollTop; parent confirms of self-edits re-run
+    // it too but bail on the consumed restore key.
     React.useLayoutEffect(() => {
         const node = textareaRef.current;
         const initialScrollY = props.initialScrollY;
@@ -279,7 +409,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         if (lastScrollRestoreKeyRef.current === restoreKey) return;
         node.scrollTop = initialScrollY;
         lastScrollRestoreKeyRef.current = restoreKey;
-    }, [props.initialScrollY, props.scrollRestoreToken, textareaStyle]);
+    }, [props.initialScrollY, props.scrollRestoreToken, textareaStyle, value]);
 
     const renderedTextareaHeight = value.length > WEB_TEXTAREA_AUTOSIZE_VALUE_LENGTH_LIMIT
         ? normalizedMaxHeight
@@ -329,6 +459,16 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         liveValueRef.current = text;
         applyTextareaHeight(e.currentTarget, text.length);
         scheduleChangeText(text);
+        recordLargeTextInputDiagnostic({
+            phase: 'web-change',
+            platform: 'web',
+            surface: 'agentInput',
+            textLength: text.length,
+            selection,
+            valueLength: value.length,
+            liveTextLength: text.length,
+            pendingTextLength: isLargeTextInputValueLength(text.length) ? text.length : undefined,
+        });
         
         if (onStateChange) {
             onStateChange({ text, selection });
@@ -437,6 +577,12 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         setSelection: (selection: { start: number; end: number }) => {
             if (isComposingRef.current) return;
             const liveText = textareaRef.current?.value ?? liveValueRef.current;
+            // Native parity (MultiTextInput.tsx): a selection may only be
+            // applied while the live text matches the controlled value.
+            // Callers compute selections against the controlled value; once
+            // the user has typed ahead of it, applying that selection would
+            // drag the live caret backwards mid-typing.
+            if (liveText !== value) return;
             const nextSelection = clampTextSelection(selection, liveText.length);
             if (textareaRef.current) {
                 textareaRef.current.setSelectionRange(nextSelection.start, nextSelection.end);
@@ -469,7 +615,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         },
         getReactNodeTag: () => null,
         getInputElement: () => textareaRef.current,
-    }), [applyTextareaHeight, emitChangeText, flushPendingTextChange, onStateChange, onSelectionChange]);
+    }), [applyTextareaHeight, emitChangeText, flushPendingTextChange, onStateChange, onSelectionChange, value]);
 
     const commonTextareaProps = {
         ref: textareaRef,

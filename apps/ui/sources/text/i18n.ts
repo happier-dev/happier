@@ -11,6 +11,10 @@ import { pt } from './translations/pt';
 import { ru } from './translations/ru';
 import { zhHans } from './translations/zh-Hans';
 import { zhHant } from './translations/zh-Hant';
+import {
+    BUNDLED_PLUGIN_TRANSLATIONS,
+    type BundledPluginTranslationKey,
+} from './bundledPluginTranslations.generated';
 
 export { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGE_CODES, SUPPORTED_LANGUAGES, getLanguageEnglishName, getLanguageNativeName, type SupportedLanguage };
 
@@ -50,14 +54,20 @@ type TranslationValueAtPath<T, Key extends string> = Key extends `${infer Head}.
         ? NonNullable<T[Key]>
         : never;
 
-export type TranslationKey = TranslationKeyFromStructure<Translations>;
+type HostTranslationKey = TranslationKeyFromStructure<Translations>;
+export type TranslationKey = HostTranslationKey | BundledPluginTranslationKey;
 
-export type TranslationParams<K extends TranslationKey> =
+type HostTranslationParams<K extends HostTranslationKey> =
     TranslationValueAtPath<Translations, K> extends (...args: infer Args) => string
         ? Args extends []
             ? never
             : Args[0]
         : never;
+
+export type TranslationParams<K extends TranslationKey> =
+    [Extract<K, HostTranslationKey>] extends [never]
+        ? never
+        : HostTranslationParams<Extract<K, HostTranslationKey>>;
 
 export type TranslationKeyNoParams = {
     [K in TranslationKey]: TranslationParams<K> extends never ? K : never;
@@ -128,7 +138,14 @@ function resolveRawTranslationValue(key: string): unknown {
     const activeValue = getValueAtPath(getTranslationTree(activeLanguage) as TranslationNode, key);
     if (activeValue !== undefined) return activeValue;
 
-    return getValueAtPath(en as TranslationNode, key);
+    const englishValue = getValueAtPath(en as TranslationNode, key);
+    if (englishValue !== undefined) return englishValue;
+
+    const activePluginBundle = BUNDLED_PLUGIN_TRANSLATIONS[activeLanguage as keyof typeof BUNDLED_PLUGIN_TRANSLATIONS];
+    const activePluginValue = (activePluginBundle as Readonly<Record<string, string>> | undefined)?.[key];
+    if (activePluginValue !== undefined) return activePluginValue;
+
+    return (BUNDLED_PLUGIN_TRANSLATIONS.en as Readonly<Record<string, string>> | undefined)?.[key];
 }
 
 function resolveStringValue(key: string): string {
@@ -156,7 +173,10 @@ function collectTranslationKeys(node: TranslationNode, prefix = '', out: string[
     return out;
 }
 
-const ALL_TRANSLATION_KEYS = collectTranslationKeys(en as TranslationNode) as TranslationKey[];
+const ALL_TRANSLATION_KEYS = [
+    ...collectTranslationKeys(en as TranslationNode),
+    ...Object.values(BUNDLED_PLUGIN_TRANSLATIONS).flatMap((bundle) => Object.keys(bundle)),
+] as TranslationKey[];
 
 export function hasTranslation(key: string): boolean {
     return resolveRawTranslationValue(key) !== undefined;

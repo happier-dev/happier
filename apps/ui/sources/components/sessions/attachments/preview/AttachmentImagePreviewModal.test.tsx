@@ -8,11 +8,11 @@ import { installSessionAttachmentCommonModuleMocks } from '@/components/sessions
 const actEnvironmentGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 
 type PreviewState =
-    | { status: 'loaded'; uri: string; svgXml: string | null; error: null }
-    | { status: 'error'; uri: null; svgXml: null; error: string };
+    | { status: 'loaded'; uri: string; error: null }
+    | { status: 'error'; uri: null; error: string };
 
 const previewState = vi.hoisted(() => ({
-    value: { status: 'loaded', uri: 'data:image/png;base64,.happier/uploads/messages/m1/file.png', svgXml: null, error: null } as PreviewState,
+    value: { status: 'loaded', uri: 'data:image/png;base64,.happier/uploads/messages/m1/file.png', error: null } as PreviewState,
 }));
 
 installSessionAttachmentCommonModuleMocks({
@@ -42,7 +42,7 @@ describe('AttachmentImagePreviewModal', () => {
 
     beforeEach(() => {
         actEnvironmentGlobal.IS_REACT_ACT_ENVIRONMENT = true;
-        previewState.value = { status: 'loaded', uri: 'data:image/png;base64,reset', svgXml: null, error: null };
+        previewState.value = { status: 'loaded', uri: 'data:image/png;base64,reset', error: null };
     });
 
     afterEach(() => {
@@ -66,6 +66,60 @@ describe('AttachmentImagePreviewModal', () => {
         expect(image.props.source).toEqual({ uri: 'blob:first' });
         expect(Array.isArray(image.props.style)).toBe(true);
         expect(image.props.style[0]).toEqual({ width: '100%', height: '100%' });
+    });
+
+    it('gives the web preview surface a viewport-constrained card height', async () => {
+        const { AttachmentImagePreviewModal } = await import('./AttachmentImagePreviewModal');
+        const setChrome = vi.fn();
+
+        await renderScreen(<AttachmentImagePreviewModal
+            onClose={() => {}}
+            setChrome={setChrome}
+            images={[
+                { kind: 'direct', uri: 'blob:first', title: 'first.png' },
+            ]}
+            initialIndex={0}
+        />);
+
+        expect(setChrome).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                kind: 'card',
+                scrollHost: 'body',
+                dimensions: expect.objectContaining({
+                    width: expect.any(Number),
+                    maxHeightRatio: expect.any(Number),
+                }),
+            }),
+        );
+    });
+
+    it('preserves the native overlay-owned card layout', async () => {
+        const { Platform } = await import('react-native');
+        const mutablePlatform = Platform as { OS: string };
+        const previousPlatform = mutablePlatform.OS;
+        mutablePlatform.OS = 'ios';
+
+        try {
+            const { AttachmentImagePreviewModal } = await import('./AttachmentImagePreviewModal');
+            const setChrome = vi.fn();
+
+            await renderScreen(<AttachmentImagePreviewModal
+                onClose={() => {}}
+                setChrome={setChrome}
+                images={[
+                    { kind: 'direct', uri: 'blob:first', title: 'first.png' },
+                ]}
+                initialIndex={0}
+            />);
+
+            expect(setChrome).toHaveBeenLastCalledWith(
+                expect.not.objectContaining({
+                    scrollHost: expect.anything(),
+                }),
+            );
+        } finally {
+            mutablePlatform.OS = previousPlatform;
+        }
     });
 
     it('hides navigation until hover on web and omits the footer index', async () => {
@@ -152,7 +206,7 @@ describe('AttachmentImagePreviewModal', () => {
 
     it('shows a generic localized error instead of raw preview details', async () => {
         const { AttachmentImagePreviewModal } = await import('./AttachmentImagePreviewModal');
-        previewState.value = { status: 'error', uri: null, svgXml: null, error: 'internal disk path leaked' };
+        previewState.value = { status: 'error', uri: null, error: 'internal disk path leaked' };
         const setChrome = vi.fn();
 
         const screen = await renderScreen(<AttachmentImagePreviewModal

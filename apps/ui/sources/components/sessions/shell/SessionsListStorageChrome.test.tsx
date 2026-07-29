@@ -48,10 +48,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props, props.children),
 }));
 
-vi.mock('./SessionListStorageTabsBar', () => ({
-    SessionListStorageTabsBar: (props: any) => React.createElement('SessionListStorageTabsBar', props, props.children),
-}));
-
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (Array.isArray(style)) {
         return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
@@ -66,32 +62,54 @@ describe('SessionsListStorageChrome', () => {
         routerPushSpy.mockReset();
     });
 
-    it('renders the direct browse action as a sidebar row and routes it to the direct browse screen', async () => {
+    it('renders the external browse action above every unified-list filter and routes it to the canonical browse screen', async () => {
         const { SessionsListStorageChrome } = await import('./SessionsListStorageChrome');
         const screen = await renderScreen(
             <SessionsListStorageChrome
                 externalSessionsEnabled={true}
-                storageKind="direct"
-                onSelectStorageKind={() => {}}
+                storageKind="all"
             />,
         );
 
         const itemGroups = screen.findAllByType('ItemGroup' as never);
         expect(itemGroups).toHaveLength(1);
         expect(itemGroups[0]?.props.constrainToContentWidth).toBe(false);
-        expect(() => screen.findByProps({ testID: 'direct-sessions-browse-button' })).not.toThrow();
+        const browseItem = screen.findByProps({ testID: 'external-sessions-browse-button' });
+        expect(browseItem.props.title).toBe('externalSessions.browseOpenExisting');
+        expect(browseItem.props.subtitle).toBeUndefined();
+        expect(browseItem.props.density).toBe('cozy');
+        expect(browseItem.props.icon).toBeUndefined();
+        expect(browseItem.props.leftElement?.props?.size).toBeGreaterThanOrEqual(18);
+        expect(browseItem.props.leftElement?.props?.size).toBeLessThanOrEqual(20);
+        expect(browseItem.props.iconBoxSize).toBe(20);
+        expect(browseItem.props.showChevron).toBe(false);
+        expect(browseItem.props.showDivider).toBe(false);
+        expect(flattenStyle(browseItem.props.pressableStyle).minHeight).toBeGreaterThanOrEqual(44);
+        expect(screen.findAllByType('SessionListStorageTabsBar' as never)).toHaveLength(0);
         const browseContainerStyle = flattenStyle(itemGroups[0]?.props.style);
         expect(browseContainerStyle.marginTop).toBe(-4);
         expect(browseContainerStyle.maxWidth).toBeUndefined();
         expect(browseContainerStyle.backgroundColor).toBeUndefined();
         const browseSurfaceStyle = flattenStyle(itemGroups[0]?.props.containerStyle);
         expect(browseSurfaceStyle.backgroundColor).toBe('transparent');
+        expect(browseSurfaceStyle.borderColor).toBe('transparent');
+        expect(browseSurfaceStyle.borderWidth).toBe(0);
+        expect(browseSurfaceStyle.borderTopWidth).toBe(0);
         expect(browseSurfaceStyle.boxShadow).toBe('none');
         expect(browseSurfaceStyle.shadowOpacity).toBe(0);
         expect(browseSurfaceStyle.elevation).toBe(0);
 
-        await screen.pressByTestIdAsync('direct-sessions-browse-button');
+        await screen.pressByTestIdAsync('external-sessions-browse-button');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/direct/browse');
+        expect(routerPushSpy).toHaveBeenCalledWith('/external/browse');
+    });
+
+    it('hides only the external browse action when the feature is disabled', async () => {
+        const { SessionsListStorageChrome } = await import('./SessionsListStorageChrome');
+        const screen = await renderScreen(
+            <SessionsListStorageChrome externalSessionsEnabled={false} storageKind="all" />,
+        );
+
+        expect(screen.findAllByProps({ testID: 'external-sessions-browse-button' })).toHaveLength(0);
     });
 });

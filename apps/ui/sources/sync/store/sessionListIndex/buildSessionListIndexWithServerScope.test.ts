@@ -8,6 +8,65 @@ import {
 } from './buildSessionListIndexWithServerScope';
 
 describe('applyReachableTargetsToSessionListRenderables', () => {
+    it('does not project layout-v1 owner workspace facts into participant shared list metadata', () => {
+        const sessions = {
+            s1: {
+                id: 's1',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                accessLevel: 'view' as const,
+                metadataLayoutVersion: 1,
+                metadataVersion: 1,
+                agentStateVersion: 0,
+                metadata: {
+                    v: 1,
+                    summary: { text: 'Shared title', updatedAt: 1 },
+                },
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online' as const,
+            },
+        };
+        const sessionRecords = {
+            s1: {
+                ...sessions.s1,
+                ownerMetadataView: {
+                    machineId: 'owner-machine',
+                    path: '/owner/private/repo',
+                    homeDir: '/owner',
+                    host: 'owner.local',
+                },
+            },
+        };
+        const machineRecords = {
+            'owner-machine': {
+                id: 'owner-machine',
+                active: true,
+                activeAt: 1,
+                metadata: {
+                    host: 'owner.local',
+                    homeDir: '/owner',
+                },
+            },
+        };
+
+        const result = applyReachableTargetsToSessionListRenderables({
+            sessions: sessions as any,
+            sessionRecords: sessionRecords as any,
+            machineRecords: machineRecords as any,
+            getProjectForSession: () => null,
+        });
+
+        expect(result).toBe(sessions);
+        expect(result.s1.metadata).toEqual({
+            v: 1,
+            summary: { text: 'Shared title', updatedAt: 1 },
+        });
+    });
+
     it('returns early without project lookups when there are no visible sessions to project', () => {
         const getProjectForSession = vi.fn(() => ({
             key: {
@@ -474,7 +533,7 @@ describe('applyReachableTargetsToSessionListRenderables', () => {
                     homeDir: null,
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'codex',
+                        agentId: 'codex',
                     },
                 },
                 thinking: false,
@@ -491,7 +550,7 @@ describe('applyReachableTargetsToSessionListRenderables', () => {
                     path: '/workspace/direct-repo',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'codex',
+                        agentId: 'codex',
                         machineId: 'm-direct',
                         remoteSessionId: 'remote-1',
                         source: { kind: 'codexHome', home: 'user' },

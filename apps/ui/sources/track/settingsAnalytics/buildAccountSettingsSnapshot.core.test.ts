@@ -89,27 +89,19 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__usePathPickerSearch).toBe(true);
     });
 
-    it('derives provider-owned account settings from canonical provider field definitions', () => {
+    it('does not expose the opaque provider settings subtree to account analytics', () => {
         const snapshot = buildAccountSettingsSnapshot({
             ...settingsDefaults,
-            codexBackendMode: 'mcp',
-            opencodeBackendMode: 'acp',
-            opencodeServerBaseUrl: '',
-            opencodeServerBaseUrlByServerIdV1: {
-                server_1: 'https://example.com/',
+            providerSettingsV1: {
+                v: 1,
+                providers: {
+                    codex: { backendMode: 'mcp' },
+                    opencode: { serverBaseUrl: 'https://example.com/' },
+                },
             },
-            claudeRemoteAgentSdkEnabled: false,
-            claudeRemoteSettingSourcesV2: ['project'],
-            claudeRemoteAdvancedOptionsJson: '{"maxTurns":4}',
         });
 
-        expect(snapshot.properties.acct_setting__codexBackendMode).toBe('mcp');
-        expect(snapshot.properties.acct_setting__opencodeBackendMode).toBe('acp');
-        expect(snapshot.properties.acct_setting__opencodeServerBaseUrl).toBe(true);
-        expect(snapshot.properties).not.toHaveProperty('acct_setting__opencodeServerBaseUrlByServerIdV1');
-        expect(snapshot.properties.acct_setting__claudeRemoteAgentSdkEnabled).toBe(false);
-        expect(snapshot.properties.acct_setting__claudeRemoteSettingSourcesV2).toBe('project');
-        expect(snapshot.properties.acct_setting__claudeRemoteAdvancedOptionsJson).toBe(true);
+        expect(snapshot.properties).not.toHaveProperty('acct_setting__providerSettingsV1');
     });
 
     it('tracks transcript storage overrides for configured backend targets using canonical target keys', () => {

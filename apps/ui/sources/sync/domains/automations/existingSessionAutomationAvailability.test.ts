@@ -166,6 +166,37 @@ describe('resolveExistingSessionAutomationAvailability', () => {
         });
     });
 
+    it('treats canonical runtimeDescriptorV1 providerSessionId as existing-session automation resume identity', () => {
+        expect(resolveExistingSessionAutomationAvailability({
+            sessionHydrated: true,
+            session: {
+                id: 's1',
+                encryptionMode: 'plain',
+                metadata: {
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'opencode',
+                        provider: {
+                            backendMode: 'server',
+                            providerSessionId: 'opencode-session-1',
+                        },
+                    },
+                },
+            },
+            machineIdOverride: 'm1',
+            sessionDekBase64: null,
+            accountSettings: {},
+        })).toEqual({
+            kind: 'ready',
+            machineId: 'm1',
+            eligibility: {
+                eligible: true,
+                agentId: 'opencode',
+                strategy: 'vendor_resume',
+            },
+        });
+    });
+
     it('surfaces configured ACP attach eligibility as an explicit compat backend carrier instead of a shared customAcp agent id', () => {
         expect(resolveExistingSessionAutomationAvailability({
             sessionHydrated: true,

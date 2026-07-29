@@ -11,8 +11,8 @@ const settingsState: { current: any } = {
   current: {
     voice: {
       providerId: 'local_conversation',
-      adapters: {
-        local_conversation: {
+      providers: {
+        local_conversation: { schemaVersion: 1, config: {
           streaming: {
             enabled: false,
             turnReadPollIntervalMs: 25,
@@ -20,7 +20,7 @@ const settingsState: { current: any } = {
             turnStreamTimeoutMs: 300000,
           },
           networkTimeoutMs: 15000,
-        },
+        } },
       },
     },
   },
@@ -61,8 +61,8 @@ describe('DaemonVoiceAgentClient', () => {
     settingsState.current = {
       voice: {
         providerId: 'local_conversation',
-        adapters: {
-          local_conversation: {
+        providers: {
+          local_conversation: { schemaVersion: 1, config: {
             streaming: {
               enabled: false,
               turnReadPollIntervalMs: 25,
@@ -70,7 +70,7 @@ describe('DaemonVoiceAgentClient', () => {
               turnStreamTimeoutMs: 300000,
             },
             networkTimeoutMs: 15000,
-          },
+          } },
         },
       },
     };
@@ -91,7 +91,7 @@ describe('DaemonVoiceAgentClient', () => {
         verbosity: 'short',
         chatModelId: 'fast',
         commitModelId: 'fast',
-        permissionPolicy: 'read_only',
+        permissionIntent: 'read-only',
         idleTtlSeconds: 300,
         initialContext: 'ctx',
       }),
@@ -114,7 +114,7 @@ describe('DaemonVoiceAgentClient', () => {
         chatModelId: 'fast',
         commitModelId: 'fast',
         commitIsolation: true,
-        permissionPolicy: 'read_only',
+        permissionIntent: 'read-only',
         idleTtlSeconds: 300,
         initialContext: 'ctx',
         existingRunId: 'run_old',
@@ -155,7 +155,7 @@ describe('DaemonVoiceAgentClient', () => {
       verbosity: 'short',
       chatModelId: 'fast',
       commitModelId: 'fast',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'ctx',
       replay: {
@@ -204,7 +204,7 @@ describe('DaemonVoiceAgentClient', () => {
       verbosity: 'short',
       chatModelId: 'fast',
       commitModelId: 'fast',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'ctx',
     });
@@ -230,7 +230,7 @@ describe('DaemonVoiceAgentClient', () => {
       verbosity: 'short',
       chatModelId: 'fast',
       commitModelId: 'fast',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'ctx',
       bootstrapTimeoutMs: 90_000,
@@ -257,7 +257,7 @@ describe('DaemonVoiceAgentClient', () => {
       verbosity: 'short',
       chatModelId: 'default',
       commitModelId: 'default',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'ctx',
     });
@@ -291,7 +291,7 @@ describe('DaemonVoiceAgentClient', () => {
         verbosity: 'short',
         chatModelId: 'fast',
         commitModelId: 'fast',
-        permissionPolicy: 'read_only',
+        permissionIntent: 'read-only',
         idleTtlSeconds: 300,
         initialContext: 'ctx',
       }),
@@ -330,6 +330,81 @@ describe('DaemonVoiceAgentClient', () => {
     );
   });
 
+  it('uses v2 for explicit transcript custody and preserves the opaque local id', async () => {
+    const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerScope).mockResolvedValueOnce({ streamId: 'stream-1' } as any);
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+
+    await client.startTurnStream({
+      sessionId: 'session-1',
+      voiceAgentId: 'run-1',
+      userText: 'Outer prompt',
+      userTranscript: { mode: 'persist', localId: ' opaque-local-id ' },
+    });
+
+    expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledWith(expect.objectContaining({
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2,
+      payload: expect.objectContaining({
+        userTranscript: { mode: 'persist', localId: ' opaque-local-id ' },
+      }),
+    }));
+  });
+
+  it('fails closed when v2 is unavailable without retrying legacy v1', async () => {
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerScope).mockRejectedValueOnce(
+      Object.assign(new Error('RPC method not available'), {
+        rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+      }),
+    );
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+
+    await expect(client.startTurnStream({
+      sessionId: 'session-1',
+      voiceAgentId: 'run-1',
+      userText: 'Outer prompt',
+      userTranscript: { mode: 'persist', localId: 'opaque-local-id' },
+    })).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
+
+    expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits a direct-shortcut user transcript with the exact caller local id', async () => {
+    const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerScope).mockResolvedValueOnce({ ok: true } as any);
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+
+    await expect(client.commitUserTranscript({
+      sessionId: 'session-1',
+      voiceAgentId: 'run-1',
+      text: 'Approve it.',
+      displayText: 'Approve the requested action.',
+      localId: ' opaque-shortcut-id ',
+    })).resolves.toEqual({ ok: true });
+
+    // Current writer consumed by the prospective predecessor reader at
+    // ../remote-dev@0649e4de85aacf08476063fef1990f418ce8e80b:
+    // apps/cli/src/rpc/handlers/executionRuns.ts.
+    expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledWith(expect.objectContaining({
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1,
+      payload: {
+        runId: 'run-1',
+        message: 'Approve it.',
+        displayMessage: 'Approve the requested action.',
+        localId: ' opaque-shortcut-id ',
+      },
+    }));
+  });
+
   it('surfaces RPC method unavailable from ensureOrStart without falling back', async () => {
     const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
     vi.mocked(sessionRpcWithServerScope).mockRejectedValueOnce(
@@ -347,7 +422,7 @@ describe('DaemonVoiceAgentClient', () => {
         verbosity: 'short',
         chatModelId: 'fast',
         commitModelId: 'fast',
-        permissionPolicy: 'read_only',
+        permissionIntent: 'read-only',
         idleTtlSeconds: 300,
         initialContext: 'ctx',
       }),
@@ -370,7 +445,7 @@ describe('DaemonVoiceAgentClient', () => {
         verbosity: 'short',
         chatModelId: 'fast',
         commitModelId: 'fast',
-        permissionPolicy: 'read_only',
+        permissionIntent: 'read-only',
         idleTtlSeconds: 300,
         initialContext: 'ctx',
       }),
@@ -409,8 +484,8 @@ describe('DaemonVoiceAgentClient', () => {
     settingsState.current = {
       voice: {
         providerId: 'local_conversation',
-        adapters: {
-          local_conversation: {
+        providers: {
+          local_conversation: { schemaVersion: 1, config: {
             streaming: {
               enabled: false,
               turnReadPollIntervalMs: 10,
@@ -418,7 +493,7 @@ describe('DaemonVoiceAgentClient', () => {
               turnStreamTimeoutMs: 1000,
             },
             networkTimeoutMs: 15000,
-          },
+          } },
         },
       },
     };
@@ -454,8 +529,8 @@ describe('DaemonVoiceAgentClient', () => {
     settingsState.current = {
       voice: {
         providerId: 'local_conversation',
-        adapters: {
-          local_conversation: {
+        providers: {
+          local_conversation: { schemaVersion: 1, config: {
             streaming: {
               enabled: false,
               turnReadPollIntervalMs: 10,
@@ -463,7 +538,7 @@ describe('DaemonVoiceAgentClient', () => {
               turnStreamTimeoutMs: null,
             },
             networkTimeoutMs: 15000,
-          },
+          } },
         },
       },
     };
@@ -511,8 +586,8 @@ describe('DaemonVoiceAgentClient', () => {
     settingsState.current = {
       voice: {
         providerId: 'local_conversation',
-        adapters: {
-          local_conversation: {
+        providers: {
+          local_conversation: { schemaVersion: 1, config: {
             streaming: {
               enabled: false,
               turnReadPollIntervalMs: 10,
@@ -520,7 +595,7 @@ describe('DaemonVoiceAgentClient', () => {
               turnStreamTimeoutMs: null,
             },
             networkTimeoutMs: 25,
-          },
+          } },
         },
       },
     };
@@ -570,8 +645,8 @@ describe('DaemonVoiceAgentClient', () => {
       settingsState.current = {
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: false,
                 turnReadPollIntervalMs: 500,
@@ -579,7 +654,7 @@ describe('DaemonVoiceAgentClient', () => {
                 turnStreamTimeoutMs: 900_000,
               },
               networkTimeoutMs: 15000,
-            },
+            } },
           },
         },
       };

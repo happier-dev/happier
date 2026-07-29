@@ -103,7 +103,7 @@ describe('appendVoiceTargetSessionSwitchNote', () => {
     });
   });
 
-  it('uses lookup session-list names before generic placeholders when summaries are unavailable', async () => {
+  it('does not disclose lookup session-list names when summary sharing is disabled', async () => {
     state.settings.voice.privacy.shareSessionSummary = false;
     state.sessions = {};
     state.sessionListRenderables = {
@@ -134,7 +134,7 @@ describe('appendVoiceTargetSessionSwitchNote', () => {
 
     expect(appendVoiceConversationNoteText).toHaveBeenCalledWith({
       conversationSessionId: 'carrier-s1',
-      text: 'Target session changed from Voice Target Alpha to Voice Tracked Beta',
+      text: 'Target session changed from the previous session to the current session',
     });
   });
 

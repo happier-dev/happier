@@ -68,6 +68,20 @@ describe('resolveConnectionHealth', () => {
         expect(result.kind).toBe('server_unreachable');
     });
 
+    it('treats planned server restarts as a neutral reconnect while preserving known machines', () => {
+        const result = resolveConnectionHealth({
+            endpointStatus: 'offline',
+            endpointReason: 'server_restarting',
+            socketStatus: 'disconnected',
+            machineGroups: [{ machineCount: 2, onlineCount: 2, status: 'idle' }],
+        });
+
+        expect(result.kind).toBe('server_restarting');
+        expect(result.machineCount).toBe(2);
+        expect(result.onlineCount).toBe(2);
+        expect(result.hasUnknownMachines).toBe(false);
+    });
+
     it('returns auth_required for terminal auth sync errors before generic server errors', () => {
         const result = resolveConnectionHealth({
             socketStatus: 'error',

@@ -2,7 +2,12 @@ import { MMKV } from 'react-native-mmkv';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopedStorageKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
-import { isPendingServerUrlActive, normalizePendingServerUrl } from './pendingServerScopedKeys';
+import {
+    getActivePendingServerUrl,
+    isPendingServerUrlActive,
+    normalizePendingServerUrl,
+    pendingServerScopedKey,
+} from './pendingServerScopedKeys';
 
 export type PendingNotificationAction = Readonly<{
     serverUrl: string;
@@ -16,6 +21,7 @@ const scope = isWebRuntime ? null : readStorageScopeFromEnv();
 const storage = new MMKV({ id: scopedStorageId('pending-notification-action', scope) });
 
 const KEY_RECORD_PREFIX = 'record:v2';
+const KEY_SERVER_RECORD_PREFIX = 'record:server:v1';
 const KEY_SERVER_URL = 'serverUrl';
 const KEY_SESSION_ID = 'sessionId';
 const KEY_REQUEST_ID = 'requestId';
@@ -61,24 +67,39 @@ function readScopedPendingNotificationAction(key: string): PendingNotificationAc
     return null;
 }
 
+function resolveActiveServerScopedKey(): string | null {
+    const activeServerUrl = getActivePendingServerUrl();
+    return activeServerUrl ? pendingServerScopedKey(KEY_SERVER_RECORD_PREFIX, activeServerUrl) : null;
+}
+
 export function setPendingNotificationAction(value: PendingNotificationAction): void {
     const serverUrl = normalizeUrl(value?.serverUrl ?? '');
     const sessionId = String(value?.sessionId ?? '').trim();
     const requestId = String(value?.requestId ?? '').trim();
     const action = value?.action === 'allow' ? 'allow' : value?.action === 'deny' ? 'deny' : '';
     const activeScope = getActiveServerAccountScope();
-    if (!serverUrl || !sessionId || !requestId || !action || !activeScope || !isPendingServerUrlActive(serverUrl)) return;
-    storage.set(
-        serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope),
-        JSON.stringify({ serverUrl, sessionId, requestId, action } satisfies PendingNotificationAction),
-    );
+    if (!serverUrl || !sessionId || !requestId || !action) return;
+    const record = JSON.stringify({ serverUrl, sessionId, requestId, action } satisfies PendingNotificationAction);
+    if (activeScope && isPendingServerUrlActive(serverUrl)) {
+        storage.set(serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope), record);
+        const serverScopedKey = resolveActiveServerScopedKey();
+        if (serverScopedKey) storage.delete(serverScopedKey);
+        return;
+    }
+    storage.set(pendingServerScopedKey(KEY_SERVER_RECORD_PREFIX, serverUrl), record);
 }
 
 export function getPendingNotificationAction(): PendingNotificationAction | null {
     const activeScope = getActiveServerAccountScope();
-    if (!activeScope) return null;
-    const scoped = readScopedPendingNotificationAction(serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope));
-    if (scoped) return scoped;
+    const serverScopedKey = resolveActiveServerScopedKey();
+    if (activeScope) {
+        const scopedKey = serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope);
+        const scoped = readScopedPendingNotificationAction(scopedKey);
+        if (scoped) return scoped;
+    } else if (serverScopedKey) {
+        const serverScoped = readScopedPendingNotificationAction(serverScopedKey);
+        if (serverScoped) return serverScoped;
+    }
 
     const legacy = readLegacyPendingNotificationAction();
     if (!legacy) return null;
@@ -92,6 +113,10 @@ export function clearPendingNotificationAction(): void {
     const activeScope = getActiveServerAccountScope();
     if (activeScope) {
         storage.delete(serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope));
+    }
+    const serverScopedKey = resolveActiveServerScopedKey();
+    if (serverScopedKey) {
+        storage.delete(serverScopedKey);
     }
     const legacy = readLegacyPendingNotificationAction();
     if (!legacy || isPendingServerUrlActive(legacy.serverUrl)) {

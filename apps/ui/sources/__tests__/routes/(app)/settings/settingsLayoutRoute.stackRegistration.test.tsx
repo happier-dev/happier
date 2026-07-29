@@ -11,7 +11,15 @@ import {
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 let translationPrefix = 'en';
 
-vi.mock('react-native-reanimated', () => ({}));
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
+});
+
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock();
+});
 
 vi.mock('@expo/vector-icons', async () => {
     const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
@@ -28,15 +36,15 @@ vi.mock('react-native', async () => {
             select: (options: any) => (options && 'web' in options ? options.web : options?.default),
         },
         useWindowDimensions: () => ({
-            width: 1440,
-            height: 900,
+            width: 390,
+            height: 844,
             scale: 2,
             fontScale: 1,
         }),
         Dimensions: {
             get: () => ({
-                width: 1440,
-                height: 900,
+                width: 390,
+                height: 844,
                 scale: 2,
                 fontScale: 1,
             }),
@@ -50,7 +58,7 @@ vi.mock('react-native', async () => {
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({
-        pathname: () => '/settings/providers/codex',
+        pathname: () => '/settings/agents/codex',
         router: {
             push: vi.fn(),
             back: vi.fn(),
@@ -116,15 +124,6 @@ vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => true,
 }));
 
-vi.mock('@/agents/catalog/providerSettingsCatalog', () => ({
-    PROVIDER_SETTINGS_DESCRIPTORS: [],
-    PROVIDER_SETTINGS_PLUGINS: [],
-    PROVIDER_SETTINGS_BEHAVIORS: [],
-    getProviderSettingsDescriptor: () => null,
-    getProviderSettingsBehavior: () => null,
-    getProviderSettingsPlugin: () => null,
-}));
-
 afterEach(() => {
     standardCleanup();
     translationPrefix = 'en';
@@ -139,10 +138,10 @@ describe('SettingsLayoutRoute stack registration', () => {
             .map((node) => node.props?.name)
             .filter((name): name is string => typeof name === 'string');
 
-        expect(screenNames).toContain('providers');
-        expect(screenNames).not.toContain('providers/index');
-        expect(screenNames).toContain('providers/[providerId]');
-        expect(screenNames).toContain('plugins');
+        expect(screenNames).toContain('agents/index');
+        expect(screenNames).not.toContain('providers');
+        expect(screenNames).toContain('agents/[agentId]');
+        expect(screenNames).toContain('plugins/index');
         expect(screenNames).toContain('plugins/[pluginId]');
         expect(screenNames).toContain('actions');
         expect(screenNames).toContain('actions/[actionId]');
@@ -157,7 +156,7 @@ describe('SettingsLayoutRoute stack registration', () => {
 
         const screen = await renderScreen(<SettingsLayoutRoute />);
         const readProvidersScreen = () => (
-            screen.findAllByType(Stack.Screen).find((node) => node.props?.name === 'providers/[providerId]')
+            screen.findAllByType(Stack.Screen).find((node) => node.props?.name === 'agents/[agentId]')
         );
         const readIndexScreen = () => (
             screen.findAllByType(Stack.Screen).find((node) => node.props?.name === 'index')
@@ -165,7 +164,7 @@ describe('SettingsLayoutRoute stack registration', () => {
         const readStack = () => screen.findByType(Stack as never);
 
         expect(readStack().props.screenOptions?.headerBackTitle).toBe('en:common.back');
-        expect(readProvidersScreen()?.props.options?.headerTitle).toBe('en:settingsProviders.title');
+        expect(readProvidersScreen()?.props.options?.headerTitle).toBe('en:settingsAgents.title');
         expect(readIndexScreen()?.props.options?.headerBackTitle).toBe('en:common.home');
 
         translationPrefix = 'fr';
@@ -174,7 +173,7 @@ describe('SettingsLayoutRoute stack registration', () => {
         });
 
         expect(readStack().props.screenOptions?.headerBackTitle).toBe('fr:common.back');
-        expect(readProvidersScreen()?.props.options?.headerTitle).toBe('fr:settingsProviders.title');
+        expect(readProvidersScreen()?.props.options?.headerTitle).toBe('fr:settingsAgents.title');
         expect(readIndexScreen()?.props.options?.headerBackTitle).toBe('fr:common.home');
     });
 });

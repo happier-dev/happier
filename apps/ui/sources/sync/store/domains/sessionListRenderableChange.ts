@@ -21,7 +21,10 @@ export type SessionListRenderableChangeImpact = Readonly<{
 export function resolveSessionListRenderableChangeImpact(
     previousRenderable: SessionListRenderableSession | undefined,
     nextRenderable: SessionListRenderableSession,
-    options?: Readonly<{ sessionListIndexSettings?: SessionListIndexRebuildSettings | null }>,
+    options?: Readonly<{
+        sessionListIndexSettings?: SessionListIndexRebuildSettings | null;
+        nowMs?: number;
+    }>,
 ): SessionListRenderableChangeImpact {
     const didWarmCacheRelevantRenderableChange = didSessionListRenderableWarmCacheFieldsChange(
         previousRenderable,
@@ -30,7 +33,9 @@ export function resolveSessionListRenderableChangeImpact(
     return {
         didWarmCacheRelevantRenderableChange,
         isWarmCacheProgressOnlyChange: didWarmCacheRelevantRenderableChange
-            && isSessionListRenderableWarmCacheProgressOnlyChange(previousRenderable, nextRenderable),
+            && (
+                isSessionListRenderableWarmCacheProgressOnlyChange(previousRenderable, nextRenderable)
+            ),
         needsSessionListIndexRebuild: shouldRebuildSessionListIndexForRenderableChange(
             previousRenderable,
             nextRenderable,

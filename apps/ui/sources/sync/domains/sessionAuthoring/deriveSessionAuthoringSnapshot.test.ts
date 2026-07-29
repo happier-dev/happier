@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CodexBackendMode } from '@happier-dev/agents';
+import { SessionModelSelectionIntentV1Schema, type CodexBackendMode } from '@happier-dev/protocol';
 
 import { deriveSessionAuthoringSnapshot } from './deriveSessionAuthoringSnapshot';
 
@@ -63,6 +63,15 @@ describe('deriveSessionAuthoringSnapshot', () => {
             profileId: 'profile-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
+            modelSelection: {
+                v: 1,
+                updatedAt: 456,
+                ref: {
+                    agentTargetKey: 'backend:review-bot:configured:review-bot',
+                    providerConnectionId: null,
+                    modelId: 'gpt-5',
+                },
+            },
             modelId: 'gpt-5',
             modelUpdatedAt: 456,
             mcpSelection: {
@@ -157,5 +166,77 @@ describe('deriveSessionAuthoringSnapshot', () => {
 
         expect(snapshot.permissionMode).toBe('safe-yolo');
         expect(snapshot.permissionModeUpdatedAt).toBe(42);
+    });
+
+    it('does not reinterpret a newer same-id presentation value as a native selection', () => {
+        const snapshot = deriveSessionAuthoringSnapshot({
+            session: {
+                id: 'session-provider',
+                encryptionMode: 'e2ee',
+                metadata: {
+                    path: '/tmp/project',
+                    host: 'qa-host',
+                    flavor: 'codex',
+                    modelSelectionIntentV1: SessionModelSelectionIntentV1Schema.parse({
+                        v: 1,
+                        updatedAt: 20,
+                        selection: {
+                            agentTargetKey: 'backend:codex',
+                            providerConnectionId: 'pc_01J00000000000000000000000',
+                            modelId: 'shared-id',
+                        },
+                    }),
+                },
+                permissionMode: 'default',
+                permissionModeUpdatedAt: null,
+                modelMode: 'shared-id',
+                modelModeUpdatedAt: 30,
+            },
+            sessionDekBase64: null,
+        });
+
+        expect(snapshot.modelSelection?.ref).toEqual({
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: 'pc_01J00000000000000000000000',
+            modelId: 'shared-id',
+        });
+    });
+
+    it('does not let a newer different-id presentation value downgrade a Provider-bound selection', () => {
+        const snapshot = deriveSessionAuthoringSnapshot({
+            session: {
+                id: 'session-provider-different-presentation',
+                encryptionMode: 'e2ee',
+                metadata: {
+                    path: '/tmp/project',
+                    host: 'qa-host',
+                    flavor: 'codex',
+                    modelSelectionIntentV1: SessionModelSelectionIntentV1Schema.parse({
+                        v: 1,
+                        updatedAt: 20,
+                        selection: {
+                            agentTargetKey: 'backend:codex',
+                            providerConnectionId: 'pc_01J00000000000000000000000',
+                            modelId: 'provider-model',
+                        },
+                    }),
+                },
+                permissionMode: 'default',
+                permissionModeUpdatedAt: null,
+                modelMode: 'native-presentation-model',
+                modelModeUpdatedAt: 30,
+            },
+            sessionDekBase64: null,
+        });
+
+        expect(snapshot.modelSelection).toEqual({
+            v: 1,
+            updatedAt: 20,
+            ref: {
+                agentTargetKey: 'backend:codex',
+                providerConnectionId: 'pc_01J00000000000000000000000',
+                modelId: 'provider-model',
+            },
+        });
     });
 });

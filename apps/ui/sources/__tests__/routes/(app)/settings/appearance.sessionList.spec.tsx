@@ -52,13 +52,13 @@ describe('AppearanceSettingsScreen (focused groups after redistribution)', () =>
         const dropdownTitles = dropdowns.map((node: any) => node.props?.itemTrigger?.title).filter(Boolean);
 
         // Core appearance settings that remain
-        expect(titles).toContain('settings.appearance');
         expect(titles).toContain('settingsAppearance.avatarStyle');
         expect(titles).toContain('settingsAppearance.showFlavorIcons');
         expect(titles).toContain('settingsAppearance.multiPanePanels');
+        expect(dropdownTitles).toContain('settingsAppearance.theme');
         expect(dropdownTitles).toContain('settingsAppearance.textSize');
-        expect(dropdownTitles).toContain('settingsAppearance.contentWidth');
         expect(dropdownTitles).toContain('settingsAppearance.itemDensity');
+        expect(dropdownTitles).toContain('settingsAppearance.contentWidth');
 
         // Session list settings moved to session.tsx — should NOT be here
         expect(titles).not.toContain('settingsFeatures.hideInactiveSessions');

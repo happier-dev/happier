@@ -136,16 +136,19 @@ describe('SelectMessageButton', () => {
         expect(screen.findByType('ProbeRoot').props).toMatchObject({ mode: true, count: 1, selected: false });
     });
 
-    it('uses the same native hitSlop contract as transcript action buttons', async () => {
+    it('uses a physical native target without overlapping hit slop', async () => {
         const screen = await renderButton();
+        const button = findPressableByTestId(screen, 'select-m1');
 
-        expect(findPressableByTestId(screen, 'select-m1').props.hitSlop).toBe(15);
+        expect(resolvePressableStyle(button).minWidth).toBeGreaterThanOrEqual(44);
+        expect(resolvePressableStyle(button).minHeight).toBeGreaterThanOrEqual(44);
+        expect(button.props.hitSlop).toBeUndefined();
     });
 
-    it('enlarges the bottom action affordance only while selection mode is active', async () => {
+    it('preserves the physical target while enlarging the icon in selection mode', async () => {
         const screen = await renderButton();
 
-        expect(findPressableByTestId(screen, 'select-m1').props.hitSlop).toBe(15);
+        expect(findPressableByTestId(screen, 'select-m1').props.hitSlop).toBeUndefined();
         expect(screen.findByType('Ionicons').props.size).toBe(12);
 
         await act(async () => {
@@ -153,11 +156,11 @@ describe('SelectMessageButton', () => {
         });
 
         const selectionToggle = findPressableByTestId(screen, 'select-m1');
-        expect(selectionToggle.props.hitSlop).toBe(22);
+        expect(selectionToggle.props.hitSlop).toBeUndefined();
         expect(screen.findByType('Ionicons').props.size).toBe(18);
         expect(resolvePressableStyle(selectionToggle)).toMatchObject({
-            minHeight: 32,
-            minWidth: 32,
+            minHeight: 44,
+            minWidth: 44,
         });
     });
 });

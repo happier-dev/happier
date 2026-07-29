@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
+import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
 
 import type {
     SelectionListOption,
@@ -22,6 +23,11 @@ vi.mock('react-native', async () => {
         }),
     });
 });
+
+const { module: capturedLegendList } = createCapturingLegendListMock({ renderItems: true });
+vi.mock('@legendapp/list/react-native', () => ({
+    LegendList: capturedLegendList.LegendList,
+}));
 
 function makeOptions(count: number, prefix = 'opt'): ReadonlyArray<SelectionListOption> {
     return Array.from({ length: count }, (_, i) => ({
@@ -192,6 +198,41 @@ describe('SelectionList non-virtualized body scroll wrapper (R9 blocker 1)', () 
         const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(<SelectionList {...defaultProps(root)} />);
         expect(screen.findByTestId('sl:bodyScroll')).toBeNull();
+    });
+
+    it('bounds the single virtualized section to the body viewport so FlashList can own scrolling', async () => {
+        const root: SelectionListStep = {
+            id: 'root',
+            inputPlaceholder: 'Search',
+            sections: [
+                {
+                    kind: 'static',
+                    id: 'big',
+                    title: 'BIG',
+                    options: makeOptions(100, 'b'),
+                    virtualization: 'force',
+                },
+            ],
+        };
+        const { SelectionList } = await import('../SelectionList');
+        const screen = await renderScreen(
+            <SelectionList {...defaultProps(root, { maxHeight: 300 })} />,
+        );
+        const sectionHost = screen.findByTestId('sl:section:big');
+        expect(sectionHost).not.toBeNull();
+
+        let virtualizedSectionWrapper = sectionHost?.parent;
+        while (virtualizedSectionWrapper && String(virtualizedSectionWrapper.type) !== 'View') {
+            virtualizedSectionWrapper = virtualizedSectionWrapper.parent;
+        }
+        expect(virtualizedSectionWrapper).not.toBeNull();
+        const styleProp = virtualizedSectionWrapper?.props?.style;
+        const flatStyle = Array.isArray(styleProp)
+            ? Object.assign({}, ...styleProp.filter(Boolean))
+            : (styleProp ?? {});
+        expect(flatStyle.flexGrow).toBe(1);
+        expect(flatStyle.flexShrink).toBe(1);
+        expect(flatStyle.minHeight).toBe(0);
     });
 
     it('scrolls the selected non-virtualized row into the body viewport', async () => {

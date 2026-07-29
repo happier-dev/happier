@@ -21,7 +21,6 @@ describe('transcript viewport lifecycle', () => {
         });
 
         expect(transition.state).toMatchObject({
-            automaticPinAuthority: true,
             fingerDown: false,
             followMode: 'following',
             gesturePhase: 'settled',
@@ -64,7 +63,6 @@ describe('transcript viewport lifecycle', () => {
         });
 
         expect(transition.state).toMatchObject({
-            automaticPinAuthority: true,
             fingerDown: false,
             followMode: 'released',
             gesturePhase: 'settled',
@@ -100,7 +98,6 @@ describe('transcript viewport lifecycle', () => {
         });
 
         expect(dragStart.state).toMatchObject({
-            automaticPinAuthority: false,
             fingerDown: true,
             followMode: 'escaping',
             gesturePhase: 'dragging',
@@ -125,7 +122,6 @@ describe('transcript viewport lifecycle', () => {
         });
 
         expect(dragEnd.state).toMatchObject({
-            automaticPinAuthority: false,
             fingerDown: false,
             followMode: 'released',
             gesturePhase: 'momentum',
@@ -139,83 +135,10 @@ describe('transcript viewport lifecycle', () => {
         });
 
         expect(settled.state).toMatchObject({
-            automaticPinAuthority: true,
             fingerDown: false,
             followMode: 'released',
             gesturePhase: 'settled',
         });
-    });
-
-    it('issues a semantic live-tail command when following content grows', () => {
-        const lifecycle = createTranscriptViewportLifecycle();
-        lifecycle.dispatch({
-            sessionId: 'session-a',
-            shouldFollowLiveTail: true,
-            type: 'session-entry',
-        });
-
-        const transition = lifecycle.dispatch({
-            reason: 'stream-append',
-            sessionId: 'session-a',
-            type: 'content-growth',
-            wantsLiveTail: true,
-        });
-
-        expect(transition.effects).toEqual([
-            {
-                command: {
-                    reason: 'stream-append',
-                    type: 'scroll-to-live-tail',
-                },
-                sessionId: 'session-a',
-                type: 'command',
-            },
-        ]);
-    });
-
-    it('does not issue automatic scroll commands while drag or away-momentum owns the viewport', () => {
-        const lifecycle = createTranscriptViewportLifecycle();
-        lifecycle.dispatch({
-            sessionId: 'session-a',
-            shouldFollowLiveTail: true,
-            type: 'session-entry',
-        });
-
-        lifecycle.dispatch({
-            sessionId: 'session-a',
-            type: 'gesture-start',
-        });
-        const duringDrag = lifecycle.dispatch({
-            reason: 'stream-append',
-            sessionId: 'session-a',
-            type: 'content-growth',
-            wantsLiveTail: true,
-        });
-
-        expect(duringDrag.state).toMatchObject({
-            automaticPinAuthority: false,
-            gesturePhase: 'dragging',
-        });
-        expect(effectTypes(duringDrag.effects)).not.toContain('command');
-
-        lifecycle.dispatch({
-            distanceFromLiveTailPx: 240,
-            pinThresholdPx: 72,
-            sessionId: 'session-a',
-            type: 'gesture-end',
-        });
-        const duringMomentum = lifecycle.dispatch({
-            reason: 'stream-append',
-            sessionId: 'session-a',
-            type: 'content-growth',
-            wantsLiveTail: true,
-        });
-
-        expect(duringMomentum.state).toMatchObject({
-            automaticPinAuthority: false,
-            gesturePhase: 'momentum',
-        });
-        expect(effectTypes(duringMomentum.effects)).not.toContain('command');
     });
 
     it('keeps repeated gesture-start events idempotent and preserves the original pre-gesture mode', () => {
@@ -272,7 +195,6 @@ describe('transcript viewport lifecycle', () => {
         });
 
         expect(transition.state).toMatchObject({
-            automaticPinAuthority: true,
             followMode: 'following',
             gesturePhase: 'settled',
         });

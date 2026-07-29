@@ -14,6 +14,8 @@ type InstallVoiceSettingsRouteModuleMocksOptions = Readonly<{
 
 const voiceSettingsRouteModuleState = vi.hoisted(() => ({
     modalMockRef: { current: null as unknown },
+    routeParamsRef: { current: {} as Record<string, string | string[] | undefined> },
+    scrollToMockRef: { current: null as null | ReturnType<typeof vi.fn> },
     options: {
         routerModule: undefined as VoiceSettingsRouteModuleFactory | undefined,
         textModule: undefined as VoiceSettingsRouteModuleFactory | undefined,
@@ -24,6 +26,14 @@ const voiceSettingsRouteModuleState = vi.hoisted(() => ({
 
 export function getVoiceSettingsRouteModalMockRef() {
     return voiceSettingsRouteModuleState.modalMockRef as { current: any };
+}
+
+export function getVoiceSettingsRouteParamsRef() {
+    return voiceSettingsRouteModuleState.routeParamsRef;
+}
+
+export function getVoiceSettingsRouteScrollToMockRef() {
+    return voiceSettingsRouteModuleState.scrollToMockRef;
 }
 
 export function installVoiceSettingsRouteModuleMocks(
@@ -42,6 +52,7 @@ export function installVoiceSettingsRouteModuleMocks(
         }
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock({
+            params: () => voiceSettingsRouteModuleState.routeParamsRef.current,
             router: { push: vi.fn() },
         }).module;
     });
@@ -68,10 +79,16 @@ export function installVoiceSettingsRouteModuleMocks(
         return modalMock.module;
     });
 
-    vi.mock('@/components/ui/lists/ItemList', () => ({
-        ItemList: React.forwardRef((props: any, ref: any) =>
-            React.createElement('ItemList', { ...props, ref }, props.children)),
-    }));
+    vi.mock('@/components/ui/lists/ItemList', () => {
+        const scrollTo = vi.fn();
+        voiceSettingsRouteModuleState.scrollToMockRef.current = scrollTo;
+        return {
+            ItemList: React.forwardRef((props: any, ref: any) => {
+                React.useImperativeHandle(ref, () => ({ scrollTo }), []);
+                return React.createElement('ItemList', props, props.children);
+            }),
+        };
+    });
 
     vi.mock('@/components/ui/lists/ItemGroup', () => ({
         ItemGroup: ({ children }: any) => React.createElement('ItemGroup', null, children),
@@ -112,11 +129,15 @@ export function installVoiceSettingsRouteModuleMocks(
         Switch: (props: any) => React.createElement('Switch', props),
     }));
 
-    vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: () => null,
-    useSettings: () => ({}),
-});
-});
+    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+        if (voiceSettingsRouteModuleState.options.storageModule) {
+            return await voiceSettingsRouteModuleState.options.storageModule(importOriginal);
+        }
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
+        return createStorageModuleStub({
+            useSetting: () => null,
+            useSettings: () => settingsParse({}),
+        });
+    });
 }

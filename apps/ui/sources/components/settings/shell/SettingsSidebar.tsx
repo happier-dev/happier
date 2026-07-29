@@ -12,6 +12,8 @@ import { t } from '@/text';
 
 import { useResolvedSettingsPageCatalog } from '@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog';
 import type { ResolvedSettingsPageNode } from '@/components/settings/catalog/types';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 const Ionicons = SafeIonicons;
 
@@ -170,6 +172,16 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
         });
     }, []);
 
+    const navigateToRoute = React.useCallback((route: string, options?: Readonly<{ clearQuery?: boolean }>) => {
+        const result = runGuardedNavigation(() => {
+            if (options?.clearQuery) setQuery('');
+            router.navigate(route as never);
+        });
+        if (result !== true) {
+            fireAndForget(result, { tag: 'SettingsSidebar.navigate' });
+        }
+    }, [router]);
+
     const renderTreeNode = React.useCallback((node: ResolvedSettingsPageNode, level: number): React.ReactNode => {
         const hasChildren = Boolean(node.children && node.children.length > 0);
         const expanded = expandedIds.has(node.id);
@@ -234,7 +246,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                             return;
                         }
                         if (node.route) {
-                            router.push(node.route as any);
+                            navigateToRoute(node.route);
                             return;
                         }
                         if (hasChildren) {
@@ -247,7 +259,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                     : null}
             </React.Fragment>
         );
-    }, [expandedIds, resolved.activePageId, router, theme, toggleExpanded]);
+    }, [expandedIds, navigateToRoute, resolved.activePageId, theme, toggleExpanded]);
 
     return (
             <View testID="settings-sidebar" style={styles.root}>
@@ -283,8 +295,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                                     density="compact"
                                     showChevron={false}
                                     onPress={() => {
-                                        setQuery('');
-                                        router.push(result.route as any);
+                                        navigateToRoute(result.route, { clearQuery: true });
                                     }}
                                 />
                             );

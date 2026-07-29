@@ -39,15 +39,7 @@ export async function openAccountSettingsCiphertext(params: {
         return null;
     }
 
-    if (!params.fallbackDecryptRaw) {
-        return null;
-    }
-
-    const fallback = await params.fallbackDecryptRaw(params.ciphertext);
-    if (fallback && typeof fallback === 'object' && !Array.isArray(fallback)) {
-        return { format: 'unknown', value: fallback as Record<string, unknown> };
-    }
-
+    // Untagged historical settings/templates shared one raw key without an
+    // authenticated content domain, so a successful raw decrypt is ambiguous.
     return null;
 }
-

@@ -4,6 +4,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
 import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
 import { PopoverScrollSourceProvider } from '@/components/ui/popover';
+import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+
+const BASE_CONTENT_PADDING_BOTTOM = Platform.select({ ios: 34, default: 16 }) ?? 16;
 
 export interface ItemListProps extends ScrollViewProps {
     children: React.ReactNode;
@@ -44,6 +47,9 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
     const styles = stylesheet;
     const internalRef = React.useRef<ScrollView>(null);
     const isInsideModalBoundary = useIsInsideModalBoundary();
+    // When the floating tab bar overlays this screen, extend the bottom padding so
+    // the last rows clear it. 0 when no bar is present, so non-tab screens are unchanged.
+    const bottomChromeHeight = useSessionCockpitBottomChromeHeight();
 
     const {
         children,
@@ -86,7 +92,8 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
                 ]}
                 contentContainerStyle={[
                     styles.contentContainer,
-                    containerStyle
+                    containerStyle,
+                    bottomChromeHeight > 0 ? { paddingBottom: BASE_CONTENT_PADDING_BOTTOM + bottomChromeHeight } : null,
                 ]}
                 showsVerticalScrollIndicator={scrollViewProps.showsVerticalScrollIndicator !== undefined
                     ? scrollViewProps.showsVerticalScrollIndicator

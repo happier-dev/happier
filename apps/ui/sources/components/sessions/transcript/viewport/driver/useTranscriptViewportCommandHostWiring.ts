@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCommittedTranscriptRef } from '@/components/sessions/transcript/viewport/lifecycle/host/useCommittedTranscriptRef';
 import type {
     TranscriptViewportCommand,
     TranscriptViewportControllerInput,
@@ -14,55 +15,33 @@ import type {
     WebTranscriptViewportAnchorRestoreResult,
 } from '@/components/sessions/transcript/viewport/prepend/webTranscriptPrependAnchor';
 import type { TranscriptViewportTelemetryScrollReason } from '@/components/sessions/transcript/scroll/transcriptViewportTelemetry';
-import type { TranscriptViewportTransactionOutcome } from '@/components/sessions/transcript/viewport/transcriptViewportOwnership';
 
 type MutableRef<T> = { current: T };
 
 export function useTranscriptViewportCommandHostWiring(params: Readonly<{
-    clearWebPrependRestoreWindow: (outcome: TranscriptViewportTransactionOutcome) => void;
     commandHostRef: MutableRef<TranscriptViewportCommandHost | null>;
     driverDeps: TranscriptViewportDriverDeps;
-    expandedToolCallsAnchorMessageIds: ReadonlySet<string>;
-    hasWebPrependRestoreWindow: () => boolean;
-    listContentHeight: number;
-    listDataLength: number;
-    localHeightChangeRestoreOwner: 'app' | 'renderer';
-    pendingWebLocalHeightChangeAnchorRef: MutableRef<Readonly<{
-        sessionId: string;
-        anchor: WebTranscriptViewportAnchor;
-    }> | null>;
     platformOS: string;
     sessionId: string;
     viewportCommandController: TranscriptViewportCommandController;
 }>) {
     const {
-        clearWebPrependRestoreWindow,
         commandHostRef,
         driverDeps,
-        expandedToolCallsAnchorMessageIds,
-        hasWebPrependRestoreWindow,
-        listContentHeight,
-        listDataLength,
-        localHeightChangeRestoreOwner,
-        pendingWebLocalHeightChangeAnchorRef,
         platformOS,
         sessionId,
         viewportCommandController,
     } = params;
     const commandHost = React.useMemo(() => createTranscriptViewportCommandHost({
-        clearWebPrependRestoreWindow,
         controller: viewportCommandController,
         driverDeps,
-        hasWebPrependRestoreWindow,
         isWeb: () => platformOS === 'web',
     }), [
-        clearWebPrependRestoreWindow,
         driverDeps,
-        hasWebPrependRestoreWindow,
         platformOS,
         viewportCommandController,
     ]);
-    commandHostRef.current = commandHost;
+    useCommittedTranscriptRef(commandHostRef, commandHost);
 
     const resolveViewportCommand = React.useCallback((input: TranscriptViewportControllerInput): TranscriptViewportCommand => {
         return commandHost.resolve(input);
@@ -89,34 +68,6 @@ export function useTranscriptViewportCommandHostWiring(params: Readonly<{
             sessionId,
         });
     }, [commandHost, sessionId]);
-
-    React.useLayoutEffect(() => {
-        if (localHeightChangeRestoreOwner === 'renderer') {
-            pendingWebLocalHeightChangeAnchorRef.current = null;
-            return;
-        }
-        if (platformOS !== 'web') return;
-        const pending = pendingWebLocalHeightChangeAnchorRef.current;
-        if (!pending) return;
-        if (pending.sessionId !== sessionId) {
-            pendingWebLocalHeightChangeAnchorRef.current = null;
-            return;
-        }
-        pendingWebLocalHeightChangeAnchorRef.current = null;
-        restoreWebViewportAnchorThroughViewportCommand({
-            anchor: pending.anchor,
-            reason: 'content-size-change',
-        });
-    }, [
-        expandedToolCallsAnchorMessageIds,
-        listContentHeight,
-        listDataLength,
-        localHeightChangeRestoreOwner,
-        pendingWebLocalHeightChangeAnchorRef,
-        platformOS,
-        restoreWebViewportAnchorThroughViewportCommand,
-        sessionId,
-    ]);
 
     return {
         executeViewportCommand,

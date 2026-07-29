@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -63,14 +63,64 @@ describe('socket update handling cursor isolation', () => {
         storage.setState(initialStorageState, true);
     });
 
-    it('does not persist durable changes cursor when handling new-session socket updates', async () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('applies self-sufficient new-session socket updates without full list invalidation', async () => {
         const saveChangesCursorSpy = vi.spyOn(persistence, 'saveChangesCursor');
-        const params = buildBaseParams();
+        const sessionDataKey = new Uint8Array([1, 2, 3]);
+        const decryptEncryptionKey = vi.fn(async (_value: string) => sessionDataKey);
+        const initializeSessions = vi.fn(async (_sessionKeys: Map<string, Uint8Array | null>) => {});
+        const sessionEncryption = {
+            decryptSessionSnapshotState: vi.fn(async () => ({
+                metadata: {
+                    name: 'Wave 11 created elsewhere',
+                    path: '/repo',
+                    homeDir: '/home/tester',
+                    host: 'tester-host',
+                    machineId: 'machine_1',
+                    flavor: 'codex',
+                },
+                agentState: {},
+            })),
+            decryptMetadata: vi.fn(),
+            decryptAgentState: vi.fn(),
+        };
+        const getSessionEncryption = vi.fn(() => sessionEncryption);
+        const applySessions = vi.fn<Parameters<typeof handleUpdateContainer>[0]['applySessions']>();
+        const hydrateSessionById = vi.fn();
+        const params = buildBaseParams({
+            applySessions,
+            hydrateSessionById,
+            encryption: {
+                getSessionEncryption,
+                getMachineEncryption: () => null,
+                removeSessionEncryption: () => {},
+                decryptEncryptionKey,
+                initializeSessions,
+            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+        });
         const updateData: ApiUpdateContainer = {
             id: 'u1',
             seq: 10,
             createdAt: 100,
-            body: { t: 'new-session' },
+            body: {
+                t: 'new-session',
+                id: 's_new',
+                seq: 1,
+                metadata: 'encrypted-metadata',
+                metadataVersion: 2,
+                agentState: 'encrypted-agent-state',
+                agentStateVersion: 3,
+                dataEncryptionKey: 'encrypted-data-key',
+                encryptionMode: 'e2ee',
+                active: true,
+                activeAt: 100,
+                createdAt: 90,
+                updatedAt: 100,
+                meaningfulActivityAt: 95,
+            },
         } as ApiUpdateContainer;
 
         await handleUpdateContainer({
@@ -78,8 +128,128 @@ describe('socket update handling cursor isolation', () => {
             updateData,
         });
 
-        expect(params.invalidateSessions).toHaveBeenCalledTimes(1);
+        expect(decryptEncryptionKey).toHaveBeenCalledWith('encrypted-data-key');
+        expect(initializeSessions).toHaveBeenCalledTimes(1);
+        const initializedSessionKeys = initializeSessions.mock.calls[0]?.[0];
+        expect(initializedSessionKeys).toBeInstanceOf(Map);
+        expect(Array.from(initializedSessionKeys?.entries() ?? [])).toEqual([
+            ['s_new', sessionDataKey],
+        ]);
+        expect(getSessionEncryption).toHaveBeenCalledWith('s_new');
+        expect(sessionEncryption.decryptSessionSnapshotState).toHaveBeenCalledWith(
+            2,
+            'encrypted-metadata',
+            3,
+            'encrypted-agent-state',
+        );
+        expect(applySessions).toHaveBeenCalledTimes(1);
+        const appliedSession = applySessions.mock.calls[0]?.[0]?.[0] as Session;
+        expect(appliedSession).toMatchObject({
+            id: 's_new',
+            seq: 1,
+            encryptionMode: 'e2ee',
+            createdAt: 90,
+            updatedAt: 100,
+            meaningfulActivityAt: 95,
+            active: true,
+            activeAt: 100,
+            metadataVersion: 2,
+            agentStateVersion: 3,
+            presence: 'online',
+        });
+        expect(appliedSession.metadata?.name).toBe('Wave 11 created elsewhere');
+        expect(hydrateSessionById).toHaveBeenCalledWith('s_new', 'socket-new-session-reconcile');
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
         expect(saveChangesCursorSpy).not.toHaveBeenCalled();
+    });
+
+    it('falls back to targeted hydration when a new-session socket payload cannot be decrypted', async () => {
+        const decryptEncryptionKey = vi.fn(async (_value: string) => {
+            throw new Error('decrypt failed');
+        });
+        const hydrateSessionById = vi.fn();
+        const applySessions = vi.fn<Parameters<typeof handleUpdateContainer>[0]['applySessions']>();
+        const params = buildBaseParams({
+            applySessions,
+            encryption: {
+                getSessionEncryption: () => null,
+                getMachineEncryption: () => null,
+                removeSessionEncryption: () => {},
+                decryptEncryptionKey,
+                initializeSessions: vi.fn(async (_sessionKeys: Map<string, Uint8Array | null>) => {}),
+            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+            hydrateSessionById,
+        });
+        // Compatibility fixture: older socket payloads can carry only sid even though the current contract requires id.
+        const updateData: ApiUpdateContainer = {
+            id: 'u1b',
+            seq: 11,
+            createdAt: 101,
+            body: {
+                t: 'new-session',
+                id: 's_decrypt_fail',
+                seq: 1,
+                metadata: 'encrypted-metadata',
+                metadataVersion: 2,
+                agentState: 'encrypted-agent-state',
+                agentStateVersion: 3,
+                dataEncryptionKey: 'encrypted-data-key',
+                encryptionMode: 'e2ee',
+                active: true,
+                activeAt: 101,
+                createdAt: 90,
+                updatedAt: 101,
+            },
+        } as ApiUpdateContainer;
+
+        await handleUpdateContainer({
+            ...params,
+            updateData,
+        });
+
+        expect(applySessions).not.toHaveBeenCalled();
+        expect(hydrateSessionById).toHaveBeenCalledWith('s_decrypt_fail', 'socket-update-missing-session');
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
+    });
+
+    it('falls back to targeted hydration using sid when a new-session socket payload has no id', async () => {
+        const hydrateSessionById = vi.fn();
+        const params = buildBaseParams({
+            encryption: {
+                getSessionEncryption: () => null,
+                getMachineEncryption: () => null,
+                removeSessionEncryption: () => {},
+                decryptEncryptionKey: vi.fn(async (_value: string) => {
+                    throw new Error('decrypt failed');
+                }),
+                initializeSessions: vi.fn(async (_sessionKeys: Map<string, Uint8Array | null>) => {}),
+            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+            hydrateSessionById,
+        });
+        const updateData: ApiUpdateContainer = {
+            id: 'u1c',
+            seq: 12,
+            createdAt: 102,
+            body: {
+                t: 'new-session',
+                sid: 's_sid_only_decrypt_fail',
+                seq: 1,
+                metadata: 'encrypted-metadata',
+                metadataVersion: 2,
+                agentState: 'encrypted-agent-state',
+                agentStateVersion: 3,
+                dataEncryptionKey: 'encrypted-data-key',
+                encryptionMode: 'e2ee',
+            },
+        } as unknown as ApiUpdateContainer;
+
+        await handleUpdateContainer({
+            ...params,
+            updateData,
+        });
+
+        expect(hydrateSessionById).toHaveBeenCalledWith('s_sid_only_decrypt_fail', 'socket-update-missing-session');
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
     });
 
     it('does not persist durable changes cursor when applying pending-changed socket updates', async () => {
@@ -204,7 +374,8 @@ describe('socket update handling cursor isolation', () => {
         expect(updatedSession.thinkingAt).toBe(150);
     });
 
-    it('patches list-only session rows from activity updates', () => {
+    it('patches list-only session rows from activity updates', async () => {
+        vi.useFakeTimers();
         const sessionId = 's_renderable_only';
         storage.setState({
             sessions: {},
@@ -230,6 +401,16 @@ describe('socket update handling cursor isolation', () => {
         flushActivityUpdates({ updates, applySessions });
 
         expect(applySessions).not.toHaveBeenCalled();
+        expect(storage.getState().sessionListRenderables[sessionId]).toMatchObject({
+            active: true,
+            activeAt: 100,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        });
+
+        await vi.advanceTimersByTimeAsync(16);
+
         expect(storage.getState().sessionListRenderables[sessionId]).toMatchObject({
             active: true,
             activeAt: 200,

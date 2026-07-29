@@ -1,7 +1,7 @@
 import type { MutableRefObject } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { resetFlashListChatListHarness } from '@/dev/testkit';
+import { resetChatListHarness } from '@/dev/testkit';
 import type {
     LastNativeRestoreIndexCommand,
     ScrollableChatListRef,
@@ -17,7 +17,7 @@ import {
  * Focused, deps-mocked unit test for the transcript command writer — the ONE place that issues raw
  * scroll writes (web DOM `scrollTop`; native `scrollToEnd`/`scrollToOffset`/`scrollToIndex`). The host
  * `Platform.OS` is the only `react-native` member the writer reads; we drive it through the CANONICAL
- * testkit lever (`resetFlashListChatListHarness({ platformOs })`) via `setPlatform`, which both resets the
+ * testkit lever (`resetChatListHarness({ platformOs })`) via `setPlatform`, which both resets the
  * harness and mirrors the chosen OS into the hoisted Platform mock holder (the same hoisted-holder pattern
  * the sibling `ChatList.flashListV2Inverted` suite uses). No component render — the deps bundle stands in
  * for the host bindings, so we can assert the EXACT raw write the node received and the boolean return for
@@ -39,13 +39,10 @@ vi.mock('react-native', () => ({
 const { performTranscriptViewportCommand } = await import(
     '@/components/sessions/transcript/viewport/performTranscriptViewportCommand'
 );
-const { performWebDomPrependAnchorRestoreCommand } = await import(
-    '@/components/sessions/transcript/viewport/driver/webDom'
-);
 
 /** Canonical testkit lever: reset the harness AND mirror the chosen OS into the hoisted Platform mock. */
 function setPlatform(platformOs: 'web' | 'ios'): void {
-    resetFlashListChatListHarness({ platformOs });
+    resetChatListHarness({ platformOs });
     platformMockState.os = platformOs;
 }
 
@@ -61,13 +58,11 @@ type FakeScrollNode = ScrollableChatListRef & {
     indexCalls: ScrollToIndexCall[];
     offsetCalls: ScrollToOffsetCall[];
     endCalls: ScrollToEndCall[];
-    transcriptViewportCommandSpace?: 'standard' | 'native-inverted';
 };
 
 function createFakeScrollNode(
     options: Readonly<{
         getLayout?: NonNullable<ScrollableChatListRef['getLayout']>;
-        transcriptViewportCommandSpace?: 'standard' | 'native-inverted';
         withScrollToEnd?: boolean;
         withScrollToIndex?: boolean;
         withScrollToOffset?: boolean;
@@ -80,7 +75,6 @@ function createFakeScrollNode(
         indexCalls,
         offsetCalls,
         endCalls,
-        transcriptViewportCommandSpace: options.transcriptViewportCommandSpace,
     } as FakeScrollNode;
     if (options.withScrollToIndex !== false) {
         (node as { scrollToIndex: ScrollableChatListRef['scrollToIndex'] }).scrollToIndex = (params) => {
@@ -198,12 +192,20 @@ type DepsOverrides = {
     listData?: readonly { readonly id: string }[];
     items?: readonly { readonly id: string }[];
     itemsLength?: number;
-    composerInsetHeight?: number;
-    nativeHotTailHeight?: number;
     shouldUseWebHotColdSplit?: boolean;
     shouldUseNativeHotColdSplit?: boolean;
     coldItemCount?: number;
     resolveRestoreAnchorIndex?: (anchor: { kind: 'message' | 'toolGroup' | 'item'; itemId: string; messageId?: string | null }) => number | null;
+    resolveRendererDataTarget?: (command: Extract<TranscriptViewportCommand, Readonly<{ kind: 'restore-anchor' | 'jump-to-seq' }>>) =>
+        | Readonly<{ kind: 'data'; index: number; itemId: string }>
+        | Readonly<{
+            kind: 'outside-data';
+            fallbackIndex: number | null;
+            itemId: string;
+            reason: 'projection-window' | 'renderer-edge';
+            targetSeq: number | null;
+        }>
+        | null;
     telemetryPlatform?: 'web' | 'ios' | 'android' | 'native-other';
     resolveJumpToSeqIndex?: (seq: number) => number | null;
 };
@@ -214,7 +216,6 @@ type DepsBundle = {
     restoreDecisions: Array<{ reason: string; params?: unknown }>;
     lastNativeRestoreIndexCommandRef: MutableRefObject<LastNativeRestoreIndexCommand | null>;
     webDomObservation: WebDomScrollObservation;
-    clearWebPrependRangeReserve: ReturnType<typeof vi.fn>;
 };
 
 function makeRef<T>(value: T): MutableRefObject<T> {
@@ -226,33 +227,47 @@ function buildDeps(overrides: DepsOverrides = {}): DepsBundle {
     const restoreDecisions: Array<{ reason: string; params?: unknown }> = [];
     const lastNativeRestoreIndexCommandRef = makeRef<LastNativeRestoreIndexCommand | null>(null);
     const webDomObservation = createWebDomScrollObservation();
-    const clearWebPrependRangeReserve = vi.fn();
 
     const deps: DepsType = {
         listRef: { current: overrides.node ?? null },
         listContentHeightRef: { current: overrides.listContentHeight ?? 1000 },
         listLayoutHeightRef: { current: overrides.listLayoutHeight ?? 400 },
         listDataRef: { current: overrides.listData ?? { length: overrides.listDataLength ?? 5 } },
-        itemsRef: { current: overrides.items ?? { length: overrides.itemsLength ?? 5 } },
-        composerInsetHeightRef: { current: overrides.composerInsetHeight ?? 0 },
-        nativeHotTailHeightRef: { current: overrides.nativeHotTailHeight ?? 0 },
         lastPinOffsetForIntentRef: { current: null },
-        lastNativePinOffsetRef: { current: null },
         webDomObservation,
         lastNativeRestoreIndexCommandRef,
         nativeMountSettleStable: true,
         telemetryPlatform: overrides.telemetryPlatform ?? 'ios',
-        shouldUseNativeHotColdSplit: overrides.shouldUseNativeHotColdSplit ?? false,
-        webHotColdCountsRef: {
-            current: {
-                coldCount: overrides.coldItemCount ?? 0,
-                hotCount: (overrides.shouldUseWebHotColdSplit ?? false) ? 1 : 0,
-            },
-        },
-        clearWebPrependRangeReserve,
         resolveWebScrollMetrics: () => overrides.webMetrics ?? null,
-        resolveRestoreAnchorIndex: overrides.resolveRestoreAnchorIndex ?? (() => null),
-        resolveJumpToSeqIndex: overrides.resolveJumpToSeqIndex ?? (() => null),
+        resolveRendererDataTarget: overrides.resolveRendererDataTarget ?? ((command) => {
+            const fullIndex = command.kind === 'restore-anchor'
+                ? overrides.resolveRestoreAnchorIndex?.(command.target.anchor) ?? null
+                : overrides.resolveJumpToSeqIndex?.(command.seq) ?? null;
+            if (fullIndex == null) return null;
+            const itemId = overrides.items?.[fullIndex]?.id ?? `row-${fullIndex}`;
+            if (overrides.shouldUseWebHotColdSplit && fullIndex >= (overrides.coldItemCount ?? 0)) {
+                const coldCount = overrides.coldItemCount ?? 0;
+                return {
+                    kind: 'outside-data',
+                    fallbackIndex: coldCount > 0 ? coldCount - 1 : null,
+                    itemId,
+                    reason: 'renderer-edge',
+                    targetSeq: null,
+                };
+            }
+            if (overrides.shouldUseNativeHotColdSplit) {
+                const fullCount = overrides.itemsLength ?? overrides.items?.length ?? 5;
+                const coldCount = overrides.listDataLength ?? overrides.listData?.length ?? 5;
+                const canonicalIndex = fullCount - 1 - fullIndex;
+                const coldCanonicalIndex = Math.min(Math.max(0, canonicalIndex), Math.max(0, coldCount - 1));
+                return {
+                    kind: 'data',
+                    index: coldCount - 1 - coldCanonicalIndex,
+                    itemId,
+                };
+            }
+            return { kind: 'data', index: fullIndex, itemId };
+        }),
         recordViewportTelemetryEvent: (event) => {
             recorded.push(event as RecordedTelemetry);
         },
@@ -260,7 +275,6 @@ function buildDeps(overrides: DepsOverrides = {}): DepsBundle {
             restoreDecisions.push({ reason, params });
         },
         resolveWebViewportTelemetryDiagnostics: () => ({ diag: true }),
-        resolveInvertedBottomPinCarveTelemetryFields: () => ({ carve: true }),
     };
 
     return {
@@ -269,7 +283,6 @@ function buildDeps(overrides: DepsOverrides = {}): DepsBundle {
         restoreDecisions,
         lastNativeRestoreIndexCommandRef,
         webDomObservation,
-        clearWebPrependRangeReserve,
     };
 }
 
@@ -286,31 +299,6 @@ afterEach(() => {
 });
 
 describe('performTranscriptViewportCommand', () => {
-    describe('skip-native-js-pin', () => {
-        beforeEach(() => setPlatform('ios'));
-
-        it('records an mvcp-skip scroll-write and returns true without touching the node', () => {
-            const bundle = buildDeps({ node: createFakeScrollNode() });
-            const command = {
-                kind: 'skip-native-js-pin',
-                sessionId: BASE_SESSION,
-                reason: 'content-size-change',
-                skipReason: 'mvcp-only',
-                mode: 'follow-bottom',
-            } satisfies TranscriptViewportCommand;
-
-            const result = performTranscriptViewportCommand(command, bundle.deps);
-
-            expect(result).toBe(true);
-            const write = lastWrite(bundle.recorded);
-            expect(write.writer).toBe('mvcp-skip');
-            expect(write.reason).toBe('content-size-change');
-            const node = bundle.deps.listRef.current as FakeScrollNode;
-            expect(node.indexCalls).toHaveLength(0);
-            expect(node.offsetCalls).toHaveLength(0);
-        });
-    });
-
     describe('pin-bottom — web', () => {
         beforeEach(() => setPlatform('web'));
 
@@ -337,7 +325,6 @@ describe('performTranscriptViewportCommand', () => {
             const write = lastWrite(bundle.recorded);
             expect(write.writer).toBe('web-dom-bottom');
             expect(write.targetOffsetY).toBe(600);
-            expect(bundle.clearWebPrependRangeReserve).toHaveBeenCalledTimes(1);
         });
 
         it('returns false when no web metrics are resolvable', () => {
@@ -348,6 +335,48 @@ describe('performTranscriptViewportCommand', () => {
             );
             expect(result).toBe(false);
             expect(bundle.recorded.filter((e) => e.type === 'scroll-write')).toHaveLength(0);
+        });
+
+        it('defers to a live renderer-held end intent instead of re-writing the tail', () => {
+            // Open-landing capture 2026-07-22 (session cmrw2np7w): repeated driver pin
+            // writes raced the renderer verifyLanding corrections and Legend's own
+            // maintain-at-end while initial row measurement oscillated scrollHeight —
+            // three writers chasing different bottoms = the visible open jiggle.
+            // Native pin-bottom already routes through the renderer
+            // (scrollRendererToEnd latches and writes in one owner); the web DOM
+            // driver defers the same way once the renderer owns the tail. The FIRST
+            // pin (no live end hold) still writes and latches.
+            const metrics = createFakeWebScrollMetrics({ scrollHeight: 1000, clientHeight: 400, scrollTop: 10 });
+            const node = createFakeScrollNode();
+            (node as unknown as { hasLiveWebHold: (target: { kind: string }) => boolean }).hasLiveWebHold =
+                (target) => target.kind === 'end';
+            const bundle = buildDeps({ node, webMetrics: metrics });
+            const result = performTranscriptViewportCommand(
+                { kind: 'pin-bottom', sessionId: BASE_SESSION, reason: 'content-size-change', mode: 'follow-bottom' },
+                bundle.deps,
+            );
+            expect(result).toBe(true);
+            // No write: the renderer's held-'end' machinery owns the landing.
+            expect(metrics.element.scrollTop).toBe(10);
+            expect(bundle.recorded.filter((e) => e.type === 'scroll-write')).toHaveLength(0);
+        });
+
+        it('hands the first bottom landing to a renderer that can own the live tail', () => {
+            const metrics = createFakeWebScrollMetrics({ scrollHeight: 1000, clientHeight: 400, scrollTop: 10 });
+            const node = createFakeScrollNode({ withScrollToEnd: true });
+            (node as unknown as { hasLiveWebHold: (target: { kind: string }) => boolean }).hasLiveWebHold =
+                () => false;
+            const bundle = buildDeps({ node, webMetrics: metrics });
+
+            const result = performTranscriptViewportCommand(
+                { kind: 'pin-bottom', sessionId: BASE_SESSION, reason: 'jump-to-bottom', mode: 'jump-to-bottom' },
+                bundle.deps,
+            );
+
+            expect(result).toBe(true);
+            expect(node.endCalls).toEqual([{ animated: false }]);
+            expect(metrics.element.scrollTop).toBe(10);
+            expect(bundle.recorded.filter((event) => event.type === 'scroll-write')).toHaveLength(0);
         });
     });
 
@@ -363,37 +392,12 @@ describe('performTranscriptViewportCommand', () => {
             expect(result).toBe(false);
         });
 
-        it('uses the canonical inverted bottom command for native follow pins with inset', () => {
-            const node = createFakeScrollNode();
-            const bundle = buildDeps({
-                node,
-                listContentHeight: 1000,
-                listLayoutHeight: 400,
-                composerInsetHeight: 40,
-                nativeHotTailHeight: 12,
-            });
-            const result = performTranscriptViewportCommand(
-                { kind: 'pin-bottom', sessionId: BASE_SESSION, reason: 'content-size-change', mode: 'follow-bottom' },
-                bundle.deps,
-            );
-            expect(result).toBe(true);
-            expect(node.indexCalls).toEqual([{ index: 0, animated: false, viewOffset: -52 }]);
-            expect(node.offsetCalls).toHaveLength(0);
-            expect(node.endCalls).toHaveLength(0);
-            expect(lastWrite(bundle.recorded).writer).toBe('native-scroll-to-offset');
-        });
-
         it('uses standard native scroll space for the Legend renderer command adapter', () => {
-            const node = createFakeScrollNode({
-                transcriptViewportCommandSpace: 'standard',
-                withScrollToEnd: true,
-            });
+            const node = createFakeScrollNode({ withScrollToEnd: true });
             const bundle = buildDeps({
                 node,
                 listContentHeight: 1000,
                 listLayoutHeight: 400,
-                composerInsetHeight: 40,
-                nativeHotTailHeight: 12,
             });
 
             const result = performTranscriptViewportCommand(
@@ -402,9 +406,9 @@ describe('performTranscriptViewportCommand', () => {
             );
 
             expect(result).toBe(true);
-            expect(node.endCalls).toEqual([]);
+            expect(node.endCalls).toEqual([{ animated: false }]);
             expect(node.indexCalls).toHaveLength(0);
-            expect(node.offsetCalls).toEqual([{ offset: 600, animated: false }]);
+            expect(node.offsetCalls).toHaveLength(0);
             expect(lastWrite(bundle.recorded)).toMatchObject({
                 writer: 'native-scroll-to-offset',
                 reason: 'content-size-change',
@@ -415,7 +419,7 @@ describe('performTranscriptViewportCommand', () => {
         });
 
         it('maps semantic native distance and history commands directly in standard Legend scroll space', () => {
-            const node = createFakeScrollNode({ transcriptViewportCommandSpace: 'standard' });
+            const node = createFakeScrollNode();
             const bundle = buildDeps({
                 node,
                 listContentHeight: 1200,
@@ -457,14 +461,20 @@ describe('performTranscriptViewportCommand', () => {
                 .toEqual([575, 240, 300]);
         });
 
-        it('keeps standard Legend index commands in source-index space and skips FlashList hot-cold remapping', () => {
-            const node = createFakeScrollNode({ transcriptViewportCommandSpace: 'standard' });
+        it('uses the renderer-data target projected before the standard Legend driver', () => {
+            const node = createFakeScrollNode();
             const resolveJumpToSeqIndex = vi.fn(() => 8);
+            const resolveRendererDataTarget = vi.fn(() => ({
+                kind: 'data' as const,
+                index: 0,
+                itemId: 'cold-row-0',
+            }));
             const bundle = buildDeps({
                 node,
                 itemsLength: 10,
                 listDataLength: 4,
                 resolveJumpToSeqIndex,
+                resolveRendererDataTarget,
                 shouldUseNativeHotColdSplit: true,
             });
 
@@ -479,170 +489,46 @@ describe('performTranscriptViewportCommand', () => {
             }, bundle.deps);
 
             expect(result).toBe(true);
-            expect(resolveJumpToSeqIndex).toHaveBeenCalledWith(42);
-            expect(node.indexCalls).toEqual([{ index: 8, animated: true, viewOffset: 32 }]);
+            expect(resolveRendererDataTarget).toHaveBeenCalledWith(expect.objectContaining({
+                kind: 'jump-to-seq',
+                seq: 42,
+            }));
+            expect(resolveJumpToSeqIndex).not.toHaveBeenCalled();
+            expect(node.indexCalls).toEqual([{ index: 0, animated: true, viewOffset: 32 }]);
             expect(bundle.lastNativeRestoreIndexCommandRef.current).toMatchObject({
-                index: 8,
+                index: 0,
                 reason: 'jump-to-seq',
                 sessionId: BASE_SESSION,
                 viewOffset: 32,
             });
         });
 
-        it('uses the canonical inverted bottom command for native explicit jumps', () => {
-            const node = createFakeScrollNode({ withScrollToEnd: true });
-            const bundle = buildDeps({
-                node,
-                composerInsetHeight: 18,
-                nativeHotTailHeight: 6,
-            });
-            const result = performTranscriptViewportCommand(
-                { kind: 'pin-bottom', sessionId: BASE_SESSION, reason: 'jump-to-bottom', mode: 'jump-to-bottom' },
-                bundle.deps,
-            );
-            expect(result).toBe(true);
-            expect(node.indexCalls).toEqual([{ index: 0, animated: false, viewOffset: -24 }]);
-            expect(node.endCalls).toHaveLength(0);
-            expect(node.offsetCalls).toHaveLength(0);
-            expect(lastWrite(bundle.recorded).writer).toBe('native-explicit-jump');
-        });
-
-        it('uses the canonical inverted bottom command for native automatic bottom pins', () => {
-            const node = createFakeScrollNode();
-            const bundle = buildDeps({
-                node,
-                listContentHeight: 200,
-                listLayoutHeight: 50,
-            });
-            const result = performTranscriptViewportCommand(
-                {
-                    kind: 'pin-bottom',
-                    sessionId: BASE_SESSION,
-                    reason: 'content-size-change',
-                    mode: 'follow-bottom',
-                    contentHeight: 1200,
-                    layoutHeight: 600,
-                } satisfies TranscriptViewportCommand,
-                bundle.deps,
-            );
-            expect(result).toBe(true);
-            expect(node.indexCalls).toEqual([{ index: 0, animated: false }]);
-            expect(node.offsetCalls).toHaveLength(0);
-            expect(lastWrite(bundle.recorded)).toMatchObject({
-                contentHeight: 1200,
-                layoutHeight: 600,
-                targetOffsetY: 0,
-            });
-        });
-
-        it('uses the canonical inverted bottom command for fractional content metrics', () => {
-            const node = createFakeScrollNode();
-            const bundle = buildDeps({
-                node,
-                listContentHeight: 200,
-                listLayoutHeight: 50,
-            });
-            const result = performTranscriptViewportCommand(
-                {
-                    kind: 'pin-bottom',
-                    sessionId: BASE_SESSION,
-                    reason: 'content-size-change',
-                    mode: 'follow-bottom',
-                    contentHeight: 10_000.1,
-                    layoutHeight: 331.9,
-                } satisfies TranscriptViewportCommand,
-                bundle.deps,
-            );
-            expect(result).toBe(true);
-            expect(node.indexCalls).toEqual([{ index: 0, animated: false }]);
-            expect(node.offsetCalls).toHaveLength(0);
-            expect(lastWrite(bundle.recorded)).toMatchObject({
-                contentHeight: 10_000.1,
-                layoutHeight: 331.9,
-                targetOffsetY: 0,
-            });
-        });
-
-        it('inverted bottom commands scrollToIndex(0) with viewOffset = -(composerInset + hotTail)', () => {
-            const node = createFakeScrollNode();
-            const bundle = buildDeps({
-                node,
-                composerInsetHeight: 16,
-                nativeHotTailHeight: 24,
-            });
-            const result = performTranscriptViewportCommand(
-                { kind: 'pin-bottom', sessionId: BASE_SESSION, reason: 'content-size-change', mode: 'follow-bottom' },
-                bundle.deps,
-            );
-            expect(result).toBe(true);
-            expect(node.indexCalls).toEqual([{ index: 0, animated: false, viewOffset: -40 }]);
-            expect(node.offsetCalls).toHaveLength(0);
-            const write = lastWrite(bundle.recorded);
-            expect(write.writer).toBe('native-scroll-to-offset');
-            // The inverted-bottom carve telemetry fields are merged into the write event.
-            expect(write.carve).toBe(true);
-        });
-
-        it('inverted bottom with zero inset omits viewOffset', () => {
-            const node = createFakeScrollNode();
-            const bundle = buildDeps({
-                node,
-                composerInsetHeight: 0,
-                nativeHotTailHeight: 0,
-            });
-            performTranscriptViewportCommand(
-                { kind: 'pin-bottom', sessionId: BASE_SESSION, reason: 'content-size-change', mode: 'follow-bottom' },
-                bundle.deps,
-            );
-            expect(node.indexCalls).toEqual([{ index: 0, animated: false }]);
-        });
-
-        it('does not use the retired standard not-ready branch for native explicit jumps', () => {
-            const node = createFakeScrollNode();
-            const bundle = buildDeps({
-                node,
-                listContentHeight: 0,
-                listLayoutHeight: 0,
-                listDataLength: 3,
-            });
-            // Drop scrollToEnd; canonical native still uses inverted scrollToIndex(0).
-            delete (node as { scrollToEnd?: unknown }).scrollToEnd;
-            const result = performTranscriptViewportCommand(
-                { kind: 'pin-bottom', sessionId: BASE_SESSION, reason: 'jump-to-bottom', mode: 'jump-to-bottom' },
-                bundle.deps,
-            );
-            expect(result).toBe(true);
-            expect(node.indexCalls).toEqual([{ index: 0, animated: false }]);
-            expect(node.offsetCalls).toHaveLength(0);
-            expect(bundle.restoreDecisions).toHaveLength(0);
-        });
     });
 
     describe('restore-distance — web', () => {
         beforeEach(() => setPlatform('web'));
 
-        it('preserve-live-tail-distance derives the web scrollTop target inside the web driver', () => {
-            const metrics = createFakeWebScrollMetrics({ scrollHeight: 2400, clientHeight: 500, scrollTop: 1495 });
-            const bundle = buildDeps({ webMetrics: metrics });
+        it('restore-distance at distance 0 defers to a live renderer-held end intent', () => {
+            // Distance 0 IS the live tail — the same single-owner rule as
+            // pin-bottom/preserve. Detached distances stay transaction-owned.
+            const metrics = createFakeWebScrollMetrics({ scrollHeight: 1000, clientHeight: 400, scrollTop: 100 });
+            const node = createFakeScrollNode();
+            (node as unknown as { hasLiveWebHold: (target: { kind: string }) => boolean }).hasLiveWebHold =
+                (target) => target.kind === 'end';
+            const bundle = buildDeps({ node, webMetrics: metrics });
             const result = performTranscriptViewportCommand(
                 {
-                    kind: 'preserve-live-tail-distance',
+                    kind: 'restore-distance',
                     sessionId: BASE_SESSION,
-                    reason: 'content-size-change',
-                    mode: 'follow-bottom',
-                    previousDistanceFromLiveTailPx: 10,
+                    reason: 'entry-restore',
+                    mode: 'restore-distance',
+                    distanceFromLiveTailPx: 0,
                 },
                 bundle.deps,
             );
             expect(result).toBe(true);
-            // maxScrollTop (1900) - previously-held live-tail distance (10) = 1890.
-            expect(metrics.element.scrollTop).toBe(1890);
-            const write = lastWrite(bundle.recorded);
-            expect(write.writer).toBe('web-dom-bottom');
-            expect(write.reason).toBe('content-size-change');
-            expect(write.mode).toBe('follow-bottom');
-            expect(write.targetOffsetY).toBe(1890);
-            expect(write.distanceFromBottom).toBe(10);
+            expect(metrics.element.scrollTop).toBe(100);
+            expect(bundle.recorded.filter((e) => e.type === 'scroll-write')).toHaveLength(0);
         });
 
         it('restore-distance maps distance-from-live-tail to scrollTop via max - distance (non-legacy)', () => {
@@ -703,151 +589,6 @@ describe('performTranscriptViewportCommand', () => {
             expect(result).toBe(false);
         });
 
-        it('restore-distance maps through the canonical inverted seam', () => {
-            const node = createFakeScrollNode();
-            const bundle = buildDeps({
-                node,
-                listContentHeight: 1000,
-                listLayoutHeight: 400,
-            });
-            const result = performTranscriptViewportCommand(
-                {
-                    kind: 'restore-distance',
-                    sessionId: BASE_SESSION,
-                    reason: 'entry-restore',
-                    mode: 'restore-distance',
-                    distanceFromLiveTailPx: 100,
-                },
-                bundle.deps,
-            );
-            expect(result).toBe(true);
-            // canonical target = max(0, maxOffset 600 - distance 100) = 500; inverted raw target mirrors to 100.
-            expect(node.offsetCalls).toEqual([{ offset: 100, animated: false }]);
-        });
-
-        it('restore-distance maps canonical target to RAW through the native inverted driver owner', () => {
-            const node = createFakeScrollNode();
-            const bundle = buildDeps({
-                node,
-                listContentHeight: 1000,
-                listLayoutHeight: 400,
-            });
-            performTranscriptViewportCommand(
-                {
-                    kind: 'restore-distance',
-                    sessionId: BASE_SESSION,
-                    reason: 'entry-restore',
-                    mode: 'restore-distance',
-                    distanceFromLiveTailPx: 100,
-                },
-                bundle.deps,
-            );
-            // canonical target = 600 - 100 = 500; inverted seam mirrors: scrollableExtent (600) - 500 = 100.
-            expect(node.offsetCalls).toEqual([{ offset: 100, animated: false }]);
-        });
-
-        it('restore-distance uses canonical mapping with measured layout', () => {
-            const node = createFakeScrollNode();
-            const bundle = buildDeps({
-                node,
-                listContentHeight: 1000,
-                listLayoutHeight: 400,
-            });
-            performTranscriptViewportCommand(
-                {
-                    kind: 'restore-distance',
-                    sessionId: BASE_SESSION,
-                    reason: 'entry-restore',
-                    mode: 'restore-distance',
-                    distanceFromLiveTailPx: 100,
-                },
-                bundle.deps,
-            );
-            expect(node.offsetCalls).toEqual([{ offset: 100, animated: false }]);
-        });
-
-        it('restore-distance honors an explicit command.contentHeight through the canonical inverted seam', () => {
-            const node = createFakeScrollNode();
-            const bundle = buildDeps({
-                node,
-                listContentHeight: 1000,
-                listLayoutHeight: 400,
-            });
-            performTranscriptViewportCommand(
-                {
-                    kind: 'restore-distance',
-                    sessionId: BASE_SESSION,
-                    reason: 'entry-restore',
-                    mode: 'restore-distance',
-                    distanceFromLiveTailPx: 50,
-                    contentHeight: 800,
-                },
-                bundle.deps,
-            );
-            // maxOffset from command.contentHeight 800 - layout 400 = 400; canonical target = 350; inverted raw = 50.
-            expect(node.offsetCalls).toEqual([{ offset: 50, animated: false }]);
-        });
-
-        it('applies native history correction through the driver with the same canonical-to-raw mapping', () => {
-            const node = createFakeScrollNode();
-            const bundle = buildDeps({
-                node,
-                listContentHeight: 1500,
-                listLayoutHeight: 300,
-            });
-
-            const result = performTranscriptViewportCommand(
-                {
-                    kind: 'apply-history-correction',
-                    sessionId: BASE_SESSION,
-                    reason: 'prepend-restore',
-                    mode: 'restore-anchor',
-                    targetDistanceFromHistoryStartPx: 820,
-                    animated: false,
-                } as TranscriptViewportCommand,
-                bundle.deps,
-            );
-
-            expect(result).toBe(true);
-            // Canonical target = 820 from history start; inverted raw target mirrors across maxOffset 1200.
-            expect(node.offsetCalls).toEqual([{ offset: 380, animated: false }]);
-            expect(lastWrite(bundle.recorded)).toMatchObject({
-                writer: 'native-scroll-to-offset',
-                reason: 'prepend-restore',
-                mode: 'restore-anchor',
-                targetOffsetY: 820,
-            });
-        });
-
-        it('applies native history correction through the canonical inverted seam', () => {
-            const node = createFakeScrollNode();
-            const bundle = buildDeps({
-                node,
-                listContentHeight: 1500,
-                listLayoutHeight: 300,
-            });
-
-            const result = performTranscriptViewportCommand(
-                {
-                    kind: 'apply-history-correction',
-                    sessionId: BASE_SESSION,
-                    reason: 'prepend-restore',
-                    mode: 'restore-anchor',
-                    targetDistanceFromHistoryStartPx: 820,
-                    animated: false,
-                } as TranscriptViewportCommand,
-                bundle.deps,
-            );
-
-            expect(result).toBe(true);
-            expect(node.offsetCalls).toEqual([{ offset: 380, animated: false }]);
-            expect(lastWrite(bundle.recorded)).toMatchObject({
-                writer: 'native-scroll-to-offset',
-                reason: 'prepend-restore',
-                mode: 'restore-anchor',
-                targetOffsetY: 820,
-            });
-        });
     });
 
     describe('restore-anchor / jump-to-seq — web hot/cold split', () => {
@@ -873,7 +614,8 @@ describe('performTranscriptViewportCommand', () => {
         it('hot-tail target pins to web visual bottom (scrollHeight) instead of a cold index', () => {
             const metrics = createFakeWebScrollMetrics({ scrollHeight: 1000, clientHeight: 400, scrollTop: 0 });
             const node = createFakeScrollNode();
-            // coldCount 0 (degenerate/empty cold slice) → resolveWebColdListScrollTarget = pin_to_bottom.
+            // A degenerate/empty recycler target carries no fallback index, so the web
+            // driver preserves the compatibility behavior by landing at visual bottom.
             const bundle = buildDeps({
                 node,
                 webMetrics: metrics,
@@ -895,6 +637,37 @@ describe('performTranscriptViewportCommand', () => {
             expect(metrics.element.scrollTop).toBe(600);
             expect(node.indexCalls).toHaveLength(0);
             expect(lastWrite(bundle.recorded).writer).toBe('web-dom-bottom');
+        });
+
+        it('tail-fallback restore defers to a live renderer-held end intent', () => {
+            // The entry-restore bottom fallback is a tail-targeting write like
+            // pin-bottom; during open it re-fires from the entry re-verify loop
+            // while the renderer already owns the tail (open-landing capture
+            // 2026-07-22) — defer under the same single-owner rule.
+            const metrics = createFakeWebScrollMetrics({ scrollHeight: 1000, clientHeight: 400, scrollTop: 0 });
+            const node = createFakeScrollNode();
+            (node as unknown as { hasLiveWebHold: (target: { kind: string }) => boolean }).hasLiveWebHold =
+                (target) => target.kind === 'end';
+            const bundle = buildDeps({
+                node,
+                webMetrics: metrics,
+                resolveRestoreAnchorIndex: () => 10,
+                shouldUseWebHotColdSplit: true,
+                coldItemCount: 0,
+            });
+            const result = performTranscriptViewportCommand(
+                {
+                    kind: 'restore-anchor',
+                    sessionId: BASE_SESSION,
+                    reason: 'entry-restore',
+                    mode: 'restore-anchor',
+                    target: { anchor: RESTORE_ANCHOR, itemOffsetPx: 0 },
+                },
+                bundle.deps,
+            );
+            expect(result).toBe(true);
+            expect(metrics.element.scrollTop).toBe(0);
+            expect(bundle.recorded.filter((e) => e.type === 'scroll-write')).toHaveLength(0);
         });
 
         it('cold restore target writes DOM scrollTop to the item anchor instead of RN-web scrollToIndex', () => {
@@ -940,16 +713,18 @@ describe('performTranscriptViewportCommand', () => {
             expect(write.targetOffsetY).toBe(190);
         });
 
-        it('jump-to-seq reads the LIVE web hot/cold counts at command time (stale-closure guard)', () => {
-            // Jump commands run inside long async flows (window materialization + landing
-            // settle); a captured split flag/count remaps the write into the wrong index space
-            // when the window re-slices mid-flight (live RG1/RG2 wrong-space class).
+        it('arms the renderer-owned entry anchor hold after a successful web restore-anchor write', () => {
+            // Live A->B->A RED (2026-07-11): the entry restore wrote an anchor-aligned offset
+            // against estimate-based geometry (contentHeight 25938), then giant-row
+            // measurements collapsed the content ~5x with no owner re-verifying the anchor —
+            // the browser clamped scrollTop and the restored row was lost near the tail.
+            // restore-visible-anchor already arms the renderer hold; restore-anchor must too.
             const node = createFakeScrollNode();
+            const holdWebEntryAnchor = vi.fn();
+            (node as unknown as { holdWebEntryAnchor: unknown }).holdWebEntryAnchor = holdWebEntryAnchor;
             const webMetrics = createFakeWebScrollMetrics({
-                anchors: [{ testId: 'transcript-item-row-4', top: 220, bottom: 320 }],
+                anchors: [{ testId: 'transcript-item-row-2', top: 220, bottom: 320 }],
                 scrollTop: 50,
-                scrollHeight: 1600,
-                clientHeight: 400,
             });
             const bundle = buildDeps({
                 node,
@@ -961,18 +736,68 @@ describe('performTranscriptViewportCommand', () => {
                     { id: 'row-3' },
                     { id: 'row-4' },
                 ],
-                shouldUseWebHotColdSplit: false,
-                coldItemCount: 0,
-                resolveJumpToSeqIndex: () => 6,
+                shouldUseWebHotColdSplit: true,
+                coldItemCount: 5,
+                resolveRestoreAnchorIndex: () => 2,
                 telemetryPlatform: 'web',
             });
-            // Split activates AFTER deps were built (mid-flight re-slice): full index 6 is a
-            // hot-tail row and must remap to the last cold row under the LIVE counts. With the
-            // stale captured counts (split inactive), index 6 has no listData row and the
-            // command dies as a wrong-space no-op.
-            (bundle.deps.webHotColdCountsRef as { current: { coldCount: number; hotCount: number } }).current = {
-                coldCount: 5,
-                hotCount: 2,
+            const result = performTranscriptViewportCommand(
+                {
+                    kind: 'restore-anchor',
+                    sessionId: BASE_SESSION,
+                    reason: 'entry-restore',
+                    mode: 'restore-anchor',
+                    target: { anchor: RESTORE_ANCHOR, itemOffsetPx: 80 },
+                },
+                bundle.deps,
+            );
+            expect(result).toBe(true);
+            expect(holdWebEntryAnchor).toHaveBeenCalledWith({
+                itemId: 'row-2',
+                itemOffsetPx: 80,
+                kind: 'message',
+                messageId: 'message-2',
+                reason: 'entry-restore',
+            });
+        });
+
+        it('jump-to-seq reads the live renderer-data projection at command time', () => {
+            // Jump commands run inside long async flows (window materialization + landing
+            // settle); a captured split flag/count remaps the write into the wrong index space
+            // when the window re-slices mid-flight (live RG1/RG2 wrong-space class).
+            const node = createFakeScrollNode();
+            const webMetrics = createFakeWebScrollMetrics({
+                anchors: [{ testId: 'transcript-item-row-4', top: 220, bottom: 320 }],
+                scrollTop: 50,
+                scrollHeight: 1600,
+                clientHeight: 400,
+            });
+            let currentTarget: Exclude<ReturnType<NonNullable<DepsOverrides['resolveRendererDataTarget']>>, null> = {
+                kind: 'data' as const,
+                index: 6,
+                itemId: 'row-6',
+            };
+            const bundle = buildDeps({
+                node,
+                webMetrics,
+                listData: [
+                    { id: 'row-0' },
+                    { id: 'row-1' },
+                    { id: 'row-2' },
+                    { id: 'row-3' },
+                    { id: 'row-4' },
+                ],
+                resolveRendererDataTarget: () => currentTarget,
+                telemetryPlatform: 'web',
+            });
+            // The projection changes after deps are built (mid-flight re-slice). The command
+            // must consume the current typed target rather than captured split counts.
+            currentTarget = {
+                kind: 'outside-data',
+                fallbackIndex: 4,
+                itemId: 'row-6',
+                reason: 'renderer-edge',
+                targetSeq: 331,
             };
             const result = performTranscriptViewportCommand(
                 {
@@ -987,62 +812,6 @@ describe('performTranscriptViewportCommand', () => {
             expect(result).toBe(true);
             const write = lastWrite(bundle.recorded);
             expect(write.writer).toBe('web-dom-restore');
-        });
-
-        it('jump-to-seq lands exactly on a mounted hot-tail footer target instead of clamping to the last cold row', () => {
-            // The web hot/cold split renders the tail outside the recycler, but footer rows
-            // still mount `transcript-item-<id>` testids. A jump whose target sits in the hot
-            // region must rect-scroll to the target row itself; the legacy last-cold-row clamp
-            // strands the viewport one footer above the target (live RG1 in-app evidence).
-            const node = createFakeScrollNode();
-            const webMetrics = createFakeWebScrollMetrics({
-                anchors: [
-                    { testId: 'transcript-item-row-4', top: 220, bottom: 320 },
-                    { testId: 'transcript-item-hot-6', top: 900, bottom: 1000 },
-                ],
-                scrollTop: 50,
-                scrollHeight: 1600,
-                clientHeight: 400,
-            });
-            const bundle = buildDeps({
-                node,
-                webMetrics,
-                listData: [
-                    { id: 'row-0' },
-                    { id: 'row-1' },
-                    { id: 'row-2' },
-                    { id: 'row-3' },
-                    { id: 'row-4' },
-                ],
-                items: [
-                    { id: 'row-0' },
-                    { id: 'row-1' },
-                    { id: 'row-2' },
-                    { id: 'row-3' },
-                    { id: 'row-4' },
-                    { id: 'hot-5' },
-                    { id: 'hot-6' },
-                ],
-                shouldUseWebHotColdSplit: true,
-                coldItemCount: 5,
-                resolveJumpToSeqIndex: () => 6,
-                telemetryPlatform: 'web',
-            });
-            const result = performTranscriptViewportCommand(
-                {
-                    kind: 'jump-to-seq',
-                    sessionId: BASE_SESSION,
-                    reason: 'jump-to-seq',
-                    mode: 'jump-to-seq',
-                    seq: 331,
-                },
-                bundle.deps,
-            );
-            expect(result).toBe(true);
-            const write = lastWrite(bundle.recorded);
-            expect(write.writer).toBe('web-dom-restore');
-            // Centered on the hot-6 rect (top 900 rel. viewport, height 100), not row-4's rect.
-            expect(webMetrics.element.scrollTop).toBeGreaterThan(500);
         });
 
         it('visible anchor correction derives the DOM target inside the web driver', () => {
@@ -1077,53 +846,6 @@ describe('performTranscriptViewportCommand', () => {
             expect(write.reason).toBe('entry-restore');
             expect(write.mode).toBe('restore-anchor');
             expect(write.targetOffsetY).toBe(608);
-        });
-
-        it('web prepend anchor correction returns the helper strategy from the web driver', () => {
-            const node = createFakeScrollNode();
-            const webMetrics = createFakeWebScrollMetrics({
-                anchors: [{ testId: 'transcript-anchor-message-m1', top: 260, bottom: 360 }],
-                scrollTop: 400,
-                scrollHeight: 2200,
-                clientHeight: 600,
-            });
-            const prependAnchor = {
-                metrics: {
-                    element: webMetrics.element,
-                    scrollTop: 400,
-                    scrollHeight: 1800,
-                    clientHeight: 600,
-                },
-                anchorTestId: 'transcript-anchor-message-m1',
-                anchorTop: 96,
-                itemTestId: 'transcript-item-turn:1',
-                itemTop: 40,
-                stabilizeForMs: 3000,
-                userIntentAtMs: 1,
-                expiresAtMs: Date.now() + 3000,
-            };
-            const bundle = buildDeps({ node, webMetrics, telemetryPlatform: 'web' });
-            const result = performWebDomPrependAnchorRestoreCommand(
-                {
-                    kind: 'restore-web-prepend-anchor',
-                    sessionId: BASE_SESSION,
-                    reason: 'prepend-restore',
-                    mode: 'restore-anchor',
-                    anchor: prependAnchor,
-                    animated: false,
-                },
-                bundle.deps,
-            );
-
-            expect(result).toEqual({ didAdjustScroll: true, strategy: 'anchor' });
-            expect(node.indexCalls).toHaveLength(0);
-            expect(webMetrics.element.scrollTop).toBe(564);
-            expect(bundle.webDomObservation.getState().observedScrollTop).toBe(564);
-            const write = lastWrite(bundle.recorded);
-            expect(write.writer).toBe('web-dom-restore');
-            expect(write.reason).toBe('prepend-restore');
-            expect(write.mode).toBe('restore-anchor');
-            expect(write.targetOffsetY).toBe(564);
         });
 
         it('cold restore target uses list layout fallback when the row is virtualized out of the DOM', () => {
@@ -1268,6 +990,203 @@ describe('performTranscriptViewportCommand', () => {
             expect(write.targetOffsetY).toBe(400);
         });
 
+        it('jump-to-seq to an unloaded target revokes the renderer-held tail at dispatch', () => {
+            // Live capture 2026-07-23: jumping to a target outside the loaded window
+            // while pinned pages older content in for seconds with NO landing write;
+            // the surviving held-'end' re-pinned to the bottom through every prepend
+            // and the user ended at the tail instead of the jump target. The jump
+            // must revoke tail ownership at dispatch; the eventual landing arms the
+            // keyed hold as the new owner.
+            const node = createFakeScrollNode();
+            const releaseWebHeldIntent = vi.fn();
+            (node as unknown as { hasLiveWebHold: (target: { kind: string }) => boolean }).hasLiveWebHold =
+                (target) => target.kind === 'end';
+            (node as unknown as { releaseWebHeldIntent: typeof releaseWebHeldIntent }).releaseWebHeldIntent = releaseWebHeldIntent;
+            const bundle = buildDeps({
+                node,
+                webMetrics: createFakeWebScrollMetrics({ scrollHeight: 1000, clientHeight: 400, scrollTop: 600 }),
+                shouldUseWebHotColdSplit: true,
+                coldItemCount: 5,
+                resolveJumpToSeqIndex: () => null,
+            });
+            const result = performTranscriptViewportCommand(
+                {
+                    kind: 'jump-to-seq',
+                    sessionId: BASE_SESSION,
+                    reason: 'jump-to-seq',
+                    mode: 'jump-to-seq',
+                    seq: 999,
+                },
+                bundle.deps,
+            );
+            expect(result).toBe(false);
+            expect(releaseWebHeldIntent).toHaveBeenCalledTimes(1);
+        });
+
+        it('restore-anchor never revokes the renderer-held tail at dispatch', () => {
+            // Restores are transaction-owned landings, not user navigation: an entry
+            // restore racing a live pinned tail must not strip the tail owner.
+            const node = createFakeScrollNode();
+            const releaseWebHeldIntent = vi.fn();
+            (node as unknown as { hasLiveWebHold: (target: { kind: string }) => boolean }).hasLiveWebHold =
+                (target) => target.kind === 'end';
+            (node as unknown as { releaseWebHeldIntent: typeof releaseWebHeldIntent }).releaseWebHeldIntent = releaseWebHeldIntent;
+            const bundle = buildDeps({
+                node,
+                webMetrics: createFakeWebScrollMetrics({ scrollHeight: 1000, clientHeight: 400, scrollTop: 600 }),
+                shouldUseWebHotColdSplit: true,
+                coldItemCount: 0,
+                resolveRestoreAnchorIndex: () => 10,
+            });
+            performTranscriptViewportCommand(
+                {
+                    kind: 'restore-anchor',
+                    sessionId: BASE_SESSION,
+                    reason: 'entry-restore',
+                    mode: 'restore-anchor',
+                    target: { anchor: RESTORE_ANCHOR, itemOffsetPx: 0 },
+                },
+                bundle.deps,
+            );
+            expect(releaseWebHeldIntent).not.toHaveBeenCalled();
+        });
+
+        it('jump-to-seq hands landing ownership to the renderer by arming the target anchor hold', () => {
+            // Live capture 2026-07-22 (nav-rail jump while pinned): the jump wrote its
+            // target while the renderer kept its own held intent, and the two landing
+            // verifiers (renderer verifyLanding vs the jump re-verify loop) oscillated
+            // the viewport ±24px indefinitely. A jump command must take renderer
+            // ownership of its target exactly like pin-bottom takes the tail
+            // (scrollToEnd) and restore-anchor takes its anchor.
+            const node = createFakeScrollNode();
+            const holdWebEntryAnchor = vi.fn();
+            (node as unknown as { holdWebEntryAnchor: typeof holdWebEntryAnchor }).holdWebEntryAnchor = holdWebEntryAnchor;
+            const resolveJumpToSeqIndex = vi.fn(() => 3);
+            const bundle = buildDeps({
+                node,
+                webMetrics: createFakeWebScrollMetrics({
+                    anchors: [{ testId: 'transcript-item-row-3', top: 500, bottom: 620 }],
+                    scrollTop: 40,
+                }),
+                listData: [
+                    { id: 'row-0' },
+                    { id: 'row-1' },
+                    { id: 'row-2' },
+                    { id: 'row-3' },
+                    { id: 'row-4' },
+                ],
+                shouldUseWebHotColdSplit: true,
+                coldItemCount: 5,
+                resolveJumpToSeqIndex,
+            });
+            const result = performTranscriptViewportCommand(
+                {
+                    kind: 'jump-to-seq',
+                    sessionId: BASE_SESSION,
+                    reason: 'jump-to-seq',
+                    mode: 'jump-to-seq',
+                    seq: 42,
+                },
+                bundle.deps,
+            );
+            expect(result).toBe(true);
+            expect(holdWebEntryAnchor).toHaveBeenCalledWith({
+                itemId: 'row-3',
+                // item content-y (500 + 40) minus the landed target (400).
+                itemOffsetPx: 140,
+                kind: 'item',
+                messageId: null,
+                reason: 'jump-to-seq',
+            });
+        });
+
+        it('keeps an unmounted giant-tail jump in approach ownership until the exact target mounts', () => {
+            // Exact-current live A failure: the first early jump starts at the physical tail
+            // with only the giant final row mounted. Its measured-band extrapolation clamps
+            // the approach write to zero. That estimate-only approach is not a completed
+            // keyed landing: publishing an anchor here makes the next landing pass defer to
+            // a target hold whose row has never mounted, while the second user click succeeds
+            // only after the target window has settled.
+            const node = createFakeScrollNode();
+            const holdWebEntryAnchor = vi.fn();
+            (node as unknown as { holdWebEntryAnchor: typeof holdWebEntryAnchor }).holdWebEntryAnchor = holdWebEntryAnchor;
+            const listData = Array.from({ length: 46 }, (_, index) => ({ id: `row-${index}` }));
+            const bundle = buildDeps({
+                node,
+                webMetrics: createFakeWebScrollMetrics({
+                    anchors: [{
+                        testId: 'transcript-item-row-45',
+                        top: -28928,
+                        bottom: 382,
+                    }],
+                    scrollTop: 77778,
+                    scrollHeight: 78166,
+                    clientHeight: 388,
+                }),
+                listData,
+                telemetryPlatform: 'web',
+                resolveJumpToSeqIndex: () => 0,
+            });
+
+            const result = performTranscriptViewportCommand(
+                {
+                    kind: 'jump-to-seq',
+                    sessionId: BASE_SESSION,
+                    reason: 'jump-to-seq',
+                    mode: 'jump-to-seq',
+                    seq: 1,
+                    align: { kind: 'top-with-item-offset', itemOffsetPx: 24 },
+                },
+                bundle.deps,
+            );
+
+            expect(result).toBe(true);
+            expect(node.indexCalls).toEqual([{ index: 0, animated: false }]);
+            expect(bundle.webDomObservation.getState().observedScrollTop).toBe(0);
+            expect(holdWebEntryAnchor).not.toHaveBeenCalled();
+        });
+
+        it('jump-to-seq defers to a live renderer keyed hold for the same target instead of re-writing', () => {
+            // The post-landing re-verify loop re-issues jump-to-seq for seconds; once the
+            // renderer anchor hold owns the target, those re-writes must stand down or
+            // the two verifiers fight (same live capture as above).
+            const node = createFakeScrollNode();
+            (node as unknown as { hasLiveWebHold: (target: { kind: string; itemId?: string }) => boolean }).hasLiveWebHold =
+                (target) => target.kind === 'item' && target.itemId === 'row-3';
+            const resolveJumpToSeqIndex = vi.fn(() => 3);
+            const bundle = buildDeps({
+                node,
+                webMetrics: createFakeWebScrollMetrics({
+                    anchors: [{ testId: 'transcript-item-row-3', top: 500, bottom: 620 }],
+                    scrollTop: 40,
+                }),
+                listData: [
+                    { id: 'row-0' },
+                    { id: 'row-1' },
+                    { id: 'row-2' },
+                    { id: 'row-3' },
+                    { id: 'row-4' },
+                ],
+                shouldUseWebHotColdSplit: true,
+                coldItemCount: 5,
+                resolveJumpToSeqIndex,
+            });
+            const result = performTranscriptViewportCommand(
+                {
+                    kind: 'jump-to-seq',
+                    sessionId: BASE_SESSION,
+                    reason: 'jump-to-seq',
+                    mode: 'jump-to-seq',
+                    seq: 42,
+                },
+                bundle.deps,
+            );
+            expect(result).toBe(true);
+            // No write happened: the renderer hold owns the landing.
+            expect(bundle.webDomObservation.getState().observedScrollTop).not.toBe(400);
+            expect(bundle.recorded.filter((event) => event.type === 'scroll-write')).toHaveLength(0);
+        });
+
         it('jump-to-seq cold target can align near the top for navigation user-turn jumps', () => {
             const node = createFakeScrollNode();
             const resolveJumpToSeqIndex = vi.fn(() => 3);
@@ -1396,38 +1315,27 @@ describe('performTranscriptViewportCommand', () => {
             );
             expect(result).toBe(true);
             // viewPosition is only added on web; native restore omits it.
-            expect(node.indexCalls).toEqual([{ index: 4, animated: false, viewOffset: -12 }]);
+            expect(node.indexCalls).toEqual([{
+                index: 4,
+                animated: false,
+                viewOffset: 12,
+                context: {
+                    anchor: {
+                        itemId: 'row-2',
+                        itemOffsetPx: 12,
+                        kind: 'message',
+                        messageId: 'message-2',
+                        reason: 'entry-restore',
+                    },
+                    kind: 'entry-placement',
+                },
+            }]);
             const stored = bundle.lastNativeRestoreIndexCommandRef.current;
             expect(stored?.index).toBe(4);
             expect(stored?.reason).toBe('entry-restore');
             expect(stored?.sessionId).toBe(BASE_SESSION);
-            expect(stored?.viewOffset).toBe(-12);
+            expect(stored?.viewOffset).toBe(12);
             expect(lastWrite(bundle.recorded).writer).toBe('native-scroll-to-index');
-        });
-
-        it('native hot/cold split remaps the full rendered index to a cold rendered index', () => {
-            const node = createFakeScrollNode();
-            // fullCount 10, coldCount 4, renderedFullIndex 0 (newest, a hot-tail row) → cold rendered 0.
-            const bundle = buildDeps({
-                node,
-                shouldUseNativeHotColdSplit: true,
-                itemsLength: 10,
-                listDataLength: 4,
-                resolveRestoreAnchorIndex: () => 0,
-            });
-            performTranscriptViewportCommand(
-                {
-                    kind: 'restore-anchor',
-                    sessionId: BASE_SESSION,
-                    reason: 'entry-restore',
-                    mode: 'restore-anchor',
-                    target: { anchor: RESTORE_ANCHOR, itemOffsetPx: 0 },
-                },
-                bundle.deps,
-            );
-            // canonicalIndex = 10 - 1 - 0 = 9 (hot-tail) → cold rendered index 0.
-            expect(node.indexCalls[0]?.index).toBe(0);
-            expect(bundle.lastNativeRestoreIndexCommandRef.current?.index).toBe(0);
         });
 
         it('jump-to-seq uses viewPosition 0.5 and stores the ref without viewOffset', () => {
@@ -1469,10 +1377,10 @@ describe('performTranscriptViewportCommand', () => {
             );
             expect(result).toBe(true);
             expect(resolveJumpToSeqIndex).toHaveBeenCalledWith(7);
-            expect(node.indexCalls).toEqual([{ index: 5, animated: true, viewOffset: -24 }]);
+            expect(node.indexCalls).toEqual([{ index: 5, animated: true, viewOffset: 24 }]);
             const stored = bundle.lastNativeRestoreIndexCommandRef.current;
             expect(stored?.index).toBe(5);
-            expect(stored?.viewOffset).toBe(-24);
+            expect(stored?.viewOffset).toBe(24);
         });
 
         it('jump-to-seq returns false when the seq is not loaded or resolvable', () => {
@@ -1517,14 +1425,13 @@ describe('performTranscriptViewportCommand', () => {
             );
 
             expect(result).toBe(true);
-            // Platform failure facts estimate RAW offset 300. Under inverted canonical telemetry
-            // records maxOffset 1200 - raw 300 = 900 while the raw write remains 300.
+            // Standard-space driver: failure facts estimate offset 300 and telemetry records it as-is.
             expect(node.offsetCalls).toEqual([{ offset: 300, animated: true }]);
             expect(lastWrite(bundle.recorded)).toMatchObject({
                 writer: 'native-scroll-to-offset',
                 reason: 'jump-to-seq',
                 mode: 'jump-to-seq',
-                targetOffsetY: 900,
+                targetOffsetY: 300,
             });
         });
     });

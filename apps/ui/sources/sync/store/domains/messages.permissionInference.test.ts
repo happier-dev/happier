@@ -33,5 +33,18 @@ describe('inferLatestUserPermissionModeFromMessages', () => {
             ]),
         ).toBeNull();
     });
-});
 
+    it('ignores recovered history while live messages still infer permission mode', () => {
+        expect(inferLatestUserPermissionModeFromMessages([
+            {
+                kind: 'user-text', id: 'live', localId: 'live-local', createdAt: 100, text: 'live',
+                meta: { permissionMode: 'acceptEdits' },
+            } as any,
+            {
+                kind: 'user-text', id: 'history', localId: null, createdAt: 9_000, sourceCreatedAt: 50,
+                text: 'history', meta: { permissionMode: 'bypassPermissions' },
+                transcriptObservationProvenance: { kind: 'non_dependent', source: 'history' },
+            } as any,
+        ])).toEqual({ mode: 'safe-yolo', updatedAt: 100 });
+    });
+});

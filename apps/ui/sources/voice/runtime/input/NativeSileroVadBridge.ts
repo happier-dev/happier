@@ -1,55 +1,81 @@
-import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
-
 import type { NativeVadBridge } from './NativeVadController';
 
-const NATIVE_SILERO_VAD_SPEECH_END_EVENT = 'vadSpeechEnd';
-const NATIVE_SILERO_VAD_SPEECH_START_EVENT = 'vadSpeechStart';
+const VAD_SAMPLE_RATE = 16_000;
+const VAD_CHANNELS = 1;
+const VAD_FRAME_MS = 20;
 
-type NativeSileroVadSubscription = Readonly<{
-    remove: () => void;
+type NativePcmFrame = Readonly<{
+    pcm16leBase64: string;
+    sampleRate: number;
+    channels: number;
 }>;
 
-type NativeSileroVadEventName =
-    | typeof NATIVE_SILERO_VAD_SPEECH_END_EVENT
-    | typeof NATIVE_SILERO_VAD_SPEECH_START_EVENT;
+type NativePcmCaptureLease = Readonly<{
+    release: () => void | Promise<void>;
+}>;
 
-type NativeSileroVadNativeModule = Readonly<{
-    addListener: (
-        eventName: NativeSileroVadEventName,
-        listener: (event: unknown) => void,
-    ) => NativeSileroVadSubscription;
-    startVadSession: (params: Readonly<{
+export type NativePcmFrameSource = Readonly<{
+    acquire: (request: Readonly<{
+        ownerId: string;
+        format: Readonly<{
+            sampleRate: number;
+            channels: 1 | 2;
+            frameMs: number;
+        }>;
+        audioSession: Readonly<{
+            mode: 'conversation';
+            input: true;
+            output: true;
+            aec: 'preferred';
+        }>;
+        onFrame: (frame: NativePcmFrame) => void;
+    }>) => NativePcmCaptureLease | Promise<NativePcmCaptureLease>;
+}>;
+
+type FrameFedVadResult = Readonly<{
+    speechStarted: boolean;
+    speechEnded: boolean;
+}>;
+
+type FrameFedSileroVadNativeModule = Readonly<{
+    createVadDetector: (params: Readonly<{
+        detectorId: string;
         minSpeechMs: number;
         redemptionMs: number;
-        sessionId: string;
+        sampleRate: number;
     }>) => void | Promise<void>;
-    stopVadSession: (params: Readonly<{
-        sessionId: string;
+    pushVadAudioFrame: (params: Readonly<{
+        detectorId: string;
+        pcm16leBase64: string;
+        sampleRate: number;
+        channels: number;
+    }>) => FrameFedVadResult | Promise<FrameFedVadResult>;
+    cancelVadDetector: (params: Readonly<{
+        detectorId: string;
     }>) => void | Promise<void>;
+}>;
+
+type ResolveNativeSileroVadBridgeOptions = Readonly<{
+    frameSource?: NativePcmFrameSource | null;
 }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
 
-function isNativeSileroVadNativeModule(value: unknown): value is NativeSileroVadNativeModule {
+function isFrameFedSileroVadNativeModule(value: unknown): value is FrameFedSileroVadNativeModule {
     if (!isRecord(value)) {
         return false;
     }
-
     return (
-        typeof value.addListener === 'function'
-        && typeof value.startVadSession === 'function'
-        && typeof value.stopVadSession === 'function'
+        typeof value.createVadDetector === 'function'
+        && typeof value.pushVadAudioFrame === 'function'
+        && typeof value.cancelVadDetector === 'function'
     );
 }
 
-function normalizeSpeechEndEventSessionId(event: unknown): string | null {
-    if (!isRecord(event)) {
-        return null;
-    }
-
-    return normalizeNonEmptyString(event.sessionId);
+function isNativePcmFrameSource(value: unknown): value is NativePcmFrameSource {
+    return isRecord(value) && typeof value.acquire === 'function';
 }
 
 async function getOptionalSherpaNativeModule(): Promise<unknown> {
@@ -58,85 +84,151 @@ async function getOptionalSherpaNativeModule(): Promise<unknown> {
         if (!isRecord(mod)) {
             return null;
         }
-
         const getter = mod.getOptionalHappierSherpaNativeModule;
-        if (typeof getter !== 'function') {
-            return null;
-        }
-
-        return (getter as () => unknown)();
+        return typeof getter === 'function' ? (getter as () => unknown)() : null;
     } catch {
         return null;
     }
 }
 
+async function getOptionalNativePcmFrameSource(): Promise<NativePcmFrameSource | null> {
+    try {
+        const mod = await import('@happier-dev/audio-stream-native') as unknown;
+        if (!isRecord(mod)) {
+            return null;
+        }
+        const getter = mod.getSharedVoicePcmCapture;
+        if (typeof getter !== 'function') {
+            return null;
+        }
+        const source = (getter as () => unknown)();
+        return isNativePcmFrameSource(source) ? source : null;
+    } catch {
+        return null;
+    }
+}
+
+let nextDetectorOrdinal = 1;
+
 export async function resolveNativeSileroVadBridge(
     nativeModule?: unknown,
+    options: ResolveNativeSileroVadBridgeOptions = {},
 ): Promise<NativeVadBridge | null> {
     const resolvedNativeModule = nativeModule === undefined
         ? await getOptionalSherpaNativeModule()
         : nativeModule;
+    const frameSource = options.frameSource === undefined
+        ? await getOptionalNativePcmFrameSource()
+        : options.frameSource;
 
-    if (!isNativeSileroVadNativeModule(resolvedNativeModule)) {
+    if (!isFrameFedSileroVadNativeModule(resolvedNativeModule) || !frameSource) {
         return null;
     }
 
     return {
         startSession: async ({ minSpeechMs, onSpeechEnd, onSpeechStart, redemptionMs, sessionId }) => {
-            const subscriptions: NativeSileroVadSubscription[] = [];
-            subscriptions.push(resolvedNativeModule.addListener(
-                NATIVE_SILERO_VAD_SPEECH_END_EVENT,
-                (event) => {
-                    if (normalizeSpeechEndEventSessionId(event) !== sessionId) {
+            const detectorId = `voice-vad:${sessionId}:${nextDetectorOrdinal++}`;
+            await resolvedNativeModule.createVadDetector({
+                detectorId,
+                minSpeechMs,
+                redemptionMs,
+                sampleRate: VAD_SAMPLE_RATE,
+            });
+
+            let stopped = false;
+            let speechActive = false;
+            let captureLease: NativePcmCaptureLease | null = null;
+            let pushTail: Promise<void> = Promise.resolve();
+
+            const cancelDetector = async (): Promise<void> => {
+                try {
+                    await resolvedNativeModule.cancelVadDetector({ detectorId });
+                } catch {
+                    // Native detector cleanup is best-effort after ownership has ended.
+                }
+            };
+
+            const releaseCapture = async (): Promise<void> => {
+                const lease = captureLease;
+                captureLease = null;
+                if (!lease) {
+                    return;
+                }
+                try {
+                    await lease.release();
+                } catch {
+                    // The shared capture owner remains responsible for its own final teardown.
+                }
+            };
+
+            const stopAfterFrameFailure = (): void => {
+                if (stopped) {
+                    return;
+                }
+                stopped = true;
+                void releaseCapture();
+                void cancelDetector();
+            };
+
+            const onFrame = (frame: NativePcmFrame): void => {
+                if (stopped || frame.sampleRate !== VAD_SAMPLE_RATE || frame.channels !== VAD_CHANNELS) {
+                    return;
+                }
+                pushTail = pushTail.then(async () => {
+                    if (stopped) {
                         return;
                     }
-
-                    onSpeechEnd();
-                },
-            ));
-            if (onSpeechStart) {
-                // Optional speech-START edge for the two-stage hysteresis machine.
-                // Native modules that do not emit it simply never fire this listener.
-                subscriptions.push(resolvedNativeModule.addListener(
-                    NATIVE_SILERO_VAD_SPEECH_START_EVENT,
-                    (event) => {
-                        if (normalizeSpeechEndEventSessionId(event) !== sessionId) {
-                            return;
-                        }
-
-                        onSpeechStart();
-                    },
-                ));
-            }
-            const removeSubscriptions = () => {
-                subscriptions.forEach((subscription) => subscription.remove());
+                    const result = await resolvedNativeModule.pushVadAudioFrame({
+                        detectorId,
+                        pcm16leBase64: frame.pcm16leBase64,
+                        sampleRate: frame.sampleRate,
+                        channels: frame.channels,
+                    });
+                    if (stopped) {
+                        return;
+                    }
+                    if (result.speechStarted && !speechActive) {
+                        speechActive = true;
+                        onSpeechStart?.();
+                    }
+                    if (result.speechEnded && speechActive) {
+                        speechActive = false;
+                        onSpeechEnd();
+                    }
+                }).catch(stopAfterFrameFailure);
             };
-            let nativeSessionStarted = false;
 
             try {
-                await resolvedNativeModule.startVadSession({
-                    minSpeechMs,
-                    redemptionMs,
-                    sessionId,
+                captureLease = await frameSource.acquire({
+                    ownerId: `native-silero-vad:${sessionId}`,
+                    format: {
+                        sampleRate: VAD_SAMPLE_RATE,
+                        channels: VAD_CHANNELS,
+                        frameMs: VAD_FRAME_MS,
+                    },
+                    audioSession: {
+                        mode: 'conversation',
+                        input: true,
+                        output: true,
+                        aec: 'preferred',
+                    },
+                    onFrame,
                 });
-                nativeSessionStarted = true;
             } catch (error) {
-                removeSubscriptions();
+                stopped = true;
+                await cancelDetector();
                 throw error;
             }
 
-            let stopped = false;
             return {
                 stop: async () => {
                     if (stopped) {
                         return;
                     }
                     stopped = true;
-                    removeSubscriptions();
-
-                    if (nativeSessionStarted) {
-                        await resolvedNativeModule.stopVadSession({ sessionId });
-                    }
+                    await releaseCapture();
+                    await pushTail.catch(() => {});
+                    await cancelDetector();
                 },
             };
         },

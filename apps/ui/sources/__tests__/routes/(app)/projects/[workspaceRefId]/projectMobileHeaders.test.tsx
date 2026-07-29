@@ -232,10 +232,10 @@ describe('project mobile route headers', () => {
     });
 
     it.each([
-        ['git', '@/app/(app)/projects/[workspaceRefId]/git', 'push', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1'],
-        ['files', '@/app/(app)/projects/[workspaceRefId]/files', 'push', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1'],
+        ['git', '@/app/(app)/projects/[workspaceRefId]/git', 'push', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1&sourceSurface=git'],
+        ['files', '@/app/(app)/projects/[workspaceRefId]/files', 'push', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1&sourceSurface=browse'],
         ['details', '@/app/(app)/projects/[workspaceRefId]/details', 'replace', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1'],
-        ['terminal', '@/app/(app)/projects/[workspaceRefId]/terminal', 'push', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1'],
+        ['terminal', '@/app/(app)/projects/[workspaceRefId]/terminal', 'push', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1&sourceSurface=terminal'],
     ])('configures mobile header actions for the %s route', async (_name, moduleId, navigationMethod, expectedHref) => {
         accountSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
 
@@ -362,6 +362,21 @@ describe('project mobile route headers', () => {
         expect(cockpit.props.surface).toBe(surface);
         expect(screen.root.findAllByType('ProjectRightPanelStub' as never)).toHaveLength(0);
         expect(screen.root.findAllByType('ProjectDetailsMainPanelStub' as never)).toHaveLength(0);
+    });
+
+    it('routes terminal cockpit root selections through the project route selection owner', async () => {
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
+
+        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/terminal')).default as React.ComponentType;
+        const screen = await renderScreen(<Screen />);
+        const cockpit = screen.root.findByType('ProjectCockpitShellStub' as never);
+        routerMock.spies.replace.mockClear();
+
+        await act(async () => {
+            cockpit.props.onSelectRootPath('  /Users/test/repo/.worktrees/feature-auth  ');
+        });
+
+        expect(routerMock.spies.replace).toHaveBeenCalledWith('/projects/wr_1/terminal?worktreeId=gitwt_feature');
     });
 
     it('uses the mobile header test-id prefix on the phone index cockpit route', async () => {

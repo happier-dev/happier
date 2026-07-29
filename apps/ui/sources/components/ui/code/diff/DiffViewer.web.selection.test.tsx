@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { InitialPresentationReadinessProvider } from '@/components/ui/presentation/InitialPresentationReadinessContext';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -77,6 +78,28 @@ describe('DiffViewer (web renderer selection)', () => {
 
         expect(screen.findByTestId('pierre-diff-viewer')).toBeTruthy();
         expect(screen.findByTestId('lazy-mount-on-screen')).toBeTruthy();
+    });
+
+    it('eagerly mounts only already-rendered virtualized Pierre rows while initial presentation is pending', async () => {
+        const { DiffViewer } = await import('./DiffViewer.web');
+
+        const screen = await renderScreen(
+            <InitialPresentationReadinessProvider value={{
+                presentationPending: true,
+                registerProducer: () => ({ complete: () => {}, dispose: () => {} }),
+            }}>
+                <DiffViewer
+                    mode="unified"
+                    unifiedDiff={'diff --git a/a.ts b/a.ts'}
+                    filePath="a.ts"
+                    virtualized
+                />
+            </InitialPresentationReadinessProvider>,
+        );
+
+        expect(
+            screen.findByTestId('lazy-mount-on-screen')?.props.initiallyVisible,
+        ).toBe(true);
     });
 
     it('falls back to Happier renderer when the env kill-switch disables pierre', async () => {

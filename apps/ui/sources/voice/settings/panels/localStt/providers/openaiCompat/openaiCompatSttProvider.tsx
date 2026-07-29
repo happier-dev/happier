@@ -1,11 +1,12 @@
 import * as React from 'react';
 
-import { Item } from '@/components/ui/lists/Item';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import type { VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSttSettings';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { normalizeSecretStringPromptInput } from '@/utils/secrets/normalizeSecretStringPromptInput';
+import { Item } from '@/components/ui/lists/Item';
+import { OpenAiCompatCredentialItem } from '@/voice/local/openaiCompat/CredentialItem';
+import { OpenAiCompatEndpointItem } from '@/voice/local/openaiCompat/EndpointItem';
 
 import type { LocalSttProviderSpec } from '../_types';
 
@@ -20,18 +21,14 @@ const OpenAiCompatSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
 
   return (
     <>
-      <Item
+      <OpenAiCompatEndpointItem
         title={t('settingsVoice.local.sttBaseUrl')}
-        detail={cfg.openaiCompat.baseUrl ? String(cfg.openaiCompat.baseUrl) : t('settingsVoice.local.notSet')}
-        onPress={() => {
-          fireAndForget((async () => {
-            const raw = await Modal.prompt(t('settingsVoice.local.sttBaseUrlTitle'), t('settingsVoice.local.sttBaseUrlDescription'), {
-              placeholder: cfg.openaiCompat.baseUrl ?? '',
-            });
-            if (raw === null) return;
-            setOpenAiCompat({ baseUrl: String(raw).trim() || null });
-          })(), { tag: 'openaiCompatSttProvider.promptBaseUrl' });
-        }}
+        promptTitle={t('settingsVoice.local.sttBaseUrlTitle')}
+        promptDescription={t('settingsVoice.local.sttBaseUrlDescription')}
+        baseUrl={cfg.openaiCompat.baseUrl}
+        insecureLocalOriginConsent={cfg.openaiCompat.insecureLocalOriginConsent}
+        insecureLocalConsentMachineId={cfg.openaiCompat.insecureLocalConsentMachineId}
+        onChange={setOpenAiCompat}
       />
       <Item
         title={t('settingsVoice.local.sttModel')}
@@ -49,18 +46,12 @@ const OpenAiCompatSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
           })(), { tag: 'openaiCompatSttProvider.promptModel' });
         }}
       />
-      <Item
+      <OpenAiCompatCredentialItem
         title={t('settingsVoice.local.sttApiKey')}
-        detail={cfg.openaiCompat.apiKey ? t('settingsVoice.local.apiKeySet') : t('settingsVoice.local.apiKeyNotSet')}
-        onPress={() => {
-          fireAndForget((async () => {
-            const raw = await Modal.prompt(t('settingsVoice.local.sttApiKeyTitle'), t('settingsVoice.local.sttApiKeyDescription'), {
-              inputType: 'secure-text',
-            });
-            if (raw === null) return;
-            setOpenAiCompat({ apiKey: normalizeSecretStringPromptInput(raw) });
-          })(), { tag: 'openaiCompatSttProvider.promptApiKey' });
-        }}
+        promptTitle={t('settingsVoice.local.sttApiKeyTitle')}
+        promptDescription={t('settingsVoice.local.sttApiKeyDescription')}
+        credentialKind="stt_api_key"
+        legacySecretValue={cfg.openaiCompat.apiKey}
       />
     </>
   );

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 const setPresentation = vi.fn();
 const setColumnsEnabled = vi.fn();
@@ -15,7 +16,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     return createStorageModuleMock({
         importOriginal,
         overrides: {
-            useSettingMutable: (name: string) => {
+            useSettingMutable: createUseSettingMutableMockFromReader((name) => {
                 if (name === 'newSessionWizardSectionPresentationV1') {
                     return [{ models: 'dropdown' }, setPresentation];
                 }
@@ -23,7 +24,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                     return [false, setColumnsEnabled];
                 }
                 return [null, vi.fn()];
-            },
+            }),
         },
     });
 });

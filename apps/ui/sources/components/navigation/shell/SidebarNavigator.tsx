@@ -18,6 +18,7 @@ import { resolvePaneFocusModeRouteScopeId } from '@/components/appShell/panes/fo
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 import { isPublicRouteForUnauthenticated } from '@/auth/routing/authRouting';
+import { useOnboardingJourneySessionActive } from '@/components/onboarding/tour/state/journeySession';
 
 type DrawerNavigatorComponent = typeof ExpoRouterDrawer.Drawer;
 
@@ -34,10 +35,42 @@ function resolveDrawerComponent(module: typeof ExpoRouterDrawer): DrawerNavigato
 
 const Drawer = resolveDrawerComponent(ExpoRouterDrawer);
 
-const stylesheet = StyleSheet.create(() => ({
+/**
+ * Radius on the sidebar-facing side of the content sheet only. The window-facing edges stay
+ * square so the sheet reads as flush to the window and never stacks its own curve on top of
+ * the OS window's rounded corners.
+ */
+const CONTENT_SHEET_SEAM_RADIUS_PX = 16;
+
+const stylesheet = StyleSheet.create((theme) => ({
     desktopDrawerRoot: {
         flex: 1,
         position: 'relative',
+        // The plane the content sheet lies on. Painted here so the sheet's rounded
+        // sidebar-facing corners reveal the canvas rather than whatever is behind the app.
+        backgroundColor: theme.colors.background.canvas,
+    },
+    /**
+     * The seam shadow. An inert overlay tracing the content sheet's exact footprint — same left
+     * corners, transparent fill — whose only job is to cast the sheet's lift shadow leftward onto
+     * the sidebar.
+     *
+     * It must be a separate element: react-navigation wraps the scene in an overflow:hidden
+     * container (react-native-drawer-layout Drawer.native.tsx), so a shadow declared on the scene
+     * itself is clipped at the seam and never reaches the sidebar. It must also be sheet-SHAPED
+     * rather than a strip, or the cast runs straight past the rounded corners.
+     */
+    contentSheetSeamShadow: {
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        right: 0,
+        borderTopLeftRadius: CONTENT_SHEET_SEAM_RADIUS_PX,
+        borderBottomLeftRadius: CONTENT_SHEET_SEAM_RADIUS_PX,
+        zIndex: 2,
+        boxShadow: theme.dark
+            ? '-5px 0 22px rgba(0, 0, 0, 0.13)'
+            : '-5px 0 22px rgba(0, 0, 0, 0.035)',
     },
 }));
 
@@ -56,10 +89,17 @@ export const SidebarNavigator = React.memo(() => {
     const segments = useSegments();
     const isTablet = useIsTablet();
     const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
+    const onboardingJourneyActive = useOnboardingJourneySessionActive();
     const { state: paneState, dispatch: dispatchPaneAction } = useAppPaneContext();
+    // The onboarding journey host owns the whole viewport until its session ends
+    // (visual spec v3 §5): the post-auth setup beats must never render beside the
+    // live app sidebar/drawer. Reuse the route-based drawer-bypass seam rather than
+    // adding a parallel gate — this covers every authed path (in-session hinge,
+    // reload re-latch, replay) on every platform.
     const bypassDesktopDrawerShell =
-        Platform.OS === 'web'
-        && (isTerminalConnectWebPathname(pathname) || isPublicNonHomeRoute(segments));
+        onboardingJourneyActive
+        || (Platform.OS === 'web'
+            && (isTerminalConnectWebPathname(pathname) || isPublicNonHomeRoute(segments)));
     const desktopDrawerEnabled = auth.isAuthenticated && isTablet && !isDesktopOverlayWindow;
     const drawerShellEnabled =
         desktopDrawerEnabled
@@ -188,16 +228,34 @@ export const SidebarNavigator = React.memo(() => {
             drawerType: 'permanent' as const,
             drawerStyle: {
                 backgroundColor: theme.colors.background.canvas,
-                borderRightWidth: StyleSheet.hairlineWidth,
-                borderRightColor: theme.colors.border.default,
+                // No right border: the seam is the content sheet's rounded edge plus its cast.
                 width: drawerWidth,
+                // react-native-drawer-layout stacks the permanent drawer at z-index 1, above the
+                // scene, which swallows the sheet's left-cast shadow. Dropping it to the default
+                // order lets DOM order decide (drawer first, scene second). drawerStyle is spread
+                // after the library's own zIndex, so this is the correct override point.
+                zIndex: 0,
+            },
+            // The content sheet: flush to the window on top/right/bottom, treated only on the edge
+            // that meets the sidebar. Deliberately NO backgroundColor — each route keeps painting
+            // what it paints today and this only clips it, so the seam changes geometry, not tone.
+            sceneStyle: {
+                borderTopLeftRadius: CONTENT_SHEET_SEAM_RADIUS_PX,
+                borderBottomLeftRadius: CONTENT_SHEET_SEAM_RADIUS_PX,
+                overflow: 'hidden' as const,
+                ...(Platform.OS === 'web'
+                    ? {}
+                    : {
+                        borderLeftWidth: StyleSheet.hairlineWidth,
+                        borderLeftColor: theme.colors.border.default,
+                    }),
             },
             drawerActiveTintColor: 'transparent',
             drawerInactiveTintColor: 'transparent',
             drawerItemStyle: { display: 'none' as const },
             drawerLabelStyle: { display: 'none' as const },
         };
-    }, [showPermanentDrawer, drawerWidth, theme.colors.border.default, theme.colors.background.canvas]);
+    }, [showPermanentDrawer, drawerWidth, theme.colors.border.default, theme.colors.background.canvas, theme.dark]);
 
     const handleExitFocusMode = React.useCallback(() => {
         dispatchPaneAction({ type: 'exitFocusMode' });
@@ -268,6 +326,12 @@ export const SidebarNavigator = React.memo(() => {
                 screenOptions={drawerNavigationOptions}
                 drawerContent={showPermanentDrawer ? drawerContent : undefined}
             />
+            {Platform.OS === 'web' && showPermanentDrawer ? (
+                <View
+                    pointerEvents="none"
+                    style={[styles.contentSheetSeamShadow, { left: drawerWidth }]}
+                />
+            ) : null}
         </DesktopMainContentDragSurface>
     );
 });

@@ -19,6 +19,7 @@ const storageFixture = vi.hoisted(() => ({
     isStorageDataReady: true,
     sessionById: {
         'session-1': {
+            encryptionMode: 'plain',
             metadata: {
                 path: '/repo',
             },
@@ -77,10 +78,19 @@ installSessionRouteCommonModuleMocks({
     },
     storageModule: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            storage: createStorageStoreMock({
+        const createRouteStorageStore = () => ({
+            getState: () => createStorageStoreMock({
                 sessions: storageFixture.sessionById as any,
-            }),
+            }).getState(),
+            getInitialState: () => createStorageStoreMock({
+                sessions: storageFixture.sessionById as any,
+            }).getState(),
+            setState: () => undefined,
+            subscribe: () => () => undefined,
+            destroy: () => undefined,
+        });
+        return createStorageModuleStub({
+            storage: createRouteStorageStore(),
             useSessions: () => (storageFixture.isStorageDataReady ? [] : null),
             useSession: (id: string) => storageFixture.sessionById[id] ?? null,
             useSessionRpcAvailabilityState: (id: string) => ({
@@ -153,6 +163,21 @@ vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () =
     },
 }));
 
+vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
+    useHydrateSessionForRoute: (sessionId: string) => {
+        if (!sessionId) {
+            return { kind: 'missing', sessionId, cause: 'not_found' };
+        }
+        if (!storageFixture.isStorageDataReady) {
+            return { kind: 'loading', sessionId, reason: 'cold' };
+        }
+        if (!storageFixture.sessionById[sessionId]) {
+            return { kind: 'missing', sessionId, cause: 'not_found' };
+        }
+        return { kind: 'available', sessionId };
+    },
+}));
+
 vi.mock('@/sync/ops', async (importOriginal) => {
     const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
     return createSyncOpsModuleMock({
@@ -221,6 +246,7 @@ describe('CommitScreen', () => {
         storageFixture.isStorageDataReady = true;
         storageFixture.sessionById = {
             'session-1': {
+                encryptionMode: 'plain',
                 metadata: {
                     path: '/repo',
                     host: 'localhost',
@@ -299,6 +325,7 @@ describe('CommitScreen', () => {
         storageFixture.isStorageDataReady = true;
         storageFixture.sessionById = {
             'session-1': {
+                encryptionMode: 'plain',
                 metadata: {
                     path: '/repo',
                 },
@@ -320,7 +347,7 @@ describe('CommitScreen', () => {
         searchParams = { id: 'session-unknown', sha: 'abc123' } as any;
         const Screen = (await import('@/app/(app)/session/[id]/commit')).default;
         const screen = await renderCommitScreen(Screen);
-        expect(screen.findByTestId('scm-commit-details-error-message')?.props.children).toBe('files.commitDetails.missingContext');
+        expect(screen.findByTestId('session-invalid-link')).toBeTruthy();
     });
 
     it('strips accidental whitespace suffixes from commit refs passed via URL params', async () => {

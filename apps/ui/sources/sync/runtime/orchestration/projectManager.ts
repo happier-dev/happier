@@ -29,6 +29,7 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import { normalizeWorkspaceScopeBase, tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { normalizeMachineHost } from '@happier-dev/protocol';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 /**
  * Unique project identifier based on machine ID and path
@@ -45,6 +46,13 @@ export function resolveProjectMachineScopeId(metadata: { machineId?: string | nu
     const host = normalizeMachineHost(metadata.host);
     if (host) return `host:${host}`;
     return 'unknown';
+}
+
+export function normalizeKnownProjectMachineId(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed || trimmed === 'unknown' || trimmed.startsWith('host:')) return null;
+    return trimmed;
 }
 
 export type ScmProjectOperationKind =
@@ -208,7 +216,8 @@ class ProjectManager {
         params?: MachineMetadata | null | Readonly<{ serverId?: string | null; machineMetadata?: MachineMetadata | null }>,
     ): void {
         // Session must have metadata path (machine id may be absent for legacy/terminal sessions).
-        if (!session.metadata?.path) {
+        const metadata = readSessionOwnerMetadataView(session);
+        if (!metadata?.path) {
             return;
         }
 
@@ -224,8 +233,8 @@ class ProjectManager {
 
         const projectKey: ProjectKey = {
             serverId: effectiveServerId,
-            machineId: resolveProjectMachineScopeId(session.metadata),
-            rootPath: session.metadata.path,
+            machineId: resolveProjectMachineScopeId(metadata),
+            rootPath: metadata.path,
         };
 
         const normalized = normalizeWorkspaceScopeBase(projectKey);
@@ -371,8 +380,9 @@ class ProjectManager {
 
         // Add or update all current sessions
         for (const session of sessions) {
-            const machineMetadata = session.metadata?.machineId 
-                ? machineMetadataMap?.get(session.metadata.machineId)
+            const metadata = readSessionOwnerMetadataView(session);
+            const machineMetadata = metadata?.machineId
+                ? machineMetadataMap?.get(metadata.machineId)
                 : undefined;
             this.addSession(session, { serverId, machineMetadata: machineMetadata ?? null });
         }

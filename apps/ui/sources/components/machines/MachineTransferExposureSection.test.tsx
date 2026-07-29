@@ -55,7 +55,6 @@ describe('MachineTransferExposureSection', () => {
                     supported: { import: true, export: true },
                     listenerClasses: {
                         loopback_http: { enabled: true, configured: true, active: true, available: true },
-                        lan_http: { enabled: false, configured: false, active: false, available: true },
                         tailscale_serve_https: { enabled: true, configured: true, active: true, available: true },
                     },
                     lifecycle: { mode: 'lazy_idle_shutdown', version: 1 },
@@ -64,7 +63,7 @@ describe('MachineTransferExposureSection', () => {
         }));
 
         expect(screen.findByTestId('machine.transferExposure.loopbackHttp')?.props.subtitle).toBe('machine.transferExposure.stateActive');
-        expect(screen.findByTestId('machine.transferExposure.lanHttp')?.props.subtitle).toBe('machine.transferExposure.stateDisabled');
+        expect(screen.findByTestId('machine.transferExposure.lanHttp')).toBeNull();
         expect(screen.findByTestId('machine.transferExposure.tailscaleServeHttps')?.props.subtitle).toBe('machine.transferExposure.stateActive');
     });
 
@@ -76,7 +75,6 @@ describe('MachineTransferExposureSection', () => {
                     supported: { import: true, export: true },
                     listenerClasses: {
                         loopback_http: { enabled: true, configured: true, active: true, available: true },
-                        lan_http: { enabled: false, configured: false, active: false, available: true },
                         tailscale_serve_https: { enabled: true, configured: false, active: false, available: true },
                     },
                     lifecycle: { mode: 'lazy_idle_shutdown', version: 1 },
@@ -95,7 +93,6 @@ describe('MachineTransferExposureSection', () => {
                     supported: { import: true, export: true },
                     listenerClasses: {
                         loopback_http: { enabled: true, configured: true, active: true, available: true },
-                        lan_http: { enabled: false, configured: false, active: false, available: true },
                         tailscale_serve_https: { enabled: true, configured: true, active: false, available: true },
                     },
                     lifecycle: { mode: 'lazy_idle_shutdown', version: 1 },
@@ -114,7 +111,6 @@ describe('MachineTransferExposureSection', () => {
                     supported: { import: true, export: true },
                     listenerClasses: {
                         loopback_http: { enabled: true, configured: true, active: true, available: true },
-                        lan_http: { enabled: false, configured: false, active: false, available: true },
                         tailscale_serve_https: { enabled: true, configured: true, active: false, available: false },
                     },
                     lifecycle: { mode: 'lazy_idle_shutdown', version: 1 },

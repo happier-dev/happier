@@ -12,6 +12,7 @@ describe('buildActivitySurfaceSnapshot', () => {
                 createSessionFixture({
                     id: 'unread',
                     seq: 5,
+                    latestReadyEventSeq: 5,
                     lastViewedSessionSeq: 2,
                     metadata: {
                         path: '/Users/tester/project/unread',
@@ -205,6 +206,7 @@ describe('buildActivitySurfaceSnapshot', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    pendingRequestObservedAt: 950,
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',

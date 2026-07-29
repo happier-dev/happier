@@ -39,6 +39,22 @@ type ResolvedSelectedServerSources = Readonly<{
     hasUnresolvedSelectedSource: boolean;
 }>;
 
+export function readSessionListIndexForServerId(
+    scoped: Readonly<Record<string, ReadonlyArray<SessionListIndexItem> | null | undefined>> | null | undefined,
+    serverIdRaw: string | null | undefined,
+): ReadonlyArray<SessionListIndexItem> | null | undefined {
+    const serverId = normalizeTrimmedString(serverIdRaw);
+    if (!scoped || !serverId) return undefined;
+    if (Object.prototype.hasOwnProperty.call(scoped, serverId)) {
+        return scoped[serverId] ?? null;
+    }
+    for (const candidateServerId of Object.keys(scoped)) {
+        if (!areServerProfileIdentifiersEquivalent(candidateServerId, serverId)) continue;
+        return scoped[candidateServerId] ?? null;
+    }
+    return undefined;
+}
+
 function resolveSelectedServerSources(
     params: ResolveSessionListSourceIndexParams,
 ): ResolvedSelectedServerSources | null {
@@ -55,7 +71,7 @@ function resolveSelectedServerSources(
     let hasUnresolvedSelectedSource = false;
 
     for (const serverId of selectedServerIds) {
-        const fromCache = scoped[serverId];
+        const fromCache = readSessionListIndexForServerId(scoped, serverId);
         const source = areServerProfileIdentifiersEquivalent(serverId, activeServerId)
             ? (params.activeIndex ?? fromCache ?? null)
             : (fromCache ?? null);

@@ -12,15 +12,12 @@ export const SettingsBelowFoldSections = React.memo(function SettingsBelowFoldSe
     appVersion,
     attachmentsUploadsEnabled,
     automationsNeedLocalEnablement,
-    connectedServicesEnabled,
     devModeEnabled,
     executionRunsEnabled,
+    externalSessionsEnabled,
     handleGitHub,
     handleReportIssue,
     handleVersionClick,
-    mcpServersEnabled,
-    memorySearchEnabled,
-    promptsLibraryEnabled,
     router,
     showAutomations,
     showChangelog,
@@ -30,27 +27,20 @@ export const SettingsBelowFoldSections = React.memo(function SettingsBelowFoldSe
     stage,
     terminalUseTmux,
     theme,
-    useProfiles,
-    voiceEnabled,
 }: SettingsBelowFoldSectionsProps) {
     return (
         <>
             {stage >= 1 ? (
                 <SettingsAiAndAgentsSection
-                    connectedServicesEnabled={connectedServicesEnabled}
-                    mcpServersEnabled={mcpServersEnabled}
-                    memorySearchEnabled={memorySearchEnabled}
-                    promptsLibraryEnabled={promptsLibraryEnabled}
                     router={router}
                     theme={theme}
-                    useProfiles={useProfiles}
-                    voiceEnabled={voiceEnabled}
                 />
             ) : null}
             {stage >= 2 ? (
                 <SettingsSessionsBehaviorSection
                     automationsNeedLocalEnablement={automationsNeedLocalEnablement}
                     executionRunsEnabled={executionRunsEnabled}
+                    externalSessionsEnabled={externalSessionsEnabled}
                     router={router}
                     showAutomations={showAutomations}
                     terminalUseTmux={terminalUseTmux}

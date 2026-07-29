@@ -9,17 +9,18 @@ import type {
     SessionMcpSelectionV1,
     WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
-import type { CodexBackendMode } from '@happier-dev/agents';
+import type { CodexBackendMode } from '@happier-dev/protocol';
 
 import type { AutomationTargetType } from '@/sync/domains/automations/automationTypes';
 
 type SessionAuthoringDraftBase = Readonly<Omit<
     SessionAuthoringValueV1,
-    'targetType' | 'checkoutCreationDraft' | 'backendTarget' | 'mcpSelection' | 'windowsRemoteSessionLaunchMode' | 'windowsTerminalWindowName' | 'codexBackendMode' | 'sessionConfigOptionOverrides' | 'automation'
+    'targetType' | 'checkoutCreationDraft' | 'backendTarget' | 'modelSelection' | 'mcpSelection' | 'windowsRemoteSessionLaunchMode' | 'windowsTerminalWindowName' | 'codexBackendMode' | 'sessionConfigOptionOverrides' | 'automation'
 > & {
     targetType: AutomationTargetType;
     checkoutCreationDraft: SessionAuthoringCheckoutCreationDraftV1 | null;
     backendTarget: BackendTargetRefV2 | null;
+    modelSelection?: SessionAuthoringValueV1['modelSelection'];
     mcpSelection: SessionMcpSelectionV1 | null;
     windowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchMode | null;
     windowsTerminalWindowName?: string | null;

@@ -89,12 +89,36 @@ describe('Session settings (Permissions entry)', () => {
             return null;
         };
 
-        expect(groupTitleForRow('settingsSession.sessionCreation.wizardModeTitle')).toBe('settingsSession.rootGroups.launchDefaults.title');
-        expect(groupTitleForRow('settingsAppearance.sessionListDensity.title')).toBe('settingsSession.rootGroups.listOrganization.title');
-        expect(groupTitleForRow('settingsSession.sessionList.identityDisplayTitle')).toBe('settingsSession.rootGroups.rowDetails.title');
-        expect(groupTitleForRow('settingsSession.sessionList.workingIndicatorTitle')).toBe('settingsSession.rootGroups.activitySignals.title');
-        expect(groupTitleForRow('settingsSession.mobileWorkspaceExperience.title')).toBe('settingsSession.rootGroups.mobileLayout.title');
-        expect(groupTitleForRow('settingsSession.promptPersonalization.askAgentToRenameSessionsTitle')).toBe('settingsSession.rootGroups.agentPersonalization.title');
+        const expectedPlacements = new Map<string, string>([
+            ['settingsSession.sessionCreation.wizardModeTitle', 'settingsSession.rootGroups.launchDefaults.title'],
+            ['settingsSession.sessionCreation.rememberLastProjectSelectionsTitle', 'settingsSession.rootGroups.launchDefaults.title'],
+            ['settingsSession.sessionCreation.rememberLastEngineSelectionsTitle', 'settingsSession.rootGroups.launchDefaults.title'],
+            ['settingsAppearance.sessionListDensity.title', 'settingsSession.rootGroups.listOrganization.title'],
+            ['settingsSession.sessionList.orderingTitle', 'settingsSession.rootGroups.listOrganization.title'],
+            ['settingsSession.sessionList.folderSortModeTitle', 'settingsSession.rootGroups.listOrganization.title'],
+            ['settingsSession.sessionList.sectionModeTitle', 'settingsSession.rootGroups.listOrganization.title'],
+            ['settingsFeatures.sessionListActiveGrouping', 'settingsSession.rootGroups.listOrganization.title'],
+            ['settingsFeatures.sessionListInactiveGrouping', 'settingsSession.rootGroups.listOrganization.title'],
+            ['settingsFeatures.hideInactiveSessions', 'settingsSession.rootGroups.listOrganization.title'],
+            ['settingsAppearance.sessionsRightPaneDefaultOpen', 'settingsSession.rootGroups.listOrganization.title'],
+            ['settingsSession.sessionList.tagsTitle', 'settingsSession.rootGroups.rowDetails.title'],
+            ['settingsSession.sessionList.identityDisplayTitle', 'settingsSession.rootGroups.rowDetails.title'],
+            ['settingsSession.sessionList.activeColorTitle', 'settingsSession.rootGroups.rowDetails.title'],
+            ['settingsSession.sessionList.workspacePathDisplayTitle', 'settingsSession.rootGroups.rowDetails.title'],
+            ['settingsSession.sessionList.workspaceFaviconsTitle', 'settingsSession.rootGroups.rowDetails.title'],
+            ['settingsSession.sessionList.workspaceMachineSubtitlesTitle', 'settingsSession.rootGroups.rowDetails.title'],
+            ['settingsSession.sessionList.workingStatusAnimatedTextTitle', 'settingsSession.rootGroups.activitySignals.title'],
+            ['settingsSession.sessionList.attentionPromotionModeTitle', 'settingsSession.rootGroups.activitySignals.title'],
+            ['settingsSession.sessionList.workingPlacementModeTitle', 'settingsSession.rootGroups.activitySignals.title'],
+            ['settingsSession.sessionList.workingIndicatorTitle', 'settingsSession.rootGroups.activitySignals.title'],
+            ['settingsSession.mobileWorkspaceExperience.title', 'settingsSession.rootGroups.mobileLayout.title'],
+            ['settingsSession.promptPersonalization.askAgentToRenameSessionsTitle', 'settingsSession.rootGroups.agentPersonalization.title'],
+            ['settingsSession.promptPersonalization.askAgentToSuggestReplyOptionsTitle', 'settingsSession.rootGroups.agentPersonalization.title'],
+        ]);
+
+        for (const [rowTitle, expectedGroupTitle] of expectedPlacements) {
+            expect(groupTitleForRow(rowTitle)).toBe(expectedGroupTitle);
+        }
     });
 
     it('does not render detailed composer, provider-limit, resume, or runtime controls on the root session settings screen', async () => {

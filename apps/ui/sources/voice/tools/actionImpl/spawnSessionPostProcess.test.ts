@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { postprocessSpawnedSession } from './spawnSessionPostProcess';
+import {
+  postprocessSpawnedSession,
+  resolveVoiceSpawnedFirstTurnLocalId,
+} from './spawnSessionPostProcess';
 
 const refreshSessions = vi.hoisted(() => vi.fn(async () => {}));
 const patchSessionMetadataWithRetry = vi.hoisted(() =>
@@ -31,6 +34,17 @@ describe('postprocessSpawnedSession', () => {
     publishDisplayTitleMetadataMutation.mockClear();
     followUpSpawnedSessionWithServerScope.mockReset();
     followUpSpawnedSessionWithServerScope.mockResolvedValue(undefined);
+  });
+
+  it('derives first-turn identity from canonical operation custody when it replaces the provisional nonce', () => {
+    expect(resolveVoiceSpawnedFirstTurnLocalId({
+      spawned: {
+        type: 'success',
+        sessionId: 'session-created',
+        spawnAttemptCustody: { spawnNonce: 'canonical-nonce' },
+      },
+      requestedSpawnNonce: 'provisional-nonce',
+    })).toBe('spawn-first-turn:canonical-nonce');
   });
 
   it('propagates initial-message follow-up failures instead of silently dropping the user prompt', async () => {

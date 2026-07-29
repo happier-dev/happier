@@ -6,7 +6,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useHeaderHeight } from '@react-navigation/elements';
 import Constants from 'expo-constants';
 import { t } from '@/text';
-import { ProfileEditForm } from '@/components/profiles/edit';
+import { LaunchProfileEditForm } from '@/components/profiles/edit';
 import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { layout } from '@/components/ui/layout/layout';
 import { useSettingMutable, useSettings } from '@/sync/domains/state/storage';
@@ -17,8 +17,11 @@ import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert'
 import { Ionicons } from '@expo/vector-icons';
 import { PopoverScope } from '@/components/ui/popover';
 import { KeyboardAwareScreen } from '@/components/ui/keyboardAvoidance';
-import { fireAndForget } from '@/utils/system/fireAndForget';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import {
+    type ActiveUnsavedChangesGuard,
+    runUnsavedChangesGuard,
+} from '@/utils/navigation/runGuardedNavigation';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
@@ -26,6 +29,13 @@ import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCat
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
+import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
+import { isLaunchProfileV2, readAiLaunchProfileCollection, type AiLaunchProfile } from '@happier-dev/protocol';
+import {
+    appendAiLaunchProfile,
+    readUiAiLaunchProfiles,
+    replaceAiLaunchProfile,
+} from '@/sync/domains/profiles/aiLaunchProfileCollection';
 
 export default React.memo(function ProfileEditScreen() {
     const { theme } = useUnistyles();
@@ -90,7 +100,11 @@ export default React.memo(function ProfileEditScreen() {
     const profileDataParam = Array.isArray(params.profileData) ? params.profileData[0] : params.profileData;
     const screenWidth = useWindowDimensions().width;
     const headerHeight = useHeaderHeight();
-    const [profiles, setProfiles] = useSettingMutable('profiles');
+    const [rawProfiles, setRawProfiles] = useSettingMutable('profiles');
+    const launchProfiles = React.useMemo(() => readUiAiLaunchProfiles(rawProfiles), [rawProfiles]);
+    const writeRawProfiles = React.useCallback((next: readonly unknown[]) => {
+        setRawProfiles(next as AIBackendProfile[]);
+    }, [setRawProfiles]);
     const [, setLastUsedProfile] = useSettingMutable('lastUsedProfile');
     const [isDirty, setIsDirty] = React.useState(false);
     const isDirtyRef = React.useRef(false);
@@ -119,21 +133,25 @@ export default React.memo(function ProfileEditScreen() {
     }, [navigation]);
 
     // Deserialize profile from URL params
-    const profile: AIBackendProfile = React.useMemo(() => {
+    const profile: AiLaunchProfile = React.useMemo(() => {
         if (profileDataParam) {
             try {
                 // Params may arrive already decoded (native) or URL-encoded (web / manual encodeURIComponent).
                 // Try raw JSON first, then fall back to decodeURIComponent.
                 try {
-                    return JSON.parse(profileDataParam);
+                    const parsed = readAiLaunchProfileCollection([JSON.parse(profileDataParam)]).entries[0];
+                    if (parsed && parsed.kind !== 'opaque') return parsed.profile;
                 } catch {
-                    return JSON.parse(decodeURIComponent(profileDataParam));
+                    const parsed = readAiLaunchProfileCollection([JSON.parse(decodeURIComponent(profileDataParam))]).entries[0];
+                    if (parsed && parsed.kind !== 'opaque') return parsed.profile;
                 }
             } catch (error) {
                 console.error('Failed to parse profile data:', error);
             }
         }
-        const resolveById = (id: string) => resolveProfileById(id, profiles);
+        const resolveById = (id: string): AiLaunchProfile | null => (
+            launchProfiles.find((entry) => entry.id === id) ?? getBuiltInProfile(id)
+        );
 
         if (cloneFromProfileIdParam) {
             const base = resolveById(cloneFromProfileIdParam);
@@ -151,11 +169,12 @@ export default React.memo(function ProfileEditScreen() {
 
         // Return empty profile for new profile creation
         return createEmptyCustomProfile();
-    }, [cloneFromProfileIdParam, profileDataParam, profileIdParam, profiles]);
+    }, [cloneFromProfileIdParam, launchProfiles, profileDataParam, profileIdParam]);
 
     const confirmDiscard = React.useCallback(async () => {
-        const saveText = profile.isBuiltIn ? t('common.saveAs') : t('common.save');
-        const message = profile.isBuiltIn
+        const isBuiltIn = !isLaunchProfileV2(profile) && profile.isBuiltIn === true;
+        const saveText = isBuiltIn ? t('common.saveAs') : t('common.save');
+        const message = isBuiltIn
             ? `${t('common.unsavedChangesWarning')}\n\n${t('profiles.builtInSaveAsHint')}`
             : t('common.unsavedChangesWarning');
         return promptUnsavedChangesAlert(
@@ -168,35 +187,43 @@ export default React.memo(function ProfileEditScreen() {
                 keepEditingText: t('common.keepEditing'),
             },
         );
-    }, [profile.isBuiltIn]);
+    }, [profile]);
 
-    useUnsavedChangesBeforeRemoveGuard({
-        navigation,
+    const unsavedChangesGuard = React.useMemo<ActiveUnsavedChangesGuard>(() => ({
         isDirtyRef,
         requestDecision: confirmDiscard,
         onSave: () => saveRef.current?.() ?? false,
         continueOnSave: false,
+        tag: 'ProfileEditScreen.beforeRemove',
+    }), [confirmDiscard]);
+
+    useUnsavedChangesBeforeRemoveGuard({
+        isDirty,
+        isDirtyRef: unsavedChangesGuard.isDirtyRef,
+        requestDecision: unsavedChangesGuard.requestDecision,
+        onSave: unsavedChangesGuard.onSave,
+        continueOnSave: unsavedChangesGuard.continueOnSave,
         onContinue: (action) => {
             if (!action) return;
             (navigation as any)?.dispatch?.(action);
         },
-        tag: 'ProfileEditScreen.beforeRemove',
+        tag: unsavedChangesGuard.tag,
     });
 
-    const handleSave = (savedProfile: AIBackendProfile): boolean => {
+    const handleSave = (savedProfile: AiLaunchProfile): boolean => {
         if (!savedProfile.name || savedProfile.name.trim() === '') {
             Modal.alert(t('common.error'), t('profiles.nameRequired'));
             return false;
         }
 
         const isBuiltIn =
-            savedProfile.isBuiltIn === true ||
+            (!isLaunchProfileV2(savedProfile) && savedProfile.isBuiltIn === true) ||
             DEFAULT_PROFILES.some((bp) => bp.id === savedProfile.id) ||
             getBuiltInProfileNameKey(savedProfile.id) !== null;
 
-        let profileToSave = savedProfile;
+        let profileToSave: AiLaunchProfile = savedProfile;
         if (isBuiltIn) {
-            profileToSave = convertBuiltInProfileToCustom(savedProfile);
+            profileToSave = convertBuiltInProfileToCustom(savedProfile as AIBackendProfile);
         }
 
         const builtInNames = DEFAULT_PROFILES
@@ -208,7 +235,7 @@ export default React.memo(function ProfileEditScreen() {
         const hasBuiltInNameConflict = builtInNames.includes(profileToSave.name.trim());
 
         // Duplicate name guard (same behavior as settings/profiles)
-        const isDuplicateName = profiles.some((p: AIBackendProfile) => {
+        const isDuplicateName = launchProfiles.some((p) => {
             if (isBuiltIn) {
                 return p.name.trim() === profileToSave.name.trim();
             }
@@ -219,13 +246,12 @@ export default React.memo(function ProfileEditScreen() {
             return false;
         }
 
-        const existingIndex = profiles.findIndex((p: AIBackendProfile) => p.id === profileToSave.id);
-        const isNewProfile = existingIndex < 0;
-        const updatedProfiles = existingIndex >= 0
-            ? profiles.map((p: AIBackendProfile, idx: number) => idx === existingIndex ? { ...profileToSave, updatedAt: Date.now() } : p)
-            : [...profiles, profileToSave];
-
-        setProfiles(updatedProfiles);
+        const exists = launchProfiles.some((entry) => entry.id === profileToSave.id);
+        const isNewProfile = !exists;
+        const updatedProfile = { ...profileToSave, updatedAt: Date.now() } as AiLaunchProfile;
+        writeRawProfiles(exists
+            ? replaceAiLaunchProfile(rawProfiles, profileToSave.id, updatedProfile)
+            : appendAiLaunchProfile(rawProfiles, updatedProfile));
 
         // Update last used profile for convenience in other screens.
         if (isNewProfile) {
@@ -270,20 +296,11 @@ export default React.memo(function ProfileEditScreen() {
     };
 
     const handleCancel = React.useCallback(() => {
-        fireAndForget((async () => {
-            if (!isDirtyRef.current) {
-                safeRouterBack({ router, navigation, fallbackHref: '/new' });
-                return;
-            }
-            const decision = await confirmDiscard();
-            if (decision === 'discard') {
-                isDirtyRef.current = false;
-                safeRouterBack({ router, navigation, fallbackHref: '/new' });
-            } else if (decision === 'save') {
-                saveRef.current?.();
-            }
-        })(), { tag: 'ProfileEditScreen.cancel' });
-    }, [confirmDiscard, navigation, router]);
+        void runUnsavedChangesGuard(
+            unsavedChangesGuard,
+            () => safeRouterBack({ router, navigation, fallbackHref: '/new' }),
+        );
+    }, [navigation, router, unsavedChangesGuard]);
 
     const headerTitle = profile.name ? t('profiles.editProfile') : t('profiles.addProfile');
     const headerBackTitle = t('common.back');
@@ -326,6 +343,7 @@ export default React.memo(function ProfileEditScreen() {
             </Pressable>
         );
     }, [handleSavePress, isDirty, theme.colors.chrome.header.foreground]);
+    const presentation = useNewSessionPickerRoutePresentation();
 
     const screenOptions = React.useMemo(() => {
         return {
@@ -333,8 +351,9 @@ export default React.memo(function ProfileEditScreen() {
             headerBackTitle,
             headerLeft,
             headerRight,
+            presentation,
         } as const;
-    }, [headerBackTitle, headerLeft, headerRight, headerTitle]);
+    }, [headerBackTitle, headerLeft, headerRight, headerTitle, presentation]);
 
     return (
         <PopoverScope>
@@ -352,7 +371,7 @@ export default React.memo(function ProfileEditScreen() {
                     <View style={[
                         { maxWidth: layout.maxWidth, flex: 1, width: '100%', alignSelf: 'center' }
                     ]}>
-                        <ProfileEditForm
+                        <LaunchProfileEditForm
                             profile={profile}
                             machineId={machineIdParam || null}
                             onSave={handleSave}

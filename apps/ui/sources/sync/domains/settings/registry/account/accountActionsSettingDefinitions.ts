@@ -3,10 +3,13 @@ import {
     ActionToolExposureModeSchema,
     ActionsSettingsV1Schema,
     DEFAULT_ACTIONS_SETTINGS_V1,
+    DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+    SessionAgentSpawnPolicyV1Schema,
     buildSettingArtifacts,
     defineSettingDefinitions,
     type ActionToolExposureMode,
     type ActionToolExposureSurface,
+    type SessionAgentSpawnPolicyV1,
 } from '@happier-dev/protocol';
 
 type ActionSettingsOverrideLike = Readonly<{
@@ -169,6 +172,18 @@ function buildActionsSettingsSummaryProperties(value: unknown): Record<string, n
     };
 }
 
+function buildSessionAgentSpawnPolicySummaryProperties(value: unknown): Record<string, number> {
+    const parsed = SessionAgentSpawnPolicyV1Schema.safeParse(value);
+    const policy: SessionAgentSpawnPolicyV1 = parsed.success
+        ? parsed.data
+        : DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1;
+    const booleanEntries = Object.entries(policy).filter(([, entry]) => typeof entry === 'boolean') as Array<[string, boolean]>;
+    return {
+        disabledOverrideCount: booleanEntries.filter(([, entry]) => entry === false).length,
+        hasPermissionCeiling: policy.permissionCeiling ? 1 : 0,
+    };
+}
+
 export const ACCOUNT_ACTIONS_SETTING_DEFINITIONS = defineSettingDefinitions({
     actionsSettingsV1: {
         schema: ActionsSettingsV1Schema,
@@ -182,6 +197,20 @@ export const ACCOUNT_ACTIONS_SETTING_DEFINITIONS = defineSettingDefinitions({
             privacy: 'count_only',
             identityScope: 'person',
             serializeCurrentProperties: buildActionsSettingsSummaryProperties,
+        },
+    },
+    sessionAgentSpawnPolicyV1: {
+        schema: SessionAgentSpawnPolicyV1Schema,
+        default: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+        description: 'Session-agent create-session override policy',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'person',
+            serializeCurrentProperties: buildSessionAgentSpawnPolicySummaryProperties,
         },
     },
 });

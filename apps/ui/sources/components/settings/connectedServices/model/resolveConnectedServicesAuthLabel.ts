@@ -5,6 +5,7 @@ import type {
     ConnectedServicesProfileOption,
     ConnectedServicesProfileOptionsByServiceId,
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
+import { isConnectedServiceProfileOptionSelectable } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 
 export type ConnectedServicesAuthLabelModel = Readonly<{
     label: string;
@@ -111,7 +112,7 @@ function resolveConnectedBindingState(
     }
 
     const connectedProfiles = (params.profileOptionsByServiceId[serviceId] ?? [])
-        .filter((option) => option.status === 'connected');
+        .filter(isConnectedServiceProfileOptionSelectable);
     if (connectedProfiles.length === 0) {
         return {
             requestedSource: 'connected',
@@ -219,7 +220,7 @@ function resolveConnectedBindingLabel(
 
     if (state.effectiveSelection === 'profile' && state.profileId) {
         const profile = (params.profileOptionsByServiceId[serviceId] ?? [])
-            .find((option) => option.status === 'connected' && option.profileId === state.profileId);
+            .find((option) => isConnectedServiceProfileOptionSelectable(option) && option.profileId === state.profileId);
         return profile ? `${params.resolveServiceTitle(serviceId)}: ${resolveProfileLabel(profile)}` : null;
     }
 

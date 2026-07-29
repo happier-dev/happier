@@ -20,6 +20,8 @@ import {
     saveMachineDisplayWarmCacheEntries,
 } from '../../domains/state/warmCachePersistence';
 import { buildMachineDisplayCacheEntriesFromRenderables } from '../../domains/state/warmCacheAdapters';
+import { areSessionValuesDeepEqual } from './areStoredSessionsEqual';
+import { areStoredMachinesEqual, hasMachineDaemonStateAdvanced } from './areStoredMachinesEqual';
 
 import type { StoreGet, StoreSet } from './_shared';
 
@@ -47,18 +49,53 @@ type MachinesDomainDependencies = Readonly<{
     sessionListIndexByServerId: Readonly<Record<string, SessionListIndexItem[] | null | undefined>>;
 }>;
 
-function saveWarmMachineCacheForState(
+let pendingWarmMachineCacheSave: {
+    activeServerId: string;
+    accountId: string;
+    entries: Record<string, MachineDisplayCacheEntryV1>;
+} | null = null;
+let pendingWarmMachineCacheSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleWarmMachineCacheSave(
     state: MachinesDomain & MachinesDomainDependencies,
     previousEntries?: Record<string, MachineDisplayCacheEntryV1>,
 ): void {
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
     const accountId = resolveWarmCacheAccountScope(state.profile?.id);
     if (!activeServerId || !accountId) return;
-    saveMachineDisplayWarmCacheEntries(
+    pendingWarmMachineCacheSave = {
         activeServerId,
         accountId,
-        buildMachineDisplayCacheEntriesFromRenderables(state.machineDisplayById ?? {}, previousEntries),
-    );
+        entries: buildMachineDisplayCacheEntriesFromRenderables(state.machineDisplayById ?? {}, previousEntries),
+    };
+    if (pendingWarmMachineCacheSaveTimer) return;
+    pendingWarmMachineCacheSaveTimer = setTimeout(() => {
+        pendingWarmMachineCacheSaveTimer = null;
+        const pending = pendingWarmMachineCacheSave;
+        pendingWarmMachineCacheSave = null;
+        if (!pending) return;
+        saveMachineDisplayWarmCacheEntries(pending.activeServerId, pending.accountId, pending.entries);
+    }, 0);
+}
+
+function areMachineDisplaysEqual(
+    previous: MachineDisplayRenderable | null | undefined,
+    next: MachineDisplayRenderable | null | undefined,
+): boolean {
+    if (previous === next) return true;
+    if (!previous || !next) return previous === next;
+    return previous.id === next.id
+        && previous.updatedAt === next.updatedAt
+        && previous.active === next.active
+        && previous.activeAt === next.activeAt
+        && (previous.revokedAt ?? null) === (next.revokedAt ?? null)
+        && previous.metadataVersion === next.metadataVersion
+        && (previous.replacedByMachineId ?? null) === (next.replacedByMachineId ?? null)
+        && (previous.replacedAt ?? null) === (next.replacedAt ?? null)
+        && (previous.replacementReason ?? null) === (next.replacementReason ?? null)
+        && (previous.replacementSource ?? null) === (next.replacementSource ?? null)
+        && (previous.replacementActorUserId ?? null) === (next.replacementActorUserId ?? null)
+        && areSessionValuesDeepEqual(previous.metadata ?? null, next.metadata ?? null);
 }
 
 function mergeMachineListById(
@@ -78,7 +115,15 @@ function mergeMachineListById(
     for (const machine of incoming) {
         mergedById.set(machine.id, machine);
     }
-    return Array.from(mergedById.values());
+    const merged = Array.from(mergedById.values());
+    if (
+        Array.isArray(current)
+        && current.length === merged.length
+        && current.every((machine, index) => areStoredMachinesEqual(machine, merged[index]))
+    ) {
+        return current;
+    }
+    return merged;
 }
 
 function normalizeMachineServerId(serverId: string | null | undefined): string {
@@ -131,7 +176,9 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     }
                     : state.machineListByServerId;
                 const machineListStatusByServerId = sourceServerId
-                    ? { ...state.machineListStatusByServerId, [sourceServerId]: 'idle' as const }
+                    ? (state.machineListStatusByServerId[sourceServerId] === 'idle'
+                        ? state.machineListStatusByServerId
+                        : { ...state.machineListStatusByServerId, [sourceServerId]: 'idle' as const })
                     : state.machineListStatusByServerId;
 
                 if (!shouldUpdateActiveProjection) {
@@ -150,23 +197,45 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     mergedMachines = {};
                     mergedMachineDisplays = {};
                     machines.forEach((machine) => {
-                        mergedMachines[machine.id] = machine;
-                        mergedMachineDisplays[machine.id] = buildMachineDisplayRenderableFromMachine(machine);
-                    });
-                } else {
-                    mergedMachines = { ...state.machines };
-                    mergedMachineDisplays = { ...state.machineDisplayById };
-                    machines.forEach((machine) => {
                         const previousMachine = state.machines[machine.id];
-                        if (
-                            typeof machine.daemonStateVersion === 'number'
-                            && machine.daemonStateVersion > (previousMachine?.daemonStateVersion ?? 0)
-                        ) {
+                        if (hasMachineDaemonStateAdvanced(previousMachine, machine)) {
                             machinesWithAdvancedDaemonState.add(machine.id);
                         }
                         mergedMachines[machine.id] = machine;
                         mergedMachineDisplays[machine.id] = buildMachineDisplayRenderableFromMachine(machine);
                     });
+                } else {
+                    mergedMachines = state.machines;
+                    mergedMachineDisplays = state.machineDisplayById;
+                    machines.forEach((machine) => {
+                        const previousMachine = state.machines[machine.id];
+                        if (hasMachineDaemonStateAdvanced(previousMachine, machine)) {
+                            machinesWithAdvancedDaemonState.add(machine.id);
+                        }
+                        if (!areStoredMachinesEqual(previousMachine, machine)) {
+                            if (mergedMachines === state.machines) {
+                                mergedMachines = { ...state.machines };
+                            }
+                            mergedMachines[machine.id] = machine;
+                        }
+                        const nextDisplay = buildMachineDisplayRenderableFromMachine(machine);
+                        const previousDisplay = state.machineDisplayById[machine.id];
+                        if (!areMachineDisplaysEqual(previousDisplay, nextDisplay)) {
+                            if (mergedMachineDisplays === state.machineDisplayById) {
+                                mergedMachineDisplays = { ...state.machineDisplayById };
+                            }
+                            mergedMachineDisplays[machine.id] = nextDisplay;
+                        }
+                    });
+                }
+
+                if (
+                    mergedMachines === state.machines
+                    && mergedMachineDisplays === state.machineDisplayById
+                    && machineListByServerId === state.machineListByServerId
+                    && machineListStatusByServerId === state.machineListStatusByServerId
+                ) {
+                    return state;
                 }
 
                 const previousIndexByServerId = state.sessionListIndexByServerId ?? {};
@@ -241,7 +310,9 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     machineListByServerId,
                     machineListStatusByServerId,
                 };
-                saveWarmMachineCacheForState(nextState as MachinesDomain & MachinesDomainDependencies);
+                if (mergedMachineDisplays !== state.machineDisplayById) {
+                    scheduleWarmMachineCacheSave(nextState as MachinesDomain & MachinesDomainDependencies);
+                }
                 return nextState;
             }),
         replaceMachineDisplays: (machines, options) =>
@@ -280,7 +351,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     machineDisplayById: nextMachineDisplays,
                     sessionListIndexByServerId: nextSessionListIndexByServerId,
                 };
-                saveWarmMachineCacheForState(nextState as MachinesDomain & MachinesDomainDependencies, previousEntries);
+                scheduleWarmMachineCacheSave(nextState as MachinesDomain & MachinesDomainDependencies, previousEntries);
                 return nextState;
             }),
     };

@@ -6,9 +6,14 @@ export type SessionModeOption = Readonly<{
 
 export type PreflightSessionModeList = Readonly<{
     availableModes: ReadonlyArray<SessionModeOption>;
+    unavailable?: boolean;
 }>;
 
 export function getSessionModeOptionsForPreflightModeList(list: PreflightSessionModeList): readonly SessionModeOption[] {
+    if (list.unavailable === true) {
+        return [];
+    }
+
     const dynamic = (list.availableModes ?? [])
         .filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string')
         .map((m) => ({

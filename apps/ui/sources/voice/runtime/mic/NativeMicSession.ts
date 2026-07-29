@@ -1,21 +1,19 @@
-import { AudioModule, RecordingPresets } from 'expo-audio';
-
 import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
 
 import type { MicSession } from './MicSession';
+import {
+    createExpoAudioRecorder,
+    type ExpoAudioRecorderLike,
+} from './createExpoAudioRecorder';
+import {
+    acquireVoiceForegroundRecordingAudioMode,
+    type VoiceAudioModeLease,
+} from '@/voice/runtime/voiceAudioMode';
 
 type CreateNativeMicSessionOptions = Readonly<{
     ensureActive?: () => Promise<void>;
     setMuted?: (muted: boolean) => Promise<void> | void;
     teardown?: () => Promise<void>;
-}>;
-
-type RecorderLike = Readonly<{
-    uri: string | null;
-    prepareToRecordAsync: () => Promise<void>;
-    pause: () => void;
-    record: () => void;
-    stop: () => Promise<void>;
 }>;
 
 type RecordingPermissionResult = Readonly<{
@@ -24,14 +22,15 @@ type RecordingPermissionResult = Readonly<{
 }>;
 
 type RecordingMicSession = MicSession & Readonly<{
-    beginRecording: () => Promise<void>;
+    beginRecording: (signal?: AbortSignal) => Promise<void>;
     stopRecording: () => Promise<string | null>;
 }>;
 
 type CreateExpoAudioRecordingMicSessionOptions = Readonly<{
-    createRecorder?: () => RecorderLike;
+    createRecorder?: () => ExpoAudioRecorderLike;
     requestPermission?: () => Promise<RecordingPermissionResult>;
     showPermissionDenied?: (canAskAgain: boolean) => void;
+    acquireAudioMode?: () => Promise<VoiceAudioModeLease>;
 }>;
 
 export function createNativeMicSession(options: CreateNativeMicSessionOptions = {}): MicSession {
@@ -56,15 +55,25 @@ export function createNativeMicSession(options: CreateNativeMicSessionOptions = 
 export function createExpoAudioRecordingMicSession(
     options: CreateExpoAudioRecordingMicSessionOptions = {},
 ): RecordingMicSession {
-    let recorder: RecorderLike | null = null;
+    let recorder: ExpoAudioRecorderLike | null = null;
+    let audioModeLease: VoiceAudioModeLease | null = null;
     let muted = false;
     const requestPermission = options.requestPermission ?? requestMicrophonePermission;
     const showPermissionDenied = options.showPermissionDenied ?? showMicrophonePermissionDeniedAlert;
     const createRecorder =
         options.createRecorder
-        ?? (() => new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY) as unknown as RecorderLike);
+        ?? createExpoAudioRecorder;
+    const acquireAudioMode = options.acquireAudioMode
+        ?? (() => acquireVoiceForegroundRecordingAudioMode('expo-audio-recorder'));
 
-    const syncRecorderMuteState = (activeRecorder: RecorderLike | null): void => {
+    const releaseAudioMode = async (): Promise<void> => {
+        const activeLease = audioModeLease;
+        if (!activeLease) return;
+        await activeLease.release();
+        if (audioModeLease === activeLease) audioModeLease = null;
+    };
+
+    const syncRecorderMuteState = (activeRecorder: ExpoAudioRecorderLike | null): void => {
         if (!activeRecorder) {
             return;
         }
@@ -96,36 +105,70 @@ export function createExpoAudioRecordingMicSession(
         },
         isMuted: () => muted,
         teardown: async () => {
-            if (!recorder) return;
-            try {
-                await recorder.stop();
-            } catch {
-                // best-effort
-            } finally {
-                recorder = null;
+            const activeRecorder = recorder;
+            recorder = null;
+            if (activeRecorder) {
+                try {
+                    await activeRecorder.stop();
+                } catch {
+                    // Recorder teardown is best-effort; the audio-session lease
+                    // must still be restored by its canonical owner.
+                }
             }
+            await releaseAudioMode();
         },
         getStream: () => null,
-        beginRecording: async () => {
+        beginRecording: async (signal) => {
             const permission = await requestPermission();
+            if (signal?.aborted) {
+                return;
+            }
             if (!permission.granted) {
                 showPermissionDenied(permission.canAskAgain === true);
                 throw new Error('mic_permission_denied');
             }
             const nextRecorder = createRecorder();
-            await nextRecorder.prepareToRecordAsync();
-            nextRecorder.record();
-            recorder = nextRecorder;
-            if (muted) {
-                nextRecorder.pause();
+            const nextAudioModeLease = await acquireAudioMode();
+            if (signal?.aborted) {
+                await nextAudioModeLease.release();
+                return;
+            }
+            try {
+                await nextRecorder.prepareToRecordAsync();
+                if (signal?.aborted) {
+                    try {
+                        await nextRecorder.stop();
+                    } catch {
+                        // Preparation rollback is best-effort; releasing the
+                        // attempt-local audio-mode lease remains authoritative.
+                    }
+                    await nextAudioModeLease.release();
+                    return;
+                }
+                audioModeLease = nextAudioModeLease;
+                nextRecorder.record();
+                recorder = nextRecorder;
+                if (muted) {
+                    nextRecorder.pause();
+                }
+            } catch (error) {
+                await nextAudioModeLease.release();
+                throw error;
             }
         },
         stopRecording: async () => {
             const activeRecorder = recorder;
             recorder = null;
-            if (!activeRecorder) return null;
-            await activeRecorder.stop();
-            return activeRecorder.uri;
+            try {
+                if (!activeRecorder) return null;
+                await activeRecorder.stop();
+                // Expo Audio's web recorder creates its Blob URL while stop()
+                // finalizes the MediaRecorder. Reading `uri` before that await
+                // silently drops valid browser recordings and skips STT.
+                return activeRecorder.uri ?? null;
+            } finally {
+                await releaseAudioMode();
+            }
         },
     };
 }

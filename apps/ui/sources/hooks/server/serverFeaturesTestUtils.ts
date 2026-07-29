@@ -2,11 +2,14 @@ import { vi } from 'vitest';
 
 import {
     DEFAULT_BROWSER_CAPABILITIES,
+    DEFAULT_DEVICE_CAPABILITIES,
     DEFAULT_LOCAL_SERVICE_CAPABILITIES,
     DEFAULT_MACHINE_LIVE_STREAM_CAPABILITIES,
     DEFAULT_MACHINE_TUNNEL_CAPABILITIES,
     DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
+    DEFAULT_PEER_MEDIATION_CAPABILITIES,
     DEFAULT_PETS_CAPABILITIES,
+    DEFAULT_SHARING_CAPABILITIES,
     type FeaturesResponse,
 } from '@happier-dev/protocol';
 
@@ -18,7 +21,6 @@ type FixtureOverrides = {
     happierVoiceEnabled?: boolean;
     voiceConfigured?: boolean;
     automationsEnabled?: boolean;
-    connectedServicesEnabled?: boolean;
     connectedServicesQuotasEnabled?: boolean;
     updatesOtaEnabled?: boolean;
     pairingDesktopQrMobileScanEnabled?: boolean;
@@ -61,6 +63,11 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
     return {
         features: {
             bugReports: { enabled: true },
+            providers: {
+                enabled: false,
+                localDiscovery: { enabled: false },
+                localModelManagement: { enabled: false },
+            },
             e2ee: {
                 keylessAccounts: { enabled: false },
             },
@@ -83,7 +90,7 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 enabled: overrides.automationsEnabled ?? true,
             },
             connectedServices: {
-                enabled: overrides.connectedServicesEnabled ?? true,
+                enabled: true,
                 accountGroups: {
                     enabled: false,
                 },
@@ -110,6 +117,7 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 public: { enabled: true },
                 contentKeys: { enabled: true },
                 pendingQueueV2: { enabled: false },
+                pendingDeliveryState: { enabled: false },
             },
             sessions: {
                 enabled: false,
@@ -125,6 +133,10 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             },
             machines: {
                 enabled: false,
+                peerMediation: {
+                    enabled: false,
+                    observability: { enabled: false },
+                },
                 transfer: {
                     enabled: false,
                     directPeer: {
@@ -153,6 +165,8 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 enabled: false,
                 inventory: { enabled: false },
                 managed: { enabled: false },
+                launcher: { enabled: false },
+                actions: { enabled: false, terminate: { enabled: false } },
                 preview: { enabled: false },
                 publicPreview: { enabled: false },
             },
@@ -161,6 +175,22 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 viewTargets: { enabled: false },
                 internal: { enabled: false },
                 sidecar: { enabled: false },
+                diagnostics: { enabled: false },
+                context: { enabled: false },
+                automation: { enabled: false },
+                recording: { enabled: false, attachments: { enabled: false } },
+            },
+            plugins: {
+                enabled: false,
+                ui: {
+                    enabled: false,
+                    hostedWeb: { enabled: false },
+                    structuredMessages: { enabled: false },
+                    reactNativeBundles: {
+                        enabled: false,
+                        devHotReload: { enabled: false },
+                    },
+                },
             },
             devices: {
                 enabled: false,
@@ -188,6 +218,9 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             },
             terminal: {
                 embeddedPty: { enabled: false },
+                transport: {
+                    byteStream: { enabled: false },
+                },
             },
             voice: {
                 enabled: voiceEnabled,
@@ -215,6 +248,7 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             },
         },
         capabilities: {
+            connectedServices: { credentialDelete: { revisionGuard: false } },
             bugReports: {
                 providerUrl: 'https://reports.happier.dev',
                 defaultIncludeDiagnostics: true,
@@ -246,11 +280,13 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 tunnel: DEFAULT_MACHINE_TUNNEL_CAPABILITIES,
                 liveStream: DEFAULT_MACHINE_LIVE_STREAM_CAPABILITIES,
                 peerMediation: {
-                    grantSigningKeys: [],
+                    ...DEFAULT_PEER_MEDIATION_CAPABILITIES,
                 },
             },
             localServices: DEFAULT_LOCAL_SERVICE_CAPABILITIES,
             browser: DEFAULT_BROWSER_CAPABILITIES,
+            devices: DEFAULT_DEVICE_CAPABILITIES,
+            sharing: DEFAULT_SHARING_CAPABILITIES,
             server: {},
             serverIdentity: { serverIdentityId: null },
             social: {

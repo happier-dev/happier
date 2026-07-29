@@ -27,6 +27,7 @@ import {
 } from '@/sync/domains/plugins/permissions/store';
 import {
     REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
+    pluginPermissionGrantScopeKey,
     type PluginPermissionGrantListInput,
     type PluginPermissionGrantTargetScope,
 } from '@/sync/domains/plugins/permissions/types';
@@ -74,14 +75,17 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
         enabled: reviewCommentsEnabled,
         listInput: pluginPermissionGrantListInput,
     });
-    const directWriteGranted = pluginPermissionGrants.hasGrant({
+    const directWriteGrants = pluginPermissionGrants.state.grantIds
+        .map((id) => pluginPermissionGrants.state.grantsById[id])
+        .filter((grant): grant is NonNullable<typeof grant> => (
+            Boolean(grant)
+            && grant?.capability === REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY
+            && pluginPermissionGrantScopeKey(grant.targetScope) === pluginPermissionGrantScopeKey(directWriteGrantScope)
+        ));
+    const pendingDirectWriteGrantRequests = selectPluginPermissionPendingRequests(pluginPermissionGrants.state, {
         capability: REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
         targetScope: directWriteGrantScope,
     });
-    const pendingDirectWriteGrantRequest = selectPluginPermissionPendingRequests(pluginPermissionGrants.state, {
-        capability: REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
-        targetScope: directWriteGrantScope,
-    })[0] ?? null;
 
     const maxFiles = React.useMemo(() => {
         const raw = typeof scmReviewMaxFilesSetting === 'number' && Number.isFinite(scmReviewMaxFilesSetting)
@@ -136,10 +140,14 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
                 <ReviewCommentsSessionSurface
                     workspaceId={props.workspaceRefId}
                     execute={reviewCommentsExecutor}
-                    directWriteGranted={directWriteGranted}
-                    pendingDirectWriteGrantRequest={pendingDirectWriteGrantRequest}
+                    directWriteGrants={directWriteGrants}
+                    pendingDirectWriteGrantRequests={pendingDirectWriteGrantRequests}
                     onGrantDirectWrite={pluginPermissionGrants.grant}
                     onCancelDirectWriteGrant={pluginPermissionGrants.dismissRequest}
+                    onRevokeDirectWrite={pluginPermissionGrants.revoke}
+                    permissionGrantStatus={pluginPermissionGrants.state.status}
+                    permissionGrantError={pluginPermissionGrants.state.error}
+                    onRefreshPermissionGrants={() => { void pluginPermissionGrants.refresh(); }}
                     defaultPanelOpen={false}
                     testID="workspace-review-comments"
                 />

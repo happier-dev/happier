@@ -28,6 +28,31 @@ const serverRuntimeState = vi.hoisted(() => ({
     serverUrl: null as string | null,
 }));
 const applyBrandHeroSeenMock = vi.hoisted(() => vi.fn());
+const onboardingTourFeatureState = vi.hoisted(() => ({
+    state: 'disabled' as 'enabled' | 'disabled' | 'unsupported' | 'unknown' | null,
+    calls: [] as Array<readonly [string, unknown]>,
+}));
+const journeyHostState = vi.hoisted(() => {
+    let releaseDeferredModuleLoad: (() => void) | null = null;
+    const state = {
+        moduleLoads: 0,
+        renderCount: 0,
+        throwOnRender: false,
+        deferModuleLoad: false,
+        moduleLoadPromise: null as Promise<void> | null,
+        lastProps: null as Record<string, unknown> | null,
+        resetModuleLoadDeferred: () => {
+            state.moduleLoadPromise = new Promise<void>((resolve) => {
+                releaseDeferredModuleLoad = resolve;
+            });
+        },
+        releaseModuleLoad: () => {
+            releaseDeferredModuleLoad?.();
+            releaseDeferredModuleLoad = null;
+        },
+    };
+    return state;
+});
 const wizardControllerMock = vi.hoisted(() => {
     const goToStep = vi.fn();
     return {
@@ -87,6 +112,18 @@ const authEntryOptionsState = vi.hoisted(() => ({
         retryServerCheck: () => {},
     },
 }));
+const localSettingsState = vi.hoisted(() => ({
+    hasCompletedAuthOnce: false as boolean,
+}));
+const journeySessionState = vi.hoisted(() => ({
+    active: false as boolean,
+}));
+const authState = vi.hoisted(() => ({
+    isAuthenticated: false as boolean,
+}));
+const pendingSetupIntentState = vi.hoisted(() => ({
+    value: null as null | Readonly<{ branch: string; phase: string; relayUrl: string | null }>,
+}));
 const desktopWindowBridgeState = vi.hoisted(() => ({
     getDesktopWindowChromePolicy: vi.fn<() => Promise<DesktopWindowChromePolicy>>(async () => ({ strategy: 'none' })),
     getDesktopWindowState: vi.fn<() => Promise<DesktopWindowState>>(async () => ({ isMaximized: false })),
@@ -125,7 +162,7 @@ vi.mock('@/modal/components/BaseModal', () => ({
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
-        isAuthenticated: false,
+        isAuthenticated: authState.isAuthenticated,
         login: loginMock,
         loginWithCredentials: loginWithCredentialsMock,
     }),
@@ -139,8 +176,38 @@ vi.mock('@/components/account/auth/useAuthEntryOptions', () => ({
     useAuthEntryOptions: () => authEntryOptionsState.current,
 }));
 
+vi.mock('@/hooks/server/useFeatureDecision', () => ({
+    useFeatureDecision: (featureId: string, scope?: unknown) => {
+        onboardingTourFeatureState.calls.push([featureId, scope] as const);
+        if (onboardingTourFeatureState.state == null) {
+            return null;
+        }
+        return {
+            featureId,
+            state: onboardingTourFeatureState.state,
+            blockedBy: onboardingTourFeatureState.state === 'enabled' ? null : 'server',
+            blockerCode: onboardingTourFeatureState.state === 'enabled' ? 'none' : 'feature_disabled',
+            diagnostics: [],
+            evaluatedAt: 0,
+            scope: scope ?? { scopeKind: 'runtime' },
+        };
+    },
+}));
+
 vi.mock('@/utils/platform/responsive', () => ({
     useIsLandscape: () => false,
+}));
+
+vi.mock('@/sync/store/hooks', () => ({
+    useLocalSetting: (key: string) => (localSettingsState as Record<string, unknown>)[key],
+}));
+
+vi.mock('@/components/onboarding/tour/state/journeySession', () => ({
+    useOnboardingJourneySessionActive: () => journeySessionState.active,
+}));
+
+vi.mock('@/components/onboarding/state/usePendingSetupIntent', () => ({
+    usePendingSetupIntent: () => pendingSetupIntentState.value,
 }));
 
 const tauriDesktopState = vi.hoisted(() => ({ value: false }));
@@ -195,6 +262,23 @@ vi.mock('@/components/onboarding/surfaces/useOnboardingWizardController', () => 
     },
 }));
 
+vi.mock('@/components/onboarding/tour/OnboardingJourneyHost', async () => {
+    if (journeyHostState.deferModuleLoad) {
+        await journeyHostState.moduleLoadPromise;
+    }
+    journeyHostState.moduleLoads += 1;
+    return {
+        OnboardingJourneyHost: (props: Record<string, unknown>) => {
+            journeyHostState.renderCount += 1;
+            journeyHostState.lastProps = props;
+            if (journeyHostState.throwOnRender) {
+                throw new Error('stage mount failed');
+            }
+            return React.createElement('OnboardingJourneyHost', props);
+        },
+    };
+});
+
 vi.mock('@/components/onboarding/unauthShell', () => ({
     UnauthenticatedSplitShell: (props: Record<string, unknown>) =>
         React.createElement(
@@ -225,6 +309,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
     const originalDebug = process.env.EXPO_PUBLIC_DEBUG;
 
     beforeEach(() => {
+        vi.resetModules();
         process.env.EXPO_PUBLIC_DEBUG = '1';
         reactNativeState.windowWidth = 390;
         reactNativeState.windowHeight = 844;
@@ -262,6 +347,19 @@ describe('PreAuthOnboardingWizardEntry', () => {
         runtimeFetchMock.mockReset();
         buildDataKeyCredentialsForTokenMock.mockClear();
         applyBrandHeroSeenMock.mockReset();
+        onboardingTourFeatureState.state = 'disabled';
+        onboardingTourFeatureState.calls = [];
+        localSettingsState.hasCompletedAuthOnce = false;
+        journeySessionState.active = false;
+        authState.isAuthenticated = false;
+        pendingSetupIntentState.value = null;
+        journeyHostState.moduleLoads = 0;
+        journeyHostState.renderCount = 0;
+        journeyHostState.throwOnRender = false;
+        journeyHostState.deferModuleLoad = false;
+        journeyHostState.moduleLoadPromise = null;
+        journeyHostState.releaseModuleLoad();
+        journeyHostState.lastProps = null;
         wizardControllerMock.goToStep.mockReset();
         wizardControllerMock.lastProps = null;
         wizardControllerMock.current = {
@@ -286,27 +384,12 @@ describe('PreAuthOnboardingWizardEntry', () => {
         desktopWindowBridgeState.getDesktopWindowChromePolicy.mockResolvedValue({ strategy: 'none' });
         desktopWindowBridgeState.getDesktopWindowState.mockResolvedValue({ isMaximized: false });
         desktopWindowBridgeState.listenDesktopWindowState.mockResolvedValue(async () => {});
-        if (typeof window !== 'undefined') {
-            window.history.pushState({}, '', '/?happier_wizard_step=relay_select');
-        } else {
-            (globalThis as unknown as { location?: { search?: string } }).location = {
-                search: '?happier_wizard_step=relay_select',
-            };
-        }
     });
 
     afterEach(() => {
         process.env.EXPO_PUBLIC_DEBUG = originalDebug;
+        vi.unstubAllGlobals();
         standardCleanup();
-    });
-
-    it('passes a debug initialStepId from happier_wizard_step in debug builds', async () => {
-        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
-        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
-
-        expect(wizardControllerMock.lastProps?.initialStepId).toBe('relay_select');
-        const shell = screen.findByType('UnauthenticatedSplitShell' as never);
-        expect(shell.props.stepId).toBe('welcome');
     });
 
     it('renders the unauth split shell directly on narrow web without the legacy modal wrapper', async () => {
@@ -317,6 +400,219 @@ describe('PreAuthOnboardingWizardEntry', () => {
         expect(screen.findByType('UnauthenticatedSplitShell' as never)).toBeTruthy();
         const wizard = screen.findByType('OnboardingWizardSurfacePresentation' as never);
         expect(wizard.props.wizardChromeMode).toBe('bare');
+    });
+
+    it('falls back to the current wizard and does not load tour code when onboardingTour is disabled', async () => {
+        onboardingTourFeatureState.state = 'disabled';
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        expect(onboardingTourFeatureState.calls).toContainEqual([
+            'app.ui.onboardingTour',
+            { scopeKind: 'runtime' },
+        ]);
+        expect(journeyHostState.moduleLoads).toBe(0);
+        expect(journeyHostState.renderCount).toBe(0);
+        expect(screen.findByType('OnboardingWizardSurfacePresentation' as never)).toBeTruthy();
+    });
+
+    it('renders only a neutral hold surface while the onboardingTour decision is resolving', async () => {
+        onboardingTourFeatureState.state = null;
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        expect(screen.findByTestId('onboarding-journey-loading')).toBeTruthy();
+        expect(screen.findAllByType('UnauthenticatedSplitShell' as never)).toHaveLength(0);
+        expect(screen.findAllByType('OnboardingWizardSurfacePresentation' as never)).toHaveLength(0);
+        expect(journeyHostState.moduleLoads).toBe(0);
+        expect(journeyHostState.renderCount).toBe(0);
+    });
+
+    it('preserves the debug query initial step override for the wizard controller', async () => {
+        vi.stubGlobal('window', {
+            location: {
+                href: 'http://localhost:8081/?happier_wizard_step=relay_select',
+                search: '?happier_wizard_step=relay_select',
+            },
+        });
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        expect(wizardControllerMock.lastProps?.initialStepId).toBe('relay_select');
+    });
+
+    it('does not flash the current wizard while the enabled journey chunk is loading', async () => {
+        onboardingTourFeatureState.state = 'enabled';
+        journeyHostState.deferModuleLoad = true;
+        journeyHostState.resetModuleLoadDeferred();
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        try {
+            expect(screen.findByTestId('onboarding-journey-loading')).toBeTruthy();
+            expect(screen.findAllByType('UnauthenticatedSplitShell' as never)).toHaveLength(0);
+            expect(screen.findAllByType('OnboardingWizardSurfacePresentation' as never)).toHaveLength(0);
+            expect(journeyHostState.renderCount).toBe(0);
+        } finally {
+            await act(async () => {
+                journeyHostState.releaseModuleLoad();
+                await vi.dynamicImportSettled();
+            });
+        }
+
+        expect(screen.findByType('OnboardingJourneyHost' as never)).toBeTruthy();
+        expect(screen.findAllByType('OnboardingWizardSurfacePresentation' as never)).toHaveLength(0);
+    });
+
+    it('renders the lazy journey host as the unauth shell replacement when onboardingTour is enabled', async () => {
+        onboardingTourFeatureState.state = 'enabled';
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        expect(screen.findAllByType('UnauthenticatedSplitShell' as never)).toHaveLength(0);
+        expect(screen.findByType('OnboardingJourneyHost' as never)).toBeTruthy();
+        expect(screen.findAllByType('OnboardingWizardSurfacePresentation' as never)).toHaveLength(0);
+        expect(journeyHostState.renderCount).toBe(1);
+        expect(journeyHostState.lastProps).toMatchObject({
+            isDesktopShell: false,
+            surface: 'web',
+            preAuthController: wizardControllerMock.current,
+        });
+    });
+
+    it('renders the classic welcome shell for returning users even when onboardingTour is enabled', async () => {
+        onboardingTourFeatureState.state = 'enabled';
+        localSettingsState.hasCompletedAuthOnce = true;
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        expect(screen.findByType('UnauthenticatedSplitShell' as never)).toBeTruthy();
+        expect(screen.findByType('OnboardingWizardSurfacePresentation' as never)).toBeTruthy();
+        expect(screen.findAllByType('OnboardingJourneyHost' as never)).toHaveLength(0);
+        expect(journeyHostState.renderCount).toBe(0);
+    });
+
+    it('keeps rendering the journey for a returning user while a journey session is active', async () => {
+        onboardingTourFeatureState.state = 'enabled';
+        localSettingsState.hasCompletedAuthOnce = true;
+        journeySessionState.active = true;
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        expect(screen.findByType('OnboardingJourneyHost' as never)).toBeTruthy();
+        expect(screen.findAllByType('UnauthenticatedSplitShell' as never)).toHaveLength(0);
+        expect(screen.findAllByType('OnboardingWizardSurfacePresentation' as never)).toHaveLength(0);
+    });
+
+    it('renders the journey for a returning user when an explicit replay beat intent is present', async () => {
+        onboardingTourFeatureState.state = 'enabled';
+        localSettingsState.hasCompletedAuthOnce = true;
+        vi.stubGlobal('window', {
+            location: {
+                href: 'http://localhost:8081/?happier_journey_beat=S5',
+                search: '?happier_journey_beat=S5',
+            },
+        });
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        expect(screen.findByType('OnboardingJourneyHost' as never)).toBeTruthy();
+        expect(screen.findAllByType('UnauthenticatedSplitShell' as never)).toHaveLength(0);
+    });
+
+    it('renders the journey replay deep-link for a returning user in a production (non-debug) build', async () => {
+        delete process.env.EXPO_PUBLIC_DEBUG;
+        onboardingTourFeatureState.state = 'enabled';
+        localSettingsState.hasCompletedAuthOnce = true;
+        vi.stubGlobal('window', {
+            location: {
+                href: 'http://localhost:8081/?happier_journey_beat=A5',
+                search: '?happier_journey_beat=A5',
+            },
+        });
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        expect(screen.findByType('OnboardingJourneyHost' as never)).toBeTruthy();
+        expect(screen.findAllByType('UnauthenticatedSplitShell' as never)).toHaveLength(0);
+    });
+
+    it('ignores the journey replay deep-link when the onboardingTour feature flag is off', async () => {
+        delete process.env.EXPO_PUBLIC_DEBUG;
+        onboardingTourFeatureState.state = 'disabled';
+        localSettingsState.hasCompletedAuthOnce = true;
+        vi.stubGlobal('window', {
+            location: {
+                href: 'http://localhost:8081/?happier_journey_beat=A5',
+                search: '?happier_journey_beat=A5',
+            },
+        });
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        expect(screen.findAllByType('OnboardingJourneyHost' as never)).toHaveLength(0);
+    });
+
+    it('re-latches the journey at the setup act for an authed returning user with a pending setup continuation', async () => {
+        onboardingTourFeatureState.state = 'enabled';
+        localSettingsState.hasCompletedAuthOnce = true;
+        journeySessionState.active = false;
+        authState.isAuthenticated = true;
+        pendingSetupIntentState.value = {
+            branch: 'thisComputer',
+            phase: 'post_auth',
+            relayUrl: 'https://relay.example.test',
+        };
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        expect(screen.findByType('OnboardingJourneyHost' as never)).toBeTruthy();
+        expect(screen.findAllByType('UnauthenticatedSplitShell' as never)).toHaveLength(0);
+        expect(journeyHostState.lastProps).toMatchObject({
+            initialBeatId: 'S3',
+        });
+    });
+
+    it('passes the debug query initial beat to the enabled journey host', async () => {
+        onboardingTourFeatureState.state = 'enabled';
+        vi.stubGlobal('window', {
+            location: {
+                href: 'http://localhost:8081/?happier_journey_beat=S5',
+                search: '?happier_journey_beat=S5',
+            },
+        });
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        expect(journeyHostState.lastProps).toMatchObject({
+            initialBeatId: 'S5',
+        });
+    });
+
+    it('falls back to the current wizard when the journey host cannot mount', async () => {
+        onboardingTourFeatureState.state = 'enabled';
+        journeyHostState.throwOnRender = true;
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        consoleErrorSpy.mockRestore();
+        expect(journeyHostState.renderCount).toBeGreaterThan(0);
+        expect(screen.findAllByType('OnboardingJourneyHost' as never)).toHaveLength(0);
+        expect(screen.findByType('OnboardingWizardSurfacePresentation' as never)).toBeTruthy();
     });
 
     it('renders the unauth split shell on Tauri desktop with bare wizard presentation', async () => {

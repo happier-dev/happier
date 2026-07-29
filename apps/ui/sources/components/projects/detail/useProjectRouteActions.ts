@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { useRouter } from 'expo-router';
 
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -17,9 +16,11 @@ import {
 } from './openProjectTerminalDetailsTab';
 import {
     buildProjectRouteHref,
-    resolveProjectRouteActiveRootParam,
+    resolveProjectRouteSelectionQuery,
     type ProjectRouteSegment,
+    type ProjectDetailsSourceSurface,
 } from './projectRouteState';
+import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
 
 function resolveProjectSurfaceForSegment(segment?: ProjectRouteSegment): ProjectMobileSurface {
     if (segment === 'git') {
@@ -36,9 +37,10 @@ export function useProjectRouteActions(params: Readonly<{
     activeRootPath: string;
     activeWorktreeId?: string | null;
     showWorktrees?: boolean;
+    sourceSurface?: ProjectDetailsSourceSurface | null;
     pane?: AppPaneScopeApi | null;
 }>) {
-    const router = useRouter();
+    const routerRef = useProjectRouteRouterRef();
     const deviceType = useDeviceType();
     const mobileWorkspaceExperience = useSetting('mobileWorkspaceExperienceV1');
     const workspaceRefId = params.workspaceRef?.id ?? null;
@@ -52,10 +54,14 @@ export function useProjectRouteActions(params: Readonly<{
     const buildHref = React.useCallback((input?: Readonly<{
         segment?: ProjectRouteSegment;
         showWorktrees?: boolean;
+        sourceSurface?: ProjectDetailsSourceSurface | null;
     }>): string => {
         if (!workspaceRefId || !workspaceRootPath) {
             return '/projects';
         }
+        const sourceSurface = input?.segment === 'details'
+            ? (input.sourceSurface ?? params.sourceSurface ?? null)
+            : null;
         return buildProjectRouteHref({
             workspaceRefId,
             segment: input?.segment,
@@ -63,10 +69,12 @@ export function useProjectRouteActions(params: Readonly<{
             defaultRootPath: workspaceRootPath,
             activeWorktreeId: params.activeWorktreeId,
             showWorktrees: input?.showWorktrees,
+            sourceSurface,
         });
     }, [
         params.activeRootPath,
         params.activeWorktreeId,
+        params.sourceSurface,
         workspaceRefId,
         workspaceRootPath,
     ]);
@@ -75,14 +83,16 @@ export function useProjectRouteActions(params: Readonly<{
         if (!workspaceRefId || !workspaceRootPath) {
             return '/projects';
         }
+        const routeSelectionQuery = resolveProjectRouteSelectionQuery({
+            activeRootPath: params.activeRootPath,
+            defaultRootPath: workspaceRootPath,
+            activeWorktreeId: params.activeWorktreeId,
+        });
         return resolveProjectRoutePathForSurface({
             workspaceRefId,
             surface,
-            rawWorktreeId: resolveProjectRouteActiveRootParam(
-                params.activeRootPath,
-                workspaceRootPath,
-                params.activeWorktreeId,
-            ) ?? null,
+            rawWorktreeId: routeSelectionQuery.rawWorktreeId,
+            rawActiveRootPath: routeSelectionQuery.rawActiveRootPath,
         });
     }, [
         params.activeRootPath,
@@ -95,25 +105,27 @@ export function useProjectRouteActions(params: Readonly<{
         segment?: ProjectRouteSegment;
         showWorktrees?: boolean;
         method?: 'push' | 'replace';
+        sourceSurface?: ProjectDetailsSourceSurface | null;
     }>) => {
         if (!workspaceRefId) return;
         const href = buildHref({
             segment: input.segment,
             showWorktrees: input.showWorktrees,
+            sourceSurface: input.sourceSurface,
         });
         if (input.method === 'replace') {
-            router.replace(href);
+            routerRef.current.replace(href);
             return;
         }
-        router.push(href);
-    }, [buildHref, router, workspaceRefId]);
+        routerRef.current.push(href);
+    }, [buildHref, routerRef, workspaceRefId]);
 
     const replaceOverviewVisibility = React.useCallback((input: Readonly<{
         segment?: ProjectRouteSegment;
         visible: boolean;
     }>) => {
         if (cockpitEnabled) {
-            router.replace(buildCockpitHref(
+            routerRef.current.replace(buildCockpitHref(
                 input.visible
                     ? 'overview'
                     : resolveProjectSurfaceForSegment(input.segment),
@@ -125,16 +137,16 @@ export function useProjectRouteActions(params: Readonly<{
             showWorktrees: input.visible,
             method: 'replace',
         });
-    }, [buildCockpitHref, cockpitEnabled, navigateToSegment, router]);
+    }, [buildCockpitHref, cockpitEnabled, navigateToSegment, routerRef]);
 
     const openWorktreesInDetails = React.useCallback((method: 'push' | 'replace' = 'push') => {
         if (cockpitEnabled) {
             const href = buildCockpitHref('overview');
             if (method === 'replace') {
-                router.replace(href);
+                routerRef.current.replace(href);
                 return;
             }
-            router.push(href);
+            routerRef.current.push(href);
             return;
         }
         navigateToSegment({
@@ -142,7 +154,7 @@ export function useProjectRouteActions(params: Readonly<{
             showWorktrees: true,
             method,
         });
-    }, [buildCockpitHref, cockpitEnabled, navigateToSegment, router]);
+    }, [buildCockpitHref, cockpitEnabled, navigateToSegment, routerRef]);
 
     const openTerminal = React.useCallback((input?: Readonly<{
         segment?: ProjectRouteSegment;
@@ -151,7 +163,7 @@ export function useProjectRouteActions(params: Readonly<{
         if (!workspaceRefId || !openDetailsTab) return;
         if (input?.exitOverview === true && params.showWorktrees === true) {
             if (cockpitEnabled) {
-                router.replace(buildCockpitHref(resolveProjectSurfaceForSegment(input.segment)));
+                routerRef.current.replace(buildCockpitHref(resolveProjectSurfaceForSegment(input.segment)));
             } else {
                 navigateToSegment({
                     segment: input.segment,
@@ -172,7 +184,7 @@ export function useProjectRouteActions(params: Readonly<{
         openDetailsTab,
         params.activeRootPath,
         params.showWorktrees,
-        router,
+        routerRef,
         workspaceRefId,
     ]);
 

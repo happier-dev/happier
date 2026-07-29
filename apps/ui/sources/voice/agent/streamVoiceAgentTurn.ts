@@ -2,9 +2,15 @@ import { storage } from '@/sync/domains/state/storage';
 
 import { createAbortRacer } from './voiceAgentAbort';
 import { resolveVoiceTurnStreamReadConfig } from './resolveVoiceTurnStreamReadConfig';
-import type { VoiceAgentHandle, VoiceAgentStartParams } from './types';
-
-type SendTurnOptions = Readonly<{ onTextDelta?: (textDelta: string) => void | Promise<void>; signal?: AbortSignal }>;
+import {
+    attachVoiceAgentActionEffectId,
+    type VoiceAgentHandle,
+    type VoiceAgentSendTurnOptions,
+    type VoiceAgentStartParams,
+} from './types';
+import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
+import { createLegacyVoiceOutputAdapter } from './legacyVoiceOutputAdapter';
+import { sanitizeVoiceOutputEventForDisplay } from './sanitizeVoiceOutputEventForDisplay';
 
 export async function streamVoiceAgentTurn(params: Readonly<{
     sessionId: string;
@@ -12,20 +18,21 @@ export async function streamVoiceAgentTurn(params: Readonly<{
     userText: string;
     displayUserText: string;
     resume?: boolean;
-    options?: SendTurnOptions;
+    options?: VoiceAgentSendTurnOptions;
     onStreamStarted?: (streamId: string) => void | Promise<void>;
     onStreamFinished?: () => void | Promise<void>;
 }>): Promise<Readonly<{ assistantText: string; actions: NonNullable<Awaited<ReturnType<VoiceAgentHandle['client']['sendTurn']>>['actions']> }>> {
     const abort = createAbortRacer(params.options?.signal);
     const resolveStreamReadConfig = () => {
         const settings: any = storage.getState().settings;
-        const voiceCfg = settings?.voice?.adapters?.local_conversation ?? null;
+        const voiceCfg = readLocalConversationSettingsFromAccountSettings(settings);
         return resolveVoiceTurnStreamReadConfig(voiceCfg);
     };
 
     const streamCfg = resolveStreamReadConfig();
 
     let started: { streamId: string } | null = null;
+    let terminalCancellationObserved = false;
     try {
         abort.throwIfAborted();
         started = await params.handle.client.startTurnStream({
@@ -34,11 +41,13 @@ export async function streamVoiceAgentTurn(params: Readonly<{
             userText: params.userText,
             displayUserText: params.displayUserText,
             ...(params.resume === true ? { resume: true } : {}),
+            ...(params.options?.userTranscript ? { userTranscript: params.options.userTranscript } : {}),
         });
         await abort.race(Promise.resolve(params.onStreamStarted?.(started.streamId)));
         abort.throwIfAborted();
 
         let cursor = 0;
+        const outputAdapter = createLegacyVoiceOutputAdapter({ streamId: started.streamId });
         let mergedDeltaText = '';
         let doneAssistantText: string | null = null;
         let doneActions: NonNullable<Awaited<ReturnType<VoiceAgentHandle['client']['sendTurn']>>['actions']> = [];
@@ -59,19 +68,28 @@ export async function streamVoiceAgentTurn(params: Readonly<{
                 }),
             );
 
+            const sourceCursorStart = cursor;
             cursor = read.nextCursor;
 
-            for (const event of read.events) {
-                if (event.t === 'delta' && typeof event.textDelta === 'string') {
-                    await abort.race(Promise.resolve(params.options?.onTextDelta?.(event.textDelta)));
-                    mergedDeltaText += event.textDelta;
-                    continue;
+            for (const [eventIndex, event] of read.events.entries()) {
+                const outputEvents = outputAdapter.ingest(sourceCursorStart + eventIndex, event);
+                for (const rawOutputEvent of outputEvents) {
+                    const outputEvent = sanitizeVoiceOutputEventForDisplay(rawOutputEvent);
+                    await abort.race(Promise.resolve(params.options?.onOutputEvent?.(outputEvent)));
+                    if (outputEvent.kind === 'speech_segment') {
+                        mergedDeltaText += outputEvent.text;
+                    } else if (outputEvent.kind === 'side_effect') {
+                        doneActions.push(attachVoiceAgentActionEffectId(outputEvent.action, outputEvent.effectId));
+                    } else if (outputEvent.kind === 'turn_final') {
+                        doneAssistantText = outputEvent.text;
+                    } else if (outputEvent.kind === 'turn_cancelled') {
+                        terminalCancellationObserved = true;
+                        throw Object.assign(new Error('stream_cancelled'), {
+                            rpcErrorCode: 'cancelled' as const,
+                        });
+                    }
                 }
-                if (event.t === 'done') {
-                    doneAssistantText = event.assistantText;
-                    doneActions = event.actions ?? [];
-                    continue;
-                }
+                if (event.t !== 'error') continue;
                 if (event.t === 'error') {
                     throw Object.assign(new Error(event.error || 'stream_failed'), {
                         rpcErrorCode: event.errorCode,
@@ -95,7 +113,7 @@ export async function streamVoiceAgentTurn(params: Readonly<{
 
         throw new Error('stream_timeout');
     } catch (error) {
-        if (started) {
+        if (started && !terminalCancellationObserved) {
             await params.handle.client
                 .cancelTurnStream({
                     sessionId: params.handle.rpcSessionId,

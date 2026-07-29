@@ -1,7 +1,9 @@
 import {
+    DEFAULT_SESSION_PENDING_QUEUE_DELIVERY_TIMING,
     DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE,
     DEFAULT_USAGE_LIMIT_RECOVERY_SETTINGS_V1,
     DEFAULT_WINDOWS_TERMINAL_WINDOW_NAME,
+    SessionPendingQueueDeliveryTimingSchema,
     SessionPendingQueueDrainModeSchema,
     UsageLimitRecoverySettingsV1Schema,
     buildSettingArtifacts,
@@ -144,6 +146,37 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },
+    sessionComposerRememberBannerVisibility: {
+        schema: z.boolean(),
+        default: false,
+        description: 'Remember collapsed composer banners globally across sessions instead of per session view',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    },
+    // Instrument-kit motion-preference chokepoint (L4). `visualEffectsLevel` is the
+    // single dial that gates every kit animation/shader; components read it only via
+    // `components/instrument/motion/useMotionPreferences.ts`, never directly.
+    visualEffectsLevel: {
+        schema: z.enum(['full', 'subtle', 'minimal']),
+        default: 'full',
+        description: 'Instrument visual-effects level: full (shaders + springs), subtle (light springs), minimal (static)',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    contextGaugeStyle: {
+        schema: z.enum(['gauge', 'text', 'hidden']),
+        default: 'gauge',
+        description: 'How in-session context usage is presented: animated gauge, plain text, or hidden',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    animatedNumbers: {
+        schema: z.boolean(),
+        default: true,
+        description: 'Animate numeric instrument readouts (odometer roll) when values change',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    },
     agentInputHistoryScope: {
         schema: z.enum(['perSession', 'global']),
         default: 'perSession',
@@ -220,6 +253,13 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Session list working placement mode: off, global section, or within current groups',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionListSeparateBackgroundWorkV1: {
+        schema: z.boolean(),
+        default: false,
+        description: 'Separate detached background work from foreground working sessions in the session list',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },
     sessionFolderViewModeV1: {
         schema: SessionFolderViewModeV1Schema,
@@ -330,6 +370,13 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         schema: SessionPendingQueueDrainModeSchema,
         default: DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE,
         description: 'How many pending queue messages an agent should materialize per wake',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionPendingQueueDeliveryTiming: {
+        schema: SessionPendingQueueDeliveryTimingSchema,
+        default: DEFAULT_SESSION_PENDING_QUEUE_DELIVERY_TIMING,
+        description: 'When server-pending queued messages should materialize relative to runtime activity',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },

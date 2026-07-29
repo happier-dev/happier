@@ -1,6 +1,12 @@
-import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import type {
+    PrimaryTurnStatusV1,
+    SessionRuntimeActivityState,
+    SessionRuntimeIssueV1,
+} from '@happier-dev/protocol';
 
 export const SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS = 120_000;
+export const SESSION_OPTIMISTIC_PENDING_THINKING_MS = 15_000;
+export const SESSION_RESUMING_PRESENTATION_TIMEOUT_MS = 30_000;
 
 export type SessionRuntimeAttentionState =
     | 'idle'
@@ -9,14 +15,26 @@ export type SessionRuntimeAttentionState =
     | 'permission_required'
     | 'action_required';
 
+export type SessionRuntimeActivityPresentationState =
+    | 'idle'
+    | 'working'
+    | 'backgroundActive';
+
 export type SessionRuntimePresentationInput = Readonly<{
     active?: boolean | null;
     activeAt?: number | null;
+    archivedAt?: number | null;
     presence?: unknown;
     thinking?: boolean | null;
     thinkingAt?: number | null;
+    optimisticThinkingAt?: number | null;
+    hasPendingUserMessages?: boolean | null;
     latestTurnStatus?: PrimaryTurnStatusV1 | null;
     latestTurnStatusObservedAt?: number | null;
+    runtimeActivityState?: SessionRuntimeActivityState | null;
+    runtimeActivityActiveCount?: number | null;
+    runtimeActivityObservedAt?: number | null;
+    runtimeActivityRevision?: number | null;
     meaningfulActivityAt?: number | null;
     lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
     hasPendingPermissionRequests?: boolean | null;
@@ -27,9 +45,13 @@ export type SessionRuntimePresentationInput = Readonly<{
 
 export type SessionRuntimePresentationState = Readonly<{
     attention: SessionRuntimeAttentionState;
+    activityState: SessionRuntimeActivityPresentationState;
     working: boolean;
+    backgroundActive: boolean;
     freshThinking: boolean;
-    freshInProgress: boolean;
+    projectedTurnInProgress: boolean;
+    freshProviderRuntimeActivity: boolean;
+    freshOptimisticPendingUserMessage: boolean;
     freshPermissionRequired: boolean;
     freshActionRequired: boolean;
     terminalStatus: PrimaryTurnStatusV1 | null;
@@ -39,6 +61,12 @@ export type SessionRuntimePresentationState = Readonly<{
 export type SessionRuntimePresenceFields = Readonly<{
     thinking: boolean;
     thinkingAt: number;
+}>;
+
+export type SessionRuntimeFreshnessSignal = Readonly<{
+    timestamp: number;
+    budgetMs: number;
+    expiresAtMs: number;
 }>;
 
 export function isFreshTimestamp(
@@ -62,6 +90,10 @@ export function hasTerminalPrimaryTurnStatus(status: PrimaryTurnStatusV1 | null 
     return status === 'completed' || status === 'cancelled' || status === 'failed';
 }
 
+export function hasProjectedActiveTurn(status: PrimaryTurnStatusV1 | null | undefined): boolean {
+    return status === 'in_progress';
+}
+
 function isLegacyThinkingBlockedByTurnProjection(latestTurnStatus: PrimaryTurnStatusV1 | null): boolean {
     return hasTerminalPrimaryTurnStatus(latestTurnStatus);
 }
@@ -73,13 +105,17 @@ export function deriveSessionRuntimePresentationState(
         ? input.nowMs
         : Date.now();
     const latestTurnStatus = input.latestTurnStatus ?? null;
+    const isArchived = typeof input.archivedAt === 'number' && Number.isFinite(input.archivedAt);
     const hasTerminalPrimaryTurnProjection = hasTerminalPrimaryTurnStatus(latestTurnStatus);
     const terminalStatus = hasTerminalPrimaryTurnProjection ? latestTurnStatus : null;
-    const freshInProgressSignals = readFreshInProgressRuntimeSignalTimestamps(input, nowMs);
     const thinkingAt = normalizeRuntimeStatusTimestamp(input.thinkingAt);
-    const isLiveRuntime = input.active === true && input.presence === 'online';
+    const optimisticThinkingAt = normalizeRuntimeStatusTimestamp(input.optimisticThinkingAt);
+    const isLiveRuntime = !isArchived && input.active === true && input.presence === 'online';
 
-    const freshInProgress = freshInProgressSignals.length > 0;
+    // The lifecycle projection is the canonical active-turn fact. It is cleared by
+    // complete/fail/cancel (including daemon exit settlement), not elapsed wall time.
+    const projectedTurnInProgress = !isArchived && hasProjectedActiveTurn(latestTurnStatus);
+    const freshProviderRuntimeActivity = !isArchived && hasProviderRuntimeActivity(input);
 
     const freshThinking =
         input.thinking === true
@@ -88,7 +124,23 @@ export function deriveSessionRuntimePresentationState(
         && isFreshTimestamp(thinkingAt, nowMs, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS)
         && !isLegacyThinkingBlockedByTurnProjection(latestTurnStatus);
 
-    const working = freshInProgress || freshThinking;
+    const freshOptimisticPendingUserMessage =
+        input.hasPendingUserMessages === true
+        && isLiveRuntime
+        && optimisticThinkingAt !== null
+        && isFreshTimestamp(optimisticThinkingAt, nowMs, SESSION_OPTIMISTIC_PENDING_THINKING_MS)
+        && !hasTerminalPrimaryTurnProjection;
+
+    const working =
+        projectedTurnInProgress
+        || freshThinking
+        || freshOptimisticPendingUserMessage;
+    const backgroundActive = !working && freshProviderRuntimeActivity;
+    const activityState: SessionRuntimeActivityPresentationState = working
+        ? 'working'
+        : backgroundActive
+            ? 'backgroundActive'
+            : 'idle';
     const pendingRequestObservedAt = normalizeRuntimeStatusTimestamp(input.pendingRequestObservedAt);
     const hasFreshPendingRequest =
         pendingRequestObservedAt !== null
@@ -99,8 +151,7 @@ export function deriveSessionRuntimePresentationState(
         && (working || hasFreshPendingRequest);
     const freshPermissionRequired =
         input.hasPendingPermissionRequests === true
-        && isLiveRuntime
-        && (working || hasFreshPendingRequest);
+        && isLiveRuntime;
 
     const attention: SessionRuntimeAttentionState =
         latestTurnStatus === 'failed'
@@ -115,9 +166,13 @@ export function deriveSessionRuntimePresentationState(
 
     return {
         attention,
+        activityState,
         working,
+        backgroundActive,
         freshThinking,
-        freshInProgress,
+        projectedTurnInProgress,
+        freshProviderRuntimeActivity,
+        freshOptimisticPendingUserMessage,
         freshPermissionRequired,
         freshActionRequired,
         terminalStatus,
@@ -125,47 +180,47 @@ export function deriveSessionRuntimePresentationState(
     };
 }
 
-export function readFreshInProgressRuntimeSignalTimestamps(
-    input: SessionRuntimePresentationInput,
-    nowMs: number,
-): readonly number[] {
-    const latestTurnStatus = input.latestTurnStatus ?? null;
-    const latestTurnStatusObservedAt = normalizeRuntimeStatusTimestamp(input.latestTurnStatusObservedAt);
-    if (latestTurnStatus !== 'in_progress' || latestTurnStatusObservedAt === null) return [];
-
-    const timestamps: number[] = [];
-    if (isFreshTimestamp(latestTurnStatusObservedAt, nowMs, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS)) {
-        timestamps.push(latestTurnStatusObservedAt);
-    }
-    const activeAt = normalizeRuntimeStatusTimestamp(input.activeAt);
-    if (
-        input.active === true
-        && input.presence === 'online'
-        && activeAt !== null
-        && activeAt >= latestTurnStatusObservedAt
-        && isFreshTimestamp(activeAt, nowMs, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS)
-    ) {
-        timestamps.push(activeAt);
-    }
-    return timestamps;
-}
-
 export function readSessionRuntimePresentationFreshnessTimestamps(
     input: SessionRuntimePresentationInput,
     nowMs: number,
 ): readonly number[] {
+    return readSessionRuntimePresentationFreshnessSignals(input, nowMs).map((signal) => signal.timestamp);
+}
+
+export function readSessionRuntimePresentationFreshnessExpirations(
+    input: SessionRuntimePresentationInput,
+    nowMs: number,
+): readonly number[] {
+    return readSessionRuntimePresentationFreshnessSignals(input, nowMs).map((signal) => signal.expiresAtMs);
+}
+
+export function readSessionRuntimePresentationFreshnessSignals(
+    input: SessionRuntimePresentationInput,
+    nowMs: number,
+): readonly SessionRuntimeFreshnessSignal[] {
     const runtimePresentation = deriveSessionRuntimePresentationState({ ...input, nowMs });
-    const timestamps: number[] = [];
+    const signals: SessionRuntimeFreshnessSignal[] = [];
+    const addFreshnessSignal = (timestamp: number | null | undefined, budgetMs: number) => {
+        const normalizedTimestamp = normalizeRuntimeStatusTimestamp(timestamp);
+        if (normalizedTimestamp === null) return;
+        if (!isFreshTimestamp(normalizedTimestamp, nowMs, budgetMs)) return;
+        signals.push({
+            timestamp: normalizedTimestamp,
+            budgetMs,
+            expiresAtMs: normalizedTimestamp + budgetMs,
+        });
+    };
+
     if (runtimePresentation.freshThinking) {
-        const thinkingAt = normalizeRuntimeStatusTimestamp(input.thinkingAt);
-        if (thinkingAt !== null) timestamps.push(thinkingAt);
+        addFreshnessSignal(input.thinkingAt, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS);
     }
-    timestamps.push(...readFreshInProgressRuntimeSignalTimestamps(input, nowMs));
-    if (runtimePresentation.freshPermissionRequired || runtimePresentation.freshActionRequired) {
-        const pendingRequestObservedAt = normalizeRuntimeStatusTimestamp(input.pendingRequestObservedAt);
-        if (pendingRequestObservedAt !== null) timestamps.push(pendingRequestObservedAt);
+    if (runtimePresentation.freshOptimisticPendingUserMessage) {
+        addFreshnessSignal(input.optimisticThinkingAt, SESSION_OPTIMISTIC_PENDING_THINKING_MS);
     }
-    return timestamps;
+    if (runtimePresentation.freshActionRequired) {
+        addFreshnessSignal(input.pendingRequestObservedAt, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS);
+    }
+    return signals;
 }
 
 export function resolveSessionRuntimePresenceFields(
@@ -183,4 +238,11 @@ export function resolveSessionRuntimePresenceFields(
         thinking: input.thinking === true,
         thinkingAt,
     };
+}
+
+function hasProviderRuntimeActivity(input: SessionRuntimePresentationInput): boolean {
+    return input.runtimeActivityState === 'active'
+        && typeof input.runtimeActivityActiveCount === 'number'
+        && Number.isFinite(input.runtimeActivityActiveCount)
+        && input.runtimeActivityActiveCount > 0;
 }

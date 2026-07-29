@@ -13,11 +13,19 @@ export type MessagePinUnavailableReason =
     | 'invalid-identity'
     | 'read-only-context';
 
+/**
+ * Row identity for a pin. `pinnedAtMs` is deliberately absent: stamping it while
+ * the row renders makes pin ordering reflect render timing instead of when the
+ * user pressed the pin, so the timestamp is applied at press time by
+ * {@link buildSessionMessagePinAtPressTime}.
+ */
+export type MessagePinTarget = Readonly<Omit<PersistedSessionMessagePinV1, 'pinnedAtMs'>>;
+
 export type MessagePinAvailability = Readonly<
     | {
         status: 'available';
         identityKey: string;
-        pin: PersistedSessionMessagePinV1;
+        pinTarget: MessagePinTarget;
         pinned: boolean;
     }
     | {
@@ -35,7 +43,6 @@ export type MessagePinAvailabilityInput = Readonly<{
     routeMessageId: string | null | undefined;
     role: SessionMessagePinRole | string | null | undefined;
     pins?: readonly PersistedSessionMessagePinV1[];
-    nowMs?: number;
 }>;
 
 function normalizeSessionId(sessionId: string | null | undefined): string | null {
@@ -62,11 +69,12 @@ function normalizePinnableRole(role: SessionMessagePinRole | string | null | und
     return null;
 }
 
-function normalizePinnedAtMs(nowMs: number | null | undefined): number {
-    if (typeof nowMs === 'number' && Number.isFinite(nowMs) && nowMs >= 0) {
-        return Math.trunc(nowMs);
-    }
-    return Date.now();
+export function buildSessionMessagePinAtPressTime(
+    target: MessagePinTarget,
+    nowMs: number = Date.now(),
+): PersistedSessionMessagePinV1 {
+    const pinnedAtMs = Number.isFinite(nowMs) && nowMs >= 0 ? Math.trunc(nowMs) : Date.now();
+    return { ...target, pinnedAtMs };
 }
 
 export function resolveMessagePinAvailability(input: MessagePinAvailabilityInput): MessagePinAvailability {
@@ -95,21 +103,20 @@ export function resolveMessagePinAvailability(input: MessagePinAvailabilityInput
     const identityKey = resolveSessionMessagePinRowIdentityKey(identityInput);
     if (!identityKey) return { status: 'unavailable', reason: 'invalid-identity' };
 
-    const pin: PersistedSessionMessagePinV1 = {
+    const pinTarget: MessagePinTarget = {
         version: 1,
         sessionId,
         seq,
         transcriptBlockIndex,
         routeMessageId,
         role,
-        pinnedAtMs: normalizePinnedAtMs(input.nowMs),
         label: null,
     };
 
     return {
         status: 'available',
         identityKey,
-        pin,
-        pinned: (input.pins ?? []).some((existingPin) => sessionMessagePinRowsMatch(existingPin, pin)),
+        pinTarget,
+        pinned: (input.pins ?? []).some((existingPin) => sessionMessagePinRowsMatch(existingPin, pinTarget)),
     };
 }

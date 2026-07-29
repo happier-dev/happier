@@ -1,56 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-    createTranscriptLifecycleHost,
-    type TranscriptLifecycleHostMeasuredNativePinInput,
-} from './lifecycleHost';
-
-const escapingBottomFollowState = {
-    dragSession: {
-        latestDistanceFromBottom: 96,
-        returnedToBottom: false,
-        sawAwayMovement: true,
-        trusted: true,
-    },
-    mode: 'escaping',
-} as const;
-
-const measuredPinInput = (
-    overrides: Partial<TranscriptLifecycleHostMeasuredNativePinInput> = {},
-): TranscriptLifecycleHostMeasuredNativePinInput => ({
-    autoPinDelayMs: 250,
-    canAutoFollow: true,
-    contentHeight: 2400,
-    deferInitialViewportAppliedUntilObserved: false,
-    forceMountSettle: false,
-    force: false,
-    hasContentMeasurement: true,
-    hasInitialViewportApplied: true,
-    hasRearmedBottomFollow: true,
-    bottomFollowMode: 'following',
-    distanceFromBottom: 144,
-    forceFollowPin: false,
-    isExplicitNativeCommand: false,
-    isJumpToSeqActive: false,
-    isMountSettleActive: false,
-    lastNativePinOffset: null,
-    lastStreamAppendPin: null,
-    lastUserScrollIntentAtMs: 0,
-    layoutHeight: 800,
-    materializationAutoPin: null,
-    mountSettleDeadlineReached: false,
-    nativeAutomaticBottomPinCommandSessionId: null,
-    nativeMountSettleStable: true,
-    nowMs: 1000,
-    pendingMountSettleBottomPin: false,
-    pinThresholdPx: 72,
-    reason: 'content-size-change',
-    sessionId: 'session-a',
-    shouldMarkInitialViewportApplied: false,
-    usesNativeFlashListBottomMaintenance: true,
-    wantsPinned: true,
-    ...overrides,
-});
+import { createTranscriptLifecycleHost } from './lifecycleHost';
 
 describe('transcript lifecycle host', () => {
     it('groups explicit jump takeover effects in lifecycle order', () => {
@@ -67,7 +17,6 @@ describe('transcript lifecycle host', () => {
         });
 
         expect(plan.explicitJumpTakeoverEffects.map((effect) => effect.type)).toEqual([
-            'explicit-jump-cancel-native-mount-settle-bottom-pin',
             'explicit-jump-suppress-entry-restore',
             'explicit-jump-preempt-entry-restore',
             'explicit-jump-clear-native-entry-restore-paint-release-timeout',
@@ -124,117 +73,18 @@ describe('transcript lifecycle host', () => {
             shouldFollowLiveTail: true,
         });
 
-        const plan = host.planLocalInteractionAutoPinDeferral({
+        const plan = host.planLocalInteractionIntent({
             sessionId: 'session-a',
             timestampMs: 1234,
         });
 
-        expect(plan.localInteractionAutoPinDeferralEffects).toEqual([
+        expect(plan.localInteractionIntentEffects).toEqual([
             {
                 sessionId: 'session-a',
                 timestampMs: 1234,
                 type: 'local-interaction-record-intent-timestamp',
             },
-            {
-                sessionId: 'session-a',
-                type: 'local-interaction-suppress-native-mount-settle-auto-pin',
-            },
-            {
-                sessionId: 'session-a',
-                type: 'local-interaction-cancel-scheduled-pin',
-            },
         ]);
-    });
-
-    it('plans content-growth live-tail commands and ignores stale sessions', () => {
-        const host = createTranscriptLifecycleHost();
-        host.enterSession({
-            platform: 'native',
-            sessionId: 'session-a',
-            shouldFollowLiveTail: true,
-        });
-
-        const stalePlan = host.planContentGrowthLiveTailCommand({
-            reason: 'content-size-change',
-            sessionId: 'session-b',
-            wantsLiveTail: true,
-        });
-        const currentPlan = host.planContentGrowthLiveTailCommand({
-            reason: 'content-size-change',
-            sessionId: 'session-a',
-            wantsLiveTail: true,
-        });
-
-        expect(stalePlan.lifecycleEffects).toEqual([]);
-        expect(stalePlan.contentGrowthLiveTailCommandEffect).toBeNull();
-        expect(currentPlan.lifecycleEffects).toEqual([{
-            command: {
-                reason: 'content-size-change',
-                type: 'scroll-to-live-tail',
-            },
-            sessionId: 'session-a',
-            type: 'command',
-        }]);
-        expect(currentPlan.contentGrowthLiveTailCommandEffect).toEqual({
-            reason: 'content-size-change',
-            sessionId: 'session-a',
-            type: 'apply-content-growth-live-tail-command',
-        });
-    });
-
-    it('plans native stream-append offset escape release through the lifecycle owner', () => {
-        const host = createTranscriptLifecycleHost();
-        host.enterSession({
-            platform: 'native',
-            sessionId: 'session-a',
-            shouldFollowLiveTail: true,
-        });
-
-        const releasePlan = host.planNativeOffsetEscapeRelease({
-            bottomFollowState: escapingBottomFollowState,
-            distanceFromLiveTailPx: 96,
-            hasActiveNativeViewportRestore: false,
-            hasNativeTouchStart: false,
-            hasRearmedNativeBottomFollow: false,
-            isNative: true,
-            nativeMomentumScrollActive: false,
-            pinThresholdPx: 72,
-            sessionId: 'session-a',
-            timestampMs: 2000,
-            wantsPinned: true,
-        });
-
-        expect(releasePlan.decision).toEqual({ type: 'release' });
-        expect(releasePlan.nativeGestureTakeoverPlan).not.toBeNull();
-        expect(releasePlan.lifecycleEffects.map((effect) => effect.type)).toContain('native-offset-release-live-tail');
-        expect(releasePlan.nativeOffsetReleaseLiveTailStateEffects).toEqual([{
-            bottomFollowState: releasePlan.state.bottomFollowState,
-            sessionId: 'session-a',
-            type: 'apply-native-offset-release-live-tail-state',
-        }]);
-        expect(releasePlan.state.bottomFollowState.mode).toBe('released');
-
-        const blockedPlan = host.planNativeOffsetEscapeRelease({
-            bottomFollowState: escapingBottomFollowState,
-            distanceFromLiveTailPx: 48,
-            hasActiveNativeViewportRestore: false,
-            hasNativeTouchStart: false,
-            hasRearmedNativeBottomFollow: false,
-            isNative: true,
-            nativeMomentumScrollActive: false,
-            pinThresholdPx: 72,
-            sessionId: 'session-a',
-            timestampMs: 2016,
-            wantsPinned: true,
-        });
-
-        expect(blockedPlan.decision).toEqual({
-            reason: 'inside-pin-threshold',
-            type: 'blocked',
-        });
-        expect(blockedPlan.nativeGestureTakeoverPlan).toBeNull();
-        expect(blockedPlan.lifecycleEffects).toEqual([]);
-        expect(blockedPlan.nativeOffsetReleaseLiveTailStateEffects).toEqual([]);
     });
 
     it('owns native confirmation pending state and preserves explicit-first ordering', () => {
@@ -389,8 +239,6 @@ describe('transcript lifecycle host', () => {
 
         expect(plan.nativeUserScrollTakeoverEffects.map((effect) => effect.type)).toEqual([
             'native-user-scroll-preempt-entry-restore',
-            'native-user-scroll-cancel-native-mount-settle-bottom-pin',
-            'native-user-scroll-suppress-native-mount-settle-auto-pin',
             'native-user-scroll-clear-native-initial-viewport-pending-observation',
             'native-user-scroll-record-intent-timestamp',
         ]);
@@ -412,9 +260,6 @@ describe('transcript lifecycle host', () => {
 
         expect(plan.nativeTouchIntentEffects.map((effect) => effect.type)).toEqual([
             'native-touch-record-intent-timestamp',
-            'native-touch-suppress-native-mount-settle-auto-pin',
-            'native-touch-cancel-native-mount-settle-bottom-pin',
-            'native-touch-cancel-scheduled-pin',
         ]);
     });
 
@@ -449,16 +294,11 @@ describe('transcript lifecycle host', () => {
         }]);
         expect(gesturePlan.nativeUserScrollTakeoverEffects.map((effect) => effect.type)).toEqual([
             'native-user-scroll-preempt-entry-restore',
-            'native-user-scroll-cancel-native-mount-settle-bottom-pin',
-            'native-user-scroll-suppress-native-mount-settle-auto-pin',
             'native-user-scroll-clear-native-initial-viewport-pending-observation',
             'native-user-scroll-record-intent-timestamp',
         ]);
         expect(gesturePlan.nativeTouchIntentEffects.map((effect) => effect.type)).toEqual([
             'native-touch-record-intent-timestamp',
-            'native-touch-suppress-native-mount-settle-auto-pin',
-            'native-touch-cancel-native-mount-settle-bottom-pin',
-            'native-touch-cancel-scheduled-pin',
         ]);
         const takeoverPlan = host.planNativeGestureTakeover({
             sessionId: 'session-a',
@@ -466,8 +306,6 @@ describe('transcript lifecycle host', () => {
         });
         expect(takeoverPlan.nativeUserScrollTakeoverEffects.map((effect) => effect.type)).toEqual([
             'native-user-scroll-preempt-entry-restore',
-            'native-user-scroll-cancel-native-mount-settle-bottom-pin',
-            'native-user-scroll-suppress-native-mount-settle-auto-pin',
             'native-user-scroll-clear-native-initial-viewport-pending-observation',
             'native-user-scroll-record-intent-timestamp',
         ]);
@@ -491,145 +329,7 @@ describe('transcript lifecycle host', () => {
         }]);
     });
 
-    it('plans measured native live-tail pins with existing native policy decisions', () => {
-        const host = createTranscriptLifecycleHost();
-
-        expect(host.planMeasuredNativeLiveTailPin(measuredPinInput({
-            isMountSettleActive: true,
-            skipAutomaticNativeJsPin: false,
-        }))).toEqual({
-            effect: {
-                reason: 'content-size-change',
-                sessionId: 'session-a',
-                type: 'set-pending-native-mount-settle-bottom-pin',
-            },
-            preflightDecision: { type: 'defer-for-mount-settle' },
-            type: 'defer-for-mount-settle',
-        });
-
-        const readyPlan = host.planMeasuredNativeLiveTailPin(measuredPinInput({
-            isExplicitNativeCommand: true,
-            reason: 'jump-to-bottom',
-        }));
-
-        expect(readyPlan.type).toBe('issue-command');
-        if (readyPlan.type !== 'issue-command') {
-            throw new Error('expected measured native pin command plan');
-        }
-        expect(readyPlan.commandPlan.commandInput).toMatchObject({
-            observedContentHeightPx: 2400,
-            observedLayoutHeightPx: 800,
-            reason: 'jump-to-bottom',
-            sessionId: 'session-a',
-            skipNativeJsPin: false,
-            type: 'auto-follow',
-        });
-
-        const nativeMaintenancePlan = host.planMeasuredNativeLiveTailPin(measuredPinInput({
-            deferInitialViewportAppliedUntilObserved: true,
-            hasInitialViewportApplied: false,
-            shouldMarkInitialViewportApplied: false,
-        }));
-
-        expect(nativeMaintenancePlan.type).toBe('issue-command');
-        if (nativeMaintenancePlan.type !== 'issue-command') {
-            throw new Error('expected native-maintenance measured native pin command plan');
-        }
-        expect(nativeMaintenancePlan.commandPlan.postSuccess.initialViewportEffects).toEqual({
-            markInitialViewportApplied: true,
-            setPendingMountSettleBottomPin: false,
-            updateInitialViewportPendingObservation: false,
-        });
-        expect(nativeMaintenancePlan.invertedFollowBottomDecision).toEqual({
-            clearPendingMountSettleBottomPin: true,
-            issuePinBottomCommand: true,
-            markInitialViewportApplied: true,
-            type: 'handled',
-        });
-        expect(nativeMaintenancePlan.preAutoFollowDecision).toEqual({
-            shouldRetryUnobservedBottomPin: false,
-            type: 'continue',
-        });
-        expect(nativeMaintenancePlan.sameOffsetDecision).toEqual({ type: 'allow-pin' });
-        expect(nativeMaintenancePlan.streamAppendDecision).toEqual({ type: 'allow-pin' });
-
-        const duplicateStreamPlan = host.planMeasuredNativeLiveTailPin(measuredPinInput({
-            lastStreamAppendPin: { contentHeight: 2400, sessionId: 'session-a' },
-            reason: 'stream-append',
-        }));
-
-        expect(duplicateStreamPlan.type).toBe('issue-command');
-        if (duplicateStreamPlan.type !== 'issue-command') {
-            throw new Error('expected duplicate stream-append measured native pin command plan');
-        }
-        expect(duplicateStreamPlan.streamAppendDecision).toEqual({
-            clearPendingMountSettleBottomPin: false,
-            markInitialViewportApplied: false,
-            reason: 'duplicate-stream-append-owner',
-            type: 'skip-pin',
-        });
-    });
-
-    it('plans pending mount-settle flushes through clear, wait, noop, and issue branches', () => {
-        const host = createTranscriptLifecycleHost();
-
-        expect(host.planNativeMountSettlePendingPinFlush({
-            canRetainPendingMountSettleBottomPin: false,
-            isMountSettleActive: false,
-            mountSettleDeadlineReached: false,
-            pendingMountSettleBottomPin: true,
-            sessionId: 'session-a',
-        })).toEqual({
-            decision: { type: 'clear-pending' },
-            effects: [{
-                sessionId: 'session-a',
-                type: 'clear-pending-native-mount-settle-bottom-pin',
-            }],
-            type: 'clear-pending',
-        });
-
-        expect(host.planNativeMountSettlePendingPinFlush({
-            canRetainPendingMountSettleBottomPin: true,
-            isMountSettleActive: true,
-            mountSettleDeadlineReached: false,
-            pendingMountSettleBottomPin: true,
-            sessionId: 'session-a',
-        })).toEqual({
-            decision: { type: 'wait-for-mount-settle' },
-            effects: [],
-            type: 'wait-for-mount-settle',
-        });
-
-        expect(host.planNativeMountSettlePendingPinFlush({
-            canRetainPendingMountSettleBottomPin: true,
-            isMountSettleActive: false,
-            mountSettleDeadlineReached: false,
-            pendingMountSettleBottomPin: false,
-            sessionId: 'session-a',
-        })).toEqual({
-            decision: { type: 'noop' },
-            effects: [],
-            type: 'noop',
-        });
-
-        expect(host.planNativeMountSettlePendingPinFlush({
-            canRetainPendingMountSettleBottomPin: true,
-            isMountSettleActive: false,
-            mountSettleDeadlineReached: true,
-            pendingMountSettleBottomPin: true,
-            sessionId: 'session-a',
-        })).toEqual({
-            decision: { type: 'issue-mount-settle-pin' },
-            effects: [{
-                reason: 'mount-settle',
-                sessionId: 'session-a',
-                type: 'request-measured-native-live-tail-pin',
-            }],
-            type: 'issue-mount-settle-pin',
-        });
-    });
-
-    it('does not re-arm web bottom-follow from a self-write echo clamped to the live tail', () => {
+    it('does not re-arm renderer-owned web bottom-follow from raw trusted movement', () => {
         const host = createTranscriptLifecycleHost();
         host.enterSession({
             platform: 'web',
@@ -661,8 +361,9 @@ describe('transcript lifecycle host', () => {
         });
         expect(echoPlan.state.bottomFollowState.mode).not.toBe('following');
 
-        // A genuinely-attested trusted return to the live tail still re-arms.
-        const genuineReturnPlan = host.observeScroll({
+        // Raw trusted movement is still not semantic user movement. The ingress
+        // classifier is the only owner allowed to attest a genuine renderer-owned return.
+        const rawTrustedMovementPlan = host.observeScroll({
             distanceFromLiveTailPx: 0,
             isTrusted: true,
             movedAwayFromLiveTail: false,
@@ -678,7 +379,8 @@ describe('transcript lifecycle host', () => {
             webMovedSinceLastObservation: true,
             webObservedUserScrollMovement: false,
         });
-        expect(genuineReturnPlan.state.bottomFollowState.mode).toBe('following');
+        expect(rawTrustedMovementPlan.state.bottomFollowState.mode).not.toBe('following');
+
     });
 
     it('groups session-entry lifecycle reset and viewport plans', () => {

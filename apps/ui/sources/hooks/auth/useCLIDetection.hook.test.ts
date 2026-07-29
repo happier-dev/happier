@@ -41,6 +41,8 @@ installAuthHookCommonModuleMocks({
 
 vi.mock('@happier-dev/agents', () => ({
     ...agentsPackageState,
+    resolveAgentStateRequestCoverageOptions: () => ({}),
+    isAgentStateRequestCoveredByCompletedRequests: () => false,
     getAgentLocalCliConfig: (agentId: string) => ({
         agentId,
         detectKey: resolvePackageDetectKey(agentId),
@@ -248,7 +250,7 @@ describe('useCLIDetection (hook)', () => {
         expect(Object.values(latest?.login ?? {}).every((value) => value === null)).toBe(true);
     });
 
-    it('uses canonical provider auth metadata detect keys for scoped CLI requests', async () => {
+    it('uses canonical provider ids for scoped CLI requests even when the binary detect key differs', async () => {
         agentsPackageState.AGENT_LOCAL_CLI_CONFIG.codex.detectKey = 'codex-alt';
 
         useMachineCapabilitiesCacheMock.mockReturnValue({
@@ -264,7 +266,7 @@ describe('useCLIDetection (hook)', () => {
         const firstCall = useMachineCapabilitiesCacheMock.mock.calls.at(-1)?.[0];
         expect(firstCall?.request?.requests).toEqual([
             {
-                id: 'cli.codex-alt',
+                id: 'cli.codex',
             },
         ]);
     });
@@ -292,6 +294,42 @@ describe('useCLIDetection (hook)', () => {
             },
         ]);
         expect(firstCall?.request?.overrides).toBeUndefined();
+    });
+
+    it('can scope detection and read results for a projected native agent id', async () => {
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: {
+                status: 'loaded',
+                snapshot: {
+                    response: {
+                        protocolVersion: 1,
+                        results: {
+                            'cli.acme.native': {
+                                ok: true,
+                                checkedAt: 123,
+                                data: {
+                                    available: true,
+                                    resolvedPath: '/opt/acme/bin/acme',
+                                    resolvedCommand: "'/opt/acme/bin/acme'",
+                                    resolutionSource: 'system',
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            refresh: vi.fn(),
+        });
+
+        const latest = await renderHookState(() => useCLIDetection('m1', {
+            autoDetect: false,
+            agentIds: ['acme.native'],
+        }));
+
+        const firstCall = useMachineCapabilitiesCacheMock.mock.calls.at(-1)?.[0];
+        expect(firstCall?.request?.requests).toEqual([{ id: 'cli.acme.native' }]);
+        expect(latest.available['acme.native']).toBe(true);
+        expect(latest.resolvedCommand['acme.native']).toBe("'/opt/acme/bin/acme'");
     });
 
     it('scopes the capability cache entry by daemon state version', async () => {
@@ -322,7 +360,7 @@ describe('useCLIDetection (hook)', () => {
         expect(firstCall?.cacheKeySalt).toBe(77);
     });
 
-    it('uses each provider detect key when scoping detection requests', async () => {
+    it('uses the canonical provider id when scoping detection requests', async () => {
         useMachineCapabilitiesCacheMock.mockReturnValue({
             state: { status: 'loading' },
             refresh: vi.fn(),
@@ -334,7 +372,7 @@ describe('useCLIDetection (hook)', () => {
         }));
 
         const firstCall = useMachineCapabilitiesCacheMock.mock.calls.at(-1)?.[0];
-        expect(firstCall?.request?.requests).toEqual([{ id: 'cli.kiro-cli' }]);
+        expect(firstCall?.request?.requests).toEqual([{ id: 'cli.kiro' }]);
     });
 
     it('returns structured auth status details when the capability payload includes them', async () => {
@@ -416,7 +454,7 @@ describe('useCLIDetection (hook)', () => {
         expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
             request: expect.objectContaining({
                 overrides: expect.objectContaining({
-                    'cli.kiro-cli': {
+                    'cli.kiro': {
                         params: {
                             includeLoginStatus: true,
                             bypassCache: true,
@@ -453,7 +491,7 @@ describe('useCLIDetection (hook)', () => {
 
         expect(refresh).toHaveBeenLastCalledWith(expect.objectContaining({
             request: expect.objectContaining({
-                requests: [{ id: 'cli.kiro-cli', params: { bypassCache: true } }],
+                requests: [{ id: 'cli.kiro', params: { bypassCache: true } }],
             }),
         }));
 
@@ -468,7 +506,7 @@ describe('useCLIDetection (hook)', () => {
                     response: {
                         protocolVersion: 1,
                         results: {
-                            'cli.kiro-cli': {
+                            'cli.kiro': {
                                 ok: true,
                                 checkedAt: 123,
                                 data: {

@@ -4,10 +4,10 @@ import type { Href } from 'expo-router';
 import type { ConnectedServiceId } from '@happier-dev/protocol';
 
 import {
-    AGENT_PROVIDER_IDS as SHARED_AGENT_PROVIDER_IDS,
     AGENT_IDS as SHARED_AGENT_IDS,
     DEFAULT_AGENT_ID,
     resolveAgentIdFromFlavor as resolveAgentIdFromFlavorShared,
+    resolveAgentIdFromSessionMetadata as resolveAgentIdFromSessionMetadataShared,
     type AgentCore as SharedAgentCore,
     type AgentId,
     type AgentModelConfig,
@@ -63,16 +63,17 @@ export type AgentCoreConfig = Readonly<{
          */
         serviceId: ConnectedServiceId | null;
         /**
-         * Human-friendly label shown in account settings and provider surfaces.
-         * (This is intentionally not i18n'd yet; can be moved to translations later.)
+         * Canonical translation key for the service label shown in account settings and provider surfaces.
          */
-        label: string;
+        labelKey: TranslationKey;
         /**
          * Optional app route used to connect the service.
          */
         connectRoute: Href | null;
     }>;
     flavorAliases: readonly string[];
+    /** Manifest-owned environment keys reserved for provider routing/auth materialization. */
+    providerOwnedEnvironmentKeys?: readonly string[];
     cli: Readonly<{
         /**
          * The shell command name used for CLI detection (and for UX copy).
@@ -212,7 +213,7 @@ export const AGENTS_CORE = Object.freeze({
 }) satisfies Readonly<Record<CanonicalAgentId, AgentCoreConfig>>;
 
 export const CANONICAL_AGENT_IDS = Object.freeze(
-    [...SHARED_AGENT_PROVIDER_IDS] as CanonicalAgentId[],
+    [...SHARED_AGENT_IDS] as CanonicalAgentId[],
 );
 
 export const AGENT_IDS = Object.freeze(
@@ -233,8 +234,29 @@ export function getAgentCore(id: AgentId): AgentCoreConfig {
     return core;
 }
 
+export function getAllAgentProviderOwnedEnvironmentKeys(
+    projectedAgentsById?: Readonly<Record<string, Readonly<{
+        id?: string;
+        providerOwnedEnvironmentKeys?: readonly string[];
+    }>>> | null,
+): ReadonlySet<string> {
+    const keys = new Set(CANONICAL_AGENT_IDS.flatMap((id) =>
+        CANONICAL_AGENTS_CORE[id].providerOwnedEnvironmentKeys ?? []));
+    for (const agent of Object.values(projectedAgentsById ?? {})) {
+        for (const key of agent.providerOwnedEnvironmentKeys ?? []) {
+            keys.add(key);
+        }
+    }
+    return keys;
+}
+
 export function resolveAgentIdFromFlavor(flavor: string | null | undefined): AgentId | null {
     const resolved = resolveAgentIdFromFlavorShared(flavor);
+    return resolved && (SHARED_AGENT_IDS as readonly string[]).includes(resolved) && isAgentId(resolved) ? resolved : null;
+}
+
+export function resolveAgentIdFromSessionMetadata(metadata: unknown): AgentId | null {
+    const resolved = resolveAgentIdFromSessionMetadataShared(metadata);
     return resolved && (SHARED_AGENT_IDS as readonly string[]).includes(resolved) && isAgentId(resolved) ? resolved : null;
 }
 
@@ -252,9 +274,18 @@ export function resolveAgentIdFromConnectedServiceId(serviceId: string | null | 
     if (typeof serviceId !== 'string') return null;
     const normalized = serviceId.trim().toLowerCase();
     if (!normalized) return null;
-    for (const id of CANONICAL_AGENT_IDS) {
+    const supportsConnectedService = (id: CanonicalAgentId): boolean => {
         const supportedServiceIds = CANONICAL_AGENTS_CORE[id].connectedServices?.supportedServiceIds ?? [];
-        if (supportedServiceIds.some((svc) => typeof svc === 'string' && svc.toLowerCase() === normalized)) return id;
+        return supportedServiceIds.some((svc) => typeof svc === 'string' && svc.toLowerCase() === normalized);
+    };
+
+    const exactProviderId = CANONICAL_AGENT_IDS.find((id) => id.toLowerCase() === normalized);
+    if (exactProviderId != null && supportsConnectedService(exactProviderId)) {
+        return exactProviderId;
+    }
+
+    for (const id of CANONICAL_AGENT_IDS) {
+        if (supportsConnectedService(id)) return id;
     }
     return null;
 }

@@ -11,16 +11,10 @@ const platformState = vi.hoisted(() => ({
     os: 'ios' as 'ios' | 'android',
 }));
 
-vi.mock('@/agents/registry/registryUiBehavior', () => ({
-    buildNewSessionOptionsFromUiState: () => ({}),
-    buildResumeCapabilityOptionsFromUiState: () => ({}),
-    getNewSessionPreflightIssues: () => [],
-    getNewSessionRelevantInstallableDepKeys: () => [],
-    resolveAgentUiBehavior: () => ({}),
-    resolveAgentUiBehaviorFromFlavor: () => ({}),
-    supportsDetectedMcpConfigScan: () => false,
-    supportsEditableSessionGoals: () => false,
-}));
+vi.mock('@/agents/registry/registryUiBehavior', async () => {
+    const { createRegistryUiBehaviorModuleMock } = await import('@/dev/testkit/mocks/registryUiBehavior');
+    return createRegistryUiBehaviorModuleMock();
+});
 
 installMessageViewCommonModuleMocks({
     reactNative: async () => {
@@ -107,7 +101,7 @@ function findNearestAncestorStyle(node: { parent?: unknown }): Record<string, un
     return {};
 }
 
-describe('MessageView (copy button hitSlop)', () => {
+describe('MessageView (native inline action targets)', () => {
     afterEach(() => {
         standardCleanup();
     });
@@ -137,12 +131,24 @@ describe('MessageView (copy button hitSlop)', () => {
                 (node: any) => node.type === 'Pressable' && node.props?.testID === 'transcript-message-copy:m1',
             );
             expect(copyButtons).toHaveLength(1);
+            const minimumSize = platformOS === 'android' ? 48 : 44;
+            const copyStyle = typeof copyButtons[0].props.style === 'function'
+                ? copyButtons[0].props.style({ pressed: false })
+                : copyButtons[0].props.style;
+            expect(flattenStyle(copyStyle).minWidth).toBeGreaterThanOrEqual(minimumSize);
+            expect(flattenStyle(copyStyle).minHeight).toBeGreaterThanOrEqual(minimumSize);
+            expect(copyButtons[0].props.hitSlop).toBeUndefined();
 
             const selectButtons = screen.findAll(
                 (node: any) => node.type === 'Pressable' && node.props?.testID === 'transcript-message-select:m1',
             );
             expect(selectButtons).toHaveLength(1);
-            expect(selectButtons[0].props.hitSlop).toBe(15);
+            const selectStyle = typeof selectButtons[0].props.style === 'function'
+                ? selectButtons[0].props.style({ pressed: false })
+                : selectButtons[0].props.style;
+            expect(flattenStyle(selectStyle).minWidth).toBeGreaterThanOrEqual(minimumSize);
+            expect(flattenStyle(selectStyle).minHeight).toBeGreaterThanOrEqual(minimumSize);
+            expect(selectButtons[0].props.hitSlop).toBeUndefined();
 
             await act(async () => {
                 selectButtons[0].props.onPress?.({} as never);

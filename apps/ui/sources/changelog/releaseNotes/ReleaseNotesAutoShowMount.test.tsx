@@ -12,10 +12,6 @@ const releaseNotesLauncherState = vi.hoisted(() => ({
     open: vi.fn(() => true),
 }));
 
-const onboardingShowcaseState = vi.hoisted(() => ({
-    hasUnread: false,
-}));
-
 const setupIntentState = vi.hoisted(() => ({
     pending: null as null | { phase: 'awaiting_auth' | 'post_auth' | 'dismissed' },
 }));
@@ -33,11 +29,9 @@ vi.mock('@/auth/context/AuthContext', () => ({
     }),
 }));
 
-vi.mock('@/onboarding/showcase', () => ({
-    useOnboardingShowcaseState: () => ({
-        hasUnread: onboardingShowcaseState.hasUnread,
-    }),
-}));
+vi.mock('@/onboarding/showcase', () => {
+    throw new Error('ReleaseNotesAutoShowMount must not import the retired onboarding showcase module.');
+});
 
 vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     getPendingSetupIntent: () => setupIntentState.pending,
@@ -72,7 +66,6 @@ describe('ReleaseNotesAutoShowMount', () => {
         process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW = 'app.ui.releaseNotes';
         process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = '';
         authState.credentials = { token: 'token', secret: 'secret' };
-        onboardingShowcaseState.hasUnread = false;
         setupIntentState.pending = null;
         modalState.activeCount = 0;
         releaseNotesLauncherState.open.mockClear();
@@ -94,18 +87,9 @@ describe('ReleaseNotesAutoShowMount', () => {
         expect(releaseNotesLauncherState.open).toHaveBeenCalledTimes(1);
     });
 
-    it('waits while the onboarding showcase is unread', async () => {
-        onboardingShowcaseState.hasUnread = true;
-
+    it('does not import the retired onboarding showcase gate', async () => {
         const { ReleaseNotesAutoShowMount } = await import('./ReleaseNotesAutoShowMount');
-        const screen = await renderScreen(<ReleaseNotesAutoShowMount />);
-
-        await vi.advanceTimersByTimeAsync(1000);
-
-        expect(releaseNotesLauncherState.open).not.toHaveBeenCalled();
-
-        onboardingShowcaseState.hasUnread = false;
-        await screen.update(<ReleaseNotesAutoShowMount />);
+        await renderScreen(<ReleaseNotesAutoShowMount />);
         await vi.advanceTimersByTimeAsync(800);
 
         expect(releaseNotesLauncherState.open).toHaveBeenCalledTimes(1);

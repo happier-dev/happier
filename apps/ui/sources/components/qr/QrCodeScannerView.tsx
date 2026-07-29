@@ -120,10 +120,10 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
     const isProcessingRef = React.useRef(false);
 
     const canUseCamera = scannerActive && canUseCurrentDeviceQrScanner();
-    const webPreviewMinHeight = React.useMemo(() => {
-        if (Platform.OS !== 'web') return null;
+    const previewMinHeight = React.useMemo(() => {
+        if (Platform.OS !== 'web' && !props.embedded) return null;
         return Math.max(280, Math.min(Math.round(height * 0.6), 520));
-    }, [height]);
+    }, [height, props.embedded]);
 
     React.useEffect(() => {
         if (!canUseCamera) return;
@@ -239,10 +239,10 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
         <View
             style={[
                 styles.root,
-                Platform.OS === 'web' && webPreviewMinHeight != null
+                previewMinHeight != null
                     ? {
                         width: '100%',
-                        minHeight: webPreviewMinHeight,
+                        minHeight: previewMinHeight,
                     }
                     : null,
             ]}

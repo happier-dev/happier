@@ -18,8 +18,7 @@ function factSource(state: {
         readRenderedVisibleRange: () => state.visibleRange,
         readFirstVisibleRenderedIndex: () => state.firstVisibleIndex,
         readRenderedItemCount: () => state.renderedItemCount ?? 0,
-        readSourceIndexForRenderedIndex: (renderedIndex) =>
-            state.sourceIndexForRenderedIndex?.(renderedIndex) ?? null,
+        readSourceIndexForRenderedIndex: state.sourceIndexForRenderedIndex,
     });
 }
 
@@ -57,5 +56,28 @@ describe('createNativeStandardListFactSource', () => {
         });
         expect(source.resolveReachedEdge('start')).toBe('older');
         expect(source.resolveReachedEdge('end')).toBe('newer');
+    });
+
+    it('skips an explicit-null synthetic row while retaining visible mapped content', () => {
+        const source = factSource({
+            renderedItemCount: 3,
+            sourceIndexForRenderedIndex: (renderedIndex) => renderedIndex === 0 ? null : renderedIndex - 1,
+            visibleRange: { startIndex: 0, endIndex: 1 },
+        });
+
+        expect(source.getVisibleSourceRange()).toEqual({
+            firstSourceIndex: 0,
+            lastSourceIndex: 0,
+        });
+    });
+
+    it('returns no visible source range when every rendered row is explicitly synthetic', () => {
+        const source = factSource({
+            renderedItemCount: 2,
+            sourceIndexForRenderedIndex: () => null,
+            visibleRange: { startIndex: 0, endIndex: 1 },
+        });
+
+        expect(source.getVisibleSourceRange()).toBeNull();
     });
 });

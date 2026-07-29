@@ -2,7 +2,7 @@ import * as React from 'react';
 import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
-import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import { tLoose, type TranslationKeyNoParams } from '@/text';
@@ -72,7 +72,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
         }
         // For built-in backends the backend id is already a canonical agent id.
         // For plugin-contributed backends the provider may still override it.
-        return resolveProviderAgentIdForBackendTarget(backendTarget) ?? backendTarget.backendId;
+        return resolveCatalogAgentIdForBackendTarget(backendTarget) ?? backendTarget.backendId;
     }, [backendTarget, params.runtimeCarrierAgentId]);
 
     const backendTargetKey = React.useMemo(() => resolveBackendTargetKeyV2(backendTarget), [backendTarget]);

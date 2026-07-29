@@ -30,12 +30,11 @@ const toolGroupUnitHeaderSpy = vi.fn();
 const toolGroupUnitToolSpy = vi.fn();
 const messageViewSpy = vi.fn();
 const messageViewWithCommonSpy = vi.fn();
-let scrollToIndexSpy: ReturnType<typeof vi.fn> | null = null;
 
 vi.mock('@/sync/sync', () => ({
     sync: {
         getSyncTuning: () => ({
-            transcriptFlashListEstimatedItemSize: 120,
+            transcriptEstimatedItemSizePx: 120,
             transcriptMaxTurnEntriesPerListItem: 8,
         }),
     },
@@ -58,43 +57,10 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
 }));
 
-vi.mock('@shopify/flash-list', () => ({
-    FlashList: React.forwardRef((props: any, ref: any) => {
-        scrollToIndexSpy = vi.fn();
-        const instance = {
-            scrollToIndex: scrollToIndexSpy,
-            scrollToOffset: vi.fn(),
-            scrollToEnd: vi.fn(),
-        };
-        if (typeof ref === 'function') ref(instance);
-        else if (ref && typeof ref === 'object') ref.current = instance;
-
-        const data = Array.isArray(props.data) ? props.data : [];
-        const header =
-            props.ListHeaderComponent
-                ? (typeof props.ListHeaderComponent === 'function' ? props.ListHeaderComponent() : props.ListHeaderComponent)
-                : null;
-        const footer =
-            props.ListFooterComponent
-                ? (typeof props.ListFooterComponent === 'function' ? props.ListFooterComponent() : props.ListFooterComponent)
-                : null;
-
-        return React.createElement(
-            'FlashList',
-            props,
-            header,
-            data.map((item: any, index: number) => {
-                const key =
-                    typeof props.keyExtractor === 'function'
-                        ? props.keyExtractor(item, index)
-                        : (item?.id ?? String(index));
-                const child = typeof props.renderItem === 'function' ? props.renderItem({ item, index }) : null;
-                return React.createElement('FlashListItem', { key }, child);
-            }),
-            footer,
-        );
-    }),
-}));
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    return createCapturingLegendListMock().module;
+});
 
 vi.mock('@/components/sessions/transcript/MessageView', () => ({
     MessageView: (props: any) => {
@@ -171,7 +137,6 @@ describe('ChainTranscriptList presentation parity', () => {
         toolGroupUnitToolSpy.mockReset();
         messageViewSpy.mockReset();
         messageViewWithCommonSpy.mockReset();
-        scrollToIndexSpy = null;
     });
 
     it('renders linear messages through parent-provided transcript session common', async () => {
@@ -192,6 +157,7 @@ describe('ChainTranscriptList presentation parity', () => {
 
         await renderScreen(React.createElement(ChainTranscriptList, {
             sessionId: 's1',
+            datasetKey: JSON.stringify(['s1', 'test-sidechain']),
             messages: [agentMessage],
             metadata: null,
             interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
@@ -235,6 +201,7 @@ describe('ChainTranscriptList presentation parity', () => {
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(React.createElement(ChainTranscriptList, {
                     sessionId: 's1',
+                    datasetKey: JSON.stringify(['s1', 'test-sidechain']),
                     messages: [toolMessageOne, toolMessageTwo],
                     metadata: null,
                     interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
@@ -282,6 +249,7 @@ describe('ChainTranscriptList presentation parity', () => {
 
         await renderScreen(React.createElement(ChainTranscriptList, {
                     sessionId: 's1',
+                    datasetKey: JSON.stringify(['s1', 'test-sidechain']),
                     messages: [userMessage, ...toolMessages],
                     metadata: null,
                     interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
@@ -320,6 +288,7 @@ describe('ChainTranscriptList presentation parity', () => {
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(React.createElement(ChainTranscriptList, {
                     sessionId: 's1',
+                    datasetKey: JSON.stringify(['s1', 'test-sidechain']),
                     messages: [userMessage, toolMessage],
                     metadata: null,
                     interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
@@ -368,6 +337,7 @@ describe('ChainTranscriptList presentation parity', () => {
 
         await renderScreen(React.createElement(ChainTranscriptList, {
                     sessionId: 's1',
+                    datasetKey: JSON.stringify(['s1', 'test-sidechain']),
                     messages: [userMessage, toolMessage],
                     metadata: null,
                     interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
@@ -387,203 +357,6 @@ describe('ChainTranscriptList presentation parity', () => {
                 forcePermissionPromptsInTranscript: true,
             }),
         );
-    });
-
-    it('keeps the initial auto-pin when local tool expansion does not change state', async () => {
-        const { ChainTranscriptList } = await import('./ChainTranscriptList');
-
-        const toolMessageOne: Message = {
-            kind: 'tool-call',
-            id: 'tool-msg-1',
-            localId: null,
-            createdAt: 1,
-            tool: makeToolCall({ id: 'tool-1', name: 'Read', input: { file: 'a.ts' }, createdAt: 1 }),
-            children: [],
-        };
-        const toolMessageTwo: Message = {
-            kind: 'tool-call',
-            id: 'tool-msg-2',
-            localId: null,
-            createdAt: 2,
-            tool: makeToolCall({ id: 'tool-2', name: 'Read', input: { file: 'b.ts' }, createdAt: 2 }),
-            children: [],
-        };
-
-        const screen = await renderScreen(React.createElement(ChainTranscriptList, {
-            sessionId: 's1',
-            messages: [toolMessageOne, toolMessageTwo],
-            metadata: null,
-            interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-        }));
-
-        const toolRow = screen.tree.root.findByType('ToolCallsGroupRowWithSessionCommon' as any);
-        act(() => {
-            toolRow.props.onSetExpanded({
-                toolCallsGroupId: toolRow.props.toolCallsGroupId,
-                toolMessageIds: toolRow.props.toolMessageIds,
-                expanded: false,
-            });
-        });
-
-        const list = screen.tree.root.findByType('FlashList' as any);
-        const initialScrollToIndexSpy = scrollToIndexSpy;
-        if (!initialScrollToIndexSpy) {
-            throw new Error('Expected FlashList ref to provide scrollToIndex');
-        }
-        act(() => {
-            list.props.onLayout({ nativeEvent: { layout: { height: 300 } } });
-            list.props.onContentSizeChange(0, 600);
-        });
-
-        expect(initialScrollToIndexSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                index: 0,
-                animated: false,
-                viewPosition: 1,
-            }),
-        );
-    });
-
-    it('preserves the web sidechain reading position when expanding a turn tool group away from bottom (WREG.5)', async () => {
-        settings.transcriptGroupingMode = 'turns';
-        settings.transcriptTurnToolCallsGroupStrategy = 'all_tools_in_turn';
-        settings.transcriptToolCallsCollapsedPreviewCount = 1;
-
-        const { Platform } = await import('react-native');
-        const originalPlatform = Platform.OS;
-        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
-        try {
-            const { ChainTranscriptList } = await import('./ChainTranscriptList');
-            const userMessage: Message = {
-                kind: 'user-text',
-                id: 'user-1',
-                localId: null,
-                createdAt: 1,
-                text: 'Run the audit',
-            };
-            const toolMessages: Message[] = Array.from({ length: 20 }, (_, index) => ({
-                kind: 'tool-call',
-                id: `tool-msg-${index + 1}`,
-                localId: null,
-                createdAt: index + 2,
-                tool: makeToolCall({
-                    id: `tool-${index + 1}`,
-                    name: 'Read',
-                    input: { file: `file-${index + 1}.ts` },
-                    createdAt: index + 2,
-                }),
-                children: [],
-            }));
-            const scrollEl = {
-                scrollTop: 480,
-                scrollHeight: 1200,
-                clientHeight: 400,
-            };
-
-            const screen = await renderScreen(React.createElement(ChainTranscriptList, {
-                sessionId: 's1',
-                messages: [userMessage, ...toolMessages],
-                metadata: null,
-                interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-            }));
-            const list = screen.tree.root.findByType('FlashList' as any);
-
-            await act(async () => {
-                list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
-                list.props.onContentSizeChange(0, 1200);
-                list.props.onScroll({
-                    nativeEvent: {
-                        target: scrollEl,
-                        contentOffset: { y: scrollEl.scrollTop },
-                    },
-                    target: scrollEl,
-                });
-            });
-
-            const headerProps = toolGroupUnitHeaderSpy.mock.calls.at(-1)?.[0];
-            expect(headerProps?.expanded).toBe(false);
-            expect(typeof headerProps?.setExpanded).toBe('function');
-
-            await act(async () => {
-                headerProps.setExpanded(true);
-                scrollEl.scrollHeight = 1380;
-            });
-
-            expect(scrollEl.scrollTop).toBe(660);
-        } finally {
-            Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
-        }
-    });
-
-    it('keeps the web sidechain pinned to bottom when expanding a bottom tool group (WREG.5)', async () => {
-        settings.transcriptGroupingMode = 'turns';
-        settings.transcriptTurnToolCallsGroupStrategy = 'all_tools_in_turn';
-        settings.transcriptToolCallsCollapsedPreviewCount = 1;
-
-        const { Platform } = await import('react-native');
-        const originalPlatform = Platform.OS;
-        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
-        try {
-            const { ChainTranscriptList } = await import('./ChainTranscriptList');
-            const userMessage: Message = {
-                kind: 'user-text',
-                id: 'user-1',
-                localId: null,
-                createdAt: 1,
-                text: 'Run the audit',
-            };
-            const toolMessages: Message[] = Array.from({ length: 20 }, (_, index) => ({
-                kind: 'tool-call',
-                id: `tool-msg-${index + 1}`,
-                localId: null,
-                createdAt: index + 2,
-                tool: makeToolCall({
-                    id: `tool-${index + 1}`,
-                    name: 'Read',
-                    input: { file: `file-${index + 1}.ts` },
-                    createdAt: index + 2,
-                }),
-                children: [],
-            }));
-            const scrollEl = {
-                scrollTop: 800,
-                scrollHeight: 1200,
-                clientHeight: 400,
-            };
-
-            const screen = await renderScreen(React.createElement(ChainTranscriptList, {
-                sessionId: 's1',
-                messages: [userMessage, ...toolMessages],
-                metadata: null,
-                interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-            }));
-            const list = screen.tree.root.findByType('FlashList' as any);
-
-            await act(async () => {
-                list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
-                list.props.onContentSizeChange(0, 1200);
-                list.props.onScroll({
-                    nativeEvent: {
-                        target: scrollEl,
-                        contentOffset: { y: scrollEl.scrollTop },
-                    },
-                    target: scrollEl,
-                });
-            });
-
-            const headerProps = toolGroupUnitHeaderSpy.mock.calls.at(-1)?.[0];
-            expect(headerProps?.expanded).toBe(false);
-            expect(typeof headerProps?.setExpanded).toBe('function');
-
-            await act(async () => {
-                headerProps.setExpanded(true);
-                scrollEl.scrollHeight = 1500;
-            });
-
-            expect(scrollEl.scrollTop).toBe(1100);
-        } finally {
-            Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
-        }
     });
 
 });

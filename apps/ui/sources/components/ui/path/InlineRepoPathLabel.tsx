@@ -19,6 +19,13 @@ export type InlineRepoPathLabelProps = Readonly<{
     pathTextStyle?: StyleProp<TextStyle>;
     nameTextStyle?: StyleProp<TextStyle>;
     nameMaxWidth?: number | `${number}%`;
+    /**
+     * When true, the basename keeps priority over the directory: it may grow to the
+     * full available width (lifting `nameMaxWidth`) so the path is the first to be
+     * truncated (head-ellipsized down to `…/`). The filename is only ever
+     * middle-ellipsized once it alone needs the entire row.
+     */
+    preferNameOverPath?: boolean;
 }>;
 
 export const InlineRepoPathLabel = React.memo(function InlineRepoPathLabel(props: InlineRepoPathLabelProps) {
@@ -55,15 +62,16 @@ export const InlineRepoPathLabel = React.memo(function InlineRepoPathLabel(props
             props.pathTextStyle,
         ];
     }, [isWeb, props.pathTextStyle]);
+    const effectiveNameMaxWidth = props.preferNameOverPath ? '100%' : (props.nameMaxWidth ?? null);
     const nameStyle = React.useMemo<StyleProp<TextStyle>>(() => {
         return [
             {
                 flexShrink: 0,
             },
-            props.nameMaxWidth != null ? { maxWidth: props.nameMaxWidth } : null,
+            effectiveNameMaxWidth != null ? { maxWidth: effectiveNameMaxWidth } : null,
             props.nameTextStyle,
         ];
-    }, [props.nameMaxWidth, props.nameTextStyle]);
+    }, [effectiveNameMaxWidth, props.nameTextStyle]);
 
     return (
         <View style={containerStyle}>

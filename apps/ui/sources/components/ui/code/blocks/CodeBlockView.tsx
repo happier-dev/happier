@@ -43,6 +43,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
             code={code}
             language={syntax.language}
             selectable={selectable}
+            wrap={wrap}
         />
     ) : (
         <Text
@@ -52,7 +53,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
                 fontSize: 14,
                 lineHeight: 20,
                 color: theme.colors.text.primary,
-                flexShrink: 0,
+                flexShrink: wrap ? undefined : 0,
             }}
         >
             {code}

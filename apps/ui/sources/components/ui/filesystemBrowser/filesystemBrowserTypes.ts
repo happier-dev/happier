@@ -1,8 +1,8 @@
 import type React from 'react';
-import type { FlatList, FlatListProps, StyleProp, ViewStyle } from 'react-native';
+import type { FlatListProps, StyleProp, ViewStyle } from 'react-native';
 
 import type { LazyDirectoryTreeNode } from '@/hooks/ui/filesystem/lazyDirectoryTreeTypes';
-import type { FlashListRef } from '@/components/ui/lists/flashListCompat/FlashListCompat';
+import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
 
 export type FilesystemBrowserNode = LazyDirectoryTreeNode;
 
@@ -33,7 +33,7 @@ export type FilesystemBrowserListProps = Readonly<{
     maxToRenderPerBatch?: number;
     windowSize?: number;
     removeClippedSubviews?: boolean;
-    listRef?: React.Ref<FlatList<FilesystemBrowserNode> | FlashListRef<FilesystemBrowserNode>>;
+    listRef?: React.Ref<VirtualizedListRef>;
     onLayout?: FlatListProps<FilesystemBrowserNode>['onLayout'];
     onContentSizeChange?: FlatListProps<FilesystemBrowserNode>['onContentSizeChange'];
     onScroll?: FlatListProps<FilesystemBrowserNode>['onScroll'];

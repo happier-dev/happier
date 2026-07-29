@@ -1,9 +1,11 @@
 import * as React from 'react';
 
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useSessionDebugInformationEnabled } from '@/sync/runtime/useSessionDebugInformationEnabled';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { SessionForkSupportSource } from '@/sync/domains/sessionFork/forkUiSupport';
+import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import type { ReducerState } from '@/sync/reducer/reducer';
 import {
     useSessionForkSupportSource,
@@ -46,6 +48,12 @@ export type TranscriptMessageDisplayCommon = Pick<TranscriptSessionCommonSetting
     | 'transcriptStreamingSmoothingEnabled'
 > & Readonly<{
     workspacePath: string | null;
+    /**
+     * Carried as a prop so the transcript list resolves it once for every row it hoists common
+     * props to. Rows that fall back to the standalone `MessageView` wrapper resolve this hook set
+     * themselves, as they already do for every other setting here.
+     */
+    debugInformationEnabled: boolean;
 }>;
 
 export type TranscriptForkCommon = Pick<TranscriptSessionCommonSettings,
@@ -57,6 +65,14 @@ export type TranscriptForkCommon = Pick<TranscriptSessionCommonSettings,
     executionRunsEnabled: boolean;
     sessionForkSupportSource: SessionForkSupportSource | null;
 }>;
+
+export function deriveTranscriptForkCommonForInteraction(
+    forkCommon: TranscriptForkCommon,
+    interaction: TranscriptInteraction | null | undefined,
+): TranscriptForkCommon {
+    if (interaction?.canFork === true || forkCommon.sessionForkSupportSource == null) return forkCommon;
+    return { ...forkCommon, sessionForkSupportSource: null };
+}
 
 export type TranscriptToolChromeCommon = Pick<TranscriptSessionCommonSettings,
     | 'toolViewTimelineChromeMode'
@@ -98,6 +114,7 @@ export function useTranscriptSessionCommon(sessionId: string): TranscriptSession
     const messagesById = useSessionMessagesById(sessionId);
     const reducerState = useSessionMessagesReducerState(sessionId);
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
+    const debugInformationEnabled = useSessionDebugInformationEnabled();
 
     const sessionReplayEnabled = useSetting('sessionReplayEnabled');
     const sessionReplayMaxSeedChars = useSetting('sessionReplayMaxSeedChars');
@@ -134,6 +151,7 @@ export function useTranscriptSessionCommon(sessionId: string): TranscriptSession
     ]);
 
     const messageDisplay = React.useMemo<TranscriptMessageDisplayCommon>(() => ({
+        debugInformationEnabled,
         sessionThinkingDisplayMode,
         sessionThinkingInlineChrome,
         sessionThinkingInlinePresentation,
@@ -156,6 +174,7 @@ export function useTranscriptSessionCommon(sessionId: string): TranscriptSession
         transcriptStreamingPartialOutputEnabled,
         transcriptStreamingSettleDelayMs,
         transcriptStreamingSmoothingEnabled,
+        debugInformationEnabled,
         workspacePath,
     ]);
 

@@ -16,6 +16,7 @@ const executeSpy = vi.fn<() => Promise<ExecuteResult>>(async () => ({ ok: true, 
 const createDefaultActionExecutorMock = vi.hoisted(() => vi.fn((..._args: unknown[]) => ({ execute: executeSpy })));
 const useExecutionRunsBackendsForSessionMock = vi.hoisted(() => vi.fn<(sessionId: string, serverId: string | null | undefined) => unknown>(() => null));
 const useSessionServerIdMock = vi.hoisted(() => vi.fn<(sessionId: string) => string | null>(() => 'server-explicit'));
+const useEnabledAgentIdsMock = vi.hoisted(() => vi.fn<() => readonly string[]>(() => ['claude']));
 const updateSessionActionDraftInput = vi.fn();
 const setSessionActionDraftStatus = vi.fn();
 const deleteSessionActionDraft = vi.fn();
@@ -82,12 +83,17 @@ installSessionActionsCommonModuleMocks({
 });
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
-  useEnabledAgentIds: () => ['claude'],
+  useEnabledAgentIds: () => useEnabledAgentIdsMock(),
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
   AGENT_IDS: ['claude'],
-  getAgentCore: () => ({ displayNameKey: 'agent.claude' }),
+  getAgentCore: (id: string) => {
+    if (id === 'customAcp') {
+      throw new Error('Unsupported UI agent core: customAcp');
+    }
+    return { displayNameKey: `agent.${id}` };
+  },
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
@@ -120,6 +126,8 @@ describe('SessionActionDraftCard', () => {
     useExecutionRunsBackendsForSessionMock.mockClear();
     useSessionServerIdMock.mockReset();
     useSessionServerIdMock.mockImplementation(() => 'server-explicit');
+    useEnabledAgentIdsMock.mockReset();
+    useEnabledAgentIdsMock.mockImplementation(() => ['claude']);
     updateSessionActionDraftInput.mockClear();
     setSessionActionDraftStatus.mockClear();
     deleteSessionActionDraft.mockClear();
@@ -145,6 +153,27 @@ describe('SessionActionDraftCard', () => {
       resolveServerIdForSessionId: (sessionId: string) => string | null;
     };
     expect(executorConfig.resolveServerIdForSessionId('s1')).toBe('server-explicit');
+  });
+
+  it('renders discovered compat review backends without requiring a canonical UI agent core', async () => {
+    useExecutionRunsBackendsForSessionMock.mockImplementationOnce(() => ({
+      claude: { available: true, intents: ['review'] },
+      customAcp: { available: true, intents: ['review'] },
+    }));
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+
+    const draft = {
+      id: 'd1',
+      sessionId: 's1',
+      actionId: 'review.start',
+      createdAt: 1,
+      status: 'editing',
+      input: { engineIds: ['customAcp'], instructions: 'Review this repository.', changeType: 'all', base: { kind: 'none' } },
+    } as const;
+
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+    const texts = screen.tree.findAllByType('Text');
+    expect(texts.some((node: any) => node.props?.children === 'customAcp')).toBe(true);
   });
 
   it('reacts to preferred session server changes for review backend lookup and execution routing', async () => {
@@ -204,6 +233,58 @@ describe('SessionActionDraftCard', () => {
     expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'running', null);
     expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'succeeded', null);
     expect(deleteSessionActionDraft).toHaveBeenCalledWith('s1', 'd1');
+  });
+
+  it('normalizes stale multi-target single-select draft input before submitting', async () => {
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+
+    const draft = {
+      id: 'd1',
+      sessionId: 's1',
+      actionId: 'subagents.plan.start',
+      createdAt: 1,
+      status: 'editing',
+      input: {
+        backendTargetKeys: ['agent:claude', 'agent:opencode'],
+        instructions: 'Plan this.',
+      },
+    } as const;
+
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+    const start = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'common.start');
+    expect(start).toBeTruthy();
+
+    await pressTestInstanceAsync(start, 'common.start');
+
+    expect(executeSpy).toHaveBeenCalledWith(
+      'subagents.plan.start',
+      { sessionId: 's1', backendTargetKeys: ['agent:opencode'], instructions: 'Plan this.' },
+      { defaultSessionId: 's1', surface: 'ui', placement: 'session_action_menu' },
+    );
+  });
+
+  it('stores canonical backend target keys as a single plan target when editing backend chips', async () => {
+    useEnabledAgentIdsMock.mockImplementation(() => ['claude', 'opencode']);
+
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+
+    const draft = {
+      id: 'd1',
+      sessionId: 's1',
+      actionId: 'subagents.plan.start',
+      createdAt: 1,
+      status: 'editing',
+      input: { backendTargetKeys: ['agent:claude'], instructions: 'Plan this.' },
+    } as const;
+
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+    const opencode = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'agent.opencode');
+    expect(opencode).toBeTruthy();
+
+    await pressTestInstanceAsync(opencode!, 'agent.opencode');
+
+    expect(updateSessionActionDraftInput).toHaveBeenCalledWith('s1', 'd1', { backendTargetKeys: ['agent:opencode'] });
+    expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'editing', null);
   });
 
   it('keeps the draft editable when the action execution fails', async () => {

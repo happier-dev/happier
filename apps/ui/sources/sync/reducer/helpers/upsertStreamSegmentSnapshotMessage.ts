@@ -1,10 +1,7 @@
 import type { ReducerMessage, ReducerState } from '../reducer';
+import { normalizeTranscriptBlockIndex, normalizeTranscriptSeq } from '../../domains/messages/transcriptOrdering';
 
 import { readStreamSegmentMetaV1 } from './streamSegmentMeta';
-
-function toTruncatedSeq(seq: unknown): number | null {
-    return typeof seq === 'number' && Number.isFinite(seq) ? Math.trunc(seq) : null;
-}
 
 function shouldApplyStreamSegmentSnapshotUpdate(args: Readonly<{
     prev: ReducerMessage;
@@ -12,7 +9,7 @@ function shouldApplyStreamSegmentSnapshotUpdate(args: Readonly<{
     nextMeta: unknown;
     nextSeq: number | null;
 }>): boolean {
-    const prevSeq = typeof args.prev.seq === 'number' ? args.prev.seq : null;
+    const prevSeq = normalizeTranscriptSeq(args.prev.seq);
     if (prevSeq !== null && args.nextSeq !== null && args.nextSeq < prevSeq) {
         return false;
     }
@@ -33,6 +30,7 @@ export function upsertStreamSegmentSnapshotMessage(args: Readonly<{
     realID: string;
     createdAt: number;
     seq: unknown;
+    transcriptBlockIndex?: number | null;
     isThinking: boolean;
     text: string;
     meta: unknown;
@@ -41,7 +39,8 @@ export function upsertStreamSegmentSnapshotMessage(args: Readonly<{
 }>): Readonly<{ messageId: string | null; didCreate: boolean; accepted: boolean }> {
     const existingId = args.state.localIds.get(args.localId) ?? null;
     const nextText = args.text;
-    const nextSeq = toTruncatedSeq(args.seq);
+    const nextSeq = normalizeTranscriptSeq(args.seq);
+    const nextBlockIndex = normalizeTranscriptBlockIndex(args.transcriptBlockIndex);
 
     if (existingId) {
         const prev = args.state.messages.get(existingId) ?? null;
@@ -53,10 +52,16 @@ export function upsertStreamSegmentSnapshotMessage(args: Readonly<{
         }
 
         const hasChanges = prev.text !== nextText || prev.meta !== args.meta;
-        if (hasChanges) {
+        const shouldApplyBlockIndex =
+            prev.transcriptBlockIndex == null
+            && nextBlockIndex !== null;
+        if (hasChanges || shouldApplyBlockIndex) {
             prev.text = nextText;
             if (nextSeq !== null && (prev.seq === null || nextSeq > prev.seq)) {
                 prev.seq = nextSeq;
+            }
+            if (shouldApplyBlockIndex) {
+                prev.transcriptBlockIndex = nextBlockIndex;
             }
             prev.meta = args.meta as any;
             args.markChanged(existingId);
@@ -69,6 +74,7 @@ export function upsertStreamSegmentSnapshotMessage(args: Readonly<{
         id: mid,
         realID: args.realID,
         seq: nextSeq,
+        transcriptBlockIndex: nextBlockIndex,
         localId: args.localId,
         role: 'agent',
         createdAt: args.createdAt,

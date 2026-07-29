@@ -8,16 +8,17 @@ import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import type { SessionHandoffRecoveryPlan } from '@/sync/domains/sessionHandoff/recoveryPlan';
-
-type RecoveryAction = 'restart_on_source' | 'keep_stopped';
+import type {
+    SessionHandoffRecoveryAction,
+    SessionHandoffRecoveryPlan,
+} from '@/sync/domains/sessionHandoff/recoveryPlan';
 
 type Props = CustomModalInjectedProps & Readonly<{
     title: string;
     message: string;
     details?: string;
     recovery: SessionHandoffRecoveryPlan;
-    onResolve: (value: RecoveryAction | null) => void;
+    onResolve: (value: SessionHandoffRecoveryAction | null) => void;
     onRequestClose?: () => void;
 }>;
 
@@ -49,19 +50,30 @@ const stylesheet = StyleSheet.create((theme) => ({
 export function SessionHandoffFailureRecoveryModal({ onClose, setChrome, title, message, details, recovery, onResolve }: Props) {
     const styles = stylesheet;
     const canRestart = recovery.actions.includes('restart_on_source');
+    const canKeepStopped = recovery.actions.includes('keep_stopped');
+    const canRetryCleanup = recovery.actions.includes('retry_source_cleanup');
 
-    const handleResolve = React.useCallback((value: RecoveryAction | null) => {
+    const handleResolve = React.useCallback((value: SessionHandoffRecoveryAction | null) => {
         onResolve(value);
         onClose();
     }, [onClose, onResolve]);
 
     const footer = React.useMemo(() => (
         <View style={styles.footer}>
-            <RoundButton
-                testID="session-handoff-recovery-keep-stopped"
-                title={t('sessionHandoff.recovery.keepStopped')}
-                onPress={() => handleResolve('keep_stopped')}
-            />
+            {canKeepStopped ? (
+                <RoundButton
+                    testID="session-handoff-recovery-keep-stopped"
+                    title={t('sessionHandoff.recovery.keepStopped')}
+                    onPress={() => handleResolve('keep_stopped')}
+                />
+            ) : null}
+            {canRetryCleanup ? (
+                <RoundButton
+                    testID="session-handoff-recovery-retry-source-cleanup"
+                    title={t('common.retry')}
+                    onPress={() => handleResolve('retry_source_cleanup')}
+                />
+            ) : null}
             {canRestart ? (
                 <RoundButton
                     testID="session-handoff-recovery-restart-on-source"
@@ -70,7 +82,7 @@ export function SessionHandoffFailureRecoveryModal({ onClose, setChrome, title, 
                 />
             ) : null}
         </View>
-    ), [canRestart, handleResolve, styles.footer]);
+    ), [canKeepStopped, canRestart, canRetryCleanup, handleResolve, styles.footer]);
 
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,

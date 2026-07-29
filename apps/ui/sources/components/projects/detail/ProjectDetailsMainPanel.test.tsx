@@ -93,6 +93,7 @@ describe('ProjectDetailsMainPanel', () => {
             scopeId: 'project:wr_1',
             activeRootPath: '/repo/.worktrees/feature-auth',
             displayPathOverride: '/repo',
+            pluginSurfacePlacementScope: 'project',
             workspaceRef: expect.objectContaining({
                 id: 'wr_1',
                 serverId: 's1',
@@ -133,5 +134,35 @@ describe('ProjectDetailsMainPanel', () => {
         };
         expect(props.renderEmptyStateSupplementaryContent).toBeTypeOf('function');
         expect(props.renderEmptyStateSupplementaryContent?.()).toBeTruthy();
+    });
+
+    it('forwards project plugin placement projection to the shared workspace details panel', async () => {
+        deviceTypeMock = 'tablet';
+        workspaceDetailsPanelSpy.mockClear();
+        const { ProjectDetailsMainPanel } = await import('./ProjectDetailsMainPanel');
+        const pluginUiProjection = { generation: 2 };
+
+        await renderScreen(
+            <ProjectDetailsMainPanel
+                scopeId="project:wr_1"
+                activeRootPath="/repo"
+                activeWorktreeId={null}
+                onSelectRootPath={() => {}}
+                workspaceRef={{
+                    id: 'wr_1',
+                    serverId: 's1',
+                    machineId: 'm1',
+                    rootPath: '/repo',
+                    createdAtMs: 1,
+                } satisfies WorkspaceRefV1}
+                {...({ pluginUiProjection, platform: 'web' } as any)}
+            />,
+        );
+
+        expect(workspaceDetailsPanelSpy).toHaveBeenCalledWith(expect.objectContaining({
+            pluginUiProjection,
+            platform: 'web',
+            pluginSurfacePlacementScope: 'project',
+        }));
     });
 });

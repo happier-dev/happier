@@ -29,6 +29,16 @@ function createFakeEditor(initialMarkdown: string) {
         destroyed: false,
         focusCalled: 0,
         lastSetContent: null as unknown,
+        lastSetTextSelection: null as unknown,
+        state: {
+            selection: { from: 1, to: 1 },
+            doc: { content: { size: Math.max(2, initialMarkdown.length + 2) } },
+        },
+        view: {
+            dom: {
+                parentElement: { scrollTop: 0, scrollLeft: 0 },
+            },
+        },
         on(name: keyof FakeEditorEvents, handler: () => void) {
             events[name].push(handler);
             return editor;
@@ -45,6 +55,14 @@ function createFakeEditor(initialMarkdown: string) {
         commands: {
             setContent: (content: unknown) => {
                 editor.lastSetContent = content;
+                const markdownValue = typeof content === 'object' && content !== null && 'markdownValue' in content
+                    ? String(content.markdownValue ?? '')
+                    : '';
+                editor.state.doc.content.size = Math.max(2, markdownValue.length + 2);
+                return true;
+            },
+            setTextSelection: (selection: unknown) => {
+                editor.lastSetTextSelection = selection;
                 return true;
             },
             focus: () => {
@@ -238,6 +256,48 @@ describe('TiptapEditorSurface (web)', () => {
         expect(onChange).toHaveBeenLastCalledWith('ab');
     });
 
+    it('keeps unflushed local edits when an external value arrives mid-typing (flushes instead of replacing the doc)', async () => {
+        const editor = createFakeEditor('seed');
+        editorState.current = editor;
+        const onChange = vi.fn();
+
+        const screen = await renderScreen(
+            React.createElement(TiptapEditorSurface, {
+                resetKey: '1',
+                value: 'seed',
+                onChange,
+                changeDebounceMs: 100,
+            }),
+        );
+
+        await act(async () => {
+            editor.__emitUpdate('local draft');
+            await flushHookEffects();
+        });
+
+        await act(async () => {
+            screen.tree.update(
+                React.createElement(TiptapEditorSurface, {
+                    resetKey: '1',
+                    value: 'external seed',
+                    onChange,
+                    changeDebounceMs: 100,
+                }),
+            );
+        });
+        await flushHookEffects();
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 125));
+        });
+
+        // The user's unflushed local edit is the source of truth: the stale/racing
+        // external value must not replace the document (that resets the cursor and
+        // loses keystrokes). The pending change is flushed upward so the parent
+        // state converges to the editor instead.
+        expect(editor.lastSetContent).toBeNull();
+        expect(onChange).toHaveBeenCalledWith('local draft');
+    });
+
     it('runs a command through the controller exposed on the ref', async () => {
         const editor = createFakeEditor('x');
         editorState.current = editor;
@@ -363,6 +423,42 @@ describe('TiptapEditorSurface (web)', () => {
         });
 
         expect(editor.setEditable).toHaveBeenCalledWith(false);
+    });
+
+    it('preserves selection and scroll while syncing external value changes', async () => {
+        const editor = createFakeEditor('seed content');
+        editor.state.selection = { from: 7, to: 7 };
+        editor.view.dom.parentElement.scrollTop = 80;
+        editor.view.dom.parentElement.scrollLeft = 6;
+        editorState.current = editor;
+        const onChange = vi.fn();
+        let tree: any;
+
+        tree = (await renderScreen(
+            React.createElement(TiptapEditorSurface, {
+                resetKey: '1',
+                value: 'seed content',
+                onChange,
+                changeDebounceMs: 0,
+            }),
+        )).tree;
+
+        await act(async () => {
+            tree.update(
+                React.createElement(TiptapEditorSurface, {
+                    resetKey: '1',
+                    value: 'external content update',
+                    onChange,
+                    changeDebounceMs: 0,
+                }),
+            );
+            await flushHookEffects();
+        });
+
+        expect(editor.lastSetTextSelection).toEqual({ from: 7, to: 7 });
+        expect(editor.view.dom.parentElement.scrollTop).toBe(80);
+        expect(editor.view.dom.parentElement.scrollLeft).toBe(6);
+        expect(onChange).toHaveBeenCalledTimes(0);
     });
 
     it('syncs external value changes without firing onChange', async () => {

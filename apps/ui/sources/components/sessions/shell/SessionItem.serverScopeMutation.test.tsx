@@ -15,10 +15,10 @@ import {
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
     SESSION_ACTION_STOP_ID,
 } from '@/components/sessions/actions/sessionActionIds';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
@@ -136,13 +136,16 @@ installSessionShellCommonModuleMocks({
                     linkedProviders: [],
                     connectedServices: [],
                     connectedServicesV2: [],
+                    connectedServiceCredentialRevisionsV1: [],
+                    connectedAccountsV4: [],
+                    connectedAccountGroupsV4: [],
                 }),
                 useSession: () => null,
                 useSessionListMeaningfulActivityAt: () => null,
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'hideInactiveSessions') return hideInactiveSessions;
                     return false;
-                },
+                } }),
             },
         });
     },

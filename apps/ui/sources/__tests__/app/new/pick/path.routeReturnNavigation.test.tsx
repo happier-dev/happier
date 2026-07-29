@@ -21,6 +21,7 @@ import {
     PICKER_THEME_COLORS,
     type PickerNavigationState,
 } from './testHarness';
+import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 enableReactActEnvironment();
 
@@ -122,12 +123,12 @@ installPickerCommonModuleMocks({
             overrides: {
                 useAllMachines: () => [pickerMachine],
                 useAllSessionListRenderables: () => [],
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'recentMachinePaths') return [];
                     if (key === 'usePathPickerSearch') return false;
                     return null;
-                },
-                useSettingMutable: () => [[], vi.fn()],
+                } }),
+                useSettingMutable: createUseSettingMutableMockFromReader(() => [[], vi.fn()]),
                 useSettings: () => ({
                     ...settingsDefaults,
                     lastUsedAgent: settingsState.current.lastUsedAgent,
@@ -189,6 +190,8 @@ vi.mock('@/utils/navigation/safeRouterBack', () => ({
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     machineContributionRegistryProjectionDescribe: (...args: Parameters<MachineContributionRegistryProjectionDescribeFn>) =>
         machineContributionRegistryProjectionDescribe(...args),
+    getMachineContributionRegistryProjectionRevision: () => 0,
+    subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
 }));
 
 vi.mock('@/components/ui/layout/layout', () => ({
@@ -396,10 +399,9 @@ describe('PathPickerScreen', () => {
             supported: true,
             projection: {
                 v: 1,
-                providersById: {
+                agentsById: {
                     'acme.review.provider': {
                         id: 'acme.review.provider',
-                        providerId: 'acme.review.provider',
                         title: 'Acme Review Provider',
                         channel: 'plugin',
                         isBuiltIn: false,
@@ -410,7 +412,7 @@ describe('PathPickerScreen', () => {
                     'acme.review.backend': {
                         id: 'acme.review.backend',
                         backendId: 'acme.review.backend',
-                        providerId: 'acme.review.provider',
+                        agentId: 'acme.review.provider',
                         title: 'Acme Review Backend',
                     },
                 },

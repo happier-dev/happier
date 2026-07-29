@@ -268,3 +268,179 @@ describe('MultiTextInputHandle (web)', () => {
         });
     });
 });
+
+// ---------------------------------------------------------------------------
+// Web setSelection — stale-caller staleness guard (native parity)
+// ---------------------------------------------------------------------------
+
+describe('MultiTextInput web setSelection staleness guard', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.resetModules();
+    });
+
+    async function renderWebWithHandle(value: string) {
+        const { MultiTextInput } = await import('../MultiTextInput.web');
+        type Handle = import('../MultiTextInput.web').MultiTextInputHandle;
+
+        const ref = React.createRef<Handle>();
+        const onSelectionChange = vi.fn();
+        const onStateChange = vi.fn();
+        const mockTextarea = {
+            focus: vi.fn(),
+            blur: vi.fn(),
+            value,
+            selectionStart: value.length,
+            selectionEnd: value.length,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+            style: {} as Record<string, string>,
+            scrollHeight: 30,
+            getBoundingClientRect: vi.fn(() => ({
+                left: 0, top: 0, width: 200, height: 30, right: 200, bottom: 30, x: 0, y: 0,
+                toJSON: () => {},
+            })),
+            tagName: 'TEXTAREA',
+            nodeName: 'TEXTAREA',
+        };
+
+        await act(async () => {
+            renderer.create(
+                React.createElement(MultiTextInput, {
+                    ref,
+                    value,
+                    onChangeText: () => {},
+                    onSelectionChange,
+                    onStateChange,
+                } as any),
+                {
+                    createNodeMock: (element: any) => (element.type === 'textarea' ? mockTextarea : null),
+                },
+            );
+        });
+
+        return { ref, mockTextarea, onSelectionChange, onStateChange };
+    }
+
+    /**
+     * Live incident (web composer, 2026-07-22): a selection-restore effect fired
+     * while the user was typing, carrying a caret position computed against a
+     * text snapshot 20-100 characters behind the live textarea. The web handle
+     * applied it unconditionally and dragged the user's caret backwards
+     * mid-typing. Native already refuses selections whose basis text is stale
+     * (`latestNativeTextRef.current !== value`); web must apply the same rule.
+     */
+    it('drops a selection whose basis is stale (live text ahead of the controlled value)', async () => {
+        const { ref, mockTextarea, onSelectionChange, onStateChange } = await renderWebWithHandle('hello');
+
+        // The user typed ahead of the last controlled value round-trip.
+        mockTextarea.value = 'hello world';
+
+        ref.current!.setSelection({ start: 2, end: 2 });
+
+        expect(mockTextarea.setSelectionRange).not.toHaveBeenCalled();
+        expect(onSelectionChange).not.toHaveBeenCalled();
+        expect(onStateChange).not.toHaveBeenCalled();
+    });
+
+    it('applies a selection when the live text matches the controlled value', async () => {
+        const { ref, mockTextarea, onSelectionChange } = await renderWebWithHandle('hello');
+
+        ref.current!.setSelection({ start: 2, end: 4 });
+
+        expect(mockTextarea.setSelectionRange).toHaveBeenCalledWith(2, 4);
+        expect(onSelectionChange).toHaveBeenCalledWith({ start: 2, end: 4 });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Web autosize measurement — layout-bleed containment
+// ---------------------------------------------------------------------------
+
+describe('MultiTextInput web autosize measurement', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.resetModules();
+    });
+
+    /**
+     * Live capture 2026-07-20 (web): the collapse-to-measure autosize pass set the
+     * textarea to `height:auto` and read `scrollHeight`, forcing a synchronous reflow
+     * in which the composer row shrank to its collapsed height. The transcript's flex
+     * sibling grew by the freed pixels for that reflow, and the browser natively
+     * clamped its scrollTop (a 102px tail jump per keystroke/composer scroll event —
+     * the typing flicker). The wrapper must be pixel-locked for the whole window in
+     * which the textarea's height is non-explicit, so the measurement reflow can
+     * never move flex siblings; they only ever see the final measured height.
+     */
+    it('locks the wrapper height while collapse-measuring so the reflow cannot move flex siblings', async () => {
+        const { MultiTextInput } = await import('../MultiTextInput.web');
+
+        let textareaHeight = '';
+        let wrapperHeight = '';
+        const measurements: Array<{ textareaHeight: string; wrapperHeight: string }> = [];
+
+        const wrapperStyle = {} as Record<string, string>;
+        Object.defineProperty(wrapperStyle, 'height', {
+            get: () => wrapperHeight,
+            set: (value: string) => { wrapperHeight = value; },
+        });
+        const parentElement = {
+            offsetHeight: 120,
+            style: wrapperStyle,
+        };
+
+        const textareaStyle = {} as Record<string, string>;
+        Object.defineProperty(textareaStyle, 'height', {
+            get: () => textareaHeight,
+            set: (value: string) => { textareaHeight = value; },
+        });
+
+        const mockTextarea = {
+            focus: vi.fn(),
+            blur: vi.fn(),
+            value: 'hello',
+            selectionStart: 0,
+            selectionEnd: 0,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+            style: textareaStyle,
+            parentElement,
+            get scrollHeight() {
+                // The forced-reflow moment: whatever layout state exists here is what
+                // flex siblings experience.
+                measurements.push({ textareaHeight, wrapperHeight });
+                return 96;
+            },
+            getBoundingClientRect: vi.fn(() => ({
+                left: 0, top: 0, width: 200, height: 30, right: 200, bottom: 30, x: 0, y: 0,
+                toJSON: () => {},
+            })),
+            tagName: 'TEXTAREA',
+            nodeName: 'TEXTAREA',
+        };
+
+        await act(async () => {
+            renderer.create(
+                React.createElement(MultiTextInput, {
+                    value: 'hello',
+                    onChangeText: () => {},
+                } as any),
+                {
+                    createNodeMock: (element: any) => (element.type === 'textarea' ? mockTextarea : null),
+                },
+            );
+        });
+
+        expect(measurements.length).toBeGreaterThan(0);
+        for (const measurement of measurements) {
+            if (measurement.textareaHeight === 'auto') {
+                expect(measurement.wrapperHeight).toMatch(/^\d+px$/);
+            }
+        }
+        // The lock is measurement-scoped: once the pass settles, the wrapper's own
+        // height is back to its pre-measurement value and the textarea is explicit.
+        expect(wrapperHeight).toBe('');
+        expect(textareaHeight).toMatch(/^\d+px$/);
+    });
+});

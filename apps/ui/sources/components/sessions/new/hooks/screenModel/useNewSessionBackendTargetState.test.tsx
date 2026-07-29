@@ -22,8 +22,8 @@ const entries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
         backendTargetKey: 'backend:review-bot:configured:review-bot',
         kind: 'configuredBackend',
         backendId: 'review-bot',
-        providerId: 'review-bot',
-        providerAgentId: null,
+        agentId: 'review-bot',
+        catalogAgentId: null,
         builtInAgentId: null,
         iconAgentId: null,
         title: 'Review Bot',
@@ -37,8 +37,8 @@ const configuredPreferredEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
         backendTargetKey: 'backend:codex',
         kind: 'builtInAgent',
         backendId: 'codex',
-        providerId: 'codex',
-        providerAgentId: 'codex',
+        agentId: 'codex',
+        catalogAgentId: 'codex',
         builtInAgentId: 'codex',
         iconAgentId: 'codex',
         title: 'Codex',
@@ -49,8 +49,8 @@ const configuredPreferredEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
         backendTargetKey: 'backend:review-bot:configured:review-bot',
         kind: 'configuredBackend',
         backendId: 'review-bot',
-        providerId: 'review-bot',
-        providerAgentId: null,
+        agentId: 'review-bot',
+        catalogAgentId: null,
         builtInAgentId: null,
         iconAgentId: null,
         title: 'Review Bot',
@@ -79,7 +79,7 @@ describe('useNewSessionBackendTargetState', () => {
 
         expect(observed).not.toBeNull();
         expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('backend:review-bot:configured:review-bot');
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedProviderAgentId).toBe(DEFAULT_AGENT_ID);
+        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedCatalogAgentId).toBe(DEFAULT_AGENT_ID);
         expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedUiAgentType).toBe(DEFAULT_AGENT_ID);
     });
 
@@ -120,8 +120,8 @@ describe('useNewSessionBackendTargetState', () => {
                 backendTargetKey: 'backend:codex',
                 kind: 'builtInAgent',
                 backendId: 'codex',
-                providerId: 'codex',
-                providerAgentId: 'codex',
+                agentId: 'codex',
+                catalogAgentId: 'codex',
                 builtInAgentId: 'codex',
                 iconAgentId: 'codex',
                 title: 'Codex',
@@ -162,7 +162,7 @@ describe('useNewSessionBackendTargetState', () => {
 
         expect(observed).not.toBeNull();
         expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('backend:review-bot:configured:review-bot');
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedProviderAgentId).toBe('codex');
+        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedCatalogAgentId).toBe('codex');
     });
 
     it('does not collapse plugin backend targets into the custom ACP sentinel for agentType state', async () => {
@@ -172,8 +172,8 @@ describe('useNewSessionBackendTargetState', () => {
                 backendTargetKey: 'backend:codex',
                 kind: 'builtInAgent',
                 backendId: 'codex',
-                providerId: 'codex',
-                providerAgentId: 'codex',
+                agentId: 'codex',
+                catalogAgentId: 'codex',
                 builtInAgentId: 'codex',
                 iconAgentId: 'codex',
                 title: 'Codex',
@@ -184,8 +184,8 @@ describe('useNewSessionBackendTargetState', () => {
                 backendTargetKey: 'backend:acme.review.backend',
                 kind: 'pluginBackend',
                 backendId: 'acme.review.backend',
-                providerId: 'plugin:acme.review',
-                providerAgentId: null,
+                agentId: 'plugin:acme.review',
+                catalogAgentId: null,
                 builtInAgentId: null,
                 iconAgentId: null,
                 title: 'Acme Review Backend',
@@ -208,7 +208,7 @@ describe('useNewSessionBackendTargetState', () => {
 
         expect(observed).not.toBeNull();
         expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('backend:acme.review.backend');
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedProviderAgentId).toBe('codex');
+        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedCatalogAgentId).toBe('codex');
         expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedUiAgentType).toBe('codex');
     });
 
@@ -219,8 +219,8 @@ describe('useNewSessionBackendTargetState', () => {
                 backendTargetKey: 'backend:codex',
                 kind: 'builtInAgent',
                 backendId: 'codex',
-                providerId: 'codex',
-                providerAgentId: 'codex',
+                agentId: 'codex',
+                catalogAgentId: 'codex',
                 builtInAgentId: 'codex',
                 iconAgentId: 'codex',
                 title: 'Codex',
@@ -255,8 +255,8 @@ describe('useNewSessionBackendTargetState', () => {
                 backendTargetKey: 'backend:acme.review.backend',
                 kind: 'pluginBackend',
                 backendId: 'acme.review.backend',
-                providerId: 'plugin:acme.review',
-                providerAgentId: 'claude',
+                agentId: 'plugin:acme.review',
+                catalogAgentId: 'claude',
                 builtInAgentId: null,
                 iconAgentId: 'claude',
                 title: 'Acme Review Backend',
@@ -279,7 +279,7 @@ describe('useNewSessionBackendTargetState', () => {
 
         await renderScreen(React.createElement(Probe));
 
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedProviderAgentId).toBe('claude');
+        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedCatalogAgentId).toBe('claude');
         expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedRuntimeCarrierAgentId).toBe('claude');
     });
 
@@ -290,8 +290,8 @@ describe('useNewSessionBackendTargetState', () => {
                 backendTargetKey: 'backend:codex',
                 kind: 'builtInAgent',
                 backendId: 'codex',
-                providerId: 'codex',
-                providerAgentId: 'codex',
+                agentId: 'codex',
+                catalogAgentId: 'codex',
                 builtInAgentId: 'codex',
                 iconAgentId: 'codex',
                 title: 'Codex',
@@ -302,8 +302,8 @@ describe('useNewSessionBackendTargetState', () => {
                 backendTargetKey: 'backend:acme.review.backend',
                 kind: 'pluginBackend',
                 backendId: 'acme.review.backend',
-                providerId: 'plugin:acme.review',
-                providerAgentId: null,
+                agentId: 'plugin:acme.review',
+                catalogAgentId: null,
                 builtInAgentId: null,
                 iconAgentId: null,
                 title: 'Acme Review Backend',
@@ -340,6 +340,54 @@ describe('useNewSessionBackendTargetState', () => {
 
         act(() => {
             tree?.unmount();
+        });
+    });
+
+    it('persists Oh My Pi selection as structured identity and clears the flat compatibility field', async () => {
+        const ohMyPiEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [{
+            backendTarget: { kind: 'backend', backendId: 'ohMyPi' },
+            backendTargetKey: 'agent:happier.agent.ohmypi/ohmypi',
+            kind: 'builtInAgent',
+            backendId: 'ohMyPi',
+            agentId: 'ohMyPi',
+            catalogAgentId: 'ohMyPi',
+            builtInAgentId: 'ohMyPi',
+            iconAgentId: 'ohMyPi',
+            title: 'Oh My Pi',
+            subtitle: 'ohMyPi',
+        }];
+        let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
+
+        function Probe() {
+            observed = useNewSessionBackendTargetState({
+                entries: ohMyPiEntries,
+                lastUsedAgent: 'claude',
+                lastUsedBackendTarget: null,
+            } as any);
+            return null;
+        }
+
+        const { tree } = await renderScreen(React.createElement(Probe));
+        applySettingsMock.mockClear();
+
+        act(() => {
+            observed?.setBackendTarget({ kind: 'backend', backendId: 'ohMyPi' });
+        });
+
+        expect(applySettingsMock).toHaveBeenCalledWith({
+            lastUsedAgent: null,
+            lastUsedBackendTarget: {
+                kind: 'agent',
+                identity: {
+                    pluginId: 'happier.agent.ohmypi',
+                    localId: 'ohmypi',
+                },
+            },
+        });
+        expect(JSON.stringify(applySettingsMock.mock.calls)).not.toContain('\"ohMyPi\"');
+
+        act(() => {
+            tree.unmount();
         });
     });
 });

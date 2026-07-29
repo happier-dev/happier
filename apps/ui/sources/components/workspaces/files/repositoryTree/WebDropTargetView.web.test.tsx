@@ -10,6 +10,8 @@ import { installRepositoryTreeCommonModuleMocks } from './repositoryTreeTestHelp
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const viewRenderSpy = vi.hoisted(() => vi.fn());
+
 function flattenStyle(style: any): React.CSSProperties | undefined {
     if (style == null) return undefined;
     if (Array.isArray(style)) {
@@ -27,6 +29,7 @@ installRepositoryTreeCommonModuleMocks({
                 select: (value: any) => value?.web ?? value?.default ?? null,
             },
             View: React.forwardRef<HTMLDivElement, any>(function View(props, ref) {
+                viewRenderSpy();
                 const { children, style, testID, onDragEnter, onDragLeave, onDragOver, onDrop, ...rest } = props;
                 void onDragEnter;
                 void onDragLeave;
@@ -63,31 +66,8 @@ function createFileDragEvent(type: string): Event {
 
 describe('WebDropTargetView.web', () => {
     it('does not trigger an extra render pass when the host ref attaches on mount', async () => {
-        let viewRenderCount = 0;
-        vi.doMock('react-native', async () => {
-            const { createReactNativeWebMock } = await import('../../../../dev/testkit/mocks/reactNative');
-            return createReactNativeWebMock({
-                Platform: {
-                    OS: 'web',
-                    select: (value: any) => value?.web ?? value?.default ?? null,
-                },
-                View: React.forwardRef<HTMLDivElement, any>(function View(props, ref) {
-                    viewRenderCount += 1;
-                    const { children, testID, ...rest } = props;
-                    return React.createElement(
-                        'div',
-                        {
-                            ...rest,
-                            ref,
-                            'data-testid': testID,
-                        },
-                        children,
-                    );
-                }),
-            });
-        });
-
-        const { WebDropTargetView } = await import('./WebDropTargetView');
+        viewRenderSpy.mockClear();
+        const { WebDropTargetView } = await webDropTargetViewModule;
         const container = document.createElement('div');
         document.body.appendChild(container);
         const root = createRoot(container);
@@ -97,7 +77,7 @@ describe('WebDropTargetView.web', () => {
                 root.render(<WebDropTargetView testID="drop-target">child</WebDropTargetView>);
             });
 
-            expect(viewRenderCount).toBe(1);
+            expect(viewRenderSpy).toHaveBeenCalledTimes(1);
         } finally {
             await act(async () => {
                 root.unmount();

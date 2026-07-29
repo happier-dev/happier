@@ -5,6 +5,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 import type { AgentTextMessage, UserTextMessage } from '@/sync/domains/messages/messageTypes';
 import type { PersistedSessionMessagePinV1 } from '@/sync/domains/messages/pins/sessionMessagePins';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -21,14 +22,14 @@ installMessageViewCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'transcriptMessageTimestampDisplayMode') return 'never';
                     if (key === 'sessionThinkingDisplayMode') return 'inline';
                     if (key === 'sessionThinkingInlinePresentation') return 'summary';
                     if (key === 'sessionThinkingInlineChrome') return 'plain';
                     if (key === 'toolViewTimelineChromeMode') return 'cards';
                     return null;
-                },
+                } }),
                 useSessionForkSupportSource: () => null,
                 useSessionWorkspacePath: () => null,
                 useSessionMessagesById: () => ({}),
@@ -43,9 +44,9 @@ vi.mock('@/components/markdown/MarkdownView', () => ({
         React.createElement('MarkdownView', props, props.children),
 }));
 
-vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
-    shouldShowMessageCopyButton: () => false,
-    shouldShowMessageSelectButton: () => false,
+vi.mock('@/components/sessions/transcript/transcriptRowActionVisibility', () => ({
+    shouldShowTranscriptRowActions: () => false,
+    shouldShowTranscriptRowPinAction: () => true,
 }));
 
 vi.mock('@/components/sessions/transcript/structured/StructuredMessageBlock', () => ({

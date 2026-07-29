@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Platform, Pressable } from 'react-native';
+import { View, Platform, Pressable, type LayoutChangeEvent } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -13,13 +13,15 @@ import { t } from '@/text';
 import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '../shell/sessionScreenTestIds';
 
 
+/** A 44pt control plus breathing room on both sides. */
+const GUTTER_MIN_WIDTH_PX = 60;
+
 interface ChatHeaderViewProps {
     title: string;
     subtitle?: string;
     subtitleEllipsizeMode?: 'head' | 'tail';
     badges?: ReadonlyArray<string>;
     onBackPress?: () => void;
-    onAvatarPress?: () => void;
     avatarId?: string;
     rightElement?: React.ReactNode;
     backgroundColor?: string;
@@ -28,6 +30,18 @@ interface ChatHeaderViewProps {
     flavor?: string | null;
     constrainWidth?: boolean;
     includeTopInset?: boolean;
+    /**
+     * Defaults to shown. Suppressed where a permanent sidebar is on screen: there is no stack to
+     * pop back to, so the chevron is a control that does nothing but take the first slot in the
+     * header. The share viewer has no sidebar and keeps it.
+     */
+    showBackButton?: boolean;
+    /**
+     * Rendered in the empty margin beside the width-constrained content when that margin is wide
+     * enough to hold it, and appended to the trailing icons when it is not. For a control that acts
+     * on something at the screen's edge — the right sidebar — sitting at that edge is what says so.
+     */
+    gutterElement?: React.ReactNode;
 }
 
 export const ChatHeaderView = React.memo(function ChatHeaderView({
@@ -36,13 +50,14 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
     subtitleEllipsizeMode = 'tail',
     badges,
     onBackPress,
-    onAvatarPress,
     avatarId,
     rightElement,
     isConnected = true,
     flavor,
     constrainWidth = true,
     includeTopInset = true,
+    showBackButton = true,
+    gutterElement,
 }: ChatHeaderViewProps): React.ReactElement {
     const { theme } = useUnistyles();
     const navigation = useNavigation();
@@ -54,6 +69,18 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
     const avatarButtonTestId = resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-header-avatar');
     const shouldUseWebSubtitleStartEllipsis = subtitleEllipsizeMode === 'head' && Platform.OS === 'web';
 
+    // The header content is centred and width-capped, so on a wide window there is an empty margin
+    // on each side. Measure the trailing one: if it can hold a 44pt control with air around it, the
+    // gutter element goes there; otherwise it falls back into the icon row.
+    const [wrapperWidth, setWrapperWidth] = React.useState(0);
+    const handleWrapperLayout = React.useCallback((event: LayoutChangeEvent) => {
+        setWrapperWidth(event.nativeEvent.layout.width);
+    }, []);
+    const trailingGutterWidth = constrainWidth && wrapperWidth > 0
+        ? Math.max(0, (wrapperWidth - Math.min(wrapperWidth, maxWidth)) / 2)
+        : 0;
+    const gutterHoldsElement = gutterElement != null && trailingGutterWidth >= GUTTER_MIN_WIDTH_PX;
+
     const handleBackPress = () => {
         if (onBackPress) {
             onBackPress();
@@ -64,23 +91,39 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
 
     return (
         <View style={[styles.container, { paddingTop: includeTopInset ? insets.top : 0, backgroundColor: theme.colors.chrome.header.background }]}>
-            <View style={[styles.contentWrapper, constrainWidth ? null : { alignItems: 'stretch' }]}>
+            <View
+                onLayout={handleWrapperLayout}
+                style={[styles.contentWrapper, constrainWidth ? null : { alignItems: 'stretch' }]}
+            >
                 <View style={[styles.content, { height: headerHeight, maxWidth }, constrainWidth ? null : { maxWidth: '100%' }]}>
-                <Pressable
-                    onPress={handleBackPress}
-                    testID={backButtonTestId}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('common.back')}
-                    style={styles.backButton}
-                    hitSlop={15}
-                >
-                    <Ionicons
-                        name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
-                        size={Platform.select({ ios: 28, default: 24 })}
-                        color={theme.colors.chrome.header.foreground}
-                    />
-                </Pressable>
-                
+                {showBackButton ? (
+                    <Pressable
+                        onPress={handleBackPress}
+                        testID={backButtonTestId}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('common.back')}
+                        style={styles.backButton}
+                        hitSlop={15}
+                    >
+                        <Ionicons
+                            name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
+                            size={Platform.select({ ios: 28, default: 24 })}
+                            color={theme.colors.chrome.header.foreground}
+                        />
+                    </Pressable>
+                ) : null}
+
+                {avatarId ? (
+                    <View style={styles.avatarLeading} testID={avatarButtonTestId}>
+                        <Avatar
+                            id={avatarId}
+                            size={32}
+                            monochrome={!isConnected}
+                            flavor={flavor}
+                        />
+                    </View>
+                ) : null}
+
                 <View style={styles.titleContainer}>
                     <View style={styles.titleRow}>
                         <Text
@@ -103,8 +146,7 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
                                     style={[
                                         styles.badge,
                                         {
-                                            backgroundColor: theme.colors.surface.inset,
-                                            borderColor: theme.colors.border.default,
+                                            backgroundColor: theme.colors.state.neutral.background,
                                         },
                                     ]}
                                     testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-header-badge:${index}`)}
@@ -114,7 +156,7 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
                                         style={[
                                             styles.badgeText,
                                             {
-                                                color: theme.colors.text.secondary,
+                                                color: theme.colors.state.neutral.foreground,
                                                 ...Typography.default('semiBold'),
                                             },
                                         ]}
@@ -152,24 +194,18 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
                     </View>
                 ) : null}
 
-                {avatarId && onAvatarPress && (
-                    <Pressable
-                        onPress={onAvatarPress}
-                        hitSlop={15}
-                        style={styles.avatarButton}
-                        testID={avatarButtonTestId}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('sessionInfo.title')}
-                    >
-                        <Avatar
-                            id={avatarId}
-                            size={32}
-                            monochrome={!isConnected}
-                            flavor={flavor}
-                        />
-                    </Pressable>
-                )}
+                {gutterHoldsElement ? null : gutterElement}
                 </View>
+                {gutterHoldsElement ? (
+                    <View
+                        pointerEvents="box-none"
+                        // `top: 0` is the wrapper's own origin, which already sits below the
+                        // container's safe-area padding — adding the inset here would count it twice.
+                        style={[styles.trailingGutter, { width: trailingGutterWidth, height: headerHeight, top: 0 }]}
+                    >
+                        {gutterElement}
+                    </View>
+                ) : null}
             </View>
         </View>
     );
@@ -229,22 +265,27 @@ const styles = StyleSheet.create(() => ({
         writingDirection: 'ltr' as const,
         unicodeBidi: 'isolate' as const,
     },
+    // Matches the canonical badge (components/ui/status/StatusPill): background-only, no border
+    // chrome, 8px radius. A bordered capsule in the header read as a different species from every
+    // other badge in the product.
     badge: {
-        borderWidth: 1,
-        borderRadius: 999,
-        paddingHorizontal: 6,
+        borderWidth: 0,
+        borderRadius: 8,
+        paddingHorizontal: 8,
         paddingVertical: 2,
     },
     badgeText: {
-        fontSize: 9,
-        lineHeight: 12,
+        fontSize: 10,
+        lineHeight: 14,
     },
-    avatarButton: {
-        width: 44,
-        height: 44,
+    avatarLeading: {
+        marginRight: 10,
+    },
+    trailingGutter: {
+        position: 'absolute',
+        right: 0,
         alignItems: 'center',
         justifyContent: 'center',
-        marginRight: Platform.select({ ios: -8, default: -8 }),
     },
     rightElementContainer: {
         flexDirection: 'row',

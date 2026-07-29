@@ -1,13 +1,11 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Switch } from '@/components/ui/forms/Switch';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
@@ -28,7 +26,6 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
     const [transcriptStreamingCoalesceMaxBatchSize, setTranscriptStreamingCoalesceMaxBatchSize] = useSettingMutable('transcriptStreamingCoalesceMaxBatchSize');
     const [transcriptStreamingPartialOutputEnabled, setTranscriptStreamingPartialOutputEnabled] = useSettingMutable('transcriptStreamingPartialOutputEnabled');
     const [transcriptThinkingPulseStaleMs, setTranscriptThinkingPulseStaleMs] = useSettingMutable('transcriptThinkingPulseStaleMs');
-    const [transcriptListImplementation, setTranscriptListImplementation] = useSettingMutable('transcriptListImplementation');
 
     const [transcriptMotionPreset] = useSettingMutable('transcriptMotionPreset');
     const normalizedMotionPreset: TranscriptMotionPreset =
@@ -44,24 +41,6 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
     const [transcriptScrollAutoFollowWhenPinned, setTranscriptScrollAutoFollowWhenPinned] = useSettingMutable('transcriptScrollAutoFollowWhenPinned');
     const [transcriptScrollJumpToBottomMinNewCount, setTranscriptScrollJumpToBottomMinNewCount] = useSettingMutable('transcriptScrollJumpToBottomMinNewCount');
     const [transcriptScrollJumpToBottomAnimateScroll, setTranscriptScrollJumpToBottomAnimateScroll] = useSettingMutable('transcriptScrollJumpToBottomAnimateScroll');
-
-    const [openListImplementationMenu, setOpenListImplementationMenu] = React.useState(false);
-
-    const normalizedTranscriptListImplementation: 'flash_v2' | 'flatlist_legacy' =
-        transcriptListImplementation === 'flatlist_legacy' ? 'flatlist_legacy' : 'flash_v2';
-
-    const listImplementationOptions: Array<{ key: 'flash_v2' | 'flatlist_legacy'; title: string; subtitle: string }> = [
-        {
-            key: 'flash_v2',
-            title: t('settingsSession.transcript.advanced.listImplementation.flashTitle'),
-            subtitle: t('settingsSession.transcript.advanced.listImplementation.flashSubtitle'),
-        },
-        {
-            key: 'flatlist_legacy',
-            title: t('settingsSession.transcript.advanced.listImplementation.legacyTitle'),
-            subtitle: t('settingsSession.transcript.advanced.listImplementation.legacySubtitle'),
-        },
-    ];
 
     const canAdjustMotion = normalizedMotionPreset !== 'off';
 
@@ -147,37 +126,6 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                     }}
                 />
 
-                <DropdownMenu
-                    open={openListImplementationMenu}
-                    onOpenChange={setOpenListImplementationMenu}
-                    variant="selectable"
-                    search={false}
-                    selectedId={normalizedTranscriptListImplementation as any}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    rowKind="item"
-                    popoverBoundaryRef={popoverBoundaryRef}
-                    itemTrigger={{
-                        title: t('settingsSession.transcript.advanced.listImplementationTitle'),
-                        icon: <Ionicons name="list-outline" size={29} color={theme.colors.text.secondary} />,
-                        subtitle: t('settingsSession.transcript.advanced.listImplementationSubtitle'),
-                    }}
-                    items={listImplementationOptions.map((opt) => ({
-                        id: opt.key,
-                        title: opt.title,
-                        subtitle: opt.subtitle,
-                        icon: (
-                            <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name="list-outline" size={22} color={theme.colors.text.secondary} />
-                            </View>
-                        ),
-                    }))}
-                    onSelect={(id) => {
-                        setTranscriptListImplementation(String(id) as any);
-                        setOpenListImplementationMenu(false);
-                    }}
-                />
             </ItemGroup>
 
             <ItemGroup

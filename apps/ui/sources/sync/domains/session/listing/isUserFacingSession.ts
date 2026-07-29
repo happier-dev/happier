@@ -1,7 +1,11 @@
 import { isHiddenSystemSession } from '@happier-dev/protocol';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 type UserFacingSessionCandidate = Readonly<{
     metadata?: unknown;
+    metadataLayoutVersion?: number;
+    ownerMetadataView?: unknown;
+    accessLevel?: unknown;
     metadataUnavailable?: boolean;
 }>;
 
@@ -24,9 +28,31 @@ export function isUserFacingSession(session: UserFacingSessionCandidate): boolea
     if (session.metadataUnavailable === true) {
         return false;
     }
+    const metadata = readSessionOwnerMetadataView({
+        metadataLayoutVersion: session.metadataLayoutVersion,
+        metadata: session.metadata ?? null,
+        ownerMetadataView: session.ownerMetadataView,
+    });
+    const isSharedParticipant = session.accessLevel === 'view'
+        || session.accessLevel === 'edit'
+        || session.accessLevel === 'admin';
+    const hasProjectedOwnerMetadata =
+        session.metadataLayoutVersion === 1
+        && session.accessLevel == null
+        && session.metadataUnavailable === false;
+    if (
+        (session.metadataLayoutVersion ?? 0) === 1
+        && metadata == null
+        && !isSharedParticipant
+        && !hasProjectedOwnerMetadata
+    ) {
+        return false;
+    }
+    const visibilityMetadata = metadata
+        ?? (isSharedParticipant || hasProjectedOwnerMetadata ? session.metadata : null);
     return !(
-        hasProjectedHiddenSystemFlag(session.metadata)
-        || hasRawHiddenSystemFlag(session.metadata)
-        || isHiddenSystemSession({ metadata: session.metadata })
+        hasProjectedHiddenSystemFlag(visibilityMetadata)
+        || hasRawHiddenSystemFlag(visibilityMetadata)
+        || isHiddenSystemSession({ metadata: visibilityMetadata })
     );
 }

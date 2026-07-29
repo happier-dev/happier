@@ -7,6 +7,8 @@ import { buildSessionMetadataStabilitySignatureValue } from '@/sync/domains/sess
 import { resolveServerIdForSessionIdFromLocalState } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { StorageState } from '@/sync/store/types';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readRollbackEligibleTurnStarts } from '@/sync/domains/session/rollback/rollbackEligibleTurnStarts';
 
 type ShellVisibleAgentStateRequestSignature = ReadonlyArray<readonly [
     string,
@@ -34,6 +36,11 @@ type ShellVisibleLatestUsageSignature = Readonly<{
 
 function buildShellVisibleMetadataSignatureValue(metadata: Session['metadata']): unknown {
     return buildSessionMetadataStabilitySignatureValue(metadata);
+}
+
+function buildShellVisibleSequenceSetSignatureValue(value: unknown): readonly number[] {
+    const normalized = readRollbackEligibleTurnStarts(value);
+    return normalized ? [...normalized].sort((left, right) => left - right) : [];
 }
 
 function normalizeServerId(value: unknown): string | null {
@@ -104,6 +111,10 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
         archivedAt: session.archivedAt ?? null,
         agentStateVersion: session.agentStateVersion ?? null,
         encryptionMode: session.encryptionMode ?? null,
+        currentStorageState: session.currentStorageState ?? null,
+        acceptedThroughServerSeq: session.acceptedThroughServerSeq ?? null,
+        publishedThroughServerSeq: session.publishedThroughServerSeq ?? null,
+        materializedThroughSourceAt: session.materializedThroughSourceAt ?? null,
         presence: session.presence ?? null,
         thinking: session.thinking === true,
         optimisticThinkingAt: session.thinking ? null : session.optimisticThinkingAt ?? null,
@@ -118,9 +129,13 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
         pendingPermissionRequestCount: session.pendingPermissionRequestCount ?? null,
         pendingUserActionRequestCount: session.pendingUserActionRequestCount ?? null,
         pendingRequestObservedAt: session.pendingRequestObservedAt ?? null,
+        rollbackEligibleTurnStarts: buildShellVisibleSequenceSetSignatureValue(
+            session.rollbackEligibleTurnStarts,
+        ),
         latestUsage: buildShellVisibleLatestUsageSignatureValue(session.latestUsage),
         agentStateRequests: buildShellVisibleAgentStateRequestSignatureValue(session.agentState),
-        metadata: buildShellVisibleMetadataSignatureValue(session.metadata),
+        sharedMetadata: buildShellVisibleMetadataSignatureValue(session.metadata),
+        ownerMetadata: buildShellVisibleMetadataSignatureValue(readSessionOwnerMetadataView(session)),
     });
 }
 

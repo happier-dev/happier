@@ -67,6 +67,21 @@ describe('bootstrapActiveServerFromWebLocation', () => {
         expect(result?.serverUrl).toBe('http://127.0.0.1:57010');
     });
 
+    it('adopts an explicit stack hostname override when the active profile uses generic localhost', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://localhost:57010';
+
+        stubWebLocation('http://happier-repo-dev-a1cc5e0671.localhost:19081/?server=http%3A%2F%2Fhappier-repo-dev-a1cc5e0671.localhost%3A57010');
+
+        const { bootstrapActiveServerFromWebLocation } = await importFreshBootstrap();
+        const result = bootstrapActiveServerFromWebLocation({ scope: 'device' });
+
+        const { getActiveServerId, getActiveServerUrl } = await importFreshServerProfiles();
+        expect(getActiveServerId()).toBe('localhost-57010');
+        expect(getActiveServerUrl()).toBe('http://happier-repo-dev-a1cc5e0671.localhost:57010');
+        expect(result?.serverUrl).toBe('http://happier-repo-dev-a1cc5e0671.localhost:57010');
+    });
+
     it('drops stale route serverId params when consuming a web server override', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://localhost:57010';
@@ -96,6 +111,49 @@ describe('bootstrapActiveServerFromWebLocation', () => {
         const { getActiveServerUrl } = await importFreshServerProfiles();
         expect(override).toBeNull();
         expect(result).toBeNull();
-        expect(getActiveServerUrl()).toBe('https://api.happier.dev');
+      expect(getActiveServerUrl()).toBe('https://api.happier.dev');
+    });
+
+    it('removes the URL intent only after the server connection and auth commit succeeds', async () => {
+        const events: string[] = [];
+        const { commitWebServerUrlOverride } = await importFreshBootstrap();
+        await commitWebServerUrlOverride({
+            action: {
+                kind: 'switch_server',
+                serverUrl: 'https://stack.example.test',
+                cleanedRelativeUrl: '/session/session-1',
+            },
+            switchServer: async () => {
+                events.push('connected-and-authenticated');
+            },
+            refreshAuth: async () => {
+                events.push('refresh-auth');
+            },
+            replaceRelativeUrl: (url) => {
+                events.push(`replace:${url}`);
+            },
+        });
+        expect(events).toEqual([
+            'connected-and-authenticated',
+            'replace:/session/session-1',
+        ]);
+    });
+
+    it('retains the URL intent when connection or auth commit rejects', async () => {
+        const replaceRelativeUrl = vi.fn();
+        const { commitWebServerUrlOverride } = await importFreshBootstrap();
+        await expect(commitWebServerUrlOverride({
+            action: {
+                kind: 'switch_server',
+                serverUrl: 'https://stack.example.test',
+                cleanedRelativeUrl: '/',
+            },
+            switchServer: async () => {
+                throw new Error('auth failed');
+            },
+            refreshAuth: async () => {},
+            replaceRelativeUrl,
+        })).rejects.toThrow('auth failed');
+        expect(replaceRelativeUrl).not.toHaveBeenCalled();
     });
 });

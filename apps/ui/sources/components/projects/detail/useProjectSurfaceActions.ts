@@ -1,12 +1,13 @@
 import * as React from 'react';
-import { useRouter } from 'expo-router';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { computeExpandedPathsForReveal } from '@/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal';
 import { storage } from '@/sync/domains/state/storage';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
+import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
 
 export function useProjectSurfaceActions(params: Readonly<{
     scopeId: string;
@@ -15,7 +16,7 @@ export function useProjectSurfaceActions(params: Readonly<{
     onRevealInFilesTreeNavigate?: () => void;
 }>) {
     const pane = useAppPaneScope(params.scopeId);
-    const router = useRouter();
+    const routerRef = useProjectRouteRouterRef();
 
     const openFileInDetails = React.useCallback((fullPath: string) => {
         const fileName = fullPath.split('/').pop() ?? fullPath;
@@ -73,15 +74,16 @@ export function useProjectSurfaceActions(params: Readonly<{
     }, [pane]);
 
     const openCreateWorktreeFlow = React.useCallback(() => {
-        router.push({
+        routerRef.current.push({
             pathname: '/new',
-            params: {
+            params: buildNewSessionLaunchRouteParams({
                 machineId: params.workspaceRef.machineId,
                 directory: params.activeRootPath,
                 worktree: 'new',
-            },
+                targetServerId: params.workspaceRef.serverId,
+            }),
         });
-    }, [params.activeRootPath, params.workspaceRef.machineId, router]);
+    }, [params.activeRootPath, params.workspaceRef.machineId, params.workspaceRef.serverId, routerRef]);
 
     const openCommitInDetails = React.useCallback((sha: string) => {
         const safeSha = sha.trim().split(/\s+/)[0] ?? '';

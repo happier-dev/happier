@@ -4,6 +4,7 @@ import {
     resolveProjectMobileSurfaceIntent,
     resolveProjectCockpitRouteFromPathname,
     resolveProjectRoutePathForSurface,
+    resolveProjectRightTabIdForSurface,
 } from './projectCockpitState';
 
 describe('projectCockpitState', () => {
@@ -25,6 +26,18 @@ describe('projectCockpitState', () => {
             surface: 'terminal',
             rawWorktreeId: '@root',
         })).toBe('/projects/wr_1/terminal?worktreeId=%40root');
+
+        expect(resolveProjectRoutePathForSurface({
+            workspaceRefId: 'wr_1',
+            surface: 'browser',
+            rawWorktreeId: 'gitwt_feature',
+        })).toBe('/projects/wr_1?worktreeId=gitwt_feature&mobileSurface=browser');
+
+        expect(resolveProjectRoutePathForSurface({
+            workspaceRefId: 'wr_1',
+            surface: 'services',
+            rawActiveRootPath: '/repo',
+        })).toBe('/projects/wr_1?activeRootPath=%2Frepo&mobileSurface=services');
     });
 
     it('resolves cockpit routes from pathname and persisted root-surface state', () => {
@@ -41,6 +54,28 @@ describe('projectCockpitState', () => {
         expect(resolveProjectCockpitRouteFromPathname('/projects/wr_1/details')).toEqual({
             workspaceRefId: 'wr_1',
             surface: 'tabs',
+        });
+
+        expect(resolveProjectCockpitRouteFromPathname('/projects/wr_1', null, 'browser')).toEqual({
+            workspaceRefId: 'wr_1',
+            surface: 'browser',
+        });
+
+        expect(resolveProjectCockpitRouteFromPathname('/projects/wr_1', null, 'services')).toEqual({
+            workspaceRefId: 'wr_1',
+            surface: 'services',
+        });
+    });
+
+    it('lets files routes honor explicit hosted-surface hints so the route model matches the rendered surface', () => {
+        expect(resolveProjectCockpitRouteFromPathname('/projects/wr_1/files', null, 'browser')).toEqual({
+            workspaceRefId: 'wr_1',
+            surface: 'browser',
+        });
+
+        expect(resolveProjectCockpitRouteFromPathname('/projects/wr_1/files', null, 'services')).toEqual({
+            workspaceRefId: 'wr_1',
+            surface: 'services',
         });
     });
 
@@ -65,5 +100,18 @@ describe('projectCockpitState', () => {
             activeRightTabId: 'files',
             persistedSurface: 'terminal',
         })).toBe('terminal');
+    });
+
+    it('maps built-in Browser and Services mobile surfaces back to right-sidebar tabs', () => {
+        expect(resolveProjectMobileSurfaceIntent({
+            routeKind: 'index',
+            activeRightTabId: 'browser',
+        })).toBe('browser');
+        expect(resolveProjectMobileSurfaceIntent({
+            routeKind: 'index',
+            activeRightTabId: 'services',
+        })).toBe('services');
+        expect(resolveProjectRightTabIdForSurface('browser')).toBe('browser');
+        expect(resolveProjectRightTabIdForSurface('services')).toBe('services');
     });
 });

@@ -3,10 +3,11 @@ import { Platform, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { PinIcon, PinSlashIcon } from '@/components/sessions/shell/sessionPinIcons';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { t } from '@/text';
 import type { PersistedSessionMessagePinV1 } from '@/sync/domains/messages/pins/sessionMessagePins';
 
-import type { MessagePinAvailability } from './resolveMessagePinAvailability';
+import { buildSessionMessagePinAtPressTime, type MessagePinAvailability } from './resolveMessagePinAvailability';
 
 export function MessagePinButton(props: Readonly<{
     availability: MessagePinAvailability;
@@ -19,15 +20,15 @@ export function MessagePinButton(props: Readonly<{
     const { theme } = useUnistyles();
     if (props.availability.status !== 'available' || !props.onTogglePin) return null;
 
-    const { pin, pinned } = props.availability;
-    const hitSlop = Platform.OS === 'web' ? undefined : 15;
+    const { pinTarget, pinned } = props.availability;
+    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
     const iconColor = pinned ? theme.colors.state.active.foreground : theme.colors.text.secondary;
     const label = pinned
         ? t('session.transcriptNavigation.unpinMessageA11y')
         : t('session.transcriptNavigation.pinMessageA11y');
 
     const handlePress = () => {
-        props.onTogglePin?.(pin);
+        props.onTogglePin?.(buildSessionMessagePinAtPressTime(pinTarget));
     };
 
     return (
@@ -36,7 +37,6 @@ export function MessagePinButton(props: Readonly<{
             onPress={handlePress}
             onHoverIn={props.onHoverIn}
             onHoverOut={props.onHoverOut}
-            hitSlop={hitSlop}
             accessibilityRole="button"
             accessibilityLabel={label}
             style={({ pressed }) => [
@@ -44,6 +44,12 @@ export function MessagePinButton(props: Readonly<{
                 Platform.OS === 'web' ? styles.webActionButton : null,
                 props.invertedActionsLayout ? styles.webActionButtonInverted : null,
                 props.invertedActionsLayout ? styles.invertedSpacing : null,
+                {
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minHeight: minimumInteractiveTargetSize,
+                    minWidth: minimumInteractiveTargetSize,
+                },
                 pinned ? styles.buttonPinned : null,
                 pressed ? styles.buttonPressed : null,
             ]}

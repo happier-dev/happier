@@ -63,6 +63,7 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides', () => ({
+    BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: {},
     BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES: {},
 }));
 
@@ -390,7 +391,8 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         expect(reviewCommentsSurfaceSpy).toHaveBeenCalledWith(expect.objectContaining({
             projectId: 'project-1',
             sessionId: 's1',
-            directWriteGranted: false,
+            directWriteGrants: [],
+            pendingDirectWriteGrantRequests: [],
             defaultPanelOpen: false,
             testID: 'review-comments-session',
             execute: expect.any(Function),

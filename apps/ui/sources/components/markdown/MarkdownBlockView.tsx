@@ -11,11 +11,15 @@ import { t } from '@/text';
 import { MarkdownSpansView } from './MarkdownSpansView';
 import { MarkdownCodeBlock } from './MarkdownCodeBlock';
 import type { StreamingTextRevealPreset } from './streaming/streamingTextRevealConfig';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 
 // Option type for callback
 export type Option = {
     title: string;
 };
+
+export type OptionLongPressHandler = (option: Option) => boolean | void | Promise<boolean | void>;
 
 type MarkdownBlockViewProps = {
     block: MarkdownBlock;
@@ -23,6 +27,7 @@ type MarkdownBlockViewProps = {
     last: boolean;
     selectable: boolean;
     onOptionPress?: (option: Option) => void;
+    onOptionLongPress?: OptionLongPressHandler;
     onLinkPress?: (url: string) => boolean | void;
     textStyle?: StyleProp<TextStyle>;
     variant: 'default' | 'thinking';
@@ -39,6 +44,7 @@ function areMarkdownBlockViewPropsEqual(prev: MarkdownBlockViewProps, next: Mark
         && prev.last === next.last
         && prev.selectable === next.selectable
         && prev.onOptionPress === next.onOptionPress
+        && prev.onOptionLongPress === next.onOptionLongPress
         && prev.onLinkPress === next.onLinkPress
         && prev.textStyle === next.textStyle
         && prev.variant === next.variant
@@ -66,7 +72,7 @@ export const MarkdownBlockView = React.memo((props: MarkdownBlockViewProps) => {
     } else if (block.type === 'mermaid') {
         return <MermaidRenderer content={block.content} />;
     } else if (block.type === 'options') {
-        return <RenderOptionsBlock items={block.items} first={props.first} last={props.last} selectable={props.selectable} onOptionPress={props.onOptionPress} textStyle={props.textStyle} />;
+        return <RenderOptionsBlock items={block.items} first={props.first} last={props.last} selectable={props.selectable} onOptionPress={props.onOptionPress} onOptionLongPress={props.onOptionLongPress} textStyle={props.textStyle} />;
     } else if (block.type === 'table') {
         return <RenderTableBlock headers={block.headers} rows={block.rows} alignments={block.alignments} first={props.first} last={props.last} selectable={props.selectable} textStyle={props.textStyle} />;
     }
@@ -192,6 +198,7 @@ function RenderOptionsBlock(props: {
     last: boolean,
     selectable: boolean,
     onOptionPress?: (option: Option) => void,
+    onOptionLongPress?: OptionLongPressHandler,
     textStyle?: StyleProp<TextStyle>,
 }) {
     const optionTextStyle = [style.optionText, props.textStyle];
@@ -200,16 +207,15 @@ function RenderOptionsBlock(props: {
             {props.items.map((item, index) => {
                 if (props.onOptionPress) {
                     return (
-                        <Pressable
+                        <MarkdownOptionButton
                             key={index}
-                            style={({ pressed }) => [
-                                style.optionItem,
-                                pressed && style.optionItemPressed
-                            ]}
-                            onPress={() => props.onOptionPress?.({ title: item })}
-                        >
-                            <Text selectable={props.selectable} style={optionTextStyle}>{item}</Text>
-                        </Pressable>
+                            item={item}
+                            index={index}
+                            selectable={props.selectable}
+                            textStyle={optionTextStyle}
+                            onOptionPress={props.onOptionPress}
+                            onOptionLongPress={props.onOptionLongPress}
+                        />
                     );
                 } else {
                     return (
@@ -220,6 +226,56 @@ function RenderOptionsBlock(props: {
                 }
             })}
         </View>
+    );
+}
+
+function MarkdownOptionButton(props: {
+    item: string,
+    index: number,
+    selectable: boolean,
+    textStyle: StyleProp<TextStyle>,
+    onOptionPress: (option: Option) => void,
+    onOptionLongPress?: OptionLongPressHandler,
+}) {
+    const feedback = useTemporaryCopyFeedback();
+    const feedbackKey = String(props.index);
+    const longPressConsumedRef = React.useRef(false);
+    const option = React.useMemo<Option>(() => ({ title: props.item }), [props.item]);
+    const handlePress = React.useCallback(() => {
+        if (longPressConsumedRef.current) {
+            longPressConsumedRef.current = false;
+            return;
+        }
+
+        props.onOptionPress(option);
+    }, [option, props.onOptionPress]);
+    const handleLongPress = React.useCallback(() => {
+        if (!props.onOptionLongPress) return;
+
+        longPressConsumedRef.current = true;
+        void Promise.resolve(props.onOptionLongPress(option)).then((copied) => {
+            if (copied === true) {
+                feedback.markCopied(feedbackKey);
+            }
+        });
+    }, [feedback, feedbackKey, option, props.onOptionLongPress]);
+
+    return (
+        <Pressable
+            style={({ pressed }) => [
+                style.optionItem,
+                pressed && style.optionItemPressed,
+            ]}
+            onPress={handlePress}
+            onLongPress={props.onOptionLongPress ? handleLongPress : undefined}
+        >
+            <Text selectable={props.selectable && !props.onOptionLongPress} style={props.textStyle}>{props.item}</Text>
+            <CopiedPill
+                visible={feedback.isCopied(feedbackKey)}
+                testID={`markdown-option-copy-feedback:${props.index}`}
+                style={style.optionCopyFeedback}
+            />
+        </Pressable>
     );
 }
 
@@ -554,6 +610,7 @@ const style = StyleSheet.create((theme) => ({
         paddingVertical: 12,
         borderWidth: 1,
         borderColor: theme.colors.border.default,
+        position: 'relative',
     },
     optionItemPressed: {
         opacity: 0.7,
@@ -564,6 +621,12 @@ const style = StyleSheet.create((theme) => ({
         fontSize: 16,
         lineHeight: 24,
         color: theme.colors.text.primary,
+    },
+    optionCopyFeedback: {
+        position: 'absolute',
+        right: 8,
+        top: 9,
+        backgroundColor: theme.colors.surface.elevated,
     },
 
     //

@@ -12,6 +12,14 @@ import { buildSessionListRenderableMetadataComparison } from './sessionListRende
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from './sessionListRenderable';
 
+const canonicalExternalSessionLink = {
+    v: 1 as const,
+    agentId: 'codex',
+    machineId: 'machine-1',
+    remoteSessionId: 'remote-1',
+    source: { kind: 'codexHome' as const, home: 'user' as const },
+};
+
 const storageState = vi.hoisted(() => ({
     sessionMessages: {} as Record<string, unknown>,
 }));
@@ -176,6 +184,120 @@ describe('preserveSessionListRenderableStaleFields', () => {
 });
 
 describe('buildSessionListRenderableFromSession', () => {
+    it('projects layout-v1 owner-private list facts from the canonical owner view', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 'layout1-owner',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            metadataLayoutVersion: 1,
+            metadata: {
+                v: 1,
+                summary: { text: 'Shared title', updatedAt: 1 },
+                agentPresentation: { agentId: 'claude' },
+            } as unknown as Session['metadata'],
+            ownerMetadataView: {
+                name: 'Owner name',
+                path: '/owner/private/repo',
+                homeDir: '/owner',
+                host: 'owner.local',
+                machineId: 'owner-machine',
+                flavor: 'claude',
+            } as Session['metadata'],
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 0,
+        } as Session);
+
+        expect(renderable.metadata).toMatchObject({
+            name: 'Owner name',
+            path: '/owner/private/repo',
+            homeDir: '/owner',
+            host: 'owner.local',
+            machineId: 'owner-machine',
+            flavor: 'claude',
+        });
+        expect(renderable.metadataUnavailable).not.toBe(true);
+    });
+
+    it('keeps layout-v1 participant renderables on strict shared metadata without owner facts', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 'layout1-participant',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            accessLevel: 'view',
+            metadataLayoutVersion: 1,
+            metadata: {
+                v: 1,
+                summary: { text: 'Shared title', updatedAt: 1 },
+                agentPresentation: { agentId: 'claude' },
+            } as unknown as Session['metadata'],
+            ownerMetadataView: {
+                name: 'Forbidden owner name',
+                path: '/owner/private/repo',
+                homeDir: '/owner',
+                host: 'owner.local',
+                machineId: 'owner-machine',
+            } as Session['metadata'],
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 0,
+        } as Session);
+
+        expect(renderable.metadata).toEqual({
+            name: undefined,
+            summaryText: 'Shared title',
+            path: '',
+            homeDir: null,
+            host: null,
+            machineId: null,
+            flavor: 'claude',
+            externalSessionV1: null,
+            externalAgentObservationV1: null,
+            readStateV1: null,
+            hiddenSystemSession: false,
+            terminalControlServiceabilityV1: null,
+        });
+        expect(renderable.metadataUnavailable).not.toBe(true);
+    });
+
+    it('marks a layout-v1 owner row unavailable when its owner view is absent', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 'layout1-owner-list-shell',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            metadataLayoutVersion: 1,
+            metadata: {
+                v: 1,
+                summary: { text: 'Shared title', updatedAt: 1 },
+            } as unknown as Session['metadata'],
+            ownerMetadataView: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 0,
+        } as Session);
+
+        expect(renderable.metadata).toBeNull();
+        expect(renderable.metadataUnavailable).toBe(true);
+    });
+
     it('does not use raw updatedAt as meaningful activity for inactive rows', () => {
         const renderable = buildSessionListRenderableFromSession({
             id: 's_inactive_churn',
@@ -198,6 +320,38 @@ describe('buildSessionListRenderableFromSession', () => {
         } satisfies Session);
 
         expect(renderable.meaningfulActivityAt).toBe(1_000);
+    });
+
+    it('projects the first user message as a transient title fallback when metadata has no display title', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's_prompt_title_fallback',
+            seq: 2,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            archivedAt: null,
+            metadata: {
+                path: '/Users/leeroy/Documents/Development/happier/dev',
+                host: 'leeroy-mbp',
+                homeDir: '/Users/leeroy',
+            },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } satisfies Session, undefined, [{
+            id: 'm-user',
+            kind: 'user-text',
+            seq: 1,
+            localId: null,
+            createdAt: 1,
+            text: 'QA detail/title/tool/turn-state audit 2026-07-01. Reply exactly QA_DETAIL_AUDIT_OK.',
+        }]);
+
+        expect(renderable.metadata?.summaryText).toBe('QA detail/title/tool/turn-state audit 2026-07-01. Reply exactly QA_DETAIL_AUDIT_OK.');
     });
 
     it('treats terminal turn projection as authoritative over legacy thinking in renderable state', () => {
@@ -304,6 +458,101 @@ describe('buildSessionListRenderableFromSession', () => {
         }]);
 
         expect(renderable.hasUnreadMessages).toBe(false);
+    });
+
+    it('does not treat trailing connected-service auth maintenance events as unread or meaningful activity', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's_auth_maintenance_tail',
+            seq: 946,
+            lastViewedSessionSeq: 945,
+            createdAt: 1,
+            updatedAt: 10_000,
+            active: true,
+            activeAt: 10_000,
+            archivedAt: null,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            latestTurnStatus: 'in_progress',
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any, undefined, [
+            {
+                id: 'm-visible',
+                kind: 'agent-text',
+                seq: 945,
+                localId: null,
+                createdAt: 1_000,
+                text: 'Visible assistant message',
+            },
+            {
+                id: 'm-auth',
+                kind: 'agent-event',
+                seq: 946,
+                createdAt: 9_000,
+                event: {
+                    type: 'connected-service-account-switch',
+                    serviceId: 'openai-codex',
+                    groupId: 'group-1',
+                    fromProfileId: 'profile-a',
+                    toProfileId: 'profile-b',
+                    reason: 'usage_limit',
+                },
+            },
+        ]);
+
+        expect(renderable.hasUnreadMessages).toBe(false);
+        expect(renderable.meaningfulActivityAt).toBe(1_000);
+    });
+
+    it('does not use raw terminal session seq when trailing connected-service auth maintenance is projected', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's_terminal_auth_maintenance_tail',
+            seq: 946,
+            lastViewedSessionSeq: 945,
+            createdAt: 1,
+            updatedAt: 10_000,
+            active: true,
+            activeAt: 10_000,
+            archivedAt: null,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: 10_000,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any, undefined, [
+            {
+                id: 'm-visible',
+                kind: 'agent-text',
+                seq: 945,
+                localId: null,
+                createdAt: 1_000,
+                text: 'Visible assistant message',
+            },
+            {
+                id: 'm-auth',
+                kind: 'agent-event',
+                seq: 946,
+                createdAt: 9_000,
+                event: {
+                    type: 'connected-service-account-switch',
+                    serviceId: 'openai-codex',
+                    groupId: 'group-1',
+                    fromProfileId: 'profile-a',
+                    toProfileId: 'profile-b',
+                    reason: 'usage_limit',
+                },
+            },
+        ]);
+
+        expect(renderable.hasUnreadMessages).toBe(false);
+        expect(renderable.meaningfulActivityAt).toBe(1_000);
     });
 
     it('keeps rows unread when a displayable message is newer than the cursor', () => {
@@ -587,6 +836,7 @@ describe('buildSessionListRenderableFromSession', () => {
 
         expect(renderable.hasPendingPermissionRequests).toBe(false);
         expect(renderable.hasPendingUserActionRequests).toBe(false);
+        expect(renderable.pendingRequestObservedAt).toBeNull();
     });
 
     it('does not keep stale pending flags when the transcript already marked the request canceled', () => {
@@ -713,7 +963,7 @@ describe('buildSessionListRenderableFromSession', () => {
                 host: 'mbp',
                 machineId: 'm1',
                 flavor: 'pro',
-                externalSessionV1: { v: 1 as const, providerId: 'provider-a' },
+                externalSessionV1: canonicalExternalSessionLink,
                 systemSessionV1: { hidden: false },
             },
             metadataVersion: 4,
@@ -743,6 +993,73 @@ describe('buildSessionListRenderableFromSession', () => {
         expect(next).toBe(previous);
     });
 
+    it('projects canonical external-session agent identity changes without providerId', () => {
+        const baseSession = {
+            id: 'external-agent-change',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            metadata: {
+                path: '/home/u/repo',
+                externalSessionV1: {
+                    v: 1 as const,
+                    agentId: 'codex',
+                    machineId: 'machine-1',
+                    remoteSessionId: 'remote-1',
+                    source: { kind: 'codexHome' as const, home: 'user' as const },
+                },
+            },
+            metadataVersion: 4,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online' as const,
+        };
+
+        const previous = buildSessionListRenderableFromSession(baseSession as any);
+        const next = buildSessionListRenderableFromSession({
+            ...baseSession,
+            metadata: {
+                ...baseSession.metadata,
+                externalSessionV1: {
+                    ...baseSession.metadata.externalSessionV1,
+                    agentId: 'claude',
+                },
+            },
+        } as any, previous);
+
+        expect(next).not.toBe(previous);
+        expect(next.metadata).not.toBe(previous.metadata);
+        expect(next.metadata?.externalSessionV1).toMatchObject({
+            agentId: 'claude',
+            machineId: 'machine-1',
+            remoteSessionId: 'remote-1',
+        });
+        expect(next.metadata?.externalSessionV1).not.toHaveProperty('providerId');
+
+        const sourceChanged = buildSessionListRenderableFromSession({
+            ...baseSession,
+            metadata: {
+                ...baseSession.metadata,
+                externalSessionV1: {
+                    ...baseSession.metadata.externalSessionV1,
+                    agentId: 'claude',
+                    source: { kind: 'codexHome', home: 'user', homePath: '/tmp/codex' },
+                },
+            },
+        } as any, next);
+
+        expect(sourceChanged).not.toBe(next);
+        expect(sourceChanged.metadata?.externalSessionV1?.source).toEqual({
+            kind: 'codexHome',
+            home: 'user',
+            homePath: '/tmp/codex',
+        });
+    });
+
     it('reuses the previous metadata object when only non-metadata session fields change', () => {
         const baseSession = {
             id: 's1',
@@ -759,7 +1076,7 @@ describe('buildSessionListRenderableFromSession', () => {
                 host: 'mbp',
                 machineId: 'm1',
                 flavor: 'pro',
-                externalSessionV1: { v: 1 as const, providerId: 'provider-a' },
+                externalSessionV1: canonicalExternalSessionLink,
                 systemSessionV1: { hidden: false },
             },
             metadataVersion: 4,
@@ -803,7 +1120,7 @@ describe('buildSessionListRenderableFromSession', () => {
             host: 'mbp',
             machineId: 'm1',
             flavor: 'pro',
-            externalSessionV1: { v: 1 as const, providerId: 'provider-a' },
+            externalSessionV1: canonicalExternalSessionLink,
             systemSessionV1: { hidden: false },
         };
 
@@ -822,7 +1139,7 @@ describe('buildSessionListRenderableFromSession', () => {
             host: 'mbp',
             machineId: 'm1',
             flavor: 'pro',
-            externalSessionV1: { v: 1 as const, providerId: 'provider-a' },
+            externalSessionV1: canonicalExternalSessionLink,
             systemSessionV1: { hidden: false },
         };
 
@@ -834,6 +1151,50 @@ describe('buildSessionListRenderableFromSession', () => {
 
         expect(next).not.toBe(previous);
         expect(next?.externalSessionV1).toBe(previous?.externalSessionV1);
+    });
+
+    it('projects canonical pushed external-Agent observation changes into list renderables', () => {
+        const workingObservation = {
+            v: 1,
+            qualifiedLinkIdentity: {
+                v: 1,
+                agent: {
+                    pluginId: 'happier.opencode',
+                    localId: 'opencode',
+                },
+                source: {
+                    kind: 'opencode.server',
+                    contractVersion: 1,
+                },
+            },
+            linkGeneration: 'link-generation-1',
+            status: 'working',
+            observedAtMs: 1_000,
+            expiresAtMs: 2_000,
+        } as const;
+        const baseMetadata = {
+            path: '/home/u/repo',
+            externalSessionV1: canonicalExternalSessionLink,
+            externalAgentObservationV1: workingObservation,
+        };
+
+        const previous = buildSessionListRenderableMetadataComparison(baseMetadata as any);
+        const semanticallyEqual = buildSessionListRenderableMetadataComparison({
+            ...baseMetadata,
+            externalAgentObservationV1: { ...workingObservation },
+        } as any, previous);
+        const changed = buildSessionListRenderableMetadataComparison({
+            ...baseMetadata,
+            externalAgentObservationV1: {
+                ...workingObservation,
+                status: 'waiting',
+            },
+        } as any, previous);
+
+        expect(previous?.externalAgentObservationV1).toEqual(workingObservation);
+        expect(semanticallyEqual).toBe(previous);
+        expect(changed).not.toBe(previous);
+        expect(changed?.externalAgentObservationV1?.status).toBe('waiting');
     });
 
     it('returns the next renderable unchanged when there is no transient state to preserve', () => {
@@ -952,6 +1313,33 @@ describe('buildSessionListRenderableFromSession', () => {
 
         expect(preserveSessionListRenderableTransientState(previous, next)).toBe(next);
     });
+
+    it('allows the local session owner to propagate an explicit resuming marker clear', () => {
+        const next = buildSessionListRenderableFromSession({
+            id: 's1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 3,
+            active: true,
+            activeAt: 3,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+            resumingAt: null,
+        } as any);
+        const previous = {
+            ...next,
+            resumingAt: 123,
+        };
+
+        expect(preserveSessionListRenderableTransientState(previous, next, {
+            preserveResumingAt: false,
+        })).toBe(next);
+    });
 });
 
 describe('didSessionListRenderableReachabilityPeerFieldsChange', () => {
@@ -978,5 +1366,118 @@ describe('didSessionListRenderableReachabilityPeerFieldsChange', () => {
                 summaryText: 'Updated non-reachability summary',
             } as any,
         })).toBe(false);
+    });
+});
+
+describe('buildSessionListRenderableFromSession with transcript aggregate', () => {
+    function buildTranscriptFixture() {
+        const messages = [
+            {
+                id: 'u1',
+                kind: 'user-text',
+                localId: null,
+                createdAt: 1_000,
+                seq: 3,
+                text: 'run it',
+            },
+            {
+                id: 't1',
+                kind: 'tool-call',
+                localId: null,
+                createdAt: 2_000,
+                seq: 5,
+                tool: {
+                    id: 't1-tool',
+                    name: 'bash',
+                    state: 'running',
+                    input: { command: 'ls' },
+                    createdAt: 2_000,
+                    startedAt: 2_000,
+                    completedAt: null,
+                    description: null,
+                    permission: {
+                        id: 't1-perm',
+                        status: 'pending',
+                    },
+                },
+                children: [],
+            },
+            {
+                id: 'a1',
+                kind: 'agent-text',
+                localId: null,
+                createdAt: 3_000,
+                seq: 7,
+                text: 'done',
+            },
+        ] as unknown as import('@/sync/domains/messages/messageTypes').Message[];
+
+        const session = {
+            id: 's_aggregate',
+            seq: 7,
+            lastViewedSessionSeq: 3,
+            createdAt: 1,
+            updatedAt: 3_000,
+            active: true,
+            activeAt: 3_000,
+            archivedAt: null,
+            // No display title: exercises the transient first-user-text
+            // title fallback through the aggregate.
+            metadata: {
+                path: '/home/u/repo',
+            },
+            metadataVersion: 1,
+            agentState: {
+                requests: {},
+                completedRequests: null,
+            },
+            agentStateVersion: 2,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as unknown as Session;
+
+        return { session, messages };
+    }
+
+    it('derives a byte-identical renderable from the aggregate without a messages walk', async () => {
+        const { buildTranscriptRenderableAggregate } = await import('./transcriptRenderableAggregate');
+        const { session, messages } = buildTranscriptFixture();
+
+        const fromMessages = buildSessionListRenderableFromSession(session, undefined, messages);
+        const aggregate = buildTranscriptRenderableAggregate({
+            messages,
+            completedRequests: null,
+        });
+        const fromAggregate = buildSessionListRenderableFromSession(session, undefined, undefined, aggregate);
+
+        expect(fromAggregate).toEqual(fromMessages);
+        expect(fromMessages.hasPendingPermissionRequests).toBe(true);
+        expect(fromMessages.hasUnreadMessages).toBe(true);
+        expect(fromMessages.meaningfulActivityAt).toBe(3_000);
+        expect(fromMessages.pendingRequestObservedAt).toBe(2_000);
+        expect(fromMessages.metadata?.summaryText).toBe('run it');
+    });
+
+    it('does not fall back to stored-transcript reads when an aggregate is provided', async () => {
+        const { buildTranscriptRenderableAggregate } = await import('./transcriptRenderableAggregate');
+        const { session, messages } = buildTranscriptFixture();
+
+        // Poison the storage bridge for this session: a stored-messages
+        // fallback would surface this bogus (empty) transcript instead.
+        storageState.sessionMessages[session.id] = {
+            messageIdsOldestFirst: [],
+            messagesById: {},
+            messagesVersion: 0,
+        };
+
+        const aggregate = buildTranscriptRenderableAggregate({
+            messages,
+            completedRequests: null,
+        });
+        const fromAggregate = buildSessionListRenderableFromSession(session, undefined, undefined, aggregate);
+
+        expect(fromAggregate.hasPendingPermissionRequests).toBe(true);
+        expect(fromAggregate.pendingRequestObservedAt).toBe(2_000);
     });
 });

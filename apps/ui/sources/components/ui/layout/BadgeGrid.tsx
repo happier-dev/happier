@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View, ViewStyle, StyleProp } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
@@ -19,11 +19,11 @@ export interface BadgeGridProps {
     style?: StyleProp<ViewStyle>;
 }
 
-const STATUS_ICON: Record<BadgeGridItem['status'], { name: string; color: string }> = {
-    positive: { name: 'checkmark-circle', color: '#34C759' },
-    negative: { name: 'close-circle', color: '#FF3B30' },
-    neutral: { name: 'ellipse', color: '#8E8E93' },
-    warning: { name: 'warning', color: '#FF9500' },
+const STATUS_ICON: Record<BadgeGridItem['status'], React.ComponentProps<typeof SafeIonicons>['name']> = {
+    positive: 'checkmark-circle',
+    negative: 'close-circle',
+    neutral: 'ellipse',
+    warning: 'warning',
 };
 
 export const BadgeGrid = React.memo<BadgeGridProps>(({ items, columns = 3, testID, style }) => {
@@ -35,15 +35,27 @@ export const BadgeGrid = React.memo<BadgeGridProps>(({ items, columns = 3, testI
     return (
         <View testID={testID} style={[styles.container, style]}>
             {items.map((item) => {
-                const icon = STATUS_ICON[item.status];
+                // Status glyph tints come from theme state tokens so every theme
+                // profile (incl. dark) keeps contrast (audit PLG-1).
+                const statusColors: Record<BadgeGridItem['status'], string> = {
+                    positive: theme.colors.state.success.foreground,
+                    negative: theme.colors.state.danger.foreground,
+                    neutral: theme.colors.state.neutral.foreground,
+                    warning: theme.colors.state.warning.foreground,
+                };
                 return (
                     <View key={item.id} style={[styles.badge, { minWidth }]}>
-                        <Ionicons
-                            name={icon.name as any}
-                            size={16}
-                            color={icon.color}
+                        <View
                             style={styles.icon}
-                        />
+                            accessibilityElementsHidden
+                            importantForAccessibility="no"
+                        >
+                            <SafeIonicons
+                                name={STATUS_ICON[item.status]}
+                                size={16}
+                                color={statusColors[item.status]}
+                            />
+                        </View>
                         <View style={styles.badgeText}>
                             <Text
                                 style={[styles.label, { color: theme.colors.text.primary }]}

@@ -1,17 +1,19 @@
 import * as React from 'react';
-import { View, Pressable } from 'react-native';
+import { Platform, View, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
-import { layout } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
-import { SafeExpoImage } from '@/components/ui/media/SafeExpoImage';
+import { FloatingTabBarSurface } from '@/components/ui/navigation/FloatingTabBarSurface';
+import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
+import { resolveTabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
+import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
 import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useSessionsHaveAttention } from '@/hooks/session/useSessionsHaveAttention';
-import { useFriendRequests } from '@/sync/domains/state/storage';
+import { useFriendRequests, useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { resolveTabBarTabs } from '@/components/ui/navigation/resolveTabBarTabs';
 import type { TabType } from '@/components/ui/navigation/tabTypes';
@@ -23,29 +25,43 @@ type MainAppTabBarProps = Readonly<{
     onTabPress: (tab: TabType) => void;
 }>;
 
+type WebTabKeyDownEvent = Readonly<{
+    key?: string;
+    nativeEvent?: Readonly<{ key?: string }>;
+    preventDefault?: () => void;
+}>;
+
+type WebTabKeyDownProps = Readonly<{
+    onKeyDown?: (event: WebTabKeyDownEvent) => void;
+}>;
+
 const styles = StyleSheet.create((theme) => ({
-    outerContainer: {
-        backgroundColor: theme.colors.surface.base,
-        borderTopWidth: 1,
-        borderTopColor: theme.colors.border.default,
-    },
     innerContainer: {
         flexDirection: 'row',
-        justifyContent: 'space-around',
-        alignItems: 'flex-start',
-        maxWidth: layout.maxWidth,
-        width: '100%',
-        alignSelf: 'center',
+        alignItems: 'center',
     },
     tab: {
-        flex: 1,
         alignItems: 'center',
-        paddingTop: 8,
-        paddingBottom: 4,
+        justifyContent: 'center',
+        minWidth: 50,
+        flexShrink: 1,
     },
     tabContent: {
         alignItems: 'center',
+        justifyContent: 'center',
         position: 'relative',
+    },
+    // Selection highlight behind the whole active tab (icon + label). Subtle
+    // overlay of the foreground color so it reads softly over the glass material.
+    activePill: {
+        position: 'absolute',
+        top: 3,
+        bottom: 3,
+        left: 4,
+        right: 4,
+        borderRadius: 16,
+        backgroundColor: theme.colors.text.primary,
+        opacity: 0.05,
     },
     label: {
         fontSize: 10,
@@ -59,32 +75,6 @@ const styles = StyleSheet.create((theme) => ({
     labelInactive: {
         color: theme.colors.text.secondary,
     },
-    badge: {
-        position: 'absolute',
-        top: -4,
-        right: -8,
-        backgroundColor: theme.colors.status.error,
-        borderRadius: 8,
-        minWidth: 16,
-        height: 16,
-        paddingHorizontal: 4,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    badgeText: {
-        color: theme.colors.button.primary.tint,
-        fontSize: 10,
-        ...Typography.default('semiBold'),
-    },
-    indicatorDot: {
-        position: 'absolute',
-        top: 0,
-        right: -2,
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        backgroundColor: theme.colors.text.primary,
-    },
 }));
 
 export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
@@ -95,71 +85,108 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
     const inboxEnabled = useInboxAvailable();
     const inboxHasContent = useInboxHasContent();
     const sessionsHaveAttention = useSessionsHaveAttention();
+    const friendsBadgeEnabled = useSetting('tabBarFriendsBadgeEnabled');
+    const inboxBadgeEnabled = useSetting('tabBarInboxBadgeEnabled');
+    const sessionsBadgeEnabled = useSetting('tabBarSessionsBadgeEnabled');
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
 
-    const tabs: { key: TabType; icon: any; label: string }[] = React.useMemo(() => {
+    const tabs: { key: TabType; label: string }[] = React.useMemo(() => {
         const tabKeys = resolveTabBarTabs({ inboxEnabled, friendsEnabled });
         return tabKeys.map((key) => {
             switch (key) {
                 case 'inbox':
-                    return { key, icon: require('@/assets/images/brutalist/Brutalism 27.png'), label: t('tabs.inbox') };
+                    return { key, label: t('tabs.inbox') };
                 case 'projects':
-                    return { key, icon: require('@/assets/images/brutalist/Brutalism 16.png'), label: t('tabs.projects') };
+                    return { key, label: t('tabs.projects') };
                 case 'friends':
-                    return { key, icon: require('@/assets/images/brutalist/Brutalism 28.png'), label: t('tabs.friends') };
+                    return { key, label: t('tabs.friends') };
                 case 'settings':
-                    return { key, icon: require('@/assets/images/brutalist/Brutalism 9.png'), label: t('tabs.settings') };
+                    return { key, label: t('tabs.settings') };
                 case 'sessions':
                 default:
-                    return { key: 'sessions', icon: require('@/assets/images/brutalist/Brutalism 15.png'), label: t('tabs.sessions') };
+                    return { key: 'sessions', label: t('tabs.sessions') };
             }
         });
     }, [friendsEnabled, inboxEnabled]);
+    const handleTabKeyDown = React.useCallback((tab: TabType, event: WebTabKeyDownEvent) => {
+        if (Platform.OS !== 'web') return;
+        const key = event?.nativeEvent?.key ?? event?.key;
+        // RNW Pressable owns Enter and pointer activation. Its Space handling
+        // only applies to button-like roles, so role=tab needs this supplement.
+        if (key !== ' ' && key !== 'Spacebar') return;
+        event?.preventDefault?.();
+        props.onTabPress(tab);
+    }, [props.onTabPress]);
 
     return (
-        <View style={[styles.outerContainer, { paddingBottom: insets.bottom }]}>
-            <View style={styles.innerContainer}>
+        <FloatingTabBarSurface bottomInset={insets.bottom}>
+            <View
+                accessibilityRole="tablist"
+                style={[styles.innerContainer, { gap: metrics.rowGap }]}
+            >
                 {tabs.map((tab) => {
                     const isActive = props.activeTab === tab.key;
+                    const webKeyDownProps: WebTabKeyDownProps = Platform.OS === 'web'
+                        ? { onKeyDown: (event) => handleTabKeyDown(tab.key, event) }
+                        : {};
 
                     return (
                         <Pressable
                             key={tab.key}
                             testID={`tabbar-tab-${tab.key}`}
-                            style={styles.tab}
+                            style={[styles.tab, { paddingVertical: metrics.tabPaddingVertical, paddingHorizontal: metrics.tabPaddingHorizontal }]}
                             onPress={() => props.onTabPress(tab.key)}
                             hitSlop={8}
+                            accessibilityRole="tab"
+                            accessibilityLabel={tab.label}
+                            accessibilityState={{ selected: isActive }}
+                            aria-selected={isActive}
+                            {...webKeyDownProps}
                         >
+                            {isActive ? <View pointerEvents="none" style={[styles.activePill, { borderRadius: metrics.activePillRadius }]} /> : null}
                             <View style={styles.tabContent}>
-                                <SafeExpoImage
-                                    source={tab.icon}
-                                    contentFit="contain"
-                                    style={{ width: 24, height: 24 }}
-                                    tintColor={isActive ? theme.colors.text.primary : theme.colors.text.secondary}
-                                />
-                                {tab.key === 'friends' && friendRequests.length > 0 && (
-                                    <View style={styles.badge}>
-                                        <Text style={styles.badgeText}>
-                                            {friendRequests.length > 99 ? '99+' : friendRequests.length}
-                                        </Text>
-                                    </View>
+                                {renderMainTabIcon(
+                                    tab.key,
+                                    metrics.iconSize,
+                                    isActive ? theme.colors.text.primary : theme.colors.text.secondary,
                                 )}
-                                {tab.key === 'sessions' && sessionsHaveAttention && (
-                                    <View style={styles.indicatorDot} />
+                                {tab.key === 'friends' && friendsBadgeEnabled && friendRequests.length > 0 && (
+                                    <TabBadge variant="count" value={friendRequests.length} />
                                 )}
-                                {tab.key === 'inbox' && inboxHasContent && (
-                                    <View style={styles.indicatorDot} />
+                                {tab.key === 'sessions' && sessionsBadgeEnabled && sessionsHaveAttention && (
+                                    <TabBadge variant="dot" />
+                                )}
+                                {tab.key === 'inbox' && inboxBadgeEnabled && inboxHasContent && (
+                                    <TabBadge variant="dot" />
                                 )}
                             </View>
-                            <Text style={[
-                                styles.label,
-                                isActive ? styles.labelActive : styles.labelInactive,
-                            ]}>
-                                {tab.label}
-                            </Text>
+                            {metrics.showLabels ? (
+                                <Text style={[
+                                    styles.label,
+                                    isActive ? styles.labelActive : styles.labelInactive,
+                                ]}>
+                                    {tab.label}
+                                </Text>
+                            ) : null}
                         </Pressable>
                     );
                 })}
             </View>
-        </View>
+        </FloatingTabBarSurface>
     );
 });
+
+// Match the app's cockpit-bar line icons (all Ionicons outline, same weight):
+// tray for Inbox, chat for Sessions, gear for Settings, people for Friends.
+function renderMainTabIcon(key: TabType, size: number, color: string): React.ReactNode {
+    const name = key === 'inbox'
+        ? 'file-tray-outline'
+        : key === 'settings'
+            ? 'cog-outline'
+            : key === 'friends'
+                ? 'people-outline'
+                : key === 'projects'
+                    ? 'folder-outline'
+                    : 'chatbubbles-outline';
+    return <Ionicons name={name} size={size} color={color} />;
+}

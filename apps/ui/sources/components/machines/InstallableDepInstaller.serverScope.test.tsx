@@ -206,7 +206,7 @@ describe('InstallableDepInstaller', () => {
             },
         });
 
-        const lastCheckedItem = screen.findByProps({ title: 'settingsProviders.authentication.lastCheckedTitle' });
+        const lastCheckedItem = screen.findByProps({ title: 'settingsAgents.authentication.lastCheckedTitle' });
         expect(lastCheckedItem).toBeTruthy();
         expect(lastCheckedItem?.props.subtitle).toBe('Mar 10, 2026, 6:13 PM');
 

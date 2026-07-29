@@ -13,9 +13,24 @@ import type { TranscriptNavigationEntry } from './transcriptNavigationTypes';
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 installNavigationCommonModuleMocks({
+    typography: async () => ({
+        Typography: {
+            default: () => ({}),
+            tabular: () => ({}),
+        },
+    }),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
+            FlatList: ({ data, renderItem, keyExtractor, ...props }: any) => React.createElement(
+                'FlatList',
+                { ...props, data },
+                (data ?? []).map((item: any, index: number) => React.createElement(
+                    React.Fragment,
+                    { key: keyExtractor ? keyExtractor(item, index) : String(index) },
+                    renderItem?.({ item, index }),
+                )),
+            ),
             Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
             ScrollView: ({ children, ...props }: any) => React.createElement('ScrollView', props, children),
             View: ({ children, ...props }: any) => React.createElement('View', props, children),
@@ -97,6 +112,43 @@ describe('TranscriptNavigationPanel', () => {
         await screen.pressByTestIdAsync('nav-mode:all');
         expect(screen.findByTestId('nav-entry:turn-1')).toBeTruthy();
         expect(screen.findByTestId('nav-entry:answer-1')).toBeTruthy();
+    });
+
+    it('shows a loading state while the session transcript has not produced a first page, not the empty state', async () => {
+        standardCleanup();
+        const { TranscriptNavigationPanel } = await import('./TranscriptNavigationPanel');
+        const screen = await renderScreen(
+            <TranscriptNavigationPanel
+                sessionId="s1"
+                entries={[]}
+                activeEntryId={null}
+                onEntryPress={() => {}}
+                isLoading
+                testIDPrefix="nav"
+            />,
+        );
+
+        expect(screen.findByTestId('nav-loading')).toBeTruthy();
+        expect(screen.findByTestId('nav-empty')).toBeNull();
+        expect(screen.getTextContent()).toContain('session.transcriptNavigation.loadingBody');
+    });
+
+    it('keeps showing loaded entries while a background refresh reports loading', async () => {
+        standardCleanup();
+        const { TranscriptNavigationPanel } = await import('./TranscriptNavigationPanel');
+        const screen = await renderScreen(
+            <TranscriptNavigationPanel
+                sessionId="s1"
+                entries={ENTRIES}
+                activeEntryId={null}
+                onEntryPress={() => {}}
+                isLoading
+                testIDPrefix="nav"
+            />,
+        );
+
+        expect(screen.findByTestId('nav-loading')).toBeNull();
+        expect(screen.findByTestId('nav-entry:turn-1')).toBeTruthy();
     });
 
     it('renders a compact empty pinned state when no entries are pinned', async () => {

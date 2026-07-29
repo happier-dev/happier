@@ -9,7 +9,26 @@ function normalizeNonEmptyString(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
-function parseStableRouteRef(routeMessageId: string): { kind: 'tool' | 'server' | 'local'; value: string } | null {
+function readNonBlankOpaqueString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+export type StableSessionMessageRouteRef = Readonly<{
+    kind: 'tool' | 'server' | 'local';
+    value: string;
+}>;
+
+export function parseStableSessionMessageRouteId(routeMessageId: string | null | undefined): StableSessionMessageRouteRef | null {
+    if (typeof routeMessageId === 'string' && routeMessageId.startsWith('local:')) {
+        const value = readNonBlankOpaqueString(routeMessageId.slice('local:'.length));
+        return value ? { kind: 'local', value } : null;
+    }
+    const normalizedRouteMessageId = normalizeNonEmptyString(routeMessageId);
+    if (!normalizedRouteMessageId) return null;
+    return parseStableRouteRef(normalizedRouteMessageId);
+}
+
+function parseStableRouteRef(routeMessageId: string): StableSessionMessageRouteRef | null {
     if (routeMessageId.startsWith('tool:')) {
         const value = normalizeNonEmptyString(routeMessageId.slice('tool:'.length));
         return value ? { kind: 'tool', value } : null;
@@ -18,17 +37,11 @@ function parseStableRouteRef(routeMessageId: string): { kind: 'tool' | 'server' 
         const value = normalizeNonEmptyString(routeMessageId.slice('server:'.length));
         return value ? { kind: 'server', value } : null;
     }
-    if (routeMessageId.startsWith('local:')) {
-        const value = normalizeNonEmptyString(routeMessageId.slice('local:'.length));
-        return value ? { kind: 'local', value } : null;
-    }
     return null;
 }
 
 export function isStableSessionMessageRouteId(routeMessageId: string | null | undefined): boolean {
-    const normalizedRouteMessageId = normalizeNonEmptyString(routeMessageId);
-    if (!normalizedRouteMessageId) return false;
-    return parseStableRouteRef(normalizedRouteMessageId) !== null;
+    return parseStableSessionMessageRouteId(routeMessageId) !== null;
 }
 
 function readStableServerMessageId(message: Message): string | null {
@@ -37,7 +50,7 @@ function readStableServerMessageId(message: Message): string | null {
 }
 
 function readStableLocalMessageId(message: Message): string | null {
-    return 'localId' in message ? normalizeNonEmptyString(message.localId) : null;
+    return 'localId' in message ? readNonBlankOpaqueString(message.localId) : null;
 }
 
 function findOriginalMessageIdForInternalId(reducerState: RouteLookupState | null | undefined, internalMessageId: string): string | null {
@@ -54,6 +67,10 @@ export function buildToolCallMessageRouteId(params: Readonly<{
     toolId?: string | null;
     fallbackMessageId?: string | null;
 }>): string | null {
+    if (typeof params.fallbackMessageId === 'string') {
+        const stableFallbackRef = parseStableSessionMessageRouteId(params.fallbackMessageId);
+        if (stableFallbackRef?.kind === 'local') return `local:${stableFallbackRef.value}`;
+    }
     const stableFallbackMessageId = normalizeNonEmptyString(params.fallbackMessageId);
     if (isStableSessionMessageRouteId(stableFallbackMessageId)) {
         return stableFallbackMessageId;
@@ -132,14 +149,17 @@ export function resolveSessionMessageRouteId(params: Readonly<{
     messagesById: Readonly<Record<string, Message>>;
     reducerState: RouteLookupState | null | undefined;
 }>): string | null {
-    const routeMessageId = normalizeNonEmptyString(params.routeMessageId);
+    const parsedRouteRef = parseStableSessionMessageRouteId(params.routeMessageId);
+    const routeMessageId = parsedRouteRef?.kind === 'local'
+        ? `local:${parsedRouteRef.value}`
+        : normalizeNonEmptyString(params.routeMessageId);
     if (!routeMessageId) return null;
 
     if (params.messagesById[routeMessageId]) {
         return routeMessageId;
     }
 
-    const stableRef = parseStableRouteRef(routeMessageId);
+    const stableRef = parsedRouteRef ?? parseStableSessionMessageRouteId(routeMessageId);
     if (stableRef?.kind === 'tool') {
         return (
             params.reducerState?.toolIdToMessageId.get(stableRef.value)

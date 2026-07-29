@@ -16,11 +16,13 @@ import { t } from '@/text';
 import { SelectionListAnimatedHeight } from './SelectionListAnimatedHeight';
 import { SelectionListBody } from './SelectionListBody';
 import { SelectionListFooter } from './SelectionListFooter';
+import { SelectionListInputAttentionContext } from './SelectionListInputAttentionContext';
 import { createSelectionListKeyPressHandler } from './SelectionListKeyboardInput';
 import { SelectionListMeasureHost } from './SelectionListMeasureHost';
-import { synthesizeSelectionListRenderPlan } from './SelectionListRenderPlan';
+import { synthesizeSelectionListRenderPlan, type SectionRenderPlan } from './SelectionListRenderPlan';
 import { activateSelectionListRow } from './SelectionListRowActivation';
 import { SelectionListSearchHeader } from './SelectionListSearchHeader';
+import { resolveSelectionListOptionDomId } from './resolveSelectionListOptionDomId';
 import { selectionListTestId } from './_shared';
 import type {
     SelectionListDynamicSection,
@@ -40,6 +42,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     container: {
         backgroundColor: theme.colors.surface.base,
         flexDirection: 'column',
+    },
+    containerFill: {
+        flex: 1,
+        minHeight: 0,
     },
     content: {
         // RUX-1 Issue 7: the content zone (body + cross-slide) MUST be the
@@ -70,6 +76,8 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 const IS_WEB = Platform.OS === 'web';
 const STABILIZED_HEIGHT_SHRINK_DELAY_MS = 180;
+/** Section id for the synthetic, filter-bypassing `buildInputRow` row. */
+const SELECTION_LIST_INPUT_ROW_SECTION_ID = 'selection-list:input-row';
 
 /**
  * SelectionList — top-level orchestrator with three-zone composition:
@@ -133,9 +141,22 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     );
 
     const currentStep = stack.currentStep;
-    const inputMode = props.inputMode ?? 'search';
+    // Per-step input mode: a pushed step may declare its own `inputMode`
+    // (e.g. the worktree "name your worktree" value step) while sibling steps
+    // stay in the SelectionList-level mode. Falls back to the prop, then 'search'.
+    const inputMode = currentStep.inputMode ?? props.inputMode ?? 'search';
     const inputBehavior = props.inputBehavior;
     const searchInputRef = React.useRef<RNTextInput | null>(null);
+
+    // Input-attention signal: a `requiresInputValue` row (e.g. the worktree
+    // "type a name" row while empty) asks to focus + shake the input rather than
+    // commit. The nonce drives the header's shake; the focus call summons the
+    // cursor so the user can start typing immediately.
+    const [inputAttentionNonce, setInputAttentionNonce] = React.useState(0);
+    const requestInputAttention = React.useCallback(() => {
+        setInputAttentionNonce((current) => current + 1);
+        searchInputRef.current?.focus?.();
+    }, []);
 
     // Reset the input when the visible step changes — the placeholder + filter
     // domain are step-specific, so persisting the value across pushes/pops
@@ -175,14 +196,32 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     });
 
     // Resolve sections to render via the pure synthesizer (R14 extraction).
+    const buildInputRow = currentStep.buildInputRow;
     const renderPlan = React.useMemo(
-        () => synthesizeSelectionListRenderPlan({
-            sections: currentStep.sections,
-            inputValue,
-            filterQuery,
-            dynamicSectionStates,
-        }),
-        [currentStep.sections, dynamicSectionStates, inputValue, filterQuery],
+        () => {
+            const base = synthesizeSelectionListRenderPlan({
+                sections: currentStep.sections,
+                inputValue,
+                // A value step can opt out of input filtering (`disableInputFilter`)
+                // so its fixed rows (e.g. the "Use suggested name" row) stay
+                // visible while the user types a custom value rather than being
+                // narrowed away as a search query.
+                filterQuery: currentStep.disableInputFilter === true ? '' : filterQuery,
+                dynamicSectionStates,
+            });
+            // Combobox-create: a step can synthesize an "act on current input"
+            // row (e.g. "Create worktree '<typed>'"). Prepend it as a
+            // filter-bypassing section so it always reflects the live input and
+            // is the default-focused row; `null` omits it.
+            const inputRow = buildInputRow?.(inputValue) ?? null;
+            if (!inputRow) return base;
+            const inputRowSection: SectionRenderPlan = {
+                id: SELECTION_LIST_INPUT_ROW_SECTION_ID,
+                options: [inputRow],
+            };
+            return [inputRowSection, ...base];
+        },
+        [currentStep.sections, currentStep.disableInputFilter, buildInputRow, dynamicSectionStates, inputValue, filterQuery],
     );
 
     // FR4-2: option-bearing sections contribute focusable rows. Sections in
@@ -239,9 +278,10 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                 option,
                 onSelect: props.onSelect,
                 onPushStep: stack.pushStep,
+                onRequiresInput: requestInputAttention,
             });
         },
-        [findOptionById, stack.pushStep, props.onSelect],
+        [findOptionById, stack.pushStep, props.onSelect, requestInputAttention],
     );
 
     const handleClearInput = React.useCallback(() => {
@@ -311,9 +351,24 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         return true;
     }, [autocompleteValueByOptionId, setInputValue]);
 
+    // Prefer the active step's commit handler (a pushed value step carries its
+    // own closure — e.g. the base ref it was opened for); fall back to the
+    // SelectionList-level prop for single-instance value-mode consumers.
+    const stepCommitInputValue = currentStep.onCommitInputValue;
     const handleCommitInputValue = React.useCallback(() => {
+        if (stepCommitInputValue) {
+            // A per-step value commit (e.g. the worktree "name" step) is a
+            // terminal selection like activating a row, so close the popover.
+            // Without this the popover stays open, the consumer rebuilds
+            // `rootStep`, and the step stack resets back to the root step.
+            // Prop-level value-mode consumers (e.g. the path picker) keep their
+            // own close semantics and are unaffected.
+            stepCommitInputValue(inputValue);
+            props.onRequestClose();
+            return;
+        }
         props.onCommitInputValue?.(inputValue);
-    }, [inputValue, props.onCommitInputValue]);
+    }, [inputValue, stepCommitInputValue, props.onCommitInputValue, props.onRequestClose]);
 
     const handleWalkUp = React.useCallback((): boolean => {
         if (!inputBehavior?.onBackspaceAtEnd) return false;
@@ -336,8 +391,19 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         return true;
     }, [inputBehavior, inputValue, setInputValue]);
 
+    // Default keyboard focus. A step can compute it from the live input
+    // (`resolveDefaultFocusedOptionId`) — e.g. the worktree name step focuses the
+    // "Use suggested name" row while empty, then the live "Create …" row once the
+    // user types — falling back to the selected option, then the first row.
+    const preferredFocusedOptionId = React.useMemo(() => {
+        const fromStep = currentStep.resolveDefaultFocusedOptionId?.(inputValue);
+        if (fromStep !== undefined && fromStep !== null) return fromStep;
+        return props.selectedOptionId ?? null;
+    }, [currentStep, inputValue, props.selectedOptionId]);
+
     const keyboard = useSelectionListKeyboardNav({
         flatVisibleOptionIds,
+        preferredFocusedOptionId,
         onActivate: handleActivate,
         canPopStep: stack.canPop,
         onPopStep: stack.popStep,
@@ -523,9 +589,10 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         ? props.maxHeight
         : undefined;
     const fixedHeight = fixedMaxHeight ?? measuredPopoverHeight.height;
-    const useContentSizedFrame = fixedHeight === undefined;
+    const useContentSizedFrame = fixedHeight === undefined && props.fillAvailableSpace !== true;
     const containerStyle: StyleProp<ViewStyle> = [
         styles.container,
+        props.fillAvailableSpace === true ? styles.containerFill : null,
         props.maxHeight !== undefined ? { maxHeight: props.maxHeight } : null,
         fixedHeight !== undefined ? { height: fixedHeight } : null,
         measuredPopoverHeight.hidden ? { opacity: 0 } : null,
@@ -544,11 +611,15 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         () => selectionListTestId(resolvedTestId, 'listbox'),
         [resolvedTestId],
     );
-    const activeDescendantId = focusedOptionId
-        ? selectionListTestId(resolvedTestId, currentStep.id, 'option', focusedOptionId)
+    const activeDescendantId = focusedOption
+        ? resolveSelectionListOptionDomId({
+            option: focusedOption,
+            rootTestID: resolvedTestId,
+            stepId: currentStep.id,
+        })
         : undefined;
 
-    const body = (
+    const listBody = (
         <SelectionListBody
             step={currentStep}
             rootTestID={resolvedTestId}
@@ -557,11 +628,16 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             focusedOptionId={focusedOptionId}
             scrollTargetOptionId={props.activeScrollOptionId ?? focusedOptionId ?? props.selectedOptionId ?? null}
             listboxId={listboxId}
+            accessibilityLabel={props.listAccessibilityLabel}
             onSelect={props.onSelect}
             onPushStep={handlePushStep}
             showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
+            pagination={props.pagination}
         />
     );
+    const body = props.contentState !== undefined ? (
+        <View style={styles.content}>{props.contentState}</View>
+    ) : listBody;
 
     // FR3-1 / FR3-8 — identity-free measure mirror. Pass an explicit
     // `mode='measure'` SelectionListBody to SelectionListAnimatedHeight so
@@ -578,9 +654,11 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             plan={renderPlan}
             focusedOptionId={focusedOptionId}
             listboxId={listboxId}
+            accessibilityLabel={props.listAccessibilityLabel}
             onSelect={props.onSelect}
             onPushStep={handlePushStep}
             showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
+            pagination={props.pagination}
         />
     );
 
@@ -607,6 +685,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         : { onKeyDown: handleKeyPress };
 
     return (
+        <SelectionListInputAttentionContext.Provider value={requestInputAttention}>
         <View
             testID={resolvedTestId}
             style={containerStyle}
@@ -632,6 +711,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                 >
                     <SelectionListSearchHeader
                         testID={selectionListTestId(resolvedTestId, 'header')}
+                        inputTestID={props.inputTestID}
                         value={inputValue}
                         onChangeText={setInputValue}
                         placeholder={currentStep.inputPlaceholder ?? ''}
@@ -639,6 +719,10 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                         backLabel={currentStep.backLabel ?? props.rootStep.title}
                         onPopStep={stack.popStep}
                         onKeyPress={handleKeyPress}
+                        // Native soft-keyboard return commits the value when this
+                        // step is in value mode (web commits via the keydown
+                        // listener instead; the header guards against double-fire).
+                        onSubmitEditing={inputMode === 'value' ? handleCommitInputValue : undefined}
                         ghostSuffix={autocomplete.ghostSuffix}
                         inputValueEllipsizeMode={props.inputValueEllipsizeMode}
                         inputPrefix={props.inputPrefix}
@@ -648,6 +732,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                         onIsComposingChange={setIsComposing}
                         listboxId={listboxId}
                         activeDescendantId={activeDescendantId}
+                        attentionNonce={inputAttentionNonce}
                     />
                 </View>
             ) : null}
@@ -699,5 +784,6 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                 </View>
             ) : null}
         </View>
+        </SelectionListInputAttentionContext.Provider>
     );
 }

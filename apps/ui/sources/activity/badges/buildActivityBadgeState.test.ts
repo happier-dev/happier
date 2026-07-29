@@ -87,6 +87,32 @@ describe('buildActivityBadgeState', () => {
         });
     });
 
+    it('counts blocked pending delivery as badge attention without counting ordinary queued input', () => {
+        const state = buildActivityBadgeState({
+            sessions: [
+                {
+                    id: 's1',
+                    seq: 5,
+                    active: true,
+                    presence: 'online',
+                    lastViewedSessionSeq: 5,
+                    pendingCount: 4,
+                    pendingBlockedCount: 1,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    metadata: { path: '', host: '' },
+                } as any,
+            ],
+            numericInboxCount: 0,
+            hasNonNumericInboxAttention: false,
+        });
+
+        expect(state).toEqual({
+            count: 1,
+            showNonNumericDot: false,
+        });
+    });
+
     it('does not count pending permission/user-action requests for inactive sessions', () => {
         const state = buildActivityBadgeState({
             sessions: [

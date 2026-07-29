@@ -71,7 +71,7 @@ describe('action settings tool exposure', () => {
         expect(resolveToolExposureState({
             settings: DEFAULT_ACTIONS_SETTINGS_V1,
             actionId: 'review.start',
-            targetId: 'session_agent',
+            targetId: 'agent',
         })).toMatchObject({
             kind: 'visible',
             value: 'default',
@@ -79,7 +79,7 @@ describe('action settings tool exposure', () => {
             resolvedMode: 'discoverable_only',
             explicit: false,
             disabled: false,
-            surface: 'session_agent',
+            surface: 'agent',
         });
     });
 
@@ -114,12 +114,12 @@ describe('action settings tool exposure', () => {
         const next = setToolExposureMode({
             settings: DEFAULT_ACTIONS_SETTINGS_V1,
             actionId: 'review.start',
-            targetId: 'session_agent',
+            targetId: 'agent',
             value: 'direct',
         });
 
         expect(readToolExposureModes(next, 'review.start')).toEqual({
-            session_agent: 'direct',
+            agent: 'direct',
         });
     });
 
@@ -128,14 +128,14 @@ describe('action settings tool exposure', () => {
         const direct = setToolExposureMode({
             settings: DEFAULT_ACTIONS_SETTINGS_V1,
             actionId: 'review.start',
-            targetId: 'session_agent',
+            targetId: 'agent',
             value: 'direct',
         });
 
         const next = setToolExposureMode({
             settings: direct,
             actionId: 'review.start',
-            targetId: 'session_agent',
+            targetId: 'agent',
             value: 'default',
         });
 
@@ -158,20 +158,20 @@ describe('action settings tool exposure', () => {
         const direct = setToolExposureMode({
             settings: DEFAULT_ACTIONS_SETTINGS_V1,
             actionId: 'review.start',
-            targetId: 'session_agent',
+            targetId: 'agent',
             value: 'direct',
         });
         const targetOff = actionSettingsTargets.setActionTargetSelected({
             settings: direct,
             actionId: 'review.start',
-            targetId: 'session_agent',
+            targetId: 'agent',
             selected: false,
         });
 
         expect(resolveToolExposureState({
             settings: targetOff,
             actionId: 'review.start',
-            targetId: 'session_agent',
+            targetId: 'agent',
         })).toMatchObject({
             kind: 'visible',
             value: 'direct',
@@ -180,7 +180,7 @@ describe('action settings tool exposure', () => {
             disabled: true,
         });
         expect(readToolExposureModes(targetOff, 'review.start')).toEqual({
-            session_agent: 'direct',
+            agent: 'direct',
         });
     });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CodexBackendMode } from '@happier-dev/agents';
+import type { CodexBackendMode } from '@happier-dev/protocol';
 
 import { buildSessionHandoffMetadataPatch } from './buildSessionHandoffMetadataPatch';
 
@@ -15,7 +15,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 machineId: 'machine_source',
                 claudeSessionId: 'claude_old',
             },
-            providerId: 'claude',
+            agentId: 'claude',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
             sessionStorageBefore: 'persisted',
@@ -43,7 +43,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 codexSessionId: 'thread_old',
                 codexBackendMode: 'acp',
             },
-            providerId: 'codex',
+            agentId: 'codex',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
             sessionStorageBefore: 'persisted',
@@ -59,11 +59,11 @@ describe('buildSessionHandoffMetadataPatch', () => {
         expect(updated.codexBackendMode).toBe('acp');
         expect(updated.runtimeDescriptorV1).toMatchObject({
             v: 1,
-            providerId: 'codex',
-            provider: {
+            agentId: 'codex',
+            agent: {
                 backendMode: 'acp',
                 providerSessionId: 'thread_new',
-                providerExtra: {
+                agentExtra: {
                     owner: 'codex',
                     schemaId: 'codex.agentRuntimeDescriptorExtra',
                     v: 1,
@@ -83,7 +83,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 codexSessionId: 'thread_old',
                 codexBackendMode: legacyCodexBackendMode,
             },
-            providerId: 'codex',
+            agentId: 'codex',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
             sessionStorageBefore: 'persisted',
@@ -97,8 +97,8 @@ describe('buildSessionHandoffMetadataPatch', () => {
 
         expect(updated.codexBackendMode).toBe('acp');
         expect(updated.runtimeDescriptorV1).toMatchObject({
-            providerId: 'codex',
-            provider: {
+            agentId: 'codex',
+            agent: {
                 backendMode: 'acp',
                 providerSessionId: 'thread_new',
             },
@@ -116,7 +116,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 codexSessionId: 'thread_old',
                 codexBackendMode: 'acp',
             },
-            providerId: 'codex',
+            agentId: 'codex',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
             sessionStorageBefore: 'direct',
@@ -128,8 +128,8 @@ describe('buildSessionHandoffMetadataPatch', () => {
             targetDirectSource: { kind: 'codexHome', home: 'connectedService', connectedServiceId: 'openai-codex' },
             targetRuntimeDescriptor: {
                 v: 1,
-                providerId: 'codex',
-                provider: {
+                agentId: 'codex',
+                agent: {
                     backendMode: 'appServer',
                     providerSessionId: 'thread_connected',
                     home: 'connectedService',
@@ -143,8 +143,8 @@ describe('buildSessionHandoffMetadataPatch', () => {
         });
         expect(updated.runtimeDescriptorV1).toMatchObject({
             v: 1,
-            providerId: 'codex',
-            provider: {
+            agentId: 'codex',
+            agent: {
                 backendMode: 'appServer',
                 providerSessionId: 'thread_connected',
                 home: 'connectedService',
@@ -165,7 +165,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 codexSessionId: 'thread_old',
                 codexBackendMode: 'acp',
             },
-            providerId: 'codex',
+            agentId: 'codex',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
             sessionStorageBefore: 'direct',
@@ -184,8 +184,8 @@ describe('buildSessionHandoffMetadataPatch', () => {
         });
 
         expect(updated.runtimeDescriptorV1).toMatchObject({
-            providerId: 'codex',
-            provider: {
+            agentId: 'codex',
+            agent: {
                 backendMode: 'acp',
                 providerSessionId: 'thread_connected',
                 home: 'connectedService',
@@ -203,7 +203,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 homePath: '/tmp/connected-codex-home',
             },
             runtimeDescriptorV1: expect.objectContaining({
-                providerId: 'codex',
+                agentId: 'codex',
             }),
         });
         expect(updated).not.toHaveProperty('agentRuntimeDescriptorV1');
@@ -221,7 +221,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 opencodeServerBaseUrl: 'http://old.example',
                 opencodeServerBaseUrlExplicit: true,
             },
-            providerId: 'opencode',
+            agentId: 'opencode',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
             sessionStorageBefore: 'direct',
@@ -239,13 +239,13 @@ describe('buildSessionHandoffMetadataPatch', () => {
         expect(updated.opencodeServerBaseUrlExplicit).toBe(true);
         expect(updated.runtimeDescriptorV1).toMatchObject({
             v: 1,
-            providerId: 'opencode',
-            provider: {
+            agentId: 'opencode',
+            agent: {
                 backendMode: 'server',
                 providerSessionId: 'sess_new',
                 serverBaseUrl: 'http://new.example',
                 serverBaseUrlExplicit: true,
-                providerExtra: {
+                agentExtra: {
                     owner: 'opencode',
                     schemaId: 'opencode.agentRuntimeDescriptorExtra',
                     v: 1,
@@ -265,7 +265,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 opencodeSessionId: 'sess_old',
                 opencodeBackendMode: 'acp',
             },
-            providerId: 'opencode',
+            agentId: 'opencode',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
             sessionStorageBefore: 'direct',
@@ -277,8 +277,8 @@ describe('buildSessionHandoffMetadataPatch', () => {
             targetDirectSource: { kind: 'opencodeServer', baseUrl: 'http://new.example', directory: '/repo/target' },
             targetRuntimeDescriptor: {
                 v: 1,
-                providerId: 'opencode',
-                provider: {
+                agentId: 'opencode',
+                agent: {
                     backendMode: 'server',
                     providerSessionId: 'sess_new',
                     serverBaseUrl: 'http://canonical.example',
@@ -291,8 +291,8 @@ describe('buildSessionHandoffMetadataPatch', () => {
         expect(updated.opencodeServerBaseUrl).toBe('http://canonical.example');
         expect(updated.runtimeDescriptorV1).toMatchObject({
             v: 1,
-            providerId: 'opencode',
-            provider: {
+            agentId: 'opencode',
+            agent: {
                 backendMode: 'server',
                 providerSessionId: 'sess_new',
                 serverBaseUrl: 'http://canonical.example',
@@ -311,13 +311,13 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 path: '/repo/source',
                 externalHistoryImportV1: {
                     v: 1,
-                    providerId: 'opencode',
+                    agentId: 'opencode',
                     remoteSessionId: 'old_remote',
                     importedAtMs: 1,
                     source: { kind: 'opencodeServer', baseUrl: 'http://old.example' },
                 },
             },
-            providerId: 'opencode',
+            agentId: 'opencode',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
             sessionStorageBefore: 'persisted',
@@ -341,11 +341,11 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 path: '/repo/source',
                 agentRuntimeDescriptorV1: {
                     v: 1,
-                    providerId: 'codex',
+                    agentId: 'codex',
                     provider: { backendMode: 'appServer', providerSessionId: 'thread_old' },
                 },
             },
-            providerId: 'claude',
+            agentId: 'claude',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
             sessionStorageBefore: 'persisted',
@@ -374,7 +374,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 claudeLastAssistantUuid: 'assistant_old',
                 externalSessionV1: {
                     v: 1,
-                    providerId: 'claude',
+                    agentId: 'claude',
                     machineId: 'machine_source',
                     remoteSessionId: 'claude_session_old',
                     source: {
@@ -385,7 +385,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                     linkedAtMs: 1,
                 },
             },
-            providerId: 'claude',
+            agentId: 'claude',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
             sessionStorageBefore: 'direct',
@@ -426,7 +426,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 opencodeSessionId: 'sess_old',
                 opencodeBackendMode: 'acp',
             },
-            providerId: 'opencode',
+            agentId: 'opencode',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
             sessionStorageBefore: 'direct',
@@ -442,13 +442,13 @@ describe('buildSessionHandoffMetadataPatch', () => {
         expect(updated.opencodeServerBaseUrl).toBe('http://new.example');
         expect(updated.runtimeDescriptorV1).toMatchObject({
             v: 1,
-            providerId: 'opencode',
-            provider: {
+            agentId: 'opencode',
+            agent: {
                 backendMode: 'server',
                 providerSessionId: 'sess_new',
                 serverBaseUrl: 'http://new.example',
                 serverBaseUrlExplicit: true,
-                providerExtra: {
+                agentExtra: {
                     owner: 'opencode',
                     schemaId: 'opencode.agentRuntimeDescriptorExtra',
                     v: 1,

@@ -2,6 +2,8 @@ import * as React from 'react';
 import { ActivityIndicator as NativeActivityIndicator, Platform, View, type ActivityIndicatorProps, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+
 const DEFAULT_SMALL_SPINNER_SIZE = 20;
 const DEFAULT_LARGE_SPINNER_SIZE = 36;
 const DEFAULT_NUMERIC_SPINNER_SIZE = 20;
@@ -38,6 +40,24 @@ function resolveSpinnerBorderWidth(size: number): number {
     return Math.max(1.5, Math.min(3, size / 8));
 }
 
+/**
+ * A vector icon draws its circle INSET in its em box, but a spinner's diameter IS its box. So a
+ * spinner and an Ionicons `checkmark-circle` given the same number render at visibly different
+ * sizes, and a status slot that swaps one for the other appears to change size as it settles.
+ *
+ * Measured from a rendered transcript at matched scale: a filled circle glyph declared at 16 draws
+ * ~12.8px of ink, next to a `size="small"` spinner's full 20px ring — the running state read 1.55x
+ * the size of the success state it turns into.
+ *
+ * Every status slot that pairs a spinner with a glyph derives the spinner from the glyph size here.
+ * Before this existed, four of them each guessed separately and all four disagreed.
+ */
+const ICON_CIRCLE_INK_RATIO = 0.8;
+
+export function iconMatchedSpinnerSize(iconSize: number): number {
+    return Math.round(iconSize * ICON_CIRCLE_INK_RATIO);
+}
+
 export function ActivitySpinner(props: ActivitySpinnerProps) {
     const { theme } = useUnistyles();
     const resolvedColor = props.color ?? theme.colors.text.secondary;
@@ -46,6 +66,14 @@ export function ActivitySpinner(props: ActivitySpinnerProps) {
         return <NativeActivityIndicator {...props} color={resolvedColor} />;
     }
 
+    return <WebActivitySpinner {...props} resolvedColor={resolvedColor} />;
+}
+
+function WebActivitySpinner(
+    props: ActivitySpinnerProps & Readonly<{ resolvedColor: ActivityIndicatorProps['color'] }>,
+) {
+    const reducedMotion = useReducedMotionPreference();
+
     const {
         animating = true,
         animationEnabled = true,
@@ -53,6 +81,7 @@ export function ActivitySpinner(props: ActivitySpinnerProps) {
         hidesWhenStopped = true,
         size,
         style,
+        resolvedColor,
         ...viewProps
     } = props;
 
@@ -69,7 +98,7 @@ export function ActivitySpinner(props: ActivitySpinnerProps) {
         borderWidth: resolveSpinnerBorderWidth(resolvedSize),
         borderColor: typeof resolvedColor === 'string' ? resolvedColor : 'currentColor',
         borderTopColor: 'transparent',
-        ...(animationEnabled ? {
+        ...(animationEnabled && !reducedMotion ? {
             animationDuration: '850ms',
             animationIterationCount: 'infinite',
             animationName: SPINNER_ANIMATION_NAME,

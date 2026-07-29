@@ -4,8 +4,10 @@ import { resolveSessionListPreferredServerIdFromState } from '@/sync/domains/ses
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { SESSION_MACHINE_TARGET_UNAVAILABLE_ERROR } from '@/sync/runtime/sessionMachineRpcErrorCodes';
 
-import { uploadSessionAttachmentFromReaderViaDirectImport } from './uploadSessionAttachmentFromReaderViaDirectImport';
+import { uploadSessionAttachmentFromReaderWithCarrierFallbacks } from './uploadSessionAttachmentFromReaderWithCarrierFallbacks';
+import type { TransferFinalizeRecoveryFailure } from '../plumbing/directTransferFinalizeRecovery';
 
 type SessionRpcFailure = Readonly<{ success: false; error: string; errorCode?: string }>;
 type TransferFailureResponse = Readonly<{ success: false; error: string; errorCode?: string }>;
@@ -36,7 +38,11 @@ export async function uploadDaemonSessionAttachmentFromReader(params: Readonly<{
     request: SessionAttachmentsUploadInitRequest;
     signal?: AbortSignal | null;
     onProgress?: ((progress: Readonly<{ uploadedBytes: number; totalBytes: number }>) => void) | null;
-}>): Promise<SessionAttachmentsUploadFinalizeResponse | TransferFailureResponse> {
+}>): Promise<
+    SessionAttachmentsUploadFinalizeResponse
+    | TransferFailureResponse
+    | TransferFinalizeRecoveryFailure<SessionAttachmentsUploadFinalizeResponse>
+> {
     const machineTarget = readMachineControlTargetForSession(params.sessionId);
     const preferredServerId = resolveSessionListPreferredServerIdFromState(
         storage.getState(),
@@ -47,12 +53,12 @@ export async function uploadDaemonSessionAttachmentFromReader(params: Readonly<{
     if (!machineTarget || !serverId) {
         return {
             success: false,
-            error: 'Machine target not available for session',
+            error: SESSION_MACHINE_TARGET_UNAVAILABLE_ERROR,
             errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
         };
     }
 
-    return await uploadSessionAttachmentFromReaderViaDirectImport({
+    return await uploadSessionAttachmentFromReaderWithCarrierFallbacks({
         machineId: machineTarget.machineId,
         serverId,
         fileReader: params.fileReader,

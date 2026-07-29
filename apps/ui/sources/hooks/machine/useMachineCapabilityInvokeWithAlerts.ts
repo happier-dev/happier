@@ -20,9 +20,11 @@ function resolveLogPathFromInvokeResponse(response: CapabilitiesInvokeResponse):
 export type CapabilityInvokeAlerts = Readonly<{
     errorTitle: string;
     successTitle: string;
+    /** The caller will reconcile post-send ambiguity from authoritative state and owns the final alert. */
+    deferAmbiguousOutcomeToCaller?: boolean;
     unsupportedMessage: (reason: UnsupportedReason) => string;
     formatErrorMessage?: (error: Readonly<{ message: string; code?: string }>) => string;
-    successMessage?: string;
+    successMessage?: string | null;
     successWithLogPath?: (logPath: string) => string;
 }>;
 
@@ -31,6 +33,7 @@ export type InvokeMachineCapabilityWithAlertsParams = Readonly<{
     request: CapabilitiesInvokeRequest;
     serverId?: string | null;
     timeoutMs?: number;
+    isAuthorityCurrent?: () => boolean;
     alerts: CapabilityInvokeAlerts;
 }>;
 
@@ -47,7 +50,12 @@ export function useMachineCapabilityInvokeWithAlerts() {
             );
 
             if (!invoke.supported) {
-                Modal.alert(params.alerts.errorTitle, params.alerts.unsupportedMessage(invoke.reason));
+                if (
+                    !(params.alerts.deferAmbiguousOutcomeToCaller === true && invoke.reason === 'error')
+                    && params.isAuthorityCurrent?.() !== false
+                ) {
+                    Modal.alert(params.alerts.errorTitle, params.alerts.unsupportedMessage(invoke.reason));
+                }
                 return invoke;
             }
 
@@ -55,18 +63,34 @@ export function useMachineCapabilityInvokeWithAlerts() {
                 const msg = params.alerts.formatErrorMessage
                     ? params.alerts.formatErrorMessage(invoke.response.error)
                     : invoke.response.error.message;
-                Modal.alert(params.alerts.errorTitle, msg);
+                if (
+                    !(params.alerts.deferAmbiguousOutcomeToCaller === true
+                        && invoke.response.error.code === 'outcomeUnknown')
+                    && params.isAuthorityCurrent?.() !== false
+                ) {
+                    Modal.alert(params.alerts.errorTitle, msg);
+                }
                 return invoke;
             }
 
             const logPath = resolveLogPathFromInvokeResponse(invoke.response);
+            if (params.alerts.successMessage === null) {
+                return invoke;
+            }
             const successMsg = logPath && params.alerts.successWithLogPath
                 ? params.alerts.successWithLogPath(logPath)
                 : (params.alerts.successMessage ?? t('common.done'));
-            Modal.alert(params.alerts.successTitle, successMsg);
+            if (params.isAuthorityCurrent?.() !== false) {
+                Modal.alert(params.alerts.successTitle, successMsg);
+            }
             return invoke;
         } catch (e) {
-            Modal.alert(params.alerts.errorTitle, e instanceof Error ? e.message : t('common.requestFailed'));
+            if (
+                params.alerts.deferAmbiguousOutcomeToCaller !== true
+                && params.isAuthorityCurrent?.() !== false
+            ) {
+                Modal.alert(params.alerts.errorTitle, e instanceof Error ? e.message : t('common.requestFailed'));
+            }
             return { supported: false, reason: 'error' as const };
         } finally {
             setIsInvoking(false);

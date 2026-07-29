@@ -6,8 +6,6 @@ import { useUnistyles } from 'react-native-unistyles';
 import { type BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
-import { listProviderSubagentSettingsSections } from '@/agents/providers/registry/providerSubagentSettingsRegistry';
-import type { TranslatableText } from '@/agents/providers/shared/providerSettingsPlugin';
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
@@ -25,6 +23,7 @@ import { useSetting } from '@/sync/domains/state/storage';
 import { useAllMachines } from '@/sync/store/hooks';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import {
     buildExecutionRunsGuidanceBlock,
     coerceExecutionRunsGuidanceEntries,
@@ -34,10 +33,10 @@ import { t } from '@/text';
 
 import { showSubAgentGuidanceRuleEditorModal } from './guidance/showSubAgentGuidanceRuleEditorModal';
 
-function resolveText(input: TranslatableText | undefined): string | undefined {
+function resolveText(input: string | Readonly<{ fallback: string }> | undefined): string | undefined {
     if (input === undefined) return undefined;
     if (typeof input === 'string') return input;
-    return t(input.key);
+    return input.fallback;
 }
 
 function clampInt(value: number, bounds: Readonly<{ min: number; max: number }>): number {
@@ -137,7 +136,18 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
         daemonMergedProjection.inputs?.mergedProviderProjectionById,
         enabledAgentIds,
     ]);
-    const providerSubagentSections = React.useMemo(() => listProviderSubagentSettingsSections(), []);
+    const agentSubagentSections = React.useMemo(() => (
+        Object.values(daemonMergedProjection.inputs?.pluginProjectionById ?? {}).flatMap((plugin) => (
+            plugin.editableSettingsGroups.flatMap((group) => {
+                const target = group.target;
+                if (target.kind !== 'agent') return [];
+                return group.presentation.subagentSections.map((section) => ({
+                    agentId: target.agent.localId,
+                    section,
+                }));
+            })
+        ))
+    ), [daemonMergedProjection.inputs?.pluginProjectionById]);
 
     const setEntriesNext = React.useCallback((next: readonly ExecutionRunsGuidanceEntry[]) => {
         setEntries(next as any);
@@ -194,7 +204,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                             : t('subAgentGuidance.settings.overview.happierStatusDisabledSubtitle')
                     }
                     icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.orange} />}
-                    onPress={() => router.push('/(app)/settings/features')}
+                    onPress={() => router.push(SETTINGS_ROUTES.features)}
                 />
             </ItemGroup>
 
@@ -206,19 +216,19 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                     title={t('subAgentGuidance.settings.related.sessionTitle')}
                     subtitle={t('subAgentGuidance.settings.related.sessionSubtitle')}
                     icon={<Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.blue} />}
-                    onPress={() => router.push('/(app)/settings/session')}
+                    onPress={() => router.push(SETTINGS_ROUTES.session)}
                 />
                 <Item
                     title={t('subAgentGuidance.settings.related.providersTitle')}
                     subtitle={t('subAgentGuidance.settings.related.providersSubtitle')}
                     icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.orange} />}
-                    onPress={() => router.push('/(app)/settings/providers')}
+                    onPress={() => router.push(SETTINGS_ROUTES.agents)}
                 />
                 <Item
                     title={t('subAgentGuidance.settings.related.backendsTitle')}
                     subtitle={t('subAgentGuidance.settings.related.backendsSubtitle')}
                     icon={<Ionicons name="git-network-outline" size={29} color={theme.colors.accent.indigo} />}
-                    onPress={() => router.push('/(app)/settings/providers')}
+                    onPress={() => router.push(SETTINGS_ROUTES.agents)}
                 />
             </ItemGroup>
 
@@ -346,22 +356,22 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                         title={t('subAgentGuidance.settings.disabled.enableExecutionRuns.title')}
                         subtitle={t('subAgentGuidance.settings.disabled.enableExecutionRuns.subtitle')}
                         icon={<Ionicons name="flask-outline" size={29} color={theme.colors.accent.orange} />}
-                        onPress={() => router.push('/(app)/settings/features')}
+                        onPress={() => router.push(SETTINGS_ROUTES.features)}
                     />
                 </ItemGroup>
             )}
 
-            {providerSubagentSections.map(({ providerId, section }) => (
+            {agentSubagentSections.map(({ agentId, section }) => (
                 <ItemGroup
-                    key={`${providerId}:${section.id}`}
+                    key={`${agentId}:${section.id}`}
                     title={resolveText(section.title) ?? ''}
-                    footer={resolveText(section.footer)}
+                    footer={resolveText(section.description)}
                 >
                     {section.items.map((item) => (
                         <Item
-                            key={`${providerId}:${section.id}:${item.id}`}
+                            key={`${agentId}:${section.id}:${item.id}`}
                             title={resolveText(item.title) ?? ''}
-                            subtitle={resolveText(item.subtitle)}
+                            subtitle={resolveText(item.description)}
                             icon={<Ionicons name={(item.iconIonName as any) ?? 'options-outline'} size={29} color={theme.colors.accent.orange} />}
                             onPress={() => router.push(item.route)}
                         />

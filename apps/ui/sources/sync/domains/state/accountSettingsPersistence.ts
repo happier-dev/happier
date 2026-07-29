@@ -1,5 +1,6 @@
 import { applySettings, settingsDefaults, settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
+import { stripMigratedSessionOrganizationSettings } from '@/sync/domains/settings/parse/accountSettingsLegacyCleanup';
 import {
     pickLocalOnlyAccountSettings,
     stripLocalOnlyAccountSettings,
@@ -58,48 +59,6 @@ function mergeArrayValuesForScopeMigration(legacy: readonly unknown[], current: 
     return next;
 }
 
-function readSessionFolderId(value: unknown): string | null {
-    if (!isPlainRecord(value)) return null;
-    const id = value.id;
-    return typeof id === 'string' && id.trim() ? id : null;
-}
-
-function mergeSessionFoldersForScopeMigration(legacy: unknown, current: unknown): unknown {
-    if (typeof current === 'undefined') return legacy;
-    if (typeof legacy === 'undefined') return current;
-    if (!isPlainRecord(legacy) || !isPlainRecord(current)) return current;
-    const legacyFolders = legacy.folders;
-    const currentFolders = current.folders;
-    if (!Array.isArray(legacyFolders) || !Array.isArray(currentFolders)) return current;
-
-    const nextFolders = [...currentFolders];
-    const seenFolderIds = new Set<string>();
-    for (const folder of currentFolders) {
-        const id = readSessionFolderId(folder);
-        if (id) seenFolderIds.add(id);
-    }
-
-    for (const folder of legacyFolders) {
-        const id = readSessionFolderId(folder);
-        if (id && seenFolderIds.has(id)) continue;
-        if (id) seenFolderIds.add(id);
-        nextFolders.push(folder);
-    }
-
-    return {
-        ...legacy,
-        ...current,
-        folders: nextFolders,
-    };
-}
-
-function mergeCollapsedGroupKeysForScopeMigration(legacy: unknown, current: unknown): unknown {
-    if (typeof current === 'undefined') return legacy;
-    if (typeof legacy === 'undefined') return current;
-    if (!isPlainRecord(legacy) || !isPlainRecord(current)) return current;
-    return { ...legacy, ...current };
-}
-
 function mergeValuesForScopeMigration(legacy: unknown, current: unknown, depth = 0): unknown {
     if (typeof current === 'undefined') return legacy;
     if (typeof legacy === 'undefined') return current;
@@ -123,8 +82,8 @@ function mergeSettingsForScopeMigration(
     legacy: Partial<Settings>,
     current: Partial<Settings>,
 ): Partial<Settings> {
-    const legacyRecord = legacy as Record<string, unknown>;
-    const currentRecord = current as Record<string, unknown>;
+    const legacyRecord = stripMigratedSessionOrganizationSettings(legacy as Record<string, unknown>);
+    const currentRecord = stripMigratedSessionOrganizationSettings(current as Record<string, unknown>);
     const next: Record<string, unknown> = { ...legacyRecord };
     for (const [key, value] of Object.entries(currentRecord)) {
         if (
@@ -133,23 +92,12 @@ function mergeSettingsForScopeMigration(
         ) {
             continue;
         }
-        next[key] = key === 'sessionFoldersV1'
-            ? mergeSessionFoldersForScopeMigration(legacyRecord[key], value)
-            : key === 'collapsedGroupKeysV1'
-                ? mergeCollapsedGroupKeysForScopeMigration(legacyRecord[key], value)
-                : mergeValuesForScopeMigration(legacyRecord[key], value);
+        next[key] = mergeValuesForScopeMigration(legacyRecord[key], value);
     }
     return next as Partial<Settings>;
 }
 
 const LEGACY_ACCOUNT_SCOPE_SESSION_PRESENTATION_SETTING_KEYS = [
-    'pinnedSessionKeysV1',
-    'workspaceLabelsV1',
-    'collapsedGroupKeysV1',
-    'sessionTagsV1',
-    'sessionListGroupOrderV1',
-    'sessionWorkspaceOrderV1',
-    'sessionFoldersV1',
     'serverSelectionGroups',
     'serverSelectionActiveTargetKind',
     'serverSelectionActiveTargetId',
@@ -209,7 +157,9 @@ function splitLocalOnlySettings(settings: Partial<Settings>): {
     localOnlySettings: Partial<Settings>;
     serverBackedSettings: Partial<Settings>;
 } {
-    const serverBackedSettings = stripLocalOnlyAccountSettings(settings);
+    const serverBackedSettings = stripMigratedSessionOrganizationSettings(
+        stripLocalOnlyAccountSettings(settings) as Record<string, unknown>,
+    ) as Partial<Settings>;
     const serverBackedRecord = serverBackedSettings as Record<string, unknown>;
     const localOnlySettings: Partial<Settings> = {};
     const localOnlyRecord = localOnlySettings as Record<string, unknown>;
@@ -225,7 +175,8 @@ function saveAccountSettingsEnvelope(
     settings: Settings,
     version: number | null,
 ): void {
-    getPersistenceStorage().set(accountSettingsKey(scope), JSON.stringify({ settings, version }));
+    const sanitizedSettings = stripMigratedSessionOrganizationSettings(settings as Record<string, unknown>) as Settings;
+    getPersistenceStorage().set(accountSettingsKey(scope), JSON.stringify({ settings: sanitizedSettings, version }));
 }
 
 export function loadAccountSettings(scope: AccountSettingsScope): { settings: unknown; version: number | null } {
@@ -233,8 +184,11 @@ export function loadAccountSettings(scope: AccountSettingsScope): { settings: un
     if (!raw) return { settings: {}, version: null };
     try {
         const parsed = JSON.parse(raw) as { settings?: unknown; version?: unknown };
+        const parsedSettings = isPlainRecord(parsed.settings)
+            ? stripMigratedSessionOrganizationSettings(parsed.settings)
+            : parsed.settings;
         return {
-            settings: parsed.settings,
+            settings: parsedSettings,
             version: typeof parsed.version === 'number' ? parsed.version : null,
         };
     } catch {
@@ -399,7 +353,9 @@ export function prepareAccountSettingsScopeForActivation(
                     currentSettingsMigration.settings,
                     currentSettingsMigration.changedKeys,
                 );
-                const serverBackedChangedSettings = stripLocalOnlyAccountSettings(changedSettings);
+                const serverBackedChangedSettings = stripMigratedSessionOrganizationSettings(
+                    stripLocalOnlyAccountSettings(changedSettings) as Record<string, unknown>,
+                );
                 const currentPending = loadPendingAccountSettings(scope);
                 const changedSettingsNotAlreadyPending: Record<string, unknown> = {};
                 const currentPendingRecord = currentPending as Record<string, unknown>;
@@ -422,7 +378,7 @@ export function loadPendingAccountSettings(scope: AccountSettingsScope): Partial
     const raw = getPersistenceStorage().getString(pendingAccountSettingsKey(scope));
     if (!raw) return {};
     try {
-        return parsePendingSettings(JSON.parse(raw));
+        return stripMigratedSessionOrganizationSettings(parsePendingSettings(JSON.parse(raw)) as Record<string, unknown>) as Partial<Settings>;
     } catch {
         return {};
     }
@@ -430,9 +386,10 @@ export function loadPendingAccountSettings(scope: AccountSettingsScope): Partial
 
 export function savePendingAccountSettings(scope: AccountSettingsScope, settings: Partial<Settings>): void {
     const key = pendingAccountSettingsKey(scope);
-    if (Object.keys(settings).length === 0) {
+    const sanitizedSettings = stripMigratedSessionOrganizationSettings(settings as Record<string, unknown>) as Partial<Settings>;
+    if (Object.keys(sanitizedSettings).length === 0) {
         getPersistenceStorage().delete(key);
         return;
     }
-    getPersistenceStorage().set(key, JSON.stringify(settings));
+    getPersistenceStorage().set(key, JSON.stringify(sanitizedSettings));
 }

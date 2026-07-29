@@ -17,6 +17,14 @@ async function activateScope(scope: { serverId: string; accountId: string }) {
     registerStorageStateReader(() => ({ profileScope: scope } as unknown as StorageState));
 }
 
+async function activateServerWithoutAccount(serverUrl: string) {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+
+    upsertAndActivateServer({ serverUrl, source: 'manual', scope: 'device', replaceEquivalentStoredUrl: true });
+    registerStorageStateReader(() => ({ profileScope: null } as unknown as StorageState));
+}
+
 describe('pendingNotificationNav', () => {
     it('stores and clears the pending payload', async () => {
         const { clearPendingNotificationNav, getPendingNotificationNav, setPendingNotificationNav } = await import('./pendingNotificationNav');
@@ -100,5 +108,46 @@ describe('pendingNotificationNav', () => {
             serverUrl: 'https://notify-nav.example.test',
             route: '/session/s_legacy',
         });
+    });
+
+    it('rehydrates cross-server pending navigation before the target account scope is active', async () => {
+        const mod = await import('./pendingNotificationNav');
+
+        await activateServerAccount('https://nav-source.example.test', 'account-a');
+        mod.clearPendingNotificationNav();
+        mod.setPendingNotificationNav({
+            serverUrl: 'https://nav-target.example.test',
+            route: '/session/s_cross',
+        });
+
+        expect(mod.getPendingNotificationNav()).toBeNull();
+
+        await activateServerWithoutAccount('https://nav-target.example.test');
+        expect(mod.getPendingNotificationNav()).toEqual({
+            serverUrl: 'https://nav-target.example.test',
+            route: '/session/s_cross',
+        });
+
+        mod.clearPendingNotificationNav();
+        expect(mod.getPendingNotificationNav()).toBeNull();
+    });
+
+    it('does not promote server-scoped pending navigation into an active account scope', async () => {
+        const mod = await import('./pendingNotificationNav');
+
+        await activateServerWithoutAccount('https://nav-shared-fallback.example.test');
+        mod.clearPendingNotificationNav();
+        mod.setPendingNotificationNav({
+            serverUrl: 'https://nav-shared-fallback.example.test',
+            route: '/session/s_server_scoped',
+        });
+
+        expect(mod.getPendingNotificationNav()).toEqual({
+            serverUrl: 'https://nav-shared-fallback.example.test',
+            route: '/session/s_server_scoped',
+        });
+
+        await activateServerAccount('https://nav-shared-fallback.example.test', 'account-b');
+        expect(mod.getPendingNotificationNav()).toBeNull();
     });
 });

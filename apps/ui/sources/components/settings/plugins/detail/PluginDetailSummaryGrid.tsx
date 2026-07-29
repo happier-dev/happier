@@ -6,7 +6,6 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 
 import type { InstalledPluginEntry } from '../model/pluginMarketplaceModel';
-import type { InstalledPluginUpdateState } from '../model/usePluginSettingsScreenState';
 
 function resolveTrustStatus(trustPolicy: string | null | undefined): BadgeGridItem['status'] {
     if (!trustPolicy) return 'warning';
@@ -15,14 +14,51 @@ function resolveTrustStatus(trustPolicy: string | null | undefined): BadgeGridIt
     return 'negative';
 }
 
+function resolveTrustPolicyLabel(trustPolicy: string | null | undefined): string {
+    switch (trustPolicy) {
+        case 'local_trusted':
+            return t('settingsPlugins.trustPolicy.localTrusted');
+        case 'trusted':
+            return t('settingsPlugins.trustPolicy.trusted');
+        case 'prompt':
+            return t('settingsPlugins.trustPolicy.prompt');
+        case 'untrusted':
+            return t('settingsPlugins.trustPolicy.untrusted');
+        default:
+            return trustPolicy
+                ? t('settingsPlugins.unknownValue', { value: trustPolicy })
+                : t('common.unavailable');
+    }
+}
+
+function resolveSourceKindLabel(sourceKind: string | null | undefined): string {
+    switch (sourceKind) {
+        case 'bundled':
+            return t('settingsPlugins.sourceKind.bundled');
+        case 'path':
+            return t('settingsPlugins.sourceKind.path');
+        case 'marketplace':
+            return t('settingsPlugins.sourceKind.marketplace');
+        case 'package':
+            return t('settingsPlugins.sourceKind.package');
+        case 'archive':
+            return t('settingsPlugins.sourceKind.archive');
+        case 'catalog':
+            return t('settingsPlugins.sourceKind.catalog');
+        default:
+            return sourceKind
+                ? t('settingsPlugins.unknownValue', { value: sourceKind })
+                : t('common.unavailable');
+    }
+}
+
 export function PluginDetailSummaryGrid(props: Readonly<{
     installed: InstalledPluginEntry;
     projection: PluginProjectionEntry | null;
-    updateState: InstalledPluginUpdateState;
 }>) {
-    const generationLabel = props.projection?.generationLabel
-        ?? (props.projection?.generation !== null && props.projection?.generation !== undefined ? String(props.projection.generation) : null);
     const provenance = props.projection?.provenance;
+    const trustPolicy = provenance?.trustPolicy ?? props.installed.source.trustPolicy;
+    const sourceKind = provenance?.sourceKind ?? props.installed.source.kind;
     const items = React.useMemo<BadgeGridItem[]>(() => {
         const summaryItems: BadgeGridItem[] = [
             {
@@ -39,34 +75,23 @@ export function PluginDetailSummaryGrid(props: Readonly<{
             },
             {
                 id: 'trust',
-                label: provenance?.trustPolicy ?? props.installed.source.trustPolicy ?? t('common.unavailable'),
-                detail: provenance?.sourceLabel ?? props.installed.source.kind,
-                status: resolveTrustStatus(provenance?.trustPolicy ?? props.installed.source.trustPolicy),
+                label: resolveTrustPolicyLabel(trustPolicy),
+                detail: provenance?.sourceLabel ?? resolveSourceKindLabel(sourceKind),
+                status: resolveTrustStatus(trustPolicy),
             },
         ];
 
-        if (generationLabel) {
-            summaryItems.push({
-                id: 'generation',
-                label: t('settingsPlugins.generationLabel'),
-                detail: generationLabel,
-                status: 'neutral',
-            });
-        }
-
-        if (props.updateState.canUpdate) {
-            summaryItems.push({
-                id: 'update',
-                label: t('common.update'),
-                detail: props.updateState.updateAvailable
-                    ? (props.updateState.catalogVersion ?? props.installed.version)
-                    : (props.updateState.sourceUrl ?? props.installed.version),
-                status: props.updateState.updateAvailable ? 'positive' : 'neutral',
-            });
-        }
-
         return summaryItems;
-    }, [generationLabel, props.installed, props.projection, props.updateState]);
+    }, [
+        props.installed.enabled,
+        props.installed.version,
+        props.projection?.status?.detail,
+        props.projection?.status?.label,
+        props.projection?.version,
+        provenance?.sourceLabel,
+        sourceKind,
+        trustPolicy,
+    ]);
 
     return (
         <ItemGroup title={t('common.details')}>

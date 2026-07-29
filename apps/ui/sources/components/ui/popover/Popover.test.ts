@@ -1020,6 +1020,90 @@ describe('Popover (web)', () => {
         expect(flattenStyle(contentViewAfterLayout?.props?.style).opacity).toBe(1);
     });
 
+    it('keeps measuring portal popovers after React StrictMode replays effects on mount', async () => {
+        const { Popover } = await import('./Popover');
+
+        const anchorRef = {
+            current: {
+                getBoundingClientRect: () => ({ left: 420, top: 548, width: 92, height: 32 }),
+            },
+        } as any;
+
+        const screen = await renderScreen(React.createElement(
+            React.StrictMode,
+            null,
+            React.createElement(Popover, {
+                open: true,
+                anchorRef,
+                placement: 'top',
+                gap: 8,
+                maxHeightCap: 460,
+                maxWidthCap: 720,
+                portal: {
+                    web: true,
+                    matchAnchorWidth: false,
+                    anchorAlign: 'start',
+                },
+                backdrop: false,
+                children: () => React.createElement('PopoverChild'),
+            }),
+        ));
+
+        await act(async () => {
+            await flushRetryPositioning();
+        });
+
+        const contentView = findPopoverContentView(screen);
+        expect(contentView).toBeTruthy();
+
+        const style = flattenStyle(contentView?.props?.style);
+        expect(style.width).toBe(720);
+        expect(style.left).toBe(280);
+    });
+
+    it('falls back to a timer when requestAnimationFrame is throttled before portal measurement', async () => {
+        restorePopoverWebGlobals?.();
+        restorePopoverWebGlobals = withPopoverWebGlobals({
+            requestAnimationFrame: vi.fn(() => 1 as never),
+        });
+        vi.useFakeTimers();
+
+        const { Popover } = await import('./Popover');
+
+        const anchorRef = {
+            current: {
+                getBoundingClientRect: () => ({ left: 420, top: 548, width: 92, height: 32 }),
+            },
+        } as any;
+
+        const screen = await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            placement: 'top',
+            gap: 8,
+            maxHeightCap: 460,
+            maxWidthCap: 720,
+            portal: {
+                web: true,
+                matchAnchorWidth: false,
+                anchorAlign: 'start',
+            },
+            backdrop: false,
+            children: () => React.createElement('PopoverChild'),
+        }));
+
+        await act(async () => {
+            await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: 80 });
+        });
+
+        const contentView = findPopoverContentView(screen);
+        expect(contentView).toBeTruthy();
+
+        const style = flattenStyle(contentView?.props?.style);
+        expect(style.width).toBe(720);
+        expect(style.left).toBe(280);
+    });
+
     it('falls back to DOM anchors on web when measureInWindow returns invalid values (prevents stuck invisible portal popovers)', async () => {
         const { Popover } = await import('./Popover');
 

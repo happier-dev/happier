@@ -1,6 +1,10 @@
 import * as React from 'react';
 
-export type ReanimatedSharedValue<T> = { value: T };
+export type ReanimatedSharedValue<T> = {
+    value: T;
+    get(): T;
+    set(value: T): void;
+};
 
 type ReanimatedEasingFunction = ((t: number) => number) & { __workletHash?: number };
 type ReanimatedEasingFactory = Readonly<{ factory: () => ReanimatedEasingFunction }>;
@@ -31,10 +35,21 @@ export function createReanimatedModuleMock() {
         createAnimatedComponent: (component: unknown) => component,
     } as const;
 
+    const createSharedValue = <T,>(initial: T): ReanimatedSharedValue<T> => {
+        const shared = {
+            value: initial,
+            get: () => shared.value,
+            set: (value: T) => {
+                shared.value = value;
+            },
+        };
+        return shared;
+    };
+    const makeMutable = <T,>(initial: T): ReanimatedSharedValue<T> => createSharedValue(initial);
     const useSharedValue = <T,>(initial: T): ReanimatedSharedValue<T> => {
         const ref = React.useRef<ReanimatedSharedValue<T> | null>(null);
         if (!ref.current) {
-            ref.current = { value: initial };
+            ref.current = createSharedValue(initial);
         }
         return ref.current;
     };
@@ -42,7 +57,7 @@ export function createReanimatedModuleMock() {
         const ref = React.useRef<ReanimatedSharedValue<T> | null>(null);
         const value = factory();
         if (!ref.current) {
-            ref.current = { value };
+            ref.current = createSharedValue(value);
         } else {
             ref.current.value = value;
         }
@@ -50,6 +65,7 @@ export function createReanimatedModuleMock() {
     };
     const runOnJS = <TArgs extends unknown[], TResult>(fn: (...args: TArgs) => TResult) => fn;
     const runOnUI = <TArgs extends unknown[], TResult>(fn: (...args: TArgs) => TResult) => fn;
+    const useAnimatedRef = <T,>() => React.useRef<T | null>(null);
 
     // Minimal interpolation helpers. Production code uses these to map a
     // 0→1 hover progress shared value to pixel and color output ranges; in
@@ -93,8 +109,11 @@ export function createReanimatedModuleMock() {
         interpolate,
         interpolateColor,
         cancelAnimation: () => {},
+        makeMutable,
         runOnJS,
         runOnUI,
+        scrollTo: () => {},
+        useAnimatedRef,
         useAnimatedProps: <T,>(factory: () => T): T => factory(),
         useAnimatedReaction: (prepare: () => unknown, react: (value: unknown, previous: unknown) => void) => {
             try {
@@ -104,9 +123,20 @@ export function createReanimatedModuleMock() {
             }
         },
         useAnimatedStyle: <T,>(factory: () => T): T => factory(),
+        // Reanimated drives this off the UI-thread render loop; tests never tick
+        // the timeline, so we just register the worklet without running it. This
+        // keeps the level conduit off React: pushing to the SharedValue never
+        // schedules a frame callback in unit tests.
+        useFrameCallback: (_callback: (frameInfo: unknown) => void, _autostart?: boolean) => ({
+            setActive: (_active: boolean) => {},
+            isActive: false,
+            callbackId: 0,
+        }),
         useDerivedValue,
         useSharedValue,
         withRepeat: <T,>(value: T): T => value,
+        withSequence: <T,>(...values: T[]): T => values[values.length - 1] as T,
+        withDelay: <T,>(_delayMs: number, value: T): T => value,
         withSpring: <T,>(value: T): T => value,
         withTiming: <T,>(value: T, config?: ReanimatedTimingConfig): T => {
             assertEasingIsWorkletLike(config?.easing);

@@ -117,7 +117,7 @@ vi.mock('@/sync/domains/models/modelOptions', () => ({
 }));
 
 vi.mock('@/sync/domains/models/describeEffectiveModelMode', () => ({
-    describeEffectiveModelMode: () => ({ effectiveModelId: 'default' }),
+    describeEffectiveModelMode: () => ({ selectedModelId: 'default', appliedModelId: null, effectiveModelId: 'default' }),
 }));
 
 vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
@@ -227,10 +227,6 @@ vi.mock('@/components/ui/scroll/ScrollEdgeIndicators', () => ({
 vi.mock('@/components/sessions/sourceControl/status', () => ({
     SourceControlStatusBadge: () => null,
     useHasMeaningfulScmStatus: () => false,
-}));
-
-vi.mock('@/components/model/ModelPickerOverlay', () => ({
-    ModelPickerOverlay: () => null,
 }));
 
 vi.mock('@/hooks/ui/useKeyboardHeight', () => ({

@@ -9,15 +9,15 @@ export const remoteSshChecklistStyles = StyleSheet.create((theme) => ({
     },
     heading: {
         gap: 6,
-        alignItems: 'center',
+        alignItems: 'flex-start',
     },
     title: {
         color: theme.colors.text.primary,
-        textAlign: 'center',
+        textAlign: 'left',
     },
     subtitle: {
         color: theme.colors.text.secondary,
-        textAlign: 'center',
+        textAlign: 'left',
     },
     sectionBlock: {
         width: '100%',
@@ -26,10 +26,10 @@ export const remoteSshChecklistStyles = StyleSheet.create((theme) => ({
     promptCard: {
         width: '100%',
         gap: 10,
-        borderRadius: 16,
+        borderRadius: 14,
         borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        padding: 16,
+        borderColor: theme.colors.border.modal,
+        padding: 20,
         backgroundColor: theme.colors.surface.base,
     },
     promptTitle: {

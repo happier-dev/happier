@@ -6,12 +6,20 @@ import { useRouter, useGlobalSearchParams } from 'expo-router';
 import { MainView } from '@/components/navigation/shell/MainView';
 import { BaseModal } from '@/modal/components/BaseModal';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
+import { clearPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
+import { buildDismissedThisComputerSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { isTauriDesktop } from '@/utils/platform/tauri';
-import { resolvePostAuthSetupRoute, PreAuthOnboardingWizardEntry } from '@/components/onboarding';
+import { PreAuthOnboardingWizardEntry } from '@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry';
+import { usePendingSetupIntent } from '@/components/onboarding/state/usePendingSetupIntent';
+import { useMachineSetupStepSatisfied } from '@/components/onboarding/state/useMachineSetupStepSatisfied';
+import {
+    doesOnboardingJourneyOwnTransientDemoServer,
+    useOnboardingJourneySessionActive,
+} from '@/components/onboarding/tour/state/journeySession';
+import { readJourneyReplayBeatId } from '@/components/onboarding/tour/state/journeyReplayIntent';
 import { SetupWizardSurface } from '@/components/onboarding/surfaces/SetupWizardSurface';
-import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
+import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
@@ -20,6 +28,8 @@ import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { shouldHoldUnauthenticatedShellForWebServerOverride } from '@/sync/domains/server/url/shouldHoldUnauthenticatedShellForWebServerOverride';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
+import { useVoiceSurfaceE2eFixtureComposition } from '@/dev/testkit/harness/useVoiceSurfaceE2eFixtureComposition';
+import { t } from '@/text';
 
 const stylesheet = StyleSheet.create({
     root: {
@@ -28,64 +38,76 @@ const stylesheet = StyleSheet.create({
     },
 });
 
-function normalizeQueryParam(value: string | string[] | undefined): string {
-    if (Array.isArray(value)) {
-        return typeof value[0] === 'string' ? value[0].trim() : '';
-    }
-    return typeof value === 'string' ? value.trim() : '';
-}
-
-function readVoiceE2eFixtureIdFromLocation(): string {
-    if (typeof window === 'undefined') return '';
-    try {
-        const current = new URL(window.location.href);
-        return (current.searchParams.get('happier_voice_e2e_fixture') ?? '').trim();
-    } catch {
-        return '';
-    }
-}
-
-function readVoiceE2eFixtureIdFromStorage(): string {
-    const storage =
-        typeof globalThis !== 'undefined' && typeof (globalThis as any).localStorage?.getItem === 'function'
-            ? (globalThis as any).localStorage as Storage
-            : null;
-    if (!storage) return '';
-    try {
-        return String(storage.getItem('happier.voice.e2e.fixture') ?? '').trim();
-    } catch {
-        return '';
-    }
-}
-
 export default function Home() {
     const auth = useAuth();
     const activeServerSnapshot = useActiveServerSnapshot();
-    const params = useGlobalSearchParams<{ happier_voice_e2e_fixture?: string | string[] }>();
-    const shouldSuppressFirstLaunchSetupRedirect = Boolean(
-        normalizeQueryParam(params.happier_voice_e2e_fixture) || readVoiceE2eFixtureIdFromLocation() || readVoiceE2eFixtureIdFromStorage(),
-    );
-    if (!auth.isAuthenticated) {
-        if (shouldHoldUnauthenticatedShellForWebServerOverride(auth.isAuthenticated, activeServerSnapshot.serverUrl)) {
+    const onboardingJourneyActive = useOnboardingJourneySessionActive();
+    const onboardingTourDecision = useFeatureDecision('app.ui.onboardingTour', { scopeKind: 'runtime' });
+    const routeGatePendingSetupIntent = usePendingSetupIntent();
+    // The post-auth machine-setup step is satisfied once the account has ANY machine (even
+    // offline). Canonical owner: useMachineSetupStepSatisfied → useAllMachines().length > 0.
+    const machineSetupStepSatisfied = useMachineSetupStepSatisfied();
+    const voiceE2eFixture = useVoiceSurfaceE2eFixtureComposition();
+    // D21/P1 composition invariant: with the journey flag ON, post-auth setup NEVER
+    // renders beside the authenticated shell. The in-memory journey-session latch can
+    // be lost (page reload, crash) while the persisted setup intent survives — in that
+    // state the route hands the setup act back to the full-viewport journey host, which
+    // re-latches on mount. The legacy in-shell wizard renders only when the flag is off.
+    const hasPendingSetupContinuation =
+        routeGatePendingSetupIntent?.phase === 'awaiting_auth'
+        || routeGatePendingSetupIntent?.phase === 'post_auth';
+    // Fail-closed: an unresolved decision is treated as disabled (legacy path).
+    // Once the account already has a machine (even offline), the machine-setup step is
+    // satisfied — the route never auto re-latches the full-viewport setup act; it falls
+    // through to the authenticated shell, which settles the stale continuation intent.
+    // This gates the AUTO re-latch only; a live journey session (onboardingJourneyActive)
+    // is intentionally not gated, so a first machine arriving mid-S3 never yanks the step.
+    const journeyOwnsSetupContinuation =
+        auth.isAuthenticated
+        && hasPendingSetupContinuation
+        && onboardingTourDecision?.state === 'enabled'
+        && !machineSetupStepSatisfied;
+    // Explicit replay deep-link (`?happier_journey_beat=<id>`): a production entry
+    // point for returning users. The entry owns the actual replay semantics; the
+    // route gate only has to hand it the viewport instead of the authenticated shell.
+    // Same fail-closed flag gating as the continuation path.
+    const hasExplicitJourneyReplayIntent =
+        onboardingTourDecision?.state === 'enabled'
+        && readJourneyReplayBeatId() != null;
+    if (!auth.isAuthenticated || onboardingJourneyActive || journeyOwnsSetupContinuation || hasExplicitJourneyReplayIntent) {
+        // The URL override owns the real relay and must settle before first mount. Once the
+        // journey has mounted, its demo world intentionally activates a temporary local
+        // relay; treating that presentation-only server as override drift would unmount the
+        // journey, restore the real relay, and reseed forever. Defer the hold only for this
+        // exact live demo lifetime. True journey exit restores the pinned relay first, and a
+        // genuinely different override remains pending for the normal route owner afterward.
+        const activeJourneyOwnsTransientDemoServer =
+            doesOnboardingJourneyOwnTransientDemoServer(onboardingJourneyActive);
+        if (
+            !activeJourneyOwnsTransientDemoServer
+            && shouldHoldUnauthenticatedShellForWebServerOverride(auth.isAuthenticated, activeServerSnapshot.serverUrl)
+        ) {
             return null;
         }
-        return <PreAuthOnboardingWizardEntry enableFirstLaunchSetupRedirect={!shouldSuppressFirstLaunchSetupRedirect} />;
+        return (
+            <PreAuthOnboardingWizardEntry
+                enableFirstLaunchSetupRedirect={!auth.isAuthenticated && !voiceE2eFixture.shouldSuppressOnboarding}
+            />
+        );
     }
     return (
-        <Authenticated />
+        <Authenticated shouldSuppressAutoOpenSetupWizard={voiceE2eFixture.shouldSuppressOnboarding} />
     );
 }
 
-function Authenticated() {
+function Authenticated(props: Readonly<{ shouldSuppressAutoOpenSetupWizard: boolean }>) {
     const params = useGlobalSearchParams<{
         id?: string | string[];
         messageId?: string | string[];
         jumpChildId?: string | string[];
         serverId?: string | string[];
-        happier_voice_e2e_fixture?: string | string[];
     }>();
     const router = useRouter();
-    const connectionHealth = useConnectionHealth();
     const localDaemonControl = useLocalDaemonControl();
     const relayDriftBanner = useRelayDriftBanner();
     const applyLocalSettings = useApplyLocalSettings();
@@ -94,17 +116,7 @@ function Authenticated() {
     const sessionId = typeof params.id === 'string' ? params.id : Array.isArray(params.id) ? (params.id[0] ?? null) : null;
     const messageId = typeof params.messageId === 'string' ? params.messageId : Array.isArray(params.messageId) ? (params.messageId[0] ?? null) : null;
     const jumpChildId = typeof params.jumpChildId === 'string' ? params.jumpChildId : Array.isArray(params.jumpChildId) ? (params.jumpChildId[0] ?? null) : null;
-    const voiceE2eFixtureId =
-        typeof params.happier_voice_e2e_fixture === 'string'
-            ? params.happier_voice_e2e_fixture
-            : Array.isArray(params.happier_voice_e2e_fixture)
-                ? (params.happier_voice_e2e_fixture[0] ?? null)
-                : null;
-    const shouldSuppressAutoOpenSetupWizard = Boolean(
-        String(voiceE2eFixtureId ?? '').trim()
-        || readVoiceE2eFixtureIdFromLocation()
-        || readVoiceE2eFixtureIdFromStorage(),
-    );
+    const shouldSuppressAutoOpenSetupWizard = props.shouldSuppressAutoOpenSetupWizard;
     const sessionRouteServerScope = createSessionRouteServerScope(params);
     const currentMachineIsConfiguredAndHealthy =
         localDaemonControl.status?.serviceInstalled === true
@@ -112,33 +124,30 @@ function Authenticated() {
         && localDaemonControl.status?.needsAuth !== true
         && Boolean(localDaemonControl.status?.machineId);
     const hasRelayDrift = relayDriftBanner != null;
-    const postAuthSetupRoute = resolvePostAuthSetupRoute({
-        isDesktopShell: isTauriDesktop(),
-        onlineMachineCount: connectionHealth.onlineCount,
-        currentMachineIsConfiguredAndHealthy,
-        hasRelayDrift,
-    });
-    const pendingSetupIntent = getPendingSetupIntent();
+    const pendingSetupIntent = usePendingSetupIntent();
     const pendingTerminalConnect = getPendingTerminalConnect();
     const pendingSetupIntentDismissed = pendingSetupIntent?.phase === 'dismissed';
     const hasPendingSetupContinuation =
         pendingSetupIntent?.phase === 'awaiting_auth'
         || pendingSetupIntent?.phase === 'post_auth';
     const hasPendingTerminalConnectApproval = pendingTerminalConnect != null;
-    const shouldSkipSetupWizardBecauseAnotherMachineIsOnline =
-        isTauriDesktop() !== true
-        && (connectionHealth.onlineCount ?? 0) > 0;
+    // Binding decision: the machine-setup step auto-displays only while the account has ZERO
+    // machines. Any machine (even offline) satisfies it — on EVERY platform, including the
+    // desktop local-daemon-health auto-open — so the in-shell wizard never auto-opens again
+    // and a stale pending continuation is settled (cleared below when !needsSetupWizard).
+    // Explicit entry points (sessions empty-state, settings, journey replay) are not gated.
+    const machineSetupStepSatisfied = useMachineSetupStepSatisfied();
     const shouldAutoOpenSetupWizard = shouldSuppressAutoOpenSetupWizard
         ? false
         : isTauriDesktop()
             ? (!currentMachineIsConfiguredAndHealthy || hasRelayDrift)
-            : (connectionHealth.onlineCount ?? 0) === 0;
+            : true;
     const needsSetupWizard =
         !hasPendingTerminalConnectApproval
         && shouldSuppressAutoOpenSetupWizard !== true
         &&
         pendingSetupIntentDismissed !== true
-        && shouldSkipSetupWizardBecauseAnotherMachineIsOnline !== true
+        && machineSetupStepSatisfied !== true
         && (hasPendingSetupContinuation || shouldAutoOpenSetupWizard);
 
     React.useEffect(() => {
@@ -152,7 +161,7 @@ function Authenticated() {
     }, [pendingSetupIntent, setupWizardVisible, shouldSuppressAutoOpenSetupWizard]);
 
     const dismissPendingSetupIntent = React.useCallback(() => {
-        const current = getPendingSetupIntent();
+        const current = pendingSetupIntent;
         if (current) {
             if (current.phase !== 'dismissed') {
                 setPendingSetupIntent({ ...current, phase: 'dismissed' });
@@ -163,13 +172,8 @@ function Authenticated() {
             return;
         }
         const snapshot = getActiveServerSnapshot();
-        const relayUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim().replace(/\/+$/, '') : null;
-        setPendingSetupIntent({
-            branch: 'thisComputer',
-            phase: 'dismissed',
-            relayUrl: relayUrl || null,
-        });
-    }, [shouldAutoOpenSetupWizard]);
+        setPendingSetupIntent(buildDismissedThisComputerSetupIntent(snapshot.serverUrl));
+    }, [pendingSetupIntent, shouldAutoOpenSetupWizard]);
 
     React.useEffect(() => {
         const sid = normalizeSessionId(sessionId);
@@ -201,10 +205,8 @@ function Authenticated() {
             return;
         }
         if (!needsSetupWizard) {
-            if (postAuthSetupRoute === '/') {
-                if (pendingSetupIntent?.phase !== 'dismissed') {
-                    clearPendingSetupIntent();
-                }
+            if (pendingSetupIntent?.phase !== 'dismissed') {
+                clearPendingSetupIntent();
             }
             return;
         }
@@ -225,7 +227,7 @@ function Authenticated() {
         }
 
         setSetupWizardVisible(true);
-    }, [needsSetupWizard, pendingSetupIntent, postAuthSetupRoute, sessionId, setupWizardVisible, shouldAutoOpenSetupWizard]);
+    }, [needsSetupWizard, pendingSetupIntent, sessionId, setupWizardVisible, shouldAutoOpenSetupWizard]);
 
     const handleSetupWizardExit = React.useCallback(() => {
         setSetupWizardVisible(false);
@@ -240,6 +242,7 @@ function Authenticated() {
                 <BaseModal
                     visible
                     showBackdrop
+                    accessibilityLabel={t('setupOnboarding.screenTitle')}
                     closeOnBackdrop={false}
                     onClose={handleSetupWizardExit}
                 >

@@ -4,10 +4,12 @@ import { z } from 'zod';
 import { DEFAULT_AGENT_ID } from '@/agents/registry/registryCore';
 import { SCM_COMMIT_STRATEGIES } from '@/scm/settings/commitStrategy';
 import {
+    SCM_BACKEND_QUALIFIED_ID_MAX_LENGTH,
     SCM_DIFF_MODE_OPTIONS,
     SCM_GIT_REPO_BACKEND_OPTIONS,
     SCM_PUSH_REJECT_POLICIES,
     SCM_REMOTE_CONFIRM_POLICIES,
+    normalizeScmBackendQualifiedId,
 } from '@/scm/settings/preferences';
 
 function bucketCount(value: number, smallMax: number, mediumMax: number): 'small' | 'medium' | 'large' {
@@ -48,7 +50,22 @@ export const ACCOUNT_SCM_FILES_SETTING_DEFINITIONS = defineSettingDefinitions({
     scmGitRepoPreferredBackend: {
         schema: z.enum(SCM_GIT_REPO_BACKEND_OPTIONS),
         default: 'git',
-        description: 'Preferred backend for .git repositories',
+        description: 'Legacy first-party backend preference for .git repositories',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    // Compatibility seam for ui-web-v0.2.2-preview.1775585938.1, whose parser only
+    // accepts the legacy enum above. Remove only after the last supported
+    // legacy-only preview ages out.
+    scmGitRepoPreferredBackendQualifiedId: {
+        schema: z.string()
+            .trim()
+            .min(1)
+            .max(SCM_BACKEND_QUALIFIED_ID_MAX_LENGTH)
+            .refine((value) => normalizeScmBackendQualifiedId(value) === value)
+            .nullable(),
+        default: null,
+        description: 'Qualified plugin contribution id preferred for .git repositories',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },

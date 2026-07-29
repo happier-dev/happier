@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
-import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -12,10 +12,14 @@ import { ProjectRightPanel } from '@/components/projects/detail/ProjectRightPane
 import { useProjectRouteActions } from '@/components/projects/detail/useProjectRouteActions';
 import { useProjectRouteHeaderOptions } from '@/components/projects/detail/useProjectRouteHeaderOptions';
 import { ProjectWorktreeRecoveryToast } from '@/components/projects/detail/ProjectWorktreeRecoveryToast';
-import { readProjectRouteStringParam } from '@/components/projects/detail/projectRouteState';
+import {
+    readProjectRouteStringParam,
+    resolveProjectRouteSelectionQuery,
+} from '@/components/projects/detail/projectRouteState';
 import { useProjectMobileRoutePersistence } from '@/components/projects/detail/useProjectMobileRoutePersistence';
 import { useWorkspaceRefById } from '@/components/projects/detail/useWorkspaceRefById';
-import { useProjectSurfaceController } from '@/components/projects/detail/useProjectSurfaceController';
+import { useProjectRouteSurfaceSync } from '@/components/projects/detail/useProjectRouteSurfaceSync';
+import { useProjectRouteRouterRef } from '@/components/projects/detail/useProjectRouteRouterRef';
 import { ProjectCockpitShell } from '@/components/workspaceCockpit/project/ProjectCockpitShell';
 import { resolveFullscreenDetailsRouteSelection } from '@/components/workspaceCockpit/resolveFullscreenDetailsRouteSelection';
 import { useFullscreenDetailsRouteAutoRedirect } from '@/components/workspaceCockpit/useFullscreenDetailsRouteAutoRedirect';
@@ -23,30 +27,45 @@ import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit
 import { resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { t } from '@/text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+
+type ProjectGitRouteParams = {
+    workspaceRefId?: string | string[];
+    worktreeId?: string | string[];
+    activeRootPath?: string | string[];
+};
 
 export default function ProjectGitScreenRoute() {
-    const { theme } = useUnistyles();
-    const router = useRouter();
-    const navigation = useNavigation();
-    const isFocused = useIsFocused();
-    const params = useLocalSearchParams<{
-        workspaceRefId?: string | string[];
-        worktreeId?: string | string[];
-        activeRootPath?: string | string[];
-    }>();
+    const params = useLocalSearchParams<ProjectGitRouteParams>();
     const workspaceRefId = readProjectRouteStringParam(params.workspaceRefId) ?? '';
+    const workspaceRef = useWorkspaceRefById(workspaceRefId);
+
+    if (!workspaceRef) {
+        return <ProjectDetailScreen workspaceRefId={workspaceRefId} activeRootPath={readProjectRouteStringParam(params.activeRootPath)} />;
+    }
+
+    return <ResolvedProjectGitScreenRoute params={params} workspaceRef={workspaceRef} />;
+}
+
+function ResolvedProjectGitScreenRoute({
+    params,
+    workspaceRef,
+}: {
+    params: ProjectGitRouteParams;
+    workspaceRef: WorkspaceRefV1;
+}) {
+    const { theme } = useUnistyles();
+    const routerRef = useProjectRouteRouterRef();
+    const navigation = useNavigation();
+    const navigationRef = React.useRef(navigation);
+    navigationRef.current = navigation;
+    const isFocused = useIsFocused();
     const {
         cockpitEnabled,
         showWorkspaceExperienceToggle,
         workspaceExperienceToggleLabelKey,
         toggleWorkspaceExperience,
     } = useMobileWorkspaceExperienceState();
-
-    const workspaceRef = useWorkspaceRefById(workspaceRefId);
-
-    if (!workspaceRef) {
-        return <ProjectDetailScreen workspaceRefId={workspaceRefId} activeRootPath={readProjectRouteStringParam(params.activeRootPath)} />;
-    }
 
     const scopeId = buildProjectPaneScopeId(workspaceRef.id);
     const pane = useAppPaneScope(scopeId);
@@ -57,13 +76,18 @@ export default function ProjectGitScreenRoute() {
         setRouteActiveRootPath,
     } = useProjectMobileRoutePersistence({
         workspaceRef,
+        isFocused,
         rawWorktreeId: params.worktreeId,
         rawActiveRootPath: params.activeRootPath,
         persistedSurface: 'git',
         resolveRouteHref: ({ activeRootPath, activeWorktreeId }) => resolveProjectRoutePathForSurface({
             workspaceRefId: workspaceRef.id,
             surface: 'git',
-            rawWorktreeId: activeRootPath === workspaceRef.rootPath ? '@root' : activeWorktreeId,
+            ...resolveProjectRouteSelectionQuery({
+                activeRootPath,
+                defaultRootPath: workspaceRef.rootPath,
+                activeWorktreeId,
+            }),
         }),
     });
 
@@ -71,10 +95,13 @@ export default function ProjectGitScreenRoute() {
         workspaceRef,
         activeRootPath: resolvedActiveRootPath,
         activeWorktreeId: resolvedActiveWorktreeId,
+        sourceSurface: 'git',
         pane,
     });
     const openWorktreesInDetails = routeActions.openWorktreesInDetails;
     const openTerminal = routeActions.openTerminal;
+    const buildHref = routeActions.buildHref;
+    const navigateToSegment = routeActions.navigateToSegment;
     const handleOpenWorktrees = React.useCallback(() => {
         openWorktreesInDetails('push');
     }, [openWorktreesInDetails]);
@@ -93,11 +120,13 @@ export default function ProjectGitScreenRoute() {
         onToggleWorktrees: handleOpenWorktrees,
         onOpenTerminal: handleOpenTerminal,
     });
-    const { syncSurface } = useProjectSurfaceController({
+    useProjectRouteSurfaceSync({
         scopeId,
         workspaceRef,
         activeRootPath: resolvedActiveRootPath,
         activeWorktreeId: resolvedActiveWorktreeId,
+        isFocused: isFocused && !cockpitEnabled,
+        surface: 'git',
     });
     const closeRight = pane.closeRight;
 
@@ -109,14 +138,9 @@ export default function ProjectGitScreenRoute() {
     }), [detailsState?.activeTabKey, detailsState?.groups, detailsState?.tabs]);
     const detailsIsOpen = detailsState?.isOpen ?? false;
 
-    React.useEffect(() => {
-        if (!isFocused) return;
-        syncSurface('git');
-    }, [isFocused, syncSurface]);
-
     const handleNavigateToDetails = React.useCallback(() => {
-        routeActions.navigateToSegment({ segment: 'details', method: 'push' });
-    }, [routeActions]);
+        navigateToSegment({ segment: 'details', method: 'push', sourceSurface: 'git' });
+    }, [navigateToSegment]);
 
     useFullscreenDetailsRouteAutoRedirect({
         resetKey: workspaceRef.id,
@@ -130,11 +154,11 @@ export default function ProjectGitScreenRoute() {
     const onRequestClose = React.useCallback(() => {
         closeRight();
         safeRouterBack({
-            router,
-            navigation,
-            fallbackHref: routeActions.buildHref(),
+            router: routerRef.current,
+            navigation: navigationRef.current,
+            fallbackHref: buildHref(),
         });
-    }, [closeRight, navigation, routeActions, router]);
+    }, [buildHref, closeRight, routerRef]);
 
     return (
         <View testID={cockpitEnabled ? undefined : 'project-git-screen'} style={{ flex: 1 }}>
@@ -151,6 +175,7 @@ export default function ProjectGitScreenRoute() {
                         activeRootPath={resolvedActiveRootPath}
                         activeWorktreeId={resolvedActiveWorktreeId}
                         surface="git"
+                        isFocused={isFocused}
                         onSelectRootPath={setRouteActiveRootPath}
                     />
                 ) : (

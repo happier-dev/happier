@@ -225,6 +225,15 @@ describe('sessions domain: renderable patches', () => {
             );
             expect(warmCacheEvent?.count).toBe(1);
             expect(warmCacheEvent?.fields.renderables).toBe(1);
+            const events = syncPerformanceTelemetry.snapshot().events;
+            expect(events.find((event) => event.name === 'sync.store.sessions.warmCache.schedule')?.fields).toEqual(expect.objectContaining({
+                coalesced: 0,
+                renderables: 1,
+                scheduled: 1,
+            }));
+            expect(events.find((event) => event.name === 'sync.store.sessions.warmCache.flush')?.fields).toEqual(expect.objectContaining({
+                renderables: 1,
+            }));
         } finally {
             syncPerformanceTelemetry.configure({ enabled: false });
             vi.useRealTimers();
@@ -311,6 +320,7 @@ describe('sessions domain: renderable patches', () => {
             agentStateVersion: 0,
             pendingPermissionRequestCount: 1,
             pendingUserActionRequestCount: 0,
+            pendingBlockedCount: 1,
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
@@ -340,6 +350,7 @@ describe('sessions domain: renderable patches', () => {
             id: 's1',
             updatedAt: 20,
             pendingCount: 2,
+            pendingBlockedCount: 1,
             pendingVersion: 3,
             metadataVersion: 1,
             agentStateVersion: 0,
@@ -361,6 +372,7 @@ describe('sessions domain: renderable patches', () => {
             sessionId: 's1',
             updatedAt: 20,
             pendingCount: 2,
+            pendingBlockedCount: 1,
             pendingVersion: 3,
             metadataVersion: 1,
             agentStateVersion: 0,
@@ -390,6 +402,87 @@ describe('sessions domain: renderable patches', () => {
         syncPerformanceTelemetry.configure({ enabled: false });
     });
 
+    it('does not rebuild the active list index when merging a renderable only updates warm-cache fields', async () => {
+        mockSessionsDomainBoundaries();
+
+        const { syncPerformanceTelemetry } = await import('../../runtime/syncPerformanceTelemetry');
+        const { buildSessionListRenderableFromSession } = await import('../../domains/session/listing/sessionListRenderable');
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        domain.replaceSessionListRenderables([buildSessionListRenderableFromSession({
+            id: 's1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 10,
+            active: true,
+            activeAt: 10,
+            metadata: {
+                name: 'Cached title',
+                machineId: 'm1',
+                path: '/home/u/repo',
+                homeDir: '/home/u',
+            },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            pendingPermissionRequestCount: 0,
+            pendingUserActionRequestCount: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any)]);
+        const initialIndex = get().sessionListIndexByServerId.server_1;
+        syncPerformanceTelemetry.configure({ enabled: true, slowThresholdMs: 0 });
+        syncPerformanceTelemetry.reset();
+
+        domain.mergeSessionListRenderables([{
+            id: 's1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 20,
+            active: true,
+            activeAt: 20,
+            pendingCount: 1,
+            pendingVersion: 2,
+            metadataVersion: 2,
+            agentStateVersion: 1,
+            metadata: null,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any]);
+
+        expect(get().sessionListRenderables.s1).toEqual(expect.objectContaining({
+            id: 's1',
+            updatedAt: 20,
+            metadataVersion: 1,
+            agentStateVersion: 0,
+            metadata: expect.objectContaining({
+                name: 'Cached title',
+                path: '/home/u/repo',
+                homeDir: '/home/u',
+                machineId: 'm1',
+            }),
+        }));
+        expect(get().sessionListIndexByServerId.server_1).toBe(initialIndex);
+
+        const mergeEvent = syncPerformanceTelemetry.snapshot().events.filter(
+            (candidate) => candidate.name === 'sync.store.sessions.renderables.merge',
+        ).at(-1);
+        expect(mergeEvent?.fields).toMatchObject({
+            incoming: 1,
+            previous: 1,
+            changed: 1,
+            listRebuild: 0,
+            listViewFieldChanges: 0,
+            staleMetadataPreserved: 1,
+            stalePendingFlagsPreserved: 1,
+            warmCacheRelevant: 1,
+        });
+        syncPerformanceTelemetry.configure({ enabled: false });
+    });
+
     it('preserves direct-session classification when a replacement renderable omits externalSessionV1', async () => {
         mockSessionsDomainBoundaries();
 
@@ -410,7 +503,13 @@ describe('sessions domain: renderable patches', () => {
                 machineId: 'm1',
                 path: '/home/u/repo',
                 homeDir: '/home/u',
-                externalSessionV1: { v: 1, providerId: 'claude' },
+                externalSessionV1: {
+                    v: 1,
+                    agentId: 'claude',
+                    machineId: 'm1',
+                    remoteSessionId: 'remote-1',
+                    source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
+                },
             },
             metadataVersion: 1,
             agentState: null,
@@ -454,7 +553,10 @@ describe('sessions domain: renderable patches', () => {
                 machineId: 'm1',
                 externalSessionV1: {
                     v: 1,
-                    providerId: 'claude',
+                    agentId: 'claude',
+                    machineId: 'm1',
+                    remoteSessionId: 'remote-1',
+                    source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
                 },
             }),
         }));
@@ -464,7 +566,10 @@ describe('sessions domain: renderable patches', () => {
         const entries = lastCall?.[2] as Record<string, any>;
         expect(entries?.s1?.externalSessionV1).toEqual({
             v: 1,
-            providerId: 'claude',
+            agentId: 'claude',
+            machineId: 'm1',
+            remoteSessionId: 'remote-1',
+            source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
         });
     });
 

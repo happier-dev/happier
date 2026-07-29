@@ -8,6 +8,7 @@ const rollbackSessionCheckpointCodeOpMock = vi.hoisted(() => vi.fn());
 const startSessionHandoffOpMock = vi.hoisted(() => vi.fn());
 const openSessionForVoiceToolMock = vi.hoisted(() => vi.fn());
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
+const completeSessionForkNavigationMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/ops/sessions', () => ({
   forkSession: forkSessionOpMock,
@@ -27,6 +28,10 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
 
 vi.mock('@/voice/tools/actionImpl/openSession', () => ({
   openSessionForVoiceTool: openSessionForVoiceToolMock,
+}));
+
+vi.mock('@/sync/domains/sessionFork/completeSessionForkNavigation', () => ({
+  completeSessionForkNavigation: (params: unknown) => completeSessionForkNavigationMock(params),
 }));
 
 vi.mock('@/voice/tools/actionImpl/spawnSession', () => ({
@@ -143,6 +148,13 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     rollbackSessionCheckpointCodeOpMock.mockReset();
     startSessionHandoffOpMock.mockReset();
     openSessionForVoiceToolMock.mockReset();
+    completeSessionForkNavigationMock.mockReset();
+    completeSessionForkNavigationMock.mockImplementation(async (params: any) => {
+      await params.navigate(
+        params.childSessionId,
+        params.serverId ? { serverId: params.serverId } : undefined,
+      );
+    });
     readMachineTargetForSessionMock.mockReset();
     readMachineTargetForSessionMock.mockReturnValue(null);
     storageGetStateMock.mockReset();
@@ -185,9 +197,69 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     );
 
     expect(res.ok).toBe(true);
+    expect(completeSessionForkNavigationMock).toHaveBeenCalledWith({
+      childSessionId: 'sess_child',
+      parentSessionId: 'sess_parent',
+      navigate: expect.any(Function),
+    });
     expect(openSession).toHaveBeenCalledTimes(1);
     expect(openSession).toHaveBeenCalledWith('sess_child');
   }, 10_000);
+
+  it('resolves the parent session server scope for fork execution and child opening', async () => {
+    forkSessionOpMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess_child' });
+
+    const openSession = vi.fn().mockResolvedValueOnce(undefined);
+
+    storageGetStateMock.mockReturnValue({
+      sessions: {
+        sess_parent: {
+          id: 'sess_parent',
+          seq: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          active: false,
+          activeAt: 0,
+          metadataVersion: 0,
+          agentStateVersion: 0,
+          thinking: false,
+          thinkingAt: 0,
+          presence: 0,
+          metadata: {
+            machineId: 'machine_1',
+          },
+        },
+      },
+      settings: {},
+    });
+
+    const resolveServerIdForSessionId = vi.fn((sessionId: string) => sessionId === 'sess_parent' ? 'server-b' : null);
+    const executor = createDefaultActionExecutor({
+      openSession,
+      resolveServerIdForSessionId,
+    });
+
+    const res = await executor.execute(
+      'session.fork' as any,
+      { sessionId: 'sess_parent' },
+      { surface: 'ui', placement: 'session_action_menu' } as any,
+    );
+
+    expect(res.ok).toBe(true);
+    expect(resolveServerIdForSessionId).toHaveBeenCalledWith('sess_parent');
+    expect(forkSessionOpMock).toHaveBeenCalledWith(expect.objectContaining({
+      parentSessionId: 'sess_parent',
+      serverId: 'server-b',
+    }));
+    expect(completeSessionForkNavigationMock).toHaveBeenCalledWith({
+      childSessionId: 'sess_child',
+      parentSessionId: 'sess_parent',
+      serverId: 'server-b',
+      navigate: expect.any(Function),
+    });
+    expect(openSession).toHaveBeenCalledTimes(1);
+    expect(openSession).toHaveBeenCalledWith('sess_child', { serverId: 'server-b' });
+  });
 
   it('passes replaySummaryRunner when session replay strategy is summary_plus_recent and a runner is configured', async () => {
     forkSessionOpMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess_child' });
@@ -239,6 +311,14 @@ describe('createDefaultActionExecutor (session.fork)', () => {
       forkPoint: { type: 'latest' },
       replaySummaryRunner: runner,
       replayMaxSeedChars: 54_321,
+    }));
+    expect(completeSessionForkNavigationMock).toHaveBeenCalledWith({
+      childSessionId: 'sess_child',
+      parentSessionId: 'sess_parent',
+      navigate: expect.any(Function),
+    });
+    expect(openSessionForVoiceToolMock).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess_child',
     }));
   }, 60_000);
 
@@ -456,7 +536,16 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           presence: 0,
           metadata: {
             machineId: 'machine_1',
-            externalSessionV1: { v: 1 },
+            directSessionV1: {
+              v: 1,
+              providerId: 'claude',
+              machineId: 'machine_1',
+              remoteSessionId: 'claude_session_1',
+              source: {
+                kind: 'claudeConfig',
+                configDir: '/Users/tester/.claude',
+              },
+            },
             flavor: 'claude',
           },
         },
@@ -581,6 +670,134 @@ describe('createDefaultActionExecutor (session.fork)', () => {
       sessionId: 'sess_parent',
       target: { type: 'latest_turn' },
     });
+  });
+
+  it.each([
+    ['Codex app-server', { flavor: 'codex', codexBackendMode: 'appServer' }],
+    ['Grok', { flavor: 'grok' }],
+  ])('delegates inactive %s rollback to a trusted completed turn start', async (_provider, metadata) => {
+    rollbackSessionConversationOpMock.mockResolvedValueOnce({
+      ok: true,
+      rolledBack: true,
+      target: { type: 'before_user_message', userMessageSeq: 3 },
+    });
+
+    storageGetStateMock.mockReturnValue({
+      sessions: {
+        sess_parent: {
+          id: 'sess_parent',
+          seq: 4,
+          createdAt: 1,
+          updatedAt: 4,
+          active: false,
+          activeAt: 4,
+          metadataVersion: 0,
+          agentStateVersion: 0,
+          thinking: false,
+          thinkingAt: 0,
+          presence: 0,
+          rollbackEligibleTurnStarts: [3],
+          sessionTurns: {
+            v: 1,
+            sessionId: 'sess_parent',
+            latestTurnId: 'turn_2',
+            updatedAt: 4,
+            turns: [{
+              turnId: 'turn_2',
+              status: 'completed',
+              startedAt: 3,
+              updatedAt: 4,
+              terminalAt: 4,
+              transcriptAnchors: {
+                startUserMessageSeq: 3,
+                userMessageSeqs: [3],
+                startSeqInclusive: 3,
+                endSeqInclusive: 4,
+              },
+              rollback: { state: 'eligible', updatedAt: 4 },
+            }],
+          },
+          metadata: {
+            machineId: 'machine_1',
+            ...metadata,
+          },
+        },
+      },
+      settings: {},
+    });
+
+    const executor = createDefaultActionExecutor();
+
+    const result = await executor.execute(
+      'session.rollback' as any,
+      {
+        sessionId: 'sess_parent',
+        target: { type: 'before_user_message', userMessageSeq: 3 },
+      },
+      { defaultSessionId: 'sess_parent', surface: 'ui' } as any,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(rollbackSessionConversationOpMock).toHaveBeenCalledWith({
+      sessionId: 'sess_parent',
+      target: { type: 'before_user_message', userMessageSeq: 3 },
+    });
+  });
+
+  it.each([
+    [
+      'inactive latest-turn rollback',
+      { active: false, metadata: { flavor: 'codex', codexBackendMode: 'appServer' }, rollbackEligibleTurnStarts: [3] },
+      { type: 'latest_turn' },
+    ],
+    [
+      'an untrusted pending turn start',
+      { active: false, metadata: { flavor: 'grok' }, rollbackEligibleTurnStarts: [3] },
+      { type: 'before_user_message', userMessageSeq: 5 },
+    ],
+    [
+      'a view-only trusted turn start',
+      { active: false, accessLevel: 'view', metadata: { flavor: 'grok' }, rollbackEligibleTurnStarts: [3] },
+      { type: 'before_user_message', userMessageSeq: 3 },
+    ],
+    [
+      'an unsupported provider trusted turn start',
+      { active: false, metadata: { flavor: 'claude' }, rollbackEligibleTurnStarts: [3] },
+      { type: 'before_user_message', userMessageSeq: 3 },
+    ],
+  ])('rejects %s before invoking the rollback RPC', async (_scenario, sessionOverrides, target) => {
+    storageGetStateMock.mockReturnValue({
+      sessions: {
+        sess_parent: {
+          id: 'sess_parent',
+          seq: 5,
+          createdAt: 1,
+          updatedAt: 5,
+          activeAt: 5,
+          metadataVersion: 0,
+          agentStateVersion: 0,
+          thinking: false,
+          thinkingAt: 0,
+          presence: 0,
+          ...sessionOverrides,
+        },
+      },
+      settings: {},
+    });
+
+    const executor = createDefaultActionExecutor();
+    const result = await executor.execute(
+      'session.rollback' as any,
+      { sessionId: 'sess_parent', target },
+      { defaultSessionId: 'sess_parent', surface: 'ui' } as any,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'action_disabled',
+    });
+    expect(rollbackSessionConversationOpMock).not.toHaveBeenCalled();
   });
 
   it('delegates checkpoint code rollback through the production action executor dependency', async () => {

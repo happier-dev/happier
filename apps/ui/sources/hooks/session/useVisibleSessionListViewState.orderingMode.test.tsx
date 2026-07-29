@@ -1181,7 +1181,7 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
         ]);
     });
 
-    it('leaves folder metadata inactive when the feature is disabled or Direct mode is selected', async () => {
+    it('leaves folder metadata inactive only when the folder feature is disabled', async () => {
         viewState.sessionFolderViewMode = 'tree';
         viewState.sessionFoldersFeatureEnabled = false;
         viewState.source = [
@@ -1205,6 +1205,7 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
                 section: 'active',
                 groupKey: 'server:s1:active:project:hash-a',
                 groupKind: 'project',
+                storageKind: 'direct',
             },
         ];
         viewState.rowsByServerId = {
@@ -1262,8 +1263,28 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
         const directHook = await renderHook(() => useVisibleSessionListViewState('direct'));
         await flushHookEffects();
 
-        expect(directHook.getCurrent()?.visibleSessionListIndex).toEqual([]);
-        expect(directHook.getCurrent()?.folderFocus).toBeNull();
+        expect(directHook.getCurrent()?.visibleSessionListIndex).toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: 'header', headerKind: 'folder', folderId: 'folder-a' }),
+            expect.objectContaining({ type: 'session', sessionId: 'in-folder', folderId: 'folder-a' }),
+        ]));
+
+        viewState.focusedSessionFolder = {
+            serverId: 's1',
+            workspace: {
+                t: 'workspaceScope',
+                serverId: 's1',
+                machineId: 'm1',
+                rootPath: '/repo',
+            },
+            folderId: 'folder-a',
+        };
+        const focusedDirectHook = await renderHook(() => useVisibleSessionListViewState('direct'));
+        await flushHookEffects();
+
+        expect(focusedDirectHook.getCurrent()?.folderFocus).toEqual(expect.objectContaining({ folderId: 'folder-a' }));
+        expect((focusedDirectHook.getCurrent()?.visibleSessionListIndex ?? [])
+            .filter((item) => item.type === 'session')
+            .map((item) => item.sessionId)).toEqual(['in-folder']);
     });
 
     it('keeps direct sessions visible when legacy index items omit storageKind but row state has direct metadata', async () => {
@@ -1278,7 +1299,17 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
                     active: true,
                     metadata: {
                         path: '/repo',
-                        externalSessionV1: { v: 1, providerId: 'opencode' },
+                        externalSessionV1: {
+                            v: 1,
+                            agentId: 'opencode',
+                            machineId: 'machine-1',
+                            remoteSessionId: 'remote-1',
+                            source: {
+                                kind: 'opencodeServer',
+                                baseUrl: 'http://127.0.0.1:4096',
+                                directory: '/repo',
+                            },
+                        },
                     },
                 }),
                 'persisted-session': makeSessionRow('persisted-session', {

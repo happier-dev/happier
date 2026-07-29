@@ -1,13 +1,14 @@
 import React from 'react';
-import { Animated, Easing, View, Pressable, Platform, Image as ReactNativeImage, type TextStyle, type ViewStyle } from 'react-native';
+import { Animated, Easing, View, Pressable, Platform, Image as ReactNativeImage, type StyleProp, type TextStyle, type ViewProps, type ViewStyle } from 'react-native';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useLocalSettingMutable, useSettingMutable } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
 import { UpdateBanner } from '@/components/ui/feedback/UpdateBanner';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Eyebrow } from '@/components/ui/text/Eyebrow';
+import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import { t } from '@/text';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
@@ -38,6 +39,9 @@ const ORDERING_MENU_IDS = {
     sessionFolderViewModeTree: 'sessionFolderViewModeTree',
     sessionListFolderSortModeFoldersFirst: 'sessionListFolderSortModeFoldersFirst',
     sessionListFolderSortModeMixed: 'sessionListFolderSortModeMixed',
+    sessionListStorageFilterAll: 'sessionListStorageFilterAll',
+    sessionListStorageFilterPersisted: 'sessionListStorageFilterPersisted',
+    sessionListStorageFilterDirect: 'sessionListStorageFilterDirect',
 } as const;
 
 const TAG_FILTER_ITEM_PREFIX = 'session-list-tag-filter:';
@@ -158,13 +162,16 @@ const SessionListOrderingMenuButton = React.memo(function SessionListOrderingMen
     const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
     const [sessionFolderViewModeV1, setSessionFolderViewModeV1] = useSettingMutable('sessionFolderViewModeV1');
     const [sessionListFolderSortModeV1, setSessionListFolderSortModeV1] = useSettingMutable('sessionListFolderSortModeV1');
+    const [sessionsListStorageFilter, setSessionsListStorageFilter] = useLocalSettingMutable('sessionsListStorageFilter');
     const sessionFoldersFeatureEnabled = useFeatureEnabled('sessions.folders');
+    const externalSessionsEnabled = useFeatureEnabled('sessions.direct');
     const [menuOpen, setMenuOpen] = React.useState(false);
     const actionIconColor = theme.colors.text.secondary;
     const sectionMode = sessionListSectionModeV1 === 'single' ? 'single' : 'activity';
     const activeGrouping = sessionListActiveGroupingV1 === 'date' ? 'date' : 'project';
     const inactiveGrouping = sessionListInactiveGroupingV1 === 'date' ? 'date' : 'project';
     const isHideInactiveSessionsEnabled = hideInactiveSessions === true;
+    const hasActiveStorageFilter = externalSessionsEnabled && sessionsListStorageFilter !== 'all';
 
     const menuItems = resolveSessionsListHeaderMenuItems({
         orderingMode,
@@ -175,6 +182,8 @@ const SessionListOrderingMenuButton = React.memo(function SessionListOrderingMen
         showFolderViewMode: sessionFoldersFeatureEnabled,
         folderViewMode: sessionFolderViewModeV1 === 'tree' ? 'tree' : 'off',
         folderSortMode: sessionListFolderSortModeV1 === 'mixed' ? 'mixed' : 'foldersFirst',
+        showStorageFilter: externalSessionsEnabled,
+        storageFilter: sessionsListStorageFilter,
         actionIconColor,
     });
 
@@ -214,6 +223,15 @@ const SessionListOrderingMenuButton = React.memo(function SessionListOrderingMen
         if (itemId === ORDERING_MENU_IDS.hideInactiveSessions) {
             setHideInactiveSessions(!isHideInactiveSessionsEnabled);
         }
+        if (externalSessionsEnabled && itemId === ORDERING_MENU_IDS.sessionListStorageFilterAll) {
+            setSessionsListStorageFilter('all');
+        }
+        if (externalSessionsEnabled && itemId === ORDERING_MENU_IDS.sessionListStorageFilterPersisted) {
+            setSessionsListStorageFilter('persisted');
+        }
+        if (externalSessionsEnabled && itemId === ORDERING_MENU_IDS.sessionListStorageFilterDirect) {
+            setSessionsListStorageFilter('direct');
+        }
         if (sessionFoldersFeatureEnabled && itemId === ORDERING_MENU_IDS.sessionFolderViewModeTree) {
             setSessionFolderViewModeV1(sessionFolderViewModeV1 === 'tree' ? 'off' : 'tree');
         }
@@ -240,6 +258,8 @@ const SessionListOrderingMenuButton = React.memo(function SessionListOrderingMen
         setSessionFolderViewModeV1,
         setSessionListFolderSortModeV1,
         orderingMode,
+        externalSessionsEnabled,
+        setSessionsListStorageFilter,
     ]);
 
     return (
@@ -270,9 +290,19 @@ const SessionListOrderingMenuButton = React.memo(function SessionListOrderingMen
                     }}
                     accessibilityRole="button"
                     accessibilityLabel={t('settingsSession.sessionList.orderingTitle')}
+                    accessibilityState={{ selected: hasActiveStorageFilter }}
                     hitSlop={8}
                 >
-                    <Ionicons name="filter-outline" size={16} color={actionIconColor} />
+                    <View>
+                        <Ionicons name="filter-outline" size={16} color={actionIconColor} />
+                        {hasActiveStorageFilter ? (
+                            <TabBadge
+                                variant="dot"
+                                testID="session-list-active-filter-indicator"
+                                style={styles.headerActiveFilterBadge}
+                            />
+                        ) : null}
+                    </View>
                 </Pressable>
             )}
         />
@@ -763,6 +793,12 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
     showOrderingMenu?: boolean;
     testID?: string;
     headerControls?: Omit<React.ComponentProps<typeof SessionListHeaderControls>, 'onMenuOpenChange'>;
+    rootMeasurement?: Readonly<{
+        active: boolean;
+        ref: React.Ref<View>;
+        onLayout: NonNullable<ViewProps['onLayout']>;
+        style?: StyleProp<ViewStyle>;
+    }>;
 }>) {
     const styles = sessionListStyles;
     const { theme } = useUnistyles();
@@ -775,9 +811,15 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
     const showOrderingMenu = props.showOrderingMenu === true;
     return (
         <Pressable
-            style={isPrimaryHeader ? styles.headerSection : styles.groupHeaderSection}
+            ref={props.rootMeasurement?.ref}
+            collapsable={props.rootMeasurement?.active ? false : undefined}
+            style={[
+                isPrimaryHeader ? styles.headerSection : styles.groupHeaderSection,
+                props.rootMeasurement?.style,
+            ]}
             onPress={props.onPress}
             testID={props.testID}
+            onLayout={props.rootMeasurement?.onLayout}
             onHoverIn={isWeb ? () => setIsHovered(true) : undefined}
             onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
         >

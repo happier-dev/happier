@@ -1,32 +1,30 @@
 import { useCallback, useMemo, useRef } from 'react';
+import { buildProviderCliCapabilityId } from '@/capabilities/cliCapabilityId';
 import { useMachineCliDetectionTarget } from '@/sync/domains/state/storage';
 import { useDaemonScopedMachineCapabilitiesCache } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 import type { CapabilityDetectResult, CliAuthStatusData, CliCapabilityData, TmuxCapabilityData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import {
-    AGENT_PROVIDER_IDS,
-    getAgentLocalCliConfig,
+    AGENT_IDS,
     type AgentId,
-    type AgentProviderId,
-    type CanonicalAgentId,
     isAgentAuthProbeSafeForBackgroundChecks,
 } from '@happier-dev/agents';
 import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
-const CLI_PROBE_AGENT_IDS: readonly AgentProviderId[] = AGENT_PROVIDER_IDS;
+const CLI_PROBE_AGENT_IDS: readonly AgentId[] = AGENT_IDS;
 
 export type CLIAvailability = Readonly<{
-    available: Readonly<Record<AgentId, boolean | null>>; // null = unknown/loading, true = installed, false = not installed
-    login: Readonly<Record<AgentId, boolean | null>>; // null = unknown/not yet loaded
-    authStatus: Readonly<Record<AgentId, CliAuthStatusData | null>>;
-    resolvedPath: Readonly<Record<AgentId, string | null>>; // null = unknown/not available
-    resolvedCommand?: Readonly<Record<AgentId, string | null>>; // null = unknown/not available
-    resolutionSource: Readonly<Record<AgentId, 'override' | 'system' | 'managed' | null>>;
+    available: Readonly<Record<string, boolean | null>>; // null = unknown/loading, true = installed, false = not installed
+    login: Readonly<Record<string, boolean | null>>; // null = unknown/not yet loaded
+    authStatus: Readonly<Record<string, CliAuthStatusData | null>>;
+    resolvedPath: Readonly<Record<string, string | null>>; // null = unknown/not available
+    resolvedCommand?: Readonly<Record<string, string | null>>; // null = unknown/not available
+    resolutionSource: Readonly<Record<string, 'override' | 'system' | 'managed' | null>>;
     tmux: boolean | null;
     isDetecting: boolean; // Explicit loading state
     timestamp: number; // When detection completed
     error?: string; // Detection error message (for debugging)
-    refresh: (next?: { bypassCache?: boolean; includeLoginStatusForAgentIds?: readonly AgentId[] }) => void;
+    refresh: (next?: { bypassCache?: boolean; includeLoginStatusForAgentIds?: readonly string[] }) => void;
 }>;
 
 export interface UseCLIDetectionOptions {
@@ -42,12 +40,12 @@ export interface UseCLIDetectionOptions {
      * Optional explicit agent ids to scope the CLI capability request.
      * When omitted, the hook falls back to the canonical new-session checklist.
      */
-    agentIds?: readonly AgentId[];
+    agentIds?: readonly string[];
     /**
      * Optional explicit agent ids for automatic login-status probing.
      * When omitted and includeLoginStatus=true, only background-safe agents are probed.
      */
-    includeLoginStatusForAgentIds?: readonly AgentId[];
+    includeLoginStatusForAgentIds?: readonly string[];
     /**
      * Optional explicit server scope for machine capability cache entries.
      */
@@ -97,37 +95,33 @@ function readCliResolutionSource(result: CapabilityDetectResult | undefined): 'o
         : null;
 }
 
-function normalizeRequestedAgentIds(agentIds: readonly AgentId[] | null | undefined): CanonicalAgentId[] {
-    const normalized: CanonicalAgentId[] = [];
-    const seen = new Set<CanonicalAgentId>();
+function normalizeRequestedAgentIds(agentIds: readonly string[] | null | undefined): string[] {
+    const normalized: string[] = [];
+    const seen = new Set<string>();
     for (const agentId of agentIds ?? []) {
-        if (!(CLI_PROBE_AGENT_IDS as readonly AgentId[]).includes(agentId)) continue;
-        if (seen.has(agentId as CanonicalAgentId)) continue;
-        seen.add(agentId as CanonicalAgentId);
-        normalized.push(agentId as CanonicalAgentId);
+        const normalizedAgentId = agentId.trim();
+        if (!normalizedAgentId || seen.has(normalizedAgentId)) continue;
+        seen.add(normalizedAgentId);
+        normalized.push(normalizedAgentId);
     }
     return normalized;
 }
 
-function resolveAutomaticLoginStatusAgentIds(includeLoginStatus: boolean, explicitAgentIds?: readonly AgentId[]): CanonicalAgentId[] {
+function resolveAutomaticLoginStatusAgentIds(includeLoginStatus: boolean, explicitAgentIds?: readonly string[]): string[] {
     if (!includeLoginStatus) return [];
     const normalizedExplicit = normalizeRequestedAgentIds(explicitAgentIds);
     if (normalizedExplicit.length > 0) return normalizedExplicit;
     return CLI_PROBE_AGENT_IDS.filter((agentId) => isAgentAuthProbeSafeForBackgroundChecks(agentId));
 }
 
-function buildCliCapabilityId(agentId: CanonicalAgentId): `cli.${string}` {
-    return `cli.${getAgentLocalCliConfig(agentId).detectKey}`;
-}
-
 function buildCliDetectionRequest(params: Readonly<{
-    agentIds?: readonly AgentId[];
-    loginStatusAgentIds?: readonly AgentId[];
+    agentIds?: readonly string[];
+    loginStatusAgentIds?: readonly string[];
     bypassCache?: boolean;
 }>) {
     const requestedAgentIds = normalizeRequestedAgentIds(params.agentIds);
     const loginStatusAgentIds = normalizeRequestedAgentIds(params.loginStatusAgentIds);
-    const targetAgentIds = requestedAgentIds.length > 0 ? requestedAgentIds : CLI_PROBE_AGENT_IDS;
+    const targetAgentIds: readonly string[] = requestedAgentIds.length > 0 ? requestedAgentIds : CLI_PROBE_AGENT_IDS;
     const scopedLoginStatusAgentIds = loginStatusAgentIds.filter((agentId) => targetAgentIds.includes(agentId));
     const bypassCache = params.bypassCache === true;
     if (requestedAgentIds.length === 0 && scopedLoginStatusAgentIds.length === 0 && !bypassCache) {
@@ -141,7 +135,7 @@ function buildCliDetectionRequest(params: Readonly<{
                 if (scopedLoginStatusAgentIds.includes(agentId)) params.includeLoginStatus = true;
                 if (bypassCache) params.bypassCache = true;
                 return {
-                    id: buildCliCapabilityId(agentId),
+                    id: buildProviderCliCapabilityId(agentId),
                     ...(Object.keys(params).length > 0 ? { params } : {}),
                 };
             }),
@@ -151,7 +145,7 @@ function buildCliDetectionRequest(params: Readonly<{
     const overrides: Record<string, { params: { includeLoginStatus?: true; bypassCache?: true } }> = {};
     for (const agentId of CLI_PROBE_AGENT_IDS) {
         const shouldIncludeLoginStatus = scopedLoginStatusAgentIds.includes(agentId);
-        overrides[buildCliCapabilityId(agentId)] = {
+        overrides[buildProviderCliCapabilityId(agentId)] = {
             params: {
                 ...(shouldIncludeLoginStatus ? { includeLoginStatus: true } : {}),
                 ...(bypassCache ? { bypassCache: true } : {}),
@@ -202,17 +196,17 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
     const fallbackDetectAtRef = useRef<number>(0);
     const lastStableValuesRef = useRef<Readonly<{
         signature: string;
-        available: Readonly<Record<AgentId, boolean | null>>;
-        login: Readonly<Record<AgentId, boolean | null>>;
-        authStatus: Readonly<Record<AgentId, CliAuthStatusData | null>>;
-        resolvedPath: Readonly<Record<AgentId, string | null>>;
-        resolvedCommand: Readonly<Record<AgentId, string | null>>;
-        resolutionSource: Readonly<Record<AgentId, 'override' | 'system' | 'managed' | null>>;
+        available: Readonly<Record<string, boolean | null>>;
+        login: Readonly<Record<string, boolean | null>>;
+        authStatus: Readonly<Record<string, CliAuthStatusData | null>>;
+        resolvedPath: Readonly<Record<string, string | null>>;
+        resolvedCommand: Readonly<Record<string, string | null>>;
+        resolutionSource: Readonly<Record<string, 'override' | 'system' | 'managed' | null>>;
         tmux: boolean | null;
         timestamp: number;
     }> | null>(null);
 
-    const refreshStable = useCallback((next?: { bypassCache?: boolean; includeLoginStatusForAgentIds?: readonly AgentId[] }) => {
+    const refreshStable = useCallback((next?: { bypassCache?: boolean; includeLoginStatusForAgentIds?: readonly string[] }) => {
         if (!machineId || !isOnline) return;
         if (next?.bypassCache) {
             refresh({
@@ -228,14 +222,15 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
     }, [automaticLoginStatusAgentIds, isOnline, machineId, refresh, scopedAgentIds]);
 
     return useMemo((): CLIAvailability => {
+        const probeAgentIds = scopedAgentIds.length > 0 ? scopedAgentIds : CLI_PROBE_AGENT_IDS;
         if (!machineId || !isOnline) {
-            const available: Record<AgentId, boolean | null> = {} as any;
-            const login: Record<AgentId, boolean | null> = {} as any;
-            const authStatus: Record<AgentId, CliAuthStatusData | null> = {} as any;
-            const resolvedPath: Record<AgentId, string | null> = {} as any;
-            const resolvedCommand: Record<AgentId, string | null> = {} as any;
-            const resolutionSource: Record<AgentId, 'override' | 'system' | 'managed' | null> = {} as any;
-            for (const agentId of CLI_PROBE_AGENT_IDS) {
+            const available: Record<string, boolean | null> = {};
+            const login: Record<string, boolean | null> = {};
+            const authStatus: Record<string, CliAuthStatusData | null> = {};
+            const resolvedPath: Record<string, string | null> = {};
+            const resolvedCommand: Record<string, string | null> = {};
+            const resolutionSource: Record<string, 'override' | 'system' | 'managed' | null> = {};
+            for (const agentId of probeAgentIds) {
                 available[agentId] = null;
                 login[agentId] = null;
                 authStatus[agentId] = null;
@@ -302,13 +297,13 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
                     refresh: refreshStable,
                 };
             }
-            const available: Record<AgentId, boolean | null> = {} as any;
-            const login: Record<AgentId, boolean | null> = {} as any;
-            const authStatus: Record<AgentId, CliAuthStatusData | null> = {} as any;
-            const resolvedPath: Record<AgentId, string | null> = {} as any;
-            const resolvedCommand: Record<AgentId, string | null> = {} as any;
-            const resolutionSource: Record<AgentId, 'override' | 'system' | 'managed' | null> = {} as any;
-            for (const agentId of CLI_PROBE_AGENT_IDS) {
+            const available: Record<string, boolean | null> = {};
+            const login: Record<string, boolean | null> = {};
+            const authStatus: Record<string, CliAuthStatusData | null> = {};
+            const resolvedPath: Record<string, string | null> = {};
+            const resolvedCommand: Record<string, string | null> = {};
+            const resolutionSource: Record<string, 'override' | 'system' | 'managed' | null> = {};
+            for (const agentId of probeAgentIds) {
                 available[agentId] = null;
                 login[agentId] = null;
                 authStatus[agentId] = null;
@@ -331,14 +326,14 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
             };
         }
 
-        const available: Record<AgentId, boolean | null> = {} as any;
-        const login: Record<AgentId, boolean | null> = {} as any;
-        const authStatus: Record<AgentId, CliAuthStatusData | null> = {} as any;
-        const resolvedPath: Record<AgentId, string | null> = {} as any;
-        const resolvedCommand: Record<AgentId, string | null> = {} as any;
-        const resolutionSource: Record<AgentId, 'override' | 'system' | 'managed' | null> = {} as any;
-        for (const agentId of CLI_PROBE_AGENT_IDS) {
-            const capId = buildCliCapabilityId(agentId);
+        const available: Record<string, boolean | null> = {};
+        const login: Record<string, boolean | null> = {};
+        const authStatus: Record<string, CliAuthStatusData | null> = {};
+        const resolvedPath: Record<string, string | null> = {};
+        const resolvedCommand: Record<string, string | null> = {};
+        const resolutionSource: Record<string, 'override' | 'system' | 'managed' | null> = {};
+        for (const agentId of probeAgentIds) {
+            const capId = buildProviderCliCapabilityId(agentId);
             available[agentId] = readCliAvailable(resultsById[capId]);
             login[agentId] = readCliLogin(resultsById[capId]);
             authStatus[agentId] = readCliAuthStatus(resultsById[capId]);
@@ -373,5 +368,5 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
             timestamp: nextTimestamp,
             refresh: refreshStable,
         };
-    }, [cached, isOnline, machineId, refreshStable, requestKey, serverId]);
+    }, [cached, isOnline, machineId, refreshStable, requestKey, scopedAgentIds, serverId]);
 }

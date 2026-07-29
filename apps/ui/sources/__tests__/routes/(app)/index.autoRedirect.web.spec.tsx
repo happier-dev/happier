@@ -27,7 +27,6 @@ vi.mock('expo-constants', () => ({
     },
 }));
 
-vi.mock('react-native-reanimated', () => ({}));
 vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
 vi.mock('@/components/navigation/shell/HomeHeader', () => ({ HomeHeaderNotAuth: () => null }));
 vi.mock('@/components/navigation/shell/MainView', () => ({ MainView: () => null }));
@@ -77,6 +76,7 @@ vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
 });
 
 vi.mock('@/platform/cryptoRandom', () => ({
+    getRandomBytes: (n: number) => new Uint8Array(n).fill(9),
     getRandomBytesAsync: async (n: number) => new Uint8Array(n).fill(9),
 }));
 

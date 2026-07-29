@@ -57,17 +57,42 @@ function listInputKey(input: PluginPermissionGrantListInput | null): string {
 }
 
 export function usePluginPermissionGrants(params: UsePluginPermissionGrantsParams): UsePluginPermissionGrantsResult {
-    const [state, setState] = React.useState(createEmptyPluginPermissionGrantState);
     const refreshInputKey = listInputKey(params.listInput);
+    const scopeKey = params.enabled && params.listInput ? refreshInputKey : `inactive:${refreshInputKey}`;
+    const emptyState = React.useMemo(createEmptyPluginPermissionGrantState, [scopeKey]);
+    const [scopedState, setScopedState] = React.useState<Readonly<{
+        scopeKey: string;
+        state: PluginPermissionGrantState;
+    }>>(() => ({ scopeKey, state: createEmptyPluginPermissionGrantState() }));
+    const state = scopedState.scopeKey === scopeKey ? scopedState.state : emptyState;
+    const refreshSequenceRef = React.useRef(0);
 
     const refresh = React.useCallback(async () => {
+        const refreshSequence = ++refreshSequenceRef.current;
         if (!params.enabled || !params.listInput) return;
-        setState((current) => beginPluginPermissionGrantRefresh(current));
+        const requestScopeKey = refreshInputKey;
+        setScopedState((current) => ({
+            scopeKey: requestScopeKey,
+            state: beginPluginPermissionGrantRefresh(
+                current.scopeKey === requestScopeKey
+                    ? current.state
+                    : createEmptyPluginPermissionGrantState(),
+            ),
+        }));
         try {
             const response = await params.actions.list(params.listInput);
-            setState((current) => applyPluginPermissionGrantList(current, response));
+            if (refreshSequenceRef.current !== refreshSequence) return;
+            setScopedState((current) => current.scopeKey === requestScopeKey
+                ? { scopeKey: requestScopeKey, state: applyPluginPermissionGrantList(current.state, response) }
+                : current);
         } catch (error) {
-            setState((current) => markPluginPermissionGrantRefreshFailed(current, errorMessage(error)));
+            if (refreshSequenceRef.current !== refreshSequence) return;
+            setScopedState((current) => current.scopeKey === requestScopeKey
+                ? {
+                      scopeKey: requestScopeKey,
+                      state: markPluginPermissionGrantRefreshFailed(current.state, errorMessage(error)),
+                  }
+                : current);
         }
     }, [params.actions, params.enabled, refreshInputKey]);
 
@@ -75,24 +100,75 @@ export function usePluginPermissionGrants(params: UsePluginPermissionGrantsParam
         void refresh();
     }, [refresh]);
 
+    React.useEffect(() => {
+        if (params.enabled && params.listInput) return;
+        ++refreshSequenceRef.current;
+        setScopedState({ scopeKey, state: createEmptyPluginPermissionGrantState() });
+    }, [params.enabled, refreshInputKey, scopeKey]);
+
     const grant = React.useCallback(async (input: PluginPermissionGrantDecisionInput) => {
-        const result = await params.actions.grant(input);
-        setState((current) => applyPluginPermissionGrantApproved(current, result));
-    }, [params.actions]);
+        if (!params.enabled) return;
+        const mutationScopeKey = scopeKey;
+        try {
+            const result = await params.actions.grant(input);
+            setScopedState((current) => current.scopeKey === mutationScopeKey
+                ? { scopeKey: mutationScopeKey, state: applyPluginPermissionGrantApproved(current.state, result) }
+                : current);
+        } catch (error) {
+            setScopedState((current) => current.scopeKey === mutationScopeKey
+                ? {
+                      scopeKey: mutationScopeKey,
+                      state: markPluginPermissionGrantRefreshFailed(current.state, errorMessage(error)),
+                  }
+                : current);
+        }
+    }, [params.actions, params.enabled, scopeKey]);
 
     const revoke = React.useCallback(async (input: PluginPermissionGrantRevokeInput) => {
-        const result = await params.actions.revoke(input);
-        setState((current) => applyPluginPermissionGrantRevoked(current, result));
-    }, [params.actions]);
+        if (!params.enabled) return;
+        const mutationScopeKey = scopeKey;
+        try {
+            const result = await params.actions.revoke(input);
+            setScopedState((current) => current.scopeKey === mutationScopeKey
+                ? { scopeKey: mutationScopeKey, state: applyPluginPermissionGrantRevoked(current.state, result) }
+                : current);
+        } catch (error) {
+            setScopedState((current) => current.scopeKey === mutationScopeKey
+                ? {
+                      scopeKey: mutationScopeKey,
+                      state: markPluginPermissionGrantRefreshFailed(current.state, errorMessage(error)),
+                  }
+                : current);
+        }
+    }, [params.actions, params.enabled, scopeKey]);
 
     const dismissRequest = React.useCallback(async (input: PluginPermissionGrantDecisionInput) => {
-        const result = await params.actions.dismissRequest(input);
-        setState((current) => applyPluginPermissionGrantRequestDismissed(current, result));
-    }, [params.actions]);
+        if (!params.enabled) return;
+        const mutationScopeKey = scopeKey;
+        try {
+            const result = await params.actions.dismissRequest(input);
+            setScopedState((current) => current.scopeKey === mutationScopeKey
+                ? {
+                      scopeKey: mutationScopeKey,
+                      state: applyPluginPermissionGrantRequestDismissed(current.state, result),
+                  }
+                : current);
+        } catch (error) {
+            setScopedState((current) => current.scopeKey === mutationScopeKey
+                ? {
+                      scopeKey: mutationScopeKey,
+                      state: markPluginPermissionGrantRefreshFailed(current.state, errorMessage(error)),
+                  }
+                : current);
+        }
+    }, [params.actions, params.enabled, scopeKey]);
 
     const upsertPendingRequest = React.useCallback((request: PluginPermissionPendingGrantRequest) => {
-        setState((current) => upsertPluginPermissionPendingRequest(current, request));
-    }, []);
+        if (!params.enabled) return;
+        setScopedState((current) => current.scopeKey === scopeKey
+            ? { scopeKey, state: upsertPluginPermissionPendingRequest(current.state, request) }
+            : current);
+    }, [params.enabled, scopeKey]);
 
     const hasGrant = React.useCallback((input: Partial<PluginPermissionGrantIdentity>) => {
         return hasPluginPermissionGrant(state, input);

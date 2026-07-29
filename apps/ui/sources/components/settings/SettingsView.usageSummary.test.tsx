@@ -2,52 +2,68 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, renderSettingsView } from '@/dev/testkit';
-import type { UsageAnalyticsSummaryViewModel } from '@/sync/api/account/usageAnalytics';
+import { SETTINGS_PAGE_CATALOG } from '@/components/settings/catalog/pageCatalog';
+import type { SettingsPageNode } from '@/components/settings/catalog/types';
+import { buildUsageAnalyticsViewModel, type UsageAnalyticsViewModel } from '@/sync/api/account/usageAnalytics';
+import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol';
 import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
 
 const tauriDesktopState = vi.hoisted(() => ({ value: true }));
 const routerPushMock = vi.hoisted(() => vi.fn());
-type UsageSummaryHookState = {
-    summary: UsageAnalyticsSummaryViewModel | null;
+type UsageBannerHookState = {
+    viewModel: UsageAnalyticsViewModel | null;
     isLoading: boolean;
     errorMessage: string | null;
 };
-const usageSummaryState = vi.hoisted<UsageSummaryHookState>(() => ({
-    summary: null,
+const usageSummaryState = vi.hoisted<UsageBannerHookState>(() => ({
+    viewModel: null,
     isLoading: false,
     errorMessage: null,
 }));
 
-function createSummaryFixture(): UsageAnalyticsSummaryViewModel {
+const DAY = 86_400_000;
+
+function bannerResponse(hasData: boolean): UsageAnalyticsQueryResponse {
+    const now = Date.now();
+    const isoDay = (offset: number) => new Date(now - offset * DAY).toISOString().slice(0, 10);
+    if (!hasData) {
+        return {
+            v: 1,
+            totals: { eventCount: 0, tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD', costSource: 'none', billingContext: 'api_usage' } },
+            series: [],
+            breakdowns: { model: [] },
+            insights: { activeDays: 0, longestStreakDays: 0, sessionsUsed: 0, messagesUsed: 0, modelsTried: 0, favoriteModel: undefined, favoriteModelChangeCount: 0, busiestMonth: undefined, busiestDay: undefined, busiestHour: undefined },
+            activity: { calendarDays: [], weekdayHourBuckets: [] },
+            leaders: { models: [] },
+            messageStats: { sessionCount: 0, messageCount: 0 },
+        };
+    }
     return {
-        activeDays: 8,
-        currentStreakDays: 5,
-        totalTokens: 2_400_000,
-        totalCost: 1_500,
-        currency: 'USD',
-        weekTokens: 2_400_000,
-        weekCost: 1_500,
-        topModel: { label: 'GPT-5', totalTokens: 1_300_000, totalCost: 800, dimension: 'model', key: 'gpt-5', reportCount: 9, firstSeenAt: 0, lastSeenAt: 0, contextWindowTokens: null, contextUsedTokens: null },
-        topEngine: { label: 'OpenCode', totalTokens: 1_200_000, totalCost: 700, dimension: 'backendMode', key: 'opencode', reportCount: 7, firstSeenAt: 0, lastSeenAt: 0, contextWindowTokens: null, contextUsedTokens: null },
-        busiestWindowLabel: 'Fri · 2 PM',
-        recentActivity: [
-            { timestamp: 1, active: true, tokens: 10, cost: 1 },
-            { timestamp: 2, active: true, tokens: 20, cost: 2 },
-            { timestamp: 3, active: false, tokens: 0, cost: 0 },
-            { timestamp: 4, active: true, tokens: 40, cost: 4 },
-            { timestamp: 5, active: true, tokens: 80, cost: 8 },
-            { timestamp: 6, active: true, tokens: 160, cost: 16 },
-            { timestamp: 7, active: true, tokens: 320, cost: 32 },
-            { timestamp: 8, active: true, tokens: 640, cost: 64 },
-            { timestamp: 9, active: true, tokens: 1280, cost: 128 },
-            { timestamp: 10, active: true, tokens: 2560, cost: 256 },
-            { timestamp: 11, active: true, tokens: 5120, cost: 512 },
-            { timestamp: 12, active: true, tokens: 10240, cost: 1024 },
-            { timestamp: 13, active: true, tokens: 20480, cost: 2048 },
-            { timestamp: 14, active: true, tokens: 40960, cost: 4096 },
-        ],
-        hasData: true,
+        v: 1,
+        totals: { eventCount: 5, tokens: { input: 900_000, output: 300_000, reasoning: 0, cacheRead: 50_000, cacheWrite: 0, total: 2_400_000 }, cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD', costSource: 'provider_reported', billingContext: 'api_usage' } },
+        series: [{ bucketStartMs: now - 5 * DAY, bucketEndMs: now - 5 * DAY + DAY, eventCount: 3, tokens: { input: 700_000, output: 240_000, reasoning: 0, cacheRead: 50_000, cacheWrite: 0, total: 990_000 }, cost: { reportedUsd: 8, estimatedUsd: 5, currency: 'USD' } }],
+        breakdowns: { model: [{ key: 'gpt-5', label: 'GPT-5', eventCount: 3, tokens: { input: 700_000, output: 240_000, reasoning: 0, cacheRead: 50_000, cacheWrite: 0, total: 990_000 }, cost: { reportedUsd: 8, estimatedUsd: 5, currency: 'USD' } }] },
+        insights: { activeDays: 8, longestStreakDays: 6, sessionsUsed: 3, messagesUsed: 5, modelsTried: 2, favoriteModel: { key: 'gpt-5', label: 'GPT-5' }, favoriteModelChangeCount: 1, busiestMonth: undefined, busiestDay: undefined, busiestHour: { key: '14', label: 'Fri · 2 PM' } },
+        activity: { calendarDays: [{ date: isoDay(0), eventCount: 2 }, { date: isoDay(1), eventCount: 3 }], weekdayHourBuckets: [{ weekday: 5, hour: 14, eventCount: 5 }] },
+        leaders: { models: [{ key: 'gpt-5', label: 'GPT-5', eventCount: 3 }] },
+        messageStats: { sessionCount: 3, messageCount: 5 },
     };
+}
+
+function createViewModelFixture(hasData = true): UsageAnalyticsViewModel {
+    return buildUsageAnalyticsViewModel(bannerResponse(hasData), { period: 'year', metric: 'tokens', focus: null, costMode: 'auto' });
+}
+
+function findCatalogNode(
+    nodes: readonly SettingsPageNode[],
+    id: string,
+): SettingsPageNode | null {
+    for (const node of nodes) {
+        if (node.id === id) return node;
+        const match = node.children ? findCatalogNode(node.children, id) : null;
+        if (match) return match;
+    }
+    return null;
 }
 
 installSettingsViewCommonModuleMocks({
@@ -97,8 +113,8 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'usage.reporting',
 }));
 
-vi.mock('@/components/settings/usage/useUsageAnalyticsSummary', () => ({
-    useUsageAnalyticsSummary: () => usageSummaryState,
+vi.mock('@/components/settings/usage/useUsageBannerModel', () => ({
+    useUsageBannerModel: () => usageSummaryState,
 }));
 
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
@@ -203,75 +219,54 @@ vi.mock('@/utils/system/bugReportActionTrail', () => ({
     recordBugReportUserAction: vi.fn(),
 }));
 
-vi.mock('@/sync/api/account/apiVendorTokens', () => ({
-    disconnectVendorToken: vi.fn(async () => {}),
-}));
-
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'gemini'],
     DEFAULT_AGENT_ID: 'agent_default',
-    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', label: 'Anthropic', connectRoute: null } }),
+    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', labelKey: 'agentInput.agent.claude', connectRoute: null } }),
     getAgentIconSource: () => null,
     getAgentIconTintColor: () => null,
     resolveAgentIdFromConnectedServiceId: () => null,
 }));
 
-describe('SettingsView usage summary strip', () => {
-    it('does not render the usage summary strip when the summary has no data', async () => {
-        usageSummaryState.summary = {
-            ...createSummaryFixture(),
-            activeDays: 0,
-            currentStreakDays: 0,
-            totalTokens: 0,
-            totalCost: 0,
-            weekTokens: 0,
-            weekCost: 0,
-            topModel: null,
-            topEngine: null,
-            busiestWindowLabel: null,
-            recentActivity: [],
-            hasData: false,
-        };
+describe('SettingsView usage banner', () => {
+    it('does not render the usage banner when there is no usage data', async () => {
+        usageSummaryState.viewModel = createViewModelFixture(false);
         usageSummaryState.errorMessage = null;
         usageSummaryState.isLoading = false;
         const { SettingsView } = await import('./SettingsView');
         const screen = await renderSettingsView(React.createElement(SettingsView));
 
         expect(screen.findAllByTestId('settings-usage-summary-strip')).toHaveLength(0);
-        expect(screen.findAllByTestId('settings-usage-summary-streak-card')).toHaveLength(0);
+        expect(screen.findAllByTestId('usage-banner-stat-lifetime')).toHaveLength(0);
     });
 
-    it('shows a loading state instead of an empty state while the summary is still loading', async () => {
-        usageSummaryState.summary = null;
-        usageSummaryState.errorMessage = null;
-        usageSummaryState.isLoading = true;
+    it('shows a skeleton loading state instead of an empty state while loading', async () => {
         const { SettingsUsageSummaryStrip } = await import('@/components/settings/usage/SettingsUsageSummaryStrip');
 
         const screen = await renderScreen(
-            <SettingsUsageSummaryStrip
-                summary={null}
-                isLoading
-            />,
+            <SettingsUsageSummaryStrip viewModel={null} isLoading />,
         );
 
-        expect(screen.getTextContent()).toContain('common.loading');
+        expect(screen.findByTestId('settings-usage-summary-loading')).toBeTruthy();
         expect(screen.getTextContent()).not.toContain('usage.noData');
     });
 
-    it('renders connected-service labels through translation keys in the settings surface', async () => {
-        usageSummaryState.summary = null;
+    it('does not render a legacy per-service shortcut beside the canonical Connected Accounts catalog', async () => {
+        usageSummaryState.viewModel = null;
         usageSummaryState.errorMessage = null;
         usageSummaryState.isLoading = false;
 
         const { SettingsView } = await import('./SettingsView');
         const screen = await renderSettingsView(React.createElement(SettingsView));
 
-        expect(screen.findAllByProps({ title: 'connectedServices.serviceNames.anthropic' }).length).toBeGreaterThan(0);
-        expect(screen.findAllByProps({ title: 'Anthropic' })).toHaveLength(0);
+        expect(screen.findGroup('settings.connectedAccounts')).toBeNull();
+        expect(findCatalogNode(SETTINGS_PAGE_CATALOG, 'connectedServices')).toMatchObject({
+            route: '/settings/connected-services',
+        });
     });
 
-    it('renders the usage summary strip above the account shortcuts', async () => {
-        usageSummaryState.summary = createSummaryFixture();
+    it('renders the usage banner above the account shortcuts and opens the usage page on press', async () => {
+        usageSummaryState.viewModel = createViewModelFixture();
         usageSummaryState.errorMessage = null;
         usageSummaryState.isLoading = false;
         routerPushMock.mockReset();
@@ -286,61 +281,29 @@ describe('SettingsView usage summary strip', () => {
         expect(orderedTestIds[0]).toBe('settings-usage-summary-strip');
         expect(orderedTestIds.indexOf('settings-add-your-phone-shortcut')).toBeGreaterThan(0);
 
-        expect(screen.findByTestId('settings-usage-summary-streak-card')).toBeTruthy();
-        expect(screen.findByTestId('settings-usage-summary-week-card')).toBeTruthy();
-        expect(screen.findByTestId('settings-usage-summary-model-card')).toBeTruthy();
-        expect(screen.findByTestId('settings-usage-summary-engine-card')).toBeTruthy();
+        expect(screen.findByTestId('usage-banner-stat-lifetime')).toBeTruthy();
+        expect(screen.findByTestId('usage-banner-heatmap')).toBeTruthy();
+        expect(screen.findByTestId('usage-banner-most-used')).toBeTruthy();
 
-        screen.pressByTestId('settings-usage-summary-streak-card');
-        screen.pressByTestId('settings-usage-summary-week-card');
-        screen.pressByTestId('settings-usage-summary-model-card');
-        screen.pressByTestId('settings-usage-summary-engine-card');
-
+        screen.pressByTestId('settings-usage-summary-open-stats');
         expect(routerPushMock).toHaveBeenNthCalledWith(1, {
-            pathname: '/(app)/settings/usage',
+            pathname: '/settings/usage',
             params: {
                 period: 'year',
                 metric: 'tokens',
             },
         });
-        expect(routerPushMock).toHaveBeenNthCalledWith(2, {
-            pathname: '/(app)/settings/usage',
-            params: {
-                period: '7days',
-                metric: 'tokens',
-            },
-        });
-        expect(routerPushMock).toHaveBeenNthCalledWith(3, {
-            pathname: '/(app)/settings/usage',
-            params: {
-                period: '30days',
-                metric: 'tokens',
-                focusDimension: 'model',
-                focusKey: 'gpt-5',
-                focusLabel: 'GPT-5',
-            },
-        });
-        expect(routerPushMock).toHaveBeenNthCalledWith(4, {
-            pathname: '/(app)/settings/usage',
-            params: {
-                period: '30days',
-                metric: 'tokens',
-                focusDimension: 'backendMode',
-                focusKey: 'opencode',
-                focusLabel: 'OpenCode',
-            },
-        });
     });
 
-    it('keeps the summary group visible when the summary query fails', async () => {
-        usageSummaryState.summary = null;
-        usageSummaryState.errorMessage = 'Usage summary failed';
+    it('keeps the banner group visible when the query fails', async () => {
+        usageSummaryState.viewModel = null;
+        usageSummaryState.errorMessage = 'Usage banner failed';
         usageSummaryState.isLoading = false;
 
         const { SettingsView } = await import('./SettingsView');
         const screen = await renderSettingsView(React.createElement(SettingsView));
 
         expect(screen.findByTestId('settings-usage-summary-strip')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('Usage summary failed');
+        expect(screen.getTextContent()).toContain('Usage banner failed');
     });
 });

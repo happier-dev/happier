@@ -3,6 +3,7 @@ import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 import { Platform } from 'react-native';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
+import { buildRetryLaterProbeResultFromResponse } from './retryLaterProbeResult';
 import { sanitizeEndpointErrorMessage } from './sanitizeEndpointErrorMessage';
 import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 
@@ -43,23 +44,6 @@ function joinBaseAndPath(baseUrl: string, path: string): string {
     const base = String(baseUrl ?? '').replace(/\/+$/, '');
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
     return `${base}${normalizedPath}`;
-}
-
-function parseRetryAfterMs(headers: Headers): number | undefined {
-    const raw = headers.get('Retry-After') ?? headers.get('retry-after');
-    if (!raw) return undefined;
-    const trimmed = raw.trim();
-    if (!trimmed) return undefined;
-    const seconds = Number.parseInt(trimmed, 10);
-    if (Number.isFinite(seconds) && seconds > 0) {
-        return seconds * 1000;
-    }
-    const timestamp = Date.parse(trimmed);
-    if (Number.isFinite(timestamp)) {
-        const deltaMs = timestamp - Date.now();
-        if (deltaMs > 0) return deltaMs;
-    }
-    return undefined;
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
@@ -141,18 +125,11 @@ export function createEndpointReadinessProbe(params: Readonly<{
                 );
 
                 if (response.status === 429) {
-                    return {
-                        status: 'retry_later',
-                        retryAfterMs: parseRetryAfterMs(response.headers),
-                        errorMessage: `Readiness probe returned ${response.status}`,
-                    };
+                    return buildRetryLaterProbeResultFromResponse(response, `Readiness probe returned ${response.status}`);
                 }
 
                 if (response.status === 503 || response.status >= 500) {
-                    return {
-                        status: 'server_unreachable',
-                        errorMessage: `Readiness probe returned ${response.status}`,
-                    };
+                    return buildRetryLaterProbeResultFromResponse(response, `Readiness probe returned ${response.status}`);
                 }
 
                 if (response.ok) {
@@ -211,18 +188,11 @@ export function createEndpointReadinessProbe(params: Readonly<{
             }
 
             if (authResponse.status === 429) {
-                return {
-                    status: 'retry_later',
-                    retryAfterMs: parseRetryAfterMs(authResponse.headers),
-                    errorMessage: `Authenticated probe returned ${authResponse.status}`,
-                };
+                return buildRetryLaterProbeResultFromResponse(authResponse, `Authenticated probe returned ${authResponse.status}`);
             }
 
             if (authResponse.status >= 500) {
-                return {
-                    status: 'server_unreachable',
-                    errorMessage: `Authenticated probe returned ${authResponse.status}`,
-                };
+                return buildRetryLaterProbeResultFromResponse(authResponse, `Authenticated probe returned ${authResponse.status}`);
             }
 
             if (authResponse.status !== 200) {

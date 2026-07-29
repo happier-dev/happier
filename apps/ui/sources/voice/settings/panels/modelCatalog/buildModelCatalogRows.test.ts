@@ -15,10 +15,13 @@ function status(
   const entry = listModelPackCatalogEntries().find((candidate) => candidate.packId === packId);
   return {
     packId,
+    pluginIdentity: null,
     kind: entry?.kind ?? 'stt_sherpa',
     model: entry?.model ?? packId,
     version: null,
     executionSupport: ['daemon'],
+    runtimeFamily: entry?.runtimeFamily ?? null,
+    runtimeSupported: true,
     installState: 'not_installed',
     progress: null,
     lastError: null,
@@ -28,16 +31,140 @@ function status(
 }
 
 describe('buildModelCatalogRows', () => {
-  it('groups catalog entries into stt and tts sections covering every catalog pack', () => {
+  it('omits uninstalled packs whose runtime family the daemon does not support', () => {
+    const unsupportedPack = listModelPackCatalogEntries('stt_sherpa')
+      .find((entry) => entry.runtimeFamily === 'sherpa_parakeet_offline')!;
+    const result = buildModelCatalogRows({
+      statuses: [status(unsupportedPack.packId, { runtimeSupported: false })],
+      selectedSttPackId: null,
+      selectedTtsPackId: null,
+    });
+
+    expect(result.stt.some((row) => row.packId === unsupportedPack.packId)).toBe(false);
+  });
+
+  it('keeps an installed or selected unsupported pack visible as a disabled recovery row', () => {
+    const unsupportedPack = listModelPackCatalogEntries('stt_sherpa')
+      .find((entry) => entry.runtimeFamily === 'sherpa_parakeet_offline')!;
+    const installed = buildModelCatalogRows({
+      statuses: [status(unsupportedPack.packId, {
+        installState: 'installed',
+        runtimeSupported: false,
+      })],
+      selectedSttPackId: null,
+      selectedTtsPackId: null,
+    }).stt.find((row) => row.packId === unsupportedPack.packId)!;
+    expect(installed).toMatchObject({
+      state: 'unsupported',
+      canInstall: false,
+      canRemove: true,
+    });
+
+    const selected = buildModelCatalogRows({
+      statuses: [status(unsupportedPack.packId, { runtimeSupported: false })],
+      selectedSttPackId: unsupportedPack.packId,
+      selectedTtsPackId: null,
+    }).stt.find((row) => row.packId === unsupportedPack.packId)!;
+    expect(selected).toMatchObject({
+      state: 'unsupported',
+      isDefault: true,
+      canInstall: false,
+      canRemove: false,
+    });
+  });
+
+  it('advertises only published built-in packs during normal catalog discovery', () => {
     const result = buildModelCatalogRows({ statuses: [], selectedSttPackId: null, selectedTtsPackId: null });
-    const catalogSttIds = listModelPackCatalogEntries('stt_sherpa').map((entry) => entry.packId).sort();
-    const catalogTtsIds = listModelPackCatalogEntries('tts_sherpa').map((entry) => entry.packId).sort();
+    const catalogSttIds = listModelPackCatalogEntries('stt_sherpa')
+      .filter((entry) => entry.publicationStatus === 'published')
+      .map((entry) => entry.packId)
+      .sort();
+    const catalogTtsIds = listModelPackCatalogEntries('tts_sherpa')
+      .filter((entry) => entry.publicationStatus === 'published')
+      .map((entry) => entry.packId)
+      .sort();
     expect(result.stt.map((row) => row.packId).sort()).toEqual(catalogSttIds);
     expect(result.tts.map((row) => row.packId).sort()).toEqual(catalogTtsIds);
   });
 
-  it('reports not_installed when the daemon has no status for a pack', () => {
-    const result = buildModelCatalogRows({ statuses: [], selectedSttPackId: null, selectedTtsPackId: null });
+  it('keeps installed or selected unavailable built-ins only as inert recovery rows', () => {
+    const unavailablePack = listModelPackCatalogEntries('tts_sherpa')
+      .find((entry) => entry.publicationStatus === 'unavailable')!;
+
+    const installed = buildModelCatalogRows({
+      statuses: [status(unavailablePack.packId, {
+        installState: 'installed',
+        runtimeSupported: true,
+      })],
+      selectedSttPackId: null,
+      selectedTtsPackId: null,
+    }).tts.find((row) => row.packId === unavailablePack.packId);
+    expect(installed).toMatchObject({
+      state: 'unsupported',
+      canInstall: false,
+      canRemove: true,
+      isDefault: false,
+    });
+
+    const selected = buildModelCatalogRows({
+      statuses: [status(unavailablePack.packId, {
+        installState: 'not_installed',
+        runtimeSupported: true,
+      })],
+      selectedSttPackId: null,
+      selectedTtsPackId: unavailablePack.packId,
+    }).tts.find((row) => row.packId === unavailablePack.packId);
+    expect(selected).toMatchObject({
+      state: 'unsupported',
+      canInstall: false,
+      canRemove: false,
+      isDefault: true,
+    });
+  });
+
+  it('adds an external plugin pack from the effective selected-host daemon catalog', () => {
+    const packId = 'acme.speech/english-small';
+    const licenseReview = {
+      pluginId: 'acme.speech',
+      packId: 'english-small',
+      pluginVersion: '1.2.3',
+      packVersion: '2026.7.0',
+      licenseId: 'acme-model-license-v1',
+      licenseTitle: 'Acme model license',
+      licenseText: 'Review these exact model terms.',
+      licenseSourceUrl: 'https://example.com/licenses/acme-v1',
+      licenseTextDigest: `sha256:${'a'.repeat(64)}`,
+      artifactDigest: `sha256:${'b'.repeat(64)}`,
+      accepted: false,
+    } as const;
+    const row = buildModelCatalogRows({
+      statuses: [status(packId, {
+        pluginIdentity: { pluginId: 'acme.speech', packId: 'english-small' },
+        kind: 'stt_sherpa',
+        model: 'acme-english-small',
+        version: '2026.7.0',
+        runtimeFamily: 'sherpa_zipformer_streaming',
+        runtimeSupported: true,
+        licenseReview,
+      })],
+      selectedSttPackId: null,
+      selectedTtsPackId: null,
+    }).stt.find((candidate) => candidate.packId === packId);
+
+    expect(row).toMatchObject({
+      packId,
+      sourcePluginId: 'acme.speech',
+      state: 'not_installed',
+      canInstall: true,
+      licenseReview,
+    });
+  });
+
+  it('reports not_installed when the daemon projects a supported published absent pack', () => {
+    const statuses = listModelPackCatalogEntries()
+      .filter((entry) => entry.publicationStatus === 'published')
+      .map((entry) => status(entry.packId));
+    const result = buildModelCatalogRows({ statuses, selectedSttPackId: null, selectedTtsPackId: null });
     for (const row of [...result.stt, ...result.tts]) {
       expect(row.state).toBe('not_installed');
       expect(row.canInstall).toBe(true);
@@ -112,6 +239,73 @@ describe('buildModelCatalogRows', () => {
     expect(row.canInstall).toBe(true);
   });
 
+  it('keeps retry and remove available after a failed reinstall retains live bytes', () => {
+    const sttPack = listModelPackCatalogEntries('stt_sherpa')[0]!.packId;
+    const row = buildModelCatalogRows({
+      statuses: [status(sttPack, {
+        installState: 'installed',
+        lastError: 'model_pack_sha256_mismatch',
+      })],
+      selectedSttPackId: sttPack,
+      selectedTtsPackId: null,
+    }).stt.find((candidate) => candidate.packId === sttPack)!;
+
+    expect(row).toMatchObject({
+      state: 'error',
+      lastError: 'model_pack_sha256_mismatch',
+      isDefault: true,
+      canInstall: true,
+      canRemove: true,
+    });
+  });
+
+  it('keeps an incompatible retained pack removable without offering an invalid retry', () => {
+    const unsupportedPack = listModelPackCatalogEntries('stt_sherpa')
+      .find((entry) => entry.runtimeFamily === 'sherpa_parakeet_offline')!;
+    const selectedNeighbor = getDefaultModelPackId('stt_sherpa')!;
+    const result = buildModelCatalogRows({
+      statuses: [
+        status(unsupportedPack.packId, {
+          installState: 'installed',
+          runtimeSupported: false,
+          lastError: 'previous_reinstall_failed',
+        }),
+        status(selectedNeighbor),
+      ],
+      selectedSttPackId: selectedNeighbor,
+      selectedTtsPackId: null,
+    });
+    const retained = result.stt.find((candidate) => candidate.packId === unsupportedPack.packId)!;
+    const neighbor = result.stt.find((candidate) => candidate.packId === selectedNeighbor)!;
+
+    expect(retained).toMatchObject({
+      state: 'unsupported',
+      lastError: 'previous_reinstall_failed',
+      isDefault: false,
+      canInstall: false,
+      canRemove: true,
+    });
+    expect(neighbor).toMatchObject({
+      isDefault: true,
+      canInstall: true,
+      canRemove: false,
+    });
+  });
+
+  it('keeps a failed install visible after the daemon reports the pack absent', () => {
+    const sttPack = listModelPackCatalogEntries('stt_sherpa')[0]!.packId;
+    const row = buildModelCatalogRows({
+      statuses: [status(sttPack, { installState: 'not_installed' })],
+      actionError: { packId: sttPack, operation: 'install' },
+      selectedSttPackId: null,
+      selectedTtsPackId: null,
+    }).stt.find((candidate) => candidate.packId === sttPack)!;
+
+    expect(row.state).toBe('error');
+    expect(row.canInstall).toBe(true);
+    expect(row.canRemove).toBe(false);
+  });
+
   it('maps every row to an uninstallable unknown state when the daemon status is unavailable', () => {
     // When the status RPC fails the daemon health is unknown. Rows must NOT be
     // installable so an install can never fire against an unknown daemon.
@@ -129,18 +323,17 @@ describe('buildModelCatalogRows', () => {
     }
   });
 
-  it('marks the selected pack as default per kind, resolving legacy ids', () => {
+  it('marks the exact selected pack as default per kind', () => {
     const defaultStt = getDefaultModelPackId('stt_sherpa')!;
     const result = buildModelCatalogRows({
       statuses: [],
-      // legacy kokoro wasm id should resolve to the canonical tts default
       selectedSttPackId: defaultStt,
       selectedTtsPackId: 'kokoro-82m-v1.0-onnx-q8-wasm',
     });
     const sttRow = result.stt.find((row) => row.packId === defaultStt)!;
     expect(sttRow.isDefault).toBe(true);
     const ttsDefault = result.tts.find((row) => row.isDefault);
-    expect(ttsDefault?.packId).toBe('kokoro-tts-en-v1');
+    expect(ttsDefault?.packId).toBe(getDefaultModelPackId('tts_sherpa'));
     // Exactly one default per kind.
     expect(result.stt.filter((row) => row.isDefault)).toHaveLength(1);
     expect(result.tts.filter((row) => row.isDefault)).toHaveLength(1);
@@ -149,7 +342,7 @@ describe('buildModelCatalogRows', () => {
   it('falls back to the catalog default when no selection is stored', () => {
     const result = buildModelCatalogRows({ statuses: [], selectedSttPackId: null, selectedTtsPackId: null });
     expect(result.stt.find((row) => row.isDefault)?.packId).toBe(getDefaultModelPackId('stt_sherpa'));
-    expect(result.tts.find((row) => row.isDefault)?.packId).toBe(getDefaultModelPackId('tts_sherpa'));
+    expect(result.tts.find((row) => row.isDefault)).toBeUndefined();
   });
 
   it('exposes a stable display name derived from the catalog model', () => {

@@ -1,5 +1,17 @@
 import type { DecryptedArtifact } from '../../domains/artifacts/artifactTypes';
+import { loadSyncTuning } from '../../runtime/syncTuning';
 import type { StoreGet, StoreSet } from './_shared';
+
+const ARTIFACT_HEADS_MAX_ENTRIES = loadSyncTuning().artifactHeadsMaxEntries;
+
+function retainNewestArtifacts(
+  artifacts: Record<string, DecryptedArtifact>,
+): Record<string, DecryptedArtifact> {
+  const entries = Object.values(artifacts)
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, ARTIFACT_HEADS_MAX_ENTRIES);
+  return Object.fromEntries(entries.map((artifact) => [artifact.id, artifact]));
+}
 
 export type ArtifactsDomain = {
   artifacts: Record<string, DecryptedArtifact>;
@@ -26,7 +38,7 @@ export function createArtifactsDomain<S extends ArtifactsDomain>({
 
         return {
           ...state,
-          artifacts: mergedArtifacts,
+          artifacts: retainNewestArtifacts(mergedArtifacts),
         };
       }),
     addArtifact: (artifact) =>
@@ -38,7 +50,7 @@ export function createArtifactsDomain<S extends ArtifactsDomain>({
 
         return {
           ...state,
-          artifacts: updatedArtifacts,
+          artifacts: retainNewestArtifacts(updatedArtifacts),
         };
       }),
     updateArtifact: (artifact) =>
@@ -50,7 +62,7 @@ export function createArtifactsDomain<S extends ArtifactsDomain>({
 
         return {
           ...state,
-          artifacts: updatedArtifacts,
+          artifacts: retainNewestArtifacts(updatedArtifacts),
         };
       }),
     deleteArtifact: (artifactId) =>
@@ -64,4 +76,3 @@ export function createArtifactsDomain<S extends ArtifactsDomain>({
       }),
   };
 }
-

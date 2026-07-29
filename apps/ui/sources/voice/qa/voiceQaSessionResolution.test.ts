@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { storage } from '@/sync/domains/state/storage';
 
 import {
+  assertLocalVoiceAgentSupportedForQa,
   isHiddenVoiceQaConversationSessionId,
+  resolveConfiguredVoiceQaProvider,
   syncLatestLocalVoiceQaResolvedSessions,
 } from './voiceQaSessionResolution';
 
@@ -70,5 +72,25 @@ describe('voiceQaSessionResolution', () => {
         runtimeSessionId: '__voice_agent__',
       },
     ]);
+  });
+
+  it('reads local conversation agent mode from the canonical provider envelope only', () => {
+    expect(() => assertLocalVoiceAgentSupportedForQa({
+      voice: {
+        providerId: 'local_conversation',
+        providers: {
+          local_conversation: {
+            schemaVersion: 1,
+            config: { conversationMode: 'agent' },
+          },
+        },
+      },
+    })).not.toThrow();
+  });
+
+  it('classifies a registered conversation provider by capability instead of a vendor id', () => {
+    expect(resolveConfiguredVoiceQaProvider({
+      voice: { providerId: 'realtime_elevenlabs' },
+    })).toBe('realtime_conversation');
   });
 });

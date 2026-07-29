@@ -1,13 +1,11 @@
 import { createStore } from 'zustand/vanilla';
 
-import {
-    resolveSessionListPreferredSessionMetadataFromState,
-    type SessionServerLookupStateLike,
-} from '@/sync/domains/session/listing/sessionListLookupState';
+import type { SessionServerLookupStateLike } from '@/sync/domains/session/listing/sessionListLookupState';
 import { readRegisteredStorageState, subscribeRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 
 import { readPreferredVoiceConversationBindingMetadata } from './voiceConversationBindingMetadata';
 import type { VoiceSessionBinding } from './voiceConversationBindingTypes';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
 type BindingsByConversationSessionId = Record<string, VoiceSessionBinding>;
 
@@ -42,6 +40,7 @@ function normalizeBinding(binding: VoiceSessionBinding): VoiceSessionBinding | n
         adapterId,
         controlSessionId,
         conversationSessionId,
+        ...(binding.lifetime === 'runtime_attempt' ? { lifetime: 'runtime_attempt' as const } : {}),
         transcriptMode,
         targetSessionId: normalizeId(binding.targetSessionId),
         updatedAt: Number.isFinite(binding.updatedAt) ? Number(binding.updatedAt) : 0,
@@ -127,11 +126,11 @@ function listPersistedBindingsFromState(state: SessionServerLookupStateLike): Re
     }
     for (const [sessionId, session] of Object.entries(state.sessions ?? {})) {
         if (!session) continue;
-        const preferredMetadata = resolveSessionListPreferredSessionMetadataFromState(state, sessionId);
+        const ownerMetadata = readVoiceSessionOwnerMetadataFromState(state, sessionId);
         const binding = readPreferredVoiceConversationBindingMetadata({
             conversationSessionId: sessionId,
-            preferredMetadata,
-            directMetadata: session.metadata ?? null,
+            preferredMetadata: ownerMetadata,
+            directMetadata: null,
         });
         if (binding) {
             bindings.push(binding);

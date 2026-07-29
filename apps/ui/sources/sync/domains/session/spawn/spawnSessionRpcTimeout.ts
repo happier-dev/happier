@@ -1,4 +1,4 @@
-const DEFAULT_SPAWN_SESSION_RPC_TIMEOUT_MS = 90_000;
+const DEFAULT_SPAWN_SESSION_RPC_TIMEOUT_MS = 5 * 60_000;
 const MAX_SPAWN_SESSION_RPC_TIMEOUT_MS = 10 * 60_000;
 
 export function readSpawnSessionRpcTimeoutMsFromEnv(): number {
@@ -13,4 +13,3 @@ export function readSpawnSessionRpcTimeoutMsFromEnv(): number {
         Math.min(MAX_SPAWN_SESSION_RPC_TIMEOUT_MS, parsed),
     );
 }
-

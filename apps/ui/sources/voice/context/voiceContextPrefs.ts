@@ -1,5 +1,5 @@
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
-import type { VoiceContextFormatterPrefs } from '@/voice/context/contextFormatters';
+import type { ResolvedVoiceContextFormatterPrefs } from '@/voice/context/contextFormatters';
 import { resolveVoiceSessionUpdatePolicy } from '@/voice/runtime/voiceUpdatePolicy';
 
 function resolveVoicePrivacySettings(settings: unknown) {
@@ -11,6 +11,8 @@ function resolveVoicePrivacySettings(settings: unknown) {
     shareToolNames: privacy.shareToolNames,
     shareToolArgs: privacy.shareToolArgs,
     shareFilePaths: privacy.shareFilePaths,
+    sharePermissionRequests: privacy.sharePermissionRequests,
+    shareDeviceInventory: privacy.shareDeviceInventory,
   } as const;
 }
 
@@ -18,7 +20,7 @@ export function getVoiceContextFormatterPrefs(params: Readonly<{
   settings: unknown;
   sessionId?: string | null;
   trackedSessionIds?: ReadonlyArray<string>;
-}>): VoiceContextFormatterPrefs {
+}>): ResolvedVoiceContextFormatterPrefs {
   const privacy = resolveVoicePrivacySettings(params.settings);
   const sessionId = typeof params.sessionId === 'string' ? params.sessionId.trim() : '';
 
@@ -30,6 +32,8 @@ export function getVoiceContextFormatterPrefs(params: Readonly<{
       voiceShareToolNames: privacy.shareToolNames,
       voiceShareToolArgs: privacy.shareToolArgs,
       voiceShareFilePaths: privacy.shareFilePaths,
+      voiceSharePermissionRequests: privacy.sharePermissionRequests,
+      voiceShareDeviceInventory: privacy.shareDeviceInventory,
     };
   }
 
@@ -48,5 +52,7 @@ export function getVoiceContextFormatterPrefs(params: Readonly<{
     voiceShareToolNames: privacy.shareToolNames,
     voiceShareToolArgs: privacy.shareToolArgs,
     voiceShareFilePaths: privacy.shareFilePaths,
+    voiceSharePermissionRequests: privacy.sharePermissionRequests,
+    voiceShareDeviceInventory: privacy.shareDeviceInventory,
   };
 }

@@ -16,7 +16,8 @@ export type CreateMicSessionOptions = Readonly<{
      * Continuous capture amplitude in [0,1], emitted while the mic is active so a
      * level visualizer can animate. Driven by the platform mic owner (web: an
      * AnalyserNode RMS loop) and reset to 0 on teardown. Consumers must route this
-     * onto the UI-thread `voiceLevelShared` SharedValue, never React state.
+     * through the runtime-owned level store into a UI-thread SharedValue, never
+     * React state.
      */
     onLevel?: (level: number) => void;
 }>;

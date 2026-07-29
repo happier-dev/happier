@@ -1,10 +1,10 @@
 import type { PluginUiArtifactProjection, PluginUiProjectionModel } from './projection';
 
 export type PluginUiArtifactInvalidation = Readonly<{
+    projectionGenerationChanged: boolean;
     changedPluginIds: readonly string[];
     changedArtifactIds: readonly string[];
     removedArtifactIds: readonly string[];
-    revokedArtifactIds: readonly string[];
 }>;
 
 function readString(value: unknown): string | null {
@@ -19,10 +19,6 @@ function readDigest(artifact: PluginUiArtifactProjection): string | null {
     return readString((integrity as Readonly<Record<string, unknown>>).digest);
 }
 
-function readRevokedAt(artifact: PluginUiArtifactProjection): string | null {
-    return readString(artifact.revokedAt);
-}
-
 function artifactFingerprint(artifact: PluginUiArtifactProjection): string {
     return JSON.stringify({
         artifactId: artifact.artifactId,
@@ -31,7 +27,6 @@ function artifactFingerprint(artifact: PluginUiArtifactProjection): string {
         cacheKey: readString(artifact.cacheKey),
         platform: readString(artifact.platform),
         channel: readString(artifact.channel),
-        revokedAt: readRevokedAt(artifact),
     });
 }
 
@@ -45,8 +40,17 @@ export function resolvePluginUiArtifactInvalidation(
 ): PluginUiArtifactInvalidation {
     const changedArtifactIds = new Set<string>();
     const removedArtifactIds = new Set<string>();
-    const revokedArtifactIds = new Set<string>();
     const changedPluginIds = new Set<string>();
+    const projectionGenerationChanged = previous.generation !== next.generation;
+
+    if (projectionGenerationChanged) {
+        for (const artifact of Object.values(previous.uiArtifactsById)) {
+            changedPluginIds.add(artifact.pluginId);
+        }
+        for (const artifact of Object.values(next.uiArtifactsById)) {
+            changedPluginIds.add(artifact.pluginId);
+        }
+    }
 
     for (const [artifactId, previousArtifact] of Object.entries(previous.uiArtifactsById)) {
         const nextArtifact = next.uiArtifactsById[artifactId];
@@ -60,12 +64,6 @@ export function resolvePluginUiArtifactInvalidation(
             changedArtifactIds.add(artifactId);
             changedPluginIds.add(nextArtifact.pluginId);
         }
-
-        if (readRevokedAt(previousArtifact) === null && readRevokedAt(nextArtifact) !== null) {
-            revokedArtifactIds.add(artifactId);
-            changedArtifactIds.add(artifactId);
-            changedPluginIds.add(nextArtifact.pluginId);
-        }
     }
 
     for (const [artifactId, nextArtifact] of Object.entries(next.uiArtifactsById)) {
@@ -74,15 +72,12 @@ export function resolvePluginUiArtifactInvalidation(
         }
         changedArtifactIds.add(artifactId);
         changedPluginIds.add(nextArtifact.pluginId);
-        if (readRevokedAt(nextArtifact) !== null) {
-            revokedArtifactIds.add(artifactId);
-        }
     }
 
     return Object.freeze({
+        projectionGenerationChanged,
         changedArtifactIds: sortValues(changedArtifactIds),
         changedPluginIds: sortValues(changedPluginIds),
         removedArtifactIds: sortValues(removedArtifactIds),
-        revokedArtifactIds: sortValues(revokedArtifactIds),
     });
 }

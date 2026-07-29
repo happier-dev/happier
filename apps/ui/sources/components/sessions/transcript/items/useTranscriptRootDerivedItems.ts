@@ -7,6 +7,10 @@ import { buildTranscriptTurnsCached } from '@/components/sessions/transcript/tur
 import type { ChatTranscriptListItem } from '@/components/sessions/transcript/chatListTypes';
 import type { ForkAwareMessageDescriptors } from '@/components/sessions/transcript/forkContext/buildForkAwareMessageDescriptors';
 import type { ForkedTranscriptSnapshot } from '@/sync/domains/sessionFork/forkedTranscriptSnapshot';
+import type {
+    ExternalSessionOperationProgressV1,
+    ExternalSessionOperationSharedPresentationV1,
+} from '@happier-dev/protocol';
 import {
     measureTranscriptDerivation,
 } from '@/components/sessions/transcript/items/measureDerivation';
@@ -15,6 +19,10 @@ import {
     resolveTranscriptDerivedItemsCacheMaxSessions,
     writeTranscriptDerivedItemsCacheEntry,
 } from '@/components/sessions/transcript/items/derivedItemsCache';
+import {
+    appendExternalSessionOperationTranscriptItem,
+    type ExternalSessionOperationTranscriptDismissal,
+} from '@/components/sessions/transcript/items/externalSessionOperationTranscriptItem';
 
 type BuildChatListItemsOptions = Parameters<typeof buildChatListItems>[0];
 
@@ -30,6 +38,10 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
     messagesById: Record<string, Message>;
     pendingMessages: BuildChatListItemsOptions['pendingMessages'];
     pendingUserActionRequests: NonNullable<BuildChatListItemsOptions['pendingUserActionRequests']>;
+    externalSessionOperationPresentation:
+        ExternalSessionOperationSharedPresentationV1 | null;
+    externalSessionOperationProgress: ExternalSessionOperationProgressV1 | null;
+    externalSessionOperationDismissal: ExternalSessionOperationTranscriptDismissal | null;
     sessionId: string;
     toolCallsGroupStrategy: 'all_tools_in_turn' | 'consecutive_tools';
 }>) {
@@ -45,6 +57,9 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
         messagesById,
         pendingMessages,
         pendingUserActionRequests,
+        externalSessionOperationPresentation,
+        externalSessionOperationProgress,
+        externalSessionOperationDismissal,
         sessionId,
         toolCallsGroupStrategy,
     } = params;
@@ -161,8 +176,20 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
                     pendingUserActionRequests,
                     actionDrafts,
                 });
-                if (!forkedTranscriptEnabled || !fork) return base;
-                return insertForkDividersIntoTranscriptItems({ items: base, fork }) as ChatTranscriptListItem[];
+                const withForkDividers = !forkedTranscriptEnabled || !fork
+                    ? base
+                    : insertForkDividersIntoTranscriptItems({ items: base, fork });
+                return appendExternalSessionOperationTranscriptItem(
+                    withForkDividers,
+                    {
+                        presentation: externalSessionOperationPresentation,
+                        progress: externalSessionOperationProgress,
+                    },
+                    {
+                        sessionId,
+                        dismissed: externalSessionOperationDismissal,
+                    },
+                );
             }
 
             const trailing = buildChatListItems({
@@ -177,13 +204,27 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
 
             const turns = turnsCache?.turns ?? [];
             const turnItems: ForkDividerTranscriptItem[] = turns.map((t) => ({ kind: 'turn', id: t.id, turn: t }));
-            const base: ForkDividerTranscriptItem[] = [...turnItems, ...trailing];
+            const operationItems = appendExternalSessionOperationTranscriptItem(
+                [],
+                {
+                    presentation: externalSessionOperationPresentation,
+                    progress: externalSessionOperationProgress,
+                },
+                {
+                    sessionId,
+                    dismissed: externalSessionOperationDismissal,
+                },
+            ) as ForkDividerTranscriptItem[];
+            const base: ForkDividerTranscriptItem[] = [...turnItems, ...trailing, ...operationItems];
             if (!forkedTranscriptEnabled || !fork) return base;
             return insertForkDividersIntoTranscriptItems({ items: base, fork }) as ChatTranscriptListItem[];
         });
     }, [
         actionDrafts,
         discardedPendingMessages,
+        externalSessionOperationDismissal,
+        externalSessionOperationPresentation,
+        externalSessionOperationProgress,
         fork,
         forkedTranscriptEnabled,
         groupingMode,
@@ -192,6 +233,7 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
         messagesById,
         pendingMessages,
         pendingUserActionRequests,
+        sessionId,
         turnsCache,
     ]);
 

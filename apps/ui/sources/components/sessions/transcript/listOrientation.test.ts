@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
     mapTranscriptListIndexBetweenOrders,
     orientTranscriptListItems,
-    resolveEntrySliceSourceBounds,
     resolveOlderNeighborRenderedIndex,
     resolveOrientedListEdgeSlots,
     resolveTranscriptListPresentation,
@@ -121,46 +120,6 @@ describe('resolveOlderNeighborRenderedIndex', () => {
             expect(resolveOlderNeighborRenderedIndex(2.5, 5, orientation)).toBeNull();
             expect(resolveOlderNeighborRenderedIndex(Number.POSITIVE_INFINITY, 5, orientation)).toBeNull();
             expect(resolveOlderNeighborRenderedIndex(0, 0, orientation)).toBeNull();
-        }
-    });
-});
-
-describe('resolveEntrySliceSourceBounds', () => {
-    it('withholds older source rows for standard orientation', () => {
-        expect(resolveEntrySliceSourceBounds({
-            anchorSourceIndex: 3,
-            count: 10,
-            orientation: 'standard',
-        })).toEqual({ start: 3, end: 10 });
-    });
-
-    it('withholds newer source rows for inverted orientation', () => {
-        expect(resolveEntrySliceSourceBounds({
-            anchorSourceIndex: 3,
-            count: 10,
-            orientation: 'inverted',
-        })).toEqual({ start: 0, end: 4 });
-    });
-
-    it('fails open to the full source window for invalid anchors and empty counts', () => {
-        for (const orientation of ['standard', 'inverted'] as const) {
-            expect(resolveEntrySliceSourceBounds({
-                anchorSourceIndex: -1,
-                count: 10,
-                orientation,
-            })).toEqual({ start: 0, end: 10 });
-
-            expect(resolveEntrySliceSourceBounds({
-                anchorSourceIndex: 2.5,
-                count: 10,
-                orientation,
-            })).toEqual({ start: 0, end: 10 });
-
-            expect(resolveEntrySliceSourceBounds({
-                anchorSourceIndex: 0,
-                count: -5,
-                orientation,
-            })).toEqual({ start: 0, end: 0 });
         }
     });
 });

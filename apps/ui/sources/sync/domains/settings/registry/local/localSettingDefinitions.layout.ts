@@ -6,6 +6,11 @@ import {
     serializeNormalizedPaneSizeWithBasisKey,
 } from './localSettingDefinitions.shared';
 
+const sessionMobileSurfaceSchema = z.union([
+    z.enum(['chat', 'browse', 'git', 'navigation', 'tabs', 'browser', 'services', 'terminal']),
+    z.custom<`plugin:${string}:${string}`>((value) => typeof value === 'string' && /^plugin:[^:]+:.+$/.test(value)),
+]);
+
 export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
     uiContentWidthMode: {
         schema: z.enum(['compact', 'medium', 'full']),
@@ -81,15 +86,22 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },
-    sessionsListStorageTab: {
-        schema: z.enum(['persisted', 'direct']),
-        default: 'persisted',
-        description: 'Selected session list storage tab',
+    terminalRendererPreference: {
+        schema: z.enum(['auto', 'xterm-webview', 'native-experimental']).catch('auto'),
+        default: 'auto',
+        description: 'Preferred terminal renderer on this device',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
+    sessionsListStorageFilter: {
+        schema: z.enum(['all', 'persisted', 'direct']),
+        default: 'all',
+        description: 'Selected session list storage filter',
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },
     sessionLastMobileSurfaceBySessionId: {
-        schema: z.record(z.string(), z.enum(['chat', 'browse', 'git', 'tabs', 'terminal'])).default({}),
+        schema: z.record(z.string(), sessionMobileSurfaceSchema).default({}),
         default: {},
         description: 'Last active mobile session surface by server-scoped session key, with legacy bare session ids accepted for compatibility',
         storageScope: 'local',
@@ -103,7 +115,7 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         },
     },
     projectLastMobileSurfaceByWorkspaceRefId: {
-        schema: z.record(z.string(), z.enum(['overview', 'browse', 'git', 'tabs', 'terminal'])).default({}),
+        schema: z.record(z.string(), z.enum(['overview', 'browse', 'git', 'tabs', 'terminal', 'browser', 'services'])).default({}),
         default: {},
         description: 'Last active mobile project surface by workspace ref id',
         storageScope: 'local',
@@ -148,6 +160,20 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         schema: z.record(z.string(), paneScopeStateSchema).default({}),
         default: {},
         description: 'Persisted app pane scope state by scope id',
+        storageScope: 'local',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'device_user',
+            serializeCurrent: objectKeyCount,
+        },
+    },
+    sessionComposerCollapsedBannerKinds: {
+        schema: z.record(z.string(), z.boolean()).default({}),
+        default: {},
+        description: 'Composer banner kinds collapsed on this device, honored only while sessionComposerRememberBannerVisibility is enabled',
         storageScope: 'local',
         analytics: {
             trackCurrentState: true,

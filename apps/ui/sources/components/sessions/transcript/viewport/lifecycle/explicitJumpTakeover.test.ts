@@ -38,7 +38,6 @@ describe('explicit jump takeover apply effects', () => {
 
     it('returns all current-session explicit jump takeover effects in order', () => {
         const effects = [
-            explicitJumpEffect('explicit-jump-cancel-native-mount-settle-bottom-pin'),
             explicitJumpEffect('explicit-jump-suppress-entry-restore'),
             explicitJumpEffect('explicit-jump-preempt-entry-restore'),
             explicitJumpEffect('explicit-jump-clear-native-entry-restore-paint-release-timeout'),

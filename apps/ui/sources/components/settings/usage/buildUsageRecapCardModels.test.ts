@@ -29,7 +29,7 @@ const response: UsageAnalyticsQueryResponse = {
         },
     ],
     breakdowns: {
-        provider: [{ key: 'openai', label: 'OpenAI', eventCount: 4, tokens: { input: 100, output: 40, reasoning: 20, cacheRead: 0, cacheWrite: 0, total: 160 }, cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' } }],
+        agent: [{ key: 'openai', label: 'OpenAI', eventCount: 4, tokens: { input: 100, output: 40, reasoning: 20, cacheRead: 0, cacheWrite: 0, total: 160 }, cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' } }],
         model: [{ key: 'gpt-5.4', label: 'GPT-5.4', eventCount: 4, tokens: { input: 100, output: 40, reasoning: 20, cacheRead: 0, cacheWrite: 0, total: 160 }, cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' } }],
         session: [],
         project: [],
@@ -62,7 +62,7 @@ const response: UsageAnalyticsQueryResponse = {
         ],
     },
     leaders: {
-        providers: [{ key: 'openai', label: 'OpenAI', eventCount: 4 }],
+        agents: [{ key: 'openai', label: 'OpenAI', eventCount: 4 }],
         models: [{ key: 'gpt-5.4', label: 'GPT-5.4', eventCount: 4 }],
         sessions: [],
         projects: [],
@@ -137,5 +137,28 @@ describe('buildUsageRecapCardModels', () => {
         expect(rhythmCard?.visual.kind === 'rankBars' ? rhythmCard.visual.rows.map((row) => row.value) : []).toEqual([12, 8, 4]);
         expect(rhythmCard?.visual.kind === 'rankBars' ? rhythmCard.visual.rows[0]?.label : '').toContain('Sat');
         expect(rhythmCard?.visual.kind === 'rankBars' ? rhythmCard.visual.rows[2]?.label : '').toContain('Thu');
+    });
+
+    it('falls back to the top agent label when the engine metadata is unknown in the model card', () => {
+        const viewModel = buildUsageAnalyticsViewModel({
+            ...response,
+            breakdowns: {
+                ...response.breakdowns,
+                backendMode: [{ key: 'unknown', label: 'unknown', eventCount: 4, tokens: { input: 100, output: 40, reasoning: 20, cacheRead: 0, cacheWrite: 0, total: 160 }, cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' } }],
+            },
+            leaders: {
+                ...response.leaders,
+                engines: [{ key: 'unknown', label: 'unknown', eventCount: 4 }],
+                agents: [{ key: 'opencode', label: 'opencode', eventCount: 4 }],
+            },
+        }, { period: '30days', metric: 'tokens', focus: null, costMode: 'auto' });
+
+        const modelCard = buildUsageRecapCardModels({
+            viewModel,
+            filters: { period: '30days', metric: 'tokens', focus: null, costMode: 'auto' },
+        }).find((card) => card.id === 'model');
+
+        expect(modelCard?.subtitle).toContain('opencode');
+        expect(modelCard?.subtitle).not.toContain('unknown');
     });
 });

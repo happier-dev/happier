@@ -179,6 +179,33 @@ describe('createEndpointReadinessProbe', () => {
         expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
     });
 
+    it('marks proxy maintenance 503 responses as planned server restarts', async () => {
+        runtimeFetchMock
+            .mockResolvedValueOnce(new Response('Server reload in progress\n', {
+                status: 503,
+                headers: {
+                    'Retry-After': '2',
+                    'X-Happier-Retry-Reason': 'server_restarting',
+                },
+            })); // /health
+
+        const { createEndpointReadinessProbe } = await import('./createEndpointReadinessProbe');
+        const probe = createEndpointReadinessProbe({
+            endpoint: 'https://server.example.test',
+            token: 'token-1',
+            timeoutMs: 50,
+        });
+
+        await expect(probe()).resolves.toEqual(
+            expect.objectContaining({
+                status: 'retry_later',
+                retryAfterMs: 2000,
+                reason: 'server_restarting',
+            }),
+        );
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it('returns auth_failed when authenticated probe is rejected', async () => {
         runtimeFetchMock
             .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 })) // /health

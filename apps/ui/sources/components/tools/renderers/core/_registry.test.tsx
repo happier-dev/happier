@@ -23,6 +23,7 @@ vi.mock('../web/WebSearchView', () => ({ WebSearchView: () => null }));
 vi.mock('../fileOps/CodeSearchView', () => ({ CodeSearchView: () => null }));
 vi.mock('../workflow/ReasoningView', () => ({ ReasoningView: () => null }));
 vi.mock('../workflow/SubAgentRunView', () => ({ SubAgentRunView: () => null }));
+vi.mock('../workflow/WorkflowActivityView', () => ({ WorkflowActivityView: () => null }));
 vi.mock('../workflow/AgentTeamView', () => ({ AgentTeamView: () => null }));
 vi.mock('../system/WorkspaceIndexingPermissionView', () => ({ WorkspaceIndexingPermissionView: () => null }));
 vi.mock('../fileOps/DeleteView', () => ({ DeleteView: () => null }));
@@ -76,6 +77,21 @@ describe('toolViewRegistry', () => {
     it('maps SubAgentRun to its dedicated view', async () => {
         const [{ getToolViewComponent, toolViewRegistry }] = await Promise.all([import('./_registry')]);
         expect(getToolViewComponent('SubAgentRun')).toBe(toolViewRegistry.SubAgentRun);
+    });
+
+    it('maps canonical Workflow to the records-backed WorkflowActivityView, distinct from the subagent view (no double render)', async () => {
+        const [{ getToolViewComponent, toolViewRegistry }, { WorkflowActivityView }, { SubAgentView }] = await Promise.all([
+            import('./_registry'),
+            import('../workflow/WorkflowActivityView'),
+            import('./_registry'),
+        ]);
+        expect(getToolViewComponent('Workflow')).toBe(WorkflowActivityView);
+        expect(toolViewRegistry.Workflow).toBe(WorkflowActivityView);
+        // The durable workflow card and the message-derived subagent summary are SEPARATE renderers:
+        // a canonical `Workflow` tool must never resolve to the subagent path (would double-render).
+        expect(getToolViewComponent('Workflow')).not.toBe(SubAgentView);
+        expect(getToolViewComponent('Task')).toBe(SubAgentView);
+        expect(getToolViewComponent('SubAgent')).toBe(SubAgentView);
     });
 
     it('maps Agent Team tools to a dedicated view', async () => {

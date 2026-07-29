@@ -4,7 +4,18 @@ import { WebView } from 'react-native-webview';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { encodeChunkedEnvelope, decodeChunkedEnvelope } from '@/components/ui/webview/bridge/chunkedBridge';
+import {
+    buildXtermWriteCompleteEvent,
+    copyTerminalBytes,
+    type XtermWriteBytesInput,
+    type XtermWriteCompleteEvent,
+} from '@/components/terminal/xterm/bytes';
 
+import { encodeTerminalBytesBase64 } from './bytes';
+import {
+    DEFAULT_XTERM_WEBVIEW_MAX_PENDING_WRITE_BYTES,
+    estimateXtermWebViewTextWriteBytes,
+} from './writeQueue';
 import { buildXtermWebViewHtml } from './xtermWebViewHtml';
 
 const XTERM_WEBVIEW_BOOT_RETRY_LIMIT = 1;
@@ -14,32 +25,74 @@ function createMessageId(): string {
 }
 
 export type XtermWebViewSurfaceHandle = Readonly<{
-    write: (data: string) => void;
+    write: (data: string) => boolean;
+    writeBytes: (input: XtermWriteBytesInput) => boolean;
     clear: () => void;
     focus: () => void;
 }>;
 
 export type XtermWebViewSurfaceProps = Readonly<{
     onInput: (data: string) => void;
+    onLink?: (url: string) => void;
     onResize: (cols: number, rows: number) => void;
     onReady: (cols: number, rows: number) => void;
+    onWriteComplete?: (event: XtermWriteCompleteEvent) => void;
     fontSize: number;
     lineHeightPx: number;
     bridgeMaxChunkBytes?: number;
+    maxPendingWriteBytes?: number;
     testID?: string;
 }>;
+
+type HostEnvelope = Readonly<{ v: 1; type: string; payload: unknown }>;
+type TerminalSizePayload = Readonly<{ cols: number; rows: number }>;
+
+function readTerminalSizePayload(value: unknown): TerminalSizePayload | null {
+    if (!value || typeof value !== 'object') return null;
+    const payload = value as Partial<TerminalSizePayload>;
+    const cols = typeof payload.cols === 'number' ? payload.cols : NaN;
+    const rows = typeof payload.rows === 'number' ? payload.rows : NaN;
+    if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) return null;
+    return { cols, rows };
+}
+
+function readStringPayloadField(value: unknown, key: string): string | null {
+    if (!value || typeof value !== 'object') return null;
+    const field = (value as Record<string, unknown>)[key];
+    return typeof field === 'string' && field.length > 0 ? field : null;
+}
+
+function readWriteCompleteEvent(value: unknown): XtermWriteCompleteEvent | null {
+    if (!value || typeof value !== 'object') return null;
+    const payload = value as Partial<XtermWriteCompleteEvent>;
+    if (typeof payload.terminalId !== 'string' || payload.terminalId.length === 0) return null;
+    if (typeof payload.seq !== 'number' || !Number.isFinite(payload.seq)) return null;
+    if (typeof payload.byteOffset !== 'number' || !Number.isFinite(payload.byteOffset)) return null;
+    if (typeof payload.byteLength !== 'number' || !Number.isFinite(payload.byteLength) || payload.byteLength < 0) return null;
+    if (typeof payload.ackedByteOffset !== 'number' || !Number.isFinite(payload.ackedByteOffset)) return null;
+    if (payload.ackedByteOffset !== payload.byteOffset + payload.byteLength) return null;
+    return {
+        terminalId: payload.terminalId,
+        seq: payload.seq,
+        byteOffset: payload.byteOffset,
+        byteLength: payload.byteLength,
+        ackedByteOffset: payload.ackedByteOffset,
+    };
+}
 
 export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, XtermWebViewSurfaceProps>(
     function XtermWebViewSurface(props, ref) {
         const { theme } = useUnistyles();
         const webViewRef = React.useRef<WebView>(null);
         const readyRef = React.useRef(false);
-        const pendingWriteRef = React.useRef('');
+        const pendingEnvelopeRef = React.useRef<HostEnvelope[]>([]);
+        const pendingWriteBytesRef = React.useRef(0);
         const bootRetryCountRef = React.useRef(0);
         const [reloadNonce, setReloadNonce] = React.useState(0);
         const maxChunkBytes = typeof props.bridgeMaxChunkBytes === 'number' ? props.bridgeMaxChunkBytes : 64_000;
+        const maxPendingWriteBytes = props.maxPendingWriteBytes ?? DEFAULT_XTERM_WEBVIEW_MAX_PENDING_WRITE_BYTES;
 
-        const allowCdnFallback = typeof (__DEV__ as any) === 'boolean' ? (__DEV__ as any) : true;
+        const allowCdnFallback = typeof __DEV__ === 'boolean' ? __DEV__ : true;
 
         const html = React.useMemo(
             () =>
@@ -85,31 +138,75 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
 
         const flushPendingWrite = React.useCallback(() => {
             if (!readyRef.current) return;
-            const pending = pendingWriteRef.current;
-            if (!pending) return;
-            pendingWriteRef.current = '';
-            postEnvelope({ v: 1, type: 'write', payload: { data: pending } });
+            const pending = pendingEnvelopeRef.current;
+            if (pending.length === 0) return;
+            pendingEnvelopeRef.current = [];
+            pendingWriteBytesRef.current = 0;
+            for (const envelope of pending) {
+                postEnvelope(envelope);
+            }
         }, [postEnvelope]);
+
+        const requestNativeFocus = React.useCallback(() => {
+            try {
+                webViewRef.current?.requestFocus();
+            } catch {
+                // Ignore focus command failures; xterm focus is still attempted inside the WebView.
+            }
+        }, []);
+
+        const enqueueEnvelope = React.useCallback((envelope: HostEnvelope, byteLength: number) => {
+            if (readyRef.current) {
+                postEnvelope(envelope);
+                return true;
+            }
+            if (pendingWriteBytesRef.current + byteLength > maxPendingWriteBytes) {
+                return false;
+            }
+            pendingEnvelopeRef.current = [...pendingEnvelopeRef.current, envelope];
+            pendingWriteBytesRef.current += byteLength;
+            return true;
+        }, [maxPendingWriteBytes, postEnvelope]);
 
         React.useImperativeHandle(
             ref,
             () => ({
                 write: (data: string) => {
-                    if (!data) return;
-                    pendingWriteRef.current += data;
-                    flushPendingWrite();
+                    if (!data) return true;
+                    return enqueueEnvelope(
+                        { v: 1, type: 'write', payload: { data } },
+                        estimateXtermWebViewTextWriteBytes(data),
+                    );
+                },
+                writeBytes: (input: XtermWriteBytesInput) => {
+                    if (input.bytes.byteLength === 0) return true;
+                    const bytes = copyTerminalBytes(input.bytes);
+                    const completion = buildXtermWriteCompleteEvent({ ...input, bytes });
+                    return enqueueEnvelope({
+                        v: 1,
+                        type: 'writeBytes',
+                        payload: {
+                            terminalId: completion.terminalId,
+                            seq: completion.seq,
+                            byteOffset: completion.byteOffset,
+                            byteLength: completion.byteLength,
+                            dataBase64: encodeTerminalBytesBase64(bytes),
+                        },
+                    }, bytes.byteLength);
                 },
                 clear: () => {
-                    pendingWriteRef.current = '';
+                    pendingEnvelopeRef.current = [];
+                    pendingWriteBytesRef.current = 0;
                     if (!readyRef.current) return;
                     postEnvelope({ v: 1, type: 'clear', payload: {} });
                 },
                 focus: () => {
+                    requestNativeFocus();
                     if (!readyRef.current) return;
                     postEnvelope({ v: 1, type: 'focus', payload: {} });
                 },
             }),
-            [flushPendingWrite, postEnvelope],
+            [enqueueEnvelope, postEnvelope, requestNativeFocus],
         );
 
         React.useEffect(() => {
@@ -152,9 +249,10 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                     ref={webViewRef}
                     source={{ html }}
                     style={{ flex: 1 }}
+                    keyboardDisplayRequiresUserAction={false}
                     onMessage={(event) => {
                         const raw = event.nativeEvent.data;
-                        let parsed: any = null;
+                        let parsed: unknown = null;
                         try {
                             parsed = JSON.parse(raw);
                         } catch {
@@ -164,12 +262,11 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                         if (!decoded) return;
 
                         if (decoded.type === 'ready') {
-                            const payload: any = decoded.payload;
-                            const cols = payload && typeof payload.cols === 'number' ? payload.cols : NaN;
-                            const rows = payload && typeof payload.rows === 'number' ? payload.rows : NaN;
-                            if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) return;
+                            const payload = readTerminalSizePayload(decoded.payload);
+                            if (!payload) return;
                             readyRef.current = true;
-                            props.onReady(cols, rows);
+                            requestNativeFocus();
+                            props.onReady(payload.cols, payload.rows);
                             postEnvelope({
                                 v: 1,
                                 type: 'setTheme',
@@ -194,19 +291,30 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                         }
 
                         if (decoded.type === 'resize') {
-                            const payload: any = decoded.payload;
-                            const cols = payload && typeof payload.cols === 'number' ? payload.cols : NaN;
-                            const rows = payload && typeof payload.rows === 'number' ? payload.rows : NaN;
-                            if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) return;
-                            props.onResize(cols, rows);
+                            const payload = readTerminalSizePayload(decoded.payload);
+                            if (!payload) return;
+                            props.onResize(payload.cols, payload.rows);
                             return;
                         }
 
                         if (decoded.type === 'input') {
-                            const payload: any = decoded.payload;
-                            const data = payload && typeof payload.data === 'string' ? payload.data : '';
+                            const data = readStringPayloadField(decoded.payload, 'data');
                             if (!data) return;
                             props.onInput(data);
+                            return;
+                        }
+
+                        if (decoded.type === 'link') {
+                            const url = readStringPayloadField(decoded.payload, 'url');
+                            if (!url) return;
+                            props.onLink?.(url);
+                            return;
+                        }
+
+                        if (decoded.type === 'writeComplete') {
+                            const event = readWriteCompleteEvent(decoded.payload);
+                            if (!event) return;
+                            props.onWriteComplete?.(event);
                             return;
                         }
 

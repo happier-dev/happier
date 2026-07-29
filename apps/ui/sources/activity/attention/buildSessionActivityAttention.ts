@@ -3,6 +3,7 @@ import { deriveSessionListAttentionState } from '@/sync/domains/session/listing/
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import {
+    deriveLatestPendingAgentStateRequestObservedAt,
     deriveLatestPendingRequestObservedAtFromSession,
     derivePendingRequestFlagsFromSession,
 } from '@/sync/domains/session/pending/listPendingSessionRequests';
@@ -37,27 +38,6 @@ function readNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : null;
 }
 
-function hasCompletedRequest(completedValue: unknown, requestId: string): boolean {
-    if (!completedValue || typeof completedValue !== 'object') return false;
-    const completed = completedValue as Record<string, { completedAt?: unknown } | undefined>;
-    return completed[requestId]?.completedAt != null;
-}
-
-function readLatestPendingAgentRequestCreatedAt(session: Session): number | null {
-    const requests = session.agentState?.requests;
-    if (!requests || typeof requests !== 'object') return null;
-    const completed = session.agentState?.completedRequests ?? null;
-    let latest: number | null = null;
-    for (const requestId in requests) {
-        if (!Object.prototype.hasOwnProperty.call(requests, requestId)) continue;
-        if (hasCompletedRequest(completed, requestId)) continue;
-        const createdAt = readNumber(requests[requestId]?.createdAt);
-        if (createdAt === null) continue;
-        latest = latest === null ? createdAt : Math.max(latest, createdAt);
-    }
-    return latest;
-}
-
 function deriveActivityAttentionFlags(params: Readonly<{
     session: Session;
     sessionMessages?: readonly Message[];
@@ -72,13 +52,15 @@ function deriveActivityAttentionFlags(params: Readonly<{
     const pendingRequestObservedAt = deriveLatestPendingRequestObservedAtFromSession(
         params.session,
         params.sessionMessages,
-    ) ?? readLatestPendingAgentRequestCreatedAt(params.session);
+    ) ?? deriveLatestPendingAgentStateRequestObservedAt(params.session.agentState);
     const runtimePresentation = deriveSessionRuntimePresentationState({
         active: params.session.active,
         activeAt: params.session.activeAt,
         presence: params.session.presence,
         thinking: params.session.thinking,
         thinkingAt: params.session.thinkingAt,
+        optimisticThinkingAt: params.session.optimisticThinkingAt ?? null,
+        hasPendingUserMessages: (params.session.pendingCount ?? 0) > 0,
         latestTurnStatus: params.session.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: params.session.latestTurnStatusObservedAt ?? null,
         meaningfulActivityAt: params.session.meaningfulActivityAt ?? null,
@@ -124,6 +106,7 @@ export function buildSessionActivityAttention(params: Readonly<{
     const derivedAttentionState = deriveSessionListAttentionState({
         hasUnreadMessages: reasons.hasUnread,
         pendingCount: 0,
+        pendingBlockedCount: params.session.pendingBlockedCount ?? 0,
         sessionState: status.state,
         latestTurnStatus: params.session.latestTurnStatus ?? null,
         lastRuntimeIssue: params.session.lastRuntimeIssue ?? null,
@@ -132,6 +115,7 @@ export function buildSessionActivityAttention(params: Readonly<{
         presence: renderableSession.presence,
         thinking: renderableSession.thinking,
         thinkingAt: renderableSession.thinkingAt,
+        optimisticThinkingAt: renderableSession.optimisticThinkingAt ?? null,
         latestTurnStatusObservedAt: renderableSession.latestTurnStatusObservedAt ?? null,
         pendingRequestObservedAt,
         nowMs: params.nowMs,
@@ -160,6 +144,7 @@ export function buildSessionActivityAttention(params: Readonly<{
                 reasons.hasPendingPermissionRequests || attentionState === 'permission_required',
             hasPendingUserActionRequests:
                 reasons.hasPendingUserActionRequests || attentionState === 'action_required',
+            hasBlockedPendingDelivery: (params.session.pendingBlockedCount ?? 0) > 0,
             hasQueuedUserInput: reasons.hasQueuedUserInput,
             isThinking: status.state === 'thinking',
         },

@@ -26,7 +26,6 @@ export type ReviewCommentBulkTransitionResult = Readonly<{
 export type ReviewCommentsPanelProps = Readonly<{
     comments: readonly ReviewCommentV1[];
     labels: ReviewCommentLabels & Readonly<{ filtersTitle: string }>;
-    directWriteGranted: boolean;
     selectedStates?: readonly ReviewCommentStateV1[];
     stateOptions?: readonly ReviewCommentStateV1[];
     onToggleState?: (state: ReviewCommentStateV1) => void;
@@ -81,7 +80,6 @@ export function ReviewCommentsPanel(props: ReviewCommentsPanelProps) {
             <ReviewCommentsList
                 comments={props.comments}
                 labels={props.labels}
-                directWriteGranted={props.directWriteGranted}
                 cardActions={props.cardActions}
                 onReply={props.onReply}
                 testID={props.testID ? `${props.testID}-list` : undefined}

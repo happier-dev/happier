@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getPendingQueueWakeResumeOptions } from './pendingQueueWake';
+import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 
 let storageState: any = {
     sessions: {},
@@ -10,10 +11,8 @@ let storageState: any = {
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: {
-        getState: () => storageState,
-    },
-});
+        storage: { getState: () => storageState },
+    });
 });
 
 function setCanonicalSessionTarget(machineId: string, path: string): void {
@@ -63,9 +62,14 @@ describe('getPendingQueueWakeResumeOptions', () => {
         const session: any = {
             thinking: false,
             agentState: null,
-            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1' },
+            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
         };
 
+        expect(readMachineControlTargetForSession('s1')).toEqual({
+            machineId: 'm1',
+            basePath: '/tmp',
+            confidence: 'reachable',
+        });
         const res = getPendingQueueWakeResumeOptions({
             sessionId: 's1',
             session,
@@ -86,7 +90,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             seq: 41,
             thinking: false,
             agentState: null,
-            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1' },
+            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
         };
 
         expect(getPendingQueueWakeResumeOptions({
@@ -108,7 +112,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             seq: 0,
             thinking: false,
             agentState: null,
-            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1' },
+            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
         };
 
         expect(getPendingQueueWakeResumeOptions({
@@ -125,6 +129,25 @@ describe('getPendingQueueWakeResumeOptions', () => {
         });
     });
 
+    it('does not wake an active session while a fresh local outbound message is already pending', () => {
+        const session: any = {
+            active: true,
+            presence: 'online',
+            thinking: false,
+            thinkingAt: 1,
+            optimisticThinkingAt: Date.now(),
+            pendingCount: 1,
+            agentState: null,
+            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
+        };
+
+        expect(getPendingQueueWakeResumeOptions({
+            sessionId: 's1',
+            session,
+            resumeCapabilityOptions: { accountSettings: {} },
+        })).toBeNull();
+    });
+
     it('does not use raw metadata as a wake target when canonical reachability is unavailable', () => {
         storageState = {
             sessions: {},
@@ -135,7 +158,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             thinking: false,
             agentState: null,
             presence: 'offline',
-            metadata: { machineId: 'm-stale', path: '/tmp/stale', flavor: 'claude', claudeSessionId: 'c1' },
+            metadata: { machineId: 'm-stale', path: '/tmp/stale', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
         };
 
         expect(getPendingQueueWakeResumeOptions({
@@ -150,7 +173,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             thinking: false,
             agentState: null,
             presence: 'offline',
-            metadata: { machineId: 'm-stale', path: '/tmp/stale', flavor: 'claude', claudeSessionId: 'c1' },
+            metadata: { machineId: 'm-stale', path: '/tmp/stale', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
         };
 
         expect(getPendingQueueWakeResumeOptions({
@@ -175,7 +198,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             thinking: false,
             agentState: null,
             presence: 'offline',
-            metadata: { machineId: 'm-stale', path: '/tmp/stale', flavor: 'claude', claudeSessionId: 'c1' },
+            metadata: { machineId: 'm-stale', path: '/tmp/stale', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
         };
 
         storageState = {
@@ -252,7 +275,56 @@ describe('getPendingQueueWakeResumeOptions', () => {
             thinking: true,
             thinkingAt: 1_000,
             agentState: null,
-            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1' },
+            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
+        };
+
+        expect(getPendingQueueWakeResumeOptions({
+            sessionId: 's1',
+            session,
+            resumeCapabilityOptions: { accountSettings: {} },
+        })).toEqual({
+            sessionId: 's1',
+            machineId: 'm1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            resume: 'c1',
+        });
+    });
+
+    it('does not wake the queued successor while the canonical turn projection is in progress', () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        const session: any = {
+            active: true,
+            presence: 'online',
+            thinking: false,
+            thinkingAt: 0,
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 1_000,
+            agentState: null,
+            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
+        };
+
+        expect(getPendingQueueWakeResumeOptions({
+            sessionId: 's1',
+            session,
+            resumeCapabilityOptions: { accountSettings: {} },
+        })).toBeNull();
+    });
+
+    it('does not block wake for display-only provider runtime activity after foreground completion', () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        const session: any = {
+            active: true,
+            presence: 'online',
+            thinking: false,
+            thinkingAt: 0,
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: 995_000,
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: 999_000,
+            runtimeActivityRevision: 1_060_000,
+            agentState: null,
+            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
         };
 
         expect(getPendingQueueWakeResumeOptions({
@@ -278,7 +350,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             latestTurnStatus: 'in_progress',
             latestTurnStatusObservedAt: 999_000,
             agentState: null,
-            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1' },
+            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
         };
 
         expect(getPendingQueueWakeResumeOptions({
@@ -299,7 +371,16 @@ describe('getPendingQueueWakeResumeOptions', () => {
         const session: any = {
             active: true,
             thinking: false,
-            agentState: { requests: { r1: { id: 'r1', createdAt: 999_000 } } },
+            agentState: {
+                requests: {
+                    r1: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: { command: 'pwd' },
+                        createdAt: 999_000,
+                    },
+                },
+            },
             presence: 'online',
             metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude' },
         };
@@ -311,7 +392,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             thinking: false,
             agentState: null,
             presence: 'offline',
-            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1' },
+            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
         };
 
         expect(getPendingQueueWakeResumeOptions({
@@ -327,7 +408,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             thinking: true,
             agentState: null,
             presence: 'offline',
-            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1' },
+            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
         };
 
         expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: {} } })).toEqual({
@@ -344,7 +425,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             thinking: false,
             agentState: { requests: { r1: { id: 'r1' } } },
             presence: 'offline',
-            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1' },
+            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
         };
 
         expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: {} } })).toEqual({
@@ -379,7 +460,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
                 path: '/tmp',
                 runtimeDescriptorV1: {
                     v: 1,
-                    providerId: 'codex',
+                    agentId: 'codex',
                     provider: {
                         backendMode: 'appServer',
                         providerSessionId: 'x1',
@@ -401,8 +482,8 @@ describe('getPendingQueueWakeResumeOptions', () => {
             resume: 'x1',
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
-                provider: {
+                agentId: 'codex',
+                agent: {
                     backendMode: 'appServer',
                     providerSessionId: 'x1',
                 },
@@ -471,7 +552,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
                 codexSessionId: 'x1',
                 runtimeDescriptorV1: {
                     v: 1,
-                    providerId: 'codex',
+                    agentId: 'codex',
                     provider: {
                         backendMode: 'appServer',
                         providerSessionId: 'x1',
@@ -492,8 +573,8 @@ describe('getPendingQueueWakeResumeOptions', () => {
             resume: 'x1',
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
-                provider: {
+                agentId: 'codex',
+                agent: {
                     backendMode: 'appServer',
                     providerSessionId: 'x1',
                 },
@@ -525,7 +606,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
         const session: any = {
             thinking: false,
             agentState: null,
-            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1' },
+            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
         };
         expect(getPendingQueueWakeResumeOptions({
             sessionId: 's1',

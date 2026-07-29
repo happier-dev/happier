@@ -1,13 +1,17 @@
-import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
+import {
+    BackendTargetKeyV2InputSchema,
+    buildSettingArtifacts,
+    defineSettingDefinitions,
+} from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import {
-    buildProviderUniverseBackendTargetKey,
-    listProviderUniverseIds,
-} from '@/agents/providers/registry/providerUniverse';
+    buildAgentUniverseBackendTargetKey,
+    listAgentUniverseIds,
+} from '@/agents/catalog/agentUniverse';
 
 const DEFAULT_BACKEND_ENABLED_BY_TARGET_KEY: Record<string, boolean> = Object.fromEntries(
-    listProviderUniverseIds().map((id) => [buildProviderUniverseBackendTargetKey(id), true]),
+    listAgentUniverseIds().map((id) => [buildAgentUniverseBackendTargetKey(id), true]),
 );
 
 const BACKEND_CLI_SOURCE_PREFERENCE_VALUES = ['system-first', 'managed-first'] as const;
@@ -20,8 +24,8 @@ function buildBackendEnabledAnalyticsProperties(
         : {};
 
     return Object.fromEntries(
-        listProviderUniverseIds().map((agentId) => {
-            const targetKey = buildProviderUniverseBackendTargetKey(agentId);
+        listAgentUniverseIds().map((agentId) => {
+            const targetKey = buildAgentUniverseBackendTargetKey(agentId);
             return [targetKey, record[targetKey] !== false];
         }),
     );
@@ -35,8 +39,8 @@ function buildBackendCliSourcePreferenceAnalyticsProperties(
         : {};
 
     return Object.fromEntries(
-        listProviderUniverseIds().map((agentId) => {
-            const targetKey = buildProviderUniverseBackendTargetKey(agentId);
+        listAgentUniverseIds().map((agentId) => {
+            const targetKey = buildAgentUniverseBackendTargetKey(agentId);
             const raw = record[targetKey];
             const normalized = raw === 'system-first' || raw === 'managed-first'
                 ? raw
@@ -54,11 +58,11 @@ export const BackendCliSourcePreferenceByTargetKeySchema = z.preprocess((raw) =>
             ([, value]) => value === 'system-first' || value === 'managed-first',
         ),
     );
-}, z.record(z.string(), BackendCliSourcePreferenceSchema)).default({});
+}, z.record(BackendTargetKeyV2InputSchema, BackendCliSourcePreferenceSchema)).default({});
 
 export const ACCOUNT_BACKEND_SETTING_DEFINITIONS = defineSettingDefinitions({
     backendEnabledByTargetKey: {
-        schema: z.record(z.string(), z.boolean()).default(DEFAULT_BACKEND_ENABLED_BY_TARGET_KEY),
+        schema: z.record(BackendTargetKeyV2InputSchema, z.boolean()).default(DEFAULT_BACKEND_ENABLED_BY_TARGET_KEY),
         default: DEFAULT_BACKEND_ENABLED_BY_TARGET_KEY,
         description: 'Per-backend enable/disable toggles',
         storageScope: 'account',

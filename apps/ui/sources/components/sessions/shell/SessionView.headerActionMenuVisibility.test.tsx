@@ -9,6 +9,7 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 (globalThis as any).__DEV__ = false;
 
 const headerActionMenuSpy = vi.hoisted(() => vi.fn());
+const attachedTerminalState = vi.hoisted(() => ({ available: false, open: vi.fn() }));
 const chatHeaderSpy = vi.hoisted(() => vi.fn());
 const agentInputSpy = vi.hoisted(() => vi.fn());
 const connectedServicesAuthSwitchSpy = vi.hoisted(() => vi.fn());
@@ -54,7 +55,6 @@ const sessionState = vi.hoisted(() => ({
   } as any,
 }));
 
-vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
   LinearGradient: 'LinearGradient',
 }));
@@ -122,6 +122,9 @@ vi.mock('@/components/sessions/actions/SessionHeaderActionMenu', () => ({
     return React.createElement('SessionHeaderActionMenu');
   },
 }));
+vi.mock('@/components/sessions/terminal/openAttachedSessionTerminal', () => ({
+  useOpenAttachedSessionTerminal: () => attachedTerminalState,
+}));
 vi.mock('@/components/ui/icons/DependabotIcon', () => ({
   DependabotIcon: 'DependabotIcon',
 }));
@@ -155,7 +158,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
   buildResumeSessionExtrasFromUiState: () => null,
   getAgentCore: () => ({
     cli: { detectKey: 'codex' },
-    uiConnectedService: { serviceId: null, label: 'Codex', connectRoute: null },
+    uiConnectedService: { serviceId: null, labelKey: 'agentInput.agent.codex', connectRoute: null },
     model: { defaultMode: 'default' },
     resume: { vendorResumeIdField: null },
     sessionModes: { kind: 'none' },
@@ -179,31 +182,15 @@ vi.mock('@/agents/registry/registryCore', () => ({
   getAgentCore: () => ({
     cli: { detectKey: 'codex' },
     connectedServices: null,
-    uiConnectedService: { serviceId: null, label: 'Codex', connectRoute: null },
+    uiConnectedService: { serviceId: null, labelKey: 'agentInput.agent.codex', connectRoute: null },
     permissions: { modeGroup: 'codexLike', promptProtocol: 'codexDecision' },
   }),
   isAgentId: (value: unknown) => value === 'codex',
   resolveAgentIdFromFlavor: () => 'codex',
 }));
-vi.mock('@/agents/catalog/providerUniverse', () => ({
-  buildProviderUniverseBackendTargetKey: (providerId: string) => `provider:${providerId}`,
-  listProviderUniverseIds: () => ['codex'],
-}));
-vi.mock('@/agents/catalog/agentSettingsCatalog', () => ({
-  AGENT_SETTINGS_BEHAVIORS: [],
-  AGENT_SETTINGS_DESCRIPTORS: [],
-  AGENT_SETTINGS_PLUGINS: [],
-  getCompatPluginAgentSettingsPlugin: () => null,
-  getPluginAgentSettingsBehavior: () => null,
-  getPluginAgentSettingsDescriptor: () => null,
-  getPluginAgentSettingsPlugin: () => null,
-  resolvePluginAgentSettingsRegistryEntry: () => ({
-    providerId: '',
-    plugin: null,
-    descriptor: null,
-    behavior: null,
-    registered: false,
-  }),
+vi.mock('@/agents/catalog/agentUniverse', () => ({
+  buildAgentUniverseBackendTargetKey: (providerId: string) => `provider:${providerId}`,
+  listAgentUniverseIds: () => ['codex'],
 }));
 vi.mock('@/utils/platform/navigateWithBlurOnWeb', () => ({
   navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
@@ -357,7 +344,7 @@ installSessionShellCommonModuleMocks({
   storage: async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-	      storage: { getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, concurrentSessionListCacheByServerId: {} }) },
+	      storage: { getState: () => ({ sessions: { s1: sessionState.session }, sessionPending: {}, settings: {}, concurrentSessionListCacheByServerId: {} }) },
 	      useSession: () => sessionState.session,
 	      useIsDataReady: () => true,
 	      useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
@@ -447,6 +434,8 @@ describe('SessionView header action menu visibility', () => {
     sessionMachineControlTargetState.target = null;
     keyboardDismissSpy.mockReset();
 	    headerActionMenuSpy.mockClear();
+	    attachedTerminalState.available = false;
+	    attachedTerminalState.open.mockReset();
 	    chatHeaderSpy.mockClear();
 	    agentInputSpy.mockClear();
     connectedServicesAuthSwitchSpy.mockClear();
@@ -476,6 +465,25 @@ describe('SessionView header action menu visibility', () => {
     const openRunsButton = findPressableByAccessibilityLabel(screen, 'session.openRuns');
 
     expect(openRunsButton).toBeUndefined();
+  });
+
+  it('shows neutral background copy in the header without making the composer busy or hiding execution runs', async () => {
+    sessionExecutionRunsSupportedState.supported = true;
+    sessionState.session = {
+      ...sessionState.session,
+      active: true,
+      presence: 'online',
+      thinking: false,
+      latestTurnStatus: 'completed',
+      latestTurnStatusObservedAt: 999_000,
+      runtimeActivityState: 'active',
+      runtimeActivityActiveCount: 1,
+    };
+
+    const screen = await renderSessionView();
+
+    expect(screen.findByTestId('session-header-background-activity-status')).toBeDefined();
+    expect(findPressableByAccessibilityLabel(screen, 'session.openRuns')).toBeDefined();
   });
 
   it('routes to session automations through blur-safe navigation', async () => {
@@ -839,6 +847,17 @@ describe('SessionView header action menu visibility', () => {
     expect(headerActionMenuSpy).toHaveBeenCalled();
   });
 
+  it('offers and handles the attached Claude terminal action when supported', async () => {
+    attachedTerminalState.available = true;
+    await renderSessionView();
+
+    const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
+    const extraIds = (props?.extraItems ?? []).map((item: any) => item?.id);
+    expect(extraIds).toContain('header.openAttachedClaudeTerminal');
+    expect(props?.onSelectExtraItem?.('header.openAttachedClaudeTerminal')).toBe(true);
+    expect(attachedTerminalState.open).toHaveBeenCalledTimes(1);
+  });
+
   it('adds an open cockpit menu item on phone when classic mode is active', async () => {
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
@@ -895,7 +914,7 @@ describe('SessionView header action menu visibility', () => {
     expect(routerBackSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('does not disable connected-services auth switching for stale in-progress projection', async () => {
+  it('disables connected-services auth switching until an in-progress turn reaches terminal projection', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(1_000_000));
     sessionState.session = {
@@ -912,6 +931,6 @@ describe('SessionView header action menu visibility', () => {
     await renderSessionView();
 
     expect(connectedServicesAuthSwitchSpy).toHaveBeenCalled();
-    expect(connectedServicesAuthSwitchSpy.mock.calls.at(-1)?.[0]?.switchingDisabledReason).toBeNull();
+    expect(connectedServicesAuthSwitchSpy.mock.calls.at(-1)?.[0]?.switchingDisabledReason).toBe('active_turn');
   });
 });

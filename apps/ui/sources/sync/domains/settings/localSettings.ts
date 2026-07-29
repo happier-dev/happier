@@ -41,6 +41,7 @@ const deprecatedLocalSettingKeys = [
     'keyboardSingleKeyShortcutsEnabled',
     'keyboardShortcutDisabledCommandIdsV1',
     'keyboardShortcutOverridesV1',
+    'sessionsListStorageTab',
 ] as const;
 
 function stripDeprecatedLocalSettingsKeys(settings: Readonly<Record<string, unknown>>): Record<string, unknown> {
@@ -136,9 +137,13 @@ function normalizeLocalSettingsParseInput(settings: unknown): unknown {
         return settings;
     }
 
-    const next = stripDeprecatedLocalSettingsKeys(migrateLegacyDesktopOverlayParseInput({
+    const migrated = migrateLegacyDesktopOverlayParseInput({
         ...(settings as Record<string, unknown>),
-    }));
+    });
+    if (migrated.sessionsListStorageFilter === undefined && migrated.sessionsListStorageTab === 'direct') {
+        migrated.sessionsListStorageFilter = 'direct';
+    }
+    const next = stripDeprecatedLocalSettingsKeys(migrated);
     if (next.attentionDeviceOverridesV1 === undefined && hasLegacyAttentionDeviceOverrideFields(next)) {
         next.attentionDeviceOverridesV1 = deriveAttentionDeviceOverridesV1FromLegacyLocalSettings({
             legacy: next,

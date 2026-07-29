@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Pressable, View, Platform, SectionList } from 'react-native';
+import { Pressable, View, Platform } from 'react-native';
+import { VirtualizedSectionList } from '@/components/ui/lists/virtualized/VirtualizedSectionList';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,7 +12,7 @@ import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
-import { useAllSessions, useSessionListRowStateByServerId, useSetting } from '@/sync/domains/state/storage';
+import { useAllSessions, useSessionListRowStateByServerId, useSessionOrganizationPinnedSessionKeys, useSetting } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { getSessionAvatarId, getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
@@ -147,7 +148,7 @@ export default function ArchivedSessionsScreen() {
     const allSessions = useAllSessions();
     const sessionListRowStateByServerId = useSessionListRowStateByServerId();
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
-    const pinnedSessionKeysV1 = (useSetting('pinnedSessionKeysV1') ?? []) as ReadonlyArray<string>;
+    const pinnedSessionKeysV1 = useSessionOrganizationPinnedSessionKeys();
 
     React.useEffect(() => {
         void sync.fetchArchivedSessions().catch(() => undefined);
@@ -291,9 +292,9 @@ export default function ArchivedSessionsScreen() {
     );
 
     const renderSectionHeader = React.useCallback(
-        ({ section }: { section: { title: string } }) => (
+        ({ section }: { section: { title?: string } }) => (
             <View style={styles.headerSection}>
-                <Text style={styles.headerText}>{section.title}</Text>
+                <Text style={styles.headerText}>{section.title ?? ''}</Text>
             </View>
         ),
         [],
@@ -312,7 +313,7 @@ export default function ArchivedSessionsScreen() {
                         <Text style={styles.emptyText}>{t('sessionHistory.empty')}</Text>
                     </View>
                 ) : (
-                    <SectionList
+                    <VirtualizedSectionList
                         style={styles.list}
                         sections={sections}
                         renderItem={({ item, index, section }) => renderSessionCard(item, index, section as ArchivedSessionsSection)}
@@ -320,9 +321,9 @@ export default function ArchivedSessionsScreen() {
                         keyExtractor={getArchivedSessionKey}
                         onEndReached={handleLoadMoreSessions}
                         onEndReachedThreshold={0.4}
-                        {...(Platform.OS === 'web'
-                            ? ({ onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb } as any)
-                            : null)}
+                        webScrollHandlers={Platform.OS === 'web'
+                            ? { onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb }
+                            : undefined}
                         contentContainerStyle={{ paddingBottom: safeArea.bottom + 64, maxWidth: layout.maxWidth }}
                     />
                 )}

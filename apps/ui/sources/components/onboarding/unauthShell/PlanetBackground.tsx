@@ -3,6 +3,8 @@ import { Platform, StyleSheet as RNStyleSheet, View, type LayoutChangeEvent } fr
 import { Image as ExpoImage } from 'expo-image';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { stageVisualTokens } from '../tour/stage/stageVisualTokens';
+
 export type PlanetBackgroundProps = Readonly<{
     /**
      * Where this backdrop is being rendered.
@@ -14,6 +16,7 @@ export type PlanetBackgroundProps = Readonly<{
      *    tap into the next flow.
      */
     variant: 'desktop' | 'mobile';
+    desktopComposition?: 'brand' | 'horizon';
 }>;
 
 // Mobile recipe constants — shared by BOTH the web and native code paths so
@@ -41,6 +44,30 @@ const PLANET_ASPECT_RATIO = 6144 / 4096;
 
 const PLANET_MOBILE_BG_SIZE = `${PLANET_MOBILE_SCALE * 100}%`;
 const PLANET_MOBILE_BG_POSITION = `center ${PLANET_MOBILE_VERTICAL_ANCHOR * 100}%`;
+
+/**
+ * Horizon-composition background size for a measured pane (F-W13-3).
+ *
+ * The configured token (`'142% auto'`) scales with the pane WIDTH only, with an
+ * aspect-preserving height. On a wide split pane the resulting image height
+ * fills the pane, but on a narrow-tall pane (the 720–1000px viewport band, or
+ * any tall stage section) the image height falls short and the planet renders
+ * as a letterboxed horizontal band with solid bands above/below — a full-bleed
+ * violation. When the width-based size cannot fill the measured height we fall
+ * back to `cover` (which keeps the low `center 86%` anchor) so the planet is
+ * always full-bleed in its pane; while unmeasured we keep the configured value
+ * (wide panes are the common case and avoid a cover→142% flash).
+ */
+export function resolveHorizonPlanetBackgroundSize(
+    size: Readonly<{ width: number; height: number }> | null,
+): string {
+    const configured = stageVisualTokens.horizon.planetBackgroundSize;
+    if (!size || size.width <= 0 || size.height <= 0) return configured;
+    const widthFactor = Number.parseFloat(configured) / 100;
+    if (!Number.isFinite(widthFactor) || widthFactor <= 0) return configured;
+    const imageHeight = (size.width * widthFactor) / PLANET_ASPECT_RATIO;
+    return imageHeight >= size.height ? configured : 'cover';
+}
 
 /**
  * The cosmic backdrop behind the unauth shell. Theme-aware: dark planet for
@@ -71,6 +98,17 @@ const PLANET_MOBILE_BG_POSITION = `center ${PLANET_MOBILE_VERTICAL_ANCHOR * 100}
 export const PlanetBackground = React.memo(function PlanetBackground(props: PlanetBackgroundProps) {
     const { theme } = useUnistyles();
 
+    // Measured pane size for the web horizon composition (F-W13-3). Declared
+    // unconditionally (hooks rule); only the web horizon branch attaches the
+    // layout handler and consumes the size.
+    const [horizonSize, setHorizonSize] = React.useState<{ width: number; height: number } | null>(null);
+    const onHorizonLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const { width, height } = event.nativeEvent.layout;
+        setHorizonSize((prev) => (
+            prev && prev.width === width && prev.height === height ? prev : { width, height }
+        ));
+    }, []);
+
     const source = theme.dark
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         ? require('@/assets/onboarding/planet-dark.jpg')
@@ -80,8 +118,17 @@ export const PlanetBackground = React.memo(function PlanetBackground(props: Plan
     if (Platform.OS === 'web') {
         const url = resolveAssetUri(source);
         const isMobile = props.variant === 'mobile';
-        const backgroundSize = isMobile ? PLANET_MOBILE_BG_SIZE : 'cover';
-        const backgroundPosition = isMobile ? PLANET_MOBILE_BG_POSITION : '80% 50%';
+        const isHorizon = props.variant === 'desktop' && props.desktopComposition === 'horizon';
+        const backgroundSize = isMobile
+            ? PLANET_MOBILE_BG_SIZE
+            : isHorizon
+              ? resolveHorizonPlanetBackgroundSize(horizonSize)
+              : 'cover';
+        const backgroundPosition = isMobile
+            ? PLANET_MOBILE_BG_POSITION
+            : isHorizon
+              ? stageVisualTokens.horizon.planetBackgroundPosition
+              : '80% 50%';
         // RN-web passes the `backgroundImage` / `backgroundSize` /
         // `backgroundPosition` style properties straight through to the
         // rendered `<div>`. We cast because these aren't part of React
@@ -99,6 +146,7 @@ export const PlanetBackground = React.memo(function PlanetBackground(props: Plan
                 testID={`planet-background-${props.variant}`}
                 accessible={false}
                 pointerEvents="none"
+                onLayout={isHorizon ? onHorizonLayout : undefined}
                 style={webStyle}
             />
         );
@@ -107,13 +155,14 @@ export const PlanetBackground = React.memo(function PlanetBackground(props: Plan
     // Native (iOS / Android) desktop variant — kept for completeness; in
     // practice the desktop variant only renders on web (Tauri/browser).
     if (props.variant === 'desktop') {
+        const isHorizon = props.desktopComposition === 'horizon';
         return (
             <ExpoImage
                 testID="planet-background-desktop"
                 accessible={false}
                 source={source}
                 contentFit="cover"
-                contentPosition={PLANET_DESKTOP_POSITION}
+                contentPosition={isHorizon ? PLANET_DESKTOP_HORIZON_POSITION : PLANET_DESKTOP_POSITION}
                 style={RNStyleSheet.absoluteFillObject}
                 pointerEvents="none"
             />
@@ -204,3 +253,4 @@ function resolveAssetUri(source: unknown): string {
 }
 
 const PLANET_DESKTOP_POSITION = { left: '80%' as const, top: '50%' as const };
+const PLANET_DESKTOP_HORIZON_POSITION = { left: '50%' as const, top: '86%' as const };

@@ -49,8 +49,23 @@ export function normalizeSpawnSessionResult(value: unknown): SpawnSessionResult 
 
     const type = value.type;
     if (type === 'success') {
-        const sessionId = typeof value.sessionId === 'string' ? value.sessionId : undefined;
-        return { type: 'success', ...(sessionId ? { sessionId } : {}) };
+        const sessionId = typeof value.sessionId === 'string' && value.sessionId.trim().length > 0
+            ? value.sessionId.trim()
+            : undefined;
+        const spawnNonce = typeof value.spawnNonce === 'string' && value.spawnNonce.trim().length > 0
+            ? value.spawnNonce.trim()
+            : undefined;
+        const sessionIdStatus = value.sessionIdStatus === 'pending' || value.sessionIdStatus === 'available'
+            ? value.sessionIdStatus
+            : value.status === 'pending'
+                ? 'pending'
+                : undefined;
+        return {
+            type: 'success',
+            ...(sessionId ? { sessionId } : {}),
+            ...(spawnNonce ? { spawnNonce } : {}),
+            ...(sessionIdStatus ? { sessionIdStatus } : {}),
+        };
     }
 
     if (type === 'requestToApproveDirectoryCreation') {

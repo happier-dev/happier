@@ -1,16 +1,22 @@
 import React from 'react';
 import { Platform, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
+import { createScmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
+import { getFirstPartyScmBackendLegacyLocalId } from '@/scm/registry/firstPartyScmBackendIdentity';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useApplySettings } from '@/sync/store/settingsWriters';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { scmBackendSettingsRegistry } from '@/scm/settings/scmBackendSettingsRegistry';
+import { createScmBackendSettingsRegistry } from '@/scm/settings/scmBackendSettingsRegistry';
+import { useDaemonScmContributionCatalog } from '@/scm/registry/useDaemonScmContributionCatalog';
+import { usePrimaryMachineFromActiveSelection } from '@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import type { ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import type { ScmDiffArea } from '@happier-dev/protocol';
 import { Modal } from '@/modal';
@@ -20,6 +26,10 @@ import { Switch } from '@/components/ui/forms/Switch';
 import type {
     ScmGitRepoPreferredBackend,
     ScmPushRejectPolicy,
+} from '@/scm/settings/preferences';
+import {
+    buildScmGitRepoBackendPreferenceSettingsDelta,
+    resolveScmGitRepoPreferredBackendId,
 } from '@/scm/settings/preferences';
 import {
     normalizeScmRemoteConfirmPolicy,
@@ -51,7 +61,7 @@ const COMMIT_STRATEGY_OPTIONS: ReadonlyArray<{
     },
 ];
 
-const GIT_REPO_BACKEND_OPTIONS: ReadonlyArray<{
+const LEGACY_GIT_REPO_BACKEND_OPTIONS: ReadonlyArray<{
     id: ScmGitRepoPreferredBackend;
     titleKey: TranslationKey;
     subtitleKey: TranslationKey;
@@ -215,8 +225,17 @@ const MARKDOWN_EDIT_MODE_OPTIONS: ReadonlyArray<{
 
 export const SourceControlSettingsView = React.memo(function SourceControlSettingsView() {
     const { theme } = useUnistyles();
+    const { push } = useRouter();
+    const primaryMachineId = usePrimaryMachineFromActiveSelection();
+    const activeServer = useActiveServerSnapshot();
+    const contributionCatalog = useDaemonScmContributionCatalog({
+        machineId: primaryMachineId,
+        serverId: activeServer.serverId,
+    });
     const [scmCommitStrategy, setScmCommitStrategy] = useSettingMutable('scmCommitStrategy');
-    const [scmGitRepoPreferredBackend, setScmGitRepoPreferredBackend] = useSettingMutable('scmGitRepoPreferredBackend');
+    const [scmGitRepoPreferredBackend] = useSettingMutable('scmGitRepoPreferredBackend');
+    const [scmGitRepoPreferredBackendQualifiedId] = useSettingMutable('scmGitRepoPreferredBackendQualifiedId');
+    const applySettings = useApplySettings();
     const [scmRemoteConfirmPolicy, setScmRemoteConfirmPolicy] = useSettingMutable('scmRemoteConfirmPolicy');
     const [scmPushRejectPolicy, setScmPushRejectPolicy] = useSettingMutable('scmPushRejectPolicy');
     const [scmDefaultDiffModeByBackend, setScmDefaultDiffModeByBackend] = useSettingMutable('scmDefaultDiffModeByBackend');
@@ -234,7 +253,22 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const [filesEditorAutoSave, setFilesEditorAutoSave] = useSettingMutable('filesEditorAutoSave');
     const [markdownDefaultEditMode, setMarkdownDefaultEditMode] = useSettingMutable('markdownDefaultEditMode');
     const markdownRichEditorEnabled = useFeatureEnabled('files.markdownRichEditor');
-    const backendPlugins = scmBackendSettingsRegistry.listPlugins();
+    const backendSettingsRegistry = React.useMemo(
+        () => createScmBackendSettingsRegistry(contributionCatalog),
+        [contributionCatalog],
+    );
+    const backendUiRegistry = React.useMemo(
+        () => createScmUiBackendRegistry(contributionCatalog),
+        [contributionCatalog],
+    );
+    const backendPlugins = backendSettingsRegistry.listPlugins();
+    const hostingProviders = backendSettingsRegistry.listHostingProviders();
+    const contributionCatalogIsStale = contributionCatalog.state === 'stale';
+    const describeProjectedMetadata = React.useCallback((description: string) => (
+        contributionCatalogIsStale
+            ? [description, t('status.offline')].filter(Boolean).join(' · ')
+            : description
+    ), [contributionCatalogIsStale]);
     const currentDiffModeByBackend = scmDefaultDiffModeByBackend ?? {};
     const effectiveFilesDiffSyntaxHighlightingMode = (filesDiffSyntaxHighlightingMode ?? 'off') as 'off' | 'simple' | 'advanced';
     const effectiveFilesDiffRendererMode = filesDiffRendererMode === 'happier' ? 'happier' : 'pierre';
@@ -254,6 +288,14 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const effectiveRemoteConfirmPolicy = normalizeScmRemoteConfirmPolicy(scmRemoteConfirmPolicy);
     const confirmsPull = shouldConfirmRemoteOperation(effectiveRemoteConfirmPolicy, 'pull');
     const confirmsPush = shouldConfirmRemoteOperation(effectiveRemoteConfirmPolicy, 'push');
+    const effectiveScmGitRepoPreferredBackendId = resolveScmGitRepoPreferredBackendId({
+        legacyPreference: scmGitRepoPreferredBackend,
+        qualifiedPreference: scmGitRepoPreferredBackendQualifiedId,
+    });
+    const setScmGitRepoPreferredBackend = React.useCallback((backendId: string) => {
+        const delta = buildScmGitRepoBackendPreferenceSettingsDelta(backendId);
+        if (delta) applySettings(delta);
+    }, [applySettings]);
 
     const renderIcon = React.useCallback((iconName: IoniconName) => (
         <Ionicons name={iconName} size={29} color={theme.colors.text.secondary} />
@@ -282,18 +324,63 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                 title={t('settingsSourceControl.gitRoutingPreference.title')}
                 footer={t('settingsSourceControl.gitRoutingPreference.footer')}
             >
-                {GIT_REPO_BACKEND_OPTIONS.map((option) => (
-                    <Item
-                        key={option.id}
-                        title={t(option.titleKey)}
-                        subtitle={t(option.subtitleKey)}
-                        icon={renderIcon(option.iconName)}
-                        rightElement={scmGitRepoPreferredBackend === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
-                        onPress={() => setScmGitRepoPreferredBackend(option.id)}
-                        showChevron={false}
-                    />
-                ))}
+                {contributionCatalog.source === 'legacy'
+                    ? LEGACY_GIT_REPO_BACKEND_OPTIONS.map((option) => (
+                        <Item
+                            key={option.id}
+                            title={t(option.titleKey)}
+                            subtitle={t(option.subtitleKey)}
+                            icon={renderIcon(option.iconName)}
+                            rightElement={
+                                effectiveScmGitRepoPreferredBackendId === resolveScmGitRepoPreferredBackendId({
+                                    legacyPreference: option.id,
+                                    qualifiedPreference: null,
+                                })
+                                    ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} />
+                                    : null
+                            }
+                            onPress={() => setScmGitRepoPreferredBackend(option.id)}
+                            showChevron={false}
+                        />
+                    ))
+                    : contributionCatalog.backends.map((backend) => (
+                        <Item
+                            key={backend.id}
+                            title={backend.title}
+                            subtitle={describeProjectedMetadata(backend.description)}
+                            icon={renderIcon('git-branch-outline')}
+                            rightElement={
+                                effectiveScmGitRepoPreferredBackendId === backend.id
+                                    ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} />
+                                    : null
+                            }
+                            onPress={contributionCatalogIsStale
+                                ? undefined
+                                : () => setScmGitRepoPreferredBackend(backend.id)}
+                            disabled={contributionCatalogIsStale}
+                            showChevron={false}
+                        />
+                    ))}
             </ItemGroup>
+
+            {hostingProviders.length > 0 ? (
+                <ItemGroup title={t('connectedServices.title')}>
+                    {hostingProviders.map((provider) => (
+                        <Item
+                            key={provider.providerId}
+                            title={provider.title}
+                            subtitle={describeProjectedMetadata(provider.description)}
+                            icon={renderIcon(provider.authService ? 'key-outline' : 'cloud-outline')}
+                            onPress={!contributionCatalogIsStale && provider.serviceId ? () => push({
+                                pathname: '/(app)/settings/connected-services/[serviceId]',
+                                params: { serviceId: provider.serviceId },
+                            }) : undefined}
+                            disabled={contributionCatalogIsStale}
+                            showChevron={!contributionCatalogIsStale && provider.serviceId !== null}
+                        />
+                    ))}
+                </ItemGroup>
+            ) : null}
 
             <ItemGroup
                 title={t('settingsSourceControl.remoteConfirmation.title')}
@@ -496,8 +583,11 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
             {backendPlugins.map((plugin) => (
                 <ItemGroup key={plugin.backendId} title={t('settingsSourceControl.backends.backendGroupTitle', { backendTitle: plugin.title })} footer={plugin.description}>
                     {(() => {
-                        const backendUiPlugin = scmUiBackendRegistry.getPlugin(plugin.backendId);
+                        const backendUiPlugin = backendUiRegistry.getPlugin(plugin.backendId);
                         const availableModes = backendUiPlugin.diffModeConfig(null).availableModes;
+                        const legacyBackendId = getFirstPartyScmBackendLegacyLocalId(plugin.backendId);
+                        const selectedDiffMode = currentDiffModeByBackend[plugin.backendId]
+                            ?? (legacyBackendId ? currentDiffModeByBackend[legacyBackendId] : undefined);
                         return DIFF_MODE_OPTIONS
                             .filter((option) => availableModes.includes(option.id))
                             .map((option) => (
@@ -507,16 +597,17 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                                     subtitle={t('settingsSourceControl.backends.defaultDiffItemSubtitle')}
                                     icon={renderIcon(option.iconName)}
                                     rightElement={
-                                        currentDiffModeByBackend[plugin.backendId] === option.id
+                                        selectedDiffMode === option.id
                                             ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} />
                                             : null
                                     }
-                                    onPress={() => {
+                                    onPress={contributionCatalogIsStale ? undefined : () => {
                                         setScmDefaultDiffModeByBackend({
                                             ...currentDiffModeByBackend,
                                             [plugin.backendId]: option.id,
                                         });
                                     }}
+                                    disabled={contributionCatalogIsStale}
                                     showChevron={false}
                                 />
                             ));

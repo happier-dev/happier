@@ -1,5 +1,6 @@
 import type { ScmDiffArea } from '@happier-dev/protocol';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { getFirstPartyScmBackendLegacyLocalId } from '@/scm/registry/firstPartyScmBackendIdentity';
 import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
 
 function firstAvailableMode(availableModes: readonly ScmDiffArea[]): ScmDiffArea {
@@ -18,8 +19,11 @@ export function resolveDefaultDiffModeForFile(input: {
     const availableModes = config.availableModes;
     const available = new Set<ScmDiffArea>(availableModes);
     const backendId = snapshot?.repo?.backendId ?? plugin.id;
+    const legacyBackendId = getFirstPartyScmBackendLegacyLocalId(backendId);
 
-    const backendPreference = backendOverrides?.[backendId ?? ''] ?? null;
+    const backendPreference = backendOverrides?.[backendId]
+        ?? (legacyBackendId ? backendOverrides?.[legacyBackendId] : undefined)
+        ?? null;
     const preferred = backendPreference && available.has(backendPreference)
         ? backendPreference
         : available.has(config.defaultMode)

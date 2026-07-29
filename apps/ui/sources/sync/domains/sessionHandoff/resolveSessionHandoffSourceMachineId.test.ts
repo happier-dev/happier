@@ -29,8 +29,31 @@ describe('resolveSessionHandoffSourceMachineId', () => {
     it('falls back to externalSessionV1.machineId when machineId is missing', () => {
         expect(resolveSessionHandoffSourceMachineId({
             sourceMachineId: null,
-            sessionMetadata: { externalSessionV1: { machineId: ' machine_direct ' } },
+            sessionMetadata: {
+                externalSessionV1: {
+                    v: 1,
+                    agentId: 'claude',
+                    machineId: ' machine_direct ',
+                    remoteSessionId: 'claude_session_1',
+                    source: { kind: 'claudeConfig', configDir: '/Users/tester/.claude' },
+                },
+            },
         })).toBe('machine_direct');
+    });
+
+    it('falls back to released directSessionV1.machineId when machineId is missing', () => {
+        expect(resolveSessionHandoffSourceMachineId({
+            sourceMachineId: null,
+            sessionMetadata: {
+                directSessionV1: {
+                    v: 1,
+                    providerId: 'claude',
+                    machineId: ' machine_legacy ',
+                    remoteSessionId: 'claude_session_1',
+                    source: { kind: 'claudeConfig', configDir: '/Users/tester/.claude' },
+                },
+            },
+        })).toBe('machine_legacy');
     });
 
     it('returns null when no non-empty id is available', () => {

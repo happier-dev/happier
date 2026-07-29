@@ -6,7 +6,7 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popover';
 import { requireRadixDismissableLayer } from '@/utils/web/radixCjs';
 import { requireReactDOM } from '@/utils/web/reactDomCjs';
-import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
+import { ModalPortalTargetProvider, useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import type { ModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
 import { useLocalSetting } from '@/sync/domains/state/storage';
@@ -22,6 +22,15 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 const isWeb = String(Platform.OS) === 'web';
 const WEB_MODAL_CARD_BOUNDARY_SELECTOR = '[data-happy-modal-card-boundary]';
+const WEB_MODAL_FOCUSABLE_SELECTOR = [
+    'a[href]',
+    'button:not([disabled])',
+    'input:not([disabled]):not([type="hidden"])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    '[contenteditable="true"]',
+    '[tabindex]:not([tabindex="-1"])',
+].join(',');
 
 // On web, stop events from propagating to expo-router's modal overlay
 // which intercepts clicks when it applies pointer-events: none to body
@@ -128,10 +137,19 @@ function isInsideWebModalCardBoundary(target: EventTarget | null): boolean {
     return false;
 }
 
+function listWebModalFocusableElements(shell: HTMLElement): HTMLElement[] {
+    return Array.from(shell.querySelectorAll<HTMLElement>(WEB_MODAL_FOCUSABLE_SELECTOR)).filter((element) => {
+        if (element.hidden || element.getAttribute('aria-hidden') === 'true') return false;
+        const style = window.getComputedStyle(element);
+        return style.display !== 'none' && style.visibility !== 'hidden';
+    });
+}
+
 interface BaseModalProps {
     visible: boolean;
     onClose?: () => void;
     children: React.ReactNode;
+    accessibilityLabel?: string;
     closeOnBackdrop?: boolean;
     showBackdrop?: boolean;
     zIndexBase?: number;
@@ -143,6 +161,7 @@ export function BaseModal({
     visible,
     onClose,
     children,
+    accessibilityLabel,
     closeOnBackdrop = true,
     showBackdrop = true,
     zIndexBase,
@@ -153,6 +172,7 @@ export function BaseModal({
     const uiBackdropBlurEnabled = useLocalSetting('uiBackdropBlurEnabled') !== false;
     const insets = useChromeSafeAreaInsets();
     const baseZ = zIndexBase ?? 100000;
+    const inheritedWebPortalTarget = useModalPortalTarget();
     const [modalPortalTarget, setModalPortalTarget] = React.useState<HTMLElement | null>(null);
     const modalPortalHostRef = React.useRef<HTMLDivElement | null>(null);
     const radixDismissableLayer = React.useMemo(() => (isWeb ? requireRadixDismissableLayer() : null), []);
@@ -174,6 +194,7 @@ export function BaseModal({
         inputRange: [0, 1],
         outputRange: [0, motionTokens.overlay.modal.backdropMaxOpacity],
     });
+    const modalAccessibilityLabel = accessibilityLabel ?? t('common.dialog');
 
     // On web, avoid setting React state inside a callback ref. In some browser/portal scenarios,
     // ref attach/detach churn can lead to nested update loops ("Maximum update depth exceeded").
@@ -192,35 +213,23 @@ export function BaseModal({
         return installWebModalBodyPointerEventsBypass();
     }, [visible]);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (!isWeb) return;
         if (!visible) return;
         if (typeof document === 'undefined') return;
 
-        webPreviousActiveElementRef.current = (document.activeElement as HTMLElement | null) ?? null;
-
-        // Move focus into the modal shell so Escape/Tab interactions behave predictably.
-        // Avoid forcing focus if the shell ref isn't ready yet.
         const shell = webContentShellRef.current;
-        if (shell) {
-            try {
-                shell.focus();
-            } catch {
-                // ignore
-            }
+        if (!shell) return;
+
+        const activeElement = (document.activeElement as HTMLElement | null) ?? null;
+        webPreviousActiveElementRef.current = activeElement;
+        try {
+            shell.focus();
+        } catch {
+            // ignore
         }
 
-        const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.key !== 'Escape') return;
-            if (!onClose) return;
-            event.preventDefault();
-            event.stopPropagation();
-            onClose();
-        };
-
-        document.addEventListener('keydown', handleKeyDown, true);
         return () => {
-            document.removeEventListener('keydown', handleKeyDown, true);
             const previous = webPreviousActiveElementRef.current;
             webPreviousActiveElementRef.current = null;
             if (previous && typeof previous.focus === 'function') {
@@ -230,6 +239,53 @@ export function BaseModal({
                     // ignore
                 }
             }
+        };
+    }, [modalPresence.present, visible]);
+
+    useEffect(() => {
+        if (!isWeb) return;
+        if (!visible) return;
+        if (typeof document === 'undefined') return;
+
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                if (!onClose) return;
+                event.preventDefault();
+                event.stopPropagation();
+                onClose();
+                return;
+            }
+
+            if (event.key !== 'Tab') return;
+            const shell = webContentShellRef.current;
+            if (!shell) return;
+
+            const focusableElements = listWebModalFocusableElements(shell);
+            if (focusableElements.length === 0) {
+                event.preventDefault();
+                event.stopPropagation();
+                shell.focus();
+                return;
+            }
+
+            const firstFocusableElement = focusableElements[0]!;
+            const lastFocusableElement = focusableElements[focusableElements.length - 1]!;
+            const activeElement = document.activeElement;
+            const focusIsOutsideDialog = activeElement == null || !shell.contains(activeElement);
+            const shouldWrapBackward = event.shiftKey
+                && (focusIsOutsideDialog || activeElement === shell || activeElement === firstFocusableElement);
+            const shouldWrapForward = !event.shiftKey
+                && (focusIsOutsideDialog || activeElement === shell || activeElement === lastFocusableElement);
+            if (!shouldWrapBackward && !shouldWrapForward) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+            (shouldWrapBackward ? lastFocusableElement : firstFocusableElement).focus();
+        };
+
+        document.addEventListener('keydown', handleKeyDown, true);
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown, true);
         };
     }, [onClose, visible]);
 
@@ -244,6 +300,7 @@ export function BaseModal({
 
         const resolvedWebPortalTarget: ModalPortalTarget = (() => {
             if (webPortalTarget) return webPortalTarget;
+            if (inheritedWebPortalTarget) return inheritedWebPortalTarget;
             if (typeof document === 'undefined') return null;
             return document.body ?? null;
         })();
@@ -285,8 +342,6 @@ export function BaseModal({
             zIndex: baseZ + 1,
             overflowY: 'auto',
         };
-
-        const title = t('common.dialog');
 
         const visuallyHiddenStyle: React.CSSProperties = {
             position: 'absolute',
@@ -351,7 +406,7 @@ export function BaseModal({
                         ref={webContentShellRef}
                         role="dialog"
                         aria-modal="true"
-                        aria-label={title}
+                        aria-label={modalAccessibilityLabel}
                         tabIndex={-1}
                         style={{ ...contentStyle, pointerEvents: visible ? 'auto' : 'none' }}
                         onPointerDown={stopPropagation}
@@ -368,7 +423,7 @@ export function BaseModal({
                             onClose();
                         }}
                     >
-                        <div style={visuallyHiddenStyle}>{title}</div>
+                        <div style={visuallyHiddenStyle}>{modalAccessibilityLabel}</div>
                         {/* Host for web portals (e.g. popovers) that must live inside the dialog subtree. */}
                         <div
                             data-happy-modal-portal-host=""
@@ -428,7 +483,13 @@ export function BaseModal({
     if (!modalPresence.present) return null;
 
     return (
-        <View style={[styles.portalRoot, { zIndex: baseZ, elevation: baseZ }]} pointerEvents={visible ? 'auto' : 'none'}>
+        <View
+            style={[styles.portalRoot, { zIndex: baseZ, elevation: baseZ }]}
+            pointerEvents={visible ? 'auto' : 'none'}
+            role="dialog"
+            accessibilityLabel={modalAccessibilityLabel}
+            accessibilityViewIsModal={visible}
+        >
             <OverlayPortalProvider>
                 <KeyboardAwareModalFrame
                     style={[

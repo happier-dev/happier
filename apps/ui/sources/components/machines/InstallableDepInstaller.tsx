@@ -177,7 +177,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
 
             {typeof props.depStatus?.lastBackgroundUpdateCheckAtMs === 'number' && Number.isFinite(props.depStatus.lastBackgroundUpdateCheckAtMs) && (
                 <Item
-                    title={t('settingsProviders.authentication.lastCheckedTitle')}
+                    title={t('settingsAgents.authentication.lastCheckedTitle')}
                     subtitle={formatTimestamp(props.depStatus.lastBackgroundUpdateCheckAtMs)}
                     icon={<Ionicons name="time-outline" size={22} color={theme.colors.text.secondary} />}
                     showChevron={false}

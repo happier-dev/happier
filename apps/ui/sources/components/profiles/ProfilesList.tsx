@@ -27,6 +27,8 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { Text } from '@/components/ui/text/Text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import type { ProfileEnabledById } from '@/sync/domains/profiles/profileEnablement';
+import { resolveVisibleBuiltInLaunchProfiles } from '@/sync/domains/profiles/visibleBuiltInLaunchProfiles';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol';
 
 
 export interface ProfilesListProps {
@@ -168,6 +170,12 @@ export function ProfilesList(props: ProfilesListProps) {
     const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const settingsProfileEnabledById = useSetting('profileEnabledById') as ProfileEnabledById | undefined;
+    const lastUsedProfile = useSetting('lastUsedProfile');
+    const secretBindingsByProfileId = useSetting('secretBindingsByProfileId');
+    const providerSettingsV1 = useSetting('providerSettingsV1');
+    const providerMigration = React.useMemo(() => (
+        readProviderSettingsFromAccountSettingsV1({ providerSettingsV1 }).settings.migration
+    ), [providerSettingsV1]);
     const profileEnabledById = props.profileEnabledById ?? settingsProfileEnabledById;
     const enabledAgentIds = React.useMemo(() => {
         return getEnabledAgentIds({ backendEnabledByTargetKey });
@@ -209,14 +217,22 @@ export function ProfilesList(props: ProfilesListProps) {
     const isMobile = useWindowDimensions().width < 580;
 
     const groups = React.useMemo(() => {
+        const builtInProfiles = resolveVisibleBuiltInLaunchProfiles({
+            lastUsedProfile,
+            favoriteProfileIds: props.favoriteProfileIds,
+            profileEnabledById: profileEnabledById ?? {},
+            secretBindingsByProfileId: secretBindingsByProfileId ?? {},
+            migration: providerMigration,
+        });
         return buildProfilesListGroups({
             customProfiles: props.customProfiles,
+            builtInProfiles,
             favoriteProfileIds: props.favoriteProfileIds,
             enabledAgentIds,
             profileEnabledById,
             includeDisabledProfiles: props.includeDisabledProfiles,
         });
-    }, [enabledAgentIds, profileEnabledById, props.customProfiles, props.favoriteProfileIds, props.includeDisabledProfiles]);
+    }, [enabledAgentIds, lastUsedProfile, profileEnabledById, props.customProfiles, props.favoriteProfileIds, props.includeDisabledProfiles, providerMigration, secretBindingsByProfileId]);
 
     const isDefaultEnvironmentFavorite = groups.favoriteIds.has('');
     const showFavoritesGroup = groups.favoriteProfiles.length > 0 || (props.includeDefaultEnvironmentRow && isDefaultEnvironmentFavorite);

@@ -3,6 +3,7 @@ import { NormalizedMessage } from '../typesRaw';
 import { createReducer } from './reducer';
 import { reducer } from './reducer';
 import { AgentState } from '../domains/state/storageTypes';
+import { markSyntheticNoResponseMeta } from '../domains/messages/syntheticNoResponseMessageMeta';
 
 describe('reducer', () => {
     // it('should process golden cases', () => {
@@ -342,6 +343,142 @@ describe('reducer', () => {
     });
 
     describe('live usage projection', () => {
+        it('projects a canonical provider snapshot and prefers it over scalar context telemetry', () => {
+            const state = createReducer();
+            const contextSnapshot = {
+                v: 1 as const,
+                modelId: 'gpt-5.4',
+                usedTokens: 42_000,
+                windowTokens: 400_000,
+                totalProcessedTokens: 120_000,
+                baselineTokens: 12_000,
+                isAutoCompactEnabled: null,
+                categories: null,
+                observedAtMs: 1_000,
+                source: 'provider_turn' as const,
+            };
+
+            reducer(state, [{
+                id: 'usage-provider-snapshot',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                content: [],
+                usage: {
+                    input_tokens: 700,
+                    output_tokens: 250,
+                    context_used_tokens: 1_200,
+                    context_window_tokens: 258_400,
+                    contextSnapshot,
+                },
+            }]);
+
+            expect(state.latestUsage).toMatchObject({
+                contextSize: 42_000,
+                contextWindowTokens: 400_000,
+                contextSnapshot,
+                contextSnapshotStale: false,
+            });
+        });
+
+        it('merges context-only usage records without clobbering previous token totals', () => {
+            const state = createReducer();
+            const liveSnapshot = {
+                v: 1 as const,
+                modelId: 'claude-fable-5',
+                usedTokens: 39_072,
+                windowTokens: 1_000_000,
+                totalProcessedTokens: null,
+                baselineTokens: null,
+                isAutoCompactEnabled: true,
+                categories: null,
+                observedAtMs: 2_000,
+                source: 'provider_live' as const,
+            };
+
+            // A real turn's usage first…
+            reducer(state, [{
+                id: 'usage-turn',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                content: [],
+                usage: {
+                    input_tokens: 700,
+                    output_tokens: 250,
+                    cache_creation_input_tokens: 30,
+                    cache_read_input_tokens: 40,
+                },
+            }]);
+
+            // …then a context-only snapshot record (live Claude getContextUsage shape).
+            reducer(state, [{
+                id: 'usage-context-only',
+                localId: null,
+                createdAt: 2000,
+                role: 'agent',
+                isSidechain: false,
+                content: [],
+                usage: {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    context_only: true,
+                    context_used_tokens: 39_072,
+                    context_window_tokens: 1_000_000,
+                    contextSnapshot: liveSnapshot,
+                },
+            }]);
+
+            expect(state.latestUsage).toMatchObject({
+                // Token totals PRESERVED from the real turn.
+                inputTokens: 700,
+                outputTokens: 250,
+                cacheCreation: 30,
+                cacheRead: 40,
+                // Context truth UPDATED from the snapshot.
+                contextSize: 39_072,
+                contextWindowTokens: 1_000_000,
+                contextSnapshot: liveSnapshot,
+                contextSnapshotStale: false,
+                timestamp: 2000,
+            });
+        });
+
+        it('synthesizes a canonical derived-estimate snapshot when provider truth is absent', () => {
+            const state = createReducer();
+
+            reducer(state, [{
+                id: 'usage-derived-snapshot',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                content: [],
+                usage: {
+                    input_tokens: 11,
+                    output_tokens: 7,
+                    cache_creation_input_tokens: 3,
+                    cache_read_input_tokens: 2,
+                },
+            }]);
+
+            expect(state.latestUsage?.contextSnapshot).toEqual({
+                v: 1,
+                modelId: null,
+                usedTokens: 16,
+                windowTokens: null,
+                totalProcessedTokens: null,
+                baselineTokens: null,
+                isAutoCompactEnabled: null,
+                categories: null,
+                observedAtMs: 1_000,
+                source: 'derived_estimate',
+            });
+            expect(state.latestUsage?.contextSnapshotStale).toBe(false);
+        });
+
         it('projects usage-only agent records into latestUsage without creating transcript messages', () => {
             const state = createReducer();
             const messages: NormalizedMessage[] = [
@@ -377,8 +514,70 @@ describe('reducer', () => {
                 cacheCreation: 3,
                 cacheRead: 2,
                 contextSize: 16,
+                contextSnapshot: {
+                    v: 1,
+                    modelId: null,
+                    usedTokens: 16,
+                    windowTokens: null,
+                    totalProcessedTokens: null,
+                    baselineTokens: null,
+                    isAutoCompactEnabled: null,
+                    categories: null,
+                    observedAtMs: 1000,
+                    source: 'derived_estimate',
+                },
+                contextSnapshotStale: false,
                 timestamp: 1000,
             });
+        });
+
+        it('retains the provider snapshot with the newest observedAtMs when records reorder', () => {
+            const state = createReducer();
+
+            const freshSnapshot = {
+                v: 1 as const,
+                modelId: 'gpt-5.4',
+                usedTokens: 42_000,
+                windowTokens: 400_000,
+                totalProcessedTokens: 120_000,
+                baselineTokens: 12_000,
+                isAutoCompactEnabled: null,
+                categories: null,
+                observedAtMs: 2_000,
+                source: 'provider_turn' as const,
+            };
+            const staleSnapshot = {
+                ...freshSnapshot,
+                usedTokens: 99_999,
+                observedAtMs: 1_500,
+            };
+
+            // Fresher-by-observedAtMs snapshot arrives first (record ts 1000)...
+            reducer(state, [{
+                id: 'usage-fresh-snapshot',
+                localId: null,
+                createdAt: 1_000,
+                role: 'agent',
+                isSidechain: false,
+                content: [],
+                usage: { input_tokens: 700, output_tokens: 250, contextSnapshot: freshSnapshot },
+            }]);
+
+            // ...then a transport-reordered staler snapshot lands with a NEWER record ts (1001).
+            reducer(state, [{
+                id: 'usage-stale-snapshot',
+                localId: null,
+                createdAt: 1_001,
+                role: 'agent',
+                isSidechain: false,
+                content: [],
+                usage: { input_tokens: 800, output_tokens: 300, contextSnapshot: staleSnapshot },
+            }]);
+
+            // The reducer must keep the snapshot the provider observed most recently.
+            expect(state.latestUsage?.contextSnapshot).toEqual(freshSnapshot);
+            expect(state.latestUsage?.contextSize).toBe(42_000);
+            expect(state.latestUsage?.contextSnapshotStale).toBe(false);
         });
 
         it('projects explicit context-window usage telemetry into latestUsage', () => {
@@ -1932,6 +2131,7 @@ describe('reducer', () => {
                 createdAt: 1700,
                 role: 'agent',
                 isSidechain: false,
+                meta: markSyntheticNoResponseMeta(),
                 content: [{
                     type: 'text',
                     text: 'No response requested.',
@@ -1947,6 +2147,42 @@ describe('reducer', () => {
             expect(toolMessage?.tool?.permission?.status).toBe('approved');
             expect(toolMessage?.tool?.completedAt).toBeNull();
             expect(toolMessage?.tool?.result).toBeUndefined();
+            expect(
+                Array.from(state.messages.values()).some((message) =>
+                    message.role === 'agent'
+                    && message.text === 'No response requested.'
+                    && !message.tool
+                    && !message.event
+                )
+            ).toBe(false);
+        });
+
+        it('renders ordinary agent text that happens to match the synthetic no-response copy', () => {
+            const state = createReducer();
+            const ordinaryNoResponseText: NormalizedMessage = {
+                id: 'ordinary-no-response',
+                localId: null,
+                createdAt: 1700,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'text',
+                    text: 'No response requested.',
+                    uuid: 'text-uuid-ordinary-no-response',
+                    parentUUID: null,
+                }],
+            };
+
+            reducer(state, [ordinaryNoResponseText]);
+
+            expect(
+                Array.from(state.messages.values()).some((message) =>
+                    message.role === 'agent'
+                    && message.text === 'No response requested.'
+                    && !message.tool
+                    && !message.event
+                )
+            ).toBe(true);
         });
 
         it('keeps orphaned running approved tools active when partial output already streamed', () => {

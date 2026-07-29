@@ -41,7 +41,7 @@ describe('describeEffectivePermissionMode', () => {
         expect(reasonCodes(res)).toContain('plan_not_supported_for_provider');
     });
 
-    it('emits mapping reason when provider canonicalization changes the mode', () => {
+    it('emits provider-native mapping reason when provider canonicalization changes the mode', () => {
         const res = describeEffectivePermissionMode({
             agentType: 'claude',
             selectedMode: 'safe-yolo',
@@ -49,7 +49,10 @@ describe('describeEffectivePermissionMode', () => {
             applyTiming: 'immediate',
         });
 
-        expect(reasonCodes(res)).toContain('mode_mapped_for_provider');
+        expect(res.reasons).toContainEqual({
+            code: 'mode_mapped_for_provider',
+            params: { providerMode: 'auto' },
+        });
     });
 
     it('emits codex-like read-only enforcement reason', () => {
@@ -62,6 +65,23 @@ describe('describeEffectivePermissionMode', () => {
 
         expect(res.effectiveMode).toBe('read-only');
         expect(reasonCodes(res)).toContain('read_only_enforced_by_tool_gating');
+    });
+
+    it('describes Grok read-only host enforcement without claiming provider-native filesystem containment', () => {
+        const res = describeEffectivePermissionMode({
+            agentType: 'grok',
+            selectedMode: 'read-only',
+            metadata: buildMetadata(),
+            applyTiming: 'immediate',
+        });
+
+        expect(res.reasons).toEqual([
+            { code: 'read_only_enforced_by_tool_gating' },
+        ]);
+        expect(res.notes).toEqual([
+            'Happier denies host-mediated ACP filesystem writes in Read Only and Plan. Trusted provider-native or direct writes remain best effort under the provider’s own policy.',
+        ]);
+        expect(res.notes.join(' ')).not.toContain('mapped to Default');
     });
 
     it('emits next-prompt timing reason when apply timing is deferred', () => {
@@ -107,7 +127,11 @@ describe('describeEffectivePermissionMode', () => {
         });
 
         expect(reasonCodes(res)).toContain('read_only_best_effort');
-        expect(res.notes.some((note) => /best effort/i.test(note))).toBe(true);
+        expect(res.notes).toEqual([
+            'Mapped to dontAsk for this provider.',
+            'Trusted provider-native or direct writes remain best effort under this provider’s own policy.',
+        ]);
+        expect(res.notes.join(' ')).not.toContain('mapped to Default');
     });
 
     it('emits MCP spawn restriction reason when ACP policy providers have no ACP metadata', () => {
@@ -128,7 +152,7 @@ describe('describeEffectivePermissionMode', () => {
             metadata: buildMetadata({
                 sessionModesV1: {
                     v: 1,
-                    provider: 'unexpected-provider',
+                    agentId: 'unexpected-provider',
                     updatedAt: 1,
                     currentModeId: 'default',
                     availableModes: [],
@@ -147,7 +171,7 @@ describe('describeEffectivePermissionMode', () => {
             metadata: buildMetadata({
                 acpSessionModesV1: {
                     v: 1,
-                    provider: 'unexpected-provider',
+                    agentId: 'unexpected-provider',
                     updatedAt: 1,
                     currentModeId: 'default',
                     availableModes: [],

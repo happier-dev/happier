@@ -111,7 +111,7 @@ describe('SelectableMenuResults (web mouse down activation)', () => {
             expect(onPressItem).toHaveBeenCalledTimes(1);
             expect(onPressItem).toHaveBeenCalledWith(expect.objectContaining({ id: 'upload' }));
 
-            await act(async () => {
+            act(() => {
                 button!.click();
             });
 
@@ -162,7 +162,7 @@ describe('SelectableMenuResults (web mouse down activation)', () => {
             expect(onPressItem).toHaveBeenCalledTimes(1);
             expect(onPressItem).toHaveBeenCalledWith(expect.objectContaining({ id: 'upload' }));
 
-            await act(async () => {
+            act(() => {
                 (option as HTMLButtonElement).click();
             });
 
@@ -171,6 +171,72 @@ describe('SelectableMenuResults (web mouse down activation)', () => {
             await act(async () => {
                 root.unmount();
             });
+            container.remove();
+        }
+    });
+
+    it('blocks the trailing web click from reaching a control exposed when selection closes the menu', async () => {
+        const { SelectableMenuResults } = await import('./SelectableMenuResults');
+        const onPressItem = vi.fn();
+        const onUnderlyingPress = vi.fn();
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+
+        function Harness() {
+            const [open, setOpen] = React.useState(true);
+            return React.createElement(
+                React.Fragment,
+                null,
+                React.createElement('button', {
+                    type: 'button',
+                    'data-testid': 'underlying-control',
+                    onMouseUp: onUnderlyingPress,
+                    onClick: onUnderlyingPress,
+                }, 'Underlying'),
+                open
+                    ? React.createElement(SelectableMenuResults, {
+                        categories: [{ id: 'general', title: 'General', items: [{ id: 'device', title: 'Device STT' }] }],
+                        selectedIndex: 0,
+                        onSelectionChange: () => {},
+                        onPressItem: (item: unknown) => {
+                            onPressItem(item);
+                            setOpen(false);
+                        },
+                        rowVariant: 'slim',
+                    })
+                    : null,
+            );
+        }
+
+        try {
+            await act(async () => {
+                root.render(React.createElement(Harness));
+            });
+            const option = container.querySelector('[data-testid="dropdown-option-device"]');
+            const underlying = container.querySelector('[data-testid="underlying-control"]') as HTMLButtonElement | null;
+            expect(option).not.toBeNull();
+            expect(underlying).not.toBeNull();
+
+            await act(async () => {
+                option!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+            });
+            expect(onPressItem).toHaveBeenCalledTimes(1);
+            expect(container.querySelector('[data-testid="dropdown-option-device"]')).toBeNull();
+
+            act(() => {
+                underlying!.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
+                underlying!.click();
+            });
+            expect(onUnderlyingPress).not.toHaveBeenCalled();
+
+            await act(async () => {
+                await new Promise((resolve) => setTimeout(resolve, 5));
+            });
+            act(() => underlying!.click());
+            expect(onUnderlyingPress).toHaveBeenCalledTimes(1);
+        } finally {
+            await act(async () => root.unmount());
             container.remove();
         }
     });

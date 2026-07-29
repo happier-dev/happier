@@ -15,23 +15,6 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/agents/registry/registryUiBehavior', () => ({
-    buildResumeCapabilityOptionsFromUiState: () => ({}),
-    buildNewSessionOptionsFromUiState: () => ({}),
-    canSelectAgentWithoutDetectedCli: () => false,
-    getNewSessionAgentInputExtraActionChips: () => [],
-    buildSpawnEnvironmentVariablesFromUiState: () => ({}),
-    buildResumeSessionExtrasFromUiState: () => null,
-    buildSpawnSessionExtrasFromUiState: () => null,
-    buildWakeResumeExtras: () => null,
-    getAgentResumeExperimentsFromSettings: () => null,
-    getNewSessionPreflightIssues: () => [],
-    getNewSessionRelevantInstallableDepKeys: () => [],
-    resolveAgentUiBehavior: () => ({}),
-    resolveAgentUiBehaviorFromFlavor: () => ({}),
-    supportsDetectedMcpConfigScan: () => false,
-    supportsEditableSessionGoals: () => false,
-}));
 vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
     getResolvedBackendCatalogEntries: () => [],
 }));
@@ -41,10 +24,22 @@ vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
 
 // Some deps resolve `react-native-reanimated` into ESM entrypoints that use extensionless imports
 // (not Node-safe). Stub both the package id and its resolved module entrypoint.
-vi.mock('react-native-reanimated', () => ({ __esModule: true, default: {} }));
-vi.mock('react-native-reanimated/lib/module', () => ({ __esModule: true, default: {} }));
-vi.mock('react-native-reanimated/lib/module/index.js', () => ({ __esModule: true, default: {} }));
-vi.mock('react-native-reanimated/lib/module/index', () => ({ __esModule: true, default: {} }));
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
+});
+vi.mock('react-native-reanimated/lib/module', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
+});
+vi.mock('react-native-reanimated/lib/module/index.js', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
+});
+vi.mock('react-native-reanimated/lib/module/index', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
+});
 
 const gestureHandlerState = vi.hoisted(() => ({
     gestures: [] as Array<{
@@ -160,6 +155,7 @@ const profileState = {
     linkedProviders: [],
     connectedServices: [],
     connectedServicesV2: [],
+    connectedServiceCredentialRevisionsV1: [],
 };
 
 installSessionShellCommonModuleMocks({
@@ -213,6 +209,7 @@ installSessionShellCommonModuleMocks({
                     const snapshot = {
                         sessions: sessionState ? { s1: sessionState } : {},
                         sessionMessages: {},
+                        sessionPending: {},
                         settings: {},
                         profile: profileState,
                         sessionListIndexByServerId: {},
@@ -223,6 +220,7 @@ installSessionShellCommonModuleMocks({
                     getState: () => ({
                         sessions: sessionState ? { s1: sessionState } : {},
                         sessionMessages: {},
+                        sessionPending: {},
                         settings: {},
                         profile: profileState,
                         sessionListIndexByServerId: {},
@@ -230,6 +228,7 @@ installSessionShellCommonModuleMocks({
                     getInitialState: () => ({
                         sessions: sessionState ? { s1: sessionState } : {},
                         sessionMessages: {},
+                        sessionPending: {},
                         settings: {},
                         profile: profileState,
                         sessionListIndexByServerId: {},
@@ -242,6 +241,7 @@ installSessionShellCommonModuleMocks({
             useSession: () => sessionState,
             useIsDataReady: () => isDataReadyState,
             useRealtimeStatus: () => 'connected',
+            useEndpointStatus: () => endpointConnectivityStatus,
             useEndpointConnectivity: () => ({
                 status: endpointConnectivityStatus,
                 reason: null,
@@ -356,11 +356,14 @@ vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => (
 vi.mock(
     '@/components/sessions/model/useSessionMachineReachability',
     async (importOriginal) => {
-        const { createSessionMachineReachabilityModuleMock } = await import('@/dev/testkit/mocks/sessionMachineReachability');
+        const {
+            createReachableSessionMachineReachability,
+            createSessionMachineReachabilityModuleMock,
+        } = await import('@/dev/testkit/mocks/sessionMachineReachability');
         return createSessionMachineReachabilityModuleMock({
             importOriginal,
             overrides: {
-                useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
+                useSessionMachineReachability: createReachableSessionMachineReachability,
                 useSessionReachableMachineTarget: () => ({ machineId: 'm1', basePath: '/tmp' }),
             },
         });

@@ -8,6 +8,7 @@ export type MachineRpcPeerFallbackReceipt = Readonly<{
     method: string;
     requestId?: string;
     reasonCode: PeerMachineRpcDirectFallbackReasonCodeV1 | string;
+    routeKind: 'server_relay';
 }>;
 
 export function createMachineRpcPeerFallbackReceipt(input: Readonly<{
@@ -21,5 +22,6 @@ export function createMachineRpcPeerFallbackReceipt(input: Readonly<{
         method: input.method,
         ...(input.requestId ? { requestId: input.requestId } : {}),
         reasonCode: input.reasonCode,
+        routeKind: 'server_relay',
     };
 }

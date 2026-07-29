@@ -28,6 +28,6 @@ describe('resolveConnectedServiceShortName', () => {
         const entry = getConnectedServiceRegistryEntry('bitbucket');
 
         expect(entry.shortName).toBeUndefined();
-        expect(resolveConnectedServiceShortName('bitbucket', (key) => key)).toBe(entry.displayNameKey);
+        expect(resolveConnectedServiceShortName('bitbucket', (key) => key)).toBe('connectedServices.fallbackName');
     });
 });

@@ -46,7 +46,12 @@ export function VoiceUiSection(props: {
           title={t('settingsVoice.ui.activityFeedEnabled')}
           subtitle={t('settingsVoice.ui.activityFeedEnabledSubtitle')}
           rightElement={
-            <Switch value={ui.activityFeedEnabled} onValueChange={(v) => setUi({ activityFeedEnabled: v })} />
+            <Switch
+              testID="settings.voice.ui.activityFeedEnabled"
+              accessibilityLabel={t('settingsVoice.ui.activityFeedEnabled')}
+              value={ui.activityFeedEnabled}
+              onValueChange={(v) => setUi({ activityFeedEnabled: v })}
+            />
           }
         />
 
@@ -56,6 +61,7 @@ export function VoiceUiSection(props: {
             subtitle={t('settingsVoice.ui.activityFeedAutoExpandOnStartSubtitle')}
             rightElement={
               <Switch
+                accessibilityLabel={t('settingsVoice.ui.activityFeedAutoExpandOnStart')}
                 value={ui.activityFeedAutoExpandOnStart}
                 onValueChange={(v) => setUi({ activityFeedAutoExpandOnStart: v })}
               />
@@ -108,6 +114,7 @@ export function VoiceUiSection(props: {
         />
 
         <DropdownMenu
+          testID="settings.voice.ui.surfaceLocation"
           open={openMenu === 'surfaceLocation'}
           onOpenChange={(next) => setOpenMenu(next ? 'surfaceLocation' : null)}
           variant="selectable"
@@ -126,6 +133,7 @@ export function VoiceUiSection(props: {
           items={[
             {
               id: 'auto',
+              testID: 'settings.voice.ui.surfaceLocation.auto',
               title: t('settingsVoice.ui.surfaceLocation.autoTitle'),
               subtitle: t('settingsVoice.ui.surfaceLocation.autoSubtitle'),
               icon: (
@@ -136,6 +144,7 @@ export function VoiceUiSection(props: {
             },
             {
               id: 'sidebar',
+              testID: 'settings.voice.ui.surfaceLocation.sidebar',
               title: t('settingsVoice.ui.surfaceLocation.sidebarTitle'),
               subtitle: t('settingsVoice.ui.surfaceLocation.sidebarSubtitle'),
               icon: (
@@ -146,6 +155,7 @@ export function VoiceUiSection(props: {
             },
             {
               id: 'session',
+              testID: 'settings.voice.ui.surfaceLocation.session',
               title: t('settingsVoice.ui.surfaceLocation.sessionTitle'),
               subtitle: t('settingsVoice.ui.surfaceLocation.sessionSubtitle'),
               icon: (
@@ -335,6 +345,7 @@ export function VoiceUiSection(props: {
               subtitle={t('settingsVoice.ui.updates.includeUserMessagesInSnippetsSubtitle')}
               rightElement={
                 <Switch
+                  accessibilityLabel={t('settingsVoice.ui.updates.includeUserMessagesInSnippetsTitle')}
                   value={updates.includeUserMessagesInSnippets}
                   onValueChange={(v) => setUpdatePatch({ includeUserMessagesInSnippets: v })}
                 />

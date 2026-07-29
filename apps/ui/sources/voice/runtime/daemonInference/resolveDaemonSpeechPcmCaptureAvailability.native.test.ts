@@ -1,30 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const getOptionalHappierAudioStreamNativeModuleMock = vi.hoisted(() => vi.fn());
+const getSharedVoicePcmCaptureMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@happier-dev/audio-stream-native', () => ({
-    getOptionalHappierAudioStreamNativeModule: () => getOptionalHappierAudioStreamNativeModuleMock(),
+    getSharedVoicePcmCapture: () => getSharedVoicePcmCaptureMock(),
 }));
 
 describe('resolveDaemonSpeechPcmCaptureAvailability (native)', () => {
     beforeEach(() => {
-        getOptionalHappierAudioStreamNativeModuleMock.mockReset();
+        getSharedVoicePcmCaptureMock.mockReset();
     });
 
-    it('reports native daemon PCM capture available when the optional native module is installed', async () => {
-        getOptionalHappierAudioStreamNativeModuleMock.mockReturnValue({
-            start: vi.fn(),
-            stop: vi.fn(),
-            addListener: vi.fn(),
-        });
+    it('reports native daemon PCM capture available when the shared capture owner is installed', async () => {
+        getSharedVoicePcmCaptureMock.mockReturnValue({ acquire: vi.fn() });
 
         const { resolveDaemonSpeechPcmCaptureAvailability } = await import('./resolveDaemonSpeechPcmCaptureAvailability.native');
 
         expect(resolveDaemonSpeechPcmCaptureAvailability()).toBe('available');
     });
 
-    it('fails closed when the optional native audio stream module is missing', async () => {
-        getOptionalHappierAudioStreamNativeModuleMock.mockReturnValue(null);
+    it('fails closed when the installed module lacks the coordinator contract', async () => {
+        getSharedVoicePcmCaptureMock.mockReturnValue(null);
 
         const { resolveDaemonSpeechPcmCaptureAvailability } = await import('./resolveDaemonSpeechPcmCaptureAvailability.native');
 

@@ -4,6 +4,7 @@ export type SessionHandoffProgressUpdate = Readonly<{
     sessionId: string;
     targetMachineId: string;
     status: SessionHandoffStatus;
+    transitionRevision?: number;
 }>;
 
 type SessionHandoffProgressListener = (update: SessionHandoffProgressUpdate) => void;

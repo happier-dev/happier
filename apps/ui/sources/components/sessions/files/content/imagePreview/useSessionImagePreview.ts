@@ -12,7 +12,7 @@ import { ImagePreviewCache } from '@/components/workspaces/files/imagePreview/im
 export type SessionImagePreviewState =
     | Readonly<{ status: 'disabled'; uri: null; error: null }>
     | Readonly<{ status: 'loading'; uri: null; error: null }>
-    | Readonly<{ status: 'loaded'; uri: string; svgXml: string | null; error: null }>
+    | Readonly<{ status: 'loaded'; uri: string; error: null }>
     | Readonly<{ status: 'error'; uri: null; error: string }>;
 
 const imagePreviewCache = new ImagePreviewCache({
@@ -21,7 +21,7 @@ const imagePreviewCache = new ImagePreviewCache({
     now: () => Date.now(),
 });
 
-function resolveImageMimeType(input: Readonly<{ filePath: string; mimeType?: string | null }>): string | null {
+function resolvePreviewMimeType(input: Readonly<{ filePath: string; mimeType?: string | null }>): string | null {
     const raw = typeof input.mimeType === 'string' && input.mimeType.trim().length > 0 ? input.mimeType.trim() : null;
     const resolved = (raw ?? getImageMimeTypeFromPath(input.filePath))?.toLowerCase();
     if (
@@ -29,6 +29,7 @@ function resolveImageMimeType(input: Readonly<{ filePath: string; mimeType?: str
         && resolved !== 'image/jpeg'
         && resolved !== 'image/webp'
         && resolved !== 'image/gif'
+        && resolved !== 'video/webm'
     ) {
         return null;
     }
@@ -67,7 +68,19 @@ export function useSessionImagePreview(input: Readonly<{
             : null;
     const providedScope = input.workspaceScope ?? null;
     const resolvedSessionScope = useSessionWorkspaceTarget(enabled && !providedScope ? sessionId : null);
-    const resolvedScope = providedScope ?? resolvedSessionScope;
+    const resolvedScopeInput = providedScope ?? resolvedSessionScope;
+    const resolvedScope = React.useMemo<WorkspaceScopeBase | null>(() => {
+        if (!resolvedScopeInput) return null;
+        return {
+            serverId: resolvedScopeInput.serverId,
+            machineId: resolvedScopeInput.machineId,
+            rootPath: resolvedScopeInput.rootPath,
+        };
+    }, [
+        resolvedScopeInput?.machineId,
+        resolvedScopeInput?.rootPath,
+        resolvedScopeInput?.serverId,
+    ]);
     const cacheScopeId = (() => {
         const explicit = typeof input.cacheScopeId === 'string' && input.cacheScopeId.trim().length > 0
             ? input.cacheScopeId.trim()
@@ -75,7 +88,7 @@ export function useSessionImagePreview(input: Readonly<{
         return explicit ?? (resolvedSessionScope?.workspaceCacheKey ?? sessionId);
     })();
 
-    const mime = React.useMemo(() => resolveImageMimeType({ filePath, mimeType: input.mimeType }), [filePath, input.mimeType]);
+    const mime = React.useMemo(() => resolvePreviewMimeType({ filePath, mimeType: input.mimeType }), [filePath, input.mimeType]);
     const canCache = Boolean(cacheKey);
 
     const cacheMaxEntriesSetting = useSetting('filesImagePreviewCacheMaxEntries');
@@ -100,7 +113,6 @@ export function useSessionImagePreview(input: Readonly<{
     const lastLoadedRef = React.useRef<Readonly<{
         identity: string;
         uri: string;
-        svgXml: string | null;
     }> | null>(null);
     React.useEffect(() => {
         const last = lastAppliedLimitsRef.current;
@@ -116,7 +128,7 @@ export function useSessionImagePreview(input: Readonly<{
         if (!resolvedScope) return { status: 'loading', uri: null, error: null };
         if (canCache) {
             const cached = imagePreviewCache.get({ sessionId: cacheScopeId, signature: cacheKey!, filePath });
-            if (cached?.status === 'loaded') return { status: 'loaded', uri: cached.uri, svgXml: cached.svgXml ?? null, error: null };
+            if (cached?.status === 'loaded') return { status: 'loaded', uri: cached.uri, error: null };
             if (cached?.status === 'error') return { status: 'error', uri: null, error: cached.error };
         }
         return { status: 'loading', uri: null, error: null };
@@ -155,9 +167,8 @@ export function useSessionImagePreview(input: Readonly<{
                 lastLoadedRef.current = {
                     identity: previewIdentity,
                     uri: cached.uri,
-                    svgXml: cached.svgXml ?? null,
                 };
-                setState({ status: 'loaded', uri: cached.uri, svgXml: cached.svgXml ?? null, error: null });
+                setState({ status: 'loaded', uri: cached.uri, error: null });
                 return;
             }
             if (cached?.status === 'error') {
@@ -193,7 +204,7 @@ export function useSessionImagePreview(input: Readonly<{
                         );
                     }
                     if (previousLoaded) {
-                        setState({ status: 'loaded', uri: previousLoaded.uri, svgXml: previousLoaded.svgXml, error: null });
+                        setState({ status: 'loaded', uri: previousLoaded.uri, error: null });
                     } else {
                         setState({ status: 'error', uri: null, error: errorMessage });
                     }
@@ -210,7 +221,7 @@ export function useSessionImagePreview(input: Readonly<{
                 if (canCache) {
                     imagePreviewCache.set(
                         { sessionId: cacheScopeId, signature: cacheKey!, filePath },
-                        { status: 'loaded', uri: source.uri, svgXml: null, cleanup, byteLength: source.byteLength },
+                        { status: 'loaded', uri: source.uri, cleanup, byteLength: source.byteLength },
                     );
                 } else {
                     uncachedCleanup = cleanup;
@@ -218,9 +229,8 @@ export function useSessionImagePreview(input: Readonly<{
                 lastLoadedRef.current = {
                     identity: previewIdentity,
                     uri: source.uri,
-                    svgXml: null,
                 };
-                setState({ status: 'loaded', uri: source.uri, svgXml: null, error: null });
+                setState({ status: 'loaded', uri: source.uri, error: null });
             } catch (err) {
                 if (cancelled) return;
                 const errorMessage = err instanceof Error ? err.message : t('files.fileReadFailed');
@@ -231,7 +241,7 @@ export function useSessionImagePreview(input: Readonly<{
                         );
                     }
                 if (previousLoaded) {
-                    setState({ status: 'loaded', uri: previousLoaded.uri, svgXml: previousLoaded.svgXml, error: null });
+                    setState({ status: 'loaded', uri: previousLoaded.uri, error: null });
                 } else {
                     setState({ status: 'error', uri: null, error: errorMessage });
                 }

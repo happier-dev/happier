@@ -36,7 +36,7 @@ export async function setPrimaryActionSessionId(params: Readonly<{
   }
 
   const nextSessionId = resolvedByTitle?.sessionId ?? params.sessionId;
-  applyVoiceSessionTargetSelection({
+  await applyVoiceSessionTargetSelection({
     controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
     targetSessionId: nextSessionId,
     updateLastFocused: params.updateLastFocused === true,

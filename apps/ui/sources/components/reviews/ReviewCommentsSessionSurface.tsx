@@ -15,8 +15,14 @@ import type {
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import type { PluginPermissionPendingGrantRequest } from '@/sync/domains/plugins/permissions/types';
-import { REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY } from '@/sync/domains/plugins/permissions/types';
+import type {
+    PluginPermissionGrant,
+    PluginPermissionPendingGrantRequest,
+} from '@/sync/domains/plugins/permissions/types';
+import {
+    REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
+    pluginPermissionGrantScopeLabel,
+} from '@/sync/domains/plugins/permissions/types';
 import type { PluginPermissionGrantActions } from '@/sync/domains/plugins/permissions/actions';
 import { createReviewCommentsActions } from '@/sync/domains/reviews/comments/actions';
 import type { ReviewCommentUiActionExecutor } from '@/sync/domains/reviews/comments/api';
@@ -62,11 +68,15 @@ export type ReviewCommentsSessionSurfaceProps = Readonly<{
     runId?: string;
     sessionId?: string;
     execute: ReviewCommentUiActionExecutor;
-    directWriteGranted: boolean;
-    pendingDirectWriteGrantRequest?: PluginPermissionPendingGrantRequest | null;
-    permissionGrantActions?: Pick<PluginPermissionGrantActions, 'grant' | 'dismissRequest'>;
+    directWriteGrants?: readonly PluginPermissionGrant[];
+    pendingDirectWriteGrantRequests?: readonly PluginPermissionPendingGrantRequest[];
+    permissionGrantActions?: Pick<PluginPermissionGrantActions, 'grant' | 'dismissRequest' | 'revoke'>;
     onGrantDirectWrite?: (input: Readonly<{ requestId: string }>) => void;
     onCancelDirectWriteGrant?: (input: Readonly<{ requestId: string }>) => void;
+    onRevokeDirectWrite?: (input: Readonly<{ grantId: string }>) => void;
+    permissionGrantStatus?: 'idle' | 'loading' | 'refreshing' | 'ready' | 'error';
+    permissionGrantError?: string | null;
+    onRefreshPermissionGrants?: () => void;
     defaultPanelOpen?: boolean;
     testID?: string;
 }>;
@@ -143,33 +153,49 @@ export function ReviewCommentsSessionSurface(props: ReviewCommentsSessionSurface
     const panelComments = showHistory
         ? historyComments
         : filteredActiveComments;
-    const pendingDirectWriteGrantRequest = props.pendingDirectWriteGrantRequest?.capability === REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY
-        ? props.pendingDirectWriteGrantRequest
-        : null;
+    const directWriteGrants = (props.directWriteGrants ?? []).filter(
+        (grant) => grant.capability === REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
+    );
+    const pendingDirectWriteGrantRequests = (props.pendingDirectWriteGrantRequests ?? []).filter(
+        (request) => request.capability === REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
+    );
+
+    const describeGrantAuthority = React.useCallback((grant: PluginPermissionGrant): string => (
+        grant.authoritySource.kind === 'bundled'
+            ? 'bundled'
+            : `machine:${grant.authoritySource.machineId} | installation:${grant.authoritySource.installationId}`
+    ), []);
 
     const openPanel = React.useCallback(() => {
         setPanelOpen(true);
     }, []);
 
-    const grantDirectWrite = React.useCallback(async () => {
-        if (!pendingDirectWriteGrantRequest) return;
-        const input = { requestId: pendingDirectWriteGrantRequest.id };
+    const grantDirectWrite = React.useCallback(async (requestId: string) => {
+        const input = { requestId };
         if (props.onGrantDirectWrite) {
             await props.onGrantDirectWrite(input);
             return;
         }
         await props.permissionGrantActions?.grant(input);
-    }, [pendingDirectWriteGrantRequest, props.onGrantDirectWrite, props.permissionGrantActions]);
+    }, [props.onGrantDirectWrite, props.permissionGrantActions]);
 
-    const cancelDirectWrite = React.useCallback(async () => {
-        if (!pendingDirectWriteGrantRequest) return;
-        const input = { requestId: pendingDirectWriteGrantRequest.id };
+    const cancelDirectWrite = React.useCallback(async (requestId: string) => {
+        const input = { requestId };
         if (props.onCancelDirectWriteGrant) {
             await props.onCancelDirectWriteGrant(input);
             return;
         }
         await props.permissionGrantActions?.dismissRequest(input);
-    }, [pendingDirectWriteGrantRequest, props.onCancelDirectWriteGrant, props.permissionGrantActions]);
+    }, [props.onCancelDirectWriteGrant, props.permissionGrantActions]);
+
+    const revokeDirectWrite = React.useCallback(async (grantId: string) => {
+        const input = { grantId };
+        if (props.onRevokeDirectWrite) {
+            await props.onRevokeDirectWrite(input);
+            return;
+        }
+        await props.permissionGrantActions?.revoke(input);
+    }, [props.onRevokeDirectWrite, props.permissionGrantActions]);
 
     const upsertUpdatedComments = React.useCallback((comments: readonly ReviewCommentV1[]) => {
         if (comments.length === 0) return;
@@ -338,14 +364,12 @@ export function ReviewCommentsSessionSurface(props: ReviewCommentsSessionSurface
                         <ReviewCommentsHistoryView
                             comments={panelComments}
                             labels={labels}
-                            directWriteGranted={props.directWriteGranted}
                             testID={`${props.testID ?? 'review-comments'}-history`}
                         />
                     ) : (
                         <ReviewCommentsPanel
                             comments={panelComments}
                             labels={labels}
-                            directWriteGranted={props.directWriteGranted}
                             selectedStates={selectedActiveStates}
                             stateOptions={ACTIVE_REVIEW_COMMENT_STATES}
                             onToggleState={toggleActiveStateFilter}
@@ -360,17 +384,90 @@ export function ReviewCommentsSessionSurface(props: ReviewCommentsSessionSurface
                             testID={`${props.testID ?? 'review-comments'}-panel`}
                         />
                     )}
+                    {directWriteGrants.map((grant) => (
+                        <View
+                            key={grant.id}
+                            testID={`${props.testID ?? 'review-comments'}-direct-write-grant-${grant.id}`}
+                            style={{ gap: 4, paddingVertical: 6 }}
+                        >
+                            <Text style={{ color: theme.colors.text.primary }}>
+                                {grant.pluginId}
+                            </Text>
+                            <Text style={{ color: theme.colors.text.secondary }}>
+                                {grant.capability}
+                            </Text>
+                            <Text
+                                testID={`${props.testID ?? 'review-comments'}-direct-write-grant-${grant.id}-scope`}
+                                style={{ color: theme.colors.text.secondary }}
+                                selectable
+                            >
+                                {pluginPermissionGrantScopeLabel(grant.targetScope)}
+                            </Text>
+                            <Text
+                                testID={`${props.testID ?? 'review-comments'}-direct-write-grant-${grant.id}-actor`}
+                                style={{ color: theme.colors.text.secondary }}
+                                selectable
+                            >
+                                {grant.grantedByUserId}
+                            </Text>
+                            <Text
+                                testID={`${props.testID ?? 'review-comments'}-direct-write-grant-${grant.id}-authority`}
+                                style={{ color: theme.colors.text.secondary }}
+                                selectable
+                            >
+                                {describeGrantAuthority(grant)}
+                            </Text>
+                            <Text
+                                testID={`${props.testID ?? 'review-comments'}-direct-write-grant-${grant.id}-created`}
+                                style={{ color: theme.colors.text.secondary }}
+                                selectable
+                            >
+                                {new Date(grant.grantedAt).toISOString()}
+                            </Text>
+                            <Pressable
+                                accessibilityRole="button"
+                                onPress={() => void revokeDirectWrite(grant.id)}
+                                testID={`${props.testID ?? 'review-comments'}-direct-write-grant-${grant.id}-revoke`}
+                                style={{ minHeight: 44, justifyContent: 'center' }}
+                            >
+                                <Text style={{ color: theme.colors.state.danger.foreground }}>
+                                    {t('files.reviewComments.durable.directWriteGrant.revoke')}
+                                </Text>
+                            </Pressable>
+                        </View>
+                    ))}
                 </View>
             ) : null}
-            {pendingDirectWriteGrantRequest ? (
-                <ReviewCommentDirectWriteGrantSheet
-                    pendingRequest={pendingDirectWriteGrantRequest}
-                    labels={directWriteGrantLabels}
-                    onGrant={grantDirectWrite}
-                    onCancel={cancelDirectWrite}
-                    testID={`${props.testID ?? 'review-comments'}-direct-write-grant`}
-                />
+            {props.permissionGrantStatus === 'error' && props.permissionGrantError ? (
+                <View
+                    testID={`${props.testID ?? 'review-comments'}-permission-grants-error`}
+                    accessibilityRole="alert"
+                    accessibilityLiveRegion="polite"
+                    style={{ gap: 4 }}
+                >
+                    <Text selectable>{props.permissionGrantError}</Text>
+                    {props.onRefreshPermissionGrants ? (
+                        <Pressable
+                            testID={`${props.testID ?? 'review-comments'}-permission-grants-refresh`}
+                            accessibilityRole="button"
+                            onPress={props.onRefreshPermissionGrants}
+                            style={{ minHeight: 44, justifyContent: 'center' }}
+                        >
+                            <Text>{t('common.retry')}</Text>
+                        </Pressable>
+                    ) : null}
+                </View>
             ) : null}
+            {pendingDirectWriteGrantRequests.map((pendingRequest) => (
+                <ReviewCommentDirectWriteGrantSheet
+                    key={pendingRequest.id}
+                    pendingRequest={pendingRequest}
+                    labels={directWriteGrantLabels}
+                    onGrant={() => void grantDirectWrite(pendingRequest.id)}
+                    onCancel={() => void cancelDirectWrite(pendingRequest.id)}
+                    testID={`${props.testID ?? 'review-comments'}-direct-write-request-${pendingRequest.id}`}
+                />
+            ))}
         </View>
     );
 }

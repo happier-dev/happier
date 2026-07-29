@@ -1,4 +1,4 @@
-import type { VoiceAdapterId, VoiceSessionMode, VoiceSessionSnapshot, VoiceSessionStatus } from '@/voice/session/types';
+import type { VoiceAdapterEngineKind, VoiceAdapterId, VoiceSessionMode, VoiceSessionSnapshot, VoiceSessionStatus } from '@/voice/session/types';
 import type { VoiceConversationRuntimeSnapshot } from './voiceConversationRuntimeTypes';
 
 export type LocalVoiceCompatStatus = 'idle' | 'recording' | 'transcribing' | 'sending' | 'speaking' | 'error';
@@ -24,7 +24,7 @@ function isRecoverableFailure(snapshot: VoiceConversationRuntimeSnapshot): boole
  * Project a failed/terminal runtime state through the single recoverability
  * rule. A recoverable failure reads as a graceful `disconnected` end (no stop
  * affordance, error code surfaced for the UI); a non-recoverable failure is a
- * hard `error` the user must dismiss (stop affordance kept).
+ * hard `error` the user must dismiss (with no stop/retry affordance).
  *
  * This is the single owner of the recoverable→disconnected / non-recoverable→
  * error decision, shared by the machine `error`/`mic_error` states and the
@@ -37,7 +37,7 @@ function resolveFailureProjection(
     if (isRecoverableFailure(snapshot)) {
         return { compatStatus: 'idle', sessionStatus: 'disconnected', canStop: false };
     }
-    return { compatStatus: 'error', sessionStatus: 'error', canStop: true };
+    return { compatStatus: 'error', sessionStatus: 'error', canStop: false };
 }
 
 function resolveDisconnectedProjection(
@@ -149,8 +149,13 @@ export function deriveLocalVoiceRuntimeProjection(
  * the machine (local_direct/local_conversation share one engine), so any local
  * adapter projects it.
  */
-function machineOwnedByAdapter(adapterId: VoiceAdapterId, snapshot: VoiceConversationRuntimeSnapshot): boolean {
-    return snapshot.adapterId === null || snapshot.adapterId === adapterId;
+function machineOwnedByAdapter(
+    adapterId: VoiceAdapterId,
+    engineKind: VoiceAdapterEngineKind,
+    snapshot: VoiceConversationRuntimeSnapshot,
+): boolean {
+    return snapshot.adapterId === adapterId
+        || (snapshot.adapterId === null && engineKind === 'local');
 }
 
 function createDisconnectedSessionSnapshot(adapterId: VoiceAdapterId): VoiceSessionSnapshot {
@@ -165,9 +170,10 @@ function createDisconnectedSessionSnapshot(adapterId: VoiceAdapterId): VoiceSess
 
 export function deriveLocalVoiceSessionSnapshot(
     adapterId: VoiceAdapterId,
+    engineKind: VoiceAdapterEngineKind,
     snapshot: VoiceConversationRuntimeSnapshot,
 ): VoiceSessionSnapshot {
-    if (!machineOwnedByAdapter(adapterId, snapshot)) {
+    if (!machineOwnedByAdapter(adapterId, engineKind, snapshot)) {
         return createDisconnectedSessionSnapshot(adapterId);
     }
 
@@ -184,7 +190,14 @@ export function deriveLocalVoiceSessionSnapshot(
             ? {
                 errorCode: snapshot.error.kind,
                 errorMessage: snapshot.error.reason,
+                errorRecoveryAction: snapshot.error.recoveryAction,
+                errorPresentation: snapshot.error.presentation,
             }
             : {}),
+        ...(snapshot.reconnecting
+            ? { presentationState: 'reconnecting' as const }
+            : snapshot.state === 'interrupted'
+                ? { presentationState: 'interrupted' as const }
+                : {}),
     };
 }

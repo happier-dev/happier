@@ -62,21 +62,21 @@ function createState(): any {
         settings: {
             voice: {
                 providerId: 'local_conversation',
-                adapters: {
-                    local_conversation: {
+                welcome: {
+                    enabled: true,
+                    mode: 'immediate',
+                    templateId: null,
+                },
+                providers: {
+                    local_conversation: { schemaVersion: 1, config: {
                         agent: {
                             backend: 'daemon',
-                            welcome: {
-                                enabled: true,
-                                mode: 'immediate',
-                                templateId: null,
-                            },
                             transcript: {
                                 persistenceMode: 'persistent',
                                 epoch: 1,
                             },
                         },
-                    },
+                    } },
                 },
             },
         },

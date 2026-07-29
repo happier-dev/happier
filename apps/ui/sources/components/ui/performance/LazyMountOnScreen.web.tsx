@@ -2,15 +2,20 @@ import * as React from 'react';
 
 type LazyMountOnScreenProps = Readonly<{
     children: React.ReactNode;
+    initiallyVisible?: boolean;
     placeholder?: React.ReactNode;
     rootMargin?: string;
 }>;
 
 export function LazyMountOnScreen(props: LazyMountOnScreenProps) {
-    const [visible, setVisible] = React.useState(false);
+    const [visible, setVisible] = React.useState(props.initiallyVisible === true);
     const ref = React.useRef<HTMLDivElement | null>(null);
 
     React.useEffect(() => {
+        if (props.initiallyVisible === true && !visible) {
+            setVisible(true);
+            return;
+        }
         if (visible) return;
         if (typeof window === 'undefined' || typeof document === 'undefined') {
             setVisible(true);
@@ -60,7 +65,7 @@ export function LazyMountOnScreen(props: LazyMountOnScreenProps) {
                 // ignore
             }
         };
-    }, [props.rootMargin, visible]);
+    }, [props.initiallyVisible, props.rootMargin, visible]);
 
     return (
         <div ref={ref}>

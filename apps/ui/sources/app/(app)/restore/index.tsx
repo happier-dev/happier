@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { RestoreIndexEmbedded } from '@/components/onboarding/restore/RestoreIndexEmbedded';
-import { WizardModalShell } from '@/components/onboarding';
+import { WizardModalShell } from '@/components/onboarding/ui/WizardModalShell';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { t } from '@/text';
 

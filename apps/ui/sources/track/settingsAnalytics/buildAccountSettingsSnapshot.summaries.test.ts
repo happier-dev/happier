@@ -34,13 +34,13 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__favoriteDirectories).toBe(3);
         expect(snapshot.properties.acct_setting__favoriteMachines).toBe(1);
         expect(snapshot.properties.acct_setting__favoriteProfiles).toBe(2);
-        expect(snapshot.properties.acct_setting__pinnedSessionKeysV1).toBe(2);
-        expect(snapshot.properties.acct_setting__workspaceLabelsV1).toBe(2);
-        expect(snapshot.properties.acct_setting__collapsedGroupKeysV1).toBe(3);
-        expect(snapshot.properties.acct_setting__sessionTagsV1__taggedSessionCount).toBe(2);
-        expect(snapshot.properties.acct_setting__sessionTagsV1__totalTagsCount).toBe(3);
-        expect(snapshot.properties.acct_setting__sessionListGroupOrderV1__groupOverrideCount).toBe(2);
-        expect(snapshot.properties.acct_setting__sessionListGroupOrderV1__totalOrderedKeyCount).toBe(3);
+        expect(snapshot.properties.acct_setting__pinnedSessionKeysV1).toBeUndefined();
+        expect(snapshot.properties.acct_setting__workspaceLabelsV1).toBeUndefined();
+        expect(snapshot.properties.acct_setting__collapsedGroupKeysV1).toBeUndefined();
+        expect(snapshot.properties.acct_setting__sessionTagsV1__taggedSessionCount).toBeUndefined();
+        expect(snapshot.properties.acct_setting__sessionTagsV1__totalTagsCount).toBeUndefined();
+        expect(snapshot.properties.acct_setting__sessionListGroupOrderV1__groupOverrideCount).toBeUndefined();
+        expect(snapshot.properties.acct_setting__sessionListGroupOrderV1__totalOrderedKeyCount).toBeUndefined();
     });
 
     it('tracks dismissed cli warnings through canonical analytics serializers', () => {
@@ -142,7 +142,7 @@ describe('buildAccountSettingsSnapshot', () => {
                         enabledPlacements: ['agent_input_chips'],
                         disabledSurfaces: ['voice'],
                         disabledPlacements: [],
-                        approvalRequiredSurfaces: ['mcp', 'session_agent'],
+                        approvalRequiredSurfaces: ['mcp', 'agent'],
                         toolExposureModes: {},
                     },
                     'subagents.plan.start': {
@@ -171,7 +171,7 @@ describe('buildAccountSettingsSnapshot', () => {
             actions: {
                 'review.start': {
                     toolExposureModes: {
-                        session_agent: 'direct',
+                        agent: 'direct',
                         cli: 'discoverable_only',
                     },
                 },

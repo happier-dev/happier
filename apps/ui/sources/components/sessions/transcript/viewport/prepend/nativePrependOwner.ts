@@ -15,10 +15,6 @@ import {
     type NativePrependCloseEffect,
 } from './prependCloseEffects';
 import {
-    createPrependFallbackQuietGate,
-    type PrependFallbackQuietGate,
-} from './prependFallbackQuietGate';
-import {
     createPrependTransaction,
     type PrependTransaction,
     type PrependTransactionOutcome,
@@ -62,15 +58,6 @@ export type NativePrependOwnerEffect =
     | Readonly<{
         delayMs: number;
         sessionId: string;
-        type: 'schedule-quiet-reobserve';
-    }>
-    | Readonly<{
-        sessionId: string;
-        type: 'clear-quiet-reobserve';
-    }>
-    | Readonly<{
-        delayMs: number;
-        sessionId: string;
         type: 'schedule-corrector-reobserve';
     }>
     | Readonly<{
@@ -94,7 +81,6 @@ export type NativePrependBeginInput = Readonly<{
 
 export type NativePrependObservationInput = Readonly<{
     activeOwner: TranscriptViewportOwner;
-    nowMs: number;
     postCommit: PrependPostCommitObservation;
     sessionId: string;
 }>;
@@ -126,7 +112,6 @@ export type NativePrependOwner = Readonly<{
     }>): readonly NativePrependOwnerEffect[];
     runCorrectorReobserve(params: NativePrependObservationInput): readonly NativePrependOwnerEffect[];
     runLayoutTimeout(params: NativePrependObservationInput): readonly NativePrependOwnerEffect[];
-    runQuietReobserve(params: NativePrependObservationInput): readonly NativePrependOwnerEffect[];
     telemetryState(sessionId: string): TranscriptViewportTelemetryTransactionState;
     trustedScroll(params: Readonly<{
         activeOwner?: TranscriptViewportOwner;
@@ -136,9 +121,7 @@ export type NativePrependOwner = Readonly<{
 
 export function createNativePrependOwner(): NativePrependOwner {
     let transaction: PrependTransaction | null = null;
-    let quietGate: PrependFallbackQuietGate | null = null;
     let layoutTimeoutScheduled = false;
-    let quietReobserveScheduled = false;
     let correctorReobserveScheduled = false;
     let lastClosedSessionId: string | null = null;
 
@@ -156,9 +139,7 @@ export function createNativePrependOwner(): NativePrependOwner {
             capturedAnchor: params.capturedAnchor,
             sessionId: params.sessionId,
         });
-        quietGate = createPrependFallbackQuietGate();
         layoutTimeoutScheduled = false;
-        quietReobserveScheduled = false;
         correctorReobserveScheduled = false;
         lastClosedSessionId = null;
 
@@ -209,22 +190,7 @@ export function createNativePrependOwner(): NativePrependOwner {
             correctorCoverage: current.correctorCoverage(),
             postCommit: params.postCommit,
         });
-        if (outcome.kind === 'needs-fallback') {
-            const gate = quietGate ?? createPrependFallbackQuietGate();
-            quietGate = gate;
-            const decision = gate.onMisalignedObservation({
-                nowMs: params.nowMs,
-                observedItemOffsetPx: current.capturedAnchor.itemOffsetPx + outcome.deltaPx,
-            });
-            if (decision.kind === 'wait') {
-                return scheduleQuietReobserve(current.sessionId, decision.reobserveInMs);
-            }
-        }
         return applyObservationOutcome(current, params.activeOwner, outcome);
-    }
-
-    function runQuietReobserve(params: NativePrependObservationInput): readonly NativePrependOwnerEffect[] {
-        return observe(params);
     }
 
     function runCorrectorReobserve(params: NativePrependObservationInput): readonly NativePrependOwnerEffect[] {
@@ -326,23 +292,6 @@ export function createNativePrependOwner(): NativePrependOwner {
         return 'none';
     }
 
-    function scheduleQuietReobserve(
-        sessionId: string,
-        delayMs: number,
-    ): readonly NativePrependOwnerEffect[] {
-        const effects: NativePrependOwnerEffect[] = [];
-        if (quietReobserveScheduled) {
-            effects.push({ sessionId, type: 'clear-quiet-reobserve' });
-        }
-        quietReobserveScheduled = true;
-        effects.push({
-            delayMs: normalizeDelayMs(delayMs),
-            sessionId,
-            type: 'schedule-quiet-reobserve',
-        });
-        return effects;
-    }
-
     function applyObservationOutcome(
         current: PrependTransaction,
         activeOwner: TranscriptViewportOwner,
@@ -373,14 +322,14 @@ export function createNativePrependOwner(): NativePrependOwner {
         if (current == null) return [];
 
         transaction = null;
-        quietGate = null;
         lastClosedSessionId = current.sessionId;
 
-        return [
+        const effects: NativePrependOwnerEffect[] = [
             ...cleanupTimerEffects(current.sessionId),
             ...mapCloseEffects(current, activeOwner),
             { sessionId: current.sessionId, type: 'bump-transaction-revision' },
         ];
+        return effects;
     }
 
     function cleanupTimerEffects(sessionId: string): readonly NativePrependOwnerEffect[] {
@@ -388,14 +337,10 @@ export function createNativePrependOwner(): NativePrependOwner {
         if (layoutTimeoutScheduled) {
             effects.push({ sessionId, type: 'clear-layout-timeout' });
         }
-        if (quietReobserveScheduled) {
-            effects.push({ sessionId, type: 'clear-quiet-reobserve' });
-        }
         if (correctorReobserveScheduled) {
             effects.push({ sessionId, type: 'clear-corrector-reobserve' });
         }
         layoutTimeoutScheduled = false;
-        quietReobserveScheduled = false;
         correctorReobserveScheduled = false;
         return effects;
     }
@@ -411,7 +356,6 @@ export function createNativePrependOwner(): NativePrependOwner {
         recordCorrectorCorrection,
         runCorrectorReobserve,
         runLayoutTimeout,
-        runQuietReobserve,
         telemetryState,
         trustedScroll,
     };

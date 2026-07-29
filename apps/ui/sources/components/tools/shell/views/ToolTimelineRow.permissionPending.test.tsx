@@ -6,6 +6,7 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { installToolShellCommonModuleMocks } from './ToolView.testHelpers';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -45,7 +46,7 @@ installToolShellCommonModuleMocks({
         (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => settings[key],
+                useSetting: createUseSettingMock({ fallback: (key) => settings[key] }),
             },
         }),
 });
@@ -213,7 +214,7 @@ describe('ToolTimelineRow (permission pending)', () => {
                             status: 'open',
                             createdAtMs: 1,
                             updatedAtMs: 1,
-                            createdBy: { surface: 'session_agent', sessionId: 's1' },
+                            createdBy: { surface: 'agent', sessionId: 's1' },
                             actionId: 'session.list',
                             actionArgs: {},
                             summary: 'List sessions',
@@ -263,7 +264,7 @@ describe('ToolTimelineRow (permission pending)', () => {
                             status: 'open',
                             createdAtMs: 1,
                             updatedAtMs: 1,
-                            createdBy: { surface: 'session_agent', sessionId: 's1' },
+                            createdBy: { surface: 'agent', sessionId: 's1' },
                             actionId: 'session.list',
                             actionArgs: {},
                             summary: 'List sessions',
@@ -312,7 +313,7 @@ describe('ToolTimelineRow (permission pending)', () => {
                             status: 'open',
                             createdAtMs: 1,
                             updatedAtMs: 1,
-                            createdBy: { surface: 'session_agent', sessionId: 's1' },
+                            createdBy: { surface: 'agent', sessionId: 's1' },
                             actionId: 'session.list',
                             actionArgs: {},
                             summary: 'List sessions',
@@ -390,5 +391,69 @@ describe('ToolTimelineRow (permission pending)', () => {
 
         expect(screen.findAllByTestId('tool-timeline-row').length).toBeGreaterThan(0);
         expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(0);
+    });
+
+    it('renders a visible and accessible denied status in an activity-feed row', async () => {
+        const { ToolTimelineRow } = await import('./ToolTimelineRow');
+        const tool: any = {
+            id: 'tool-denied',
+            name: 'writeTextFile',
+            state: 'error',
+            input: { path: './readonly-forbidden.txt', content: 'DENIED' },
+            createdAt: 1,
+            startedAt: 1,
+            completedAt: 2,
+            description: 'Write file',
+            result: null,
+            permission: { id: 'perm-denied', kind: 'filesystem', status: 'denied' },
+        };
+
+        const screen = await renderScreen(
+            <ToolTimelineRow
+                tool={tool}
+                metadata={null}
+                sessionId="s1"
+                messageId="m-denied"
+                interaction={{ canSendMessages: true, canApprovePermissions: true }}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('errors.permissionDenied');
+        expect(screen.findByTestId('tool-timeline-row-permission-blocked')).toMatchObject({
+            props: {
+                accessible: true,
+                accessibilityLabel: 'errors.permissionDenied',
+            },
+        });
+    });
+
+    it('renders a visible and accessible failed status in an activity-feed row', async () => {
+        const { ToolTimelineRow } = await import('./ToolTimelineRow');
+        const tool: any = {
+            id: 'tool-failed',
+            name: 'writeTextFile',
+            state: 'error',
+            input: { path: './failed.txt', content: 'FAILED' },
+            createdAt: 1,
+            startedAt: 1,
+            completedAt: 2,
+            description: 'Write file',
+            result: { error: 'Filesystem unavailable' },
+        };
+
+        const screen = await renderScreen(
+            <ToolTimelineRow
+                tool={tool}
+                metadata={null}
+                sessionId="s1"
+                messageId="m-failed"
+                interaction={{ canSendMessages: true, canApprovePermissions: true }}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('Filesystem unavailable');
+        const errorStatus = screen.findByTestId('tool-timeline-row-error');
+        expect(errorStatus?.props.accessible).toBe(true);
+        expect(errorStatus?.props.accessibilityLabel).toBe('Filesystem unavailable');
     });
 });

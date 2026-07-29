@@ -22,7 +22,7 @@ import { buildDataKeyCredentialsForToken } from '@/auth/flows/buildDataKeyCreden
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { trackAccountCreated, trackAccountRestored } from '@/track';
 
-import { WizardModalShell } from '@/components/onboarding';
+import { WizardModalShell } from '@/components/onboarding/ui/WizardModalShell';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 

@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKey, buildBackendTargetKeyV2 } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
 import {
     installProfileEditFormModuleMocks,
@@ -158,7 +158,12 @@ describe('ProfileEditForm backend targets', () => {
         expect(result).toBe(true);
         expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
             compatibilityByTargetKey: expect.objectContaining({
-                [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' })]: true,
+                [buildBackendTargetKeyV2({
+                    kind: 'backend',
+                    backendId: 'custom-backend',
+                    configuredBackendId: 'custom-backend',
+                    sourceKind: 'configured',
+                })]: true,
             }),
         }));
     });
@@ -187,7 +192,12 @@ describe('ProfileEditForm backend targets', () => {
         expect(result).toBe(true);
         expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
             authMode: 'machineLogin',
-            requiresMachineLoginTargetKey: buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' }),
+            requiresMachineLoginTargetKey: buildBackendTargetKeyV2({
+                kind: 'backend',
+                backendId: 'custom-backend',
+                configuredBackendId: 'custom-backend',
+                sourceKind: 'configured',
+            }),
             requiresMachineLogin: undefined,
         }));
     });

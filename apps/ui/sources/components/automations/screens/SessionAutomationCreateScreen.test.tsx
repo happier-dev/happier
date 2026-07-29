@@ -5,6 +5,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -262,6 +263,7 @@ async function submitComposer(): Promise<void> {
 
 describe('SessionAutomationCreateScreen', () => {
     beforeEach(() => {
+        invalidateAccountEncryptionModeCache();
         hydrateReadyState.ready = true;
         sessionState.session = {
             id: 's1',

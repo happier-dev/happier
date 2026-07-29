@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import { classifyAccessEndpointHostedHttpsCompatibility } from '@/sync/domains/accessEndpoints/classify';
 import { isSameServerUrl, normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { getOrCreateHappierCloudServerProfile, listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { HAPPIER_CLOUD_SERVER_URL, getOrCreateHappierCloudServerProfile, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 
@@ -43,9 +43,24 @@ export function isWebMixedContentBlockedEndpoint(serverUrl: string): boolean {
     }) === 'mixed-content-blocked';
 }
 
-export function resolveCanonicalCloudRelayProfile(): Readonly<{ serverId: string; serverUrl: string }> | null {
+type CanonicalCloudRelayProfile = Readonly<{ serverId: string | null; serverUrl: string }>;
+
+export function resolveCanonicalCloudRelayProfile(): CanonicalCloudRelayProfile | null {
     const setupPolicy = resolveSetupSurfacePolicy();
     if (!setupPolicy.relay.allowHappierCloud) return null;
+    const serverUrl = normalizeServerUrl(HAPPIER_CLOUD_SERVER_URL) ?? HAPPIER_CLOUD_SERVER_URL;
+    const existing = listServerProfiles().find((profile) => {
+        const profileUrl = profile?.serverUrl ? normalizeServerUrl(profile.serverUrl) : '';
+        return Boolean(profileUrl) && isSameServerUrl(profileUrl, serverUrl);
+    });
+    return { serverId: existing?.id ?? null, serverUrl };
+}
+
+export function ensureCanonicalCloudRelayProfile(): Readonly<{ serverId: string; serverUrl: string }> | null {
+    const resolved = resolveCanonicalCloudRelayProfile();
+    if (!resolved) return null;
+    if (resolved.serverId) return { serverId: resolved.serverId, serverUrl: resolved.serverUrl };
+
     const profile = getOrCreateHappierCloudServerProfile();
     const serverUrl = profile?.serverUrl ? normalizeServerUrl(profile.serverUrl) : '';
     if (!profile || !serverUrl) return null;

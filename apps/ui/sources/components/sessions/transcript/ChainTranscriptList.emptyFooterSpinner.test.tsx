@@ -8,31 +8,28 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 vi.mock('@/sync/sync', () => ({
     sync: {
         getSyncTuning: () => ({
-            transcriptFlashListEstimatedItemSize: 120,
+            transcriptEstimatedItemSizePx: 120,
             transcriptBackwardPrefetchThresholdPx: 800,
         }),
     },
 }));
 
-vi.mock('@shopify/flash-list', () => ({
-    FlashList: React.forwardRef((props: any, ref: any) => {
-        const instance = {
-            scrollToEnd: vi.fn(),
-            scrollToIndex: vi.fn(() => Promise.resolve()),
-            scrollToOffset: vi.fn(),
-        };
-        if (typeof ref === 'function') ref(instance);
-        else if (ref && typeof ref === 'object') ref.current = instance;
-        return React.createElement('FlashList', props, props.ListFooterComponent ?? null);
-    }),
-}));
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    return createCapturingLegendListMock().module;
+});
 
 describe('ChainTranscriptList empty-state footer spinner', () => {
-    async function renderChainTranscriptList(
-        props: React.ComponentProps<typeof import('./ChainTranscriptList')['ChainTranscriptList']>,
-    ) {
+    type ChainTranscriptListTestProps =
+        Omit<React.ComponentProps<typeof import('./ChainTranscriptList')['ChainTranscriptList']>, 'datasetKey'>
+        & { datasetKey?: string };
+
+    async function renderChainTranscriptList(props: ChainTranscriptListTestProps) {
         const { ChainTranscriptList } = await import('./ChainTranscriptList');
-        return renderScreen(React.createElement(ChainTranscriptList, props));
+        return renderScreen(React.createElement(ChainTranscriptList, {
+            ...props,
+            datasetKey: props.datasetKey ?? JSON.stringify([props.sessionId, 'test-sidechain']),
+        }));
     }
 
     afterEach(() => {

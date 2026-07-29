@@ -24,8 +24,8 @@ const state: any = {
     settings: {
         voice: {
             providerId: 'local_conversation',
-            adapters: {
-                local_conversation: {
+            providers: {
+                local_conversation: { schemaVersion: 1, config: {
                     agent: {
                         backend: 'daemon',
                         agentSource: 'session',
@@ -36,7 +36,7 @@ const state: any = {
                         transcript: { persistenceMode: 'ephemeral', epoch: 0 },
                     },
                     networkTimeoutMs: 15_000,
-                },
+                } },
             },
         },
     },

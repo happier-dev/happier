@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
@@ -141,6 +143,13 @@ async function loadPatchedWebRenderers(): Promise<WebRenderersModule> {
         import.meta.url,
     ).href;
     return import(/* @vite-ignore */ moduleUrl) as Promise<WebRenderersModule>;
+}
+
+function readPatchedPackageFile(relativePath: string): string {
+    return readFileSync(
+        new URL(`../../../../node_modules/react-native-enriched-markdown/${relativePath}`, import.meta.url),
+        'utf8',
+    );
 }
 
 function spanChildren(node: React.ReactNode): string[] {
@@ -573,5 +582,15 @@ describe('EnrichedMarkdownText web streaming reveal', () => {
         const parser = await loadPatchedWebParseMarkdown();
 
         await expect(parser.preloadMarkdownRuntime()).resolves.toBeUndefined();
+    });
+
+    it('keeps the single-file parser inside the owning web runtime module', () => {
+        const sourceParser = readPatchedPackageFile('src/web/parseMarkdown.ts');
+        const builtParser = readPatchedPackageFile('lib/module/web/parseMarkdown.js');
+
+        expect(sourceParser).toContain("import createMd4cModule from './wasm/md4c.js'");
+        expect(builtParser).toContain("import createMd4cModule from './wasm/md4c.js'");
+        expect(sourceParser).not.toContain("import('./wasm/md4c");
+        expect(builtParser).not.toContain("import('./wasm/md4c");
     });
 });

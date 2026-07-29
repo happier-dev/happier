@@ -1,4 +1,4 @@
-import { lightTheme } from '@/theme';
+import { lightTheme, type Theme } from '@/theme';
 
 import type { PlainObject } from '../mocks/_shared';
 import { mergeObjects } from '../mocks/_shared';
@@ -26,11 +26,13 @@ export type TestThemeRuntimeFixture = Readonly<{
     statusBar: { height: number };
 }>;
 
-export function createThemeFixture(overrides?: PlainObject): PlainObject {
-    return mergeObjects(
+export function createThemeFixture(overrides?: PlainObject): Theme {
+    const theme = mergeObjects(
         mergeObjects(lightTheme as PlainObject, testThemeFallbacks),
         overrides,
     );
+    // The deep merge starts from the complete canonical light theme and only replaces supplied leaves.
+    return theme as Theme;
 }
 
 export function createThemeRuntimeFixture(overrides?: Partial<TestThemeRuntimeFixture>): TestThemeRuntimeFixture {

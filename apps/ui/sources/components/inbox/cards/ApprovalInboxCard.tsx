@@ -6,11 +6,12 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { useMachine, useSession } from '@/sync/domains/state/storage';
-import { readDisplayMachineIdForSession, readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
+import { readDisplayMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { Text } from '@/components/ui/text/Text';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { formatPathRelativeToHome, getSessionName } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export const ApprovalInboxCard = React.memo((props: Readonly<{
   artifact: DecryptedArtifact;
@@ -20,13 +21,17 @@ export const ApprovalInboxCard = React.memo((props: Readonly<{
 
   const title = props.artifact.header?.title ?? props.artifact.title ?? t('approvals.untitled');
   const actionIdRaw = typeof props.artifact.header?.actionId === 'string' ? String(props.artifact.header.actionId).trim() : '';
+  const qualifiedActionId = typeof props.artifact.header?.qualifiedActionId === 'string'
+    ? props.artifact.header.qualifiedActionId.trim()
+    : '';
   const sessionId = typeof props.artifact.header?.sessionId === 'string' ? props.artifact.header.sessionId.trim() : '';
   const session = useSession(sessionId);
-  const machineId = readDisplayMachineIdForSession({
+  const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
+  const displayTarget = readDisplayMachineTargetForSession({
     sessionId,
-    metadata: session?.metadata ?? null,
+    metadata: ownerMetadata,
   });
-  const machine = useMachine(machineId);
+  const machine = useMachine(displayTarget?.machineId ?? '');
 
   const actionTitle = React.useMemo(() => {
     if (!actionIdRaw) return null;
@@ -38,21 +43,22 @@ export const ApprovalInboxCard = React.memo((props: Readonly<{
   }, [actionIdRaw]);
 
   const sessionTitle = session ? getSessionName(session) : null;
-  const displayPath = session
-    ? readDisplayPathForSession({
-      sessionId,
-      metadata: session.metadata ?? null,
-    })
-    : '';
+  const displayPath = session ? displayTarget?.basePath ?? '' : '';
   const pathLabel = displayPath
-    ? formatPathRelativeToHome(displayPath, session?.metadata?.homeDir ?? undefined)
+    ? formatPathRelativeToHome(displayPath, ownerMetadata?.homeDir)
     : null;
   const machineLabel = getMachineDisplayName(machine);
+  const accessibilityLabel = qualifiedActionId
+    ? `${String(title)} · ${qualifiedActionId}`
+    : actionTitle
+      ? `${String(title)} · ${actionTitle}`
+      : String(title);
 
   return (
     <Pressable
       testID={`inbox.approval.${props.artifact.id}`}
       accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
       onPress={props.onPress}
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
     >
@@ -60,7 +66,7 @@ export const ApprovalInboxCard = React.memo((props: Readonly<{
         <Ionicons name="alert-circle-outline" size={18} color={theme.colors.status.error} />
         <View style={styles.headerText}>
           <Text style={styles.title}>{title}</Text>
-          {actionTitle ? <Text style={styles.subtitle}>{actionTitle}</Text> : null}
+          {actionTitle || qualifiedActionId ? <Text style={styles.subtitle}>{actionTitle ?? qualifiedActionId}</Text> : null}
         </View>
         <Ionicons name="chevron-forward" size={16} color={theme.colors.text.secondary} />
       </View>

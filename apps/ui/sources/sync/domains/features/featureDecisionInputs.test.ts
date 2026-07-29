@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/protocol';
 
 import { storage } from '@/sync/domains/state/storage';
-import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import {
+    primeServerFeaturesSnapshot,
+    resetServerFeaturesClientForTests,
+} from '@/sync/api/capabilities/serverFeaturesClient';
 import {
     isRuntimeFeatureEnabled,
     resolveRuntimeFeatureDecision,
@@ -81,5 +84,45 @@ describe('featureDecisionInputs', () => {
         });
 
         expect(enabled).toBe(false);
+    });
+
+    it('evaluates an explicit spawn scope against its exact server snapshot', async () => {
+        primeServerFeaturesSnapshot({
+            serverId: 'server-1',
+            snapshot: {
+                status: 'ready',
+                features: FeaturesResponseSchema.parse({
+                    features: { providers: { enabled: false } },
+                    capabilities: {},
+                }),
+            },
+        });
+        primeServerFeaturesSnapshot({
+            serverId: 'server-2',
+            snapshot: {
+                status: 'ready',
+                features: FeaturesResponseSchema.parse({
+                    features: { providers: { enabled: true } },
+                    capabilities: {},
+                }),
+            },
+        });
+
+        const decision = await resolveRuntimeFeatureDecision({
+            featureId: 'providers',
+            scope: {
+                scopeKind: 'spawn',
+                serverId: 'server-2',
+            },
+        });
+
+        expect(decision).toMatchObject({
+            featureId: 'providers',
+            state: 'enabled',
+            scope: {
+                scopeKind: 'spawn',
+                serverId: 'server-2',
+            },
+        });
     });
 });

@@ -1,3 +1,4 @@
+import { buildSpawnedFirstTurnLocalId } from '@happier-dev/protocol';
 import { sync } from '@/sync/sync';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { publishDisplayTitleMetadataMutation } from '@/sync/state/displayTitlePublish';
@@ -5,13 +6,30 @@ import { followUpSpawnedSessionWithServerScope } from '@/sync/runtime/orchestrat
 import { resolveSpawnedFirstPromptFollowUp } from '@/sync/domains/session/spawn/spawnedFirstPromptFollowUp';
 import { normalizeNonEmptyString } from './shared';
 
+export function resolveVoiceSpawnedFirstTurnLocalId(params: Readonly<{
+  spawned: unknown;
+  requestedSpawnNonce: string;
+}>): string | null {
+  const spawnedRecord = params.spawned && typeof params.spawned === 'object' && !Array.isArray(params.spawned)
+    ? params.spawned as Record<string, unknown>
+    : null;
+  const custody = spawnedRecord?.spawnAttemptCustody
+    && typeof spawnedRecord.spawnAttemptCustody === 'object'
+    && !Array.isArray(spawnedRecord.spawnAttemptCustody)
+    ? spawnedRecord.spawnAttemptCustody as Record<string, unknown>
+    : null;
+  const canonicalSpawnNonce = normalizeNonEmptyString(custody?.spawnNonce)
+    ?? normalizeNonEmptyString(params.requestedSpawnNonce);
+  return buildSpawnedFirstTurnLocalId(canonicalSpawnNonce);
+}
+
 export async function postprocessSpawnedSession(params: Readonly<{
   sessionId: string | null;
   serverId?: string | null;
   tag?: string | null;
   initialMessage?: string | null;
   initialMessageMetaOverrides?: Record<string, unknown> | null;
-  daemonInitialPromptUsed?: boolean | null;
+  firstTurnLocalId?: string | null;
 }>): Promise<void> {
   const sessionId = normalizeNonEmptyString(params.sessionId);
   if (!sessionId) return;
@@ -37,8 +55,8 @@ export async function postprocessSpawnedSession(params: Readonly<{
   const firstPromptFollowUp = resolveSpawnedFirstPromptFollowUp({
     sessionId,
     initialMessageText: initialMessage,
+    fallbackLocalId: params.firstTurnLocalId,
     metaOverrides: normalizeInitialMessageMetaOverrides(params.initialMessageMetaOverrides),
-    daemonInitialPromptUsed: params.daemonInitialPromptUsed === true,
   });
 
   if (firstPromptFollowUp.initialMessageText) {
@@ -51,20 +69,6 @@ export async function postprocessSpawnedSession(params: Readonly<{
     });
   }
 
-  if (!tag && !initialMessage && params.daemonInitialPromptUsed === true) {
-    try {
-      await sync.refreshSessions();
-    } catch {
-      // best-effort
-    }
-  }
-}
-
-export function didSpawnUseDaemonInitialPrompt(spawned: unknown): boolean {
-  if (!spawned || typeof spawned !== 'object' || Array.isArray(spawned)) {
-    return false;
-  }
-  return (spawned as { usedInitialPrompt?: unknown }).usedInitialPrompt === true;
 }
 
 function normalizeInitialMessageMetaOverrides(

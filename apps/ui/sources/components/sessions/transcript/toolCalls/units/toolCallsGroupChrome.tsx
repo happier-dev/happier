@@ -7,7 +7,7 @@ import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import type { TranscriptToolChromeCommon } from '@/components/sessions/transcript/transcriptSessionCommon';
 
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
@@ -19,7 +19,12 @@ import type { GroupedToolCallChromeMode } from './groupedToolCallRowContent';
 
 export type ToolCallsGroupChromeVariant = 'cards' | 'feed' | 'feed_background';
 export type ToolCallsGroupUnitPosition = 'header' | 'middle' | 'footer';
-export type ToolCallsGroupStatus = 'running' | 'completed' | 'error';
+export type ToolCallsGroupStatus =
+    | 'running'
+    | 'completed'
+    | 'error'
+    | 'permission_denied'
+    | 'permission_canceled';
 
 export function resolveToolCallsGroupChromeVariant(
     toolChromeCommon: TranscriptToolChromeCommon,
@@ -51,6 +56,8 @@ export function resolveToolCallsGroupStatus(params: Readonly<{
     permissionDisabledReason?: TranscriptInteraction['permissionDisabledReason'];
 }>): ToolCallsGroupStatus {
     let sawError = false;
+    let sawPermissionDenied = false;
+    let sawPermissionCanceled = false;
     for (const message of params.toolMessages) {
         const tool = resolveInactiveSessionToolCallFailure({
             tool: message.tool,
@@ -59,8 +66,18 @@ export function resolveToolCallsGroupStatus(params: Readonly<{
         const kind = resolveToolStatusIndicatorKind(tool);
         if (kind === 'running' || kind === 'permission_pending') return 'running';
         if (kind === 'error') sawError = true;
+        if (kind === 'permission_blocked') {
+            if (tool.permission?.status === 'denied') {
+                sawPermissionDenied = true;
+            } else {
+                sawPermissionCanceled = true;
+            }
+        }
     }
-    return sawError ? 'error' : 'completed';
+    if (sawError) return 'error';
+    if (sawPermissionDenied) return 'permission_denied';
+    if (sawPermissionCanceled) return 'permission_canceled';
+    return 'completed';
 }
 
 export function resolveToolCallsGroupUnitContainerStyle(
@@ -142,6 +159,14 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
 }>) {
     const { theme } = useUnistyles();
     const headerPressable = props.expanded;
+    const terminalStatusLabel =
+        props.status === 'error'
+            ? t('common.error')
+            : props.status === 'permission_denied'
+                ? t('errors.permissionDenied')
+                : props.status === 'permission_canceled'
+                    ? t('errors.permissionCanceled')
+                    : null;
 
     return (
         <Pressable
@@ -161,14 +186,26 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
                 <Text style={chromeStyles.subtitle}> · {props.count}</Text>
             </Text>
             <View style={chromeStyles.headerRight}>
-                <View style={chromeStyles.statusIconRight}>
+                <View
+                    testID={`tool-calls-group-status:${props.status}`}
+                    accessible={terminalStatusLabel !== null}
+                    accessibilityLabel={terminalStatusLabel ?? undefined}
+                    style={terminalStatusLabel ? chromeStyles.terminalStatus : chromeStyles.statusIconRight}
+                >
                     {props.status === 'running' ? (
-                        <ActivitySpinner size="small" color={theme.colors.text.secondary} />
+                        <ActivitySpinner size={iconMatchedSpinnerSize(GROUP_STATUS_ICON_SIZE_PX)} color={theme.colors.text.secondary} />
                     ) : props.status === 'error' ? (
-                        <Ionicons name="alert-circle" size={16} color={theme.colors.state.danger.foreground} />
+                        <Ionicons name="alert-circle" size={GROUP_STATUS_ICON_SIZE_PX} color={theme.colors.state.danger.foreground} />
+                    ) : props.status === 'permission_denied' || props.status === 'permission_canceled' ? (
+                        <Ionicons name="remove-circle-outline" size={16} color={theme.colors.state.danger.foreground} />
                     ) : (
-                        <Ionicons name="checkmark-circle" size={16} color={theme.colors.state.success.foreground} />
+                        <Ionicons name="checkmark-circle" size={GROUP_STATUS_ICON_SIZE_PX} color={theme.colors.state.success.foreground} />
                     )}
+                    {terminalStatusLabel ? (
+                        <Text style={chromeStyles.terminalStatusText} numberOfLines={1}>
+                            {terminalStatusLabel}
+                        </Text>
+                    ) : null}
                 </View>
                 {props.expanded ? (
                     <Ionicons
@@ -202,6 +239,8 @@ export const ToolCallsGroupExpandMoreChrome = React.memo(function ToolCallsGroup
         </Pressable>
     );
 });
+
+const GROUP_STATUS_ICON_SIZE_PX = 16;
 
 const chromeStyles = StyleSheet.create((theme) => ({
     header: {
@@ -238,9 +277,22 @@ const chromeStyles = StyleSheet.create((theme) => ({
         gap: 8,
     },
     statusIconRight: {
-        width: 18,
+        width: GROUP_STATUS_ICON_SIZE_PX,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    terminalStatus: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        gap: 5,
+        minWidth: 0,
+    },
+    terminalStatusText: {
+        color: theme.colors.state.danger.foreground,
+        fontSize: 12,
+        ...Typography.default('semiBold'),
+        maxWidth: 160,
     },
     previewMore: {
         paddingHorizontal: 0,
@@ -279,13 +331,13 @@ const unitStyles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.inset ?? theme.colors.surface.base,
     },
     unitCardsHeaderCap: {
-        borderTopLeftRadius: 14,
-        borderTopRightRadius: 14,
+        borderTopLeftRadius: theme.borderRadius.xl,
+        borderTopRightRadius: theme.borderRadius.xl,
         overflow: 'hidden',
     },
     unitCardsFooterCap: {
-        borderBottomLeftRadius: 14,
-        borderBottomRightRadius: 14,
+        borderBottomLeftRadius: theme.borderRadius.xl,
+        borderBottomRightRadius: theme.borderRadius.xl,
         overflow: 'hidden',
     },
     unitFeed: {
@@ -296,14 +348,14 @@ const unitStyles = StyleSheet.create((theme) => ({
         paddingHorizontal: 10,
     },
     unitFeedBackgroundHeaderCap: {
-        borderTopLeftRadius: 14,
-        borderTopRightRadius: 14,
+        borderTopLeftRadius: theme.borderRadius.xl,
+        borderTopRightRadius: theme.borderRadius.xl,
         overflow: 'hidden',
         paddingTop: 6,
     },
     unitFeedBackgroundFooterCap: {
-        borderBottomLeftRadius: 14,
-        borderBottomRightRadius: 14,
+        borderBottomLeftRadius: theme.borderRadius.xl,
+        borderBottomRightRadius: theme.borderRadius.xl,
         overflow: 'hidden',
         paddingBottom: 6,
     },

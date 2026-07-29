@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKey, buildBackendTargetKeyV2 } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
 import {
     installProfileEditFormModuleMocks,
@@ -192,8 +192,17 @@ describe('ProfileEditForm machine-login persistence', () => {
             requiresMachineLoginTargetKey: undefined,
         }));
         expect(savedProfile?.compatibilityByTargetKey).toEqual(expect.objectContaining({
-            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: true,
-            [configuredTargetKey]: true,
+            [buildBackendTargetKeyV2({
+                kind: 'backend',
+                backendId: 'codex',
+                sourceKind: 'built_in',
+            })]: true,
+            [buildBackendTargetKeyV2({
+                kind: 'backend',
+                backendId: 'custom-backend',
+                configuredBackendId: 'custom-backend',
+                sourceKind: 'configured',
+            })]: true,
         }));
     });
 });

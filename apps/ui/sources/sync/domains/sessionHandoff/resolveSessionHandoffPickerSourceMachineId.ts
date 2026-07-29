@@ -1,3 +1,4 @@
+import { readExternalSessionLink } from '../session/external/readExternalSessionLink';
 import { normalizeSessionHandoffMachineId, type SessionHandoffMachineMetadataLike } from './normalizeSessionHandoffMachineId';
 
 export function resolveSessionHandoffPickerSourceMachineId(input: Readonly<{
@@ -6,7 +7,7 @@ export function resolveSessionHandoffPickerSourceMachineId(input: Readonly<{
 }>): string | null {
     return (
         normalizeSessionHandoffMachineId(input.sessionMetadata?.machineId)
-        ?? normalizeSessionHandoffMachineId(input.sessionMetadata?.externalSessionV1?.machineId)
+        ?? normalizeSessionHandoffMachineId(readExternalSessionLink(input.sessionMetadata)?.machineId)
         ?? normalizeSessionHandoffMachineId(input.sourceMachineId)
         ?? null
     );

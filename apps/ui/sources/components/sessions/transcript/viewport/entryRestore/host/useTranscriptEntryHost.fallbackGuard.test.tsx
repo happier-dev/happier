@@ -19,19 +19,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
 
-import { renderHook } from '@/dev/testkit';
+import { createDeferred, renderHook } from '@/dev/testkit';
 
 import { createEntryRestoreOwner } from '@/components/sessions/transcript/viewport/entryRestore/entryRestoreOwner';
 import { createSessionOpenLatch } from '@/components/sessions/transcript/viewport/sessionOpen/sessionOpenLatch';
 import { resolveTranscriptRenderWindowProjection } from '@/components/sessions/transcript/viewport/window/resolveTranscriptRenderWindowProjection';
+import { createTranscriptWindowGapItem } from '@/components/sessions/transcript/viewport/window/transcriptWindowGapItem';
 import type { ChatTranscriptListItem } from '@/components/sessions/transcript/chatListTypes';
 import type { WebTranscriptScrollMetrics } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
 import type { SessionEntryViewportRefValue } from './useTranscriptEntryHost';
 import { useTranscriptEntryHost } from './useTranscriptEntryHost';
 
 const syncMockState = vi.hoisted(() => ({
+    loadTargetWindowMessages: vi.fn(),
     sessionViewport: null as null | {
-        anchor: null;
+        anchor: null | {
+            capturedAtMs: number;
+            itemId: string;
+            itemOffsetPx: number;
+            kind: 'message';
+            messageId: string | null;
+            seq?: number | null;
+        };
         isPinned: boolean;
         lastUpdatedAt: number;
         offsetY: number;
@@ -42,13 +51,11 @@ const syncMockState = vi.hoisted(() => ({
 vi.mock('@/sync/sync', () => ({
     sync: {
         getSessionViewport: () => syncMockState.sessionViewport,
+        loadTargetWindowMessages: syncMockState.loadTargetWindowMessages,
         getSyncTuning: () => ({
             transcriptInitialFillBudgetMs: 2000,
             transcriptInitialFillMaxNoProgressLoads: 3,
             transcriptViewportAnchorOlderLookupMaxLoads: 6,
-            transcriptWebInitialPinStabilizeMs: 3000,
-            transcriptWebInitialPinRetryIntervalMs: 250,
-            transcriptWebInitialPinRetryMilestonesMs: [16, 50, 100, 200, 400, 800],
         }),
     },
 }));
@@ -69,12 +76,9 @@ function createStableMembers(overrides?: {
 }) {
     const items: readonly ChatTranscriptListItem[] = overrides?.items ?? [];
     const renderWindowProjection = resolveTranscriptRenderWindowProjection<ChatTranscriptListItem>({
-        activeThinkingMessageId: null,
-        entrySliceWindow: null,
-        expandedToolCallsAnchorMessageIds: new Set<string>(),
+        createWindowGapItem: createTranscriptWindowGapItem,
         items,
         listOrientation: 'standard',
-        platformOS: 'ios',
         sessionId: 's1',
         targetWindowState: {
             isWindowMode: false,
@@ -88,10 +92,9 @@ function createStableMembers(overrides?: {
             hasMoreNewer: null,
             activatedAtMs: null,
         },
-        transcriptNativeHotTailItemCount: 0,
-        transcriptWebHotTailItemCount: 0,
     });
     return {
+        activeTargetWindowTargetRef: { current: null },
         anchorLookupExhaustedRef: { current: false },
         anchorLookupInFlightRef: { current: false },
         anchorLookupLoadCountRef: { current: 0 },
@@ -107,15 +110,12 @@ function createStableMembers(overrides?: {
         disposeEntryRestoreTransactionForExitRef: { current: () => {} },
         entryRestoreDeadlineTimeoutRef: { current: null },
         entryRestoreOwner: overrides?.entryRestoreOwner ?? createEntryRestoreOwner(),
-        entrySliceWindowRef: { current: null },
         executeViewportCommand: overrides?.executeViewportCommand ?? vi.fn(() => true),
         hasNativeContentMeasurementForCurrentSession: vi.fn(() => false),
         initialFillAbortRef: { current: null },
-        initialWebPinStabilizingRef: { current: false },
         invalidateViewportAnchorCapture: vi.fn(),
         isScrollable: vi.fn(() => false),
         isViewportAnchorSeqLoaded: vi.fn(() => false),
-        jumpToSeqActiveRef: { current: false },
         lastScrollOffsetForIntentRef: overrides?.lastScrollOffsetForIntentRef ?? { current: null },
         lastUserScrollIntentAtMsRef: { current: Number.NEGATIVE_INFINITY },
         latestJumpToSeqRef: { current: null },
@@ -126,17 +126,16 @@ function createStableMembers(overrides?: {
         loadOlder: vi.fn(async () => null),
         markNativeInitialViewportAppliedForCurrentSession: vi.fn(),
         nativeMountSettleDeadlineReachedRef: { current: false },
+        nativeMountSettleStable: false,
         observeMountSettleMetrics: vi.fn(),
-        pinToBottom: vi.fn(() => true),
-        pinToBottomRespectingNativeMountSettle: vi.fn(),
         recordRestoreDecisionTelemetry: vi.fn(),
+        recordEntryOwnerOutcome: vi.fn(),
         recordViewportTelemetryEvent: vi.fn(),
         renderWindowProjection,
-        requestBottomFollowScheduledWriteRef: { current: () => {} },
         resolveEntryRestoreOwnerAnchor: vi.fn<EntryHostDeps['resolveEntryRestoreOwnerAnchor']>(() => null),
         resolveNearestSurvivingViewportAnchorIndex: vi.fn<EntryHostDeps['resolveNearestSurvivingViewportAnchorIndex']>(() => null),
         resolveNearestSurvivingViewportAnchorIndexFromItems: vi.fn<EntryHostDeps['resolveNearestSurvivingViewportAnchorIndexFromItems']>(() => null),
-        resolveSeqForViewportAnchor: vi.fn(() => null),
+        resolveSeqForViewportAnchor: vi.fn<EntryHostDeps['resolveSeqForViewportAnchor']>(() => null),
         resolveViewportCommand: vi.fn(() => ({
             kind: 'none' as const,
             sessionId: 's1',
@@ -148,21 +147,15 @@ function createStableMembers(overrides?: {
             didAdjustScroll: false,
             status: 'not_found' as const,
         })),
-        revealEntrySliceWindow: vi.fn(() => 0),
         scheduleNativePaintReleaseForEntryRestore: vi.fn(),
-        scheduleFirstSessionOpenWebInitialPinRetryRef: { current: null },
         // Viewport recorded for session 's1' with offsetY = 26835 (a jump-class restore target).
         sessionEntryViewportRef: overrides?.sessionEntryViewportRef ?? {
             current: null,
         },
         sessionOpenLatch: createSessionOpenLatch(),
-        sessionOpenWebInitialPinRetryArmAtMsRef: { current: 0 },
-        sessionOpenWebInitialPinRetryTimeoutRef: { current: null },
-        setEntrySliceWindow: vi.fn(),
         setNativeMountSettleDeadlineReached: vi.fn(),
         updateNativeInitialViewportPendingObservation: vi.fn(),
         updateNativeViewportPaintObserved: vi.fn(),
-        waitForNextVisualUpdate: vi.fn(async () => {}),
         wantsPinnedRef: { current: true },
     };
 }
@@ -170,7 +163,6 @@ function createStableMembers(overrides?: {
 function buildDeps(members: ReturnType<typeof createStableMembers>): EntryHostDeps {
     return {
         ...members,
-        autoPinDelayMs: 1000,
         committedMessagesCount: 0,
         displayItemsLength: 0,
         isLoaded: false,
@@ -185,7 +177,369 @@ function buildDeps(members: ReturnType<typeof createStableMembers>): EntryHostDe
 
 describe('useTranscriptEntryHost fallback guard', () => {
     beforeEach(() => {
+        syncMockState.loadTargetWindowMessages.mockReset();
         syncMockState.sessionViewport = null;
+    });
+
+    it('materializes an outside-data entry anchor target before issuing its restore', async () => {
+        const originalPlatformOS = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+        const anchor = {
+            kind: 'message' as const,
+            messageId: 'message-2',
+            itemId: 'row-2',
+            itemOffsetPx: 95,
+            capturedAtMs: 1000,
+            seq: 2,
+        };
+        const items: readonly ChatTranscriptListItem[] = [2, 5, 6].map((seq) => ({
+            kind: 'message' as const,
+            id: `row-${seq}`,
+            messageId: `message-${seq}`,
+            createdAt: seq,
+            seq,
+        }));
+        const projection = resolveTranscriptRenderWindowProjection<ChatTranscriptListItem>({
+            createWindowGapItem: createTranscriptWindowGapItem,
+            items,
+            listOrientation: 'standard',
+            sessionId: 's1',
+            targetWindowState: {
+                activatedAtMs: 1000,
+                hasMoreNewer: false,
+                hasMoreOlder: true,
+                isWindowMode: true,
+                newerCursor: null,
+                olderCursor: 4,
+                targetSeq: 5,
+                windowId: 'window-5',
+                windowMaxSeq: 6,
+                windowMinSeq: 5,
+            },
+        });
+        syncMockState.loadTargetWindowMessages.mockResolvedValue({ status: 'stale' });
+        const restoreWebViewportAnchorThroughViewportCommand = vi.fn(() => ({
+            didAdjustScroll: true,
+            status: 'restored' as const,
+        }));
+        const members = createStableMembers({
+            items,
+            restoreWebViewportAnchorThroughViewportCommand,
+            sessionEntryViewportRef: {
+                current: {
+                    sessionId: 's1',
+                    entryKind: 'anchored',
+                    shouldFollowBottom: false,
+                    offsetY: 2520,
+                    anchor,
+                    sourceLastUpdatedAt: 1000,
+                    effects: [],
+                },
+            },
+        });
+        members.renderWindowProjection = projection;
+        members.listDataRef = { current: projection.listData };
+        members.resolveEntryRestoreOwnerAnchor = vi.fn(() => anchor);
+        members.resolveNearestSurvivingViewportAnchorIndexFromItems = vi.fn(() => 0);
+        members.resolveSeqForViewportAnchor = vi.fn(() => 2);
+        members.isViewportAnchorSeqLoaded = vi.fn(() => true);
+
+        try {
+            const hook = await renderHook(
+                (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+                { initialProps: buildDeps({
+                    ...members,
+                    decomposedItems: items,
+                }) },
+            );
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(syncMockState.loadTargetWindowMessages).toHaveBeenCalledWith(
+                's1',
+                { kind: 'seq', seq: 2 },
+                { direction: 'initial' },
+            );
+            expect(restoreWebViewportAnchorThroughViewportCommand).not.toHaveBeenCalled();
+
+            await hook.unmount();
+
+            syncMockState.loadTargetWindowMessages.mockClear();
+            members.anchorLookupExhaustedRef.current = true;
+            const exhaustedHook = await renderHook(
+                (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+                { initialProps: buildDeps({
+                    ...members,
+                    decomposedItems: items,
+                }) },
+            );
+            await Promise.resolve();
+
+            expect(syncMockState.loadTargetWindowMessages).not.toHaveBeenCalled();
+            expect(restoreWebViewportAnchorThroughViewportCommand).toHaveBeenCalledTimes(1);
+
+            await exhaustedHook.unmount();
+        } finally {
+            Object.defineProperty(Platform, 'OS', { value: originalPlatformOS, configurable: true });
+        }
+    });
+
+    it('materializes an unloaded durable entry anchor through the exact target window and retries restore once', async () => {
+        const originalPlatformOS = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true });
+        const anchor = {
+            kind: 'message' as const,
+            messageId: 'message-331',
+            itemId: 'row-331',
+            itemOffsetPx: 40,
+            capturedAtMs: 1000,
+            seq: 331,
+        };
+        const materializedItem: ChatTranscriptListItem = {
+            kind: 'message',
+            id: anchor.itemId,
+            messageId: anchor.messageId,
+            createdAt: 331,
+            seq: anchor.seq,
+        };
+        const executeViewportCommand = vi.fn(() => true);
+        const members = createStableMembers({
+            executeViewportCommand,
+            items: [{
+                kind: 'message',
+                id: 'row-400',
+                messageId: 'message-400',
+                createdAt: 400,
+                seq: 400,
+            }],
+            sessionEntryViewportRef: {
+                current: {
+                    sessionId: 's1',
+                    entryKind: 'anchored',
+                    shouldFollowBottom: false,
+                    offsetY: 2520,
+                    anchor,
+                    sourceLastUpdatedAt: 1000,
+                    effects: [],
+                },
+            },
+        });
+        members.resolveEntryRestoreOwnerAnchor = vi.fn(() => anchor);
+        members.resolveSeqForViewportAnchor = vi.fn(() => 331);
+        members.isViewportAnchorSeqLoaded = vi.fn(
+            () => members.listDataRef.current.some((item) => item.id === materializedItem.id),
+        );
+        syncMockState.loadTargetWindowMessages.mockImplementation(async () => {
+            members.listDataRef.current = [materializedItem];
+            return {
+                status: 'loaded',
+                targetPresent: true,
+            };
+        });
+
+        try {
+            const hook = await renderHook(
+                (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+                { initialProps: buildDeps(members) },
+            );
+
+            await vi.waitFor(() => {
+                expect(syncMockState.loadTargetWindowMessages).toHaveBeenCalledTimes(1);
+                expect(executeViewportCommand).toHaveBeenCalledTimes(1);
+            });
+            expect(syncMockState.loadTargetWindowMessages).toHaveBeenCalledWith(
+                's1',
+                { kind: 'seq', seq: 331 },
+                { direction: 'initial' },
+            );
+            expect(members.loadOlder).not.toHaveBeenCalled();
+            expect(members.activeTargetWindowTargetRef.current).toEqual({
+                kind: 'seq',
+                seq: 331,
+            });
+
+            await hook.unmount();
+        } finally {
+            Object.defineProperty(Platform, 'OS', { value: originalPlatformOS, configurable: true });
+        }
+    });
+
+    it.each([
+        {
+            name: 'stale',
+            result: { status: 'stale', targetPresent: true },
+        },
+        {
+            name: 'target absent',
+            result: { status: 'not_found', targetPresent: false },
+        },
+    ])('does not retry durable entry restore when exact target materialization is $name', async ({ result }) => {
+        const originalPlatformOS = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true });
+        const anchor = {
+            kind: 'message' as const,
+            messageId: 'message-331',
+            itemId: 'row-331',
+            itemOffsetPx: 40,
+            capturedAtMs: 1000,
+            seq: 331,
+        };
+        const executeViewportCommand = vi.fn(() => true);
+        const members = createStableMembers({
+            executeViewportCommand,
+            items: [{
+                kind: 'message',
+                id: 'row-400',
+                messageId: 'message-400',
+                createdAt: 400,
+                seq: 400,
+            }],
+            sessionEntryViewportRef: {
+                current: {
+                    sessionId: 's1',
+                    entryKind: 'anchored',
+                    shouldFollowBottom: false,
+                    offsetY: 2520,
+                    anchor,
+                    sourceLastUpdatedAt: 1000,
+                    effects: [],
+                },
+            },
+        });
+        members.resolveEntryRestoreOwnerAnchor = vi.fn(() => anchor);
+        members.resolveSeqForViewportAnchor = vi.fn(() => 331);
+        members.isViewportAnchorSeqLoaded = vi.fn(() => false);
+        syncMockState.loadTargetWindowMessages.mockResolvedValue(result);
+
+        try {
+            const hook = await renderHook(
+                (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+                { initialProps: buildDeps(members) },
+            );
+
+            await vi.waitFor(() => {
+                expect(syncMockState.loadTargetWindowMessages).toHaveBeenCalledTimes(1);
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(executeViewportCommand).not.toHaveBeenCalled();
+            expect(members.loadOlder).not.toHaveBeenCalled();
+            expect(members.activeTargetWindowTargetRef.current).toBeNull();
+            expect(syncMockState.loadTargetWindowMessages).toHaveBeenCalledTimes(1);
+
+            await hook.unmount();
+        } finally {
+            Object.defineProperty(Platform, 'OS', { value: originalPlatformOS, configurable: true });
+        }
+    });
+
+    it('does not publish or retry an exact target result after the host session changes', async () => {
+        const originalPlatformOS = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true });
+        const anchor = {
+            kind: 'message' as const,
+            messageId: 'message-331',
+            itemId: 'row-331',
+            itemOffsetPx: 40,
+            capturedAtMs: 1000,
+            seq: 331,
+        };
+        const executeViewportCommand = vi.fn(() => true);
+        const members = createStableMembers({
+            executeViewportCommand,
+            items: [{
+                kind: 'message',
+                id: 'row-400',
+                messageId: 'message-400',
+                createdAt: 400,
+                seq: 400,
+            }],
+            sessionEntryViewportRef: {
+                current: {
+                    sessionId: 's1',
+                    entryKind: 'anchored',
+                    shouldFollowBottom: false,
+                    offsetY: 2520,
+                    anchor,
+                    sourceLastUpdatedAt: 1000,
+                    effects: [],
+                },
+            },
+        });
+        members.resolveEntryRestoreOwnerAnchor = vi.fn(() => anchor);
+        members.resolveSeqForViewportAnchor = vi.fn(() => 331);
+        members.isViewportAnchorSeqLoaded = vi.fn(() => false);
+        const targetWindow = createDeferred<{ status: 'loaded'; targetPresent: true }>();
+        syncMockState.loadTargetWindowMessages
+            .mockImplementationOnce(() => targetWindow.promise)
+            .mockResolvedValue({ status: 'not_found', targetPresent: false });
+
+        try {
+            const hook = await renderHook(
+                (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+                { initialProps: buildDeps(members) },
+            );
+            await vi.waitFor(() => {
+                expect(syncMockState.loadTargetWindowMessages).toHaveBeenCalledTimes(1);
+            });
+
+            members.currentSessionIdRef.current = 's2';
+            targetWindow.resolve({ status: 'loaded', targetPresent: true });
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(members.activeTargetWindowTargetRef.current).toBeNull();
+            expect(executeViewportCommand).not.toHaveBeenCalled();
+            expect(syncMockState.loadTargetWindowMessages).toHaveBeenCalledTimes(1);
+
+            await hook.unmount();
+        } finally {
+            Object.defineProperty(Platform, 'OS', { value: originalPlatformOS, configurable: true });
+        }
+    });
+
+    it('keeps distance-only bounded materialization on the sequential older-load path', async () => {
+        const members = createStableMembers();
+        const hook = await renderHook(
+            (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+            { initialProps: buildDeps(members) },
+        );
+        const effects = createEntryRestoreOwner().attempt({
+            canMaterializeOlder: true,
+            contentHeight: 2400,
+            currentSessionId: 's1',
+            deadlineMs: 1500,
+            exactAnchorIndex: null,
+            fillSettled: true,
+            items: [{ id: 'row-1' }],
+            jumpToSeqActive: false,
+            layoutHeight: 600,
+            nearestAnchorIndex: null,
+            nowMs: 1000,
+            platform: 'native',
+            restoredViewport: {
+                anchor: null,
+                offsetY: 3000,
+                sessionId: 's1',
+                shouldFollowBottom: false,
+            },
+            userScrollObserved: false,
+        });
+
+        hook.getCurrent().applyEntryRestoreOwnerEffects(effects);
+        await vi.waitFor(() => {
+            expect(members.loadOlder).toHaveBeenCalledTimes(1);
+        });
+        expect(members.recordRestoreDecisionTelemetry).toHaveBeenCalledWith(
+            'not-ready',
+            expect.any(Object),
+        );
+        expect(members.recordEntryOwnerOutcome).not.toHaveBeenCalled();
+        expect(syncMockState.loadTargetWindowMessages).not.toHaveBeenCalled();
+
+        await hook.unmount();
     });
 
     /**
@@ -265,6 +619,88 @@ describe('useTranscriptEntryHost fallback guard', () => {
         expect(executeViewportCommand).toHaveBeenCalledTimes(1);
 
         await hook.unmount();
+    });
+
+    it('waits for renderer facts after scroll_requested instead of retrying on the former 300ms cadence or after unmount', async () => {
+        const originalPlatformOS = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+        vi.useFakeTimers();
+
+        const anchor = {
+            kind: 'message' as const,
+            messageId: 'message-1',
+            itemId: 'msg:message-1',
+            itemOffsetPx: 95,
+            capturedAtMs: 1000,
+            seq: 10,
+        };
+        const items: readonly ChatTranscriptListItem[] = [{
+            kind: 'message',
+            id: anchor.itemId,
+            messageId: anchor.messageId,
+            createdAt: 1000,
+            seq: anchor.seq,
+        }];
+        const createRetryHarness = async () => {
+            const restoreWebViewportAnchorThroughViewportCommand = vi.fn(() => ({
+                didAdjustScroll: false,
+                status: 'scroll_requested' as const,
+            }));
+            const members = createStableMembers({
+                items,
+                restoreWebViewportAnchorThroughViewportCommand,
+                sessionEntryViewportRef: {
+                    current: {
+                        sessionId: 's1',
+                        entryKind: 'anchored',
+                        shouldFollowBottom: false,
+                        offsetY: 2520,
+                        anchor,
+                        sourceLastUpdatedAt: 1000,
+                        effects: [],
+                    },
+                },
+            });
+            members.resolveEntryRestoreOwnerAnchor = vi.fn(() => anchor);
+            members.resolveNearestSurvivingViewportAnchorIndexFromItems = vi.fn(() => 0);
+
+            const hook = await renderHook(
+                (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+                {
+                    initialProps: buildDeps({
+                        ...members,
+                        decomposedItems: items,
+                        listDataRef: { current: items },
+                    }),
+                },
+            );
+            return { hook, restoreWebViewportAnchorThroughViewportCommand };
+        };
+
+        try {
+            const mounted = await createRetryHarness();
+            expect(mounted.restoreWebViewportAnchorThroughViewportCommand).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(299);
+            expect(mounted.restoreWebViewportAnchorThroughViewportCommand).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(1);
+            expect(mounted.restoreWebViewportAnchorThroughViewportCommand).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(600);
+            expect(mounted.restoreWebViewportAnchorThroughViewportCommand).toHaveBeenCalledTimes(1);
+            await mounted.hook.unmount();
+            vi.clearAllTimers();
+
+            const unmounted = await createRetryHarness();
+            expect(unmounted.restoreWebViewportAnchorThroughViewportCommand).toHaveBeenCalledTimes(1);
+            await unmounted.hook.unmount();
+
+            await vi.advanceTimersByTimeAsync(300);
+            expect(unmounted.restoreWebViewportAnchorThroughViewportCommand).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.clearAllTimers();
+            vi.useRealTimers();
+            Object.defineProperty(Platform, 'OS', { value: originalPlatformOS, configurable: true });
+        }
     });
 
     it('does not replay an anchored web entry restore after an accepted scroll observation', async () => {
@@ -395,12 +831,79 @@ describe('useTranscriptEntryHost fallback guard', () => {
         }
     });
 
-    it('clears a pending web initial-pin retry when the host unmounts', async () => {
+    it('does not treat an idempotent session-entry viewport echo as post-entry user movement', async () => {
         const originalPlatformOS = Platform.OS;
         Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
-        vi.useFakeTimers();
-        vi.setSystemTime(0);
-        const members = createStableMembers();
+        syncMockState.sessionViewport = {
+            anchor: {
+                kind: 'message',
+                itemId: 'msg:distance-sentinel',
+                messageId: 'distance-sentinel',
+                itemOffsetPx: 0,
+                capturedAtMs: 1000,
+                seq: 9,
+            },
+            isPinned: false,
+            lastUpdatedAt: 2000,
+            offsetY: 2520,
+            source: 'observed',
+        };
+        const items: readonly ChatTranscriptListItem[] = [{
+            kind: 'message',
+            id: 'msg:distance-sentinel',
+            messageId: 'distance-sentinel',
+            createdAt: 1000,
+            seq: 9,
+        }];
+        const fakeElement = {} as HTMLElement;
+        const executeViewportCommand = vi.fn(() => true);
+        const members = createStableMembers({
+            executeViewportCommand,
+            items,
+            resolveWebScrollMetrics: vi.fn(() => ({
+                clientHeight: 670,
+                element: fakeElement,
+                scrollHeight: 20_000,
+                scrollTop: 16_810,
+            })),
+            sessionEntryViewportRef: {
+                current: {
+                    sessionId: 's1',
+                    entryKind: 'anchored',
+                    shouldFollowBottom: false,
+                    offsetY: 2520,
+                    anchor: {
+                        kind: 'message',
+                        itemId: 'msg:distance-sentinel',
+                        messageId: 'distance-sentinel',
+                        itemOffsetPx: 0,
+                        capturedAtMs: 1000,
+                    },
+                    sourceLastUpdatedAt: 1000,
+                    effects: [],
+                },
+            },
+        });
+        members.listContentHeightRef.current = 20_000;
+        members.listLayoutHeightRef.current = 670;
+        members.sessionOpenLatch.arm({
+            entryKind: 'anchored',
+            nativeFirstPaintFallbackDelayMs: 1000,
+            nowMs: 1000,
+            platform: 'web',
+            sessionId: 's1',
+            shouldFollowBottom: false,
+        webOpenPhaseDeadlineDelayMs: 30_000,
+        });
+        members.sessionOpenLatch.onHostFacts({
+            contentHeight: 20_000,
+            isLoaded: true,
+            isScrollable: true,
+            itemCount: items.length,
+            layoutHeight: 670,
+            nowMs: 1000,
+            sessionId: 's1',
+        });
 
         try {
             const hook = await renderHook(
@@ -408,20 +911,20 @@ describe('useTranscriptEntryHost fallback guard', () => {
                 {
                     initialProps: {
                         ...buildDeps(members),
+                        committedMessagesCount: items.length,
+                        displayItemsLength: items.length,
                         isLoaded: true,
+                        listContentHeight: 20_000,
+                        listDataLength: items.length,
+                        listLayoutHeight: 670,
                     },
                 },
             );
 
-            expect(members.sessionOpenWebInitialPinRetryTimeoutRef.current).not.toBeNull();
-            expect(vi.getTimerCount()).toBeGreaterThan(0);
+            expect(executeViewportCommand).toHaveBeenCalledTimes(1);
 
             await hook.unmount();
-
-            expect(members.sessionOpenWebInitialPinRetryTimeoutRef.current).toBeNull();
-            expect(vi.getTimerCount()).toBe(0);
         } finally {
-            vi.useRealTimers();
             Object.defineProperty(Platform, 'OS', { value: originalPlatformOS, configurable: true });
         }
     });
@@ -457,7 +960,6 @@ describe('useTranscriptEntryHost fallback guard', () => {
                 sessionId: 's1',
                 shouldFollowBottom: false,
             },
-            slice: { capable: false },
             userScrollObserved: false,
         });
         expect(openEffects.some((effect) => effect.type === 'execute-command')).toBe(true);

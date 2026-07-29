@@ -14,7 +14,6 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',

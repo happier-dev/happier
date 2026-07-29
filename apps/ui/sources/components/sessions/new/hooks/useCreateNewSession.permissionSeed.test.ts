@@ -9,6 +9,7 @@ import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvP
 import { normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
 import {
     buildBackendTargetKey,
+    SessionModelSelectionV1Schema,
     type SessionMcpSelectionV1,
 } from '@happier-dev/protocol';
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
@@ -414,6 +415,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -476,6 +478,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -537,6 +540,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -602,6 +606,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -646,6 +651,110 @@ describe('useCreateNewSession permission seeding', () => {
         }));
     });
 
+    it('uses canonical provider selection for next-prompt metadata even when presentation mode is Automatic', async () => {
+        const {
+            useCreateNewSession,
+            followUpSpawnedSessionWithServerScopeSpy,
+            machineSpawnNewSessionSpy,
+        } = await setupUseCreateNewSessionHarness();
+
+        machineSpawnNewSessionSpy.mockResolvedValueOnce({
+            type: 'success',
+            sessionId: 'sess_target',
+        });
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const settings = { experiments: false } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+        const authoringDraft = buildNewSessionAuthoringDraft({
+            directory: '/tmp',
+            checkoutCreationDraft: null,
+            prompt: 'hello',
+            displayText: 'hello',
+            agentId: 'opencode',
+            backendTarget: { kind: 'backend', backendId: 'opencode' },
+            transcriptStorage: null,
+            profileId: null,
+            environmentVariables: null,
+            resumeSessionId: null,
+            permissionMode: 'default',
+            permissionModeUpdatedAt: null,
+            modelSelection: SessionModelSelectionV1Schema.parse({
+                v: 1,
+                updatedAt: 456,
+                ref: {
+                    agentTargetKey: 'backend:opencode',
+                    providerConnectionId: 'pc_openrouter',
+                    modelId: 'default',
+                },
+            }),
+            mcpSelection: null,
+            connectedServices: null,
+            terminal: null,
+            windowsRemoteSessionLaunchMode: null,
+            windowsRemoteSessionConsole: null,
+            codexBackendMode: null,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            automation: null,
+        });
+
+        function Test() {
+            const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'opencode' as any,
+                permissionMode: 'default' as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                sessionPrompt: 'hello',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-a',
+                allowedTargetServerIds: ['server-a'],
+                authoringDraft,
+            });
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
+            modelSelection: authoringDraft.modelSelection,
+        }));
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'sess_target',
+            initialMessageText: 'hello',
+            metaOverrides: { model: 'default' },
+        }));
+    });
+
     it('runs local slash actions for the created session without sending the slash text as the first message', async () => {
         const {
             useCreateNewSession,
@@ -668,6 +777,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -727,6 +837,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -795,6 +906,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -861,6 +973,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -922,6 +1035,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -987,6 +1101,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -1041,7 +1156,6 @@ describe('useCreateNewSession permission seeding', () => {
         machineSpawnNewSessionSpy.mockResolvedValueOnce({
             type: 'success',
             sessionId: 'sess_target',
-            usedInitialPrompt: true,
         });
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -1056,6 +1170,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -1100,24 +1215,20 @@ describe('useCreateNewSession permission seeding', () => {
 
         expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
             serverId: 'server-b',
-            initialPrompt: 'Ship the scoped follow-up fix',
         }));
+        expect(machineSpawnNewSessionSpy.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
         expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'sess_target',
             targetServerId: 'server-b',
             initialMessageText: 'Ship the scoped follow-up fix',
-            messageLocalId: 'daemon-initial-prompt:sess_target',
-            metaOverrides: expect.objectContaining({
-                source: 'daemon-initial-prompt',
-                sentFrom: 'ui',
-            }),
+            messageLocalId: expect.stringMatching(/^spawn-first-turn:new-session-spawn-/),
             profileId: null,
         }));
         expect(refreshSessionsSpy).not.toHaveBeenCalled();
         expect(syncSendMessageSpy).not.toHaveBeenCalled();
     });
 
-    it('alerts and avoids opening a non-hydrated created session when post-spawn follow-up fails for a repo-native worktree launch', async () => {
+    it('preserves the /new draft without hydrating or opening the created session when a repo-native first-turn follow-up fails', async () => {
         const {
             useCreateNewSession,
             captureExceptionIfEnabledSpy,
@@ -1133,7 +1244,6 @@ describe('useCreateNewSession permission seeding', () => {
         machineSpawnNewSessionSpy.mockResolvedValueOnce({
             type: 'success',
             sessionId: 'sess_target',
-            usedInitialPrompt: true,
         });
         followUpSpawnedSessionWithServerScopeSpy.mockRejectedValueOnce(new Error('follow-up failed'));
 
@@ -1151,6 +1261,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: routerReplace },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -1197,30 +1308,23 @@ describe('useCreateNewSession permission seeding', () => {
         expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'follow-up failed');
         expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
             serverId: 'server-b',
-            initialPrompt: 'Ship the scoped follow-up fix',
         }));
+        expect(machineSpawnNewSessionSpy.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
         expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'sess_target',
             targetServerId: 'server-b',
             initialMessageText: 'Ship the scoped follow-up fix',
-            messageLocalId: 'daemon-initial-prompt:sess_target',
-            metaOverrides: expect.objectContaining({
-                source: 'daemon-initial-prompt',
-                sentFrom: 'ui',
-            }),
+            messageLocalId: expect.stringMatching(/^spawn-first-turn:new-session-spawn-/),
         }));
         expect(saveSessionDraftsSpy).toHaveBeenCalledWith({ sess_target: 'Ship the scoped follow-up fix' });
         expect(updateSessionDraftSpy).not.toHaveBeenCalled();
         expect(disableDraftPersistence).not.toHaveBeenCalled();
         expect(clearNewSessionDraftSpy).not.toHaveBeenCalled();
-        expect(ensureSessionVisibleForMessageRouteSpy).toHaveBeenCalledWith('sess_target', {
-            forceRefresh: true,
-            serverId: 'server-b',
-        });
+        expect(ensureSessionVisibleForMessageRouteSpy).not.toHaveBeenCalled();
         expect(routerReplace).not.toHaveBeenCalled();
     });
 
-    it('clears and disables the /new draft before opening a hydrated created session when post-spawn follow-up fails', async () => {
+    it('preserves the /new draft without opening even when created-session hydration could succeed after a first-turn failure', async () => {
         const {
             useCreateNewSession,
             setLocalSearchParams,
@@ -1238,7 +1342,6 @@ describe('useCreateNewSession permission seeding', () => {
         machineSpawnNewSessionSpy.mockResolvedValueOnce({
             type: 'success',
             sessionId: 'sess_target',
-            usedInitialPrompt: true,
         });
         followUpSpawnedSessionWithServerScopeSpy.mockRejectedValueOnce(new Error('follow-up failed'));
         ensureSessionVisibleForMessageRouteSpy.mockImplementationOnce(async (sessionId: string) => {
@@ -1259,6 +1362,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: routerReplace },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -1300,23 +1404,20 @@ describe('useCreateNewSession permission seeding', () => {
         expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'follow-up failed');
         expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
             serverId: 'server-b',
-            initialPrompt: 'Ship the scoped follow-up fix',
         }));
+        expect(machineSpawnNewSessionSpy.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
         expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'sess_target',
             targetServerId: 'server-b',
             initialMessageText: 'Ship the scoped follow-up fix',
-            messageLocalId: 'daemon-initial-prompt:sess_target',
-            metaOverrides: expect.objectContaining({
-                source: 'daemon-initial-prompt',
-                sentFrom: 'ui',
-            }),
+            messageLocalId: expect.stringMatching(/^spawn-first-turn:new-session-spawn-/),
         }));
         expect(saveSessionDraftsSpy).toHaveBeenCalledWith({ sess_target: 'Ship the scoped follow-up fix' });
-        expect(updateSessionDraftSpy).toHaveBeenCalledWith('sess_target', 'Ship the scoped follow-up fix');
-        expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
-        expect(clearNewSessionDraftSpy).toHaveBeenCalledTimes(1);
-        expect(routerReplace).toHaveBeenCalledWith('/session/sess_target?serverId=server-b', expect.anything());
+        expect(ensureSessionVisibleForMessageRouteSpy).not.toHaveBeenCalled();
+        expect(updateSessionDraftSpy).not.toHaveBeenCalled();
+        expect(disableDraftPersistence).not.toHaveBeenCalled();
+        expect(clearNewSessionDraftSpy).not.toHaveBeenCalled();
+        expect(routerReplace).not.toHaveBeenCalled();
     });
 
     it('creates an automation instead of spawning immediately when automation mode is enabled', async () => {
@@ -1358,6 +1459,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: routerPush, replace: routerReplace },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -1498,6 +1600,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: routerPush, replace: routerReplace },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -1593,6 +1696,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test(props: Readonly<{ automationDraft: NewSessionAutomationDraft }>) {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router,
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -1694,6 +1798,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test(props: Readonly<{ automationDraft: NewSessionAutomationDraft }>) {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router,
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -1803,6 +1908,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: routerReplace },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -1873,6 +1979,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: routerReplace },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -1964,6 +2071,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -2055,6 +2163,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: routerReplace },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
@@ -2124,6 +2233,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',

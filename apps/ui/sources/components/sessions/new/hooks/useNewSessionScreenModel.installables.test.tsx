@@ -143,6 +143,7 @@ const testSettingsDefaults = vi.hoisted(() => ({
     favoriteMachines: [],
     favoriteProfiles: [],
     profiles: [] as AIBackendProfile[],
+    profileEnabledById: {} as Record<string, boolean>,
     secrets: [],
     secretBindingsByProfileId: {},
     serverSelectionGroups: [],
@@ -192,6 +193,12 @@ const machineCapabilitiesResultsState = vi.hoisted(() => ({
             },
         },
     } as Record<string, unknown>,
+}));
+const includeProjectedCodexAcpInstallableState = vi.hoisted(() => ({
+    value: false,
+}));
+const includeLaunchSelectionMachinesState = vi.hoisted(() => ({
+    value: false,
 }));
 
 const storageState = vi.hoisted(() => ({
@@ -313,6 +320,13 @@ installNewSessionScreenModelCommonModuleMocks({
         return createPartialStorageModuleMock(importOriginal, {
             // Boundary fixture: this suite only consumes the machine id + metadata shape.
             useAllMachines: (() => machineState.value as any) as any,
+            useLaunchSelectionMachines: (() => (
+                includeLaunchSelectionMachinesState.value ? machineState.value : []
+            ) as any) as any,
+            useMachineListByServerId: () => ({
+                s1: includeLaunchSelectionMachinesState.value ? machineState.value as any : [],
+            }),
+            useMachineListStatusByServerId: () => ({}),
             storage: Object.assign((selector: (state: ReturnType<typeof getMockStorageState>) => unknown) => selector(getMockStorageState()), {
                 getState: () => getMockStorageState(),
             }) as any,
@@ -400,6 +414,31 @@ vi.mock('@/capabilities/ensureAgentInstallablesBackground', () => ({
     ensureAgentInstallablesBackground: (params: unknown) => ensureAgentInstallablesBackgroundMock(params),
 }));
 
+vi.mock('@/capabilities/installablesRegistry', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/capabilities/installablesRegistry')>();
+    return {
+        ...actual,
+        getInstallablesRegistryEntries: (params?: Parameters<typeof actual.getInstallablesRegistryEntries>[0]) => (
+            includeProjectedCodexAcpInstallableState.value && !params
+                ? actual.getInstallablesRegistryEntries({
+                    projectedInstallables: [{
+                        id: 'codex-acp',
+                        key: 'codex-acp',
+                        capabilityId: 'dep.codex-acp',
+                        sourceKind: 'github_release_binary',
+                        display: { name: 'Codex ACP' },
+                        defaultPolicy: {
+                            autoInstallWhenNeeded: true,
+                            autoUpdateMode: 'auto',
+                        },
+                        experimental: true,
+                    }],
+                })
+                : actual.getInstallablesRegistryEntries(params)
+        ),
+    };
+});
+
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
     useMachineCapabilitiesCache: () => ({ state: { status: 'idle' }, refresh: machineCapabilitiesCacheRefreshMock }),
     prefetchMachineCapabilities: async () => {},
@@ -436,6 +475,13 @@ vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: Promise<unknown>) => {
         pendingFireAndForget.push(promise);
         void promise.catch(() => {});
+    },
+}));
+
+vi.mock('@/utils/timing/runAfterInteractionsWithFallback', () => ({
+    runAfterInteractionsWithFallback: (fn: () => void) => {
+        fn();
+        return () => {};
     },
 }));
 
@@ -638,6 +684,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         settingsState.sessionWindowsRemoteSessionLaunchMode = 'hidden';
         settingsState.lastUsedAgent = 'codex';
         settingsState.lastUsedPermissionMode = 'default';
+        settingsState.experiments = false;
         settingsState.sessionDefaultPermissionModeByTargetKey = {};
         settingsState.backendEnabledByTargetKey = {};
         storageStore.getState().activateProfileScope({ serverId: 's_active', accountId: 'acct_active' });
@@ -657,6 +704,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         persistedDraft.acpSessionModeId = 'plan';
         persistedDraft.backendNewSessionOptionStateByTargetKey = {};
         delete (persistedDraft as any).backendTarget;
+        delete (persistedDraft as any).resumeSessionId;
         delete (persistedDraft as any).transcriptStorage;
         enabledAgentIdsState.value = ['codex', 'claude'];
         cliAvailabilityState.value = {
@@ -680,6 +728,8 @@ describe('useNewSessionScreenModel (installables)', () => {
                 },
             },
         };
+        includeProjectedCodexAcpInstallableState.value = false;
+        includeLaunchSelectionMachinesState.value = false;
         pendingFireAndForget.length = 0;
         featureEnabledState.sessionsDirect = false;
         featureEnabledCalls.length = 0;
@@ -716,8 +766,12 @@ describe('useNewSessionScreenModel (installables)', () => {
         });
     });
 
-    it('does not force a background codex-acp install side effect during initial model setup', async () => {
+    it('installs a relevant missing codex-acp dependency only after explicit create intent', async () => {
         routeParamsState.value = { machineId: 'machine-1' };
+        settingsState.experiments = true;
+        includeProjectedCodexAcpInstallableState.value = true;
+        includeLaunchSelectionMachinesState.value = true;
+        (persistedDraft as typeof persistedDraft & { resumeSessionId: string }).resumeSessionId = 'resume-session-1';
         const hook = await renderNewSessionScreenModel();
         let model = hook.getCurrent();
 
@@ -726,7 +780,22 @@ describe('useNewSessionScreenModel (installables)', () => {
 
         expect(model).toBeTruthy();
         expect(model?.variant).toBe('simple');
+        expect(model?.simpleProps?.agentType).toBe('codex');
+        expect(model?.simpleProps?.selectedMachineId).toBe('machine-1');
+        expect(model?.simpleProps?.machineName).toBe('Machine One');
         expect(ensureAgentInstallablesBackgroundMock).not.toHaveBeenCalled();
+
+        await invokeHookAction(() => model?.simpleProps?.handleCreateSession?.());
+
+        expect(ensureAgentInstallablesBackgroundMock).toHaveBeenCalledTimes(1);
+        expect(ensureAgentInstallablesBackgroundMock).toHaveBeenCalledWith({
+            agentId: 'codex',
+            machineId: 'machine-1',
+            serverId: 's1',
+            settings: settingsState,
+            resumeSessionId: 'resume-session-1',
+        });
+        expect(handleCreateSessionMock).toHaveBeenCalledTimes(1);
     });
 
     it('falls back to default settings when settings are temporarily unavailable during startup', async () => {
@@ -808,7 +877,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         const opencodeOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string }) =>
             option.id === buildBuiltInBackendTargetKey('opencode'));
 
-        const opencodeDetailContent = opencodeOption?.renderDetailContent?.() ?? opencodeOption?.detailContent ?? null;
+        const opencodeDetailContent = opencodeOption?.renderDetailContent?.({ onRequestClose: vi.fn() }) ?? opencodeOption?.detailContent ?? null;
         expect(opencodeDetailContent).toBeTruthy();
 
         const detailScreen = await renderScreen(<>{opencodeDetailContent}</>);
@@ -867,7 +936,7 @@ describe('useNewSessionScreenModel (installables)', () => {
 
         expect(customPresetOption).toBeTruthy();
 
-        const detailElement = (customPresetOption?.renderDetailContent?.() ?? customPresetOption?.detailContent) as React.ReactElement<{
+        const detailElement = (customPresetOption?.renderDetailContent?.({ onRequestClose: vi.fn() }) ?? customPresetOption?.detailContent) as React.ReactElement<{
             onSelectionChange?: (selection: { modelId: string; sessionModeId: string }) => void;
         }> | undefined;
         expect(detailElement).toBeTruthy();
@@ -939,7 +1008,7 @@ describe('useNewSessionScreenModel (installables)', () => {
 
         const customPresetOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string; onApply?: () => void; renderDetailContent?: () => React.ReactNode; detailContent?: React.ReactNode }) =>
             option.id === buildConfiguredAcpBackendTargetKey('custom-preset'));
-        const detailElement = (customPresetOption?.renderDetailContent?.() ?? customPresetOption?.detailContent) as React.ReactElement<{
+        const detailElement = (customPresetOption?.renderDetailContent?.({ onRequestClose: vi.fn() }) ?? customPresetOption?.detailContent) as React.ReactElement<{
             onSelectionChange?: (selection: { modelId: string; sessionModeId: string }) => void;
         }> | undefined;
         expect(detailElement).toBeTruthy();
@@ -1000,7 +1069,7 @@ describe('useNewSessionScreenModel (installables)', () => {
 
         expect(typeof customPresetOption?.renderDetailContent).toBe('function');
 
-        const firstDetailElement = customPresetOption?.renderDetailContent?.() as React.ReactElement<{
+        const firstDetailElement = customPresetOption?.renderDetailContent?.({ onRequestClose: vi.fn() }) as React.ReactElement<{
             selectedModelId?: string;
             onSelectionChange?: (selection: { modelId: string; sessionModeId: string; configOverrides?: Record<string, string> }) => void;
         }> | undefined;
@@ -1013,7 +1082,7 @@ describe('useNewSessionScreenModel (installables)', () => {
             configOverrides: {},
         }));
 
-        const updatedDetailElement = customPresetOption?.renderDetailContent?.() as React.ReactElement<{
+        const updatedDetailElement = customPresetOption?.renderDetailContent?.({ onRequestClose: vi.fn() }) as React.ReactElement<{
             selectedModelId?: string;
         }> | undefined;
 
@@ -1072,7 +1141,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         const customPresetOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string }) =>
             option.id === buildConfiguredAcpBackendTargetKey('custom-preset'));
 
-        const customPresetDetailContent = customPresetOption?.renderDetailContent?.() ?? customPresetOption?.detailContent ?? null;
+        const customPresetDetailContent = customPresetOption?.renderDetailContent?.({ onRequestClose: vi.fn() }) ?? customPresetOption?.detailContent ?? null;
         expect(customPresetDetailContent).toBeTruthy();
 
         const detailScreen = await renderScreen(<>{customPresetDetailContent}</>);
@@ -1133,7 +1202,7 @@ describe('useNewSessionScreenModel (installables)', () => {
 
         const customPresetOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string; onApply?: () => void; renderDetailContent?: () => React.ReactNode; detailContent?: React.ReactNode }) =>
             option.id === buildConfiguredAcpBackendTargetKey('custom-preset'));
-        const detailElement = (customPresetOption?.renderDetailContent?.() ?? customPresetOption?.detailContent) as React.ReactElement<{
+        const detailElement = (customPresetOption?.renderDetailContent?.({ onRequestClose: vi.fn() }) ?? customPresetOption?.detailContent) as React.ReactElement<{
             onSelectionChange?: (selection: { modelId: string; sessionModeId: string; configOverrides?: Record<string, string> }) => void;
         }> | undefined;
         expect(detailElement).toBeTruthy();

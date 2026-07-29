@@ -2,13 +2,14 @@ import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSes
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { hasVoiceTranscriptNoteMeta } from './voiceTranscriptNoteMeta';
 import { resolveVoiceTranscriptRenderWindow, VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX } from './voiceTranscriptBounds';
-import { readVoiceTurnTruncatedText, voiceTurnTruncationVersion } from './voiceTurnTruncation';
+import { isVoiceTurnInterrupted, voiceTurnInterruptionVersion } from './voiceTurnInterruption';
 
 export type VoiceTranscriptEntry = Readonly<{
     id: string;
     createdAt: number;
     kind: 'user' | 'assistant' | 'note';
     text: string;
+    interrupted?: boolean;
 }>;
 
 const EMPTY_ENTRIES: ReadonlyArray<VoiceTranscriptEntry> = Object.freeze([]);
@@ -16,7 +17,7 @@ const EMPTY_ENTRIES: ReadonlyArray<VoiceTranscriptEntry> = Object.freeze([]);
 type TranscriptSelectorCacheEntry = Readonly<{
     slice: unknown;
     limit: number;
-    truncationVersion: number;
+    interruptionVersion: number;
     result: ReadonlyArray<VoiceTranscriptEntry>;
 }>;
 
@@ -112,12 +113,11 @@ export function selectVoiceTranscriptEntriesForConversationSession(
 
     const limit = resolveVoiceTranscriptRenderWindow(options?.limit);
     const slice = state?.sessionMessages?.[resolvedConversationSessionId];
-    // The played-ms truncation registry can change "what was heard" without
-    // changing the underlying message slice (a barge-in records an override but
-    // does not rewrite the store), so its version participates in the memo key.
-    const truncationVersion = voiceTurnTruncationVersion();
+    // Interruption state changes without rewriting the message slice, so its
+    // version participates in the memo key.
+    const interruptionVersion = voiceTurnInterruptionVersion();
     const cached = readTranscriptSelectorCache(resolvedConversationSessionId);
-    if (cached && cached.slice === slice && cached.limit === limit && cached.truncationVersion === truncationVersion) {
+    if (cached && cached.slice === slice && cached.limit === limit && cached.interruptionVersion === interruptionVersion) {
         return cached.result;
     }
 
@@ -127,10 +127,7 @@ export function selectVoiceTranscriptEntriesForConversationSession(
         const record = readRecord(message);
         const entryId = resolveTranscriptEntryId(message);
         if (!record || !entryId) continue;
-        // A barge-in truncation override replaces the heard text for this turn;
-        // an empty override means nothing meaningful was heard → drop the entry.
-        const truncatedOverride = readVoiceTurnTruncatedText(entryId);
-        const text = truncatedOverride !== null ? normalizeNonEmptyString(truncatedOverride) : extractMessageText(message);
+        const text = extractMessageText(message);
         if (!text) continue;
         const kind =
             record.kind === 'user-text' || record.role === 'user'
@@ -143,6 +140,9 @@ export function selectVoiceTranscriptEntriesForConversationSession(
             createdAt: typeof record.createdAt === 'number' && Number.isFinite(record.createdAt) ? record.createdAt : 0,
             kind,
             text,
+            ...(kind === 'assistant' && isVoiceTurnInterrupted(entryId)
+                ? { interrupted: true }
+                : {}),
         });
     }
 
@@ -159,6 +159,6 @@ export function selectVoiceTranscriptEntriesForConversationSession(
         ? Object.freeze(entries.slice(entries.length - limit))
         : Object.freeze(entries);
     const result = windowed.length === 0 ? EMPTY_ENTRIES : windowed;
-    writeTranscriptSelectorCache(resolvedConversationSessionId, { slice, limit, truncationVersion, result });
+    writeTranscriptSelectorCache(resolvedConversationSessionId, { slice, limit, interruptionVersion, result });
     return result;
 }

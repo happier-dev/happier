@@ -1,37 +1,22 @@
-import { fireAndForget } from '@/utils/system/fireAndForget';
 import { storage } from '@/sync/domains/state/storage';
-import { realtimeTransport } from '@/voice/runtime/realtime/RealtimeTransport';
 import { getVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
-import { resolveActiveLocalVoiceAgentBinding } from './resolveActiveLocalVoiceAgentBinding';
+import {
+    getVoiceAdapterRegistry,
+    resolveVoiceAdapterContextChannel,
+} from '@/voice/session/voiceAdapterRegistry';
 import type { VoiceContextSink } from './VoiceContextSink';
+import { resolveVoiceProviderIdFromSettings } from '@/voice/settings/resolveVoiceProviderId';
+import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 
-function createLocalAgentSink(): VoiceContextSink | null {
-    const activeLocalVoiceAgent = resolveActiveLocalVoiceAgentBinding();
-    if (!activeLocalVoiceAgent) {
-        return null;
-    }
-
+function createProjectedContextSink(adapterId: string, voiceSettings: unknown): VoiceContextSink | null {
+    const channel = resolveVoiceAdapterContextChannel(adapterId, voiceSettings);
+    if (!channel) return null;
     return {
-        sendContextualUpdate: (_sid, update) =>
-            activeLocalVoiceAgent.sendContextualUpdate(update),
-        sendTextMessage: (_sid, update) =>
-            fireAndForget(activeLocalVoiceAgent.sendTextUpdate(update), {
-                tag: 'local_voice_agent_text_update',
-            }),
-        announceAssistantText: (_sid, text) =>
-            activeLocalVoiceAgent.announceAssistantText(text),
-    };
-}
-
-function createRealtimeSink(): VoiceContextSink | null {
-    const voice = realtimeTransport.getVoiceSession();
-    if (!voice || !realtimeTransport.isVoiceSessionStarted()) {
-        return null;
-    }
-
-    return {
-        sendContextualUpdate: (_sessionId, update) => voice.sendContextualUpdate(update),
-        sendTextMessage: (_sessionId, update) => voice.sendTextMessage(update),
+        sendContextualUpdate: (_sessionId, update) => channel.sendContextualUpdate(update),
+        sendTextMessage: (_sessionId, text) => channel.sendTextMessage(text),
+        ...(channel.announceAssistantText
+            ? { announceAssistantText: (_sessionId: string, text: string) => channel.announceAssistantText?.(text) }
+            : {}),
     };
 }
 
@@ -44,20 +29,20 @@ function resolveActiveOwnerAdapterId(): string | null {
 }
 
 export function getVoiceContextSinkForSession(_sessionId: string): VoiceContextSink | null {
-    const activeOwnerAdapterId = resolveActiveOwnerAdapterId();
-    if (activeOwnerAdapterId === 'local_conversation') {
-        return createLocalAgentSink();
-    }
-    if (activeOwnerAdapterId === 'realtime_elevenlabs') {
-        return createRealtimeSink();
-    }
-
     const settings = storage.getState().settings as any;
-    const providerId = settings?.voice?.providerId ?? 'off';
-    const conversationMode = settings?.voice?.adapters?.local_conversation?.conversationMode ?? 'direct_session';
-    if (providerId === 'local_conversation' && conversationMode === 'agent') {
-        return createLocalAgentSink();
+    const voiceSettings = voiceSettingsParse(settings?.voice);
+    const activeOwnerAdapterId = resolveActiveOwnerAdapterId();
+    if (activeOwnerAdapterId) {
+        return createProjectedContextSink(activeOwnerAdapterId, voiceSettings);
     }
 
-    return null;
+    const providerId = resolveVoiceProviderIdFromSettings(voiceSettings);
+    if (!providerId) return null;
+    // Local agent context can remain active through its canonical binding even
+    // while the surface snapshot is disconnected. Realtime channels, however,
+    // must never revive a stale SDK/session object from selected settings alone.
+    const selectedAdapter = getVoiceAdapterRegistry().get(providerId);
+    return selectedAdapter?.engineKind === 'local'
+        ? createProjectedContextSink(providerId, voiceSettings)
+        : null;
 }

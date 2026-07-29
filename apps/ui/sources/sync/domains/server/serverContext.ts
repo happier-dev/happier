@@ -20,7 +20,7 @@ function readRuntimeConfiguredServerContext(): string {
 
 function inferStackContextFromWebOrigin(): boolean {
     if (!isWebRuntime()) return false;
-    const host = normalize(window.location.hostname);
+    const host = normalize(window.location?.hostname);
     // Stack-served UIs use a `happier-<stack>.localhost` origin.
     return host.startsWith('happier-') && host.endsWith('.localhost');
 }

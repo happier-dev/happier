@@ -1,4 +1,9 @@
 import { serverFetch } from '@/sync/http/client';
+import {
+    ProviderSettingsV1Schema,
+    removeProviderMachineStateV1,
+    type ProviderSettingsV1,
+} from '@happier-dev/protocol';
 
 export type MachineRevokeFromAccountResult =
     | { ok: true }
@@ -33,6 +38,64 @@ export async function machineRevokeFromAccount(machineId: string): Promise<Machi
     }
 
     return readMachineAccountError(response);
+}
+
+export type MachineRevokeWithProviderCleanupResult =
+    | Readonly<{ ok: true; machineAlreadyRevoked: boolean; providerCleanup: 'complete' | 'not_needed' }>
+    | Readonly<{
+        ok: false;
+        status: number;
+        error: string;
+        machineRevoked: true;
+        providerCleanup: 'pending';
+        retryable: true;
+    }>
+    | Extract<MachineRevokeFromAccountResult, { ok: false }>;
+
+/**
+ * Coordinates the irreversible server revoke with the encrypted account-
+ * settings CAS owner. The server cannot decrypt Provider settings, so cleanup
+ * intentionally follows revocation: a cleanup failure is safe, explicit, and
+ * retryable, while a settings write never happens for a failed revoke.
+ */
+export async function machineRevokeWithProviderCleanup(
+    machineId: string,
+    dependencies: Readonly<{
+        revoke(id: string): Promise<MachineRevokeFromAccountResult>;
+        mutateProviderSettings(
+            mutate: (settings: ProviderSettingsV1) => ProviderSettingsV1,
+        ): Promise<void>;
+    }>,
+): Promise<MachineRevokeWithProviderCleanupResult> {
+    const id = String(machineId ?? '').trim();
+    if (!id) return { ok: false, status: 400, error: 'machine_id_required' };
+    const revoked = await dependencies.revoke(id);
+    const machineAlreadyRevoked = !revoked.ok && revoked.status === 410 && revoked.error === 'machine_revoked';
+    if (!revoked.ok && !machineAlreadyRevoked) return revoked;
+
+    try {
+        let cleanupNeeded = false;
+        await dependencies.mutateProviderSettings((settings) => {
+            const current = ProviderSettingsV1Schema.parse(settings);
+            const next = removeProviderMachineStateV1(current, id);
+            cleanupNeeded = JSON.stringify(next) !== JSON.stringify(current);
+            return next;
+        });
+        return {
+            ok: true,
+            machineAlreadyRevoked,
+            providerCleanup: cleanupNeeded ? 'complete' : 'not_needed',
+        };
+    } catch {
+        return {
+            ok: false,
+            status: 503,
+            error: 'provider_cleanup_pending',
+            machineRevoked: true,
+            providerCleanup: 'pending',
+            retryable: true,
+        };
+    }
 }
 
 export async function machineReplaceInAccount(params: Readonly<{

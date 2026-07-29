@@ -1,10 +1,13 @@
+import {
+    extractCanonicalDiffFiles,
+    readTurnChangeToolMetadataFromToolCall,
+    type FileChangeEvidence,
+    type TurnChangeSet,
+    type TurnChangeToolMetadata,
+} from '@happier-dev/protocol';
 import { deriveCanonicalPatchFileDiffs } from '@happier-dev/protocol/tools/v2';
-import type { FileChangeEvidence, TurnChangeSet } from '@happier-dev/protocol';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
-
-import { extractCanonicalDiffFiles } from '../parsing/extractCanonicalDiffFiles';
-import { readTurnChangeToolMetadataFromToolCall, type TurnChangeToolMetadata } from '../parsing/readTurnChangeToolMetadata';
 
 type TurnChangeSetCandidate = Readonly<{
     kind: 'diff' | 'patch';
@@ -98,7 +101,7 @@ function extractCanonicalPatchFiles(input: unknown, metadata: TurnChangeToolMeta
         source: metadata.source,
         confidence: metadata.confidence,
         provider: metadata.provider,
-        providerTurnId: metadata.turnId,
+        agentTurnId: metadata.turnId,
         providerMessageId: messageId,
     }));
 }

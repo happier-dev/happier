@@ -160,7 +160,11 @@ export type AgentTeamSessionProviderBehavior = Readonly<{
             messages: readonly AgentTeamMessage[];
         }>) => readonly string[];
         deriveTargets?: (ctx: Readonly<{
-            session: Readonly<{ metadata?: Record<string, unknown> | null }>;
+            session: Readonly<{
+                metadata?: Record<string, unknown> | null;
+                metadataLayoutVersion?: number;
+                ownerMetadataView?: Record<string, unknown> | null;
+            }>;
             messages: readonly AgentTeamMessage[];
             currentTargets: readonly AgentTeamSessionParticipantTarget[];
         }>) => readonly AgentTeamSessionParticipantTarget[];

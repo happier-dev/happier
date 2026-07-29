@@ -50,4 +50,31 @@ describe('resolveTranscriptSelectionToolbarMessages', () => {
 
         expect(resolved).toEqual([{ id: 'done', role: 'assistant', text: 'complete' }]);
     });
+
+    it('drops agent placeholders that the transcript does not render when diagnostics are disabled', () => {
+        const resolved = resolveTranscriptSelectionToolbarMessages([
+            message({
+                id: 'unsupported',
+                kind: 'agent-text',
+                text: '[Unsupported agent output: future-type]',
+                meta: { happierUnsupportedContentV1: 'unsupported-agent-output' } as never,
+            }),
+            message({ id: 'answer', kind: 'agent-text', text: 'done' }),
+        ]);
+
+        expect(resolved.map((entry) => entry.id)).toEqual(['answer']);
+    });
+
+    it('keeps the raw diagnostic selectable when developer diagnostics are enabled', () => {
+        const resolved = resolveTranscriptSelectionToolbarMessages([
+            message({
+                id: 'unsupported',
+                kind: 'agent-text',
+                text: '[Unsupported agent output: future-type]',
+                meta: { happierUnsupportedContentV1: 'unsupported-agent-output' } as never,
+            }),
+        ], null, { debugInformationEnabled: true });
+
+        expect(resolved[0]?.text).toBe('[Unsupported agent output: future-type]');
+    });
 });

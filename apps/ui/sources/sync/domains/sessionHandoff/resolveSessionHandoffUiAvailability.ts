@@ -11,9 +11,12 @@ import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { canHandoffConversation } from './handoffUiSupport';
 import { resolveSessionHandoffSourceMachineId } from './resolveSessionHandoffSourceMachineId';
 import type { SessionHandoffRuntimeAvailability } from './useSessionHandoffSourceReachability';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 type SessionLike = Readonly<{
     metadata?: Record<string, unknown> | null;
+    metadataLayoutVersion?: number;
+    ownerMetadataView?: Record<string, unknown> | null;
 }>;
 
 export type SessionHandoffUiAvailability =
@@ -50,7 +53,13 @@ function readSourceMachineDaemonState(input: Readonly<{
     const sessionId = normalizeNonEmptyString(input.sessionId);
     const serverId = normalizeNonEmptyString(input.serverId);
     const reachableMachineId = normalizeNonEmptyString(input.reachableMachineId);
-    const sessionMetadata = input.session?.metadata ?? null;
+    const sessionMetadata = input.session
+        ? readSessionOwnerMetadataView({
+            metadataLayoutVersion: input.session.metadataLayoutVersion,
+            metadata: input.session.metadata ?? null,
+            ownerMetadataView: input.session.ownerMetadataView,
+        })
+        : null;
     if (!sessionId || !sessionMetadata) {
         return null;
     }

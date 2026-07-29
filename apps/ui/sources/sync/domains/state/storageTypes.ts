@@ -1,11 +1,15 @@
 import { z } from "zod";
-import { applyRuntimeDescriptorSessionMetadata } from "@happier-dev/agents/session/state/metadataWriters";
+import { applyRuntimeDescriptorSessionMetadata, normalizeLegacyAgentVocabularySessionMetadata } from "@happier-dev/agents/session/state/metadataWriters";
 import type { PermissionMode, ModelMode } from "@/sync/domains/permissions/permissionTypes";
 import type {
+    PendingDeliveryBlockedReason,
     PrimaryTurnStatusV1,
+    ScmBackendId,
     ScmHostingProviderRef,
     ScmPullRequestStatusProjection,
+    SessionMessageRole,
     SessionRuntimeIssueV1,
+    SessionContextUsageSnapshotV1,
 } from "@happier-dev/protocol";
 import { 
     createAgentRuntimeFacetsV1Schema,
@@ -18,6 +22,8 @@ import {
     createSessionSystemSessionV1Schema,
     readRuntimeDescriptorV1FromMetadata,
     RuntimeDescriptorV1Schema,
+    SessionAppliedModelV1Schema,
+    SessionModelSelectionIntentV1Schema,
     WindowsRemoteSessionLaunchModeSchema,
 } from "@happier-dev/protocol";
 
@@ -42,7 +48,7 @@ const MetadataObjectSchema = z.object({
         v: z.literal(1),
         sourceMachineId: z.string(),
         targetMachineId: z.string(),
-        providerId: z.string(),
+        agentId: z.string(),
         sessionStorageBefore: z.enum(['direct', 'persisted']),
         sessionStorageAfter: z.enum(['direct', 'persisted']),
         transportStrategy: z.enum(['direct_peer', 'server_routed_stream']),
@@ -57,6 +63,7 @@ const MetadataObjectSchema = z.object({
     agentRuntimeCapabilitiesV1: z.unknown().optional(),
     agentRuntimeFacetsV1: createAgentRuntimeFacetsV1Schema(z).optional(),
     geminiSessionId: z.string().optional(), // Gemini ACP session ID (opaque)
+    grokSessionId: z.string().optional(), // Grok ACP session ID (opaque)
     opencodeSessionId: z.string().optional(), // OpenCode ACP session ID (opaque)
     opencodeBackendMode: z.enum(['server', 'acp']).optional(),
     opencodeServerBaseUrl: z.string().optional(),
@@ -66,6 +73,7 @@ const MetadataObjectSchema = z.object({
     kimiSessionId: z.string().optional(), // Kimi ACP session ID (opaque)
     kiloSessionId: z.string().optional(), // Kilo ACP session ID (opaque)
     piSessionId: z.string().optional(), // Pi RPC session ID (opaque)
+    antigravitySessionId: z.string().optional(), // Antigravity CLI conversation ID (opaque)
     copilotSessionId: z.string().optional(), // Copilot ACP session ID (opaque)
     auggieAllowIndexing: z.boolean().optional(), // Auggie indexing enablement (spawn-time)
     tools: z.array(z.string()).optional(),
@@ -76,14 +84,14 @@ const MetadataObjectSchema = z.object({
     })).optional(),
     acpHistoryImportV1: z.object({
         v: z.literal(1),
-        provider: z.string(),
+        agentId: z.string(),
         remoteSessionId: z.string(),
         importedAt: z.number(),
         lastImportedFingerprint: z.string().optional(),
     }).optional(),
     acpSessionModesV1: z.object({
         v: z.literal(1),
-        provider: z.string(),
+        agentId: z.string(),
         updatedAt: z.number(),
         currentModeId: z.string(),
         availableModes: z.array(z.object({
@@ -94,7 +102,7 @@ const MetadataObjectSchema = z.object({
     }).optional(),
     sessionModesV1: z.object({
         v: z.literal(1),
-        provider: z.string(),
+        agentId: z.string(),
         updatedAt: z.number(),
         currentModeId: z.string(),
         availableModes: z.array(z.object({
@@ -110,7 +118,7 @@ const MetadataObjectSchema = z.object({
      */
     acpSessionModelsV1: z.object({
         v: z.literal(1),
-        provider: z.string(),
+        agentId: z.string(),
         updatedAt: z.number(),
         currentModelId: z.string(),
         availableModels: z.array(z.object({
@@ -134,7 +142,7 @@ const MetadataObjectSchema = z.object({
     }).optional(),
     sessionModelsV1: z.object({
         v: z.literal(1),
-        provider: z.string(),
+        agentId: z.string(),
         updatedAt: z.number(),
         currentModelId: z.string(),
         availableModels: z.array(z.object({
@@ -161,7 +169,7 @@ const MetadataObjectSchema = z.object({
      */
     acpConfigOptionsV1: z.object({
         v: z.literal(1),
-        provider: z.string(),
+        agentId: z.string(),
         updatedAt: z.number(),
         configOptions: z.array(z.object({
             id: z.string(),
@@ -174,11 +182,20 @@ const MetadataObjectSchema = z.object({
                 name: z.string(),
                 description: z.string().optional(),
             })).optional(),
+            groups: z.array(z.object({
+                id: z.string(),
+                name: z.string(),
+                options: z.array(z.object({
+                    value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+                    name: z.string(),
+                    description: z.string().optional(),
+                })),
+            })).optional(),
         })),
     }).optional(),
     sessionConfigOptionsV1: z.object({
         v: z.literal(1),
-        provider: z.string(),
+        agentId: z.string(),
         updatedAt: z.number(),
         configOptions: z.array(z.object({
             id: z.string(),
@@ -190,6 +207,15 @@ const MetadataObjectSchema = z.object({
                 value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
                 name: z.string(),
                 description: z.string().optional(),
+            })).optional(),
+            groups: z.array(z.object({
+                id: z.string(),
+                name: z.string(),
+                options: z.array(z.object({
+                    value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+                    name: z.string(),
+                    description: z.string().optional(),
+                })),
             })).optional(),
         })),
     }).optional(),
@@ -228,9 +254,12 @@ const MetadataObjectSchema = z.object({
      *
      * This mirrors the permission/mode override pattern:
      * - Stored in session metadata for cross-device consistency
-     * - Applied to outgoing user messages via `message.meta.model` where supported
+     * - Applied to outgoing user messages through the structured selection envelope,
+     *   with `message.meta.model` retained only for providerless legacy readers
      */
     modelOverrideV1: createModelOverrideV1Schema(z).optional(),
+    modelSelectionIntentV1: SessionModelSelectionIntentV1Schema.optional(),
+    sessionAppliedModelV1: SessionAppliedModelV1Schema.optional(),
     /**
      * Local-only markers for committed transcript messages that should be treated as discarded
      * (e.g. when the user switches to terminal control and abandons unprocessed remote messages).
@@ -265,10 +294,10 @@ const MetadataObjectSchema = z.object({
         parentCutoffSeqInclusive: z.number(),
         createdAtMs: z.number(),
         strategy: z.string(),
-        providerHint: z.object({
-            providerId: z.string().optional(),
+        agentHint: z.object({
+            agentId: z.string().optional(),
             backendMode: z.string().optional(),
-            providerSessionId: z.string().optional(),
+            agentSessionId: z.string().optional(),
         }).optional(),
     }).optional(),
     /**
@@ -314,7 +343,7 @@ export const MetadataSchema = z.preprocess((value) => {
     if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) {
         return parsedValue;
     }
-    const metadata = parsedValue as Record<string, unknown>;
+    const metadata = normalizeLegacyAgentVocabularySessionMetadata(parsedValue as Record<string, unknown>);
     const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(metadata);
     if (runtimeDescriptorV1 === null && Object.prototype.hasOwnProperty.call(metadata, 'runtimeDescriptorV1')) {
         const { agentRuntimeDescriptorV1: _legacyAgentRuntimeDescriptorV1, ...rest } = metadata;
@@ -378,9 +407,11 @@ const AgentStateObjectSchema = z.object({
         reason: z.string().nullish(),
         mode: z.string().nullish(),
         allowedTools: z.array(z.string()).nullish(),
-        decision: z.enum(['approved', 'approved_for_session', 'approved_execpolicy_amendment', 'denied', 'abort']).nullish(),
+        decision: z.enum(['approved', 'approved_for_session', 'approved_execpolicy_amendment', 'denied', 'abort'])
+            .nullish()
+            .catch(undefined),
         updatedPermissions: z.any().optional(),
-    })).nullish(),
+    }).passthrough()).nullish(),
     /**
      * Optional agent capabilities negotiated via agentState.
      * This must be permissive for backward/forward compatibility across agent versions.
@@ -405,6 +436,10 @@ const AgentStateObjectSchema = z.object({
          * "Apply setting & steer now". Readers must fail closed when absent.
          */
         inFlightConfigApplySupported: z.boolean().nullish(),
+        terminalComposerClearSupported: z.boolean().nullish(),
+        pendingInputInterruptAndRunLocalId: z.string().trim().min(1).nullish(),
+        pendingInputInterruptAndRunStateAt: z.number().int().nonnegative().nullish(),
+        terminalComposerDraftPresent: z.boolean().nullish(),
         localPermissionBridgeInLocalMode: z.boolean().optional(),
         permissionsInUiWhileLocal: z.boolean().optional(),
     }).nullish(),
@@ -447,6 +482,7 @@ export interface Session {
      */
     pendingVersion?: number,
     pendingCount?: number,
+    pendingBlockedCount?: number,
     lastViewedSessionSeq?: number | null,
     pendingPermissionRequestCount?: number,
     pendingUserActionRequestCount?: number,
@@ -458,7 +494,29 @@ export interface Session {
     latestReadyEventSeq?: number | null,
     latestReadyEventAt?: number | null,
     lastRuntimeIssue?: SessionRuntimeIssueV1 | null,
+    runtimeActivityActiveCount?: number | null,
+    runtimeActivityState?: 'active' | 'idle' | 'unknown' | null,
+    runtimeActivityObservedAt?: number | null,
+    runtimeActivityRevision?: number | null,
+    /**
+     * Server-readable transcript authority. Missing on older servers; linked sessions
+     * with no value must fail closed as legacy-unknown rather than infer persistence.
+     */
+    currentStorageState?: 'machine_only' | 'server_partial' | 'snapshot_complete' | 'hosted' | 'legacy_external_unknown',
+    acceptedThroughServerSeq?: number | null,
+    materializedThroughSourceAt?: number | null,
+    publishedThroughServerSeq?: number | null,
+    metadataLayoutVersion?: number,
     metadata: Metadata | null,
+    /**
+     * Owner-only layout-v1 metadata after the account-scoped envelope has been
+     * opened. The wire ciphertext is consumed at the session read boundary.
+     */
+    /**
+     * Ephemeral owner compatibility projection. It is derived from the strict
+     * shared and owner envelopes and is never serialized as shared metadata.
+     */
+    ownerMetadataView?: Metadata | null,
     metadataVersion: number,
     agentState: AgentState | null,
     agentStateVersion: number,
@@ -466,6 +524,7 @@ export interface Session {
     thinkingAt: number,
     presence: "online" | number, // "online" when active, timestamp when last seen
     optimisticThinkingAt?: number | null; // Local-only timestamp used for immediate "processing" UI feedback after submit
+    resumingAt?: number | null; // Local-only, bounded resume lifecycle marker shared by header/composer/list status.
     thinkingGraceUntil?: number | null; // Local-only timestamp used to debounce thinking indicator and avoid flicker between streaming chunks
     lastTurnCompletedAt?: number | null; // Local-only explicit terminal lifecycle timestamp used for completion surfaces
     todos?: Array<{
@@ -488,6 +547,9 @@ export interface Session {
         cacheCreation: number;
         cacheRead: number;
         contextSize: number;
+        contextWindowTokens?: number;
+        contextSnapshot: SessionContextUsageSnapshotV1;
+        contextSnapshotStale: boolean;
         timestamp: number;
     } | null;
     // Sharing-related fields
@@ -503,6 +565,10 @@ export interface Session {
     canApprovePermissions?: boolean; // Whether the current user can approve permission prompts for this shared session
 }
 
+export type PendingDeliveryStatus = 'server_queued' | 'server_delivering' | 'external_handoff' | 'blocked';
+
+export type { PendingDeliveryBlockedReason };
+
 export interface PendingMessage {
     id: string;
     localId: string | null;
@@ -510,6 +576,21 @@ export interface PendingMessage {
     updatedAt: number;
     source?: 'local_outbound' | 'server_pending';
     deliveryStatus?: 'queued' | 'accepted';
+    /** Durable-outbox authority for local outbound rows; never inferred from the active server. */
+    pendingOutboxScope?: import('@/sync/domains/scope/serverAccountScope').ServerAccountScope;
+    /** Durable local outbox operation; `cancel` must never be presented or retried as a send. */
+    pendingOutboxOperation?: 'enqueue' | 'cancel';
+    sendState?: 'unconfirmed' | 'failed';
+    pendingDeliveryStatus?: PendingDeliveryStatus;
+    /** Descriptive detail for a delivering row; never an outcome or settlement authority. */
+    pendingDeliveryDetail?: import('@happier-dev/protocol').PendingDeliveryDetailV1;
+    pendingDeliveryStatusRaw?: string;
+    pendingDeliveryBlockedReason?: PendingDeliveryBlockedReason;
+    pendingDeliveryBlockedReasonRaw?: string;
+    /** Server-owned action intent for this durable Pending row. */
+    pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
+    /** Corrupt non-null action data is visible and never treated as ordinary enqueue. */
+    pendingRequestedActionMalformed?: boolean;
     text: string;
     displayText?: string;
     pendingDecryptFailure?: { kind: 'decrypt_failed' };
@@ -518,13 +599,14 @@ export interface PendingMessage {
 
 export interface DiscardedPendingMessage extends PendingMessage {
     discardedAt: number;
-    discardedReason: 'switch_to_local' | 'manual';
+    discardedReason: 'switch_to_local' | 'manual' | 'dismissed_uncertain' | 'resent_as_new';
 }
 
 export interface DecryptedMessage {
     id: string,
     seq: number | null,
     localId: string | null,
+    messageRole?: SessionMessageRole | null,
     content: any,
     createdAt: number,
 }
@@ -545,6 +627,7 @@ export const MachineMetadataSchema = z.object({
     displayName: z.string().optional(), // Custom display name for the machine
     windowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchModeSchema.optional(),
     windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
+    daemonTerminalSessionAttachSupported: z.boolean().optional(),
     // Daemon status fields
     daemonLastKnownStatus: z.enum(['running', 'shutting-down']).optional(),
     daemonLastKnownPid: z.number().optional(),
@@ -569,7 +652,6 @@ export interface Machine {
     replacementActorUserId?: string | null;
     installationId?: string | null;
     contentPublicKeyFingerprint?: string | null;
-    spawnReadinessStatus?: 'ready' | 'missing' | 'revoked' | 'replaced' | 'offline' | 'unknown' | 'probing' | 'rpcUnavailable' | 'keyUnavailable';
     metadata: MachineMetadata | null;
     metadataVersion: number;
     daemonState: any | null;  // Dynamic daemon state (runtime info)
@@ -708,7 +790,7 @@ export interface ScmWorkingSnapshot {
     repo: {
         isRepo: boolean;
         rootPath: string | null;
-        backendId?: 'git' | 'sapling' | null;
+        backendId?: ScmBackendId | null;
         mode?: '.git' | '.sl' | null;
         defaultBranch?: string | null;
         worktrees?: Array<{

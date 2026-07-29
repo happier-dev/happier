@@ -8,12 +8,16 @@ function buildPending(params: {
     localId: string | null;
     createdAt: number;
     text?: string;
+    source?: PendingMessage['source'];
+    pendingDeliveryStatus?: PendingMessage['pendingDeliveryStatus'];
 }): PendingMessage {
     return {
         id: params.id,
         localId: params.localId,
         createdAt: params.createdAt,
         updatedAt: params.createdAt,
+        ...(params.source ? { source: params.source } : {}),
+        ...(params.pendingDeliveryStatus ? { pendingDeliveryStatus: params.pendingDeliveryStatus } : {}),
         text: params.text ?? params.id,
         rawRecord: {},
     };
@@ -102,6 +106,99 @@ describe('buildChatListItems', () => {
         expect(items[3]?.kind === 'action-draft' && items[3].draft.id).toBe('d1');
     });
 
+    it('appends pending user-action requests as transcript rows when no transcript tool call exists', () => {
+        const messages: Message[] = [
+            { kind: 'user-text', id: 'm1', localId: 'u1', createdAt: 1, text: 'user' },
+            { kind: 'agent-text', id: 'm2', localId: null, createdAt: 2, text: 'agent' },
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+
+        const items = buildChatListItems({
+            messageIdsOldestFirst: messages.map((m) => m.id),
+            messagesById,
+            pendingMessages: [],
+            pendingUserActionRequests: [
+                {
+                    id: 'resume_choice',
+                    tool: 'AskUserQuestion',
+                    kind: 'user_action',
+                    arguments: { question: 'How should Claude resume this session?' },
+                    createdAt: 3,
+                },
+            ],
+        });
+
+        expect(items.map((item) => item.kind)).toEqual(['message', 'message', 'pending-user-action']);
+        expect(items[2]).toEqual(expect.objectContaining({
+            id: 'pending-user-action:resume_choice',
+            kind: 'pending-user-action',
+            createdAt: 3,
+        }));
+    });
+
+    it('does not duplicate a pending user-action request that already has a transcript tool row', () => {
+        const messages: Message[] = [
+            buildToolCallMessage({
+                id: 'ask',
+                localId: null,
+                createdAt: 3,
+                state: 'running',
+                name: 'AskUserQuestion',
+                requestKind: 'user_action',
+            }),
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+
+        const items = buildChatListItems({
+            messageIdsOldestFirst: messages.map((m) => m.id),
+            messagesById,
+            pendingMessages: [],
+            pendingUserActionRequests: [
+                {
+                    id: 'perm:ask',
+                    tool: 'AskUserQuestion',
+                    kind: 'user_action',
+                    arguments: { question: 'Continue?' },
+                    createdAt: 3,
+                },
+            ],
+        });
+
+        expect(items.map((item) => item.kind)).toEqual(['message']);
+    });
+
+    it('reuses cached committed transcript items when only pending user-action requests are appended', () => {
+        const messages: Message[] = [
+            { kind: 'user-text', id: 'm1', localId: 'u1', createdAt: 1, text: 'user' },
+            { kind: 'agent-text', id: 'm2', localId: null, createdAt: 2, text: 'agent' },
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+        const base = buildChatListItemsCached({
+            cache: null,
+            messageIdsOldestFirst: messages.map((m) => m.id),
+            messagesById,
+            pendingMessages: [],
+        });
+
+        const next = buildChatListItemsCached({
+            cache: base.cache,
+            messageIdsOldestFirst: messages.map((m) => m.id),
+            messagesById,
+            pendingMessages: [],
+            pendingUserActionRequests: [
+                {
+                    id: 'resume_choice',
+                    tool: 'AskUserQuestion',
+                    kind: 'user_action',
+                    arguments: { question: 'How should Claude resume this session?' },
+                    createdAt: 3,
+                },
+            ],
+        });
+
+        expect(next.items.map((item) => item.kind)).toEqual(['message', 'message', 'pending-user-action']);
+    });
+
     it('appends pending messages after transcript messages', () => {
         const messages: Message[] = [
             { kind: 'user-text', id: 'm1', localId: 'u1', createdAt: 1, text: 'user' },
@@ -143,6 +240,8 @@ describe('buildChatListItems', () => {
             switch (item.kind) {
                 case 'pending-queue':
                     return item.pendingMessages.map((p) => p.localId);
+                case 'pending-user-action':
+                    return item.request.id;
                 case 'message':
                     return item.messageId;
                 case 'action-draft':
@@ -151,6 +250,8 @@ describe('buildChatListItems', () => {
                     return item.id;
                 case 'tool-calls-group':
                     return item.toolMessageIds;
+                case 'external-session-operation':
+                    return item.id;
                 default: {
                     const _exhaustive: never = item;
                     return _exhaustive;
@@ -158,6 +259,169 @@ describe('buildChatListItems', () => {
             }
         });
         expect(ids).toEqual(['m-user', 'm-tool', 'm-event', 'p3']);
+    });
+
+    it('hides started compaction event rows after a terminal event with the same lifecycle id is present', () => {
+        const messages: Message[] = [
+            {
+                kind: 'agent-event',
+                id: 'm-compact-started',
+                createdAt: 20,
+                event: {
+                    type: 'context-compaction',
+                    phase: 'started',
+                    lifecycleId: 'compact_1',
+                    provider: 'codex',
+                },
+            },
+            {
+                kind: 'agent-event',
+                id: 'm-other-started',
+                createdAt: 21,
+                event: {
+                    type: 'message',
+                    message: 'Preparing workspace',
+                    lifecycleId: 'workspace_1',
+                },
+            },
+            {
+                kind: 'agent-event',
+                id: 'm-compact-completed',
+                createdAt: 22,
+                event: {
+                    type: 'context-compaction',
+                    phase: 'completed',
+                    lifecycleId: 'compact_1',
+                    provider: 'codex',
+                },
+            },
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+
+        const items = buildChatListItems({
+            messageIdsOldestFirst: messages.map((m) => m.id),
+            messagesById,
+            pendingMessages: [],
+        });
+
+        expect(items.flatMap((item) => item.kind === 'message' ? item.messageId : [])).toEqual([
+            'm-other-started',
+            'm-compact-completed',
+        ]);
+    });
+
+    it('keeps compaction lifecycle rows independent when lifecycle ids differ', () => {
+        const messages: Message[] = [
+            {
+                kind: 'agent-event',
+                id: 'm-compact-started',
+                createdAt: 20,
+                event: {
+                    type: 'context-compaction',
+                    phase: 'started',
+                    lifecycleId: 'compact-start',
+                    provider: 'claude',
+                },
+            },
+            {
+                kind: 'agent-event',
+                id: 'm-compact-completed',
+                createdAt: 22,
+                event: {
+                    type: 'context-compaction',
+                    phase: 'completed',
+                    lifecycleId: 'compact-complete',
+                    provider: 'claude',
+                },
+            },
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+
+        const items = buildChatListItems({
+            messageIdsOldestFirst: messages.map((m) => m.id),
+            messagesById,
+            pendingMessages: [],
+        });
+
+        expect(items.flatMap((item) => item.kind === 'message' ? item.messageId : [])).toEqual([
+            'm-compact-started',
+            'm-compact-completed',
+        ]);
+    });
+
+    it('keeps compaction lifecycle rows without lifecycle ids independent', () => {
+        const messages: Message[] = [
+            {
+                kind: 'agent-event',
+                id: 'm-compact-started',
+                createdAt: 20,
+                event: {
+                    type: 'context-compaction',
+                    phase: 'started',
+                    provider: 'claude',
+                },
+            },
+            {
+                kind: 'agent-event',
+                id: 'm-compact-completed',
+                createdAt: 22,
+                event: {
+                    type: 'context-compaction',
+                    phase: 'completed',
+                    provider: 'claude',
+                },
+            },
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+
+        const items = buildChatListItems({
+            messageIdsOldestFirst: messages.map((m) => m.id),
+            messagesById,
+            pendingMessages: [],
+        });
+
+        expect(items.flatMap((item) => item.kind === 'message' ? item.messageId : [])).toEqual([
+            'm-compact-started',
+            'm-compact-completed',
+        ]);
+    });
+
+    it('renders only the latest compaction row for a lifecycle id', () => {
+        const messages: Message[] = [
+            {
+                kind: 'agent-event',
+                id: 'm-compact-started',
+                createdAt: 20,
+                event: {
+                    type: 'context-compaction',
+                    phase: 'started',
+                    lifecycleId: 'compact_1',
+                    provider: 'claude',
+                },
+            },
+            {
+                kind: 'agent-event',
+                id: 'm-compact-progress',
+                createdAt: 21,
+                event: {
+                    type: 'context-compaction',
+                    phase: 'progress',
+                    lifecycleId: 'compact_1',
+                    provider: 'claude',
+                },
+            },
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+
+        const items = buildChatListItems({
+            messageIdsOldestFirst: messages.map((m) => m.id),
+            messagesById,
+            pendingMessages: [],
+        });
+
+        expect(items.flatMap((item) => item.kind === 'message' ? item.messageId : [])).toEqual([
+            'm-compact-progress',
+        ]);
     });
 
     it('keeps pending messages without localId in the pending queue item', () => {
@@ -174,6 +438,103 @@ describe('buildChatListItems', () => {
 });
 
 describe('buildChatListItemsCached', () => {
+    it('starts a new tool-call group before a fork boundary message', () => {
+        const messages: Message[] = [
+            buildToolCallMessage({ id: 'parent-tool', localId: null, createdAt: 1 }),
+            buildToolCallMessage({ id: 'child-tool', localId: null, createdAt: 2 }),
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+        const buildWithForkBoundaries = buildChatListItemsCached as (
+            opts: Parameters<typeof buildChatListItemsCached>[0] & {
+                forkBoundaryBeforeMessageIds?: ReadonlySet<string>;
+                forkBoundarySignature?: string;
+            }
+        ) => ReturnType<typeof buildChatListItemsCached>;
+
+        const result = buildWithForkBoundaries({
+            cache: null,
+            messageIdsOldestFirst: ['parent-tool', 'child-tool'],
+            messagesById,
+            pendingMessages: [],
+            groupConsecutiveToolCalls: true,
+            forkBoundaryBeforeMessageIds: new Set(['child-tool']),
+            forkBoundarySignature: 'child-tool',
+        });
+
+        expect(result.items.map((item) => item.kind)).toEqual(['tool-calls-group', 'tool-calls-group']);
+        expect(result.items[0]?.kind === 'tool-calls-group' && result.items[0].toolMessageIds).toEqual(['parent-tool']);
+        expect(result.items[1]?.kind === 'tool-calls-group' && result.items[1].toolMessageIds).toEqual(['child-tool']);
+    });
+
+    it('annotates grouped tool calls with homogeneous fork origin metadata', () => {
+        const messages: Message[] = [
+            buildToolCallMessage({ id: 'parent-tool-1', localId: null, createdAt: 1 }),
+            buildToolCallMessage({ id: 'parent-tool-2', localId: null, createdAt: 2 }),
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+        const buildWithForkMetadata = buildChatListItemsCached as (
+            opts: Parameters<typeof buildChatListItemsCached>[0] & {
+                forkMetadataByMessageId?: Readonly<Record<string, { originSessionId: string; isReadOnlyContext: boolean }>>;
+            }
+        ) => ReturnType<typeof buildChatListItemsCached>;
+
+        const result = buildWithForkMetadata({
+            cache: null,
+            messageIdsOldestFirst: ['parent-tool-1', 'parent-tool-2'],
+            messagesById,
+            pendingMessages: [],
+            groupConsecutiveToolCalls: true,
+            forkMetadataByMessageId: {
+                'parent-tool-1': { originSessionId: 'parent', isReadOnlyContext: true },
+                'parent-tool-2': { originSessionId: 'parent', isReadOnlyContext: true },
+            },
+        });
+
+        expect(result.items[0]).toMatchObject({
+            kind: 'tool-calls-group',
+            originSessionId: 'parent',
+            isReadOnlyContext: true,
+        });
+    });
+
+    it('starts a new appended tool-call group before a fork boundary message', () => {
+        const messages: Message[] = [
+            buildToolCallMessage({ id: 'parent-tool', localId: null, createdAt: 1 }),
+            buildToolCallMessage({ id: 'child-tool', localId: null, createdAt: 2 }),
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+        const buildWithForkBoundaries = buildChatListItemsCached as (
+            opts: Parameters<typeof buildChatListItemsCached>[0] & {
+                forkBoundaryBeforeMessageIds?: ReadonlySet<string>;
+                forkBoundarySignature?: string;
+            }
+        ) => ReturnType<typeof buildChatListItemsCached>;
+
+        const before = buildWithForkBoundaries({
+            cache: null,
+            messageIdsOldestFirst: ['parent-tool'],
+            messagesById,
+            pendingMessages: [],
+            groupConsecutiveToolCalls: true,
+            forkBoundaryBeforeMessageIds: new Set(['child-tool']),
+            forkBoundarySignature: 'child-tool',
+        });
+
+        const after = buildWithForkBoundaries({
+            cache: before.cache,
+            messageIdsOldestFirst: ['parent-tool', 'child-tool'],
+            messagesById,
+            pendingMessages: [],
+            groupConsecutiveToolCalls: true,
+            forkBoundaryBeforeMessageIds: new Set(['child-tool']),
+            forkBoundarySignature: 'child-tool',
+        });
+
+        expect(after.items.map((item) => item.kind)).toEqual(['tool-calls-group', 'tool-calls-group']);
+        expect(after.items[0]).toBe(before.items[0]);
+        expect(after.items[1]?.kind === 'tool-calls-group' && after.items[1].toolMessageIds).toEqual(['child-tool']);
+    });
+
     it('reuses the item array when only an existing message body streams', () => {
         const agentMessage: AgentTextMessage = { kind: 'agent-text', id: 'm-2', localId: null, createdAt: 2, text: 'hello' };
         const initialMessagesById: Record<string, Message> = {
@@ -258,6 +619,97 @@ describe('buildChatListItemsCached', () => {
         // Object identity stability is the entire point of caching.
         expect(r2.items[0]).toBe(r1.items[0]);
         expect(r2.items[1]).toBe(r1.items[1]);
+    });
+
+    it('hides cached started compaction event rows after appending a terminal event with the same lifecycle id', () => {
+        const messages: Message[] = [
+            {
+                kind: 'agent-event',
+                id: 'm-compact-started',
+                createdAt: 20,
+                event: {
+                    type: 'context-compaction',
+                    phase: 'started',
+                    lifecycleId: 'compact_1',
+                    provider: 'codex',
+                },
+            },
+            {
+                kind: 'agent-event',
+                id: 'm-compact-completed',
+                createdAt: 22,
+                event: {
+                    type: 'context-compaction',
+                    phase: 'completed',
+                    lifecycleId: 'compact_1',
+                    provider: 'codex',
+                },
+            },
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+
+        const before = buildChatListItemsCached({
+            cache: null,
+            messageIdsOldestFirst: ['m-compact-started'],
+            messagesById,
+            pendingMessages: [],
+        });
+        const after = buildChatListItemsCached({
+            cache: before.cache,
+            messageIdsOldestFirst: ['m-compact-started', 'm-compact-completed'],
+            messagesById,
+            pendingMessages: [],
+        });
+
+        expect(before.items.flatMap((item) => item.kind === 'message' ? item.messageId : [])).toEqual(['m-compact-started']);
+        expect(after.items.flatMap((item) => item.kind === 'message' ? item.messageId : [])).toEqual(['m-compact-completed']);
+    });
+
+    it('keeps cached compaction lifecycle rows independent when lifecycle ids differ', () => {
+        const messages: Message[] = [
+            {
+                kind: 'agent-event',
+                id: 'm-compact-started',
+                createdAt: 20,
+                event: {
+                    type: 'context-compaction',
+                    phase: 'started',
+                    lifecycleId: 'compact-start',
+                    provider: 'claude',
+                },
+            },
+            {
+                kind: 'agent-event',
+                id: 'm-compact-completed',
+                createdAt: 22,
+                event: {
+                    type: 'context-compaction',
+                    phase: 'completed',
+                    lifecycleId: 'compact-complete',
+                    provider: 'claude',
+                },
+            },
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+
+        const before = buildChatListItemsCached({
+            cache: null,
+            messageIdsOldestFirst: ['m-compact-started'],
+            messagesById,
+            pendingMessages: [],
+        });
+        const after = buildChatListItemsCached({
+            cache: before.cache,
+            messageIdsOldestFirst: ['m-compact-started', 'm-compact-completed'],
+            messagesById,
+            pendingMessages: [],
+        });
+
+        expect(before.items.flatMap((item) => item.kind === 'message' ? item.messageId : [])).toEqual(['m-compact-started']);
+        expect(after.items.flatMap((item) => item.kind === 'message' ? item.messageId : [])).toEqual([
+            'm-compact-started',
+            'm-compact-completed',
+        ]);
     });
 
     it('groups consecutive tool-call messages into a tool-calls-group item when enabled', () => {
@@ -378,6 +830,8 @@ describe('buildChatListItemsCached', () => {
             switch (item.kind) {
                 case 'pending-queue':
                     return item.pendingMessages.map((p) => p.localId);
+                case 'pending-user-action':
+                    return item.request.id;
                 case 'message':
                     return item.messageId;
                 case 'action-draft':
@@ -386,6 +840,8 @@ describe('buildChatListItemsCached', () => {
                     return item.id;
                 case 'tool-calls-group':
                     return item.toolMessageIds;
+                case 'external-session-operation':
+                    return item.id;
                 default: {
                     const _exhaustive: never = item;
                     return _exhaustive;
@@ -409,6 +865,8 @@ describe('buildChatListItemsCached', () => {
             switch (item.kind) {
                 case 'pending-queue':
                     return item.pendingMessages.map((p) => p.localId);
+                case 'pending-user-action':
+                    return item.request.id;
                 case 'message':
                     return item.messageId;
                 case 'action-draft':
@@ -417,6 +875,8 @@ describe('buildChatListItemsCached', () => {
                     return item.id;
                 case 'tool-calls-group':
                     return item.toolMessageIds;
+                case 'external-session-operation':
+                    return item.id;
                 default: {
                     const _exhaustive: never = item;
                     return _exhaustive;
@@ -424,5 +884,65 @@ describe('buildChatListItemsCached', () => {
             }
         });
         expect(ids2).toEqual(['m-user', 'm2']);
+    });
+
+    it('keeps unresolved server pending rows visible when their committed transcript row exists', () => {
+        const messages: Message[] = [
+            { kind: 'user-text', id: 'm-user', localId: 'p1', createdAt: 20, text: 'materialized user' },
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+        const pending: PendingMessage[] = [
+            buildPending({
+                id: 'p1-server',
+                localId: 'p1',
+                createdAt: 10,
+                source: 'server_pending',
+                pendingDeliveryStatus: 'server_delivering',
+            }),
+            buildPending({
+                id: 'p1-local',
+                localId: 'p1',
+                createdAt: 11,
+                source: 'local_outbound',
+            }),
+        ];
+
+        const items = buildChatListItems({
+            messageIdsOldestFirst: ['m-user'],
+            messagesById,
+            pendingMessages: pending,
+        });
+
+        expect(items.map((item) => item.kind)).toEqual(['pending-queue']);
+        expect(items[0]?.kind === 'pending-queue' && items[0].pendingMessages.map((message) => message.id))
+            .toEqual(['p1-server']);
+    });
+
+    it('keeps discarded server pending rows authoritative over their provisional committed transcript row', () => {
+        const messages: Message[] = [
+            { kind: 'user-text', id: 'm-user', localId: 'p1', createdAt: 20, text: 'materialized user' },
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+        const discarded = [{
+            ...buildPending({
+                id: 'p1-server',
+                localId: 'p1',
+                createdAt: 10,
+                source: 'server_pending',
+            }),
+            discardedAt: 30,
+            discardedReason: 'manual' as const,
+        }];
+
+        const items = buildChatListItems({
+            messageIdsOldestFirst: ['m-user'],
+            messagesById,
+            pendingMessages: [],
+            discardedMessages: discarded,
+        });
+
+        expect(items.map((item) => item.kind)).toEqual(['pending-queue']);
+        expect(items[0]?.kind === 'pending-queue' && items[0].discardedMessages.map((message) => message.id))
+            .toEqual(['p1-server']);
     });
 });

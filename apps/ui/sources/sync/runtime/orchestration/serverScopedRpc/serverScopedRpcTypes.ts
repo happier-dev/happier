@@ -1,3 +1,5 @@
+import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
+
 export type SocketRpcResult =
     | { ok: true; result: string }
     | { ok: false; error?: string; errorCode?: string };
@@ -10,6 +12,10 @@ export type ServerScopedMachineRpcParams<A> = Readonly<{
     timeoutMs?: number;
     preferScoped?: boolean;
     skipTransferPolicyEvaluation?: boolean;
+    authorization?: SocketRpcAuthorizationContext;
+    signal?: AbortSignal;
+    /** Exact-action issuance hook, invoked immediately before the real socket emit. */
+    onIssued?: () => void;
 }>;
 
 export type ActiveServerRpcContext = Readonly<{
@@ -37,6 +43,7 @@ export type ScopedRpcEncryptionContext = Readonly<{
 }>;
 
 export type ScopedRpcSessionEncryptionContext = Readonly<{
+    anonID?: string;
     decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
     initializeSessions: (keys: Map<string, Uint8Array | null>) => Promise<void>;
     getSessionEncryption: (sessionId: string) => ScopedSessionEncryption | null | undefined;
@@ -63,5 +70,12 @@ export type ScopedSocketClient = Readonly<{
     emit: (event: string, payload: any) => void;
     on: (event: string, listener: (...args: any[]) => void) => void;
     off: (event: string, listener: (...args: any[]) => void) => void;
+    /**
+     * The socket.io connection id of the underlying ephemeral socket, or '' when not connected.
+     * Surfacing it lets per-tab transports (e.g. the live-stream relay viewer) target
+     * `io.to(socketId)` instead of falling back to the shared user room. It changes across
+     * reconnects, so callers must read it at use time, never cache it.
+     */
+    getSocketId: () => string;
     disconnect: () => void;
 }>;

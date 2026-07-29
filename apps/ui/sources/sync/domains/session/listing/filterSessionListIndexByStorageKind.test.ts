@@ -14,7 +14,16 @@ function makeSessionRow(id: string, direct: boolean): SessionListRenderableSessi
         activeAt: 0,
         metadataVersion: 0,
         agentStateVersion: 0,
-        metadata: direct ? { path: '', externalSessionV1: { v: 1, providerId: 'codex' } } : { path: '' },
+        metadata: direct ? {
+            path: '',
+            externalSessionV1: {
+                v: 1,
+                agentId: 'codex',
+                machineId: 'machine-1',
+                remoteSessionId: 'remote-1',
+                source: { kind: 'codexHome', home: 'user' },
+            },
+        } : { path: '' },
         thinking: false,
         thinkingAt: 0,
         presence: 0,
@@ -61,6 +70,23 @@ describe('filterSessionListIndexByStorageKind', () => {
         ]);
     });
 
+    it('uses indexed storageKind without requiring legacy row state', () => {
+        const source: SessionListIndexItem[] = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey: 'g1', serverId: 'server-a' },
+            { type: 'session', sessionId: 'persisted-1', serverId: 'server-a', groupKey: 'g1', storageKind: 'persisted' },
+            { type: 'session', sessionId: 'direct-1', serverId: 'server-a', groupKey: 'g1', storageKind: 'direct' },
+        ];
+
+        const result = filterSessionListIndexByStorageKind(source, 'persisted', () => {
+            throw new Error('storageKind-bearing index items must not require legacy row resolution');
+        })!;
+
+        expect(result).toEqual([
+            expect.objectContaining({ type: 'header', headerKind: 'date' }),
+            expect.objectContaining({ type: 'session', sessionId: 'persisted-1', storageKind: 'persisted' }),
+        ]);
+    });
+
     it('reuses the same empty result when filtering removes every session', () => {
         const source: SessionListIndexItem[] = [
             { type: 'header', title: 'Today', headerKind: 'date', groupKey: 'g1', serverId: 'server-a' },
@@ -72,5 +98,25 @@ describe('filterSessionListIndexByStorageKind', () => {
 
         expect(first).toBe(second);
         expect(first).toEqual([]);
+    });
+
+    it('keeps a converted external-history row in all and Happier views but out of External', () => {
+        const source: SessionListIndexItem[] = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey: 'g1', serverId: 'server-a' },
+            { type: 'session', sessionId: 'converted-1', serverId: 'server-a', groupKey: 'g1' },
+        ];
+        const converted = {
+            ...makeSessionRow('converted-1', false),
+            metadata: {
+                path: '/repo',
+                externalHistoryImportV1: { v: 1, importedAt: 1_000 },
+            },
+        };
+        const resolve = makeResolver({ 'server-a:converted-1': converted });
+
+        expect(filterSessionListIndexByStorageKind(source, 'all', resolve)).toBe(source);
+        expect(filterSessionListIndexByStorageKind(source, 'persisted', resolve))
+            .toEqual(expect.arrayContaining([expect.objectContaining({ type: 'session', sessionId: 'converted-1' })]));
+        expect(filterSessionListIndexByStorageKind(source, 'direct', resolve)).toEqual([]);
     });
 });

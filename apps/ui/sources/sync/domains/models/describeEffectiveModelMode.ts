@@ -3,14 +3,24 @@ import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { hasDynamicModelListForSession, getSelectableModelIdsForSession, supportsFreeformModelSelectionForSession } from '@/sync/domains/models/modelOptions';
 import { readSessionModelsState, readSessionModesState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
+import { SessionAppliedModelV1Schema } from '@happier-dev/protocol';
 
 export type ModelApplyScope = 'live' | 'next_prompt' | 'spawn_only';
 
 export type EffectiveModelModeDescription = Readonly<{
+    /** Requested model. This owns picker selection and model-specific controls. */
+    selectedModelId: string;
+    /** Last model attached to an exact provider-accepted new turn for this agent. */
+    appliedModelId: string | null;
+    /** @deprecated Use selectedModelId for selection semantics. */
     effectiveModelId: string;
     applyScope: ModelApplyScope;
     notes: string[];
 }>;
+
+function normalizeModelId(value: string | null | undefined): string {
+    return typeof value === 'string' ? value.trim() : '';
+}
 
 export function describeEffectiveModelMode(params: {
     agentType: AgentType;
@@ -20,9 +30,14 @@ export function describeEffectiveModelMode(params: {
     const agentId = resolveAgentIdFromFlavor(params.agentType) ?? DEFAULT_AGENT_ID;
     const core = getAgentCore(agentId);
 
-    const selectedModelId = typeof params.selectedModelId === 'string' ? params.selectedModelId.trim() : '';
+    const selectedModelId = normalizeModelId(params.selectedModelId);
     const hasExplicitSelection = selectedModelId.length > 0;
-    const effectiveModelId = hasExplicitSelection ? selectedModelId : core.model.defaultMode;
+    const defaultModelId = normalizeModelId(core.model.defaultMode) || 'default';
+    const effectiveModelId = hasExplicitSelection ? selectedModelId : defaultModelId;
+    const appliedModel = SessionAppliedModelV1Schema.safeParse(params.metadata?.sessionAppliedModelV1);
+    const appliedModelId = appliedModel.success && appliedModel.data.provider === agentId
+        ? normalizeModelId(appliedModel.data.modelId) || null
+        : null;
 
     const isAcpSession = Boolean(readSessionModesState(params.metadata) || readSessionModelsState(params.metadata));
 
@@ -57,5 +72,11 @@ export function describeEffectiveModelMode(params: {
         notes.push('Model selection is not available in the app for this provider.');
     }
 
-    return { effectiveModelId, applyScope, notes };
+    return {
+        selectedModelId: effectiveModelId,
+        appliedModelId,
+        effectiveModelId,
+        applyScope,
+        notes,
+    };
 }

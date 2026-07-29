@@ -22,7 +22,7 @@ export type ScmRemoteTarget = {
 };
 
 export type ScmUiBackendPlugin = {
-    id: 'git' | 'sapling';
+    id: string;
     displayName: string;
     mapCapabilitiesToUiPolicy: (snapshot: ScmWorkingSnapshot | null) => ScmUiPolicy;
     diffModeConfig: (snapshot: ScmWorkingSnapshot | null) => {

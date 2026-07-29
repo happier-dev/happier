@@ -27,7 +27,7 @@ export class NativeModule<TEvents = unknown> {
 }
 
 // Expo modules use this to access native modules (which don't exist in Vitest/node).
-export function requireOptionalNativeModule() {
+export function requireOptionalNativeModule(_moduleName?: string) {
     return null;
 }
 

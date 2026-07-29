@@ -1,5 +1,11 @@
 import { MMKV } from 'react-native-mmkv';
-import { PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema } from '@happier-dev/protocol';
+import {
+    ExternalSessionsSourceSchema,
+    parseSessionRuntimeActivityProjectionFields,
+    PrimaryTurnStatusV1Schema,
+    SessionRuntimeActivityStateSchema,
+    SessionRuntimeIssueV1Schema,
+} from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
@@ -12,6 +18,11 @@ type WarmCacheSavedValue = Readonly<{
     raw: string;
     value: Record<string, unknown>;
 }>;
+type WarmCacheBootHydrationSchedule = Readonly<{
+    cancel: () => void;
+    done: Promise<void>;
+}>;
+type RequestIdleCallbackHandle = ReturnType<NonNullable<typeof globalThis.requestIdleCallback>>;
 
 const warmCacheSavedValueByKey = new Map<string, WarmCacheSavedValue>();
 
@@ -31,6 +42,7 @@ const EMPTY_MACHINE_DISPLAY_WARM_CACHE_ENTRIES = EMPTY_WARM_CACHE_ENTRIES as Rec
 export const SessionListCacheEntryV1Schema = z.object({
     sessionId: z.string().min(1),
     seq: z.number().int().nonnegative().optional(),
+    metadataLayoutVersion: z.number().int().nonnegative().optional(),
     metadataVersion: z.number().int().nonnegative(),
     agentStateVersion: z.number().int().nonnegative(),
     updatedAt: z.number(),
@@ -41,10 +53,16 @@ export const SessionListCacheEntryV1Schema = z.object({
     archivedAt: z.number().nullable(),
     lastViewedSessionSeq: z.number().int().nonnegative().nullable().optional(),
     pendingCount: z.number().int().nonnegative().optional(),
+    pendingBlockedCount: z.number().int().nonnegative().optional(),
     pendingVersion: z.number().int().nonnegative().optional(),
     latestTurnStatus: PrimaryTurnStatusV1Schema.nullable().optional(),
     latestTurnStatusObservedAt: z.number().int().nonnegative().nullable().optional(),
     lastRuntimeIssue: SessionRuntimeIssueV1Schema.nullable().optional(),
+    runtimeActivityActiveCount: z.number().int().nonnegative().nullable().optional(),
+    runtimeActivityState: SessionRuntimeActivityStateSchema.nullable().optional(),
+    runtimeActivityObservedAt: z.number().int().nonnegative().nullable().optional(),
+    runtimeActivityRevision: z.number().int().nonnegative().nullable().optional(),
+    runtimeActivitySourceClass: z.never().optional(),
     rollbackEligibleTurnStarts: z.array(z.number().int().nonnegative()).optional(),
     latestReadyEventSeq: z.number().int().nonnegative().nullable().optional(),
     latestReadyEventAt: z.number().int().nonnegative().nullable().optional(),
@@ -60,13 +78,24 @@ export const SessionListCacheEntryV1Schema = z.object({
     flavor: z.string().nullable().optional(),
     externalSessionV1: z.object({
         v: z.literal(1),
-        providerId: z.string().optional(),
-    }).nullable().optional(),
+        agentId: z.string().min(1),
+        machineId: z.string().min(1),
+        remoteSessionId: z.string().min(1),
+        source: ExternalSessionsSourceSchema,
+        codexBackendMode: z.string().optional(),
+    }).passthrough().nullable().optional(),
     hiddenSystemSession: z.boolean().optional(),
     keepVisibleWhenInactive: z.boolean().optional(),
     hasPendingPermissionRequests: z.boolean().optional(),
     hasPendingUserActionRequests: z.boolean().optional(),
     hasUnreadMessages: z.boolean().optional(),
+}).superRefine((entry, context) => {
+    if (parseSessionRuntimeActivityProjectionFields(entry).kind === 'invalid') {
+        context.addIssue({
+            code: 'custom',
+            message: 'Runtime Activity must be absent or a complete validated tuple',
+        });
+    }
 });
 
 export type SessionListCacheEntryV1 = z.infer<typeof SessionListCacheEntryV1Schema>;
@@ -186,6 +215,60 @@ function peekScopedRecord<T extends Record<string, unknown>>(key: string | null)
 
 function normalizeEmptyWarmCacheRecord<T extends Record<string, unknown>>(value: T): T {
     return hasAnyOwnEntries(value) ? value : (EMPTY_WARM_CACHE_ENTRIES as T);
+}
+
+export function scheduleWarmCacheBootHydration(
+    task: () => void,
+    options?: Readonly<{ fallbackDelayMs?: number }>,
+): WarmCacheBootHydrationSchedule {
+    const fallbackDelayMs = typeof options?.fallbackDelayMs === 'number' && Number.isFinite(options.fallbackDelayMs)
+        ? Math.max(0, Math.trunc(options.fallbackDelayMs))
+        : 100;
+    const requestIdleCallback = globalThis.requestIdleCallback;
+    const cancelIdleCallback = globalThis.cancelIdleCallback;
+    let idleHandle: RequestIdleCallbackHandle | null = null;
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
+    let resolveDone: () => void = () => {};
+    const done = new Promise<void>((resolve) => {
+        resolveDone = resolve;
+    });
+
+    const clearPending = (): void => {
+        if (fallbackTimer) {
+            clearTimeout(fallbackTimer);
+            fallbackTimer = null;
+        }
+        if (idleHandle !== null && typeof cancelIdleCallback === 'function') {
+            cancelIdleCallback(idleHandle);
+            idleHandle = null;
+        }
+    };
+    const run = (): void => {
+        if (settled) return;
+        settled = true;
+        clearPending();
+        try {
+            task();
+        } finally {
+            resolveDone();
+        }
+    };
+
+    if (typeof requestIdleCallback === 'function') {
+        idleHandle = requestIdleCallback(run, { timeout: fallbackDelayMs });
+    }
+    fallbackTimer = setTimeout(run, fallbackDelayMs);
+
+    return {
+        cancel: () => {
+            if (settled) return;
+            settled = true;
+            clearPending();
+            resolveDone();
+        },
+        done,
+    };
 }
 
 export function loadSessionListWarmCacheEntries(serverId: string | null | undefined, accountId: string | null | undefined): Record<string, SessionListCacheEntryV1> {

@@ -111,6 +111,7 @@ export const SessionSubagentGroup = React.memo((props: Readonly<{
         fireAndForget(
             sync.submitMessage(props.sessionId, structured.text, structured.displayText, structured.metaOverrides, {
                 callerSurface: 'subagent_command',
+                forceImmediate: true,
             }),
             { tag: 'SessionSubagentGroup.deleteTeam' },
         );

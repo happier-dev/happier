@@ -1,7 +1,16 @@
-import type { FlashListRef } from '@/components/ui/lists/flashListCompat/FlashListCompat';
 import { readNativeAbsoluteScrollOffset } from '@/components/sessions/transcript/viewport/driver/readNativeAbsoluteScrollOffset';
 
-export type NativeTranscriptViewportFlashListRef<T> = FlashListRef<T>;
+export type NativeTranscriptViewportRef = Readonly<{
+    computeVisibleIndices?: () => { startIndex: number; endIndex: number };
+    getFirstVisibleIndex?: () => number;
+    getLayout?: (index: number) => {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    } | undefined;
+    getAbsoluteLastScrollOffset?: () => number;
+}>;
 
 export type NativeTranscriptViewportAnchorKind = 'message' | 'toolGroup' | 'item';
 
@@ -109,8 +118,8 @@ function clampIndex(index: number, maxExclusive: number): number | null {
     return index;
 }
 
-function resolveVisibleRange<T>(
-    ref: NativeTranscriptViewportFlashListRef<T>,
+function resolveVisibleRange(
+    ref: NativeTranscriptViewportRef,
     dataLength: number,
 ): { startIndex: number; endIndex: number } | null {
     if (dataLength <= 0) return null;
@@ -163,7 +172,7 @@ function chooseFocusLineIndex<T>(params: Readonly<{
 }
 
 export function captureNativeTranscriptViewportAnchor<T>(params: Readonly<{
-    ref: NativeTranscriptViewportFlashListRef<T> | null | undefined;
+    ref: NativeTranscriptViewportRef | null | undefined;
     data: readonly T[];
     focusOffsetPx: number;
     capturedAtMs: number;
@@ -232,7 +241,7 @@ export function planNativeTranscriptViewportAnchorRestore(params: Readonly<{
     return {
         status: 'planned',
         index: params.index,
-        // FlashList adds viewOffset to the item layout offset; invert our row-top-to-viewport coordinate.
+        // Native scrollToIndex adds viewOffset to the item layout offset; invert our row-top-to-viewport coordinate.
         viewOffset: -params.itemOffsetPx,
     };
 }
@@ -266,8 +275,8 @@ export function planNativeTranscriptViewportAnchorMeasuredOffsetRestore(params: 
     return { status: 'planned', targetOffsetY };
 }
 
-function isIndexVisibleWithFallback<T>(
-    ref: NativeTranscriptViewportFlashListRef<T>,
+function isIndexVisibleWithFallback(
+    ref: NativeTranscriptViewportRef,
     index: number,
 ): boolean {
     if (typeof ref.computeVisibleIndices === 'function') {
@@ -294,8 +303,8 @@ function isIndexVisibleWithFallback<T>(
     return false;
 }
 
-export function resolveNativeTranscriptViewportAnchorRestoreObservation<T>(params: Readonly<{
-    ref: NativeTranscriptViewportFlashListRef<T> | null | undefined;
+export function resolveNativeTranscriptViewportAnchorRestoreObservation(params: Readonly<{
+    ref: NativeTranscriptViewportRef | null | undefined;
     index: number;
     itemOffsetPx: number;
     tolerancePx: number;

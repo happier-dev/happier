@@ -10,7 +10,10 @@ import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
 import type { CustomModalInjectedProps } from '@/modal';
 import { t } from '@/text';
 
-export type ExternalSessionTakeoverDialogAction = 'direct' | 'persisted';
+export type ExternalSessionTakeoverDialogAction =
+    | 'direct'
+    | 'persisted'
+    | 'recheck';
 
 export type ExternalSessionTakeoverDialogResult = Readonly<{
     action: ExternalSessionTakeoverDialogAction | null;
@@ -21,6 +24,7 @@ type ExternalSessionTakeoverDialogProps = CustomModalInjectedProps & Readonly<{
     canTakeOverDirect: boolean;
     canTakeOverPersist: boolean;
     canForceStop: boolean;
+    runningProcessPid?: number | null;
     onResolve: (result: ExternalSessionTakeoverDialogResult) => void;
     onRequestClose?: () => void;
 }>;
@@ -94,6 +98,7 @@ export function ExternalSessionTakeoverDialog(props: ExternalSessionTakeoverDial
     useUnistyles();
     const styles = stylesheet;
     const [forceStop, setForceStop] = React.useState(false);
+    const runningProcessActive = props.runningProcessPid !== undefined;
 
     const resolve = React.useCallback((result: ExternalSessionTakeoverDialogResult) => {
         props.onResolve(result);
@@ -102,9 +107,28 @@ export function ExternalSessionTakeoverDialog(props: ExternalSessionTakeoverDial
 
     return (
         <View style={styles.body}>
+            {runningProcessActive ? (
+                <View style={styles.forceStopCard}>
+                    <Text style={styles.forceStopTitle}>
+                        {t('chatFooter.externalSessionProcessRunning')}
+                    </Text>
+                    <Text style={styles.forceStopBody}>
+                        {t('chatFooter.externalSessionTakeoverBlocked')}
+                        {props.runningProcessPid === null
+                            ? null
+                            : ` ${t('runs.detail.pid', {
+                                pid: props.runningProcessPid,
+                            })}`}
+                    </Text>
+                </View>
+            ) : null}
+
             {props.canTakeOverDirect ? (
                 <Pressable
                     testID="direct-session-takeover-dialog-direct"
+                    accessibilityRole="button"
+                    accessibilityLabel={t('chatFooter.directTakeoverDialogDirectTitle')}
+                    accessibilityHint={t('chatFooter.directTakeoverDialogDirectBody')}
                     onPress={() => resolve({ action: 'direct', forceStop: props.canForceStop ? forceStop : false })}
                     style={({ pressed }) => [styles.optionButton, { opacity: pressed ? 0.85 : 1 }]}
                 >
@@ -116,6 +140,9 @@ export function ExternalSessionTakeoverDialog(props: ExternalSessionTakeoverDial
             {props.canTakeOverPersist ? (
                 <Pressable
                     testID="direct-session-takeover-dialog-persist"
+                    accessibilityRole="button"
+                    accessibilityLabel={t('chatFooter.directTakeoverDialogPersistTitle')}
+                    accessibilityHint={t('chatFooter.directTakeoverDialogPersistBody')}
                     onPress={() => resolve({ action: 'persisted', forceStop: props.canForceStop ? forceStop : false })}
                     style={({ pressed }) => [styles.optionButton, { opacity: pressed ? 0.85 : 1 }]}
                 >
@@ -130,6 +157,9 @@ export function ExternalSessionTakeoverDialog(props: ExternalSessionTakeoverDial
                         <Text style={styles.forceStopTitle}>{t('chatFooter.directTakeoverDialogForceStopTitle')}</Text>
                         <Switch
                             testID="direct-session-takeover-dialog-force-stop"
+                            accessibilityRole="switch"
+                            accessibilityLabel={t('chatFooter.directTakeoverDialogForceStopTitle')}
+                            accessibilityHint={t('chatFooter.directTakeoverDialogForceStopBody')}
                             value={forceStop}
                             onValueChange={setForceStop}
                         />
@@ -138,8 +168,28 @@ export function ExternalSessionTakeoverDialog(props: ExternalSessionTakeoverDial
                 </View>
             ) : null}
 
+            {runningProcessActive ? (
+                <Pressable
+                    testID="direct-session-takeover-dialog-recheck"
+                    accessibilityRole="button"
+                    accessibilityLabel={t('chatFooter.externalSessionRecheck')}
+                    accessibilityHint={t('chatFooter.externalSessionTakeoverBlocked')}
+                    onPress={() => resolve({ action: 'recheck', forceStop: false })}
+                    style={({ pressed }) => [
+                        styles.optionButton,
+                        { opacity: pressed ? 0.85 : 1 },
+                    ]}
+                >
+                    <Text style={styles.optionTitle}>
+                        {t('chatFooter.externalSessionRecheck')}
+                    </Text>
+                </Pressable>
+            ) : null}
+
             <Pressable
                 testID="direct-session-takeover-dialog-cancel"
+                accessibilityRole="button"
+                accessibilityLabel={t('common.cancel')}
                 onPress={() => resolve({ action: null, forceStop: false })}
                 style={({ pressed }) => [styles.cancelButton, { opacity: pressed ? 0.7 : 1 }]}
             >
@@ -153,6 +203,7 @@ export async function showExternalSessionTakeoverDialog(params: Readonly<{
     canTakeOverDirect: boolean;
     canTakeOverPersist: boolean;
     canForceStop: boolean;
+    runningProcessPid?: number | null;
 }>): Promise<ExternalSessionTakeoverDialogResult> {
     const deferred = createDeferredOnce<ExternalSessionTakeoverDialogResult>();
     Modal.show({
@@ -161,6 +212,9 @@ export async function showExternalSessionTakeoverDialog(params: Readonly<{
             canTakeOverDirect: params.canTakeOverDirect,
             canTakeOverPersist: params.canTakeOverPersist,
             canForceStop: params.canForceStop,
+            ...(params.runningProcessPid !== undefined
+                ? { runningProcessPid: params.runningProcessPid }
+                : {}),
             onResolve: deferred.resolve,
         },
         onRequestClose: () => deferred.resolve({ action: null, forceStop: false }),

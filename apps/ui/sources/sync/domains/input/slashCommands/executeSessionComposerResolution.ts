@@ -35,10 +35,20 @@ type SessionComposerTextSnapshot = Readonly<{
   text: string;
 }>;
 
+// A genuine, permanent backend limitation: the provider does not expose editable goals at all.
+// The disabled-feature signal arrives as a human-readable error string (no stable errorCode).
 function isUnsupportedGoalOperationResult(result: SessionGoalOperationResult): boolean {
   if (result.ok) return false;
-  if (result.errorCode === 'unsupported_session_runtime_method') return true;
   return /goals?\s+feature\s+is\s+disabled/i.test(result.error);
+}
+
+// A transient state: a freshly-opened active session's live session RPC reports the goal method as
+// not yet registered (`unsupported_session_runtime_method`) before its runtime controls finish
+// wiring. This is a load-time race, not a permanent backend limitation, so it must surface as a
+// retryable "not ready yet" message rather than the permanent-sounding "does not support" message.
+function isGoalControlNotReadyResult(result: SessionGoalOperationResult): boolean {
+  if (result.ok) return false;
+  return result.errorCode === 'unsupported_session_runtime_method';
 }
 
 function isMissingCurrentGoalOperationResult(result: SessionGoalOperationResult): boolean {
@@ -56,6 +66,10 @@ function showGoalOperationFailure(
 ): void {
   if (options?.statusOnly === true && isMissingCurrentGoalOperationResult(result)) {
     modalAlert(t('session.workState.noCurrentGoalTitle'), t('session.workState.noCurrentGoalMessage'));
+    return;
+  }
+  if (isGoalControlNotReadyResult(result)) {
+    modalAlert(t('session.workState.notReadyTitle'), t('session.workState.notReadyMessage'));
     return;
   }
   if (isUnsupportedGoalOperationResult(result)) {

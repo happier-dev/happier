@@ -94,6 +94,7 @@ export default function SessionRunDetailsScreen() {
                     ref={detailsRef}
                     sessionId={sessionId}
                     runId={runId}
+                    serverId={routeScope.serverId}
                     presentation="screen"
                 />
             )}

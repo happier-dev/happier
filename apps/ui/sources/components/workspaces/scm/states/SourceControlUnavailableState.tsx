@@ -1,11 +1,8 @@
 import * as React from 'react';
-import { View } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 import { SCM_OPERATION_ERROR_CODES, type ScmOperationErrorCode } from '@happier-dev/protocol';
@@ -57,59 +54,13 @@ export function SourceControlUnavailableState(props: {
     const details = sanitizeDetails(props.details ?? null);
 
     return (
-        <View
-            style={{
-                flex: 1,
-                justifyContent: 'center',
-                alignItems: 'center',
-                paddingTop: 40,
-                paddingHorizontal: 20,
-                gap: 14,
-            }}
-        >
-            <Octicons name="alert" size={42} color={theme.colors.text.secondary} />
-
-            <Text
-                style={{
-                    fontSize: 16,
-                    color: theme.colors.text.secondary,
-                    textAlign: 'center',
-                    ...Typography.default(),
-                }}
-            >
-                {t('common.error')}
-            </Text>
-
-            <Text
-                style={{
-                    fontSize: 14,
-                    color: theme.colors.text.secondary,
-                    textAlign: 'center',
-                    ...Typography.default(),
-                }}
-            >
-                {t(bodyKey)}
-            </Text>
-
-            {details && (
-                <Text
-                    style={{
-                        fontSize: 12,
-                        color: theme.colors.text.secondary,
-                        textAlign: 'center',
-                        opacity: 0.9,
-                        ...Typography.default(),
-                    }}
-                >
-                    {details}
-                </Text>
-            )}
-
-            {props.onRetry && (
-                <View style={{ marginTop: 6 }}>
-                    <RoundButton size="normal" title={t('common.retry')} onPress={props.onRetry} />
-                </View>
-            )}
-        </View>
+        <SurfaceStateCard
+            kind="error"
+            title={t('common.error')}
+            reason={t(bodyKey)}
+            detail={details ?? undefined}
+            icon={<Octicons name="alert" size={42} color={theme.colors.text.secondary} />}
+            action={props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : undefined}
+        />
     );
 }

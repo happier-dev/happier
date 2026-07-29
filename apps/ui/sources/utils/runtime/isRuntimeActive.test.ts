@@ -1,6 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const appState = vi.hoisted(() => ({ currentState: 'active' as string }));
+const appState = vi.hoisted(() => ({
+    currentState: 'active' as string,
+    listeners: new Set<(state: string) => void>(),
+}));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
@@ -9,11 +12,21 @@ vi.mock('react-native', async () => {
             get currentState() {
                 return appState.currentState;
             },
+            addEventListener: (_event: string, listener: (state: string) => void) => {
+                appState.listeners.add(listener);
+                return { remove: () => appState.listeners.delete(listener) };
+            },
         },
     });
 });
 
 describe('isRuntimeActive', () => {
+    afterEach(() => {
+        appState.currentState = 'active';
+        appState.listeners.clear();
+        vi.useRealTimers();
+    });
+
     it('treats the web appState "unknown" as active (so probes can run)', async () => {
         const { isRuntimeActive } = await import('./isRuntimeActive');
         appState.currentState = 'unknown';
@@ -64,5 +77,30 @@ describe('isRuntimeActive', () => {
             delete (globalThis as any).__TAURI_INTERNALS__;
             (globalThis as any).document = prevDocument;
         }
+    });
+
+    it('skips interval ticks while inactive and runs once when returning active overdue', async () => {
+        vi.useFakeTimers();
+        const { startRuntimeActiveGatedInterval } = await import('./isRuntimeActive');
+        const tick = vi.fn();
+
+        appState.currentState = 'active';
+        const stop = startRuntimeActiveGatedInterval(tick, 100);
+
+        await vi.advanceTimersByTimeAsync(100);
+        expect(tick).toHaveBeenCalledTimes(1);
+
+        appState.currentState = 'background';
+        appState.listeners.forEach((listener) => listener('background'));
+        await vi.advanceTimersByTimeAsync(500);
+        expect(tick).toHaveBeenCalledTimes(1);
+
+        appState.currentState = 'active';
+        appState.listeners.forEach((listener) => listener('active'));
+        expect(tick).toHaveBeenCalledTimes(2);
+
+        stop();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(tick).toHaveBeenCalledTimes(2);
     });
 });

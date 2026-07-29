@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import { createProjectedAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/createProjectedAgentLocalAuthPlugin';
 
 import {
     adaptDaemonContributionRegistryProjectionToMergedProjectionInputs,
@@ -12,19 +13,28 @@ describe('daemon contribution registry projection adapters', () => {
         const projection: DaemonContributionRegistryProjectionV1Like = {
             v: 1,
             generationId: 'registry:plugin-provider|ui:p1.settings',
-            providersById: {
+            agentsById: {
                 p1: {
                     id: 'p1',
                     title: 'P1',
                     subtitle: 'sub',
                     channel: 'plugin',
                     settingsBackendId: 'b1',
-                    providerAgentId: 'claude',
+                    catalogAgentId: 'claude',
                     iconAgentId: 'codex',
                 },
             },
             backendsById: {
-                b1: { id: 'b1', providerId: 'p1', providerAgentId: 'claude', iconAgentId: 'codex' },
+                b1: {
+                    id: 'b1',
+                    agentId: 'p1',
+                    catalogAgentId: 'claude',
+                    iconAgentId: 'codex',
+                    capabilities: {
+                        executionRun: { supported: true },
+                        session: { supported: false },
+                    },
+                },
             },
             actionsById: {
                 'p1.refresh': {
@@ -37,6 +47,13 @@ describe('daemon contribution registry projection adapters', () => {
                         settings: true,
                     },
                 },
+                'p1.write': {
+                    id: 'p1.write',
+                    pluginId: 'p1',
+                    title: 'Write P1',
+                    safety: 'danger',
+                    surfaces: { settings: true },
+                },
             },
             resourcesById: {
                 'p1.prompt': {
@@ -48,40 +65,26 @@ describe('daemon contribution registry projection adapters', () => {
                     contentType: 'text/markdown',
                 },
             },
-            uiDescriptorsById: {
-                'p1.settings': {
-                    id: 'p1.settings',
-                    pluginId: 'p1',
-                    surface: 'settings',
-                    title: 'Setup',
-                    description: 'Configure P1',
-                    fields: [
-                        {
-                            id: 'enabled',
-                            kind: 'boolean',
-                            title: 'Enabled',
-                            options: [],
-                        },
-                    ],
-                },
-            },
         };
 
         const adapted = adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(projection);
         expect(adapted.mergedProviderProjectionById?.p1).toEqual(expect.objectContaining({
-            providerId: 'p1',
+            agentId: 'p1',
             title: 'P1',
             subtitle: 'sub',
             channel: 'plugin',
             settingsBackendId: 'b1',
-            providerAgentId: 'claude',
+            catalogAgentId: 'claude',
             iconAgentId: 'codex',
         }));
         expect(adapted.mergedBackendProjectionById?.b1).toEqual(expect.objectContaining({
             backendId: 'b1',
-            providerId: 'p1',
-            providerAgentId: 'claude',
+            agentId: 'p1',
+            catalogAgentId: 'claude',
             iconAgentId: 'codex',
+            capabilities: expect.objectContaining({
+                session: expect.objectContaining({ supported: false }),
+            }),
         }));
         expect(adapted.pluginProjectionById?.p1).toEqual(expect.objectContaining({
             pluginId: 'p1',
@@ -92,6 +95,11 @@ describe('daemon contribution registry projection adapters', () => {
                     id: 'p1.refresh',
                     title: 'Refresh P1',
                     surfaces: ['settings'],
+                    dangerLevel: 'safe',
+                }),
+                expect.objectContaining({
+                    id: 'p1.write',
+                    dangerLevel: 'writesLocal',
                 }),
             ],
             resources: [
@@ -101,76 +109,10 @@ describe('daemon contribution registry projection adapters', () => {
                     path: 'resources/prompt.md',
                 }),
             ],
-            settingsSections: [
-                expect.objectContaining({
-                    id: 'p1.settings',
-                    fields: [
-                        expect.objectContaining({
-                            key: 'enabled',
-                            kind: 'boolean',
-                        }),
-                    ],
-                }),
-            ],
         }));
     });
 
-    it('keeps v1 agent and provider settings descriptors in separate ownership buckets', () => {
-        const projection: DaemonContributionRegistryProjectionV1Like = {
-            v: 1,
-            uiDescriptorsById: {
-                'p1.agent-settings': {
-                    id: 'p1.agent-settings',
-                    pluginId: 'p1',
-                    surface: 'agentSettings',
-                    title: 'Agent Settings',
-                    fields: [
-                        {
-                            id: 'agentSecret',
-                            kind: 'secret',
-                            title: 'Agent secret',
-                            options: [],
-                        },
-                    ],
-                },
-                'p1.provider-settings': {
-                    id: 'p1.provider-settings',
-                    pluginId: 'p1',
-                    surface: 'providerSettings',
-                    title: 'Provider Settings',
-                    fields: [
-                        {
-                            id: 'providerSecret',
-                            kind: 'secret',
-                            title: 'Provider secret',
-                            options: [],
-                        },
-                    ],
-                },
-            },
-        };
-
-        const adapted = adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(projection);
-
-        expect(adapted.pluginProjectionById?.p1?.agentSettingsSections).toEqual([
-            expect.objectContaining({
-                id: 'p1.agent-settings',
-                fields: [
-                    expect.objectContaining({ key: 'agentSecret', kind: 'secret' }),
-                ],
-            }),
-        ]);
-        expect(adapted.pluginProjectionById?.p1?.providerSettingsSections).toEqual([
-            expect.objectContaining({
-                id: 'p1.provider-settings',
-                fields: [
-                    expect.objectContaining({ key: 'providerSecret', kind: 'secret' }),
-                ],
-            }),
-        ]);
-    });
-
-    it('adapts plugin projection v2 descriptors and registry metadata', () => {
+    it('adapts plugin projection v2 registry metadata', () => {
         const projection: PluginProjectionV2 = {
             v: 2,
             generation: 42,
@@ -187,7 +129,30 @@ describe('daemon contribution registry projection adapters', () => {
                     digest: 'sha256:manifest',
                 },
             },
-            providersById: {},
+            agentsById: {
+                'acme.native': {
+                    id: 'acme.native',
+                    identity: {
+                        pluginId: 'acme.review',
+                        localId: 'acme-native',
+                    },
+                    channel: 'plugin',
+                    isBuiltIn: false,
+                    providerOwnedEnvironmentKeys: [],
+                    cli: {
+                        executable: { binaryName: 'acme', sourcePreference: 'system-first' },
+                        install: { manual: { kind: 'none' } },
+                        auth: {
+                            support: 'login_terminal',
+                            probe: { parser: 'unknown', backgroundChecks: 'safe' },
+                            loginLaunches: [
+                                { kind: 'primary', args: ['login'] },
+                                { kind: 'device_code', args: ['login', '--device-code'] },
+                            ],
+                        },
+                    },
+                },
+            },
             backendsById: {},
             actionsById: {
                 'acme.review.refresh': {
@@ -196,14 +161,18 @@ describe('daemon contribution registry projection adapters', () => {
                     title: 'Refresh Acme',
                     description: 'Refresh Acme resources',
                     scopes: ['settings'],
-                    surfaces: ['settings'],
+                    surfaces: ['agent'],
                     placement: 'detailsPanel',
-                    dangerLevel: 'safe',
+                    dangerLevel: 'writesRemote',
+                    confirmation: {
+                        title: { key: 'actions.refresh.title', fallback: 'Refresh remote resources?' },
+                        body: { key: 'actions.refresh.body', fallback: 'This changes remote resources.' },
+                        confirmLabel: { key: 'actions.refresh.confirm', fallback: 'Refresh' },
+                    },
                     available: true,
                 },
             },
             familiesById: {},
-            hooksById: {},
             toolsById: {},
             commandsById: {},
             resourcesById: {
@@ -216,104 +185,66 @@ describe('daemon contribution registry projection adapters', () => {
                     contentType: 'text/markdown',
                 },
             },
-            uiDescriptorsById: {
-                'acme.review.settings': {
-                    id: 'acme.review.settings',
-                    pluginId: 'acme.review',
-                    surface: 'settings',
-                    title: 'Setup',
-                    description: 'Configure review hooks',
-                    fields: [
-                        {
-                            id: 'enabled',
-                            type: 'boolean',
-                            title: 'Enable review hooks',
-                            options: [],
-                        },
-                        {
-                            id: 'mode',
-                            type: 'select',
-                            title: 'Mode',
-                            options: [
-                                { value: 'safe', label: 'Safe' },
-                            ],
-                        },
-                    ],
-                },
-                'acme.review.setup': {
-                    id: 'acme.review.setup',
-                    pluginId: 'acme.review',
-                    surface: 'setup',
-                    title: 'Setup Flow',
-                    description: 'Initial setup',
-                    fields: [
-                        {
-                            id: 'connect',
-                            type: 'action',
-                            title: 'Connect account',
-                            options: [],
-                        },
-                    ],
-                },
-                'acme.review.provider-settings': {
-                    id: 'acme.review.provider-settings',
-                    pluginId: 'acme.review',
-                    surface: 'agentSettings',
-                    title: 'Provider Settings',
-                    fields: [
-                        {
-                            id: 'providerSecret',
-                            type: 'secret',
-                            title: 'Provider token',
-                            options: [],
-                        },
-                    ],
-                },
-                'acme.review.backend-settings': {
-                    id: 'acme.review.backend-settings',
-                    pluginId: 'acme.review',
-                    surface: 'backendSettings',
-                    title: 'Backend Settings',
-                    fields: [
-                        {
-                            id: 'parallelism',
-                            type: 'number',
-                            title: 'Parallelism',
-                            options: [],
-                        },
-                    ],
-                },
-                'acme.review.status': {
-                    id: 'acme.review.status',
-                    pluginId: 'acme.review',
-                    surface: 'status',
-                    title: 'Runtime',
-                    fields: [
-                        {
-                            id: 'generation',
-                            type: 'text',
-                            title: 'Registry generation',
-                            options: [],
-                        },
-                    ],
-                },
-            },
+            settingsById: {},
             diagnostics: [
                 {
-                    severity: 'warning',
-                    code: 'registry.warning',
-                    message: 'Registry rebuilt with warnings',
+                    version: 1,
+                    id: 'acme.review:normalization:plugin:0',
+                    data: {
+                        severity: 'warning',
+                        code: 'registry.warning',
+                        message: 'Registry rebuilt with warnings',
+                    },
+                    plugin: { id: 'acme.review', version: '1.2.3', source: 'localPath' },
+                    stage: 'normalization',
+                    generation: '42',
+                    host: 'daemon',
+                    platform: 'darwin',
+                    occurredAtMs: 1,
+                    resolution: { state: 'current' },
                 },
                 {
-                    severity: 'info',
-                    code: 'plugin.activated',
-                    message: 'Activation completed',
-                    pluginId: 'acme.review',
+                    version: 1,
+                    id: 'acme.review:activation:plugin:0',
+                    data: {
+                        severity: 'info',
+                        code: 'plugin.activated',
+                        message: 'Activation completed',
+                    },
+                    plugin: { id: 'acme.review', version: '1.2.3', source: 'localPath' },
+                    stage: 'activation',
+                    generation: '42',
+                    host: 'daemon',
+                    platform: 'darwin',
+                    occurredAtMs: 2,
+                    resolution: { state: 'current' },
                 },
             ],
         };
 
         const adapted = adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(projection);
+        expect(adapted.mergedProviderProjectionById['acme.native']?.identity).toEqual({
+            pluginId: 'acme.review',
+            localId: 'acme-native',
+        });
+
+        expect(adapted.mergedProviderProjectionById['acme.native']?.cli?.auth.loginLaunches).toEqual([
+            { kind: 'primary', args: ['login'] },
+            { kind: 'device_code', args: ['login', '--device-code'] },
+        ]);
+        const projectedCli = adapted.mergedProviderProjectionById['acme.native']?.cli;
+        if (!projectedCli) throw new Error('expected native Agent CLI/auth projection');
+        const authPlugin = createProjectedAgentLocalAuthPlugin({
+            agentId: 'acme.native',
+            cli: projectedCli,
+        });
+        expect(authPlugin.loginLaunchKinds).toEqual(['primary', 'device_code']);
+        expect(authPlugin.buildLoginLaunch?.({
+            kind: 'device_code',
+            resolvedCommand: "'/opt/runtime/bun' '/opt/acme/acme.js'",
+        })).toEqual({
+            initialCommand: "'/opt/runtime/bun' '/opt/acme/acme.js' login --device-code",
+        });
 
         expect(adapted.pluginProjectionById?.['acme.review']).toEqual(expect.objectContaining({
             pluginId: 'acme.review',
@@ -328,12 +259,19 @@ describe('daemon contribution registry projection adapters', () => {
                 manifestDigest: 'sha256:manifest',
             }),
             diagnostics: [
+                { code: 'registry.warning', message: 'Registry rebuilt with warnings', severity: 'warning' },
                 { code: 'plugin.activated', message: 'Activation completed', severity: 'info' },
             ],
             actions: [
                 expect.objectContaining({
                     id: 'acme.review.refresh',
                     title: 'Refresh Acme',
+                    dangerLevel: 'writesRemote',
+                    confirmation: {
+                        title: { key: 'actions.refresh.title', fallback: 'Refresh remote resources?' },
+                        body: { key: 'actions.refresh.body', fallback: 'This changes remote resources.' },
+                        confirmLabel: { key: 'actions.refresh.confirm', fallback: 'Refresh' },
+                    },
                 }),
             ],
             resources: [
@@ -344,49 +282,7 @@ describe('daemon contribution registry projection adapters', () => {
                 }),
             ],
         }));
-        expect(adapted.pluginProjectionById?.['acme.review']?.settingsSections).toEqual([
-            expect.objectContaining({
-                id: 'acme.review.settings',
-                title: 'Setup',
-                fields: [
-                    expect.objectContaining({ key: 'enabled', kind: 'boolean' }),
-                    expect.objectContaining({
-                        key: 'mode',
-                        kind: 'enum',
-                        enumOptions: [{ id: 'safe', title: 'Safe' }],
-                    }),
-                ],
-            }),
-        ]);
-        expect(adapted.pluginProjectionById?.['acme.review']?.setupSections).toEqual([
-            expect.objectContaining({
-                id: 'acme.review.setup',
-                fields: [
-                    expect.objectContaining({ key: 'connect', kind: 'action' }),
-                ],
-            }),
-        ]);
-        expect(adapted.pluginProjectionById?.['acme.review']?.agentSettingsSections).toEqual([
-            expect.objectContaining({
-                id: 'acme.review.provider-settings',
-                fields: [
-                    expect.objectContaining({ key: 'providerSecret', kind: 'secret' }),
-                ],
-            }),
-        ]);
-        expect(adapted.pluginProjectionById?.['acme.review']?.providerSettingsSections).toEqual([]);
-        expect(adapted.pluginProjectionById?.['acme.review']?.backendSettingsSections).toEqual([
-            expect.objectContaining({
-                id: 'acme.review.backend-settings',
-                fields: [
-                    expect.objectContaining({ key: 'parallelism', kind: 'number' }),
-                ],
-            }),
-        ]);
-        expect(adapted.pluginProjectionById?.['acme.review']?.statusSections).toHaveLength(1);
-        expect(adapted.registryDiagnostics).toEqual([
-            { code: 'registry.warning', message: 'Registry rebuilt with warnings', severity: 'warning' },
-        ]);
+        expect(adapted.registryDiagnostics).toEqual([]);
     });
 
 });

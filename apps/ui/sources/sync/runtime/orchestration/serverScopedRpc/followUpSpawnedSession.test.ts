@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchAndApplySessionById } from '@/sync/engine/sessions/sessionById';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -8,10 +8,19 @@ const syncMock = vi.hoisted(() => ({
     applySessions: vi.fn(),
     refreshSessions: vi.fn(async () => {}),
     sendMessage: vi.fn(async () => {}),
+    enqueuePendingMessage: vi.fn(async (_sessionId: string, _text: string, _displayText?: string, _meta?: Record<string, unknown>, options?: Readonly<{ localId?: string | null }>) => ({
+        localId: options?.localId ?? 'pending-local-id',
+        accepted: true,
+    })),
 }));
+const getSyncSingletonMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/sync', () => ({
     sync: syncMock,
+}));
+
+vi.mock('@/sync/runtime/getSyncSingleton', () => ({
+    getSyncSingleton: getSyncSingletonMock,
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
@@ -20,8 +29,30 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 describe('followUpSpawnedSessionWithServerScope', () => {
+    beforeEach(() => {
+        syncMock.applySessions.mockClear();
+        syncMock.refreshSessions.mockClear();
+        syncMock.sendMessage.mockClear();
+        syncMock.enqueuePendingMessage.mockClear();
+        getSyncSingletonMock.mockReset();
+        getSyncSingletonMock.mockReturnValue(syncMock);
+    });
+
     it('attaches a recoverable follow-up payload when active-scope sendMessage fails before the first message send', async () => {
         const ensureSessionVisibleForMessageRoute = vi.fn(async () => {});
+        const storedSession = {
+            id: 'sess_target',
+            createdAt: 1,
+            updatedAt: 2,
+            seq: 0,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadataVersion: 1,
+            metadata: null,
+            agentStateVersion: 1,
+            agentState: null,
+        } as Session;
 
         const { createFollowUpSpawnedSessionWithServerScope, readRecoverableFollowUpPayload } = await import('./followUpSpawnedSession');
         const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
@@ -31,12 +62,12 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             }),
             activeSync: {
                 refreshSessions: async () => {},
-                sendMessage: async () => {
+                enqueuePendingMessage: async () => {
                     throw new Error('active send failed');
                 },
             },
             ensureSessionVisibleForMessageRoute,
-            getStoredSession: () => null,
+            getStoredSession: () => storedSession,
         });
 
         let thrown: unknown = null;
@@ -68,7 +99,62 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             },
             profileId: 'profile-work',
         });
-        expect(ensureSessionVisibleForMessageRoute).not.toHaveBeenCalled();
+        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('sess_target', { forceRefresh: true });
+    }, 120_000);
+
+    it('enqueues post-spawn first text and attachment metadata exactly once with the stable local id', async () => {
+        const enqueuePendingMessage = vi.fn(async () => ({
+            localId: 'spawn-first-turn:nonce-1',
+            accepted: true,
+        }));
+        const storedSession = {
+            id: 'sess_target',
+            createdAt: 1,
+            updatedAt: 2,
+            seq: 0,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadataVersion: 1,
+            metadata: null,
+            agentStateVersion: 1,
+            agentState: null,
+        } as Session;
+        const { createFollowUpSpawnedSessionWithServerScope } = await import('./followUpSpawnedSession');
+        const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
+            resolveContext: async () => ({ scope: 'active', timeoutMs: 5_000 }),
+            activeSync: {
+                refreshSessions: async () => {},
+                enqueuePendingMessage,
+            },
+            ensureSessionVisibleForMessageRoute: async () => {},
+            getStoredSession: () => storedSession,
+        });
+        const attachmentMeta = {
+            happier: {
+                kind: 'attachments.v1',
+                attachments: [{ name: 'evidence.txt', uploadedPath: 'uploads/evidence.txt' }],
+            },
+        };
+
+        await followUpSpawnedSessionWithServerScope({
+            sessionId: 'sess_target',
+            initialMessageText: 'Investigate this bug\n\n[attachments block]',
+            displayText: 'Investigate this bug',
+            metaOverrides: attachmentMeta,
+            messageLocalId: 'spawn-first-turn:nonce-1',
+        });
+
+        expect(enqueuePendingMessage).toHaveBeenCalledExactlyOnceWith(
+            'sess_target',
+            'Investigate this bug\n\n[attachments block]',
+            'Investigate this bug',
+            attachmentMeta,
+            {
+                localId: 'spawn-first-turn:nonce-1',
+                requestedAction: { v: 1, kind: 'enqueue' },
+            },
+        );
     });
 
     it('hydrates scoped sessions through sync bookkeeping instead of writing directly to storage state', async () => {
@@ -82,6 +168,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 scope: 'scoped',
                 timeoutMs: 5_000,
                 targetServerId: 'server-b',
+                targetAccountId: 'account-b',
                 targetServerUrl: 'https://server-b.example.test',
                 token: 'token-b',
                 encryption: {
@@ -124,7 +211,6 @@ describe('followUpSpawnedSessionWithServerScope', () => {
     it('hydrates and sends the initial message through the selected server scope without writing workspace metadata', async () => {
         const sendSessionMessageWithServerScope = vi.fn(async () => ({ ok: true as const }));
         const refreshSessions = vi.fn(async () => {});
-        const sendMessage = vi.fn(async () => {});
 
         let storedSession: Session | null = null;
         const fetchedSession = {
@@ -152,6 +238,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 scope: 'scoped',
                 timeoutMs: 5_000,
                 targetServerId: 'server-b',
+                targetAccountId: 'account-b',
                 targetServerUrl: 'https://server-b.example.test',
                 token: 'token-b',
                 encryption: {
@@ -173,7 +260,6 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             sendSessionMessageWithServerScope,
             activeSync: {
                 refreshSessions,
-                sendMessage,
             },
             getStoredSession: () => storedSession,
             applySessions: (sessions) => {
@@ -205,6 +291,8 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 },
             },
             profileId: 'profile-work',
+            messageLocalId: undefined,
+            providerDeliveryIntent: 'first_turn',
         });
         expect(storedSession).not.toBeNull();
         if (!storedSession) {
@@ -217,7 +305,6 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             },
         });
         expect(refreshSessions).not.toHaveBeenCalled();
-        expect(sendMessage).not.toHaveBeenCalled();
     });
 
     it('does not send the scoped follow-up when session-by-id hydration returns terminal auth', async () => {
@@ -229,6 +316,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 scope: 'scoped',
                 timeoutMs: 5_000,
                 targetServerId: 'server-b',
+                targetAccountId: 'account-b',
                 targetServerUrl: 'https://server-b.example.test',
                 token: 'token-b',
                 encryption: {
@@ -270,6 +358,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 scope: 'scoped',
                 timeoutMs: 5_000,
                 targetServerId: 'server-b',
+                targetAccountId: 'account-b',
                 targetServerUrl: 'https://server-b.example.test',
                 token: 'token-b',
                 encryption: {
@@ -299,70 +388,13 @@ describe('followUpSpawnedSessionWithServerScope', () => {
         expect(sendSessionMessageWithServerScope).not.toHaveBeenCalled();
     });
 
-    it('hydrates the active-scope session after sending the initial message so navigation can resolve it locally', async () => {
-        const refreshSessions = vi.fn(async () => {});
-        const sendMessage = vi.fn(async () => {});
-        let storedSession: Session | null = null;
-        const ensureSessionVisibleForMessageRoute = vi.fn(async () => {
-            storedSession = {
-                id: 'sess_target',
-                createdAt: 1,
-                updatedAt: 2,
-                seq: 1,
-                active: true,
-                activeAt: 2,
-                encryptionMode: 'plain',
-                metadataVersion: 1,
-                metadata: { path: '/tmp/repo' },
-                agentStateVersion: 1,
-                agentState: null,
-            } as Session;
-        });
 
-        const { createFollowUpSpawnedSessionWithServerScope } = await import('./followUpSpawnedSession');
-        const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
-            resolveContext: async () => ({
-                scope: 'active',
-                timeoutMs: 5_000,
-            }),
-            activeSync: {
-                refreshSessions,
-                sendMessage,
-            },
-            ensureSessionVisibleForMessageRoute,
-            getStoredSession: () => storedSession,
-        });
-
-        await expect(followUpSpawnedSessionWithServerScope({
-            sessionId: 'sess_target',
-            targetServerId: 'server-b',
-            initialMessageText: 'hello from active server',
-        })).resolves.toBeUndefined();
-
-        expect(refreshSessions).not.toHaveBeenCalled();
-        expect(sendMessage).toHaveBeenCalledWith(
-            'sess_target',
-            'hello from active server',
-            undefined,
-            undefined,
-            {
-                profileId: undefined,
-                localId: undefined,
-                bypassPendingQueueReason: 'server_scoped_rpc',
-            },
-        );
-        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith(
-            'sess_target',
-            { forceRefresh: true, serverId: 'server-b' },
-        );
-    });
-
-    it('does not fail active-scope follow-up after the first message is sent when local hydration still lags behind', async () => {
+    it('fails active-scope first-message follow-up recoverably when local hydration still lags behind', async () => {
         const refreshSessions = vi.fn(async () => {});
         const sendMessage = vi.fn(async () => {});
         const ensureSessionVisibleForMessageRoute = vi.fn(async (_sessionId: string, _options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) => {});
 
-        const { createFollowUpSpawnedSessionWithServerScope } = await import('./followUpSpawnedSession');
+        const { createFollowUpSpawnedSessionWithServerScope, readRecoverableFollowUpPayload } = await import('./followUpSpawnedSession');
         const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
             resolveContext: async () => ({
                 scope: 'active',
@@ -370,31 +402,32 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             }),
             activeSync: {
                 refreshSessions,
-                sendMessage,
             },
             ensureSessionVisibleForMessageRoute,
             getStoredSession: () => null,
         });
 
-        await expect(followUpSpawnedSessionWithServerScope({
-            sessionId: 'sess_target',
-            initialMessageText: 'hello from active server',
-        })).resolves.toBeUndefined();
+        let thrown: unknown = null;
+        try {
+            await followUpSpawnedSessionWithServerScope({
+                sessionId: 'sess_target',
+                initialMessageText: 'hello from active server',
+            });
+        } catch (error) {
+            thrown = error;
+        }
 
+        expect(thrown).toBeInstanceOf(Error);
+        expect((thrown as Error).message).toBe('Created session is not available locally yet');
+        expect(readRecoverableFollowUpPayload(thrown)).toEqual({
+            draftText: 'hello from active server',
+        });
         expect(refreshSessions).not.toHaveBeenCalled();
-        expect(sendMessage).toHaveBeenCalledWith(
-            'sess_target',
-            'hello from active server',
-            undefined,
-            undefined,
-            {
-                profileId: undefined,
-                localId: undefined,
-                bypassPendingQueueReason: 'server_scoped_rpc',
-            },
-        );
+        expect(sendMessage).not.toHaveBeenCalled();
         expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('sess_target', { forceRefresh: true });
     });
+
+
 
     it('forces active-scope hydration when the stored session already exists but is only partially hydrated', async () => {
         const refreshSessions = vi.fn(async () => {});
@@ -421,7 +454,6 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             }),
             activeSync: {
                 refreshSessions,
-                sendMessage: async () => {},
             },
             ensureSessionVisibleForMessageRoute: async (sessionId: string, options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) => {
                 await ensureSessionVisibleForMessageRoute(sessionId, options);
@@ -460,66 +492,64 @@ describe('followUpSpawnedSessionWithServerScope', () => {
         });
     });
 
-    it('passes displayText, metadata overrides, and profileId through the default active-scope sendMessage wrapper', async () => {
-        let storedSession: Session | null = null;
-        const { sync } = await import('@/sync/sync');
-        const refreshSessions = vi.spyOn(sync, 'refreshSessions').mockImplementation(async () => {});
-        const sendMessage = vi.spyOn(sync, 'sendMessage').mockImplementation(async () => {});
-        const ensureSessionVisibleForMessageRoute = vi.fn(async (_sessionId: string, _options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) => {});
 
-        const { createFollowUpSpawnedSessionWithServerScope } = await import('./followUpSpawnedSession');
+    it('does not default active-send when created-session hydration reports a retryable failure over stale active state', async () => {
+        const ensureSessionVisibleForMessageRoute = vi.fn(async () => ({
+            kind: 'retryable_failure' as const,
+            sessionId: 'sess_target',
+            serverId: 'server-b',
+            errorCode: 'timeout',
+        }));
+        const sendMessage = vi.fn(async () => {});
+        getSyncSingletonMock.mockReturnValue({
+            refreshSessions: vi.fn(async () => {}),
+            sendMessage,
+            ensureSessionVisibleForMessageRoute,
+        });
+
+        const staleStoredSession = {
+            id: 'sess_target',
+            createdAt: 1,
+            updatedAt: 2,
+            seq: 0,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadataVersion: 0,
+            metadata: null,
+            agentStateVersion: 1,
+            agentState: null,
+        } as Session;
+
+        const { createFollowUpSpawnedSessionWithServerScope, readRecoverableFollowUpPayload } = await import('./followUpSpawnedSession');
         const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
             resolveContext: async () => ({
                 scope: 'active',
                 timeoutMs: 5_000,
             }),
-            ensureSessionVisibleForMessageRoute: async (sessionId: string, options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) => {
-                await ensureSessionVisibleForMessageRoute(sessionId, options);
-                storedSession = {
-                    id: 'sess_target',
-                    createdAt: 1,
-                    updatedAt: 2,
-                    seq: 0,
-                    active: true,
-                    activeAt: 2,
-                    encryptionMode: 'plain',
-                    metadataVersion: 0,
-                    metadata: null,
-                    agentStateVersion: 1,
-                    agentState: null,
-                } as Session;
-            },
-            getStoredSession: () => storedSession,
+            getStoredSession: () => staleStoredSession,
         });
 
-        await followUpSpawnedSessionWithServerScope({
-            sessionId: 'sess_target',
-            initialMessageText: 'hello from active server',
-            displayText: 'hello display',
-            metaOverrides: {
-                happier: {
-                    kind: 'attachments.v1',
-                },
-            },
-            profileId: 'profile-work',
-        });
+        let thrown: unknown = null;
+        try {
+            await followUpSpawnedSessionWithServerScope({
+                sessionId: 'sess_target',
+                targetServerId: 'server-b',
+                initialMessageText: 'hello from active server',
+            });
+        } catch (error) {
+            thrown = error;
+        }
 
-        expect(refreshSessions).not.toHaveBeenCalled();
-        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('sess_target', { forceRefresh: true });
-        expect(sendMessage).toHaveBeenCalledWith(
-            'sess_target',
-            'hello from active server',
-            'hello display',
-            {
-                happier: {
-                    kind: 'attachments.v1',
-                },
-            },
-            {
-                profileId: 'profile-work',
-                localId: undefined,
-                bypassPendingQueueReason: 'server_scoped_rpc',
-            },
-        );
+        expect(thrown).toBeInstanceOf(Error);
+        expect((thrown as Error).message).toBe('Created session is not available locally yet');
+        expect(readRecoverableFollowUpPayload(thrown)).toEqual({
+            draftText: 'hello from active server',
+        });
+        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('sess_target', {
+            forceRefresh: true,
+            serverId: 'server-b',
+        });
+        expect(sendMessage).not.toHaveBeenCalled();
     });
 });

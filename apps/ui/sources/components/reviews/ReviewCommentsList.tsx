@@ -12,7 +12,6 @@ import type { ReviewCommentLabels } from './labels';
 export type ReviewCommentsListProps = Readonly<{
     comments: readonly ReviewCommentV1[];
     labels: ReviewCommentLabels;
-    directWriteGranted: boolean;
     cardActions?: ReviewCommentCardActions;
     onReply?: (input: Readonly<{ parentCommentId: string }>) => void;
     testID?: string;
@@ -40,14 +39,9 @@ function groupRootComments(comments: readonly ReviewCommentV1[]): readonly Reado
 }
 
 export function ReviewCommentsList(props: ReviewCommentsListProps) {
-    const directWriteLabel = props.directWriteGranted
-        ? props.labels.directWriteGranted
-        : props.labels.directWriteMissing;
-
     if (props.comments.length === 0) {
         return (
             <View testID={props.testID}>
-                <Text>{directWriteLabel}</Text>
                 <Text>{props.labels.empty}</Text>
             </View>
         );
@@ -55,7 +49,6 @@ export function ReviewCommentsList(props: ReviewCommentsListProps) {
 
     return (
         <View testID={props.testID}>
-            <Text>{directWriteLabel}</Text>
             {groupRootComments(props.comments).map(({ root, replies }) => (
                 <ReviewCommentThread
                     key={root.id}

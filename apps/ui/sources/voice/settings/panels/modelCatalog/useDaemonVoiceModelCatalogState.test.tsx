@@ -9,9 +9,25 @@ import { listModelPackCatalogEntries } from '@happier-dev/protocol';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
+import { buildModelCatalogRows } from './buildModelCatalogRows';
 import { useDaemonVoiceModelCatalogState } from './useDaemonVoiceModelCatalogState';
 
 const STT_PACK = listModelPackCatalogEntries('stt_sherpa')[0]!.packId;
+
+type LegacyTestClient = Pick<DaemonVoiceInferenceClient, 'getModelsStatus' | 'installModel' | 'removeModel'>;
+
+function catalogClient(client: LegacyTestClient): Pick<
+    DaemonVoiceInferenceClient,
+    'listModels' | 'getModelsStatus' | 'installModel' | 'acceptModelPackLicense' | 'removeModel'
+> {
+    return {
+        listModels: (scope) => client.getModelsStatus(undefined, scope),
+        getModelsStatus: async () => [],
+        installModel: client.installModel.bind(client),
+        acceptModelPackLicense: vi.fn(async () => status(STT_PACK)),
+        removeModel: client.removeModel.bind(client),
+    };
+}
 
 function status(
     packId: string,
@@ -20,6 +36,7 @@ function status(
     const entry = listModelPackCatalogEntries().find((candidate) => candidate.packId === packId);
     return {
         packId,
+        pluginIdentity: null,
         kind: entry?.kind ?? 'stt_sherpa',
         model: entry?.model ?? packId,
         version: null,
@@ -33,14 +50,18 @@ function status(
 }
 
 function TestHarness(props: Readonly<{
-    client: Pick<DaemonVoiceInferenceClient, 'getModelsStatus' | 'installModel' | 'removeModel'>;
+    client: LegacyTestClient;
     enabled?: boolean;
+    refreshKey?: unknown;
+    suspendAfterHook?: Promise<never>;
 }>): React.ReactElement {
-    const { state, install } = useDaemonVoiceModelCatalogState({
-        client: props.client,
+    const { state, install, refresh } = useDaemonVoiceModelCatalogState({
+        client: React.useMemo(() => catalogClient(props.client), [props.client]),
         pollIntervalMs: 100,
         enabled: props.enabled,
+        refreshKey: props.refreshKey,
     });
+    if (props.suspendAfterHook) throw props.suspendAfterHook;
     const sttStatus = state.statuses.find((candidate) => candidate.packId === STT_PACK);
     return (
         <>
@@ -48,8 +69,11 @@ function TestHarness(props: Readonly<{
                 installState: sttStatus?.installState ?? null,
                 count: state.statuses.length,
                 actionPackId: state.actionPackId,
+                actionErrorPackId: state.actionError?.packId ?? null,
+                actionErrorOperation: state.actionError?.operation ?? null,
             })}
             {React.createElement('InstallButton', { onPress: () => install(STT_PACK) })}
+            {React.createElement('RefreshButton', { onPress: refresh })}
         </>
     );
 }
@@ -63,23 +87,64 @@ describe('useDaemonVoiceModelCatalogState', () => {
         vi.useRealTimers();
     });
 
-    it('requests every catalog pack id on refresh', async () => {
+    it('keeps discovered external packs while making an uninstalled canonical pack actionable', async () => {
+        const externalPackId = 'acme.speech/english-small';
+        const canonicalEntry = listModelPackCatalogEntries()
+            .find((entry) => entry.packId === STT_PACK)!;
+        const listModels = vi.fn(async (): Promise<DaemonVoiceInferenceModelStatus[]> => [
+            status(externalPackId, {
+                pluginIdentity: { pluginId: 'acme.speech', packId: 'english-small' },
+                kind: 'stt_sherpa',
+                model: 'acme-english-small',
+                runtimeFamily: 'sherpa_zipformer_streaming',
+                runtimeSupported: true,
+            }),
+        ]);
         const getModelsStatus = vi.fn(
-            async (_packIds?: readonly string[] | null): Promise<DaemonVoiceInferenceModelStatus[]> => [],
+            async (_packIds?: readonly string[] | null): Promise<DaemonVoiceInferenceModelStatus[]> => [
+                status(STT_PACK, {
+                    runtimeFamily: canonicalEntry.runtimeFamily,
+                    runtimeSupported: true,
+                }),
+            ],
         );
-        const installModel = vi.fn(async () => status(STT_PACK));
-        const removeModel = vi.fn(async () => undefined);
+        const client = {
+            listModels,
+            getModelsStatus,
+            installModel: vi.fn(async () => status(STT_PACK)),
+            acceptModelPackLicense: vi.fn(async () => status(STT_PACK)),
+            removeModel: vi.fn(async () => undefined),
+        };
 
-        await renderScreen(
-            <TestHarness client={{ getModelsStatus, installModel, removeModel }} />,
-        );
+        function CatalogRefreshHarness(): React.ReactElement {
+            const { state } = useDaemonVoiceModelCatalogState({ client });
+            const rows = buildModelCatalogRows({
+                statuses: state.statuses,
+                selectedSttPackId: null,
+                selectedTtsPackId: null,
+            });
+            const canonicalRow = rows.stt.find((row) => row.packId === STT_PACK);
+            return React.createElement('CatalogRefreshState', {
+                canonicalInstallState: canonicalRow?.state ?? null,
+                canonicalCanInstall: canonicalRow?.canInstall ?? false,
+                externalVisible: rows.stt.some((row) => row.packId === externalPackId),
+            });
+        }
+
+        const { tree } = await renderScreen(<CatalogRefreshHarness />);
         await act(async () => {
             await Promise.resolve();
         });
 
-        const requested = getModelsStatus.mock.calls[0]?.[0] ?? [];
-        const catalogIds = listModelPackCatalogEntries().map((entry) => entry.packId).sort();
-        expect([...requested].sort()).toEqual(catalogIds);
+        expect(listModels).toHaveBeenCalledWith();
+        expect(getModelsStatus).toHaveBeenCalledWith(
+            listModelPackCatalogEntries().map((entry) => entry.packId),
+        );
+        expect(tree.root.findByType('CatalogRefreshState').props).toMatchObject({
+            canonicalInstallState: 'not_installed',
+            canonicalCanInstall: true,
+            externalVisible: true,
+        });
     });
 
     it('does not open a daemon model status request while disabled', async () => {
@@ -102,6 +167,67 @@ describe('useDaemonVoiceModelCatalogState', () => {
 
         expect(getModelsStatus).not.toHaveBeenCalled();
         expect(tree.root.findByType('State').props.count).toBe(0);
+    });
+
+    it('refreshes status when the selected execution-machine identity changes', async () => {
+        const getModelsStatus = vi.fn()
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([status(STT_PACK, { installState: 'installed' })]);
+        const client = {
+            getModelsStatus,
+            installModel: vi.fn(async () => status(STT_PACK)),
+            removeModel: vi.fn(async () => undefined),
+        };
+
+        const { tree } = await renderScreen(<TestHarness client={client} refreshKey="machine-a" />);
+        await act(async () => { await Promise.resolve(); });
+        expect(getModelsStatus).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            tree.update(<TestHarness client={client} refreshKey="machine-b" />);
+            await Promise.resolve();
+        });
+
+        expect(getModelsStatus).toHaveBeenCalledTimes(2);
+        const calls = getModelsStatus.mock.calls as unknown as ReadonlyArray<
+            readonly [undefined, Readonly<{ machineId: string }>]
+        >;
+        expect(calls[0]?.[1]).toEqual({ machineId: 'machine-a' });
+        expect(calls[1]?.[1]).toEqual({ machineId: 'machine-b' });
+        expect(tree.root.findByType('State').props.installState).toBe('installed');
+    });
+
+    it('does not expose the previous machine status while the replacement machine refresh is pending', async () => {
+        let resolveMachineB!: (value: DaemonVoiceInferenceModelStatus[]) => void;
+        const machineBStatus = new Promise<DaemonVoiceInferenceModelStatus[]>((resolve) => {
+            resolveMachineB = resolve;
+        });
+        const getModelsStatus = vi.fn()
+            .mockResolvedValueOnce([status(STT_PACK, { installState: 'installed' })])
+            .mockImplementationOnce(() => machineBStatus);
+        const client = {
+            getModelsStatus,
+            installModel: vi.fn(async () => status(STT_PACK)),
+            removeModel: vi.fn(async () => undefined),
+        };
+
+        const { tree } = await renderScreen(<TestHarness client={client} refreshKey="machine-a" />);
+        await act(async () => { await Promise.resolve(); });
+        expect(tree.root.findByType('State').props.installState).toBe('installed');
+
+        await act(async () => {
+            tree.update(<TestHarness client={client} refreshKey="machine-b" />);
+            await Promise.resolve();
+        });
+
+        expect(getModelsStatus).toHaveBeenCalledTimes(2);
+        expect(tree.root.findByType('State').props.installState).toBeNull();
+
+        await act(async () => {
+            resolveMachineB([status(STT_PACK, { installState: 'not_installed' })]);
+            await machineBStatus;
+        });
+        expect(tree.root.findByType('State').props.installState).toBe('not_installed');
     });
 
     it('polls until an installing pack reports installed', async () => {
@@ -149,9 +275,10 @@ describe('useDaemonVoiceModelCatalogState', () => {
         // Stable client reference: an inline literal would change identity every
         // render, re-running the refresh effect and looping.
         const client = { getModelsStatus, installModel, removeModel };
+        const adaptedClient = catalogClient(client);
 
         function ErrorHarness(): React.ReactElement {
-            const { state } = useDaemonVoiceModelCatalogState({ client });
+            const { state } = useDaemonVoiceModelCatalogState({ client: adaptedClient });
             return React.createElement('Err', { errorCode: state.errorCode });
         }
 
@@ -170,9 +297,10 @@ describe('useDaemonVoiceModelCatalogState', () => {
         const installModel = vi.fn(async () => status(STT_PACK));
         const removeModel = vi.fn(async () => undefined);
         const client = { getModelsStatus, installModel, removeModel };
+        const adaptedClient = catalogClient(client);
 
         function ErrorHarness(): React.ReactElement {
-            const { state } = useDaemonVoiceModelCatalogState({ client });
+            const { state } = useDaemonVoiceModelCatalogState({ client: adaptedClient });
             return React.createElement('Err', { errorCode: state.errorCode });
         }
 
@@ -183,5 +311,315 @@ describe('useDaemonVoiceModelCatalogState', () => {
         });
         // An out-of-union code must not leak through as a non-error/"ready" state.
         expect(tree.root.findByType('Err').props.errorCode).toBe('internal_error');
+    });
+
+    it('does not let a stale status response overwrite a newer refresh', async () => {
+        let resolveFirst!: (statuses: DaemonVoiceInferenceModelStatus[]) => void;
+        const first = new Promise<DaemonVoiceInferenceModelStatus[]>((resolve) => {
+            resolveFirst = resolve;
+        });
+        const getModelsStatus = vi.fn()
+            .mockImplementationOnce(() => first)
+            .mockResolvedValueOnce([status(STT_PACK, { installState: 'installed' })]);
+        const client = {
+            getModelsStatus,
+            installModel: vi.fn(async () => status(STT_PACK)),
+            removeModel: vi.fn(async () => undefined),
+        };
+
+        const { tree } = await renderScreen(<TestHarness client={client} />);
+        await pressTestInstanceAsync(tree.root.findByType('RefreshButton'));
+        expect(tree.root.findByType('State').props.installState).toBe('installed');
+
+        await act(async () => {
+            resolveFirst([status(STT_PACK, { installState: 'not_installed' })]);
+            await first;
+        });
+        expect(tree.root.findByType('State').props.installState).toBe('installed');
+    });
+
+    it('rejects a second model mutation while the current action is still in flight', async () => {
+        let resolveInstall!: (value: DaemonVoiceInferenceModelStatus) => void;
+        const pendingInstall = new Promise<DaemonVoiceInferenceModelStatus>((resolve) => {
+            resolveInstall = resolve;
+        });
+        const client = {
+            getModelsStatus: vi.fn(async () => [status(STT_PACK)]),
+            installModel: vi.fn(() => pendingInstall),
+            removeModel: vi.fn(async () => undefined),
+        };
+        const { tree } = await renderScreen(<TestHarness client={client} />);
+        await act(async () => { await Promise.resolve(); });
+
+        let firstAction!: Promise<void>;
+        await act(async () => {
+            firstAction = tree.root.findByType('InstallButton').props.onPress();
+            tree.root.findByType('InstallButton').props.onPress();
+            await Promise.resolve();
+        });
+        expect(client.installModel).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            resolveInstall(status(STT_PACK, { installState: 'installed' }));
+            await firstAction;
+        });
+    });
+
+    it('settles a completed mutation without waiting for a slow status refresh', async () => {
+        let resolveRefresh!: (value: DaemonVoiceInferenceModelStatus[]) => void;
+        const pendingRefresh = new Promise<DaemonVoiceInferenceModelStatus[]>((resolve) => {
+            resolveRefresh = resolve;
+        });
+        const client = {
+            getModelsStatus: vi.fn()
+                .mockResolvedValueOnce([status(STT_PACK)])
+                .mockImplementationOnce(() => pendingRefresh),
+            installModel: vi.fn(async () => {
+                throw Object.assign(new Error('manifest unavailable'), { code: 'internal_error' });
+            }),
+            removeModel: vi.fn(async () => undefined),
+        };
+        const { tree } = await renderScreen(<TestHarness client={client} />);
+        await act(async () => { await Promise.resolve(); });
+
+        let action!: Promise<void>;
+        await act(async () => {
+            action = tree.root.findByType('InstallButton').props.onPress() as Promise<void>;
+            await Promise.resolve();
+        });
+        let settled = false;
+        void action.then(() => { settled = true; });
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(settled).toBe(true);
+        expect(tree.root.findByType('State').props.actionPackId).toBeNull();
+        expect(tree.root.findByType('State').props.actionErrorPackId).toBe(STT_PACK);
+        expect(tree.root.findByType('State').props.actionErrorOperation).toBe('install');
+        expect(client.getModelsStatus).toHaveBeenCalledTimes(2);
+
+        await act(async () => {
+            resolveRefresh([status(STT_PACK)]);
+            await pendingRefresh;
+        });
+        expect(tree.root.findByType('State').props.actionErrorPackId).toBe(STT_PACK);
+    });
+
+    it('clears a retained install failure when authoritative status later reports installed', async () => {
+        let resolveRefresh!: (value: DaemonVoiceInferenceModelStatus[]) => void;
+        const pendingRefresh = new Promise<DaemonVoiceInferenceModelStatus[]>((resolve) => {
+            resolveRefresh = resolve;
+        });
+        const client = {
+            getModelsStatus: vi.fn()
+                .mockResolvedValueOnce([status(STT_PACK)])
+                .mockImplementationOnce(() => pendingRefresh),
+            installModel: vi.fn(async () => {
+                throw Object.assign(new Error('response lost'), { code: 'request_timeout' });
+            }),
+            removeModel: vi.fn(async () => undefined),
+        };
+        const { tree } = await renderScreen(<TestHarness client={client} />);
+        await act(async () => { await Promise.resolve(); });
+
+        await act(async () => {
+            void tree.root.findByType('InstallButton').props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(tree.root.findByType('State').props.actionErrorPackId).toBe(STT_PACK);
+
+        await act(async () => {
+            resolveRefresh([status(STT_PACK, { installState: 'installed' })]);
+            await pendingRefresh;
+        });
+        expect(tree.root.findByType('State').props.actionErrorPackId).toBeNull();
+    });
+
+    it('ignores a late mutation result from a previously selected execution machine', async () => {
+        let rejectInstall!: (error: Error) => void;
+        const pendingInstall = new Promise<DaemonVoiceInferenceModelStatus>((_resolve, reject) => {
+            rejectInstall = reject;
+        });
+        const client = {
+            getModelsStatus: vi.fn(async () => [status(STT_PACK)]),
+            installModel: vi.fn(() => pendingInstall),
+            removeModel: vi.fn(async () => undefined),
+        };
+        const { tree } = await renderScreen(<TestHarness client={client} refreshKey="machine-a" />);
+        await act(async () => { await Promise.resolve(); });
+
+        let action!: Promise<void>;
+        await act(async () => {
+            action = tree.root.findByType('InstallButton').props.onPress();
+            await Promise.resolve();
+        });
+        expect(tree.root.findByType('State').props.actionPackId).toBe(STT_PACK);
+
+        await act(async () => {
+            tree.update(<TestHarness client={client} refreshKey="machine-b" />);
+            await Promise.resolve();
+        });
+        expect(tree.root.findByType('State').props.actionPackId).toBeNull();
+
+        await act(async () => {
+            rejectInstall(Object.assign(new Error('old machine failed'), { code: 'internal_error' }));
+            await action;
+        });
+
+        expect(tree.root.findByType('State').props.actionErrorPackId).toBeNull();
+        expect(client.getModelsStatus).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not refresh daemon status after an in-flight action is disabled', async () => {
+        let resolveInstall!: (value: DaemonVoiceInferenceModelStatus) => void;
+        const pendingInstall = new Promise<DaemonVoiceInferenceModelStatus>((resolve) => {
+            resolveInstall = resolve;
+        });
+        const client = {
+            getModelsStatus: vi.fn(async () => [status(STT_PACK)]),
+            installModel: vi.fn(() => pendingInstall),
+            removeModel: vi.fn(async () => undefined),
+        };
+        const { tree } = await renderScreen(<TestHarness client={client} enabled />);
+        await act(async () => { await Promise.resolve(); });
+
+        let action!: Promise<void>;
+        await act(async () => {
+            action = tree.root.findByType('InstallButton').props.onPress();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            tree.update(<TestHarness client={client} enabled={false} />);
+            await Promise.resolve();
+        });
+        await act(async () => {
+            resolveInstall(status(STT_PACK, { installState: 'installed' }));
+            await action;
+        });
+
+        expect(client.getModelsStatus).toHaveBeenCalledTimes(1);
+        expect(tree.root.findByType('State').props.actionPackId).toBeNull();
+    });
+
+    it('does not refresh daemon status after an in-flight action owner unmounts', async () => {
+        let resolveInstall!: (value: DaemonVoiceInferenceModelStatus) => void;
+        const pendingInstall = new Promise<DaemonVoiceInferenceModelStatus>((resolve) => {
+            resolveInstall = resolve;
+        });
+        const client = {
+            getModelsStatus: vi.fn(async () => [status(STT_PACK)]),
+            installModel: vi.fn(() => pendingInstall),
+            removeModel: vi.fn(async () => undefined),
+        };
+        const { tree } = await renderScreen(<TestHarness client={client} enabled />);
+        await act(async () => { await Promise.resolve(); });
+
+        let action!: Promise<void>;
+        await act(async () => {
+            action = tree.root.findByType('InstallButton').props.onPress();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            tree.unmount();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            resolveInstall(status(STT_PACK, { installState: 'installed' }));
+            await action;
+        });
+
+        expect(client.getModelsStatus).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not invalidate a committed action from a suspended replacement render that never commits', async () => {
+        let resolveInstall!: (value: DaemonVoiceInferenceModelStatus) => void;
+        const pendingInstall = new Promise<DaemonVoiceInferenceModelStatus>((resolve) => {
+            resolveInstall = resolve;
+        });
+        const neverCommits = new Promise<never>(() => undefined);
+        const client = {
+            getModelsStatus: vi.fn(async () => [status(STT_PACK)]),
+            installModel: vi.fn(() => pendingInstall),
+            removeModel: vi.fn(async () => undefined),
+        };
+        const { tree } = await renderScreen(
+            <React.Suspense fallback={React.createElement('Fallback')}>
+                <TestHarness client={client} refreshKey="machine-a" />
+            </React.Suspense>,
+        );
+        await act(async () => { await Promise.resolve(); });
+
+        let action!: Promise<void>;
+        await act(async () => {
+            action = tree.root.findByType('InstallButton').props.onPress();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            tree.update(
+                <React.Suspense fallback={React.createElement('Fallback')}>
+                    <TestHarness
+                        client={client}
+                        refreshKey="machine-b"
+                        suspendAfterHook={neverCommits}
+                    />
+                </React.Suspense>,
+            );
+            await Promise.resolve();
+        });
+
+        await act(async () => {
+            resolveInstall(status(STT_PACK, { installState: 'installed' }));
+            await action;
+        });
+
+        expect(client.getModelsStatus).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not disable a committed action from a suspended disabled render that never commits', async () => {
+        let resolveInstall!: (value: DaemonVoiceInferenceModelStatus) => void;
+        const pendingInstall = new Promise<DaemonVoiceInferenceModelStatus>((resolve) => {
+            resolveInstall = resolve;
+        });
+        const neverCommits = new Promise<never>(() => undefined);
+        const client = {
+            getModelsStatus: vi.fn(async () => [status(STT_PACK)]),
+            installModel: vi.fn(() => pendingInstall),
+            removeModel: vi.fn(async () => undefined),
+        };
+        const { tree } = await renderScreen(
+            <React.Suspense fallback={React.createElement('Fallback')}>
+                <TestHarness client={client} refreshKey="machine-a" enabled />
+            </React.Suspense>,
+        );
+        await act(async () => { await Promise.resolve(); });
+
+        let action!: Promise<void>;
+        await act(async () => {
+            action = tree.root.findByType('InstallButton').props.onPress();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            tree.update(
+                <React.Suspense fallback={React.createElement('Fallback')}>
+                    <TestHarness
+                        client={client}
+                        refreshKey="machine-a"
+                        enabled={false}
+                        suspendAfterHook={neverCommits}
+                    />
+                </React.Suspense>,
+            );
+            await Promise.resolve();
+        });
+
+        await act(async () => {
+            resolveInstall(status(STT_PACK, { installState: 'installed' }));
+            await action;
+        });
+
+        expect(client.getModelsStatus).toHaveBeenCalledTimes(2);
     });
 });

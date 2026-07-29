@@ -16,7 +16,7 @@ import {
 import { recordDaemonVoiceInferenceTtsLatencySample } from './daemonVoiceInferencePolicy';
 import { createDaemonVoiceInferenceClientError } from './daemonVoiceInferenceErrors';
 
-type SupportedPlaybackFormat = 'mp3' | 'wav';
+type SupportedPlaybackFormat = 'wav';
 
 type SupportedDaemonTtsOutput = Extract<DaemonVoiceInferenceAudioOutput, Readonly<{
     codec: SupportedPlaybackFormat;
@@ -34,14 +34,6 @@ function normalizeDaemonTtsOutput(
             throw createDaemonVoiceInferenceClientError('unsupported_codec');
         }
         return { codec: 'wav', mimeType: 'audio/wav' };
-    }
-
-    if (codec === 'mp3') {
-        const allowed = new Set(['audio/mpeg', 'audio/mp3']);
-        if (!allowed.has(mimeType)) {
-            throw createDaemonVoiceInferenceClientError('unsupported_codec');
-        }
-        return { codec: 'mp3', mimeType: 'audio/mpeg' };
     }
 
     throw createDaemonVoiceInferenceClientError('unsupported_codec');
@@ -95,13 +87,29 @@ export class DaemonTtsController {
         };
     }
 
-    private waitForAbort(signal: AbortSignal): Promise<null> {
+    private async waitForNextOrStop<T>(params: Readonly<{
+        signal: AbortSignal;
+        next: () => Promise<T>;
+        producerTermination: Promise<null>;
+    }>): Promise<T | null> {
+        const { signal } = params;
         if (signal.aborted) {
-            return Promise.resolve(null);
+            return null;
         }
-        return new Promise((resolve) => {
-            signal.addEventListener('abort', () => resolve(null), { once: true });
+        let abortListener!: () => void;
+        const aborted = new Promise<null>((resolve) => {
+            abortListener = () => resolve(null);
+            signal.addEventListener('abort', abortListener, { once: true });
         });
+        try {
+            return await Promise.race([
+                params.next(),
+                aborted,
+                params.producerTermination,
+            ]);
+        } finally {
+            signal.removeEventListener('abort', abortListener);
+        }
     }
 
     async speak(params: Readonly<{
@@ -123,15 +131,21 @@ export class DaemonTtsController {
 
         let stopPlayback: (() => void) | null = null;
         let clearStopper = () => {};
+        const stopActivePlayback = () => {
+            const stopper = stopPlayback;
+            stopPlayback = null;
+            try {
+                stopper?.();
+            } catch {
+                // Playback teardown is best-effort; lifecycle cleanup continues.
+            }
+        };
+        abortController.signal.addEventListener('abort', stopActivePlayback);
 
         try {
             clearStopper = params.registerPlaybackStopper(() => {
                 abortController.abort();
-                try {
-                    stopPlayback?.();
-                } catch {
-                    // ignore
-                }
+                stopActivePlayback();
             });
 
             const registerPlaybackOnly: VoicePlaybackStopperRegistrar = (stopper) => {
@@ -165,6 +179,7 @@ export class DaemonTtsController {
                     speed: params.speed,
                     output: normalizedOutput,
                     registerPlaybackOnly,
+                    stopActivePlayback,
                     onSpeaking: notifySpeakingOnce,
                     abortController,
                     synthesisStartedAtMs,
@@ -195,6 +210,7 @@ export class DaemonTtsController {
             });
         } finally {
             params.signal?.removeEventListener('abort', abortListener);
+            abortController.signal.removeEventListener('abort', stopActivePlayback);
             clearStopper();
         }
     }
@@ -207,6 +223,7 @@ export class DaemonTtsController {
         speed: number | null;
         output: SupportedDaemonTtsOutput;
         registerPlaybackOnly: VoicePlaybackStopperRegistrar;
+        stopActivePlayback: () => void;
         onSpeaking: () => void;
         abortController: AbortController;
         synthesisStartedAtMs: number;
@@ -217,15 +234,59 @@ export class DaemonTtsController {
         let firstSegmentRecorded = false;
         let cancelRequested = false;
         let abortPlayback: (() => void) | null = null;
+        const maxResidentSegments = 2;
+        let producerTerminated = false;
+        let resolveProducerTermination!: () => void;
+        const producerTermination = new Promise<null>((resolve) => {
+            resolveProducerTermination = () => resolve(null);
+        });
+        const residentSegmentIds = new Set<string>();
+        const residencyWaiters = new Set<() => void>();
+        const wakeResidencyWaiters = () => {
+            const waiters = [...residencyWaiters];
+            residencyWaiters.clear();
+            for (const resolve of waiters) resolve();
+        };
+        const releaseResidentSegment = (segmentId: string) => {
+            if (!residentSegmentIds.delete(segmentId)) {
+                return;
+            }
+            wakeResidencyWaiters();
+        };
+        const terminateProducer = () => {
+            if (producerTerminated) {
+                return;
+            }
+            producerTerminated = true;
+            resolveProducerTermination();
+            residentSegmentIds.clear();
+            wakeResidencyWaiters();
+        };
+        const waitForResidencySlot = async (): Promise<boolean> => {
+            while (
+                residentSegmentIds.size >= maxResidentSegments
+                && !producerTerminated
+                && !params.abortController.signal.aborted
+            ) {
+                await new Promise<void>((resolve) => residencyWaiters.add(resolve));
+            }
+            return !producerTerminated && !params.abortController.signal.aborted;
+        };
 
         const playbackController = createTtsPlaybackController<DaemonTtsSegmentPayload>({
             playChunk: async (chunk) => {
-                await this.deps.playAudioBytesWithStopper({
-                    bytes: chunk.bytes,
-                    format: chunk.format,
-                    registerPlaybackStopper: params.registerPlaybackOnly,
-                    onPlaybackStarted: params.onSpeaking,
-                });
+                try {
+                    await this.deps.playAudioBytesWithStopper({
+                        bytes: chunk.bytes,
+                        format: chunk.format,
+                        registerPlaybackStopper: params.registerPlaybackOnly,
+                        onPlaybackStarted: params.onSpeaking,
+                    });
+                } finally {
+                    // Local playback completion releases residency immediately;
+                    // the remote acknowledgement must never hold the next ready segment.
+                    releaseResidentSegment(chunk.segment.segmentId);
+                }
             },
             confirmPlayback: async (chunk) => {
                 if (this.speakEpoch !== epoch || params.abortController.signal.aborted) {
@@ -234,6 +295,17 @@ export class DaemonTtsController {
                 await stream?.ackSegment(chunk.segment);
             },
             onPlaybackError: async () => {
+                terminateProducer();
+                if (this.speakEpoch !== epoch || params.abortController.signal.aborted || cancelRequested) {
+                    return;
+                }
+                cancelRequested = true;
+                abortPlayback?.();
+                await stream?.cancel().catch(() => undefined);
+            },
+            onConfirmationError: async () => {
+                terminateProducer();
+                params.stopActivePlayback();
                 if (this.speakEpoch !== epoch || params.abortController.signal.aborted || cancelRequested) {
                     return;
                 }
@@ -246,6 +318,7 @@ export class DaemonTtsController {
         const playback = playbackController.speak();
         abortPlayback = playback.abort;
         const abortListener = () => {
+            terminateProducer();
             playback.abort();
             if (!cancelRequested) {
                 cancelRequested = true;
@@ -267,14 +340,24 @@ export class DaemonTtsController {
             let receivedSegments = 0;
             while (
                 this.speakEpoch === epoch
+                && !producerTerminated
                 && !params.abortController.signal.aborted
                 && receivedSegments < stream.segmentCount
             ) {
-                const event = await Promise.race([
-                    stream.next(),
-                    this.waitForAbort(params.abortController.signal),
-                ]);
-                if (!event || this.speakEpoch !== epoch || params.abortController.signal.aborted) {
+                if (!await waitForResidencySlot()) {
+                    break;
+                }
+                const event = await this.waitForNextOrStop({
+                    signal: params.abortController.signal,
+                    next: () => stream!.next(),
+                    producerTermination,
+                });
+                if (
+                    !event
+                    || producerTerminated
+                    || this.speakEpoch !== epoch
+                    || params.abortController.signal.aborted
+                ) {
                     break;
                 }
                 if (event.type === 'done') {
@@ -294,6 +377,7 @@ export class DaemonTtsController {
                     });
                 }
                 receivedSegments += 1;
+                residentSegmentIds.add(event.segmentId);
                 const chunk: TtsChunk<DaemonTtsSegmentPayload> = {
                     groupId: stream.streamId,
                     chunkIndex: event.segmentIndex,
@@ -305,6 +389,15 @@ export class DaemonTtsController {
                 playbackController.enqueue(chunk);
             }
             await playback.done;
+        } catch (error) {
+            terminateProducer();
+            params.stopActivePlayback();
+            playback.abort();
+            if (!cancelRequested) {
+                cancelRequested = true;
+                await stream?.cancel().catch(() => undefined);
+            }
+            throw error;
         } finally {
             params.abortController.signal.removeEventListener('abort', abortListener);
             if (params.abortController.signal.aborted && !cancelRequested) {

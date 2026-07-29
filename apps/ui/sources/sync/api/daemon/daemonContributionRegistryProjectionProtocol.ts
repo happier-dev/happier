@@ -13,7 +13,7 @@ type UnknownRecord = Readonly<Record<string, unknown>>;
 
 export type DaemonContributionRegistryProjectionV1Like = Readonly<{
     v: 1;
-    providersById: DaemonContributionRegistryProjectionV1['providersById'];
+    agentsById: DaemonContributionRegistryProjectionV1['agentsById'];
     backendsById: DaemonContributionRegistryProjectionV1['backendsById'];
 }> & UnknownRecord;
 

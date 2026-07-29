@@ -88,17 +88,17 @@ describe('useSessionListA11yAnnouncements', () => {
                 kind: 'blocked',
                 reason: 'workspace-scope-mismatch',
             },
-            sessionListBlockReason: 'direct-session',
+            sessionListBlockReason: 'feature-disabled',
             visual: { kind: 'none' },
         };
 
         hook.getCurrent().announceDropResult({
-            label: 'Direct session',
+            label: 'External session',
             result: blockedResult,
         });
 
         expect(announceForAccessibilitySpy).toHaveBeenCalledWith(
-            expect.stringContaining('sessionsList.dragA11yBlockedDirectSession'),
+            expect.stringContaining('sessionsList.dragA11yBlockedFeatureDisabled'),
         );
     });
 

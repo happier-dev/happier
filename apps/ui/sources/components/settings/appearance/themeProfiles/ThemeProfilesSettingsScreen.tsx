@@ -19,9 +19,9 @@ import { useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { createThemeProfileDraft } from '@/theme/profiles/createThemeProfileDraft';
 import { THEME_PROFILE_MAX_PROFILES } from '@/theme/profiles/themeProfileConstants';
-import { isBuiltInThemeProfilePresetId } from '@/theme/profiles/builtInThemeProfiles';
 import { applyThemeRuntimeSelection } from '@/theme/profiles/themeProfileRuntime';
-import type { ThemeProfilesLocalStateV1, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
+import { isThemeProfileActive, setActiveThemeProfileForMode } from '@/theme/profiles/themeProfilePersistence';
+import type { ThemeProfileMode, ThemeProfilesLocalStateV1, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 import { buildThemePresetSourceOptions, type ThemePresetSourceOption } from './themeProfilePresetOptions';
 import {
     createThemeProfileId,
@@ -47,7 +47,6 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
     const presetOptions = React.useMemo(() => buildThemePresetSourceOptions(themeProfiles), [themeProfiles]);
     const customPresetOptions = React.useMemo(() => presetOptions.filter((option) => option.kind === 'custom'), [presetOptions]);
     const builtInPresetOptions = React.useMemo(() => presetOptions.filter((option) => option.kind !== 'custom'), [presetOptions]);
-    const activeThemeId = themeProfiles.activeProfileId ?? themePreference;
     const profileLimitReached = themeProfiles.profiles.length >= THEME_PROFILE_MAX_PROFILES;
 
     const openImport = React.useCallback(() => {
@@ -94,16 +93,13 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
         router.push(profileEditorRoute(id));
     }, [profileLimitReached, router, setThemeProfiles, themeProfiles]);
 
-    const selectBaseTheme = React.useCallback((nextThemePreference: ThemePreference) => {
-        applyThemeSelection(nextThemePreference, { ...themeProfiles, activeProfileId: null });
-    }, [applyThemeSelection, themeProfiles]);
+    const selectBaseTheme = React.useCallback((mode: ThemeProfileMode) => {
+        applyThemeSelection(themePreference, setActiveThemeProfileForMode(themeProfiles, mode, null));
+    }, [applyThemeSelection, themePreference, themeProfiles]);
 
     const selectProfile = React.useCallback((option: ThemePresetSourceOption) => {
-        const nextPreference = isBuiltInThemeProfilePresetId(option.id)
-            ? option.builtInDefinition?.preferredMode ?? option.preferredMode
-            : option.preferredMode;
-        applyThemeSelection(nextPreference, { ...themeProfiles, activeProfileId: option.id });
-    }, [applyThemeSelection, themeProfiles]);
+        applyThemeSelection(themePreference, setActiveThemeProfileForMode(themeProfiles, option.preferredMode, option.id));
+    }, [applyThemeSelection, themePreference, themeProfiles]);
 
     const activatePresetOption = React.useCallback((option: ThemePresetSourceOption) => {
         if (option.id === 'light' || option.id === 'dark') {
@@ -122,12 +118,18 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
         if (!confirmed) return;
 
         const nextThemeProfiles = removeThemeProfile(themeProfiles, profile.id);
-        if (themeProfiles.activeProfileId === profile.id) {
+        if (isThemeProfileActive(themeProfiles, profile.id)) {
             applyThemeSelection(themePreference, nextThemeProfiles);
             return;
         }
         setThemeProfiles(nextThemeProfiles);
     }, [applyThemeSelection, setThemeProfiles, themePreference, themeProfiles]);
+
+    const isPresetOptionActive = React.useCallback((option: ThemePresetSourceOption): boolean => {
+        if (option.id === 'light') return themeProfiles.activeProfileIds.light === null;
+        if (option.id === 'dark') return themeProfiles.activeProfileIds.dark === null;
+        return themeProfiles.activeProfileIds.light === option.id || themeProfiles.activeProfileIds.dark === option.id;
+    }, [themeProfiles.activeProfileIds]);
 
     const renderPresetActions = React.useCallback((option: ThemePresetSourceOption) => {
         const actions: ItemAction[] = [];
@@ -168,7 +170,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
 
         return (
             <View testID={`settings-theme-profile-${option.kind === 'custom' ? 'custom' : 'built-in'}-actions-${option.id}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                {activeThemeId === option.id ? (
+                {isPresetOptionActive(option) ? (
                     <Ionicons name="checkmark-circle" size={20} color={theme.colors.status.connected} />
                 ) : null}
                 <ItemRowActions
@@ -182,7 +184,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
                 />
             </View>
         );
-    }, [activeThemeId, deleteProfile, duplicateTheme, profileLimitReached, router, theme.colors.accent.blue, theme.colors.status.connected]);
+    }, [deleteProfile, duplicateTheme, isPresetOptionActive, profileLimitReached, router, theme.colors.accent.blue, theme.colors.status.connected]);
 
     const renderPresetRow = React.useCallback((option: ThemePresetSourceOption) => {
         const builtIn = option.kind !== 'custom';
@@ -193,13 +195,13 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
                 testID={builtIn ? `settings-theme-profile-built-in-${option.id}` : `settings-theme-profile-custom-${option.id}`}
                 title={option.title}
                 subtitle={option.subtitle}
-                selected={activeThemeId === option.id}
+                selected={isPresetOptionActive(option)}
                 icon={<Ionicons name={iconName} size={28} color={option.kind === 'builtIn' ? theme.colors.accent.indigo : theme.colors.status.connecting} />}
                 rightElement={renderPresetActions(option)}
                 onPress={() => activatePresetOption(option)}
             />
         );
-    }, [activatePresetOption, activeThemeId, renderPresetActions, theme.colors.accent.indigo, theme.colors.status.connecting]);
+    }, [activatePresetOption, isPresetOptionActive, renderPresetActions, theme.colors.accent.indigo, theme.colors.status.connecting]);
 
     const builtInDropdownItems = React.useMemo((): readonly DropdownMenuItem[] => (
         builtInPresetOptions.map((option) => {
@@ -223,7 +225,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
                     onOpenChange={setBuiltInDropdownOpen}
                     variant="selectable"
                     search
-                    selectedId={activeThemeId}
+                    selectedId={null}
                     showCategoryTitles={false}
                     matchTriggerWidth
                     connectToTrigger

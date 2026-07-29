@@ -10,8 +10,8 @@
  * `pointerEvents="none"` so they never block row taps. The fade uses the
  * popover/surface color from theme so the fade-to-background reads correctly.
  *
- * On the FlashList path (virtualized section owns scroll), the body skips
- * this entirely — FlashList handles its own scroll container, and the popover
+ * On the virtualized list path (virtualized section owns scroll), the body skips
+ * this entirely — virtualized list handles its own scroll container, and the popover
  * surface (`AgentInputPopoverSurface` / `FloatingOverlay`) already paints
  * outer edge fades around its scroll viewport when it owns the scroller.
  */

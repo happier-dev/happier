@@ -4,7 +4,7 @@ import { act } from 'react-test-renderer';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import type { AiLaunchProfile } from '@happier-dev/protocol';
 import { createEmptyCustomProfile } from '@/sync/domains/profiles/profileMutations';
 import {
     createNavigationMock,
@@ -15,6 +15,7 @@ import {
     PICKER_NAV_STATE,
     PICKER_THEME_COLORS,
 } from './testHarness';
+import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 enableReactActEnvironment();
 
@@ -94,12 +95,12 @@ installPickerCommonModuleMocks({
         (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettingMutable: (key: string) => {
+                useSettingMutable: createUseSettingMutableMockFromReader((key) => {
                     if (key === 'profiles') {
                         return [[], vi.fn()];
                     }
                     return [null, vi.fn()];
-                },
+                }),
                 useSettings: () => ({
                     ...settingsDefaults,
                     lastUsedAgent: settingsState.current.lastUsedAgent,
@@ -122,7 +123,7 @@ installPickerCommonModuleMocks({
 });
 
 vi.mock('@/components/profiles/edit', () => ({
-    ProfileEditForm: (props: any) => {
+    LaunchProfileEditForm: (props: any) => {
         capturedFormPropsRef.current = props;
         return React.createElement('ProfileEditForm');
     },
@@ -160,6 +161,8 @@ vi.mock('@/components/ui/keyboardAvoidance', () => ({
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     machineContributionRegistryProjectionDescribe: (...args: Parameters<MachineContributionRegistryProjectionDescribeFn>) =>
         machineContributionRegistryProjectionDescribe(...args),
+    getMachineContributionRegistryProjectionRevision: () => 0,
+    subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
 }));
 
 describe('ProfileEditScreen replace fallback', () => {
@@ -207,10 +210,9 @@ describe('ProfileEditScreen replace fallback', () => {
             supported: true,
             projection: {
                 v: 1,
-                providersById: {
+                agentsById: {
                     'acme.review.provider': {
                         id: 'acme.review.provider',
-                        providerId: 'acme.review.provider',
                         title: 'Acme Review Provider',
                         channel: 'plugin',
                         isBuiltIn: false,
@@ -221,7 +223,7 @@ describe('ProfileEditScreen replace fallback', () => {
                     'acme.review.backend': {
                         id: 'acme.review.backend',
                         backendId: 'acme.review.backend',
-                        providerId: 'acme.review.provider',
+                        agentId: 'acme.review.provider',
                         title: 'Acme Review Backend',
                     },
                 },
@@ -234,7 +236,7 @@ describe('ProfileEditScreen replace fallback', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 2 });
 
-        const onSave = capturedFormPropsRef.current?.onSave as ((profile: AIBackendProfile) => boolean) | undefined;
+        const onSave = capturedFormPropsRef.current?.onSave as ((profile: AiLaunchProfile) => boolean) | undefined;
         expect(typeof onSave).toBe('function');
 
         let saved: boolean | undefined;
@@ -243,8 +245,7 @@ describe('ProfileEditScreen replace fallback', () => {
                 ...createEmptyCustomProfile(),
                 id: 'profile-new',
                 name: 'New Profile',
-                compatibility: { claude: true, codex: true, gemini: true },
-            } satisfies AIBackendProfile);
+            } satisfies AiLaunchProfile);
         });
         expect(saved).toBe(true);
 

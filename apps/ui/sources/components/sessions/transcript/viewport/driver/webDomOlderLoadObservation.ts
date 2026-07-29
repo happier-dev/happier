@@ -7,6 +7,10 @@ import {
 
 export type WebDomOlderLoadObservationTrigger = 'edge-reached' | 'scroll';
 
+type WebDomOlderLoadObservationRequestedTrigger =
+    | WebDomOlderLoadObservationTrigger
+    | 'layout-committed';
+
 export type WebDomOlderLoadObservationFacts = Readonly<{
     contentHeight: number;
     distanceFromBottom: number;
@@ -14,7 +18,7 @@ export type WebDomOlderLoadObservationFacts = Readonly<{
     metrics: WebTranscriptScrollMetrics;
     offsetY: number;
     scrollable: boolean;
-    trigger: WebDomOlderLoadObservationTrigger;
+    trigger: WebDomOlderLoadObservationRequestedTrigger;
 }>;
 
 export function resolveWebDomOlderLoadObservationTrigger(params: Readonly<{
@@ -30,7 +34,7 @@ export function resolveWebDomOlderLoadObservationTrigger(params: Readonly<{
 }
 
 export function resolveWebDomOlderLoadObservation(params: Readonly<{
-    requestedTrigger?: WebDomOlderLoadObservationTrigger;
+    requestedTrigger?: WebDomOlderLoadObservationRequestedTrigger;
     target: unknown;
     viewportGuardThresholdPx: number;
 }>): WebDomOlderLoadObservationFacts | null {
@@ -42,10 +46,13 @@ export function resolveWebDomOlderLoadObservation(params: Readonly<{
         clientHeight: params.target.clientHeight,
     };
     const distanceFromBottom = getWebTranscriptDistanceFromBottom(metrics);
-    const trigger = resolveWebDomOlderLoadObservationTrigger({
-        requestedTrigger: params.requestedTrigger,
-        scrollTop: metrics.scrollTop,
-    });
+    const trigger =
+        params.requestedTrigger === 'layout-committed'
+            ? params.requestedTrigger
+            : resolveWebDomOlderLoadObservationTrigger({
+                requestedTrigger: params.requestedTrigger,
+                scrollTop: metrics.scrollTop,
+            });
     const viewportGuardThresholdPx =
         Number.isFinite(params.viewportGuardThresholdPx)
             ? Math.max(0, params.viewportGuardThresholdPx)

@@ -152,10 +152,6 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (fn: any) => [false, fn],
 }));
 
-vi.mock('@/sync/api/account/apiVendorTokens', () => ({
-    disconnectVendorToken: vi.fn(async () => {}),
-}));
-
 vi.mock('@/sync/domains/profiles/profile', () => ({
     profileDefaults: {
         id: '',
@@ -167,6 +163,7 @@ vi.mock('@/sync/domains/profiles/profile', () => ({
         linkedProviders: [],
         connectedServices: [],
         connectedServicesV2: [],
+        connectedServiceCredentialRevisionsV1: [],
     },
     getDisplayName: () => null,
     getAvatarUrl: () => null,

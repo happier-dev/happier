@@ -34,20 +34,26 @@ export function toggleFavoriteProfileId(favoriteProfileIds: string[], profileId:
 
 export function buildProfileGroups({
     customProfiles,
+    builtInProfiles,
     favoriteProfileIds,
     enabledAgentIds,
     profileEnabledById,
     includeDisabledProfiles = false,
 }: {
     customProfiles: AIBackendProfile[];
+    builtInProfiles?: AIBackendProfile[];
     favoriteProfileIds: string[];
     enabledAgentIds?: readonly AgentId[];
     profileEnabledById?: ProfileEnabledById | null;
     includeDisabledProfiles?: boolean;
 }): ProfileGroups {
-    const builtInIds = new Set(DEFAULT_PROFILES.map((profile) => profile.id));
+    const resolvedBuiltInProfiles = builtInProfiles ?? DEFAULT_PROFILES
+        .map((profile) => getBuiltInProfile(profile.id))
+        .filter(isProfile);
+    const builtInIds = new Set(resolvedBuiltInProfiles.map((profile) => profile.id));
 
     const customById = new Map(customProfiles.map((profile) => [profile.id, profile] as const));
+    const builtInById = new Map(resolvedBuiltInProfiles.map((profile) => [profile.id, profile] as const));
 
     const isVisible = (profile: AIBackendProfile): boolean => {
         if (!includeDisabledProfiles && !isProfileEnabled(profile, profileEnabledById)) return false;
@@ -56,7 +62,7 @@ export function buildProfileGroups({
     };
 
     const favoriteProfiles = favoriteProfileIds
-        .map((id) => customById.get(id) ?? getBuiltInProfile(id))
+        .map((id) => customById.get(id) ?? builtInById.get(id))
         .filter(isProfile);
     const visibleFavoriteProfiles = favoriteProfiles.filter(isVisible);
 
@@ -70,9 +76,7 @@ export function buildProfileGroups({
         .filter(isVisible)
         .filter((profile) => !favoriteIds.has(profile.id));
 
-    const nonFavoriteBuiltInProfiles = DEFAULT_PROFILES
-        .map((profile) => getBuiltInProfile(profile.id))
-        .filter(isProfile)
+    const nonFavoriteBuiltInProfiles = resolvedBuiltInProfiles
         .filter(isVisible)
         .filter((profile) => !favoriteIds.has(profile.id));
 

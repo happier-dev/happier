@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ToolCallMessage } from './messageTypes';
-import { buildSessionMessageRouteId, resolveMessageRouteIdForDisplay, resolveSessionMessageRouteId } from './messageRouteIds';
+import {
+    buildSessionMessageRouteId,
+    parseStableSessionMessageRouteId,
+    resolveMessageRouteIdForDisplay,
+    resolveSessionMessageRouteId,
+} from './messageRouteIds';
 import { createReducer, reducer } from '@/sync/reducer/reducer';
 import type { NormalizedMessage } from '@/sync/typesRaw';
 
@@ -28,6 +33,17 @@ function makeToolMessage(id: string): ToolCallMessage {
 }
 
 describe('messageRouteIds', () => {
+    it('preserves whitespace-distinct opaque local ids in stable routes', () => {
+        expect(parseStableSessionMessageRouteId('local: request-1')).toEqual({
+            kind: 'local',
+            value: ' request-1',
+        });
+        expect(parseStableSessionMessageRouteId('local:request-1 ')).toEqual({
+            kind: 'local',
+            value: 'request-1 ',
+        });
+    });
+
     it('builds a durable server route for an internal message id when reducer state knows the original id', () => {
         const reducerState = createReducer();
         reducerState.messageIds.set('server-msg-1', 'internal-1');

@@ -3,6 +3,17 @@ import { describe, expect, it } from 'vitest';
 import { createTranscriptFreshnessGate } from './transcriptFreshnessGate';
 
 describe('createTranscriptFreshnessGate', () => {
+    it('checks freshness without consuming the item', () => {
+        const gate = createTranscriptFreshnessGate({ freshnessMs: 500, getNowMs: () => 1000 });
+
+        expect(gate.isFresh({ id: 'm1', createdAt: 800 })).toBe(true);
+        expect(gate.isFresh({ id: 'm1', createdAt: 800 })).toBe(true);
+        expect(gate.isSeen('m1')).toBe(false);
+
+        expect(gate.consumeFreshness({ id: 'm1', createdAt: 800 })).toBe(true);
+        expect(gate.isFresh({ id: 'm1', createdAt: 800 })).toBe(false);
+    });
+
     it('treats unseen items within freshness window as fresh once', () => {
         let now = 1000;
         const gate = createTranscriptFreshnessGate({ freshnessMs: 500, getNowMs: () => now });

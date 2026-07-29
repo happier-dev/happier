@@ -52,6 +52,22 @@ describe('AgentStateSchema capabilities', () => {
         expect(legacy.capabilities?.inFlightConfigApplySupported ?? null).toBeNull();
     });
 
+    it('preserves terminal composer clear capability fields when present', () => {
+        const parsed = AgentStateSchema.parse({
+            capabilities: {
+                terminalComposerClearSupported: true,
+                terminalComposerDraftPresent: true,
+            },
+        });
+
+        expect(parsed.capabilities?.terminalComposerClearSupported).toBe(true);
+        expect(parsed.capabilities?.terminalComposerDraftPresent).toBe(true);
+
+        const legacy = AgentStateSchema.parse({ capabilities: { inFlightSteer: true } });
+        expect(legacy.capabilities?.terminalComposerClearSupported ?? null).toBeNull();
+        expect(legacy.capabilities?.terminalComposerDraftPresent ?? null).toBeNull();
+    });
+
     it('preserves localPermissionBridgeInLocalMode capability when present', () => {
         const parsed = AgentStateSchema.parse({
             capabilities: { localPermissionBridgeInLocalMode: true },

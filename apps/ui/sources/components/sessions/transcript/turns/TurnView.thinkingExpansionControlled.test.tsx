@@ -22,9 +22,6 @@ let messageById: Record<string, any> = {};
 let renderedToolCallsGroupRowProps: any[] = [];
 let renderedToolCallsGroupRowWithCommonProps: any[] = [];
 let renderedRollbackButtonProps: any[] = [];
-const flashListCompatMockState = vi.hoisted(() => ({
-  mappingKeyCalls: [] as Array<Readonly<{ index: number; itemKey: string | number | bigint }>>,
-}));
 
 installTranscriptCommonModuleMocks({
     reactNative: async () => {
@@ -55,11 +52,13 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 vi.mock('@/components/sessions/transcript/MessageView', () => ({
   MessageView: (props: any) => {
     renderedMessageViewProps.push(props);
-    return React.createElement('MessageView', props);
+    const initialMessageId = React.useRef(props.message.id).current;
+    return React.createElement('MessageView', { ...props, initialMessageId });
   },
   MessageViewWithSessionCommon: (props: any) => {
     renderedMessageViewWithCommonProps.push(props);
-    return React.createElement('MessageViewWithSessionCommon', props);
+    const initialMessageId = React.useRef(props.message.id).current;
+    return React.createElement('MessageViewWithSessionCommon', { ...props, initialMessageId });
   },
 }));
 
@@ -89,15 +88,6 @@ vi.mock('@/components/sessions/transcript/TranscriptRollbackActionButton', () =>
   },
 }));
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
-  useMappingHelper: () => ({
-    getMappingKey: (itemKey: string | number | bigint, index: number) => {
-      flashListCompatMockState.mappingKeyCalls.push({ itemKey, index });
-      return index;
-    },
-  }),
-}));
-
 function getRenderedMessageViewProps() {
   return [...renderedMessageViewProps, ...renderedMessageViewWithCommonProps];
 }
@@ -118,7 +108,6 @@ describe('TurnView (thinking expansion controlled)', () => {
     renderedToolCallsGroupRowProps = [];
     renderedToolCallsGroupRowWithCommonProps = [];
     renderedRollbackButtonProps = [];
-    flashListCompatMockState.mappingKeyCalls = [];
   });
 
   it('forwards parent-provided transcript session common to nested message and tool rows', async () => {
@@ -133,6 +122,7 @@ describe('TurnView (thinking expansion controlled)', () => {
       transcriptStreamingSmoothingEnabled: false,
       transcriptMessageSelectionEnabled: true,
       transcriptMessageSendToSessionEnabled: false,
+      debugInformationEnabled: false,
       workspacePath: null,
     } satisfies TranscriptMessageDisplayCommon;
     const forkCommon = {
@@ -204,7 +194,7 @@ describe('TurnView (thinking expansion controlled)', () => {
     ]);
   });
 
-  it('routes mapped turn content keys through the FlashList mapping helper', async () => {
+  it('keeps nested message identity attached to the logical message when turn content reorders', async () => {
     messageById = {
       'agent-1': { kind: 'agent-text', id: 'agent-1', localId: null, createdAt: 1, text: 'reply', isThinking: false },
       'agent-2': { kind: 'agent-text', id: 'agent-2', localId: null, createdAt: 3, text: 'done', isThinking: false },
@@ -220,21 +210,37 @@ describe('TurnView (thinking expansion controlled)', () => {
       ],
     };
 
+    const commonProps = {
+      metadata: null,
+      sessionId: 's1',
+      activeThinkingMessageId: null,
+      expandedToolCallsAnchorMessageIds: new Set<string>(),
+      setToolCallsGroupExpanded: () => {},
+      interaction: { canSendMessages: true, canApprovePermissions: true },
+    };
     const { TurnView } = await import('./TurnView');
-    await renderScreen(React.createElement(TurnView as any, {
-          turn,
-          metadata: null,
-          sessionId: 's1',
-          activeThinkingMessageId: null,
-          expandedToolCallsAnchorMessageIds: new Set(),
-          setToolCallsGroupExpanded: () => {},
-          interaction: { canSendMessages: true, canApprovePermissions: true },
-        }));
+    const screen = await renderScreen(React.createElement(TurnView as any, {
+      ...commonProps,
+      turn,
+    }));
 
-    expect(flashListCompatMockState.mappingKeyCalls).toEqual([
-      { itemKey: 'agent-1', index: 0 },
-      { itemKey: 'tool-group-1', index: 1 },
-      { itemKey: 'agent-2', index: 2 },
+    await screen.update(React.createElement(TurnView as any, {
+      ...commonProps,
+      turn: {
+        ...turn,
+        content: [turn.content[2], turn.content[1], turn.content[0]],
+      },
+    }));
+
+    const identityPairs = screen.findAll((node) => (
+      typeof node.props.initialMessageId === 'string'
+    )).map((node) => ({
+      current: node.props.message.id,
+      initial: node.props.initialMessageId,
+    }));
+    expect(identityPairs).toEqual([
+      { current: 'agent-2', initial: 'agent-2' },
+      { current: 'agent-1', initial: 'agent-1' },
     ]);
   });
 

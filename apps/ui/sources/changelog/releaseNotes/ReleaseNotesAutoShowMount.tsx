@@ -2,7 +2,6 @@ import * as React from 'react';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { useOptionalModal } from '@/modal';
-import { useOnboardingShowcaseState } from '@/onboarding/showcase';
 import { getPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 
 import { isReleaseNotesStoryCardsEnabled } from './featureGate';
@@ -31,7 +30,6 @@ function hasActiveSetupIntent(): boolean {
  */
 export function ReleaseNotesAutoShowMount(): null {
     const { credentials } = useAuth();
-    const onboardingShowcase = useOnboardingShowcaseState();
     const launcher = useReleaseNotesLauncher();
     const modal = useOptionalModal();
     const setupIntentActive = hasActiveSetupIntent();
@@ -45,7 +43,6 @@ export function ReleaseNotesAutoShowMount(): null {
         if (!credentials) return; // wait for auth/setup to resolve.
         if (setupIntentActive) return;
         if (modalStackActive) return;
-        if (onboardingShowcase.hasUnread) return;
         ranRef.current = true;
 
         // 1) Seed migration baseline before evaluating launch policy.
@@ -72,7 +69,6 @@ export function ReleaseNotesAutoShowMount(): null {
         credentials,
         launcher,
         modalStackActive,
-        onboardingShowcase.hasUnread,
         releaseNotesEnabled,
         setupIntentActive,
     ]);

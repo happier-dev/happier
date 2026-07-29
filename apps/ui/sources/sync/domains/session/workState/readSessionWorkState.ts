@@ -5,11 +5,13 @@ import {
 } from '@happier-dev/protocol';
 
 import type {
+    SessionWorkStateGoalCapabilities,
     SessionWorkStateItem,
     SessionWorkStateSnapshot,
     SessionWorkStateStatus,
     SessionWorkStateStatusReason,
 } from './sessionWorkStateTypes';
+import { recordSessionPayloadConsumptionTelemetry } from '../sessionPayloadConsumptionTelemetry';
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
     'pending',
@@ -34,8 +36,23 @@ function readNonNegativeNumber(value: unknown): number | null {
     return number !== null && number >= 0 ? number : null;
 }
 
+function readGoalCapabilities(value: unknown): SessionWorkStateGoalCapabilities | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    const capabilities: { canEdit?: boolean; canStop?: boolean; canClear?: boolean } = {};
+    if (typeof record.canEdit === 'boolean') capabilities.canEdit = record.canEdit;
+    if (typeof record.canStop === 'boolean') capabilities.canStop = record.canStop;
+    if (typeof record.canClear === 'boolean') capabilities.canClear = record.canClear;
+    return Object.keys(capabilities).length > 0 ? capabilities : null;
+}
+
 function readStatusReason(value: unknown): SessionWorkStateStatusReason | null {
-    return value === 'budgetLimited' ? value : null;
+    return value === 'blocked'
+        || value === 'usageLimited'
+        || value === 'budgetLimited'
+        || value === 'interrupted'
+        ? value
+        : null;
 }
 
 function toUiWorkStateItem(item: SessionWorkStateItemV1): SessionWorkStateItem {
@@ -53,6 +70,10 @@ function toUiWorkStateItem(item: SessionWorkStateItemV1): SessionWorkStateItem {
         ...(typeof item.vendorRef === 'string' ? { vendorRef: item.vendorRef } : {}),
         ...(typeof item.order === 'number' ? { order: item.order } : {}),
         ...(typeof item.priority === 'string' ? { priority: item.priority } : {}),
+        ...((): Readonly<{ goalCapabilities?: SessionWorkStateGoalCapabilities }> => {
+            const capabilities = readGoalCapabilities(item.goalCapabilities);
+            return capabilities ? { goalCapabilities: capabilities } : {};
+        })(),
         ...(typeof item.tokenBudget === 'number' || item.tokenBudget === null ? { tokenBudget: item.tokenBudget } : {}),
         ...(typeof item.tokensUsed === 'number' ? { tokensUsed: item.tokensUsed } : {}),
         ...(typeof item.timeUsedSeconds === 'number' ? { timeUsedSeconds: item.timeUsedSeconds } : {}),
@@ -113,7 +134,15 @@ export function readSessionWorkStateFromMetadata(metadata: unknown): SessionWork
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
     const raw = metadata as Record<string, unknown>;
     const canonical = readSessionWorkStateV1FromMetadata(raw);
-    return canonical ? toUiWorkStateSnapshot(canonical) : readLegacyGoalSnapshot(raw);
+    if (canonical) {
+        recordSessionPayloadConsumptionTelemetry({
+            family: 'work-state',
+            payload: canonical,
+            itemCount: canonical.items.length,
+        });
+        return toUiWorkStateSnapshot(canonical);
+    }
+    return readLegacyGoalSnapshot(raw);
 }
 
 function firstItem(snapshot: SessionWorkStateSnapshot | null, predicate: (item: SessionWorkStateItem) => boolean): SessionWorkStateItem | null {

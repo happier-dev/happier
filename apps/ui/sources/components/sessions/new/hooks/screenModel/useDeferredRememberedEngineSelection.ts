@@ -2,6 +2,7 @@ import * as React from 'react';
 import type {
     AcpConfigOptionOverridesV1,
     BackendTargetRefV2,
+    SessionModelSelectionV1,
 } from '@happier-dev/protocol';
 
 import {
@@ -14,7 +15,7 @@ import {
 export const REMEMBERED_ENGINE_SELECTION_WRITE_DELAY_MS = 3000;
 
 type RememberedEngineSelectionInput = Readonly<{
-    modelId: string;
+    modelSelection: SessionModelSelectionV1 | null;
     acpSessionModeId: string | null;
     sessionConfigOptionOverrides: AcpConfigOptionOverridesV1 | null;
 }>;

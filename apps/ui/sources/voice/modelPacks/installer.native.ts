@@ -1,8 +1,12 @@
 import { parseModelPackManifest, type ModelPackManifest } from '@happier-dev/protocol';
-import { installModelPackWithHost } from '@happier-dev/voice-modelpacks';
+import { installModelPackWithHost, type ModelPackPromotionPriorInstallV1 } from '@happier-dev/voice-modelpacks';
 
 import { getFetch, getFs } from './installer/fs.native';
-import { createExpoModelPackInstallerHost, reconcileExpoModelPackPromotion } from './installer/host.native';
+import {
+  createExpoModelPackInstallerHost,
+  reconcileExpoModelPackPromotion,
+  removeExpoModelPackWithHost,
+} from './installer/host.native';
 import { fetchRemoteManifest } from './installer/network';
 import { assertManifestPathsSafe, getMetaFile, getPackRootDir, normalizePackId } from './installer/paths';
 import type { InstallerFs, InstallMode, InstallerOverrides, UpdatePolicy } from './installer/types';
@@ -26,6 +30,7 @@ async function installViaHost(opts: {
   manifest: ModelPackManifest;
   timeoutMs: number;
   signal: AbortSignal;
+  priorInstall: ModelPackPromotionPriorInstallV1;
   onProgress?: (p: { loaded: number; total: number; file?: string }) => void;
 }): Promise<{ packDirUri: string; manifest: ModelPackManifest }> {
   const host = createExpoModelPackInstallerHost({
@@ -38,6 +43,7 @@ async function installViaHost(opts: {
     packId: opts.packId,
     manifest: opts.manifest,
     signal: opts.signal,
+    priorInstall: opts.priorInstall,
     onProgress: opts.onProgress,
   });
   return { packDirUri: result.rootLocation, manifest: result.manifest };
@@ -60,7 +66,7 @@ export async function ensureModelPackInstalled(
   const id = normalizePackId(opts.packId);
   // X-M1: roll forward/back any swap this pack left interrupted by a crash before
   // inspecting/serving it, so a transiently-missing live dir is never observed.
-  reconcileExpoModelPackPromotion({ fs, packId: id });
+  await reconcileExpoModelPackPromotion({ fs, packId: id });
   const rootDir = getPackRootDir(fs, id);
 
   const meta = getMetaFile(fs, rootDir);
@@ -97,6 +103,7 @@ export async function ensureModelPackInstalled(
         manifest: remote,
         timeoutMs: opts.timeoutMs,
         signal: opts.signal,
+        priorInstall: Object.freeze({ scopeKey: `expo-model-pack:${rootDir.uri}`, identityKey: id }),
         onProgress: opts.onProgress,
       });
     }
@@ -129,6 +136,7 @@ export async function ensureModelPackInstalled(
     manifest,
     timeoutMs: opts.timeoutMs,
     signal: opts.signal,
+    priorInstall: null,
     onProgress: opts.onProgress,
   });
 }
@@ -154,6 +162,7 @@ export async function checkModelPackUpdateAvailable(
   const fs = await getFs(overrides);
   const fetchImpl = getFetch(overrides);
   const id = normalizePackId(opts.packId);
+  await reconcileExpoModelPackPromotion({ fs, packId: id });
   const rootDir = getPackRootDir(fs, id);
   const meta = getMetaFile(fs, rootDir);
 
@@ -198,7 +207,7 @@ export async function getModelPackInstallSummary(
   const fs = await getFs(overrides);
   const id = normalizePackId(opts.packId);
   // X-M1: recover an interrupted swap before reporting install state.
-  reconcileExpoModelPackPromotion({ fs, packId: id });
+  await reconcileExpoModelPackPromotion({ fs, packId: id });
   const rootDir = getPackRootDir(fs, id);
   const meta = getMetaFile(fs, rootDir);
 
@@ -215,15 +224,11 @@ export async function getModelPackInstallSummary(
   }
 }
 
-export async function removeModelPack(opts: { packId: string | null }, overrides: InstallerOverrides = {}): Promise<void> {
+export async function removeModelPack(
+  opts: { packId: string | null; signal?: AbortSignal },
+  overrides: InstallerOverrides = {},
+): Promise<void> {
   const fs = await getFs(overrides);
   const id = normalizePackId(opts.packId);
-  const rootDir = getPackRootDir(fs, id);
-  try {
-    if (rootDir.exists) {
-      rootDir.delete?.({ idempotent: true });
-    }
-  } catch {
-    // ignore
-  }
+  await removeExpoModelPackWithHost({ fs, packId: id, signal: opts.signal });
 }

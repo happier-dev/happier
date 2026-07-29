@@ -7,6 +7,7 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { storage } from '@/sync/domains/state/storage';
 import { useShallow } from 'zustand/react/shallow';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
+import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useSegments } from 'expo-router';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
@@ -98,8 +99,11 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     const actionExecutor = useMemo(
         () => createDefaultActionExecutor({
             resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
-            openSession: (sessionId) => {
-                router.push((`/session/${sessionId}`) as any);
+            openSession: (sessionId, options) => {
+                router.push(buildScopedSessionRouteHref({
+                    sessionId,
+                    serverId: options?.serverId,
+                }) as any);
             },
         }),
         [router],

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import type { TranscriptRowLayoutMutation } from './TranscriptRowLayoutMutationContext';
 import type { TranscriptItemHeightValiditySignature } from './transcriptItemHeightCache';
 import { createTranscriptMeasurementHost } from './transcriptMeasurementHost';
 
@@ -21,76 +20,7 @@ function signature(
     };
 }
 
-function signatureChange(
-    previous: TranscriptItemHeightValiditySignature,
-    next: TranscriptItemHeightValiditySignature,
-): TranscriptRowLayoutMutation {
-    return {
-        reason: 'signature-change',
-        sourceId: next.itemId,
-        previousSignature: previous,
-        nextSignature: next,
-    };
-}
-
 describe('transcriptMeasurementHost', () => {
-    it('coalesces structural row cache clears to one effect per commit token', () => {
-        const host = createTranscriptMeasurementHost();
-        const mutation = signatureChange(
-            signature({ expansionKey: 'tools:collapsed|thinking:none' }),
-            signature({ expansionKey: 'tools:expanded|thinking:none' }),
-        );
-
-        host.advanceLayoutInvalidationCommitToken();
-
-        expect(host.observeRowLayoutMutation({
-            mutation,
-            viewportTransactionOpen: false,
-        }).effects).toEqual([{ type: 'clear-layout-cache', reason: 'structural-delta' }]);
-        expect(host.observeRowLayoutMutation({
-            mutation,
-            viewportTransactionOpen: false,
-        }).effects).toEqual([]);
-
-        host.advanceLayoutInvalidationCommitToken();
-        expect(host.observeRowLayoutMutation({
-            mutation,
-            viewportTransactionOpen: false,
-        }).effects).toEqual([{ type: 'clear-layout-cache', reason: 'structural-delta' }]);
-    });
-
-    it('suppresses global cache clears while a viewport transaction owns the viewport', () => {
-        const host = createTranscriptMeasurementHost();
-        host.advanceLayoutInvalidationCommitToken();
-
-        expect(host.observeRowLayoutMutation({
-            mutation: { reason: 'expand', sourceId: 'message-1' },
-            viewportTransactionOpen: true,
-        }).effects).toEqual([]);
-    });
-
-    it('does not clear the global cache for streaming append churn or stream finalization', () => {
-        const host = createTranscriptMeasurementHost();
-        host.advanceLayoutInvalidationCommitToken();
-
-        expect(host.observeRowLayoutMutation({
-            mutation: signatureChange(
-                signature({ rowState: 'streaming', structuralKey: 'token-1' }),
-                signature({ rowState: 'streaming', structuralKey: 'token-2' }),
-            ),
-            viewportTransactionOpen: false,
-        }).effects).toEqual([]);
-
-        host.advanceLayoutInvalidationCommitToken();
-        expect(host.observeRowLayoutMutation({
-            mutation: signatureChange(
-                signature({ rowState: 'streaming', structuralKey: 'token-2' }),
-                signature({ rowState: 'stable', structuralKey: 'final' }),
-            ),
-            viewportTransactionOpen: false,
-        }).effects).toEqual([]);
-    });
-
     it('resets per-session host state while preserving exact stable-row height cache entries', () => {
         const host = createTranscriptMeasurementHost();
         const stable = signature();

@@ -1,16 +1,15 @@
 import {
     normalizeCodexBackendMode as normalizeCanonicalCodexBackendMode,
-    resolveMetadataStringOverrideV1,
-    type CodexBackendMode,
-} from '@happier-dev/agents';
-import {
     SessionAuthoringTerminalV1Schema,
     SessionAuthoringValueV1Schema,
+    type CodexBackendMode,
     type SessionAuthoringTerminalV1,
     type SessionAuthoringValueV1,
 } from '@happier-dev/protocol';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+
 
 export const normalizeCodexBackendMode = normalizeCanonicalCodexBackendMode;
 
@@ -64,8 +63,15 @@ export function normalizeSessionAuthoringTerminal(
     return parsed.success ? parsed.data : null;
 }
 
-export function normalizeTerminalFromSessionMetadata(session: Pick<Session, 'metadata'>): SessionAuthoringTerminalV1 | null {
-    const terminal = normalizeOptionalRecord(session.metadata?.terminal);
+export function normalizeTerminalFromSessionMetadata(
+    session: Pick<
+        Session,
+        'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView'
+    >,
+): SessionAuthoringTerminalV1 | null {
+    const terminal = normalizeOptionalRecord(
+        readSessionOwnerMetadataView(session)?.terminal,
+    );
     if (!terminal) {
         return null;
     }
@@ -88,16 +94,5 @@ export function normalizeTerminalFromSessionMetadata(session: Pick<Session, 'met
                 },
             }
             : {}),
-    };
-}
-
-export function resolveMetadataModelOverride(session: Pick<Session, 'metadata'>): Readonly<{
-    modelId: string | null;
-    modelUpdatedAt: number | null;
-}> {
-    const override = resolveMetadataStringOverrideV1(session.metadata as Record<string, unknown> | null, 'modelOverrideV1', 'modelId');
-    return {
-        modelId: normalizeOptionalString(override?.value),
-        modelUpdatedAt: normalizeOptionalNumber(override?.updatedAt),
     };
 }

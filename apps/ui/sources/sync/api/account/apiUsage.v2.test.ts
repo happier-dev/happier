@@ -58,6 +58,7 @@ describe('apiUsage v2 analytics query', () => {
         const body = JSON.parse(String(options?.body));
         expect(body).toMatchObject({
             granularity: 'day',
+            timeZoneOffsetMinutes: -new Date().getTimezoneOffset(),
             includeSeries: true,
             includeInsights: true,
             includeActivity: true,

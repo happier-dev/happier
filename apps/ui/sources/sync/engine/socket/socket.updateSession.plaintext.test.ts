@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
+import { buildInboxSessionState } from '@/hooks/inbox/buildInboxSessionState';
 import {
     markSessionSurfaceVisible,
     resetSessionSurfaceVisibilityForTests,
@@ -11,9 +12,31 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { flushActivityUpdates, handleSocketUpdate, handleUpdateContainer } from './socket';
 
+const socketPostDecryptSideEffectMocks = vi.hoisted(() => ({
+    notifyActivityAgentRequest: vi.fn(),
+    reportNewAgentRequestsFromSessionTransition: vi.fn(),
+}));
+
+vi.mock('@/activity/notifications/runtime/activityLocalNotificationBus', () => ({
+    notifyActivityAgentRequest: socketPostDecryptSideEffectMocks.notifyActivityAgentRequest,
+}));
+
+vi.mock('@/voice/context/reportNewAgentRequestsFromSessionTransition', () => ({
+    reportNewAgentRequestsFromSessionTransition:
+        socketPostDecryptSideEffectMocks.reportNewAgentRequestsFromSessionTransition,
+}));
+
 const initialStorageState = storage.getInitialState();
 type HandleUpdateContainerParams = Parameters<typeof handleUpdateContainer>[0];
 type HandleUpdateContainerBaseParams = Omit<HandleUpdateContainerParams, 'updateData'>;
+
+function createDeferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((resolvePromise) => {
+        resolve = resolvePromise;
+    });
+    return { promise, resolve };
+}
 
 function buildSession(sessionId: string): Session {
     return {
@@ -70,6 +93,8 @@ describe('socket update handling: plaintext update-session', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
         resetSessionSurfaceVisibilityForTests();
+        socketPostDecryptSideEffectMocks.notifyActivityAgentRequest.mockClear();
+        socketPostDecryptSideEffectMocks.reportNewAgentRequestsFromSessionTransition.mockClear();
     });
 
     afterEach(() => {
@@ -118,6 +143,111 @@ describe('socket update handling: plaintext update-session', () => {
         } finally {
             consoleError.mockRestore();
         }
+    });
+
+    it('hydrates a serialized hidden Voice permission update into global Inbox custody', async () => {
+        const sessionId = 's_hidden_voice_post_end_permission';
+        storage.getState().applySessions([{
+            ...buildSession(sessionId),
+            serverId: 'server-a',
+            metadata: {
+                path: '/tmp',
+                host: 'localhost',
+                systemSessionV1: {
+                    v: 1,
+                    key: 'voice_conversation',
+                    hidden: true,
+                },
+                voiceConversationScopeV1: {
+                    v: 1,
+                    kind: 'voice_home',
+                },
+            },
+            agentState: {
+                controlledByUser: null,
+                requests: {},
+                completedRequests: {},
+            },
+        }]);
+        const applySessions = vi.fn((sessions: Parameters<HandleUpdateContainerBaseParams['applySessions']>[0]) => {
+            storage.getState().applySessions(sessions);
+        });
+        const params = buildBaseParams({ applySessions });
+        const updateData = JSON.parse(JSON.stringify({
+            id: 'u_hidden_voice_post_end_permission',
+            seq: 10,
+            createdAt: 1_234,
+            body: {
+                t: 'update-session',
+                id: sessionId,
+                pendingPermissionRequestCount: 1,
+                agentState: {
+                    version: 2,
+                    value: JSON.stringify({
+                        controlledByUser: null,
+                        requests: {
+                            'permission-after-end': {
+                                tool: 'Bash',
+                                kind: 'permission',
+                                arguments: { command: 'git status' },
+                                createdAt: 1_233,
+                            },
+                        },
+                        completedRequests: {},
+                    }),
+                },
+            },
+        } satisfies ApiUpdateContainer)) as ApiUpdateContainer;
+
+        await handleUpdateContainer({
+            ...params,
+            updateData,
+        });
+
+        const hydratedSession = storage.getState().sessions[sessionId];
+        expect(hydratedSession).toEqual(expect.objectContaining({
+            id: sessionId,
+            pendingPermissionRequestCount: 1,
+            agentState: expect.objectContaining({
+                requests: {
+                    'permission-after-end': expect.objectContaining({
+                        kind: 'permission',
+                    }),
+                },
+            }),
+        }));
+        const inbox = buildInboxSessionState({
+            sessions: [hydratedSession!],
+            sessionRows: [],
+            nowMs: 1_234,
+        });
+        expect(inbox.sessionsNeedingAttention).toEqual([
+            expect.objectContaining({
+                session: expect.objectContaining({
+                    id: sessionId,
+                    metadata: expect.objectContaining({
+                        systemSessionV1: {
+                            v: 1,
+                            key: 'voice_conversation',
+                            hidden: true,
+                        },
+                        voiceConversationScopeV1: {
+                            v: 1,
+                            kind: 'voice_home',
+                        },
+                    }),
+                }),
+                pendingPermissions: [
+                    expect.objectContaining({
+                        id: 'permission-after-end',
+                        kind: 'permission',
+                        tool: 'Bash',
+                        arguments: { command: 'git status' },
+                        createdAt: 1_233,
+                    }),
+                ],
+            }),
+        ]);
     });
 
     it('still applies projection fields for an e2ee session when session encryption is missing instead of dropping the update', async () => {
@@ -229,6 +359,109 @@ describe('socket update handling: plaintext update-session', () => {
         expect(updatedSession.latestReadyEventSeq).toBe(7);
         expect(updatedSession.latestReadyEventAt).toBe(1_990);
         expect(updatedSession.updatedAt).toBe(2_000);
+    });
+
+    it('does not emit duplicate Agent side effects when an older decrypt completes after a newer tuple', async () => {
+        const sessionId = 's_deferred_agent_side_effect_currentness';
+        storage.getState().applySessions([{
+            ...buildSession(sessionId),
+            encryptionMode: 'e2ee',
+            agentState: {
+                controlledByUser: true,
+                requests: {},
+                completedRequests: {},
+            },
+            agentStateVersion: 1,
+        }]);
+
+        const staleAgentState = {
+            controlledByUser: false,
+            requests: {
+                stalePermission: {
+                    tool: 'Bash',
+                    kind: 'permission',
+                    arguments: { command: 'echo stale' },
+                },
+            },
+            completedRequests: {},
+        };
+        const currentAgentState = {
+            controlledByUser: false,
+            requests: {
+                currentPermission: {
+                    tool: 'Bash',
+                    kind: 'permission',
+                    arguments: { command: 'echo current' },
+                },
+            },
+            completedRequests: {},
+        };
+        const staleDecrypt = createDeferred<typeof staleAgentState>();
+        const decryptAgentState = vi.fn((version: number) =>
+            version === 2
+                ? staleDecrypt.promise
+                : Promise.resolve(currentAgentState),
+        );
+        const applySessions = vi.fn((
+            sessions: Parameters<HandleUpdateContainerBaseParams['applySessions']>[0],
+        ) => {
+            storage.getState().applySessions(sessions);
+        });
+        const params = buildBaseParams({
+            encryption: {
+                getSessionEncryption: () => ({
+                    decryptMetadata: vi.fn(),
+                    decryptAgentState,
+                }),
+                getMachineEncryption: () => null,
+                removeSessionEncryption: () => {},
+            } as unknown as HandleUpdateContainerBaseParams['encryption'],
+            applySessions,
+        });
+
+        const staleUpdate = handleUpdateContainer({
+            ...params,
+            updateData: {
+                id: 'u_agent_state_v2',
+                seq: 2,
+                createdAt: 2,
+                body: {
+                    t: 'update-session',
+                    id: sessionId,
+                    agentState: { version: 2, value: 'agent-state-v2' },
+                },
+            },
+        });
+        await expect.poll(() => decryptAgentState.mock.calls.length).toBe(1);
+
+        await handleUpdateContainer({
+            ...params,
+            updateData: {
+                id: 'u_agent_state_v3',
+                seq: 3,
+                createdAt: 3,
+                body: {
+                    t: 'update-session',
+                    id: sessionId,
+                    agentState: { version: 3, value: 'agent-state-v3' },
+                },
+            },
+        });
+        staleDecrypt.resolve(staleAgentState);
+        await staleUpdate;
+
+        expect(storage.getState().sessions[sessionId]).toMatchObject({
+            agentStateVersion: 3,
+            agentState: currentAgentState,
+        });
+        expect(socketPostDecryptSideEffectMocks.notifyActivityAgentRequest).toHaveBeenCalledTimes(1);
+        expect(socketPostDecryptSideEffectMocks.notifyActivityAgentRequest).toHaveBeenCalledWith(
+            expect.objectContaining({ requestId: 'currentPermission' }),
+        );
+        expect(
+            socketPostDecryptSideEffectMocks.reportNewAgentRequestsFromSessionTransition,
+        ).toHaveBeenCalledTimes(1);
+        expect(params.onSessionVisible).toHaveBeenCalledTimes(1);
     });
 
     it('applies metadata when the incoming version is higher and treats an equal version as a no-op (hydrated path)', async () => {
@@ -518,7 +751,7 @@ describe('socket update handling: plaintext update-session', () => {
                     host: 'localhost',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
                         machineId: 'machine-1',
                         remoteSessionId: 'remote-1',
                         source: {
@@ -568,7 +801,7 @@ describe('socket update handling: plaintext update-session', () => {
                 machineId: 'machine-1',
                 externalSessionV1: expect.objectContaining({
                     v: 1,
-                    providerId: 'claude',
+                    agentId: 'claude',
                     remoteSessionId: 'remote-1',
                 }),
                 externalSessionAttentionV1: expect.objectContaining({
@@ -591,7 +824,7 @@ describe('socket update handling: plaintext update-session', () => {
                     host: 'localhost',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
                         machineId: 'machine-1',
                         remoteSessionId: 'remote-1',
                         source: {
@@ -641,7 +874,7 @@ describe('socket update handling: plaintext update-session', () => {
                 host: 'devbox',
                 externalSessionV1: expect.objectContaining({
                     v: 1,
-                    providerId: 'claude',
+                    agentId: 'claude',
                     remoteSessionId: 'remote-1',
                 }),
                 externalSessionAttentionV1: expect.objectContaining({
@@ -689,7 +922,7 @@ describe('socket update handling: plaintext update-session', () => {
                         host: 'devbox',
                         externalSessionV1: {
                             v: 1,
-                            providerId: 'claude',
+                            agentId: 'claude',
                             machineId: 'machine-1',
                             remoteSessionId: 'remote-1',
                             source: {
@@ -777,6 +1010,161 @@ describe('socket update handling: plaintext update-session', () => {
         );
         expect(params.invalidateSessions).not.toHaveBeenCalled();
         expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+
+    it('patches cache-only renderables for runtime activity update-session without forcing a sessions refresh', async () => {
+        storage.getState().replaceSessionListRenderables([
+            {
+                id: 's_cached_runtime_activity_only',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                archivedAt: null,
+                metadataVersion: 1,
+                agentStateVersion: 0,
+                metadata: { path: '/tmp', host: 'localhost' },
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online',
+                latestTurnStatus: 'completed',
+                runtimeActivityState: 'unknown',
+                runtimeActivityActiveCount: 0,
+                runtimeActivityObservedAt: null,
+                runtimeActivityRevision: 0,
+                hasUnreadMessages: false,
+            },
+        ]);
+
+        const params = buildBaseParams();
+        await handleUpdateContainer({
+            ...params,
+            updateData: {
+                id: 'u_runtime_activity_only_cache_only',
+                seq: 12,
+                createdAt: 1236,
+                body: {
+                    t: 'update-session',
+                    id: 's_cached_runtime_activity_only',
+                    runtimeActivityState: 'active',
+                    runtimeActivityActiveCount: 1,
+                    runtimeActivityObservedAt: 1200,
+                    runtimeActivityRevision: 132_000,
+                },
+            },
+        });
+
+        expect(storage.getState().sessionListRenderables.s_cached_runtime_activity_only).toEqual(
+            expect.objectContaining({
+                runtimeActivityState: 'active',
+                runtimeActivityActiveCount: 1,
+                runtimeActivityObservedAt: 1200,
+                runtimeActivityRevision: 132_000,
+                updatedAt: 1236,
+            }),
+        );
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
+        expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+
+    it('retains cache-only runtime activity truth and target-hydrates on an equal-revision conflict', async () => {
+        vi.useFakeTimers();
+        storage.getState().replaceSessionListRenderables([{
+            id: 's_cached_runtime_conflict',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            archivedAt: null,
+            metadataVersion: 1,
+            agentStateVersion: 0,
+            metadata: { path: '/tmp', host: 'localhost' },
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: 1_100,
+            runtimeActivityRevision: 7,
+            hasUnreadMessages: false,
+        }]);
+
+        const hydrateSessionById = vi.fn();
+        const params = buildBaseParams({ hydrateSessionById });
+        await handleUpdateContainer({
+            ...params,
+            updateData: {
+                id: 'u_runtime_activity_conflict_cache_only',
+                seq: 12,
+                createdAt: 1_236,
+                body: {
+                    t: 'update-session',
+                    id: 's_cached_runtime_conflict',
+                    runtimeActivityState: 'idle',
+                    runtimeActivityActiveCount: 0,
+                    runtimeActivityObservedAt: 1_200,
+                    runtimeActivityRevision: 7,
+                },
+            },
+        });
+
+        expect(storage.getState().sessionListRenderables.s_cached_runtime_conflict).toEqual(
+            expect.objectContaining({
+                runtimeActivityState: 'active',
+                runtimeActivityActiveCount: 1,
+                runtimeActivityObservedAt: 1_100,
+                runtimeActivityRevision: 7,
+            }),
+        );
+        expect(hydrateSessionById).toHaveBeenCalledWith(
+            's_cached_runtime_conflict',
+            'socket-update-runtime-activity-conflict',
+        );
+        await vi.runAllTimersAsync();
+    });
+
+    it('retains hydrated runtime activity truth and target-hydrates on an equal-revision conflict', async () => {
+        storage.getState().applySessions([{
+            ...buildSession('s_hydrated_runtime_conflict'),
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: 1_100,
+            runtimeActivityRevision: 7,
+        }]);
+
+        const hydrateSessionById = vi.fn();
+        const params = buildBaseParams({ hydrateSessionById });
+        await handleUpdateContainer({
+            ...params,
+            updateData: {
+                id: 'u_runtime_activity_conflict_hydrated',
+                seq: 12,
+                createdAt: 1_236,
+                body: {
+                    t: 'update-session',
+                    id: 's_hydrated_runtime_conflict',
+                    runtimeActivityState: 'idle',
+                    runtimeActivityActiveCount: 0,
+                    runtimeActivityObservedAt: 1_200,
+                    runtimeActivityRevision: 7,
+                },
+            },
+        });
+
+        const applySessionsSpy = params.applySessions as unknown as ReturnType<typeof vi.fn>;
+        expect(applySessionsSpy).toHaveBeenCalledTimes(1);
+        expect(applySessionsSpy.mock.calls[0]?.[0]?.[0]).toEqual(expect.objectContaining({
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: 1_100,
+            runtimeActivityRevision: 7,
+        }));
+        expect(hydrateSessionById).toHaveBeenCalledWith(
+            's_hydrated_runtime_conflict',
+            'socket-update-runtime-activity-conflict',
+        );
     });
 
     it('target-hydrates visible cache-only renderables after update-session projection patches', async () => {
@@ -882,6 +1270,227 @@ describe('socket update handling: plaintext update-session', () => {
         expect(hydrateSessionById).toHaveBeenCalledWith('s_cached_route_update', 'socket-update-missing-session');
         expect(params.invalidateSessions).not.toHaveBeenCalled();
         expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+
+    it('target-hydrates live full-content session turn projections after terminal turn updates', async () => {
+        const sessionId = 's_live_turn_projection';
+        const sourceServerId = 'server-live-turns';
+        markSessionSurfaceVisible(sessionId, sourceServerId);
+        storage.getState().applySessions([{
+            ...buildSession(sessionId),
+            active: false,
+            latestTurnId: 'turn-1',
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 1_100,
+        }]);
+
+        const hydrateSessionById = vi.fn();
+        const params = buildBaseParams({ hydrateSessionById });
+        await handleUpdateContainer({
+            ...params,
+            sourceServerId,
+            updateData: {
+                id: 'u_live_turn_projection',
+                seq: 14,
+                createdAt: 1_237,
+                body: {
+                    t: 'update-session',
+                    id: sessionId,
+                    latestTurnId: 'turn-1',
+                    latestTurnStatus: 'completed',
+                    latestTurnStatusObservedAt: 1_235,
+                },
+            },
+        });
+
+        expect(hydrateSessionById).toHaveBeenCalledWith(sessionId, 'socket-update-turn-projection');
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
+    });
+
+    it('keeps layout-0 metadata socket patches on the existing inline hydration path', async () => {
+        const sessionId = 's_layout0_inline_metadata';
+        storage.getState().applySessions([buildSession(sessionId)]);
+        const hydrateSessionById = vi.fn();
+        const params = buildBaseParams({ hydrateSessionById });
+
+        await handleUpdateContainer({
+            ...params,
+            updateData: {
+                id: 'u_layout0_inline_metadata',
+                seq: 14,
+                createdAt: 1_237,
+                body: {
+                    t: 'update-session',
+                    id: sessionId,
+                    metadata: {
+                        version: 2,
+                        value: JSON.stringify({
+                            path: '/updated',
+                            host: 'layout0-host',
+                        }),
+                    },
+                },
+            },
+        });
+
+        expect(hydrateSessionById).not.toHaveBeenCalled();
+        const appliedSession = (
+            params.applySessions as unknown as ReturnType<typeof vi.fn>
+        ).mock.calls.at(-1)?.[0]?.[0] as Session | undefined;
+        expect(appliedSession).toEqual(expect.objectContaining({
+            metadataLayoutVersion: 0,
+            metadataVersion: 2,
+            metadata: {
+                path: '/updated',
+                host: 'layout0-host',
+            },
+        }));
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
+    });
+
+    it('target-hydrates layout-1 owner metadata after a shared metadata socket patch', async () => {
+        const sessionId = 's_layout1_owner_refresh';
+        storage.getState().applySessions([{
+            ...buildSession(sessionId),
+            metadataLayoutVersion: 1,
+            metadata: { v: 1 } as any,
+            ownerMetadataView: {
+                path: '/private/worktree',
+                host: 'private',
+            } as any,
+        }]);
+        const hydrateSessionById = vi.fn();
+        const params = buildBaseParams({ hydrateSessionById });
+
+        await handleUpdateContainer({
+            ...params,
+            updateData: {
+                id: 'u_layout1_owner_refresh',
+                seq: 14,
+                createdAt: 1_237,
+                body: {
+                    t: 'update-session',
+                    id: sessionId,
+                    metadataLayoutVersion: 1,
+                    metadata: {
+                        version: 2,
+                        value: JSON.stringify({ v: 1 }),
+                    },
+                },
+            },
+        });
+
+        expect(hydrateSessionById).toHaveBeenCalledWith(
+            sessionId,
+            'socket-update-owner-metadata',
+        );
+        const appliedSession = (
+            params.applySessions as unknown as ReturnType<typeof vi.fn>
+        ).mock.calls.at(-1)?.[0]?.[0] as Session | undefined;
+        expect(appliedSession?.ownerMetadataView).toBeNull();
+        expect(appliedSession).not.toHaveProperty('ownerMetadata');
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
+    });
+
+    it.each(['view', 'edit', 'admin'] as const)(
+        'applies a layout-1 %s participant shared metadata patch without requesting owner hydration',
+        async (accessLevel) => {
+            const sessionId = `s_layout1_${accessLevel}_participant_shared_patch`;
+            storage.getState().applySessions([{
+                ...buildSession(sessionId),
+                metadataLayoutVersion: 1,
+                metadata: { v: 1 } as unknown as Session['metadata'],
+                ownerMetadataView: null,
+                accessLevel,
+            }]);
+            const hydrateSessionById = vi.fn();
+            const params = buildBaseParams({ hydrateSessionById });
+
+            await handleUpdateContainer({
+                ...params,
+                updateData: {
+                    id: `u_layout1_${accessLevel}_participant_shared_patch`,
+                    seq: 15,
+                    createdAt: 1_238,
+                    body: {
+                        t: 'update-session',
+                        id: sessionId,
+                        metadataLayoutVersion: 1,
+                        metadata: {
+                            version: 2,
+                            value: JSON.stringify({
+                                v: 1,
+                                summary: { text: 'Shared title', updatedAt: 1_238 },
+                            }),
+                        },
+                    },
+                },
+            });
+
+            expect(hydrateSessionById).not.toHaveBeenCalled();
+            const appliedSession = (
+                params.applySessions as unknown as ReturnType<typeof vi.fn>
+            ).mock.calls.at(-1)?.[0]?.[0] as Session | undefined;
+            expect(appliedSession).toEqual(expect.objectContaining({
+                metadataLayoutVersion: 1,
+                metadataVersion: 2,
+                metadata: {
+                    v: 1,
+                    summary: { text: 'Shared title', updatedAt: 1_238 },
+                },
+                ownerMetadataView: null,
+                accessLevel,
+            }));
+            expect(appliedSession).not.toHaveProperty('ownerMetadata');
+            expect(params.invalidateSessions).not.toHaveBeenCalled();
+        },
+    );
+
+    it('retains layout-1 participant turn-projection hydration without requesting owner metadata', async () => {
+        const sessionId = 's_layout1_participant_turn_projection';
+        const sourceServerId = 'server-layout1-participant-turns';
+        markSessionSurfaceVisible(sessionId, sourceServerId);
+        storage.getState().applySessions([{
+            ...buildSession(sessionId),
+            metadataLayoutVersion: 1,
+            metadata: { v: 1 } as unknown as Session['metadata'],
+            ownerMetadataView: null,
+            accessLevel: 'view',
+            latestTurnId: 'turn-participant-1',
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 1_200,
+        }]);
+        const hydrateSessionById = vi.fn();
+        const params = buildBaseParams({ hydrateSessionById });
+
+        await handleUpdateContainer({
+            ...params,
+            sourceServerId,
+            updateData: {
+                id: 'u_layout1_participant_turn_projection',
+                seq: 16,
+                createdAt: 1_240,
+                body: {
+                    t: 'update-session',
+                    id: sessionId,
+                    metadataLayoutVersion: 1,
+                    metadata: {
+                        version: 2,
+                        value: JSON.stringify({ v: 1 }),
+                    },
+                    latestTurnId: 'turn-participant-1',
+                    latestTurnStatus: 'completed',
+                    latestTurnStatusObservedAt: 1_239,
+                },
+            },
+        });
+
+        expect(hydrateSessionById).toHaveBeenCalledTimes(1);
+        expect(hydrateSessionById).toHaveBeenCalledWith(
+            sessionId,
+            'socket-update-turn-projection',
+        );
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
     });
 
     it('coalesces cache-only non-urgent update-session projection patches until the activity window flushes', async () => {
@@ -1353,6 +1962,7 @@ describe('socket update handling: plaintext update-session', () => {
                 activeAt: 1,
                 archivedAt: null,
                 pendingCount: 0,
+                pendingBlockedCount: 1,
                 pendingVersion: 1,
                 metadataVersion: 1,
                 agentStateVersion: 0,
@@ -1386,11 +1996,62 @@ describe('socket update handling: plaintext update-session', () => {
         expect(storage.getState().sessionListRenderables['s_cached_pending']).toEqual(
             expect.objectContaining({
                 pendingCount: 4,
+                pendingBlockedCount: 1,
                 pendingVersion: 8,
                 meaningfulActivityAt: 1_235,
             }),
         );
         expect(storage.getState().sessionListIndexByServerId).toBe(initialIndexByServerId);
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
+        expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+
+    it('clears cache-only blocked pending state when pending-changed sends explicit zero', async () => {
+        storage.getState().replaceSessionListRenderables([
+            {
+                id: 's_cached_pending_clear',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                archivedAt: null,
+                pendingCount: 2,
+                pendingBlockedCount: 1,
+                pendingVersion: 1,
+                metadataVersion: 1,
+                agentStateVersion: 0,
+                metadata: { path: '/tmp', host: 'localhost' },
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online',
+            },
+        ]);
+
+        const params = buildBaseParams();
+        await handleUpdateContainer({
+            ...params,
+            updateData: {
+                id: 'u_plain_pending_cache_only_clear',
+                seq: 12,
+                createdAt: 1236,
+                body: {
+                    t: 'pending-changed',
+                    sid: 's_cached_pending_clear',
+                    pendingCount: 1,
+                    pendingBlockedCount: 0,
+                    pendingVersion: 8,
+                },
+            } as ApiUpdateContainer,
+        });
+
+        expect(storage.getState().sessionListRenderables.s_cached_pending_clear).toEqual(
+            expect.objectContaining({
+                pendingCount: 1,
+                pendingBlockedCount: 0,
+                pendingVersion: 8,
+            }),
+        );
         expect(params.invalidateSessions).not.toHaveBeenCalled();
         expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
     });
@@ -1452,6 +2113,7 @@ describe('socket update handling: plaintext update-session', () => {
         storage.getState().applySessions([{
             ...buildSession('s_pending_hydrated'),
             pendingCount: 0,
+            pendingBlockedCount: 1,
             pendingVersion: 1,
             meaningfulActivityAt: 100,
         }]);
@@ -1478,10 +2140,142 @@ describe('socket update handling: plaintext update-session', () => {
         expect(applySessionsSpy.mock.calls[0]?.[0]?.[0]).toEqual(expect.objectContaining({
             id: 's_pending_hydrated',
             pendingCount: 2,
+            pendingBlockedCount: 1,
             pendingVersion: 9,
             meaningfulActivityAt: 1_235,
         }));
         expect(params.invalidateSessions).not.toHaveBeenCalled();
+    });
+
+    it('clears hydrated blocked pending state when pending-changed sends explicit zero', async () => {
+        storage.getState().applySessions([{
+            ...buildSession('s_pending_hydrated_clear'),
+            pendingCount: 2,
+            pendingBlockedCount: 1,
+            pendingVersion: 1,
+        }]);
+
+        const params = buildBaseParams();
+        await handleUpdateContainer({
+            ...params,
+            updateData: {
+                id: 'u_pending_hydrated_clear',
+                seq: 13,
+                createdAt: 1_236,
+                body: {
+                    t: 'pending-changed',
+                    sid: 's_pending_hydrated_clear',
+                    pendingCount: 0,
+                    pendingBlockedCount: 0,
+                    pendingVersion: 9,
+                },
+            } as ApiUpdateContainer,
+        });
+
+        const applySessionsSpy = params.applySessions as unknown as ReturnType<typeof vi.fn>;
+        expect(applySessionsSpy).toHaveBeenCalledTimes(1);
+        expect(applySessionsSpy.mock.calls[0]?.[0]?.[0]).toEqual(expect.objectContaining({
+            id: 's_pending_hydrated_clear',
+            pendingCount: 0,
+            pendingBlockedCount: 0,
+            pendingVersion: 9,
+        }));
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
+    });
+
+    it('prunes cached server-owned pending rows when pending-changed sends zero queued rows', async () => {
+        const sessionId = 's_hydrated_pending_detail_clear';
+        storage.getState().applySessions([{ ...buildSession(sessionId), pendingCount: 1, pendingVersion: 1 }]);
+        storage.getState().applyPendingMessages(sessionId, [
+            {
+                id: 'server-pending-1',
+                localId: 'server-pending-1',
+                createdAt: 1,
+                updatedAt: 1,
+                source: 'server_pending',
+                text: 'sent to provider',
+                rawRecord: {},
+            },
+            {
+                id: 'local-outbound-1',
+                localId: 'local-outbound-1',
+                createdAt: 2,
+                updatedAt: 2,
+                source: 'local_outbound',
+                deliveryStatus: 'queued',
+                text: 'saving locally',
+                rawRecord: {},
+            },
+            {
+                id: 'local-accepted-1',
+                localId: 'local-accepted-1',
+                createdAt: 3,
+                updatedAt: 3,
+                source: 'local_outbound',
+                deliveryStatus: 'accepted',
+                pendingDeliveryStatus: 'server_delivering',
+                text: 'already handed to the server',
+                rawRecord: {},
+            },
+            {
+                id: 'local-external-1',
+                localId: 'local-external-1',
+                createdAt: 4,
+                updatedAt: 4,
+                source: 'local_outbound',
+                deliveryStatus: 'accepted',
+                pendingDeliveryStatus: 'external_handoff',
+                text: 'external custody remains visible',
+                rawRecord: {},
+            },
+            {
+                id: 'local-blocked-1',
+                localId: 'local-blocked-1',
+                createdAt: 5,
+                updatedAt: 5,
+                source: 'local_outbound',
+                deliveryStatus: 'accepted',
+                pendingDeliveryStatus: 'blocked',
+                text: 'blocked custody remains visible',
+                rawRecord: {},
+            },
+            {
+                id: 'local-cancel-1',
+                localId: 'local-cancel-1',
+                createdAt: 6,
+                updatedAt: 6,
+                source: 'local_outbound',
+                deliveryStatus: 'accepted',
+                pendingDeliveryStatus: 'server_delivering',
+                pendingOutboxOperation: 'cancel',
+                text: 'cancel custody remains visible',
+                rawRecord: {},
+            },
+        ]);
+        const params = buildBaseParams();
+
+        await handleUpdateContainer({
+            ...params,
+            updateData: {
+                id: 'u_hydrated_pending_detail_clear',
+                seq: 13,
+                createdAt: 1237,
+                body: {
+                    t: 'pending-changed',
+                    sid: sessionId,
+                    pendingCount: 0,
+                    pendingBlockedCount: 0,
+                    pendingVersion: 5,
+                },
+            } as ApiUpdateContainer,
+        });
+
+        expect(storage.getState().sessionPending[sessionId]?.messages.map((message) => message.id)).toEqual([
+            'local-outbound-1',
+            'local-external-1',
+            'local-blocked-1',
+            'local-cancel-1',
+        ]);
     });
 
     it('patches hydrated share permission updates without forcing a sessions refresh', async () => {
@@ -1625,7 +2419,10 @@ describe('socket update handling: plaintext update-session', () => {
                     host: 'localhost',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
+                        machineId: 'machine-1',
+                        remoteSessionId: 'remote-1',
+                        source: { kind: 'claudeConfig', configDir: '/tmp/.claude' },
                     },
                 },
                 thinking: false,
@@ -1672,7 +2469,7 @@ describe('socket update handling: plaintext update-session', () => {
             host: 'devbox',
             externalSessionV1: expect.objectContaining({
                 v: 1,
-                providerId: 'claude',
+                agentId: 'claude',
             }),
         }));
     });
@@ -1694,7 +2491,10 @@ describe('socket update handling: plaintext update-session', () => {
                     host: 'localhost',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
+                        machineId: 'machine-1',
+                        remoteSessionId: 'remote-1',
+                        source: { kind: 'claudeConfig', configDir: '/tmp/.claude' },
                     },
                 },
                 thinking: false,
@@ -1742,7 +2542,7 @@ describe('socket update handling: plaintext update-session', () => {
             host: 'devbox',
             externalSessionV1: expect.objectContaining({
                 v: 1,
-                providerId: 'claude',
+                agentId: 'claude',
             }),
         }));
     });
@@ -1764,7 +2564,10 @@ describe('socket update handling: plaintext update-session', () => {
                     host: 'localhost',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
+                        machineId: 'machine-1',
+                        remoteSessionId: 'remote-1',
+                        source: { kind: 'claudeConfig', configDir: '/tmp/.claude' },
                     },
                 },
                 thinking: false,
@@ -1812,7 +2615,7 @@ describe('socket update handling: plaintext update-session', () => {
             host: 'devbox',
             externalSessionV1: expect.objectContaining({
                 v: 1,
-                providerId: 'claude',
+                agentId: 'claude',
             }),
         }));
     });
@@ -2019,7 +2822,8 @@ describe('socket update handling: plaintext update-session', () => {
         }));
     });
 
-    it('skips fresh cache-only timestamp-only activity patches until runtime freshness needs refresh', () => {
+    it('skips fresh cache-only timestamp-only activity patches until runtime freshness needs refresh', async () => {
+        vi.useFakeTimers();
         syncPerformanceTelemetry.configure({
             enabled: true,
             slowThresholdMs: 1_000_000,
@@ -2095,9 +2899,9 @@ describe('socket update handling: plaintext update-session', () => {
 
         expect(storage.getState().sessionListRenderables.s_cached_activity_timestamp_gate).toEqual(
             expect.objectContaining({
-                activeAt: 61_001,
-                thinkingAt: 61_001,
-                updatedAt: 61_001,
+                activeAt: 1,
+                thinkingAt: 1,
+                updatedAt: 1,
             }),
         );
         expect(syncPerformanceTelemetry.snapshot().events.find((entry) => entry.name === 'sync.socket.sessions.activity.flush')?.fields)
@@ -2106,10 +2910,21 @@ describe('socket update handling: plaintext update-session', () => {
                 renderableTimestampOnlyPatches: 1,
                 renderableTimestampOnlySkippedFreshPatches: 0,
             }));
+
+        await vi.advanceTimersByTimeAsync(16);
+
+        expect(storage.getState().sessionListRenderables.s_cached_activity_timestamp_gate).toEqual(
+            expect.objectContaining({
+                activeAt: 61_001,
+                thinkingAt: 61_001,
+                updatedAt: 61_001,
+            }),
+        );
         expect(applySessions).not.toHaveBeenCalled();
     });
 
-    it('refreshes cache-only activity timestamps even when a durable projection has a newer updatedAt', () => {
+    it('refreshes cache-only activity timestamps even when a durable projection has a newer updatedAt', async () => {
+        vi.useFakeTimers();
         storage.getState().replaceSessionListRenderables([
             {
                 id: 's_cached_activity_heartbeat',
@@ -2149,6 +2964,19 @@ describe('socket update handling: plaintext update-session', () => {
         expect(storage.getState().sessionListRenderables.s_cached_activity_heartbeat).toEqual(
             expect.objectContaining({
                 active: true,
+                activeAt: 1,
+                thinking: true,
+                thinkingAt: 1,
+                presence: 'online',
+                updatedAt: 100_000,
+            }),
+        );
+
+        await vi.advanceTimersByTimeAsync(16);
+
+        expect(storage.getState().sessionListRenderables.s_cached_activity_heartbeat).toEqual(
+            expect.objectContaining({
+                active: true,
                 activeAt: 70_001,
                 thinking: true,
                 thinkingAt: 70_001,
@@ -2159,7 +2987,8 @@ describe('socket update handling: plaintext update-session', () => {
         expect(applySessions).not.toHaveBeenCalled();
     });
 
-    it('target-hydrates visible cache-only renderables after activity patches', () => {
+    it('target-hydrates visible cache-only renderables after activity patches', async () => {
+        vi.useFakeTimers();
         storage.getState().replaceSessionListRenderables([
             {
                 id: 's_cached_activity_visible',
@@ -2205,6 +3034,20 @@ describe('socket update handling: plaintext update-session', () => {
 
         expect(storage.getState().sessionListRenderables.s_cached_activity_visible).toEqual(
             expect.objectContaining({
+                active: false,
+                activeAt: 1,
+                thinking: false,
+                thinkingAt: 1,
+                presence: 1,
+                updatedAt: 1,
+            }),
+        );
+        expect(hydrateSessionById).toHaveBeenCalledWith('s_cached_activity_visible', 'socket-update-missing-session');
+
+        await vi.advanceTimersByTimeAsync(16);
+
+        expect(storage.getState().sessionListRenderables.s_cached_activity_visible).toEqual(
+            expect.objectContaining({
                 active: true,
                 activeAt: 70_001,
                 thinking: true,
@@ -2213,7 +3056,193 @@ describe('socket update handling: plaintext update-session', () => {
                 updatedAt: 70_001,
             }),
         );
-        expect(hydrateSessionById).toHaveBeenCalledWith('s_cached_activity_visible', 'socket-update-missing-session');
+        expect(applySessions).not.toHaveBeenCalled();
+    });
+
+    it('skips queued cache-only activity patches when targeted hydration materializes the session before flush', async () => {
+        vi.useFakeTimers();
+        storage.getState().replaceSessionListRenderables([
+            {
+                id: 's_cached_activity_hydrated_before_flush',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: false,
+                activeAt: 1,
+                archivedAt: null,
+                metadataVersion: 1,
+                agentStateVersion: 0,
+                metadata: { path: '/tmp', host: 'localhost' },
+                thinking: false,
+                thinkingAt: 1,
+                presence: 1,
+            },
+        ]);
+        markSessionSurfaceVisible('s_cached_activity_hydrated_before_flush', 'server-a');
+        const applySessions = vi.fn();
+        const hydrateSessionById = vi.fn();
+
+        flushActivityUpdates({
+            updates: new Map([
+                [
+                    's_cached_activity_hydrated_before_flush',
+                    {
+                        type: 'activity',
+                        id: 's_cached_activity_hydrated_before_flush',
+                        sessionId: 's_cached_activity_hydrated_before_flush',
+                        active: true,
+                        activeAt: 70_001,
+                        thinking: true,
+                    },
+                ],
+            ]),
+            applySessions,
+            sourceServerId: 'server-a',
+            hydrateSessionById,
+        });
+
+        expect(hydrateSessionById).toHaveBeenCalledWith(
+            's_cached_activity_hydrated_before_flush',
+            'socket-update-missing-session',
+        );
+        storage.getState().applySessions([
+            {
+                ...buildSession('s_cached_activity_hydrated_before_flush'),
+                active: false,
+                activeAt: 500,
+                thinking: false,
+                thinkingAt: 500,
+                updatedAt: 500,
+            },
+        ]);
+
+        await vi.advanceTimersByTimeAsync(16);
+
+        expect(storage.getState().sessions.s_cached_activity_hydrated_before_flush).toEqual(
+            expect.objectContaining({
+                active: false,
+                activeAt: 500,
+                thinking: false,
+                thinkingAt: 500,
+                updatedAt: 500,
+            }),
+        );
+        expect(storage.getState().sessionListRenderables.s_cached_activity_hydrated_before_flush).toEqual(
+            expect.objectContaining({
+                active: false,
+                activeAt: 500,
+                thinking: false,
+                thinkingAt: 500,
+                updatedAt: 500,
+            }),
+        );
+        expect(applySessions).not.toHaveBeenCalled();
+    });
+
+    it('coalesces cache-only activity renderable patches before touching the list store', async () => {
+        vi.useFakeTimers();
+        storage.getState().replaceSessionListRenderables([
+            {
+                id: 's_cached_activity_coalesced_one',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: false,
+                activeAt: 1,
+                archivedAt: null,
+                metadataVersion: 1,
+                agentStateVersion: 0,
+                metadata: { path: '/tmp/one', host: 'localhost' },
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            },
+            {
+                id: 's_cached_activity_coalesced_two',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: false,
+                activeAt: 1,
+                archivedAt: null,
+                metadataVersion: 1,
+                agentStateVersion: 0,
+                metadata: { path: '/tmp/two', host: 'localhost' },
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            },
+        ]);
+
+        const applySessions = vi.fn();
+        flushActivityUpdates({
+            updates: new Map([
+                [
+                    's_cached_activity_coalesced_one',
+                    {
+                        type: 'activity',
+                        id: 's_cached_activity_coalesced_one',
+                        sessionId: 's_cached_activity_coalesced_one',
+                        active: true,
+                        activeAt: 20,
+                        thinking: true,
+                    },
+                ],
+                [
+                    's_cached_activity_coalesced_two',
+                    {
+                        type: 'activity',
+                        id: 's_cached_activity_coalesced_two',
+                        sessionId: 's_cached_activity_coalesced_two',
+                        active: true,
+                        activeAt: 21,
+                        thinking: true,
+                    },
+                ],
+            ]),
+            applySessions,
+        });
+
+        expect(storage.getState().sessionListRenderables.s_cached_activity_coalesced_one).toEqual(
+            expect.objectContaining({
+                active: false,
+                activeAt: 1,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            }),
+        );
+        expect(storage.getState().sessionListRenderables.s_cached_activity_coalesced_two).toEqual(
+            expect.objectContaining({
+                active: false,
+                activeAt: 1,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            }),
+        );
+        expect(applySessions).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(16);
+
+        expect(storage.getState().sessionListRenderables.s_cached_activity_coalesced_one).toEqual(
+            expect.objectContaining({
+                active: true,
+                activeAt: 20,
+                thinking: true,
+                thinkingAt: 20,
+                presence: 'online',
+            }),
+        );
+        expect(storage.getState().sessionListRenderables.s_cached_activity_coalesced_two).toEqual(
+            expect.objectContaining({
+                active: true,
+                activeAt: 21,
+                thinking: true,
+                thinkingAt: 21,
+                presence: 'online',
+            }),
+        );
         expect(applySessions).not.toHaveBeenCalled();
     });
 

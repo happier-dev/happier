@@ -88,6 +88,15 @@ describe('deriveSessionListAttentionState', () => {
         })).toBe('pending');
     });
 
+    it('treats blocked pending delivery as action-required attention', () => {
+        expect(deriveSessionListAttentionState({
+            hasUnreadMessages: false,
+            pendingCount: 2,
+            pendingBlockedCount: 1,
+            sessionState: 'waiting',
+        })).toBe('action_required');
+    });
+
     it('treats resuming sessions as active attention before generic pending activity', () => {
         expect(deriveSessionListAttentionState({
             hasUnreadMessages: false,
@@ -115,8 +124,8 @@ describe('deriveSessionListAttentionState', () => {
                 v: 1,
                 scope: 'primary_session',
                 status: 'failed',
-                code: 'provider_status_error',
-                source: 'provider_status_error',
+                code: 'agent_status_error',
+                source: 'agent_status_error',
                 occurredAt: 100,
                 sanitizedPreview: 'Provider reported an error',
             },
@@ -137,16 +146,16 @@ describe('deriveSessionListAttentionState', () => {
         })).toBe('failed');
     });
 
-    it('does not use stale in-progress primary turns as thinking attention', () => {
+    it('uses the canonical in-progress primary turn as thinking attention without a timestamp', () => {
         expect(deriveSessionListAttentionState({
             hasUnreadMessages: false,
             pendingCount: 0,
             sessionState: 'waiting',
             latestTurnStatus: 'in_progress',
-        })).toBe('quiet');
+        })).toBe('thinking');
     });
 
-    it('uses fresh in-progress primary turns as thinking attention', () => {
+    it('uses timestamped in-progress primary turns as thinking attention', () => {
         expect(deriveSessionListAttentionState({
             hasUnreadMessages: false,
             pendingCount: 0,
@@ -157,6 +166,61 @@ describe('deriveSessionListAttentionState', () => {
             presence: 'online',
             nowMs: 1_100,
         })).toBe('thinking');
+    });
+
+    it('uses fresh local outbound pending messages as working attention', () => {
+        expect(deriveSessionListAttentionState({
+            hasUnreadMessages: false,
+            pendingCount: 1,
+            sessionState: 'waiting',
+            active: true,
+            presence: 'online',
+            thinking: false,
+            thinkingAt: 1,
+            optimisticThinkingAt: 1_000,
+            nowMs: 1_100,
+        })).toBe('thinking');
+    });
+
+    it('uses fresh detached provider runtime activity after a completed turn as background attention', () => {
+        const nowMs = 1_000_000;
+
+        expect(deriveSessionListAttentionState({
+            hasUnreadMessages: false,
+            pendingCount: 0,
+            sessionState: 'waiting',
+            active: true,
+            presence: 'online',
+            thinking: false,
+            thinkingAt: 0,
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: nowMs - 10_000,
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: nowMs - 1_000,
+            runtimeActivityRevision: nowMs + 60_000,
+            nowMs,
+        })).toBe('quiet');
+    });
+
+    it('ignores stale untrusted provider runtime activity after a completed foreground turn for list attention', () => {
+        const nowMs = 1_000_000;
+
+        expect(deriveSessionListAttentionState({
+            hasUnreadMessages: false,
+            pendingCount: 0,
+            sessionState: 'waiting',
+            active: false,
+            presence: 0,
+            thinking: false,
+            thinkingAt: 0,
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: nowMs - 10_000,
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: nowMs - 300_000,
+            runtimeActivityRevision: nowMs - 1,
+            nowMs,
+        })).toBe('quiet');
     });
 
     it('uses unread completed primary turns as ready attention', () => {
@@ -221,8 +285,8 @@ describe('deriveSessionListAttentionState', () => {
                 v: 1,
                 scope: 'primary_session',
                 status: 'failed',
-                code: 'provider_status_error',
-                source: 'provider_status_error',
+                code: 'agent_status_error',
+                source: 'agent_status_error',
                 occurredAt: 100,
                 sanitizedPreview: 'Provider reported an error',
             },

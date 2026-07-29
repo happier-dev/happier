@@ -1,6 +1,7 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createProviderErrorV1 } from '@happier-dev/protocol';
 import { collectUnexpectedRawTextNodes, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
@@ -101,6 +102,7 @@ vi.mock('expo-image', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
+    ItemGroupSelectionContext: React.createContext<{ selectableItemCount: number } | null>(null),
     ItemGroup: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('ItemGroup', props, props.children),
 }));
@@ -182,10 +184,6 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/components/model/ModelPickerOverlay', () => ({
-    ModelPickerOverlay: () => null,
-}));
-
 vi.mock('@/components/autocomplete/useActiveWord', () => ({
     useActiveWord: () => ({ word: '', start: 0, end: 0 }),
 }));
@@ -240,7 +238,7 @@ vi.mock('@/sync/domains/models/modelOptions', () => ({
 }));
 
 vi.mock('@/sync/domains/models/describeEffectiveModelMode', () => ({
-    describeEffectiveModelMode: () => ({ effectiveModelId: 'default' }),
+    describeEffectiveModelMode: () => ({ selectedModelId: 'default', appliedModelId: null, effectiveModelId: 'default' }),
 }));
 
 vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
@@ -366,10 +364,8 @@ describe('NewSessionSimplePanel', () => {
         const pendingLaunchAttempt: NewSessionLaunchAttempt = {
             attemptId: 'attempt-1',
             spawnNonce: 'spawn-1',
-            spawnAttemptKey: null,
             scopeKey: 'scope-1',
             createdSessionId: null,
-            daemonInitialPromptUsed: false,
             firstTurnLocalId: 'first-turn-1',
             attachmentMessageLocalId: 'attachment-1',
             status: 'spawning',
@@ -422,6 +418,55 @@ describe('NewSessionSimplePanel', () => {
         expect(screen.findByProps({ testID: 'new-session-launch-pending-preview' })).toBeTruthy();
         expect(screen.findByProps({ testID: 'new-session-launch-pending-preview-prompt' }).props.children)
             .toBe('Build the pending launch state');
+    });
+
+    it('renders the canonical typed Provider launch recovery above the simple composer', async () => {
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+        const providerLaunchError = createProviderErrorV1('provider_not_enabled_on_machine', {
+            connectionId: 'pc_provider',
+            machineId: 'machine-1',
+        });
+        const screen = await renderScreen(<NewSessionSimplePanel
+            popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
+            headerHeight={44}
+            safeAreaTop={0}
+            safeAreaBottom={0}
+            newSessionTopPadding={0}
+            newSessionSidePadding={0}
+            newSessionBottomPadding={0}
+            containerStyle={{}}
+            sessionPrompt=""
+            setSessionPrompt={() => {}}
+            handleCreateSession={() => {}}
+            canCreate={true}
+            isCreating={false}
+            emptyAutocompletePrefixes={[]}
+            emptyAutocompleteSuggestions={async () => []}
+            agentType="claude"
+            handleAgentClick={() => {}}
+            permissionMode="default"
+            handlePermissionModeChange={() => {}}
+            modelMode="default"
+            setModelMode={() => {}}
+            modelOptions={[]}
+            machineName={undefined}
+            selectedPath=""
+            showResumePicker={false}
+            resumeSessionId={null}
+            isResumeSupportChecking={false}
+            useProfiles={false}
+            selectedProfileId={null}
+            connectionStatus={undefined}
+            providerLaunchError={providerLaunchError}
+            retryProviderLaunch={vi.fn()}
+        />);
+
+        expect(screen.findByProps({
+            testID: 'provider-error:provider_not_enabled_on_machine',
+        })).toBeTruthy();
+        expect(screen.findByProps({
+            testID: 'provider-error-action:provider_not_enabled_on_machine',
+        })).toBeTruthy();
     });
 
     it('does not force the composer shell to full-height on wide web layouts', async () => {

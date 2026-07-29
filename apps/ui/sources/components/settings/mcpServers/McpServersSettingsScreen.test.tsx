@@ -12,6 +12,7 @@ import {
     mcpServersModuleState,
     resetMcpServersCommonModuleMockState,
 } from './mcpServersTestHelpers';
+import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -113,18 +114,18 @@ function installMcpServersScreenMocks() {
                     })],
                     useMachineListByServerId: () => ({}),
                     useMachineListStatusByServerId: () => ({}),
-                    useSetting: (key: string) => {
+                    useSetting: createUseSettingMock({ fallback: (key) => {
                         if (key === 'serverSelectionGroups') return [];
                         return null;
-                    },
-                    useSettingMutable: (key: string) => {
+                    } }),
+                    useSettingMutable: createUseSettingMutableMockFromReader((key) => {
                         if (key === 'mcpServersSettingsV1') {
                             return [settingsState.value, setMcpSettingsSpy];
                         }
                         if (key === 'secrets') return [[], vi.fn()];
                         if (key === 'favoriteDirectories') return [[], vi.fn()];
                         return [null, vi.fn()];
-                    },
+                    }),
                 },
             });
         },

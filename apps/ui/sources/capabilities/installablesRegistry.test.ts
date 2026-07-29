@@ -9,23 +9,14 @@ describe('getInstallablesRegistryEntries', () => {
 
         expect(entries.map((e) => e.key)).toEqual(INSTALLABLES_CATALOG.map((e) => e.key));
         expect(entries.map((e) => e.capabilityId)).toEqual(INSTALLABLES_CATALOG.map((e) => e.capabilityId));
-        expect(Object.fromEntries(entries.map((e) => [e.key, e.supportsManagedOverrideInstall]))).toEqual({
-            'codex-acp': false,
-            gh: true,
-            az: false,
-        });
-        expect(Object.fromEntries(entries.map((e) => [e.key, e.defaultPolicy]))).toEqual({
-            'codex-acp': { autoInstallWhenNeeded: true, autoUpdateMode: 'auto' },
-            gh: { autoInstallWhenNeeded: false, autoUpdateMode: 'notify' },
-            az: { autoInstallWhenNeeded: false, autoUpdateMode: 'notify' },
-        });
+        expect(entries.filter((e) => e.supportsManagedOverrideInstall).map((e) => e.key)).toEqual(['gh']);
+        expect(entries.map((e) => e.defaultPolicy)).toEqual(INSTALLABLES_CATALOG.map((e) => e.defaultPolicy));
     });
 
-    it('projects gh as an optional generic dependency without replacing codex-acp', () => {
+    it('projects gh as an optional generic dependency', () => {
         const entries = getInstallablesRegistryEntries();
         const gh = entries.find((entry) => entry.key === 'gh');
 
-        expect(entries.map((entry) => entry.key)).toContain('codex-acp');
         expect(gh).toEqual(expect.objectContaining({
             key: 'gh',
             kind: 'dep',
@@ -60,7 +51,7 @@ describe('getInstallablesRegistryEntries', () => {
         });
     });
 
-    it('includes projected plugin installables beyond the compatibility catalog with generic UI metadata', () => {
+    it('includes projected plugin managed dependencies beyond the compatibility catalog with generic UI metadata', () => {
         const getEntries = getInstallablesRegistryEntries as (params?: {
             pluginProjection?: PluginProjectionV2;
         }) => readonly ReturnType<typeof getInstallablesRegistryEntries>[number][];
@@ -69,18 +60,17 @@ describe('getInstallablesRegistryEntries', () => {
                 v: 2,
                 generation: 1,
                 installedPackagesById: {},
-                providersById: {},
+                agentsById: {},
                 backendsById: {},
                 actionsById: {},
                 toolsById: {},
                 commandsById: {},
                 resourcesById: {},
-                uiDescriptorsById: {},
-                hooksById: {},
+                settingsById: {},
                 diagnostics: [],
                 familiesById: {
-                    installables: {
-                        family: 'installables',
+                    managedDependencies: {
+                        family: 'managedDependencies',
                         entriesById: {
                             'acme-tool': {
                                 id: 'acme-tool',

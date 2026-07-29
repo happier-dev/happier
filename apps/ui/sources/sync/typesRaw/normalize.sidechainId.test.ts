@@ -35,7 +35,7 @@ describe('typesRaw.normalizeRawMessage', () => {
       role: 'agent',
       content: {
         type: 'acp',
-        provider: 'opencode',
+        agentId: 'opencode',
         data: {
           type: 'message',
           message: 'subtask says hi',
@@ -280,7 +280,7 @@ describe('typesRaw.normalizeRawMessage', () => {
       role: 'agent',
       content: {
         type: 'acp',
-        provider: 'opencode',
+        agentId: 'opencode',
         data: {
           type: 'tool-call',
           callId: 'call_1',

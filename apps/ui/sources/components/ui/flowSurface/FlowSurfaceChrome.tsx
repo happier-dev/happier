@@ -20,6 +20,8 @@ export type FlowSurfaceChromeProps = Readonly<{
     scrollable?: boolean;
     contentStyle?: StyleProp<ViewStyle>;
     shellStyle?: StyleProp<ViewStyle>;
+    titleAlignment?: 'center' | 'left';
+    titleScale?: 'default' | 'wizard';
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -45,9 +47,17 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 8,
     },
+    titleBlockLeft: {
+        maxWidth: '100%',
+        alignSelf: 'stretch',
+        alignItems: 'flex-start',
+    },
     titleLeading: {
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    titleLeadingLeft: {
+        alignItems: 'flex-start',
     },
     title: {
         ...Typography.default('semiBold'),
@@ -57,12 +67,22 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.primary,
         textAlign: 'center',
     },
+    titleWizard: {
+        fontSize: 30,
+        lineHeight: 36,
+    },
+    titleLeft: {
+        textAlign: 'left',
+    },
     subtitle: {
         ...Typography.default(),
         fontSize: 15,
         lineHeight: 21,
         color: theme.colors.text.secondary,
         textAlign: 'center',
+    },
+    subtitleLeft: {
+        textAlign: 'left',
     },
     body: {
         width: '100%',
@@ -79,6 +99,8 @@ export function FlowSurfaceChrome(props: FlowSurfaceChromeProps) {
     const hasHeader = props.header != null;
     const hasTitleBlock = props.titleLeading != null || props.title != null || props.subtitle != null;
     const hasFooter = props.footer != null;
+    const titleAlignment = props.titleAlignment ?? 'center';
+    const titleScale = props.titleScale ?? 'default';
 
     return (
         <WizardCardLayout
@@ -91,10 +113,35 @@ export function FlowSurfaceChrome(props: FlowSurfaceChromeProps) {
                 {hasHeader ? <View style={styles.header}>{props.header}</View> : null}
                 <View style={[styles.content, props.contentStyle]}>
                     {hasTitleBlock ? (
-                        <View style={styles.titleBlock}>
-                            {props.titleLeading ? <View style={styles.titleLeading}>{props.titleLeading}</View> : null}
-                            {props.title ? <Text style={styles.title}>{props.title}</Text> : null}
-                            {props.subtitle ? <Text style={styles.subtitle}>{props.subtitle}</Text> : null}
+                        <View style={[
+                            styles.titleBlock,
+                            titleAlignment === 'left' ? styles.titleBlockLeft : null,
+                        ]}>
+                            {props.titleLeading ? (
+                                <View style={[
+                                    styles.titleLeading,
+                                    titleAlignment === 'left' ? styles.titleLeadingLeft : null,
+                                ]}>
+                                    {props.titleLeading}
+                                </View>
+                            ) : null}
+                            {props.title ? (
+                                <Text style={[
+                                    styles.title,
+                                    titleScale === 'wizard' ? styles.titleWizard : null,
+                                    titleAlignment === 'left' ? styles.titleLeft : null,
+                                ]}>
+                                    {props.title}
+                                </Text>
+                            ) : null}
+                            {props.subtitle ? (
+                                <Text style={[
+                                    styles.subtitle,
+                                    titleAlignment === 'left' ? styles.subtitleLeft : null,
+                                ]}>
+                                    {props.subtitle}
+                                </Text>
+                            ) : null}
                         </View>
                     ) : null}
                     <View style={styles.body}>{props.children}</View>

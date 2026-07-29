@@ -218,6 +218,11 @@ export class SyncPerformanceTelemetry {
         this.recordDuration(name, 0, fields);
     }
 
+    countLazy(name: string, fields: () => SyncPerformanceTelemetryFields | undefined): void {
+        if (!this.enabled) return;
+        this.recordDuration(name, 0, fields());
+    }
+
     recordDuration(name: string, durationMs: number, fields?: SyncPerformanceTelemetryFields): void {
         if (!this.enabled) return;
         const trimmedName = name.trim();

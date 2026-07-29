@@ -95,7 +95,29 @@ describe('useSelectionListKeyboardNav (Phase 2.5 — advanced)', () => {
             expect(onAcceptAutocomplete).not.toHaveBeenCalled();
         });
 
-        it('Tab activates the focused row when no ghost is present (Issue 3 RUX-2)', async () => {
+        it('lets Tab leave a nonempty search input before the user explicitly navigates rows', async () => {
+            const onActivate = vi.fn();
+            const harness = await renderHook(() =>
+                useSelectionListKeyboardNav(makeParams({
+                    inputMode: 'search',
+                    onActivate,
+                    ghostSuffixPresent: false,
+                    flatVisibleOptionIds: ['filtered-row-a', 'filtered-row-b'],
+                })),
+            );
+            const { event, preventDefault, stopPropagation } = makeKeyEvent({ key: 'Tab' });
+            let consumed = true;
+            await act(async () => {
+                consumed = harness.getCurrent().handleKey(event);
+            });
+            expect(harness.getCurrent().focusedIndex).toBe(0);
+            expect(consumed).toBe(false);
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(stopPropagation).not.toHaveBeenCalled();
+            expect(onActivate).not.toHaveBeenCalled();
+        });
+
+        it('Tab activates the focused row after Arrow navigation when no ghost is present (Issue 3 RUX-2)', async () => {
             // Issue 3: user uses ↑/↓ to focus a row, then expects Tab to
             // activate it (just like Enter). If we don't consume here, the
             // browser default Tab traversal moves focus to the next focusable
@@ -110,6 +132,9 @@ describe('useSelectionListKeyboardNav (Phase 2.5 — advanced)', () => {
                     flatVisibleOptionIds: ['row-a', 'row-b'],
                 })),
             );
+            await act(async () => {
+                harness.getCurrent().handleKey(makeKeyEvent({ key: 'ArrowDown' }).event);
+            });
             const { event, preventDefault } = makeKeyEvent({ key: 'Tab' });
             let consumed = false;
             await act(async () => {
@@ -117,14 +142,83 @@ describe('useSelectionListKeyboardNav (Phase 2.5 — advanced)', () => {
             });
             expect(consumed).toBe(true);
             expect(preventDefault).toHaveBeenCalled();
-            expect(onActivate).toHaveBeenCalledWith('row-a');
+            expect(onActivate).toHaveBeenCalledWith('row-b');
             expect(onAcceptAutocomplete).not.toHaveBeenCalled();
         });
 
-        it('Tab does NOT preventDefault or activate when no row is focused AND no ghost (Issue 3 RUX-2)', async () => {
-            // Accessibility guarantee: if there's nothing to act on, Tab MUST
-            // fall through so keyboard users can still traverse out of the
-            // popover with native focus order.
+        it.each([
+            {
+                name: 'the query and visible row identities change',
+                nextInputValue: 'new query',
+                nextVisibleOptionIds: ['new-row-a', 'new-row-b'],
+            },
+            {
+                name: 'the query changes while visible row identities stay the same',
+                nextInputValue: 'refined query',
+                nextVisibleOptionIds: ['old-row-a', 'old-row-b'],
+            },
+            {
+                name: 'visible row identities change while the query stays the same',
+                nextInputValue: 'old query',
+                nextVisibleOptionIds: ['refreshed-row-a', 'refreshed-row-b'],
+            },
+        ])('resets explicit row focus when $name', async ({
+            nextInputValue,
+            nextVisibleOptionIds,
+        }) => {
+            const onActivate = vi.fn();
+            const harness = await renderHook<ReturnType<typeof useSelectionListKeyboardNav>, Params>(
+                (props) => useSelectionListKeyboardNav(props),
+                {
+                    initialProps: makeParams({
+                        inputMode: 'search',
+                        inputValue: 'old query',
+                        flatVisibleOptionIds: ['old-row-a', 'old-row-b'],
+                        onActivate,
+                    }),
+                },
+            );
+
+            await act(async () => {
+                harness.getCurrent().handleKey(makeKeyEvent({ key: 'ArrowDown' }).event);
+            });
+            expect(harness.getCurrent().focusedIndex).toBe(1);
+
+            await harness.rerender(makeParams({
+                inputMode: 'search',
+                inputValue: nextInputValue,
+                flatVisibleOptionIds: nextVisibleOptionIds,
+                onActivate,
+            }));
+            expect(harness.getCurrent().focusedIndex).toBe(0);
+
+            const initialTab = makeKeyEvent({ key: 'Tab' });
+            let initialTabConsumed = true;
+            await act(async () => {
+                initialTabConsumed = harness.getCurrent().handleKey(initialTab.event);
+            });
+            expect(initialTabConsumed).toBe(false);
+            expect(initialTab.preventDefault).not.toHaveBeenCalled();
+            expect(initialTab.stopPropagation).not.toHaveBeenCalled();
+            expect(onActivate).not.toHaveBeenCalled();
+
+            await act(async () => {
+                harness.getCurrent().handleKey(makeKeyEvent({ key: 'ArrowDown' }).event);
+            });
+            const explicitTab = makeKeyEvent({ key: 'Tab' });
+            let explicitTabConsumed = false;
+            await act(async () => {
+                explicitTabConsumed = harness.getCurrent().handleKey(explicitTab.event);
+            });
+            expect(explicitTabConsumed).toBe(true);
+            expect(explicitTab.preventDefault).toHaveBeenCalledOnce();
+            expect(explicitTab.stopPropagation).toHaveBeenCalledOnce();
+            expect(onActivate).toHaveBeenCalledOnce();
+            expect(onActivate).toHaveBeenCalledWith(nextVisibleOptionIds[1]);
+        });
+
+        it('Tab does NOT preventDefault or activate when the filtered list is empty (Issue 3 RUX-2)', async () => {
+            // The empty-list case remains a distinct native traversal path.
             const onActivate = vi.fn();
             const harness = await renderHook(() =>
                 useSelectionListKeyboardNav(makeParams({
@@ -140,6 +234,30 @@ describe('useSelectionListKeyboardNav (Phase 2.5 — advanced)', () => {
             });
             expect(consumed).toBe(false);
             expect(preventDefault).not.toHaveBeenCalled();
+            expect(onActivate).not.toHaveBeenCalled();
+        });
+
+        it('Shift+Tab leaves a nonempty search input before explicit row navigation', async () => {
+            const onActivate = vi.fn();
+            const harness = await renderHook(() =>
+                useSelectionListKeyboardNav(makeParams({
+                    inputMode: 'search',
+                    onActivate,
+                    ghostSuffixPresent: false,
+                    flatVisibleOptionIds: ['filtered-row-a', 'filtered-row-b'],
+                })),
+            );
+            const { event, preventDefault, stopPropagation } = makeKeyEvent({
+                key: 'Tab',
+                shiftKey: true,
+            });
+            let consumed = true;
+            await act(async () => {
+                consumed = harness.getCurrent().handleKey(event);
+            });
+            expect(consumed).toBe(false);
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(stopPropagation).not.toHaveBeenCalled();
             expect(onActivate).not.toHaveBeenCalled();
         });
 
@@ -574,20 +692,26 @@ describe('useSelectionListKeyboardNav (Phase 2.5 — advanced)', () => {
             const onAcceptAutocomplete = vi.fn();
             const onAcceptFocusedAutocomplete = vi.fn(() => true);
             const onCommitInputValue = vi.fn();
-            const harness = await renderHook(() =>
-                useSelectionListKeyboardNav(makeParams({
-                    inputMode: 'value',
-                    onActivate,
-                    onAcceptAutocomplete,
-                    onAcceptFocusedAutocomplete,
-                    onCommitInputValue,
-                    flatVisibleOptionIds: ['a', 'b'],
-                    ghostSuffixPresent: false,
-                    inputValue: '~/Documents/',
-                })),
+            const initialParams = makeParams({
+                inputMode: 'value',
+                onActivate,
+                onAcceptAutocomplete,
+                onAcceptFocusedAutocomplete,
+                onCommitInputValue,
+                flatVisibleOptionIds: ['a', 'b'],
+                ghostSuffixPresent: false,
+                inputValue: '~/Documents/',
+            });
+            const harness = await renderHook<ReturnType<typeof useSelectionListKeyboardNav>, Params>(
+                (props) => useSelectionListKeyboardNav(props),
+                { initialProps: initialParams },
             );
             await act(async () => {
                 harness.getCurrent().handleKey(makeKeyEvent({ key: 'ArrowDown' }).event);
+            });
+            await harness.rerender({
+                ...initialParams,
+                inputValue: '~/Documents/Projects/',
             });
             let consumed = false;
             await act(async () => {

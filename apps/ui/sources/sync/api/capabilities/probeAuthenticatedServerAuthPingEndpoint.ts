@@ -1,9 +1,12 @@
+import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
+
+import { buildRetryLaterProbeResultFromResponse } from '@/sync/runtime/connectivity/retryLaterProbeResult';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
 export type AuthenticatedServerAuthPingProbeResult =
-    | Readonly<{ status: 'ready' }>
+    | Extract<ReadinessProbeResult, { status: 'ready' }>
     | Readonly<{ status: 'auth_failed'; statusCode: 401 | 403; errorMessage: string }>
-    | Readonly<{ status: 'retry_later'; errorMessage: string }>
+    | Extract<ReadinessProbeResult, { status: 'retry_later' }>
     | Readonly<{ status: 'server_unreachable'; errorMessage: string }>;
 
 export function normalizeBaseUrl(raw: string): string | null {
@@ -50,11 +53,8 @@ export async function probeAuthenticatedServerAuthPingEndpoint(params: Readonly<
             };
         }
 
-        if (authResponse.status >= 500) {
-            return {
-                status: 'retry_later',
-                errorMessage: `Authenticated probe returned ${authResponse.status}`,
-            };
+        if (authResponse.status === 429 || authResponse.status >= 500) {
+            return buildRetryLaterProbeResultFromResponse(authResponse, `Authenticated probe returned ${authResponse.status}`);
         }
 
         return { status: 'ready' };

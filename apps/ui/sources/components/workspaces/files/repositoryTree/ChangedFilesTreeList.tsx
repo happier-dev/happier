@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { FlatList, Platform, View, type ScrollViewProps } from 'react-native';
+import { Platform, View, type ScrollViewProps } from 'react-native';
+import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -101,7 +102,7 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
     }, [expandedDirs, filteredNodes, tree]);
 
     return (
-        <FlatList
+        <VirtualizedList
             data={nodesToRender}
             keyExtractor={(node) => `${node.kind}:${node.fullPath}`}
             style={{ flex: 1, minHeight: 0 }}

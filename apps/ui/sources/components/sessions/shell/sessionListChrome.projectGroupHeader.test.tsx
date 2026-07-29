@@ -325,6 +325,43 @@ describe('ProjectGroupHeader menu items', () => {
         expect(latestMenuProps?.popoverAnchorAlign).toBe('end');
     });
 
+    it('keeps the real collapsible header root mounted when measurement activates', async () => {
+        const { CollapsibleSectionHeader } = await import('./sessionListChrome');
+        const measurementRef = React.createRef<any>();
+        const onLayout = vi.fn();
+        const screen = await renderScreen(
+            <CollapsibleSectionHeader
+                title="Needs attention"
+                collapsed={false}
+                onPress={vi.fn()}
+                rootMeasurement={{
+                    active: false,
+                    ref: measurementRef,
+                    onLayout,
+                }}
+            />,
+        );
+        const rootBeforeActivation = screen.findByType('Pressable');
+
+        await act(async () => {
+            screen.tree.update(
+                <CollapsibleSectionHeader
+                    title="Needs attention"
+                    collapsed={false}
+                    onPress={vi.fn()}
+                    rootMeasurement={{
+                        active: true,
+                        ref: measurementRef,
+                        onLayout,
+                        style: { zIndex: 1 },
+                    }}
+                />,
+            );
+        });
+
+        expect(screen.findByType('Pressable')).toBe(rootBeforeActivation);
+    });
+
     it('adds the folder tree toggle to the existing ordering menu', async () => {
         const { CollapsibleSectionHeader } = await import('./sessionListChrome');
 

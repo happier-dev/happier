@@ -13,6 +13,7 @@ import {
     createRouterMock,
 } from './testHarness';
 import type { PickerStackScreenOptions } from './testHarness';
+import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 enableReactActEnvironment();
 
@@ -53,8 +54,8 @@ installPickerCommonModuleMocks({
         (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: () => false,
-                useSettingMutable: () => [[], vi.fn()],
+                useSetting: createUseSettingMock({ fallback: () => false }),
+                useSettingMutable: createUseSettingMutableMockFromReader(() => [[], vi.fn()]),
             },
         }),
 });

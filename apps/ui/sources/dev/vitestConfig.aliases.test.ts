@@ -3,6 +3,15 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('vitest config aliases', () => {
+    it('caps fork pool parallelism at six by default', async () => {
+        const module = await import('../../vitest.config');
+        const config = module.default as {
+            test?: { poolOptions?: { forks?: { maxForks?: number } } };
+        };
+
+        expect(config.test?.poolOptions?.forks?.maxForks).toBe(6);
+    });
+
     it('stubs expo-modules-core subpaths to avoid loading Expo TS sources in node tests', async () => {
         const module = await import('../../vitest.config');
         const config = module.default as {
@@ -43,6 +52,9 @@ describe('vitest config aliases', () => {
         expect(resolver?.resolveId?.('@happier-dev/agents')).toContain('/packages/agents/src/index.ts');
         expect(resolver?.resolveId?.('@happier-dev/agents/permissions')).toContain(
             '/packages/agents/src/permissions/index.ts',
+        );
+        expect(resolver?.resolveId?.('@happier-dev/protocol/installablesPolicy')).toContain(
+            '/packages/protocol/src/installables/policy.ts',
         );
         expect(
             resolver?.resolveId?.(

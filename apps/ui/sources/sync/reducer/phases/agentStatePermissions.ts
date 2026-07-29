@@ -1,3 +1,7 @@
+import {
+    isAgentStateRequestCoveredByCompletedRequests,
+    resolveAgentStateRequestCoverageOptions,
+} from '@happier-dev/agents';
 import { compareToolCalls } from '../../../utils/tools/toolComparison';
 import type { AgentState } from '../../domains/state/storageTypes';
 import type { ToolCall } from '../../domains/messages/messageTypes';
@@ -6,10 +10,33 @@ import { equalOptionalStringArrays } from '../helpers/arrays';
 import type { ReducerState } from '../reducer';
 import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
 import { setThinkingMergeCursor } from '../helpers/mergeCursors';
+import {
+    buildReducerStoredPermissionFromCompletedRequest,
+    buildToolPermissionFromStored,
+    getCompletedAllowedTools,
+} from '../helpers/toolCallProjection';
+
+const PENDING_REQUEST_COVERAGE_OPTIONS = resolveAgentStateRequestCoverageOptions({
+    kind: 'localPermissionBridge',
+});
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     return value as Record<string, unknown>;
+}
+
+function buildCompletedRequestPlaceholderResult(completed: unknown): unknown {
+    const completedRecord = asRecord(completed);
+    const answerRecord = asRecord(completedRecord?.answers);
+    if (!answerRecord) return 'Approved';
+
+    const answers: Record<string, string> = {};
+    for (const [question, answer] of Object.entries(answerRecord)) {
+        if (typeof answer === 'string') {
+            answers[question] = answer;
+        }
+    }
+    return Object.keys(answers).length > 0 ? { answers } : 'Approved';
 }
 
 function mergePermissionRequestArgumentsPreservingExecpolicy(
@@ -64,36 +91,6 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
     // Phase 0: Process AgentState permissions
     //
 
-    const getCompletedAllowedTools = (completed: any): string[] | undefined => {
-        const list = completed?.allowedTools ?? completed?.allowTools;
-        if (Array.isArray(list)) return list;
-
-        const updatedPermissions = completed?.updatedPermissions;
-        if (!Array.isArray(updatedPermissions) || updatedPermissions.length === 0) return undefined;
-
-        const derived = new Set<string>();
-        for (const update of updatedPermissions) {
-            if (!update || typeof update !== 'object' || Array.isArray(update)) continue;
-            const rec = update as Record<string, unknown>;
-            if (rec.type !== 'addRules' || rec.behavior !== 'allow') continue;
-            const rules = rec.rules;
-            if (!Array.isArray(rules) || rules.length === 0) continue;
-            for (const rule of rules) {
-                if (!rule || typeof rule !== 'object' || Array.isArray(rule)) continue;
-                const toolName = (rule as any).toolName;
-                if (typeof toolName !== 'string' || toolName.length === 0) continue;
-                const ruleContent = (rule as any).ruleContent;
-                if (typeof ruleContent === 'string' && ruleContent.length > 0) {
-                    derived.add(`${toolName}(${ruleContent})`);
-                } else {
-                    derived.add(toolName);
-                }
-            }
-        }
-
-        return derived.size > 0 ? Array.from(derived) : undefined;
-    };
-
     if (enableLogging) {
         console.log(`[REDUCER] Phase 0: Processing AgentState`);
     }
@@ -104,15 +101,19 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
         // Process pending permission requests
         if (agentState.requests) {
             for (const [permId, request] of Object.entries(agentState.requests)) {
-                // If this permission is also in completedRequests, prefer the newer one by timestamp.
+                // If this permission is also in completedRequests, use the shared coverage rule to decide
+                // whether that terminal/equivalent completion really covers this exact pending request.
                 // Some agents can re-prompt with the same permission id (same toolCallId) even after
                 // a previous approval was recorded; in that case we must surface the new pending request.
                 const existingCompleted = agentState.completedRequests?.[permId];
                 if (existingCompleted) {
-                    const pendingCreatedAt = request.createdAt ?? 0;
-                    const completedAt = existingCompleted.completedAt ?? existingCompleted.createdAt ?? 0;
-                    const isNewerPending = pendingCreatedAt > completedAt;
-                    if (!isNewerPending) {
+                    const isCoveredByCompletedRequest = isAgentStateRequestCoveredByCompletedRequests({
+                        requestId: permId,
+                        request,
+                        completedRequests: agentState.completedRequests as Record<string, unknown>,
+                        options: PENDING_REQUEST_COVERAGE_OPTIONS,
+                    });
+                    if (isCoveredByCompletedRequest) {
                         continue;
                     }
                     pendingOverridesCompleted.add(permId);
@@ -254,6 +255,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                     arguments: request.arguments,
                     createdAt: request.createdAt || Date.now(),
                     status: 'pending',
+                    kind: typeof request.kind === 'string' ? request.kind : undefined,
                     suggestions: request.permissionSuggestions,
                 });
             }
@@ -266,6 +268,8 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                 if (pendingOverridesCompleted.has(permId)) {
                     continue;
                 }
+                const storedPermission = buildReducerStoredPermissionFromCompletedRequest(completed);
+                const completedAllowedTools = getCompletedAllowedTools(completed);
                 // Check if we have a message for this permission ID
                 const messageId = state.toolIdToMessageId.get(permId);
                 if (messageId != null) {
@@ -287,7 +291,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                             (typeof completed.kind === 'string' && message.tool.permission?.kind !== completed.kind) ||
                             message.tool.permission?.reason !== completed.reason ||
                             message.tool.permission?.mode !== completed.mode ||
-                            !equalOptionalStringArrays(message.tool.permission?.allowedTools, getCompletedAllowedTools(completed)) ||
+                            !equalOptionalStringArrays(message.tool.permission?.allowedTools, completedAllowedTools) ||
                             message.tool.permission?.decision !== completed.decision;
 
                         if (!needsUpdate) {
@@ -303,7 +307,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                                 status: completed.status,
                                 kind: typeof completed.kind === 'string' ? completed.kind : undefined,
                                 mode: completed.mode || undefined,
-                                allowedTools: getCompletedAllowedTools(completed),
+                                allowedTools: completedAllowedTools,
                                 decision: completed.decision || undefined,
                                 reason: completed.reason || undefined
                             };
@@ -315,7 +319,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                                 message.tool.permission.kind = completed.kind;
                             }
                             message.tool.permission.mode = completed.mode || undefined;
-                            message.tool.permission.allowedTools = getCompletedAllowedTools(completed);
+                            message.tool.permission.allowedTools = completedAllowedTools;
                             message.tool.permission.decision = completed.decision || undefined;
                             if (completed.reason) {
                                 message.tool.permission.reason = completed.reason;
@@ -343,7 +347,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                                     hasChanged = true;
                                 }
                                 if (!message.tool.result) {
-                                    message.tool.result = 'Approved';
+                                    message.tool.result = buildCompletedRequestPlaceholderResult(completed);
                                     hasChanged = true;
                                 }
                             } else if (message.tool.state !== 'running') {
@@ -367,17 +371,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                         }
 
                         // Update stored permission
-                        state.permissions.set(permId, {
-                            tool: completed.tool,
-                            arguments: completed.arguments,
-                            createdAt: completed.createdAt || Date.now(),
-                            completedAt: completed.completedAt || undefined,
-                            status: completed.status,
-                            reason: completed.reason || undefined,
-                            mode: completed.mode || undefined,
-                            allowedTools: getCompletedAllowedTools(completed),
-                            decision: completed.decision || undefined
-                        });
+                        state.permissions.set(permId, storedPermission);
 
                         if (hasChanged) {
                             changed.add(messageId);
@@ -390,14 +384,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                             console.log(`[REDUCER] Storing permission ${permId} for incoming tool`);
                         }
                         // Store permission for when tool arrives in Phase 2
-                        state.permissions.set(permId, {
-                            tool: completed.tool,
-                            arguments: completed.arguments,
-                            createdAt: completed.createdAt || Date.now(),
-                            completedAt: completed.completedAt || undefined,
-                            status: completed.status,
-                            reason: completed.reason || undefined
-                        });
+                        state.permissions.set(permId, storedPermission);
                         continue;
                     }
 
@@ -418,16 +405,9 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                         completedAt: completed.completedAt || Date.now(),
                         description: null,
                         result: completed.status === 'approved'
-                            ? 'Approved'
+                            ? buildCompletedRequestPlaceholderResult(completed)
                             : (completed.reason ? { error: completed.reason } : undefined),
-                        permission: {
-                            id: permId,
-                            status: completed.status,
-                            reason: completed.reason || undefined,
-                            mode: completed.mode || undefined,
-                            allowedTools: getCompletedAllowedTools(completed),
-                            decision: completed.decision || undefined
-                        }
+                        permission: buildToolPermissionFromStored(permId, storedPermission),
                     };
 
 		                    state.messages.set(mid, {
@@ -446,17 +426,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                     state.toolIdToMessageId.set(permId, mid);
 
                     // Store permission details
-                    state.permissions.set(permId, {
-                        tool: completed.tool,
-                        arguments: completed.arguments,
-                        createdAt: completed.createdAt || Date.now(),
-                        completedAt: completed.completedAt || undefined,
-                        status: completed.status,
-                        reason: completed.reason || undefined,
-                        mode: completed.mode || undefined,
-                        allowedTools: getCompletedAllowedTools(completed),
-                        decision: completed.decision || undefined
-                    });
+                    state.permissions.set(permId, storedPermission);
 
                     changed.add(mid);
                     drainAndApplyOrphanToolResultsToMessage({

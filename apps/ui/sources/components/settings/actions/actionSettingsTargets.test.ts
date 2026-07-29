@@ -96,13 +96,13 @@ describe('actionSettingsTargets', () => {
         const next = setActionTargetSelected({
             settings: DEFAULT_ACTIONS_SETTINGS_V1,
             actionId: 'session.message.send',
-            targetId: 'session_agent',
+            targetId: 'agent',
             selected: false,
         });
 
         expect(next.actions['session.message.send']).toEqual({
             enabledPlacements: [],
-            disabledSurfaces: ['session_agent'],
+            disabledSurfaces: ['agent'],
             disabledPlacements: [],
             approvalRequiredSurfaces: [],
         });

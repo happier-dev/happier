@@ -11,6 +11,7 @@ import { getVoiceAdapterRegistry } from '@/voice/session/voiceAdapterRegistry';
 import type { VoiceAdapterTranscriptMode } from '@/voice/session/types';
 
 import type { VoiceConversationBindingResolution } from './voiceConversationBindingTypes';
+import { readLocalConversationVoiceSettings, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 
 /**
  * Read the provider-owned transcript-mode decision for a voice adapter from the
@@ -27,7 +28,7 @@ function resolveBindingTranscriptMode(
 }
 
 function shouldForceVoiceHomeForLocalConversation(settings: any): boolean {
-    const config = settings?.voice?.adapters?.local_conversation ?? null;
+    const config = readLocalConversationVoiceSettings(voiceSettingsParse(settings?.voice));
     return config?.agent?.stayInVoiceHome === true;
 }
 
@@ -61,11 +62,27 @@ export async function ensureVoiceConversationBindingResolution(params: Readonly<
     if (!providerId) return null;
     const controlSessionId = normalizeNonEmptyString(params.controlSessionId);
     if (!controlSessionId) return null;
+    const targetSessionId = normalizeNonEmptyString(params.requestedTargetSessionId);
+
+    const providerOwnedResolution = await getVoiceAdapterRegistry().get(providerId)?.resolveConversationBinding?.({
+        controlSessionId,
+        requestedTargetSessionId: targetSessionId,
+        settings: params.settings,
+    });
+    if (providerOwnedResolution) {
+        const conversationSessionId = normalizeNonEmptyString(providerOwnedResolution.conversationSessionId);
+        if (!conversationSessionId) return null;
+        return {
+            controlSessionId,
+            conversationSessionId,
+            transcriptMode: providerOwnedResolution.transcriptMode,
+            targetSessionId: normalizeNonEmptyString(providerOwnedResolution.targetSessionId),
+        };
+    }
 
     const transcriptMode = resolveBindingTranscriptMode(providerId, params.settings);
     if (!transcriptMode) return null;
 
-    const targetSessionId = normalizeNonEmptyString(params.requestedTargetSessionId);
     const rootSessionId =
         controlSessionId === VOICE_AGENT_GLOBAL_SESSION_ID
             ? targetSessionId

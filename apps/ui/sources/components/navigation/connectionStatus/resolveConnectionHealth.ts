@@ -14,10 +14,12 @@ type ConnectionEndpointStatus =
     | 'auth_failed'
     | 'shutting_down';
 type ConnectionSyncErrorKind = 'auth' | 'config' | 'network' | 'server' | 'unknown';
+type ConnectionEndpointReason = 'server_restarting' | string | null;
 
 export function resolveConnectionHealth(params: Readonly<{
     socketStatus: ConnectionSocketStatus;
     endpointStatus?: ConnectionEndpointStatus;
+    endpointReason?: ConnectionEndpointReason;
     hasSyncError?: boolean;
     syncErrorKind?: ConnectionSyncErrorKind;
     machineGroups: ReadonlyArray<ConnectionHealthMachineGroup>;
@@ -42,6 +44,19 @@ export function resolveConnectionHealth(params: Readonly<{
     }
 
     const hasUnknownMachines = machines.hasUnknownServers || hasUnknownReadyCount;
+
+    if (
+        params.endpointReason === 'server_restarting'
+        && (params.endpointStatus === 'offline' || params.endpointStatus === 'connecting')
+    ) {
+        return {
+            kind: 'server_restarting',
+            machineCount: machines.machineCount,
+            onlineCount: machines.onlineCount,
+            hasUnknownMachines,
+            socketStatus: params.socketStatus,
+        };
+    }
 
     if (params.endpointStatus === 'connecting' && params.socketStatus !== 'connected') {
         return {

@@ -12,6 +12,7 @@ import {
     type MessageSendMode,
 } from '@/sync/domains/session/control/submitMode';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 import { confirmNonSteerableSend, isNonSteerableSendBlockerReason } from './confirmNonSteerableSend';
 
@@ -82,6 +83,9 @@ export async function resolveNonSteerableSendPlan(opts: {
     }
 
     const isModeChangeBlocker = reason === 'mode_change_refused';
+    const ownerMetadata = opts.session
+        ? readSessionOwnerMetadataView(opts.session)
+        : null;
     const desiredMode: PermissionMode | null =
         typeof opts.session?.permissionMode === 'string' && opts.session.permissionMode.length > 0
             ? opts.session.permissionMode
@@ -110,9 +114,9 @@ export async function resolveNonSteerableSendPlan(opts: {
                 steerWithoutConfig: true,
                 steerWithoutConfigMetaOverrides: {
                     permissionMode:
-                        typeof opts.session?.metadata?.permissionMode === 'string'
-                            && opts.session.metadata.permissionMode.length > 0
-                            ? opts.session.metadata.permissionMode
+                        typeof ownerMetadata?.permissionMode === 'string'
+                            && ownerMetadata.permissionMode.length > 0
+                            ? ownerMetadata.permissionMode
                             : 'default',
                 },
             };

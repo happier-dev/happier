@@ -17,8 +17,5 @@ export {
     publishAcpSessionModeOverrideToMetadata,
 } from './acpSessionModeOverridePublish';
 export {
-    publishModelOverrideToMetadata,
-} from './modelOverridePublish';
-export {
     publishPermissionModeToMetadata,
 } from './permissionModePublish';

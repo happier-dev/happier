@@ -9,14 +9,24 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
 
-export function PlanOutputMessageCard(props: Readonly<{ payload: PlanOutputV1; sessionId: string }>) {
+export function PlanOutputMessageCard(props: Readonly<{
+    payload: PlanOutputV1;
+    sessionId: string;
+    canSendMessages: boolean;
+}>) {
     const [error, setError] = React.useState<string | null>(null);
     const [isSending, setIsSending] = React.useState(false);
+    const canSendMessagesRef = React.useRef(props.canSendMessages === true);
     const sections = props.payload.sections ?? [];
     const risks = props.payload.risks ?? [];
     const milestones = props.payload.milestones ?? [];
 
+    React.useLayoutEffect(() => {
+        canSendMessagesRef.current = props.canSendMessages === true;
+    }, [props.canSendMessages]);
+
     const handleAdopt = React.useCallback(() => {
+        if (!canSendMessagesRef.current) return;
         fireAndForget((async () => {
             setError(null);
             setIsSending(true);
@@ -90,18 +100,20 @@ export function PlanOutputMessageCard(props: Readonly<{ payload: PlanOutputV1; s
 
             {error ? <Text selectable style={styles.errorText}>{error}</Text> : null}
 
-            <Pressable
-                accessibilityRole="button"
-                testID="adopt-plan-button"
-                accessibilityLabel={t('session.planOutput.a11y.adoptPlan')}
-                onPress={handleAdopt}
-                disabled={isSending}
-                style={[styles.adoptButton, isSending && styles.adoptButtonDisabled]}
-            >
-                <Text style={styles.adoptButtonText}>
-                    {isSending ? t('session.planOutput.sending') : t('session.planOutput.adoptPlan')}
-                </Text>
-            </Pressable>
+            {props.canSendMessages === true ? (
+                <Pressable
+                    accessibilityRole="button"
+                    testID="adopt-plan-button"
+                    accessibilityLabel={t('session.planOutput.a11y.adoptPlan')}
+                    onPress={handleAdopt}
+                    disabled={isSending}
+                    style={[styles.adoptButton, isSending && styles.adoptButtonDisabled]}
+                >
+                    <Text style={styles.adoptButtonText}>
+                        {isSending ? t('session.planOutput.sending') : t('session.planOutput.adoptPlan')}
+                    </Text>
+                </Pressable>
+            ) : null}
         </View>
     );
 }

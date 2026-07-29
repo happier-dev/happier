@@ -26,7 +26,7 @@ const stylesheet = UnistylesStyleSheet.create((theme) => ({
     },
     hint: {
         color: theme.colors.text.secondary,
-        textAlign: 'center',
+        textAlign: 'left',
     },
 }));
 

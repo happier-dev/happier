@@ -7,7 +7,7 @@ export const TRANSCRIPT_TOP_GUTTER_PX = 12;
  */
 export const TRANSCRIPT_BOTTOM_GUTTER_PX = 12;
 export const TRANSCRIPT_NATIVE_SCROLL_EVENT_THROTTLE_MS = 16;
-export const TRANSCRIPT_WEB_FLASH_LIST_SCROLL_EVENT_THROTTLE_MS = 32;
+export const TRANSCRIPT_WEB_SCROLL_EVENT_THROTTLE_MS = 32;
 /**
  * Genuine-top tolerance (px) for the web DOM-scroll "at the very top" classifier and the
  * older-pagination machine's exact-edge re-arm. The web scroll element reports `scrollTop`

@@ -1,4 +1,9 @@
-import { createFeatureDecision, type FeatureDecision, type FeatureId } from '@happier-dev/protocol';
+import {
+    createFeatureDecision,
+    type FeatureDecision,
+    type FeatureDecisionScope,
+    type FeatureId,
+} from '@happier-dev/protocol';
 
 import { storage } from '@/sync/domains/state/storage';
 import {
@@ -15,32 +20,53 @@ export type RuntimeFeatureDecisionInputs = Readonly<{
     featureId: FeatureId;
     settings: FeatureLocalPolicySettings;
     snapshot: ServerFeaturesRuntimeSnapshot;
+    scope: FeatureDecisionScope;
+}>;
+
+export type RuntimeFeatureDecisionSpawnScope = Readonly<{
+    scopeKind: 'spawn';
+    serverId: string | null | undefined;
 }>;
 
 export type ResolveRuntimeFeatureDecisionParams = Readonly<{
     featureId: FeatureId;
     settings?: FeatureLocalPolicySettings;
     serverId?: string;
+    scope?: RuntimeFeatureDecisionSpawnScope;
     timeoutMs?: number;
     force?: boolean;
 }>;
+
+function resolveRuntimeFeatureDecisionRequestContext(
+    params: ResolveRuntimeFeatureDecisionParams,
+): Readonly<{ scope: FeatureDecisionScope; serverId?: string }> {
+    const rawServerId = params.scope ? params.scope.serverId : params.serverId;
+    const serverId = typeof rawServerId === 'string' ? rawServerId.trim() : '';
+    return {
+        scope: params.scope
+            ? { scopeKind: 'spawn', ...(serverId ? { serverId } : {}) }
+            : { scopeKind: 'runtime' },
+        ...(serverId ? { serverId } : {}),
+    };
+}
 
 export async function loadRuntimeFeatureDecisionInputs(
     params: ResolveRuntimeFeatureDecisionParams,
 ): Promise<RuntimeFeatureDecisionInputs> {
     const settings = params.settings ?? storage.getState().settings;
+    const requestContext = resolveRuntimeFeatureDecisionRequestContext(params);
     const snapshotStrategy = resolveFeatureDecisionSnapshotStrategy({
         featureId: params.featureId,
         settings,
-        scopeKind: 'runtime',
+        scopeKind: requestContext.scope.scopeKind,
         hasMainSelectionServerIds: false,
     });
 
-    const snapshot: ServerFeaturesRuntimeSnapshot = snapshotStrategy.runtimeEnabled
+    const snapshot: ServerFeaturesRuntimeSnapshot = snapshotStrategy.runtimeEnabled || snapshotStrategy.spawnEnabled
         ? await getServerFeaturesSnapshot({
             timeoutMs: params.timeoutMs,
             force: params.force,
-            serverId: params.serverId,
+            serverId: requestContext.serverId,
         })
         : { status: 'loading' };
 
@@ -48,6 +74,7 @@ export async function loadRuntimeFeatureDecisionInputs(
         featureId: params.featureId,
         settings,
         snapshot,
+        scope: requestContext.scope,
     };
 }
 
@@ -67,10 +94,7 @@ export async function resolveRuntimeFeatureDecision(
         blockerCode: 'probe_failed',
         diagnostics: [],
         evaluatedAt: Date.now(),
-        scope: {
-            scopeKind: 'runtime',
-            ...(params.serverId ? { serverId: params.serverId } : {}),
-        },
+        scope: inputs.scope,
     });
 }
 

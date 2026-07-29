@@ -558,7 +558,7 @@ describe('sessionListLookupState', () => {
                         path: '/workspace/direct-repo',
                         externalSessionV1: {
                             v: 1,
-                            providerId: 'codex',
+                            agentId: 'codex',
                             machineId: 'm-direct',
                             remoteSessionId: 'remote-1',
                             source: { kind: 'codexHome', home: 'user' },
@@ -581,7 +581,7 @@ describe('sessionListLookupState', () => {
                         machineId: null,
                         externalSessionV1: {
                             v: 1,
-                            providerId: 'codex',
+                            agentId: 'codex',
                         },
                     },
                     thinking: false,

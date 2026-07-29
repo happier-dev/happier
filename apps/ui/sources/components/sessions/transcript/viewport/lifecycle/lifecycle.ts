@@ -3,7 +3,6 @@ import {
     type TranscriptBottomFollowMode,
     type TranscriptBottomFollowModeState,
 } from '@/components/sessions/transcript/scroll/transcriptBottomFollowMode';
-import type { TranscriptViewportScrollReason } from '@/components/sessions/transcript/viewport/transcriptViewportTypes';
 import type {
     GenericScrollObservationAnchorCaptureCancellationEffect,
     GenericScrollObservationReadOnlyVisibleBottomState,
@@ -14,7 +13,6 @@ import type {
 export type TranscriptViewportGesturePhase = 'settled' | 'dragging' | 'momentum';
 
 export type TranscriptViewportLifecycleState = Readonly<{
-    automaticPinAuthority: boolean;
     bottomFollowState: TranscriptBottomFollowModeState;
     fingerDown: boolean;
     followMode: TranscriptBottomFollowMode;
@@ -22,19 +20,9 @@ export type TranscriptViewportLifecycleState = Readonly<{
     sessionId: string | null;
 }>;
 
-export type TranscriptViewportLifecycleCommand = Readonly<{
-    reason: TranscriptViewportScrollReason;
-    type: 'scroll-to-live-tail';
-}>;
-
 export type TranscriptViewportExplicitJumpTakeoverReason = 'jump-to-bottom' | 'jump-to-seq';
 
 export type TranscriptViewportLifecycleEffect =
-    | Readonly<{
-        command: TranscriptViewportLifecycleCommand;
-        sessionId: string;
-        type: 'command';
-    }>
     | Readonly<{
         distanceFromLiveTailPx: number;
         isPinned: true;
@@ -65,15 +53,7 @@ export type TranscriptViewportLifecycleEffect =
     }>
     | Readonly<{
         sessionId: string;
-        type: 'session-entry-native-bottom-pin-command-cache-reset';
-    }>
-    | Readonly<{
-        sessionId: string;
         type: 'session-entry-native-gesture-momentum-mirror-reset';
-    }>
-    | Readonly<{
-        sessionId: string;
-        type: 'session-entry-native-stream-append-content-version-record-reset';
     }>
     | Readonly<{
         sessionId: string;
@@ -132,11 +112,6 @@ export type TranscriptViewportLifecycleEffect =
     | Readonly<{
         reason: TranscriptViewportExplicitJumpTakeoverReason;
         sessionId: string;
-        type: 'explicit-jump-cancel-native-mount-settle-bottom-pin';
-    }>
-    | Readonly<{
-        reason: TranscriptViewportExplicitJumpTakeoverReason;
-        sessionId: string;
         type: 'explicit-jump-suppress-entry-restore';
     }>
     | Readonly<{
@@ -183,14 +158,6 @@ export type TranscriptViewportLifecycleEffect =
     }>
     | Readonly<{
         sessionId: string;
-        type: 'native-user-scroll-cancel-native-mount-settle-bottom-pin';
-    }>
-    | Readonly<{
-        sessionId: string;
-        type: 'native-user-scroll-suppress-native-mount-settle-auto-pin';
-    }>
-    | Readonly<{
-        sessionId: string;
         type: 'native-user-scroll-clear-native-initial-viewport-pending-observation';
     }>
     | Readonly<{
@@ -205,28 +172,8 @@ export type TranscriptViewportLifecycleEffect =
     }>
     | Readonly<{
         sessionId: string;
-        type: 'native-touch-suppress-native-mount-settle-auto-pin';
-    }>
-    | Readonly<{
-        sessionId: string;
-        type: 'native-touch-cancel-native-mount-settle-bottom-pin';
-    }>
-    | Readonly<{
-        sessionId: string;
-        type: 'native-touch-cancel-scheduled-pin';
-    }>
-    | Readonly<{
-        sessionId: string;
         timestampMs: number;
         type: 'local-interaction-record-intent-timestamp';
-    }>
-    | Readonly<{
-        sessionId: string;
-        type: 'local-interaction-suppress-native-mount-settle-auto-pin';
-    }>
-    | Readonly<{
-        sessionId: string;
-        type: 'local-interaction-cancel-scheduled-pin';
     }>
     | Readonly<{
         sessionId: string;
@@ -251,11 +198,6 @@ export type TranscriptViewportLifecycleEffect =
         distanceFromLiveTailPx: number;
         sessionId: string;
         type: 'native-touch-release-live-tail';
-    }>
-    | Readonly<{
-        distanceFromLiveTailPx: number;
-        sessionId: string;
-        type: 'native-offset-release-live-tail';
     }>
     | Readonly<{
         distanceFromLiveTailPx: number;
@@ -345,7 +287,7 @@ export type TranscriptViewportLifecycleEvent =
         pinThresholdPx: number;
         releaseAuthority?: 'web-genuine-movement';
         sessionId: string;
-        source?: 'native-offset-escape' | 'native-scroll' | 'native-touch-escape' | 'web-scroll';
+        source?: 'native-scroll' | 'native-touch-escape' | 'web-scroll';
         trustedUserMovement: boolean;
         type: 'facts-observed';
     }>
@@ -368,12 +310,6 @@ export type TranscriptViewportLifecycleEvent =
     | Readonly<{
         sessionId: string;
         type: 'native-momentum-scroll-end';
-    }>
-    | Readonly<{
-        reason: TranscriptViewportScrollReason;
-        sessionId: string;
-        type: 'content-growth';
-        wantsLiveTail: boolean;
     }>
     | Readonly<{
         intent: 'follow-bottom-intent' | 'jump-to-bottom';
@@ -408,7 +344,7 @@ export type TranscriptViewportLifecycleEvent =
     | Readonly<{
         sessionId: string;
         timestampMs: number;
-        type: 'local-transcript-interaction-auto-pin-deferral';
+        type: 'local-transcript-interaction-intent';
     }>
     | Readonly<{
         sessionId: string;
@@ -586,24 +522,6 @@ export function createTranscriptViewportLifecycle(): TranscriptViewportLifecycle
                     effects: nativeMomentumActiveMirrorEffects(event.sessionId, false),
                     state: snapshot(current),
                 };
-            case 'content-growth':
-                return {
-                    effects: automaticLiveTailPinAuthority(current) &&
-                        current.bottomFollow.mode === 'following' &&
-                        event.wantsLiveTail
-                        ? [
-                            {
-                                command: {
-                                    reason: event.reason,
-                                    type: 'scroll-to-live-tail',
-                                },
-                                sessionId: event.sessionId,
-                                type: 'command',
-                            },
-                        ]
-                    : [],
-                    state: snapshot(current),
-                };
             case 'return-to-live-tail-intent':
                 current.bottomFollow = resolveTranscriptBottomFollowMode(current.bottomFollow, {
                     type: event.intent,
@@ -646,9 +564,9 @@ export function createTranscriptViewportLifecycle(): TranscriptViewportLifecycle
                     ),
                     state: snapshot(current),
                 };
-            case 'local-transcript-interaction-auto-pin-deferral':
+            case 'local-transcript-interaction-intent':
                 return {
-                    effects: localTranscriptInteractionAutoPinDeferralEffects(event.sessionId, event.timestampMs),
+                    effects: localTranscriptInteractionIntentEffects(event.sessionId, event.timestampMs),
                     state: snapshot(current),
                 };
             case 'web-user-scroll-takeover':
@@ -719,11 +637,6 @@ function observeFacts(
         previousPhase === 'dragging' &&
         event.movement === 'away-from-live-tail' &&
         current.bottomFollow.mode === 'released';
-    const releasedFromNativeOffset =
-        event.source === 'native-offset-escape' &&
-        previousPhase === 'dragging' &&
-        event.movement === 'away-from-live-tail' &&
-        current.bottomFollow.mode === 'released';
     const releasedFromNativeScroll =
         event.source === 'native-scroll' &&
         previousMode !== 'released' &&
@@ -742,8 +655,6 @@ function observeFacts(
             ? returnToLiveTailEffects(event.sessionId, event.distanceFromLiveTailPx)
             : releasedFromNativeTouch
                 ? nativeTouchReleaseLiveTailEffects(event.sessionId, event.distanceFromLiveTailPx)
-            : releasedFromNativeOffset
-                ? nativeOffsetReleaseLiveTailEffects(event.sessionId, event.distanceFromLiveTailPx)
             : releasedFromNativeScroll
                 ? nativeScrollReleaseLiveTailEffects(event.sessionId, event.distanceFromLiveTailPx)
             : shouldEmitNativeObservedViewportState
@@ -865,19 +776,6 @@ function nativeTouchReleaseLiveTailEffects(
         {
             sessionId,
             type: 'native-bottom-follow-rearm-reset',
-        },
-    ];
-}
-
-function nativeOffsetReleaseLiveTailEffects(
-    sessionId: string,
-    distanceFromLiveTailPx: number,
-): readonly TranscriptViewportLifecycleEffect[] {
-    return [
-        {
-            distanceFromLiveTailPx: normalizeDistance(distanceFromLiveTailPx),
-            sessionId,
-            type: 'native-offset-release-live-tail',
         },
     ];
 }
@@ -1048,11 +946,6 @@ function explicitJumpTakeoverEffects(
         {
             reason,
             sessionId,
-            type: 'explicit-jump-cancel-native-mount-settle-bottom-pin',
-        },
-        {
-            reason,
-            sessionId,
             type: 'explicit-jump-suppress-entry-restore',
         },
         {
@@ -1107,14 +1000,6 @@ function nativeUserScrollTakeoverEffects(
         },
         {
             sessionId,
-            type: 'native-user-scroll-cancel-native-mount-settle-bottom-pin',
-        },
-        {
-            sessionId,
-            type: 'native-user-scroll-suppress-native-mount-settle-auto-pin',
-        },
-        {
-            sessionId,
             type: 'native-user-scroll-clear-native-initial-viewport-pending-observation',
         },
         {
@@ -1138,42 +1023,18 @@ function nativeTouchIntentEffects(
             type: 'native-touch-record-intent-timestamp',
         });
     }
-    effects.push(
-        {
-            sessionId,
-            type: 'native-touch-suppress-native-mount-settle-auto-pin',
-        },
-        {
-            sessionId,
-            type: 'native-touch-cancel-native-mount-settle-bottom-pin',
-        },
-        {
-            sessionId,
-            type: 'native-touch-cancel-scheduled-pin',
-        },
-    );
     return effects;
 }
 
-function localTranscriptInteractionAutoPinDeferralEffects(
+function localTranscriptInteractionIntentEffects(
     sessionId: string,
     timestampMs: number,
 ): readonly TranscriptViewportLifecycleEffect[] {
-    return [
-        {
-            sessionId,
-            timestampMs,
-            type: 'local-interaction-record-intent-timestamp',
-        },
-        {
-            sessionId,
-            type: 'local-interaction-suppress-native-mount-settle-auto-pin',
-        },
-        {
-            sessionId,
-            type: 'local-interaction-cancel-scheduled-pin',
-        },
-    ];
+    return [{
+        sessionId,
+        timestampMs,
+        type: 'local-interaction-record-intent-timestamp',
+    }];
 }
 
 function webUserScrollTakeoverEffects(sessionId: string): readonly TranscriptViewportLifecycleEffect[] {
@@ -1220,15 +1081,7 @@ function sessionEntryViewportEffects(
         });
         effects.push({
             sessionId: event.sessionId,
-            type: 'session-entry-native-bottom-pin-command-cache-reset',
-        });
-        effects.push({
-            sessionId: event.sessionId,
             type: 'session-entry-native-gesture-momentum-mirror-reset',
-        });
-        effects.push({
-            sessionId: event.sessionId,
-            type: 'session-entry-native-stream-append-content-version-record-reset',
         });
         effects.push({
             sessionId: event.sessionId,
@@ -1299,26 +1152,12 @@ function sessionEntryViewportEffects(
 
 function snapshot(state: MutableLifecycleState): TranscriptViewportLifecycleState {
     return {
-        automaticPinAuthority: automaticPinAuthority(state),
         bottomFollowState: state.bottomFollow,
         fingerDown: state.gesturePhase === 'dragging',
         followMode: state.bottomFollow.mode,
         gesturePhase: state.gesturePhase,
         sessionId: state.sessionId,
     };
-}
-
-function automaticPinAuthority(state: MutableLifecycleState): boolean {
-    return state.gesturePhase === 'settled';
-}
-
-function automaticLiveTailPinAuthority(state: MutableLifecycleState): boolean {
-    return automaticPinAuthority(state) ||
-        (
-            state.gesturePhase === 'momentum' &&
-            state.bottomFollow.mode === 'following' &&
-            state.bottomFollow.dragSession?.returnedToBottom === true
-        );
 }
 
 function normalizeDistance(value: number): number {

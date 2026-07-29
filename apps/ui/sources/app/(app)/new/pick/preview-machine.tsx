@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, Pressable } from 'react-native';
+import { Pressable } from 'react-native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -16,6 +16,7 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
+import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 
 export default React.memo(function PreviewMachinePickerScreen() {
     const { theme } = useUnistyles();
@@ -75,16 +76,17 @@ export default React.memo(function PreviewMachinePickerScreen() {
             <Ionicons name="chevron-back" size={22} color={theme.colors.chrome.header.foreground} />
         </Pressable>
     ), [navigation, router, theme.colors.chrome.header.foreground]);
+    const presentation = useNewSessionPickerRoutePresentation();
 
     const screenOptions = React.useCallback(() => {
         return {
             headerShown: true,
             title: t('profiles.previewMachine.title'),
             headerBackTitle: t('common.back'),
-            presentation: Platform.OS === 'ios' ? ('containedModal' as const) : undefined,
+            presentation,
             headerLeft,
         } as const;
-    }, [headerLeft]);
+    }, [headerLeft, presentation]);
 
     const favoriteMachineList = React.useMemo(() => {
         const byId = new Map(machines.map((m) => [m.id, m] as const));

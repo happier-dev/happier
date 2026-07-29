@@ -2,6 +2,53 @@ export async function delay(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * Raised by {@link withTimeout} when the wrapped operation misses its deadline.
+ * Carries the deadline so callers can report the bound they enforced.
+ */
+export class AsyncTimeoutError extends Error {
+    readonly timeoutMs: number;
+
+    constructor(operation: string, timeoutMs: number) {
+        super(`${operation} timed out after ${timeoutMs}ms`);
+        this.name = 'AsyncTimeoutError';
+        this.timeoutMs = timeoutMs;
+    }
+}
+
+/**
+ * Bound an operation that reaches a system boundary we do not control (native module bridges,
+ * lazily fetched bundles, OS permission services). Those can stall indefinitely, and an unbounded
+ * await propagates the stall into whatever owns the caller — a coalescing sync run that never
+ * completes, or a screen stuck on a spinner with no recovery.
+ *
+ * A non-positive `timeoutMs` disables the deadline so callers can opt out without branching.
+ */
+export async function withTimeout<T>(
+    operation: Promise<T> | (() => Promise<T>),
+    timeoutMs: number,
+    operationName: string,
+): Promise<T> {
+    const pending = typeof operation === 'function' ? operation() : operation;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        return pending;
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        // Promise.race subscribes to `pending`, so a late rejection is delivered to an already
+        // settled race rather than surfacing as an unhandled rejection.
+        return await Promise.race([
+            pending,
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new AsyncTimeoutError(operationName, timeoutMs)), timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timer !== undefined) clearTimeout(timer);
+    }
+}
+
 export function linearBackoffDelay(currentFailureCount: number, minDelay: number, maxDelay: number, maxFailureCount: number) {
     // Linearly ramp the delay as failures increase, capped at maxDelay, then apply jitter.
     const safeMaxFailureCount = Number.isFinite(maxFailureCount) ? Math.max(maxFailureCount, 1) : 50;

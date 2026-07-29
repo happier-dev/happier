@@ -45,8 +45,6 @@ function comment(overrides: Partial<ReviewCommentV1> = {}): ReviewCommentV1 {
 
 const labels = {
     empty: 'No comments',
-    directWriteGranted: 'Direct write enabled',
-    directWriteMissing: 'Proposals only',
     engine: 'Engine',
     stale: 'Stale',
     outdated: 'Outdated',
@@ -92,7 +90,6 @@ describe('ReviewCommentsList', () => {
                     comment({ id: 'c2', state: 'resolved', body: '', flags: { redacted: true } }),
                 ]}
                 labels={labels}
-                directWriteGranted={false}
             />,
         );
 
@@ -101,6 +98,7 @@ describe('ReviewCommentsList', () => {
         expect(screen.getTextContent()).toContain('review-deepsec');
         expect(screen.getTextContent()).toContain('Stale');
         expect(screen.getTextContent()).toContain('Redacted');
-        expect(screen.getTextContent()).toContain('Proposals only');
+        expect(screen.getTextContent()).not.toContain('Proposals only');
+        expect(screen.getTextContent()).not.toContain('Direct write enabled');
     });
 });

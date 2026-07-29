@@ -5,10 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { vi } from 'vitest';
 
-vi.mock('expo-modules-core', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('expo-modules-core')>();
-    return { ...actual, requireOptionalNativeModule: () => null };
-});
+vi.mock('expo-modules-core', () => ({ requireOptionalNativeModule: () => null }));
 vi.mock('expo-constants', () => ({ default: { expoConfig: { extra: { app: {} } } } }));
 
 import { loadAppConfig } from './appConfig';

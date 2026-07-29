@@ -27,7 +27,7 @@ type UsageLimitRecoveryPayload = Readonly<{
     issueFingerprint?: string | null;
     remember?: boolean;
     provider?: string;
-    operation?: 'check_now' | 'switch_account_now';
+    operation?: 'check_now' | 'switch_account_now' | 'consume_reset_credit';
     resumePromptMode?: UsageLimitRecoveryResumePromptMode;
 }>;
 
@@ -237,12 +237,20 @@ export async function sessionUsageLimitWaitResumeEnable(
 
 export async function sessionUsageLimitWaitResumeCancel(
     sessionId: string,
-    params: Readonly<{ issueFingerprint?: string | null }> = {},
+    params: Readonly<{
+        issueFingerprint: string;
+        armedAtMs: number;
+        runtimeAuthRecoveryAttemptId?: string;
+    }>,
     opts?: UsageLimitRecoveryOperationOptions,
 ): Promise<SessionUsageLimitRecoveryOperationResult> {
     const payload = {
         sessionId,
-        issueFingerprint: params.issueFingerprint ?? null,
+        issueFingerprint: params.issueFingerprint,
+        armedAtMs: params.armedAtMs,
+        ...(params.runtimeAuthRecoveryAttemptId
+            ? { runtimeAuthRecoveryAttemptId: params.runtimeAuthRecoveryAttemptId }
+            : {}),
     };
     if (isInactiveSession(sessionId)) {
         return await runUsageLimitRecoveryMachineRpc(
@@ -336,6 +344,47 @@ export async function sessionUsageLimitSwitchAccountNow(
         sessionId,
         SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW,
         RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW,
+        payload,
+        opts,
+    );
+}
+
+export async function sessionUsageLimitConsumeResetCredit(
+    sessionId: string,
+    opts?: Readonly<{
+        provider?: string | null;
+        issueFingerprint?: string | null;
+    }> & UsageLimitRecoveryOperationOptions,
+): Promise<SessionUsageLimitRecoveryOperationResult> {
+    const provider = typeof opts?.provider === 'string' ? opts.provider.trim() : '';
+    const issueFingerprint = readString(opts?.issueFingerprint);
+    const payload = {
+        sessionId,
+        ...(provider.length > 0 ? { provider } : {}),
+        ...(issueFingerprint ? { issueFingerprint } : {}),
+    };
+    if (isInactiveSession(sessionId)) {
+        const target = await resolveUsageLimitRecoveryMachineControlTarget(sessionId, opts);
+        if (!target) {
+            return await runUsageLimitRecoveryRpc(
+                sessionId,
+                SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT,
+                payload,
+                opts,
+            );
+        }
+        return await runUsageLimitRecoveryMachineRpc(
+            sessionId,
+            RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT,
+            payload,
+            opts,
+            target,
+        );
+    }
+    return await runUsageLimitRecoveryRpcWithMachineFallback(
+        sessionId,
+        SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT,
+        RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT,
         payload,
         opts,
     );

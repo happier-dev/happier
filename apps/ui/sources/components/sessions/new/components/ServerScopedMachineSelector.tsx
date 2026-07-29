@@ -7,7 +7,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import type {
     ServerScopedMachine,
     ServerScopedMachineGroup,
@@ -35,23 +35,18 @@ function resolveGroupedMachineAvailability(machine: ServerScopedMachine): Readon
     detail: string;
     selectable: boolean;
 }> {
-    const online = isMachineOnline(machine);
-    const readinessStatus = machine.spawnReadinessStatus;
+    const readiness = resolveMachineSpawnReadiness({
+        machine,
+        selectedMachineId: machine.id,
+    });
 
-    if (readinessStatus === 'ready') {
+    if (readiness.status === 'ready') {
         return { detail: t('status.online'), selectable: true };
     }
 
-    if (readinessStatus === 'unknown' || readinessStatus === 'probing') {
+    if (readiness.status === 'revoked' || readiness.status === 'replaced') {
         return {
-            detail: online ? t('status.online') : t('status.offline'),
-            selectable: online,
-        };
-    }
-
-    if (readinessStatus === 'rpcUnavailable' || readinessStatus === 'keyUnavailable') {
-        return {
-            detail: online ? t('common.unavailable') : t('status.offline'),
+            detail: t('common.unavailable'),
             selectable: false,
         };
     }

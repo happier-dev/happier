@@ -32,8 +32,8 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     }),
 }));
 
-vi.mock('../families/uploadSessionAttachmentFromReaderViaDirectImport', () => ({
-    uploadSessionAttachmentFromReaderViaDirectImport: async (params: any) => {
+vi.mock('../families/uploadSessionAttachmentFromReaderWithCarrierFallbacks', () => ({
+    uploadSessionAttachmentFromReaderWithCarrierFallbacks: async (params: any) => {
         state.directImportUploadCalls.push(params);
         return { success: true, path: '/repo/file', sizeBytes: params.fileReader.sizeBytes, sha256: 'h' };
     },

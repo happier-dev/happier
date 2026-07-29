@@ -16,6 +16,15 @@ export type TranscriptTargetWindowDisplayItem = Readonly<{
     seq?: number | null;
 }>;
 
+export type TranscriptWindowGapDescriptor = Readonly<{
+    direction: 'older' | 'newer';
+    id: string;
+}>;
+
+export type TranscriptWindowGapItem = TranscriptWindowGapDescriptor & Readonly<{
+    kind: 'transcript-window-gap';
+}>;
+
 export type TranscriptTargetWindowDisplayResult<TItem extends TranscriptTargetWindowDisplayItem> = Readonly<{
     mode: 'tail' | 'window';
     items: readonly TItem[];

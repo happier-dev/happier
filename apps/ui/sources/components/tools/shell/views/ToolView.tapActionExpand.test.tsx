@@ -9,6 +9,7 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -48,7 +49,7 @@ installToolShellCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'toolViewDetailLevelDefault') return 'title';
                     if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
                     if (key === 'toolViewDetailLevelByToolName') return {};
@@ -56,7 +57,7 @@ installToolShellCommonModuleMocks({
                     if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
                     if (key === 'toolViewExpandedDetailLevelByToolName') return {};
                     return null;
-                },
+                } }),
             },
         });
     },
@@ -203,7 +204,7 @@ describe('ToolView (tap action: expand)', () => {
         });
         await flushHookEffects();
 
-        expect(screen.findByTestId('tool-sidechain-loading')).not.toBeNull();
+        expect(screen.findByTestId('tool-view-sidechain-hydration-status')).not.toBeNull();
 
         await act(async () => {
             request.resolve('loaded');
@@ -211,7 +212,7 @@ describe('ToolView (tap action: expand)', () => {
         });
         await flushHookEffects();
 
-        expect(screen.findByTestId('tool-sidechain-loading')).toBeNull();
+        expect(screen.findByTestId('tool-view-sidechain-hydration-status')).toBeNull();
     });
 
     it('surfaces an unavailable affordance (not a perpetual spinner) when expanded sidechain hydration fails terminally', async () => {
@@ -241,7 +242,7 @@ describe('ToolView (tap action: expand)', () => {
             });
             await flushHookEffects();
 
-            const statusNode = screen.findByTestId('tool-sidechain-loading');
+            const statusNode = screen.findByTestId('tool-view-sidechain-hydration-status');
             expect(statusNode).not.toBeNull();
             expect(screen.getTextContent()).toContain('common.unavailable');
             expect(statusNode?.findAllByProps({ accessibilityRole: 'progressbar' })).toHaveLength(0);
@@ -342,7 +343,7 @@ describe('ToolView (tap action: expand)', () => {
         expect(pushSpy).toHaveBeenCalledWith('/session/s1/message/server%3Aserver-msg-1');
     });
 
-    it('hides the secondary open action when tool navigation is disabled, even if the tool has its own id', async () => {
+    it('expands without hydrating the sidechain when tool navigation is disabled', async () => {
         pushSpy.mockReset();
         navigateWithBlurOnWebSpy.mockClear();
         renderedToolViewSpy.mockReset();
@@ -367,5 +368,13 @@ describe('ToolView (tap action: expand)', () => {
         );
 
         expect(screen.findByTestId('tool-view-header-secondary')).toBeNull();
+
+        await act(async () => {
+            screen.pressByTestId('tool-view-header-primary');
+        });
+        await flushHookEffects();
+
+        expect(screen.findAllByType('SpecificToolView' as React.ElementType)).toHaveLength(1);
+        expect(ensureSidechainMessagesLoadedMock).not.toHaveBeenCalled();
     });
 });

@@ -5,9 +5,12 @@ import {
     renderSettingsView,
     standardCleanup,
 } from '@/dev/testkit';
-import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/sync/domains/settings/voiceSettings';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import {
     getVoiceSettingsRouteModalMockRef,
+    getVoiceSettingsRouteParamsRef,
+    getVoiceSettingsRouteScrollToMockRef,
     installVoiceSettingsRouteModuleMocks,
 } from './voiceSettingsRouteTestHelpers';
 
@@ -19,13 +22,15 @@ const decryptSecretValue = vi.fn<(value: unknown) => string | null>(() => null);
 const resetGlobalVoiceAgentPersistenceSpy = vi.fn(async () => {});
 const canAgentResumeSpy = vi.fn<(agentId: string | null | undefined) => boolean>(() => true);
 const modalMockRef = getVoiceSettingsRouteModalMockRef();
+const routeParamsRef = getVoiceSettingsRouteParamsRef();
+const scrollToMockRef = getVoiceSettingsRouteScrollToMockRef();
 
 installVoiceSettingsRouteModuleMocks({
     storageModule: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useSetting: () => null,
-            useSettings: () => ({}),
+            useSettings: () => settingsParse({}),
         });
     },
 });
@@ -71,21 +76,18 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModel
 
 vi.mock('@/sync/store/hooks', () => ({
     useAllMachines: () => [],
+    useProfile: () => null,
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'test-server' }),
 }));
 
-vi.mock('@/components/settings/pickers/resolvePreferredMachineId', () => ({
-    resolvePreferredMachineId: () => null,
-}));
-
 vi.mock('@/agents/runtime/resumeCapabilities', () => ({
     canAgentResume: (agentId: string | null | undefined) => canAgentResumeSpy(agentId),
 }));
 
-const voiceState: any = {
+const createVoiceState = (): any => ({
     providerId: 'realtime_elevenlabs',
     assistantLanguage: null,
     ui: {
@@ -110,9 +112,9 @@ const voiceState: any = {
         shareFilePaths: false,
         shareToolArgs: false,
     },
-    adapters: {
-        realtime_elevenlabs: {
-            assistantLanguage: null,
+    providers: {
+        realtime_elevenlabs: { schemaVersion: 2, config: {
+            mode: 'default',
             billingMode: 'happier',
             tts: {
                 voiceId: 'EST9Ui6982FZPSi7gCHi',
@@ -125,14 +127,23 @@ const voiceState: any = {
                     speed: null,
                 },
             },
-            byo: { agentId: null, apiKey: null },
-        },
-	        local_direct: {
+            byo: { agentId: null },
+        } },
+	        local_direct: { schemaVersion: 1, config: {
             stt: { baseUrl: null, apiKey: null, model: 'whisper-1', useDeviceStt: false },
             tts: {
                 provider: 'openai_compat',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
-                kokoro: { assetSetId: null, voiceId: null, speed: null },
+                openaiCompat: {
+                    baseUrl: null,
+                    insecureLocalOriginConsent: null,
+                    insecureLocalConsentMachineId: null,
+                    apiKey: null,
+                    model: 'tts-1',
+                    voice: 'alloy',
+                    format: 'mp3',
+                },
+                localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null, execution: 'auto' },
+                providers: {},
                 autoSpeakReplies: true,
                 bargeInEnabled: true
             },
@@ -144,14 +155,23 @@ const voiceState: any = {
 	                    minSpeechMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs,
 	                },
 	            },
-	        },
-        local_conversation: {
+	        } },
+        local_conversation: { schemaVersion: 1, config: {
             conversationMode: 'direct_session',
             stt: { baseUrl: null, apiKey: null, model: 'whisper-1', useDeviceStt: false },
             tts: {
                 provider: 'openai_compat',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
-                kokoro: { assetSetId: null, voiceId: null, speed: null },
+                openaiCompat: {
+                    baseUrl: null,
+                    insecureLocalOriginConsent: null,
+                    insecureLocalConsentMachineId: null,
+                    apiKey: null,
+                    model: 'tts-1',
+                    voice: 'alloy',
+                    format: 'mp3',
+                },
+                localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null, execution: 'auto' },
+                providers: {},
                 autoSpeakReplies: true,
                 bargeInEnabled: true
 	            },
@@ -177,15 +197,20 @@ const voiceState: any = {
                 verbosity: 'short',
             },
             streaming: { enabled: false, ttsEnabled: false, ttsChunkChars: 200 },
-        },
+        } },
     },
-};
+});
+
+let voiceState: any = createVoiceState();
 
 vi.mock('@/voice/settings/useVoiceSettingsMutable', () => ({
-    useVoiceSettingsMutable: () => [voiceState, (next: any) => setVoice(next)],
+    useVoiceSettingsMutable: () => [voiceSettingsParse(voiceState), (next: any) => setVoice(next)],
 }));
 
 beforeEach(() => {
+    routeParamsRef.current = {};
+    scrollToMockRef.current?.mockClear();
+    voiceState = createVoiceState();
     setVoice.mockClear();
     setVoiceProviderId.mockClear();
     decryptSecretValue.mockReset();
@@ -194,8 +219,7 @@ beforeEach(() => {
     canAgentResumeSpy.mockReturnValue(true);
     voiceState.providerId = 'realtime_elevenlabs';
     voiceState.assistantLanguage = null;
-    voiceState.adapters.realtime_elevenlabs.assistantLanguage = null;
-    voiceState.adapters.realtime_elevenlabs.billingMode = 'happier';
+    voiceState.providers.realtime_elevenlabs.config.billingMode = 'happier';
     voiceState.ui.scopeDefault = 'global';
     voiceState.ui.surfaceLocation = 'auto';
     voiceState.ui.updates.activeSession = 'summaries';
@@ -222,7 +246,7 @@ afterEach(() => {
 });
 
 describe('VoiceSettingsScreen (server voice unsupported)', () => {
-    it('hides Happier Voice option and coerces mode to off', async () => {
+    it('keeps Happier Voice visible but disabled without destroying the unavailable hosted selection', async () => {
         voiceState.providerId = ' realtime_elevenlabs ';
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
@@ -231,15 +255,77 @@ describe('VoiceSettingsScreen (server voice unsupported)', () => {
         expect(screen.findRowByTitle('settingsVoice.mode.off')).toBeTruthy();
         expect(screen.findRowByTitle('settingsVoice.mode.local')).toBeTruthy();
         expect(screen.findRowByTitle('settingsVoice.mode.byo')).toBeTruthy();
-        expect(screen.findRowByTitle('settingsVoice.mode.happier')).toBeNull();
-        expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'off' }));
+        const hostedRow = screen.findRowByTitle('settingsVoice.mode.happier');
+        expect(hostedRow).toBeTruthy();
+        expect(hostedRow?.props.disabled).toBe(true);
+        expect(hostedRow?.props.onPress).toBeUndefined();
+        expect(setVoice).not.toHaveBeenCalled();
     });
 });
 
 describe('VoiceSettingsScreen (voice settings UX)', () => {
+    it('scrolls the stable Privacy section into view once for the validated route focus', async () => {
+        routeParamsRef.current = { focus: 'privacy' };
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const list = screen.tree.root.findByType('ItemList' as any);
+        const privacySection = screen.findByTestId('settings.voice.section.privacy');
+
+        expect(privacySection).toBeTruthy();
+        expect(scrollToMockRef.current).toBeTruthy();
+
+        await act(async () => {
+            list.props.onContentSizeChange(0, 1800);
+            privacySection?.props.onLayout({
+                nativeEvent: { layout: { y: 1200, height: 320 } },
+            });
+            list.props.onLayout({
+                nativeEvent: { layout: { y: 0, height: 400 } },
+            });
+        });
+
+        expect(scrollToMockRef.current).toHaveBeenCalledTimes(1);
+        expect(scrollToMockRef.current).toHaveBeenCalledWith({
+            y: 1160,
+            animated: false,
+        });
+
+        await act(async () => {
+            list.props.onContentSizeChange(0, 1900);
+            privacySection?.props.onLayout({
+                nativeEvent: { layout: { y: 1200, height: 320 } },
+            });
+        });
+        expect(scrollToMockRef.current).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ['unknown'],
+        [''],
+        [['unknown', 'privacy']],
+    ])('ignores unsupported or malformed Voice settings focus %j', async (focus) => {
+        routeParamsRef.current = { focus };
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const list = screen.tree.root.findByType('ItemList' as any);
+        const privacySection = screen.findByTestId('settings.voice.section.privacy');
+
+        await act(async () => {
+            list.props.onContentSizeChange(0, 1800);
+            privacySection?.props.onLayout({
+                nativeEvent: { layout: { y: 1200, height: 320 } },
+            });
+            list.props.onLayout({
+                nativeEvent: { layout: { y: 0, height: 400 } },
+            });
+        });
+
+        expect(scrollToMockRef.current).not.toHaveBeenCalled();
+    });
+
     it('renders local conversation settings when providerId is padded', async () => {
         voiceState.providerId = ' local_conversation ';
-        voiceState.adapters.local_conversation.conversationMode = 'direct_session';
+        voiceState.providers.local_conversation.config.conversationMode = 'direct_session';
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
@@ -250,7 +336,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
     it('shows local TTS settings even in direct-to-session conversation mode', async () => {
         voiceState.providerId = 'local_conversation';
-        voiceState.adapters.local_conversation.conversationMode = 'direct_session';
+        voiceState.providers.local_conversation.config.conversationMode = 'direct_session';
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
@@ -259,15 +345,15 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         expect(screen.findRowByTitle('settingsVoice.local.autoSpeak')).toBeTruthy();
     });
 
-    it('renders the web local-neural daemon fallback controls without crashing', async () => {
+    it('renders the shared selected-daemon model-pack row for web local-neural TTS', async () => {
         voiceState.providerId = 'local_conversation';
-        voiceState.adapters.local_conversation.conversationMode = 'agent';
-        voiceState.adapters.local_conversation.tts = {
+        voiceState.providers.local_conversation.config.conversationMode = 'agent';
+        voiceState.providers.local_conversation.config.tts = {
             provider: 'local_neural',
             autoSpeakReplies: true,
             bargeInEnabled: true,
             openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
-            googleCloud: null,
+            providers: {},
             localNeural: {
                 model: 'kokoro',
                 assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
@@ -281,13 +367,14 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
 
         expect(findDropdownByItemTriggerTitle(screen, 'settingsVoice.local.daemonInference.execution.title')).toBeTruthy();
-        expect(screen.findRowByTitle('settingsVoice.local.daemonInference.service.title')).toBeTruthy();
-        expect(screen.findRowByTitle('settingsVoice.local.daemonInference.model.title')).toBeTruthy();
+        expect(screen.findByTestId('voice-model-row-kokoro-82m-v1.0-onnx-q8-wasm')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsVoice.local.daemonInference.service.title')).toBeNull();
+        expect(screen.findRowByTitle('settingsVoice.local.daemonInference.model.title')).toBeNull();
     });
 
     it('uses screen-level popover boundaries for dropdowns', async () => {
         voiceState.providerId = 'realtime_elevenlabs';
-        voiceState.adapters.realtime_elevenlabs.billingMode = 'byo';
+        voiceState.providers.realtime_elevenlabs.config.billingMode = 'byo';
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
@@ -348,7 +435,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         await import('@/modal');
 
         voiceState.providerId = 'local_conversation';
-        voiceState.adapters.local_conversation.conversationMode = 'agent';
+        voiceState.providers.local_conversation.config.conversationMode = 'agent';
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
@@ -365,7 +452,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         await import('@/modal');
 
         voiceState.providerId = 'local_conversation';
-        voiceState.adapters.local_conversation.conversationMode = 'agent';
+        voiceState.providers.local_conversation.config.conversationMode = 'agent';
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
@@ -389,10 +476,10 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
     it('disables provider resume when the selected fixed agent does not support vendor resume', async () => {
         canAgentResumeSpy.mockImplementation((agentId) => agentId !== 'unknown-agent');
         voiceState.providerId = 'local_conversation';
-        voiceState.adapters.local_conversation.conversationMode = 'agent';
-        voiceState.adapters.local_conversation.agent.agentSource = 'agent';
-        voiceState.adapters.local_conversation.agent.agentId = 'unknown-agent';
-        voiceState.adapters.local_conversation.agent.transcript = { persistenceMode: 'persistent', epoch: 1 };
+        voiceState.providers.local_conversation.config.conversationMode = 'agent';
+        voiceState.providers.local_conversation.config.agent.agentSource = 'agent';
+        voiceState.providers.local_conversation.config.agent.agentId = 'unknown-agent';
+        voiceState.providers.local_conversation.config.agent.transcript = { persistenceMode: 'persistent', epoch: 1 };
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
@@ -406,9 +493,9 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
     it('can toggle voice agent commit isolation', async () => {
         voiceState.providerId = 'local_conversation';
-        voiceState.adapters.local_conversation.conversationMode = 'agent';
-        voiceState.adapters.local_conversation.agent.backend = 'daemon';
-        voiceState.adapters.local_conversation.agent.commitIsolation = false;
+        voiceState.providers.local_conversation.config.conversationMode = 'agent';
+        voiceState.providers.local_conversation.config.agent.backend = 'daemon';
+        voiceState.providers.local_conversation.config.agent.commitIsolation = false;
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
@@ -420,10 +507,12 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
         expect(setVoice).toHaveBeenCalledWith(
             expect.objectContaining({
-                adapters: expect.objectContaining({
+                providers: expect.objectContaining({
                     local_conversation: expect.objectContaining({
-                        agent: expect.objectContaining({
-                            commitIsolation: true,
+                        config: expect.objectContaining({
+                            agent: expect.objectContaining({
+                                commitIsolation: true,
+                            }),
                         }),
                     }),
                 }),
@@ -435,8 +524,8 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         await import('@/modal');
 
         voiceState.providerId = 'local_conversation';
-        voiceState.adapters.local_conversation.conversationMode = 'agent';
-        voiceState.adapters.local_conversation.agent.transcript = { persistenceMode: 'persistent', epoch: 1 };
+        voiceState.providers.local_conversation.config.conversationMode = 'agent';
+        voiceState.providers.local_conversation.config.agent.transcript = { persistenceMode: 'persistent', epoch: 1 };
 
         resetGlobalVoiceAgentPersistenceSpy.mockClear();
         modalMockRef.current.spies.confirm.mockResolvedValueOnce(true);
@@ -457,7 +546,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         await import('@/modal');
 
         voiceState.providerId = 'local_conversation';
-        voiceState.adapters.local_conversation.conversationMode = 'agent';
+        voiceState.providers.local_conversation.config.conversationMode = 'agent';
 
         modalMockRef.current.spies.prompt.mockResolvedValueOnce('999999');
 
@@ -471,9 +560,11 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
         expect(setVoice).toHaveBeenCalledWith(
             expect.objectContaining({
-                adapters: expect.objectContaining({
+                providers: expect.objectContaining({
                     local_conversation: expect.objectContaining({
-                        agent: expect.objectContaining({ idleTtlSeconds: 21600 }),
+                        config: expect.objectContaining({
+                            agent: expect.objectContaining({ idleTtlSeconds: 21600 }),
+                        }),
                     }),
                 }),
             }),
@@ -515,7 +606,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
     it('wires ElevenLabs voice dropdown selection into settings (BYO)', async () => {
         voiceState.providerId = 'realtime_elevenlabs';
-        voiceState.adapters.realtime_elevenlabs.billingMode = 'byo';
+        voiceState.providers.realtime_elevenlabs.config.billingMode = 'byo';
         decryptSecretValue.mockReturnValue('xi-test');
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
@@ -529,9 +620,11 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         });
 
         expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
-            adapters: expect.objectContaining({
+            providers: expect.objectContaining({
                 realtime_elevenlabs: expect.objectContaining({
-                    tts: expect.objectContaining({ voiceId: 'voice_test' }),
+                    config: expect.objectContaining({
+                        tts: expect.objectContaining({ voiceId: 'voice_test' }),
+                    }),
                 }),
             }),
         }));
@@ -539,7 +632,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
     it('wires ElevenLabs speaker boost tri-state into settings (BYO)', async () => {
         voiceState.providerId = 'realtime_elevenlabs';
-        voiceState.adapters.realtime_elevenlabs.billingMode = 'byo';
+        voiceState.providers.realtime_elevenlabs.config.billingMode = 'byo';
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
@@ -557,10 +650,12 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         });
 
         expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
-            adapters: expect.objectContaining({
+            providers: expect.objectContaining({
                 realtime_elevenlabs: expect.objectContaining({
-                    tts: expect.objectContaining({
-                        voiceSettings: expect.objectContaining({ useSpeakerBoost: false }),
+                    config: expect.objectContaining({
+                        tts: expect.objectContaining({
+                            voiceSettings: expect.objectContaining({ useSpeakerBoost: false }),
+                        }),
                     }),
                 }),
             }),

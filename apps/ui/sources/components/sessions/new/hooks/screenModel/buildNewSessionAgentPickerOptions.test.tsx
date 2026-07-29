@@ -16,7 +16,7 @@ function createEntry(params: Readonly<{
     kind: ResolvedBackendCatalogEntry['kind'];
     title: string;
     providerId?: string;
-    providerAgentId?: ResolvedBackendCatalogEntry['providerAgentId'];
+    catalogAgentId?: ResolvedBackendCatalogEntry['catalogAgentId'];
     builtInAgentId?: ResolvedBackendCatalogEntry['builtInAgentId'];
     capabilities?: ResolvedBackendCatalogEntry['capabilities'];
 }>): ResolvedBackendCatalogEntry {
@@ -28,10 +28,10 @@ function createEntry(params: Readonly<{
         backendTargetKey: formatBackendTargetKeyV2(backendTarget),
         kind: params.kind,
         backendId: params.backendId,
-        providerId: params.providerId ?? params.backendId,
-        providerAgentId: params.providerAgentId ?? null,
+        agentId: params.providerId ?? params.backendId,
+        catalogAgentId: params.catalogAgentId ?? null,
         builtInAgentId: params.builtInAgentId ?? null,
-        iconAgentId: params.providerAgentId ?? params.builtInAgentId ?? null,
+        iconAgentId: params.catalogAgentId ?? params.builtInAgentId ?? null,
         capabilities: params.capabilities ?? null,
         title: params.title,
         subtitle: null,
@@ -45,7 +45,7 @@ describe('buildNewSessionAgentPickerOptions', () => {
             kind: 'builtInAgent',
             title: 'Claude',
             providerId: 'claude',
-            providerAgentId: 'claude',
+            catalogAgentId: 'claude',
             builtInAgentId: 'claude',
             capabilities: { session: { supported: true } },
         });
@@ -54,7 +54,7 @@ describe('buildNewSessionAgentPickerOptions', () => {
             kind: 'builtInAgent',
             title: 'Antigravity',
             providerId: 'antigravity',
-            providerAgentId: 'antigravity',
+            catalogAgentId: 'antigravity',
             builtInAgentId: 'antigravity',
             capabilities: { session: { supported: true } },
         });

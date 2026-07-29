@@ -5,7 +5,23 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
-export type StdStreams = { stdout?: string; stderr?: string };
+export type StdStreams = { stdout?: string; stderr?: string; exitCode?: number };
+
+function readFirstString(obj: Record<string, unknown>, keys: readonly string[]): string | undefined {
+    for (const key of keys) {
+        const value = obj[key];
+        if (typeof value === 'string') return value;
+    }
+    return undefined;
+}
+
+function readFirstNumber(obj: Record<string, unknown>, keys: readonly string[]): number | undefined {
+    for (const key of keys) {
+        const value = obj[key];
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+    }
+    return undefined;
+}
 
 export function extractStdStreams(result: unknown): StdStreams | null {
     const parsed = maybeParseJson(result);
@@ -15,18 +31,23 @@ export function extractStdStreams(result: unknown): StdStreams | null {
     const obj = asRecord(parsed);
     if (!obj) return null;
 
-    const stdout =
-        typeof obj.stdout === 'string'
-            ? obj.stdout
-            : typeof obj.aggregated_output === 'string'
-                ? obj.aggregated_output
-                : typeof obj.formatted_output === 'string'
-                    ? obj.formatted_output
-                    : undefined;
-    const stderr = typeof obj.stderr === 'string' ? obj.stderr : undefined;
-    if (!stdout && !stderr) return null;
+    const stdout = readFirstString(obj, [
+        'stdout',
+        'out',
+        'aggregatedOutput',
+        'aggregated_output',
+        'formattedOutput',
+        'formatted_output',
+    ]);
+    const stderr = readFirstString(obj, ['stderr', 'err']);
+    const exitCode = readFirstNumber(obj, ['exitCode', 'exit_code', 'code']);
+    if (stdout === undefined && stderr === undefined && exitCode === undefined) return null;
 
-    return { stdout, stderr };
+    return {
+        ...(stdout !== undefined ? { stdout } : {}),
+        ...(stderr !== undefined ? { stderr } : {}),
+        ...(exitCode !== undefined ? { exitCode } : {}),
+    };
 }
 
 export function tailTextWithEllipsis(text: string, maxChars: number): string {

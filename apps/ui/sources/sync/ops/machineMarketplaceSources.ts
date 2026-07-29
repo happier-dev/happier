@@ -5,6 +5,9 @@ import {
     type MarketplaceSourceOriginV1,
     type MarketplaceSourceRegistryV1,
     type MarketplaceSourceV1,
+    type MarketplaceIndexQueryV1,
+    type MarketplaceIndexQueryResultV1,
+    MarketplaceIndexQueryResultV1Schema,
 } from '@happier-dev/protocol';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -20,6 +23,7 @@ export type MachineMarketplaceSourceRegistryInputV1 = Readonly<{
     description?: string | null;
     origin?: MarketplaceSourceOriginV1 | null;
     enabled?: boolean;
+    registryProfileId?: string | null;
 }>;
 
 function normalizeSourceUrl(sourceUrl: string): string {
@@ -49,6 +53,7 @@ function createMarketplaceSourceRecord(
         description: normalizeOptionalDescription(input.description),
         enabled: input.enabled,
         origin: input.origin ?? undefined,
+        registryProfileId: input.registryProfileId,
     }, existing);
 }
 
@@ -156,4 +161,37 @@ export async function machineMarketplaceSourceRegistrySet(
         method: RPC_METHODS.DAEMON_MARKETPLACE_SOURCE_REGISTRY_SET,
         payload: registry,
     });
+}
+
+export async function machineMarketplaceIndexQuery(
+    machineId: string,
+    query: MarketplaceIndexQueryV1,
+    opts?: MachineMarketplaceSourceRegistryRpcOpts,
+): Promise<MarketplaceIndexQueryResultV1> {
+    const items: MarketplaceIndexQueryResultV1['items'][number][] = [];
+    const diagnostics: MarketplaceIndexQueryResultV1['diagnostics'][number][] = [];
+    const seenCursors = new Set<string>();
+    let cursor = query.cursor;
+    let firstPage: MarketplaceIndexQueryResultV1 | null = null;
+    for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
+        const raw = await machineRpcWithServerScope<unknown, MarketplaceIndexQueryV1>({
+            machineId,
+            serverId: opts?.serverId ?? undefined,
+            timeoutMs: opts?.timeoutMs ?? undefined,
+            method: RPC_METHODS.DAEMON_MARKETPLACE_INDEX_QUERY,
+            payload: { ...query, cursor },
+        });
+        const parsed = MarketplaceIndexQueryResultV1Schema.safeParse(raw);
+        if (!parsed.success) throw new Error('Invalid marketplace index response from daemon');
+        const page = parsed.data;
+        if (firstPage && page.revision !== firstPage.revision) throw new Error('Marketplace index revision changed during pagination');
+        firstPage ??= page;
+        items.push(...page.items);
+        diagnostics.push(...page.diagnostics.slice(0, Math.max(0, 128 - diagnostics.length)));
+        if (!page.nextCursor) return { ...firstPage, items, diagnostics, nextCursor: null };
+        if (seenCursors.has(page.nextCursor)) throw new Error('Marketplace index returned a repeated pagination cursor');
+        seenCursors.add(page.nextCursor);
+        cursor = page.nextCursor;
+    }
+    throw new Error('Marketplace index exceeded the pagination limit');
 }

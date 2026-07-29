@@ -1,5 +1,6 @@
 import { beforeEach, vi } from 'vitest';
 import type { Settings } from '@/sync/domains/settings/settings';
+import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 type MachineDetailsModuleFactory = () => unknown | Promise<unknown>;
 type MachineDetailsStorageFactory = (importOriginal: <T>() => Promise<T>) => unknown | Promise<unknown>;
@@ -27,7 +28,6 @@ export function installMachineDetailsCommonModuleMocks(
         clearDaemonMergedProjectionCacheForTests();
     });
 
-    vi.mock('react-native-reanimated', () => ({}));
 
     vi.mock('react-native', async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -119,8 +119,8 @@ export function installMachineDetailsCommonModuleMocks(
                 useSessions: () => [],
                 useAllMachines: () => [],
                 useMachine: () => null,
-                useSetting: () => false,
-                useSettingMutable: () => [null, vi.fn()],
+                useSetting: createUseSettingMock({ fallback: () => false }),
+                useSettingMutable: createUseSettingMutableMockFromReader(() => [null, vi.fn()]),
                 useSettings: () => ({ schemaVersion: 1 } as Settings),
             },
         });

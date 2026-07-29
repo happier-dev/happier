@@ -12,6 +12,36 @@ afterEach(async () => {
 });
 
 describe('voiceSessionStore', () => {
+  it('mints one canonical attempt id per inactive-to-active start and keeps it through reconnect churn', async () => {
+    vi.resetModules();
+    const {
+      getVoiceSessionAttemptId,
+      setVoiceSessionSnapshot,
+    } = await import('./voiceSessionStore');
+
+    setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's1', status: 'connecting', mode: 'idle', canStop: true });
+    const firstAttemptId = getVoiceSessionAttemptId();
+    expect(firstAttemptId).toBeTypeOf('string');
+
+    setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's1', status: 'connected', mode: 'listening', canStop: true });
+    setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's1', status: 'connecting', mode: 'idle', canStop: true });
+    expect(getVoiceSessionAttemptId()).toBe(firstAttemptId);
+
+    setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+    expect(getVoiceSessionAttemptId()).toBeNull();
+    setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's1', status: 'connecting', mode: 'idle', canStop: true });
+    expect(getVoiceSessionAttemptId()).not.toBe(firstAttemptId);
+  });
+
+  it('mints a new attempt when the active control session changes without a disconnected publication', async () => {
+    vi.resetModules();
+    const { getVoiceSessionAttemptId, setVoiceSessionSnapshot } = await import('./voiceSessionStore');
+    setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's1', status: 'connected', mode: 'listening', canStop: true });
+    const firstAttemptId = getVoiceSessionAttemptId();
+    setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's2', status: 'connecting', mode: 'idle', canStop: true });
+    expect(getVoiceSessionAttemptId()).not.toBe(firstAttemptId);
+  });
+
   it('does not rerender subscribers when setVoiceSessionSnapshot receives an identical snapshot', async () => {
     vi.resetModules();
 
@@ -78,6 +108,8 @@ describe('voiceSessionStore', () => {
       canStop: true,
       errorCode: 'device_stt_start_failed',
       errorMessage: 'device_stt_start_failed',
+      errorRecoveryAction: 'open_settings',
+      errorPresentation: 'permission_required',
     });
 
     setVoiceSessionSnapshot({
@@ -91,6 +123,27 @@ describe('voiceSessionStore', () => {
     const snap = getVoiceSessionSnapshot();
     expect(snap.errorCode).toBeUndefined();
     expect(snap.errorMessage).toBeUndefined();
+    expect(snap.errorRecoveryAction).toBeUndefined();
+    expect(snap.errorPresentation).toBeUndefined();
+  });
+
+  it('publishes reconnecting and interrupted presentation-only changes', async () => {
+    vi.resetModules();
+    const { getVoiceSessionSnapshot, setVoiceSessionSnapshot } = await import('./voiceSessionStore');
+    const baseline = {
+      adapterId: 'local_direct',
+      sessionId: 's1',
+      status: 'connecting' as const,
+      mode: 'idle' as const,
+      canStop: true,
+    };
+
+    setVoiceSessionSnapshot(baseline);
+    setVoiceSessionSnapshot({ ...baseline, presentationState: 'reconnecting' });
+    expect(getVoiceSessionSnapshot().presentationState).toBe('reconnecting');
+
+    setVoiceSessionSnapshot({ ...baseline, presentationState: 'interrupted' });
+    expect(getVoiceSessionSnapshot().presentationState).toBe('interrupted');
   });
 
   it('canonicalizes adapter and session ids when storing a snapshot', async () => {
@@ -133,9 +186,12 @@ describe('voiceSessionStore', () => {
         canStop: false,
       });
       setVoiceSessionLifecycleController({
-        dispose: () => {},
+        dispose: async () => {},
+        getConfiguredProviderId: () => 'local_conversation',
+        rearmAfterCredentialAuthorityChange: vi.fn(() => {}),
         getSnapshot: () => controllerSnapshot,
         interrupt: vi.fn(async () => {}),
+        bargeIn: vi.fn(async () => {}),
         sendContextUpdate: vi.fn(() => {}),
         setConfiguredProviderId: vi.fn(() => {}),
         setMuted: vi.fn(async () => {}),
@@ -175,9 +231,12 @@ describe('voiceSessionStore', () => {
       canStop: false,
     });
     setVoiceSessionLifecycleController({
-      dispose: () => {},
+      dispose: async () => {},
+      getConfiguredProviderId: () => 'local_direct',
+      rearmAfterCredentialAuthorityChange: vi.fn(() => {}),
       getSnapshot: () => activeSnapshot,
       interrupt: vi.fn(async () => {}),
+      bargeIn: vi.fn(async () => {}),
       sendContextUpdate: vi.fn(() => {}),
       setConfiguredProviderId: vi.fn(() => {}),
       setMuted: vi.fn(async () => {}),
@@ -187,6 +246,7 @@ describe('voiceSessionStore', () => {
     });
     registerVoiceAdapters([{
       id: 'local_direct',
+      engineKind: 'local',
       start: vi.fn(async () => {}),
       stop: vi.fn(async () => {}),
       toggle: vi.fn(async () => {}),

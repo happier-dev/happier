@@ -12,6 +12,7 @@ const stableCredentials = { token: 't', secret: Buffer.from(new Uint8Array(32).f
 const useFeatureEnabledSpy = vi.fn((_featureId: string) => true);
 const useProfileSpy = vi.fn<() => Pick<AccountProfile, 'connectedServicesV2'>>(() => ({
     connectedServicesV2: [],
+    connectedServiceCredentialRevisionsV1: [],
 }));
 const useSettingsSpy = vi.fn(() => ({
     connectedServicesQuotaPinnedMeterIdsByKey: {},
@@ -134,5 +135,89 @@ describe('useConnectedServiceQuotaSummaries', () => {
         const last = seen.at(-1);
         expect(last?.summaries[0]?.primaryMeter?.meterId).toBe('monthly');
         expect(last?.summaries[0]?.meters.map((meter) => meter.meterId)).toEqual(['monthly', 'weekly']);
+    });
+
+    it('requests summaries for retryable refresh-failure profiles because they remain usable', async () => {
+        useFeatureEnabledSpy.mockReturnValue(true);
+        useProfileSpy.mockReturnValue({
+            connectedServicesV2: [
+                {
+                    serviceId: 'anthropic',
+                    profiles: [
+                        {
+                            profileId: 'retryable',
+                            status: 'refresh_failed_retryable',
+                            kind: 'oauth',
+                            providerEmail: null,
+                            providerAccountId: null,
+                            expiresAt: null,
+                            lastUsedAt: null,
+                            health: null,
+                        },
+                    ],
+                    groups: [],
+                },
+            ],
+        });
+
+        const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
+        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries());
+
+        expect(seen.at(-1)?.hasConnectedProfiles).toBe(true);
+        expect(getConnectedServiceQuotaSnapshotPlainSpy).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ serviceId: 'anthropic', profileId: 'retryable' }),
+        );
+    });
+
+    it('still requests summaries for an empty/unknown status (fails OPEN) and skips only explicit needs_reauth', async () => {
+        // Usage DISPLAY fails open: absent/'' status must not silently drop a
+        // healthy profile from quota summaries; only an explicit, recognized
+        // needs_reauth is excluded (shouldHideQuotaForCredentialStatus fold).
+        useFeatureEnabledSpy.mockReturnValue(true);
+        useProfileSpy.mockReturnValue({
+            connectedServicesV2: [
+                {
+                    serviceId: 'anthropic',
+                    profiles: [
+                        {
+                            profileId: 'unknown-status',
+                            // Raw wire value outside the typed enum — the display gate must fail OPEN.
+                            status: '' as unknown as 'connected',
+                            kind: 'oauth',
+                            providerEmail: null,
+                            providerAccountId: null,
+                            expiresAt: null,
+                            lastUsedAt: null,
+                            health: null,
+                        },
+                        {
+                            profileId: 'reauth',
+                            status: 'needs_reauth',
+                            kind: 'oauth',
+                            providerEmail: null,
+                            providerAccountId: null,
+                            expiresAt: null,
+                            lastUsedAt: null,
+                            health: null,
+                        },
+                    ],
+                    groups: [],
+                },
+            ],
+        });
+
+        const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
+        const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaSummaries());
+
+        expect(seen.at(-1)?.hasConnectedProfiles).toBe(true);
+        expect(getConnectedServiceQuotaSnapshotPlainSpy).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ serviceId: 'anthropic', profileId: 'unknown-status' }),
+        );
+        expect(getConnectedServiceQuotaSnapshotPlainSpy).not.toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ profileId: 'reauth' }),
+        );
     });
 });

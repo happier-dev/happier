@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -6,6 +7,13 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
+
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (!Array.isArray(style)) {
+        return style && typeof style === 'object' ? style as Record<string, unknown> : {};
+    }
+    return Object.assign({}, ...style.map(flattenStyle));
+}
 
 describe('CheckpointCodeRollbackDialog', () => {
     afterEach(() => {
@@ -59,6 +67,43 @@ describe('CheckpointCodeRollbackDialog', () => {
             codeOnlyTranscriptDivergenceConfirmed: true,
         });
         await screen.unmount();
+    });
+
+    it('keeps every rollback action semantically named and at least 48dp tall on Android', async () => {
+        const previousPlatform = Platform.OS;
+        (Platform as { OS: string }).OS = 'android';
+        try {
+            const { CheckpointCodeRollbackDialog } = await import('./CheckpointCodeRollbackDialog');
+            const screen = await renderScreen(
+                <CheckpointCodeRollbackDialog
+                    visible
+                    conversationRollbackSupported={false}
+                    onCancel={() => undefined}
+                    onConfirm={() => undefined}
+                />,
+            );
+
+            const advancedAction = screen.findByTestId('checkpoint-rollback-show-advanced');
+            expect(advancedAction?.props.accessibilityRole).toBe('button');
+            expect(flattenStyle(advancedAction?.props.style).minHeight).toBeGreaterThanOrEqual(48);
+
+            await screen.pressByTestIdAsync('checkpoint-rollback-show-advanced');
+            await screen.pressByTestIdAsync('checkpoint-rollback-choice:code_only_without_stash');
+
+            for (const testID of [
+                'checkpoint-rollback-choice:code_only_without_stash',
+                'checkpoint-rollback-code-only-confirmation',
+                'checkpoint-rollback-cancel',
+                'checkpoint-rollback-confirm',
+            ]) {
+                const action = screen.findByTestId(testID);
+                expect(action?.props.accessibilityRole).toBeTruthy();
+                expect(flattenStyle(action?.props.style).minHeight).toBeGreaterThanOrEqual(48);
+            }
+            await screen.unmount();
+        } finally {
+            (Platform as { OS: string }).OS = previousPlatform;
+        }
     });
 
     it('opens through the app Modal pattern instead of inline screen state', async () => {

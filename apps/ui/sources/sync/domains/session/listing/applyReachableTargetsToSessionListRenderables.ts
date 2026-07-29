@@ -13,6 +13,7 @@ import {
     buildComparableBasePathPeerSessions,
     listComparableBasePathPeerSessions,
 } from './buildComparableBasePathPeerSessions';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 type ProjectLookupResult = {
     key?: {
@@ -62,7 +63,7 @@ type NormalizedTargetMachineMetadata = Readonly<{
 }>;
 
 function buildNormalizedSessionRecordMetadata(sessionRecord: Session): NormalizedSessionRecordMetadata {
-    const metadata = sessionRecord.metadata ?? null;
+    const metadata = readSessionOwnerMetadataView(sessionRecord);
     const sessionPath = normalizeTrimmedString(metadata?.path) || null;
     const sessionHomeDir = normalizeTrimmedString(metadata?.homeDir) || null;
     return {
@@ -236,6 +237,20 @@ export function applyReachableTargetsToSessionListRenderables(
         const session = params.sessions[sessionId];
         const sessionRecord = sessionRecords[sessionId];
         if (!sessionRecord || !session.metadata) {
+            continue;
+        }
+        // Layout-1 participant list metadata is the strict shared projection.
+        // Reachable machine/path facts come from the owner view and must never
+        // be copied into that participant-visible projection. Owner-local
+        // renderables may still project the already-hydrated owner view.
+        const isLayout1Participant =
+            (session.metadataLayoutVersion ?? sessionRecord.metadataLayoutVersion ?? 0) === 1
+            && (
+                session.accessLevel === 'view'
+                || session.accessLevel === 'edit'
+                || session.accessLevel === 'admin'
+            );
+        if (isLayout1Participant) {
             continue;
         }
         const normalizedProjectionArtifacts = readNormalizedProjectionArtifacts(sessionId, sessionRecord);

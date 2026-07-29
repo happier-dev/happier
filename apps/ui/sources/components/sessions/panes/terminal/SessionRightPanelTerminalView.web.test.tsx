@@ -275,6 +275,27 @@ describe('SessionRightPanelTerminalView.web', () => {
         expect(ensureInput?.terminalKey).toBe('session:s1:terminal:term-7');
     });
 
+    it('uses the typed session-attach launch intent without workspace-shell inputs', async () => {
+        const SessionEmbeddedTerminalPaneWeb = await loadSessionEmbeddedTerminalPaneWeb();
+
+        await renderAndFlush(
+            <SessionEmbeddedTerminalPaneWeb
+                sessionId="s1"
+                scopeId="session:s1"
+                currentDockLocation="details"
+                terminalMode="session_attach"
+                testIdPrefix="pane-attached"
+            />,
+        );
+
+        expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(1);
+        expect(machineTerminalEnsureSpy.mock.calls[0]?.[1]).toEqual({
+            cols: 80,
+            rows: 24,
+            launch: { kind: 'session_attach', sessionId: 's1' },
+        });
+    });
+
     it('uses the resolved session machine target when the session machine id is stale', async () => {
         sessionState = {
             metadata: {

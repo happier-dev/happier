@@ -7,17 +7,22 @@ import { DEFAULT_AGENT_ID, getAgentCore, isAgentId } from '@/agents/catalog/cata
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getAgentDropdownMenuItems } from '@/components/settings/pickers/agentDropdownItems';
 import { getModelDropdownMenuItems, REFRESH_MODELS_DROPDOWN_ITEM_ID } from '@/components/settings/pickers/modelDropdownItems';
-import { getMachineDropdownMenuItems } from '@/components/settings/pickers/machineDropdownItems';
 import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Modal } from '@/modal';
-import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import {
+  readLocalConversationVoiceSettings,
+  voiceSettingsParse,
+  writeLocalConversationVoiceSettings,
+  type VoiceSettings,
+} from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { normalizeSecretStringPromptInput } from '@/utils/secrets/normalizeSecretStringPromptInput';
+import { OpenAiCompatCredentialItem } from '@/voice/local/openaiCompat/CredentialItem';
+import { OpenAiCompatEndpointItem } from '@/voice/local/openaiCompat/EndpointItem';
 import { parseLocalVoiceSttSettings, parseLocalVoiceTtsSettings } from '@/voice/local/localVoiceSettings';
 import { LocalVoiceSttGroup } from '@/voice/settings/panels/localStt/LocalVoiceSttGroup';
 import { LocalVoiceTtsGroup } from '@/voice/settings/panels/localTts/LocalVoiceTtsGroup';
@@ -34,7 +39,8 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useAllMachines } from '@/sync/store/hooks';
 import { useSetting, useSettings } from '@/sync/domains/state/storage';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
-import { resolveStoredVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
+import { resolveVoiceProviderIdFromSettings } from '@/voice/settings/resolveVoiceProviderId';
+import { applyVoiceWelcomeSelection, resolveVoiceWelcomeSelection } from '@/voice/settings/welcome';
 
 
 export function LocalConversationSection(props: {
@@ -52,7 +58,6 @@ export function LocalConversationSection(props: {
     | null
     | 'conversationMode'
     | 'mediatorBackend'
-    | 'mediatorMachineTarget'
     | 'mediatorRootSessionPolicy'
     | 'mediatorAgentSource'
     | 'mediatorAgentId'
@@ -68,9 +73,10 @@ export function LocalConversationSection(props: {
     | 'mediatorVerbosity'
   >(null);
 
-  const cfg = props.voice.adapters.local_conversation;
-  const storedProviderId = resolveStoredVoiceProviderId(props.voice.providerId);
-  const enabled = storedProviderId === 'local_conversation';
+  const voice = voiceSettingsParse(props.voice);
+  const cfg = readLocalConversationVoiceSettings(voice);
+  const executionMachine = voice.executionMachine;
+  const enabled = resolveVoiceProviderIdFromSettings(voice) === 'local_conversation';
   const machines = useAllMachines();
   const recentMachinePaths = useSetting('recentMachinePaths') as any[] | undefined;
 
@@ -112,8 +118,8 @@ export function LocalConversationSection(props: {
   }, [cfg.agent.agentId, cfg.agent.agentSource]);
 
   const preflightMachineId = React.useMemo(() => {
-    if (cfg.agent.machineTargetMode === 'fixed') {
-      const machineId = String(cfg.agent.machineTargetId ?? '').trim();
+    if (executionMachine.mode === 'fixed') {
+      const machineId = String(executionMachine.machineId ?? '').trim();
       return machineId.length > 0 ? machineId : null;
     }
 
@@ -121,7 +127,7 @@ export function LocalConversationSection(props: {
       machines,
       recentMachinePaths: Array.isArray(recentMachinePaths) ? recentMachinePaths : [],
     });
-  }, [cfg.agent.machineTargetId, cfg.agent.machineTargetMode, machines, recentMachinePaths]);
+  }, [executionMachine.machineId, executionMachine.mode, machines, recentMachinePaths]);
 
 	  const preflightModels = useNewSessionPreflightModelsState({
 	    backendTarget: { kind: 'backend', backendId: selectedAgentIdForModelOptions ?? DEFAULT_AGENT_ID },
@@ -156,27 +162,6 @@ export function LocalConversationSection(props: {
     ];
   }, [selectableModelMenuItems, theme.colors.text.secondary]);
 
-  const machineTargetDropdownItems = React.useMemo(() => {
-    return getMachineDropdownMenuItems({
-      machines,
-      iconColor: theme.colors.text.secondary,
-      includeAuto: true,
-      autoSubtitle: t('settingsVoice.local.conversation.machineAutoSubtitle'),
-    });
-  }, [machines, theme.colors.text.secondary]);
-
-  const machineTargetSelectedId = React.useMemo(() => {
-    if (cfg.agent.machineTargetMode === 'fixed') {
-      const machineId = String(cfg.agent.machineTargetId ?? '').trim();
-      if (machineId) return machineId;
-    }
-    return 'auto';
-  }, [cfg.agent.machineTargetId, cfg.agent.machineTargetMode]);
-
-  const machineTargetSelectedItem = React.useMemo(() => {
-    return machineTargetDropdownItems.find((it) => it.id === machineTargetSelectedId) ?? machineTargetDropdownItems[0] ?? null;
-  }, [machineTargetDropdownItems, machineTargetSelectedId]);
-
   const rootSessionPolicyItems = React.useMemo(() => {
     return [
       {
@@ -210,13 +195,7 @@ export function LocalConversationSection(props: {
   if (!enabled) return null;
 
   const setCfg = (patch: Partial<typeof cfg>) => {
-    props.setVoice({
-      ...props.voice,
-      adapters: {
-        ...props.voice.adapters,
-        local_conversation: { ...cfg, ...patch },
-      },
-    });
+    props.setVoice(writeLocalConversationVoiceSettings(voice, { ...cfg, ...patch }));
   };
 
   const setAgent = (patch: Partial<typeof cfg.agent>) => setCfg({ agent: { ...cfg.agent, ...patch } });
@@ -291,6 +270,7 @@ export function LocalConversationSection(props: {
             title={t('settingsVoice.local.conversation.handsFree.enableTitle')}
             rightElement={
               <Switch
+                accessibilityLabel={t('settingsVoice.local.conversation.handsFree.enableTitle')}
                 value={cfg.handsFree.enabled}
                 onValueChange={(v) => setCfg({ handsFree: { ...cfg.handsFree, enabled: v } })}
               />
@@ -459,6 +439,7 @@ export function LocalConversationSection(props: {
                     subtitle={t('settingsVoice.local.conversation.providerResumeFallback.subtitle')}
                     rightElement={
                       <Switch
+                        accessibilityLabel={t('settingsVoice.local.conversation.providerResumeFallback.title')}
                         value={cfg.agent.providerResume?.fallbackToReplay !== false}
                         onValueChange={(v) => setAgent({ providerResume: { ...(cfg.agent.providerResume ?? {}), fallbackToReplay: v } })}
                       />
@@ -528,6 +509,7 @@ export function LocalConversationSection(props: {
               subtitle={t('settingsVoice.local.conversation.prewarm.subtitle')}
               rightElement={
                 <Switch
+                  accessibilityLabel={t('settingsVoice.local.conversation.prewarm.title')}
                   value={cfg.agent.prewarmOnConnect === true}
                   onValueChange={(v) => setAgent({ prewarmOnConnect: v })}
                 />
@@ -539,7 +521,7 @@ export function LocalConversationSection(props: {
               onOpenChange={(next) => setOpenMenu(next ? 'mediatorWelcomeMode' : null)}
               variant="selectable"
               search={false}
-              selectedId={cfg.agent.welcome?.enabled ? (cfg.agent.welcome?.mode ?? 'immediate') : 'off'}
+              selectedId={resolveVoiceWelcomeSelection(voice.welcome)}
               showCategoryTitles={false}
               matchTriggerWidth={true}
               connectToTrigger={true}
@@ -569,11 +551,10 @@ export function LocalConversationSection(props: {
                 },
               ]}
               onSelect={(id) => {
-                if (id === 'off') {
-                  setAgent({ welcome: { ...(cfg.agent.welcome ?? {}), enabled: false } });
-                } else {
-                  setAgent({ welcome: { ...(cfg.agent.welcome ?? {}), enabled: true, mode: id as any } });
-                }
+                props.setVoice(applyVoiceWelcomeSelection(
+                  voice,
+                  id === 'on_first_turn' ? 'on_first_turn' : id === 'off' ? 'off' : 'immediate',
+                ));
                 setOpenMenu(null);
               }}
             />
@@ -645,36 +626,6 @@ export function LocalConversationSection(props: {
                 }}
               />
 
-              <DropdownMenu
-                open={openMenu === 'mediatorMachineTarget'}
-                onOpenChange={(next) => setOpenMenu(next ? 'mediatorMachineTarget' : null)}
-                variant="selectable"
-                search={false}
-                selectedId={machineTargetSelectedId}
-                showCategoryTitles={false}
-                matchTriggerWidth={true}
-                connectToTrigger={true}
-                rowKind="item"
-                popoverBoundaryRef={props.popoverBoundaryRef}
-                itemTrigger={{
-                  title: t('settingsVoice.local.conversation.agentMachine.title'),
-                  subtitleFormatter: () => (machineTargetSelectedItem?.subtitle ?? t('settingsVoice.local.conversation.agentMachine.fallbackSubtitle')),
-                  detailFormatter: () => (machineTargetSelectedItem?.title ?? machineTargetSelectedId),
-                }}
-                items={machineTargetDropdownItems}
-                onSelect={(id) => {
-                  if (id === 'auto') {
-                    setAgent({ machineTargetMode: 'auto', machineTargetId: null });
-                    setOpenMenu(null);
-                    return;
-                  }
-                  const machineId = String(id ?? '').trim();
-                  if (!machineId) return;
-                  setAgent({ machineTargetMode: 'fixed', machineTargetId: machineId });
-                  setOpenMenu(null);
-                }}
-              />
-
               <Item
                 title={t('settingsVoice.local.conversation.agentMachine.stayInVoiceHomeTitle')}
                 subtitle={
@@ -684,10 +635,12 @@ export function LocalConversationSection(props: {
                 }
                 rightElement={
                   <Switch
+                    accessibilityLabel={t('settingsVoice.local.conversation.agentMachine.stayInVoiceHomeTitle')}
                     value={cfg.agent.stayInVoiceHome === true}
                     onValueChange={(v) => setAgent({ stayInVoiceHome: v })}
                   />
                 }
+                rightElementOutsidePressable
                 onPress={() => setAgent({ stayInVoiceHome: cfg.agent.stayInVoiceHome !== true })}
                 showChevron={false}
                 selected={false}
@@ -702,10 +655,12 @@ export function LocalConversationSection(props: {
                 }
                 rightElement={
                   <Switch
+                    accessibilityLabel={t('settingsVoice.local.conversation.agentMachine.allowTeleportTitle')}
                     value={cfg.agent.teleportEnabled !== false}
                     onValueChange={(v) => setAgent({ teleportEnabled: v })}
                   />
                 }
+                rightElementOutsidePressable
                 onPress={() => setAgent({ teleportEnabled: cfg.agent.teleportEnabled === false })}
                 showChevron={false}
                 selected={false}
@@ -838,7 +793,7 @@ export function LocalConversationSection(props: {
           onOpenChange={(next) => setOpenMenu(next ? 'mediatorPermissionPolicy' : null)}
           variant="selectable"
           search={false}
-          selectedId={cfg.agent.permissionPolicy}
+          selectedId={cfg.agent.permissionIntent}
           showCategoryTitles={false}
           matchTriggerWidth={true}
           connectToTrigger={true}
@@ -849,20 +804,32 @@ export function LocalConversationSection(props: {
           }}
           items={[
             {
-              id: 'read_only',
-              title: t('settingsVoice.local.mediatorPermissionReadOnly'),
-              subtitle: t('settingsVoice.local.conversation.permissionPolicy.readOnlySubtitle'),
+              id: 'default',
+              title: t('agentInput.permissionMode.default'),
+              subtitle: t('settingsActions.spawnPolicy.permissionCeiling.options.default.subtitle'),
               icon: <Ionicons name="eye-outline" size={22} color={theme.colors.text.secondary} />,
             },
             {
-              id: 'no_tools',
-              title: t('settingsVoice.local.mediatorPermissionNoTools'),
-              subtitle: t('settingsVoice.local.conversation.permissionPolicy.noToolsSubtitle'),
+              id: 'read-only',
+              title: t('agentInput.permissionMode.readOnly'),
+              subtitle: t('settingsActions.spawnPolicy.permissionCeiling.options.read-only.subtitle'),
               icon: <Ionicons name="hand-left-outline" size={22} color={theme.colors.text.secondary} />,
+            },
+            {
+              id: 'safe-yolo',
+              title: t('agentInput.permissionMode.safeYolo'),
+              subtitle: t('settingsActions.spawnPolicy.permissionCeiling.options.safe-yolo.subtitle'),
+              icon: <Ionicons name="shield-checkmark-outline" size={22} color={theme.colors.text.secondary} />,
+            },
+            {
+              id: 'yolo',
+              title: t('agentInput.permissionMode.yolo'),
+              subtitle: t('settingsActions.spawnPolicy.permissionCeiling.options.yolo.subtitle'),
+              icon: <Ionicons name="flash-outline" size={22} color={theme.colors.text.secondary} />,
             },
           ]}
           onSelect={(id) => {
-            setAgent({ permissionPolicy: id as any });
+            setAgent({ permissionIntent: id as any });
             setOpenMenu(null);
           }}
         />
@@ -1053,10 +1020,12 @@ export function LocalConversationSection(props: {
             subtitle={t('settingsVoice.local.conversation.commitIsolation.subtitle')}
             rightElement={
               <Switch
+                accessibilityLabel={t('settingsVoice.local.conversation.commitIsolation.title')}
                 value={cfg.agent.commitIsolation === true}
                 onValueChange={(v) => setAgent({ commitIsolation: v })}
               />
             }
+            rightElementOutsidePressable
             onPress={() => {
               setAgent({ commitIsolation: cfg.agent.commitIsolation !== true });
             }}
@@ -1117,41 +1086,28 @@ export function LocalConversationSection(props: {
 
       {cfg.agent.backend === 'openai_compat' ? (
         <ItemGroup title={t('settingsVoice.local.mediatorBackendOpenAi')}>
-          <Item
+          <OpenAiCompatEndpointItem
             title={t('settingsVoice.local.chatBaseUrl')}
-            detail={cfg.agent.openaiCompat.chatBaseUrl ? String(cfg.agent.openaiCompat.chatBaseUrl) : t('settingsVoice.local.notSet')}
-            onPress={() => {
-              fireAndForget((async () => {
-                const raw = await Modal.prompt(
-                  t('settingsVoice.local.chatBaseUrlTitle'),
-                  t('settingsVoice.local.chatBaseUrlDescription'),
-                  { placeholder: cfg.agent.openaiCompat.chatBaseUrl ?? '' },
-                );
-                if (raw === null) return;
-                setAgent({
-                  openaiCompat: { ...cfg.agent.openaiCompat, chatBaseUrl: String(raw).trim() || null },
-                });
-              })(), { tag: 'LocalConversationSection.prompt.openaiCompat.chatBaseUrl' });
-            }}
+            promptTitle={t('settingsVoice.local.chatBaseUrlTitle')}
+            promptDescription={t('settingsVoice.local.chatBaseUrlDescription')}
+            baseUrl={cfg.agent.openaiCompat.chatBaseUrl}
+            insecureLocalOriginConsent={cfg.agent.openaiCompat.insecureLocalOriginConsent}
+            insecureLocalConsentMachineId={cfg.agent.openaiCompat.insecureLocalConsentMachineId}
+            onChange={(patch) => setAgent({
+              openaiCompat: {
+                ...cfg.agent.openaiCompat,
+                chatBaseUrl: patch.baseUrl,
+                insecureLocalOriginConsent: patch.insecureLocalOriginConsent,
+                insecureLocalConsentMachineId: patch.insecureLocalConsentMachineId,
+              },
+            })}
           />
-          <Item
+          <OpenAiCompatCredentialItem
             title={t('settingsVoice.local.chatApiKey')}
-            detail={cfg.agent.openaiCompat.chatApiKey ? t('settingsVoice.local.apiKeySet') : t('settingsVoice.local.notSet')}
-            onPress={() => {
-              fireAndForget((async () => {
-                const raw = await Modal.prompt(
-                  t('settingsVoice.local.chatApiKeyTitle'),
-                  t('settingsVoice.local.chatApiKeyDescription'),
-                  {
-                    inputType: 'secure-text',
-                  },
-                );
-                if (raw === null) return;
-                setAgent({
-                  openaiCompat: { ...cfg.agent.openaiCompat, chatApiKey: normalizeSecretStringPromptInput(raw) },
-                });
-              })(), { tag: 'LocalConversationSection.prompt.openaiCompat.chatApiKey' });
-            }}
+            promptTitle={t('settingsVoice.local.chatApiKeyTitle')}
+            promptDescription={t('settingsVoice.local.chatApiKeyDescription')}
+            credentialKind="chat_api_key"
+            legacySecretValue={cfg.agent.openaiCompat.chatApiKey}
           />
           <Item
             title={t('settingsVoice.local.chatModel')}
@@ -1229,12 +1185,24 @@ export function LocalConversationSection(props: {
         <Item
           title={t('settingsVoice.local.conversation.streaming.enableTitle')}
           subtitle={t('settingsVoice.local.conversation.streaming.enableSubtitle')}
-          rightElement={<Switch value={cfg.streaming.enabled} onValueChange={(v) => setStreaming({ enabled: v })} />}
+          rightElement={(
+            <Switch
+              accessibilityLabel={t('settingsVoice.local.conversation.streaming.enableTitle')}
+              value={cfg.streaming.enabled}
+              onValueChange={(v) => setStreaming({ enabled: v })}
+            />
+          )}
         />
         <Item
           title={t('settingsVoice.local.conversation.streaming.enableTtsTitle')}
           subtitle={t('settingsVoice.local.conversation.streaming.enableTtsSubtitle')}
-          rightElement={<Switch value={cfg.streaming.ttsEnabled} onValueChange={(v) => setStreaming({ ttsEnabled: v })} />}
+          rightElement={(
+            <Switch
+              accessibilityLabel={t('settingsVoice.local.conversation.streaming.enableTtsTitle')}
+              value={cfg.streaming.ttsEnabled}
+              onValueChange={(v) => setStreaming({ ttsEnabled: v })}
+            />
+          )}
         />
         <Item
           title={t('settingsVoice.local.conversation.streaming.ttsChunkCharsTitle')}

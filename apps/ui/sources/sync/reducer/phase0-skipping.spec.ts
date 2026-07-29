@@ -258,4 +258,86 @@ describe('Phase 0 permission skipping issue', () => {
         // Should have been mapped into permission.allowedTools for UI code paths.
         expect((msg?.tool?.permission as any)?.allowedTools).toEqual(['Bash(echo hello)']);
     });
+
+    it('preserves completed permission metadata when matching tool calls arrive in the same batch', () => {
+        const state = createReducer();
+
+        const messages: NormalizedMessage[] = [{
+            id: 'msg1',
+            localId: null,
+            createdAt: 1000,
+            role: 'agent',
+            isSidechain: false,
+            content: [{
+                type: 'tool-call',
+                id: 'tool1',
+                name: 'Bash',
+                input: { command: 'echo hello' },
+                description: 'Run shell command',
+                uuid: 'uuid-tool1',
+                parentUUID: null,
+            }],
+        }];
+        const agentState: AgentState = {
+            requests: {},
+            completedRequests: {
+                tool1: {
+                    tool: 'Bash',
+                    arguments: { command: 'echo hello' },
+                    status: 'approved',
+                    createdAt: 900,
+                    completedAt: 950,
+                    mode: 'acceptEdits',
+                    decision: 'approved_for_session',
+                    allowTools: ['Bash(echo hello)'],
+                } as any,
+            },
+        };
+
+        reducer(state, messages, agentState);
+
+        const msg = Array.from(state.messages.values()).find(m => m.tool?.permission?.id === 'tool1');
+        expect(msg?.tool?.permission).toMatchObject({
+            id: 'tool1',
+            status: 'approved',
+            mode: 'acceptEdits',
+            decision: 'approved_for_session',
+            allowedTools: ['Bash(echo hello)'],
+        });
+    });
+
+    it('keeps stored pending permissions running when the matching tool call arrives later', () => {
+        const state = createReducer();
+        state.permissions.set('tool1', {
+            tool: 'Bash',
+            arguments: { command: 'echo hello' },
+            createdAt: 900,
+            status: 'pending',
+        });
+
+        const messages: NormalizedMessage[] = [{
+            id: 'msg1',
+            localId: null,
+            createdAt: 1000,
+            role: 'agent',
+            isSidechain: false,
+            content: [{
+                type: 'tool-call',
+                id: 'tool1',
+                name: 'Bash',
+                input: { command: 'echo hello' },
+                description: 'Run shell command',
+                uuid: 'uuid-tool1',
+                parentUUID: null,
+            }],
+        }];
+
+        reducer(state, messages, null);
+
+        const msg = Array.from(state.messages.values()).find(m => m.tool?.permission?.id === 'tool1');
+        expect(msg?.tool?.permission?.status).toBe('pending');
+        expect(msg?.tool?.state).toBe('running');
+        expect(msg?.tool?.completedAt).toBeNull();
+        expect(msg?.tool?.result).toBeUndefined();
+    });
 });

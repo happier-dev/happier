@@ -13,6 +13,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { UseExternalSessionRuntimeResult } from '@/components/sessions/model/useExternalSessionRuntime';
 import { useSessionExternalSessionRuntime } from '@/components/sessions/model/useSessionExternalSessionRuntime';
 import { useSessionRunningExecutionRuns } from './useSessionRunningExecutionRuns';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 function normalizeSessionId(sessionId: string): string {
     return String(sessionId ?? '').trim();
@@ -95,7 +96,9 @@ export function useSessionSubagents(params: Readonly<{
 }> {
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const normalizedSessionId = React.useMemo(() => normalizeSessionId(params.sessionId), [params.sessionId]);
-    const sessionMetadata = params.session?.metadata ?? null;
+    const sessionMetadata = params.session
+        ? readSessionOwnerMetadataView(params.session)
+        : null;
     const sessionMetadataSignature = React.useMemo(
         () => buildStableJsonSignature(sessionMetadata),
         [sessionMetadata],
@@ -125,7 +128,7 @@ export function useSessionSubagents(params: Readonly<{
     });
     const internalExternalSessionRuntime = useSessionExternalSessionRuntime({
         sessionId: normalizedSessionId,
-        metadata: params.session?.metadata,
+        metadata: stableSessionMetadata,
         enabled: params.externalSessionRuntime == null,
     });
     const externalSessionRuntime = params.externalSessionRuntime ?? internalExternalSessionRuntime;
@@ -134,6 +137,7 @@ export function useSessionSubagents(params: Readonly<{
         if (!params.session) return [] as const;
         const derivedSubagents = deriveSessionSubagents({
             session: {
+                metadataLayoutVersion: 0,
                 metadata: stableSessionMetadata,
             },
             messages: subagentMessages,

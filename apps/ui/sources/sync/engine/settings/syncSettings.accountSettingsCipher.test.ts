@@ -236,6 +236,190 @@ describe('syncSettings account settings ciphertext', () => {
         mocks.storageStoreState.rollbackSessionOrganizationOptimistic.mockReset();
     });
 
+    it('recomputes a functional account-settings mutation after a CAS conflict', async () => {
+        const encryptionStub = {
+            getContentPrivateKey: () => TEST_MACHINE_KEY,
+        } as unknown as Encryption;
+        const initialCiphertext = sealAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+            payload: {
+                providerSettingsV1: {
+                    schemaVersion: 1,
+                    connections: [{ id: 'pc-a' }],
+                    machineGrants: [{ machineId: 'revoked', connectionId: 'pc-a' }],
+                },
+            },
+            randomBytes: mocks.getRandomBytes,
+        });
+        const concurrentCiphertext = sealAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+            payload: {
+                providerSettingsV1: {
+                    schemaVersion: 1,
+                    connections: [{ id: 'pc-a' }],
+                    machineGrants: [{ machineId: 'revoked', connectionId: 'pc-a' }],
+                    manualModelsByConnectionId: { 'pc-a': [{ id: 'concurrent/model', addedAt: 9 }] },
+                },
+            },
+            randomBytes: mocks.getRandomBytes,
+        });
+        mocks.serverFetch
+            .mockResolvedValueOnce(new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                status: 200, headers: { 'Content-Type': 'application/json' },
+            }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                content: { t: 'encrypted', c: initialCiphertext }, version: 4,
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                success: false,
+                error: 'version-mismatch',
+                currentVersion: 5,
+                currentContent: { t: 'encrypted', c: concurrentCiphertext },
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, version: 6 }), {
+                status: 200, headers: { 'Content-Type': 'application/json' },
+            }));
+
+        await syncSettings({
+            credentials,
+            encryption: encryptionStub,
+            pendingSettings: {},
+            clearPendingSettings: vi.fn(),
+            serverSettingsMutation: (raw) => {
+                const provider = raw.providerSettingsV1 as Record<string, unknown>;
+                return {
+                    ...raw,
+                    providerSettingsV1: { ...provider, machineGrants: [] },
+                };
+            },
+        });
+
+        const postBodies = mocks.serverFetch.mock.calls
+            .filter((call) => call[1]?.method === 'POST')
+            .map((call) => JSON.parse(String(call[1]?.body)) as { content: { c: string }; expectedVersion: number });
+        expect(postBodies.map((body) => body.expectedVersion)).toEqual([4, 5]);
+        const committed = openAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+            ciphertext: postBodies[1]!.content.c,
+        })?.value as Record<string, any>;
+        expect(committed.providerSettingsV1.machineGrants).toEqual([]);
+        expect(committed.providerSettingsV1.manualModelsByConnectionId).toEqual({
+            'pc-a': [{ id: 'concurrent/model', addedAt: 9 }],
+        });
+    });
+
+    it('preserves canonical Voice settings and diagnostics across a crash-recovered sparse delta and CAS retry', async () => {
+        const encryptionStub = {
+            getContentPrivateKey: () => TEST_MACHINE_KEY,
+        } as unknown as Encryption;
+        const initialDiagnostics = {
+            v: 1,
+            enabled: true,
+            consentVersion: 1,
+            captureSttInput: true,
+            captureTtsOutput: false,
+            maxAgeMs: 12 * 60 * 60 * 1_000,
+            maxFiles: 7,
+            maxBytes: 4 * 1024 * 1024,
+            maxDurationMs: 60_000,
+        } as const;
+        const concurrentDiagnostics = {
+            ...initialDiagnostics,
+            maxFiles: 8,
+        } as const;
+        const canonicalVoice = {
+            providerId: 'realtime_codex',
+            providers: {
+                realtime_codex: {
+                    schemaVersion: 2,
+                    config: {
+                        globalConnectedServices: {
+                            v: 1,
+                            bindingsByServiceId: {
+                                'openai-codex': {
+                                    source: 'connected',
+                                    selection: 'profile',
+                                    profileId: 'codex-work-profile',
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        } as const;
+        const initialCiphertext = sealAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+            payload: {
+                voiceDiagnosticsV1: initialDiagnostics,
+                voiceSettingsV1: canonicalVoice,
+                voice: { assistantLanguage: 'en' },
+            },
+            randomBytes: mocks.getRandomBytes,
+        });
+        const concurrentCiphertext = sealAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+            payload: {
+                voiceDiagnosticsV1: concurrentDiagnostics,
+                voiceSettingsV1: canonicalVoice,
+                voice: { assistantLanguage: 'fr' },
+            },
+            randomBytes: mocks.getRandomBytes,
+        });
+        mocks.serverFetch
+            .mockResolvedValueOnce(new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                status: 200, headers: { 'Content-Type': 'application/json' },
+            }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                content: { t: 'encrypted', c: initialCiphertext }, version: 4,
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                success: false,
+                error: 'version-mismatch',
+                currentVersion: 5,
+                currentContent: { t: 'encrypted', c: concurrentCiphertext },
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, version: 6 }), {
+                status: 200, headers: { 'Content-Type': 'application/json' },
+            }));
+
+        await syncSettings({
+            credentials,
+            encryption: encryptionStub,
+            // Historical crash-recovered pending shape from before the top-level owner existed.
+            pendingSettings: {
+                voice: { assistantLanguage: 'de' },
+            } as unknown as Parameters<typeof syncSettings>[0]['pendingSettings'],
+            clearPendingSettings: vi.fn(),
+        });
+
+        const committed = mocks.serverFetch.mock.calls
+            .filter((call) => call[1]?.method === 'POST')
+            .map((call) => {
+                const body = JSON.parse(String(call[1]?.body)) as { content: { c: string } };
+                return openAccountScopedBlobCiphertext({
+                    kind: 'account_settings',
+                    material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+                    ciphertext: body.content.c,
+                })?.value as Record<string, unknown>;
+            });
+
+        expect(committed).toHaveLength(2);
+        expect(committed[0]?.voiceDiagnosticsV1).toEqual(initialDiagnostics);
+        expect(committed[1]?.voiceDiagnosticsV1).toEqual(concurrentDiagnostics);
+        expect(committed[1]?.voiceSettingsV1).toMatchObject({
+            providerId: 'realtime_codex',
+            assistantLanguage: 'de',
+            providers: canonicalVoice.providers,
+        });
+        expect(committed[1]?.voice).toEqual(expect.objectContaining({ assistantLanguage: 'de' }));
+        expect(committed[1]?.voice).not.toHaveProperty('diagnostics');
+    });
+
     it('POSTs settings as a canonical account_scoped_v1 ciphertext (no encryptRaw)', async () => {
         const encryptionStub = {
             getContentPrivateKey: () => TEST_MACHINE_KEY,

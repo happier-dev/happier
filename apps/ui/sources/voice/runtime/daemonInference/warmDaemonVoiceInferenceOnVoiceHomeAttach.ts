@@ -1,8 +1,8 @@
+import { DaemonVoiceInferenceModelsWarmResponseSchema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { ensureVoiceConversationSessionForVoiceHome } from '@/voice/persistence/voiceConversationSession';
+import { resolveVoiceHomeDaemonMachineId } from '@/voice/persistence/voiceConversationSession';
 import {
     parseLocalVoiceSttSettings,
     parseLocalVoiceTtsSettings,
@@ -10,6 +10,7 @@ import {
 } from '@/voice/local/localVoiceSettings';
 import { resolveKokoroDaemonTtsPackId } from '@/voice/kokoro/assets/resolveKokoroDaemonTtsPackId';
 
+import { createDaemonVoiceInferenceClientError } from './daemonVoiceInferenceErrors';
 import { resolveDaemonVoiceInferenceExecution } from './daemonVoiceInferencePolicy';
 
 export type WarmDaemonVoiceInferenceOnVoiceHomeAttachDeps = Readonly<{
@@ -23,17 +24,30 @@ export type WarmDaemonVoiceInferenceOnVoiceHomeAttachParams = Readonly<{
 }>;
 
 async function warmDaemonVoiceInferenceModels(packIds: readonly string[]): Promise<void> {
-    const sessionId = await ensureVoiceConversationSessionForVoiceHome();
-    const machineTarget = readMachineTargetForSession(sessionId);
-    if (!machineTarget?.machineId) {
+    const machineId = resolveVoiceHomeDaemonMachineId();
+    if (!machineId) {
         return;
     }
 
-    await machineRpcWithServerScope({
-        machineId: machineTarget.machineId,
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM,
-        payload: { packIds },
-    });
+    const parsed = DaemonVoiceInferenceModelsWarmResponseSchema.safeParse(
+        await machineRpcWithServerScope({
+            machineId,
+            method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM,
+            payload: { packIds },
+        }),
+    );
+    if (!parsed.success) {
+        throw createDaemonVoiceInferenceClientError(
+            'internal_error',
+            'daemon_voice_inference_invalid_response',
+        );
+    }
+    if (!parsed.data.ok) {
+        throw createDaemonVoiceInferenceClientError(
+            parsed.data.errorCode,
+            parsed.data.error,
+        );
+    }
 }
 
 async function resolveWarmPackIds(params: Readonly<{

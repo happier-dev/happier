@@ -9,7 +9,7 @@ import {
     getStorage,
     loadLocalVoiceEngineWithCompatState,
     registerLocalVoiceEngineHarnessHooks,
-    sendMessage,
+    submitMessage,
 } from './localVoiceEngine.testHarness';
 
 /**
@@ -36,26 +36,20 @@ const captureOwnerHooks = vi.hoisted(() => ({
         | null,
 }));
 
-// Spy holder for the played-ms truncation seam. Registered per test via
-// `vi.doMock` so the (freshly re-imported) engine wires its barge-in interrupt
-// to the spy instead of the real transcript-store truncation.
-const truncationHooks = vi.hoisted(() => ({
-    spy: null as ReturnType<typeof vi.fn> | null,
-}));
-
-function registerTruncationSpy(): ReturnType<typeof vi.fn> {
-    const spy = vi.fn();
-    truncationHooks.spy = spy;
-    vi.doMock('@/voice/transcript/voiceTurnTruncation', () => ({
-        truncateVoiceConversationAssistantTurnToPlayedBoundary: (params: unknown) => spy(params),
-        readVoiceTurnTruncatedText: () => null,
-        voiceTurnTruncationVersion: () => 0,
-        __resetVoiceTurnTruncations: () => {},
-    }));
-    return spy;
-}
-
 async function registerControlSessionBinding(controlSessionId: string, conversationSessionId: string): Promise<void> {
+    const storage = await getStorage();
+    const state = storage.getState();
+    storage.__setState({
+        sessions: {
+            ...state.sessions,
+            [conversationSessionId]: {
+                id: conversationSessionId,
+                active: true,
+                updatedAt: Date.now(),
+                metadata: {},
+            },
+        },
+    });
     const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
     voiceSessionBindingStore.getState().bind({
         adapterId: 'local_direct',
@@ -103,21 +97,21 @@ async function configureBargeInSpeakingSession(sessionId: string): Promise<void>
             voice: {
                 ...storage.getState().settings.voice,
                 providerId: 'local_direct',
-                adapters: {
-                    ...storage.getState().settings.voice.adapters,
-                    local_direct: {
-                        ...storage.getState().settings.voice.adapters.local_direct,
+                providers: {
+                    ...storage.getState().settings.voice.providers,
+                    local_direct: { schemaVersion: 1, config: {
+                        ...storage.getState().settings.voice.providers.local_direct.config,
                         stt: {
-                            ...storage.getState().settings.voice.adapters.local_direct.stt,
+                            ...storage.getState().settings.voice.providers.local_direct.config.stt,
                             useDeviceStt: true,
                             baseUrl: null,
                         },
                         tts: {
-                            ...storage.getState().settings.voice.adapters.local_direct.tts,
+                            ...storage.getState().settings.voice.providers.local_direct.config.tts,
                             autoSpeakReplies: false,
                             bargeInEnabled: true,
                         },
-                    },
+                    } },
                 },
             },
         },
@@ -132,6 +126,7 @@ const baseSignal = (sessionId: string, transcript: string): TurnEndpointSignal =
     sessionId,
     source: 'native_vad',
     transcript,
+    endpoint: { reason: 'acoustic_endpoint', confidence: null },
 });
 
 // The echo guard's protected-head / overlap thresholds (single source of truth).
@@ -149,26 +144,26 @@ async function configureReplySpeakingSession(): Promise<void> {
             voice: {
                 ...storage.getState().settings.voice,
                 providerId: 'local_direct',
-                adapters: {
-                    ...storage.getState().settings.voice.adapters,
-                    local_direct: {
-                        ...storage.getState().settings.voice.adapters.local_direct,
+                providers: {
+                    ...storage.getState().settings.voice.providers,
+                    local_direct: { schemaVersion: 1, config: {
+                        ...storage.getState().settings.voice.providers.local_direct.config,
                         stt: {
-                            ...storage.getState().settings.voice.adapters.local_direct.stt,
+                            ...storage.getState().settings.voice.providers.local_direct.config.stt,
                             useDeviceStt: true,
                             baseUrl: null,
                         },
                         tts: {
-                            ...storage.getState().settings.voice.adapters.local_direct.tts,
+                            ...storage.getState().settings.voice.providers.local_direct.config.tts,
                             autoSpeakReplies: true,
                             provider: 'device',
                             bargeInEnabled: true,
                             openaiCompat: {
-                                ...storage.getState().settings.voice.adapters.local_direct.tts.openaiCompat,
+                                ...storage.getState().settings.voice.providers.local_direct.config.tts.openaiCompat,
                                 baseUrl: null,
                             },
                         },
-                    },
+                    } },
                 },
             },
         },
@@ -194,14 +189,16 @@ async function driveReplyToSpeaking(
     const storage = await getStorage();
     const onDoneRef: { current: (() => void) | undefined } = { current: undefined };
     const onStoppedRef: { current: (() => void) | undefined } = { current: undefined };
+    const onStartRef: { current: (() => void) | undefined } = { current: undefined };
     expoSpeechSpeak.mockImplementation((_text: string, opts: any) => {
+        onStartRef.current = typeof opts?.onStart === 'function' ? (opts.onStart as () => void) : undefined;
         onDoneRef.current = typeof opts?.onDone === 'function' ? (opts.onDone as () => void) : undefined;
         onStoppedRef.current = typeof opts?.onStopped === 'function' ? (opts.onStopped as () => void) : undefined;
     });
     expoSpeechStop.mockImplementation(() => {
         onStoppedRef.current?.();
     });
-    sendMessage.mockImplementationOnce(() => {
+    submitMessage.mockImplementationOnce(() => {
         storage.__setState({
             sessionMessages: {
                 s1: {
@@ -214,13 +211,20 @@ async function driveReplyToSpeaking(
 
     const turnPromise = engine.sendLocalVoiceAgentTextTurn('s1', 'what is the forecast');
     await vi.waitFor(() => {
+        expect(expoSpeechSpeak).toHaveBeenCalledTimes(1);
+    });
+    expect(engine.getLocalVoiceState().status).not.toBe('speaking');
+    if (!onStartRef.current) throw new Error('Expected ExpoSpeech onStart callback');
+    const speakingStartedAt = Date.now();
+    onStartRef.current();
+    await vi.waitFor(() => {
         expect(engine.getLocalVoiceState().status).toBe('speaking');
     });
 
     return {
         turnPromise,
         finishSpeak: () => onDoneRef.current?.(),
-        speakingStartedAt: Date.now(),
+        speakingStartedAt,
     };
 }
 
@@ -228,7 +232,6 @@ describe('local voice engine live barge-in', () => {
     registerLocalVoiceEngineHarnessHooks();
     beforeEach(() => {
         captureOwnerHooks.current = null;
-        truncationHooks.spy = null;
         registerCaptureOwnerDouble();
     });
 
@@ -322,20 +325,20 @@ describe('local voice engine live barge-in', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_direct',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_direct: {
-                            ...storage.getState().settings.voice.adapters.local_direct,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_direct: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_direct.config,
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                                 useDeviceStt: true,
                                 baseUrl: null,
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                                 bargeInEnabled: true,
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -381,6 +384,7 @@ describe('local voice engine live barge-in', () => {
         // 7-word, past-protected-head turn that interrupts.
         hooks!.onEndpointSignal({
             detectedAt: handle.speakingStartedAt + 5_000,
+            endpoint: { reason: 'acoustic_endpoint', confidence: null },
             sessionId: 's1',
             source: 'native_vad',
             transcript: 'the weather today is sunny and warm',
@@ -410,6 +414,7 @@ describe('local voice engine live barge-in', () => {
         // barge-in that must abort TTS and rearm listening.
         hooks!.onEndpointSignal({
             detectedAt: handle.speakingStartedAt + 5_000,
+            endpoint: { reason: 'acoustic_endpoint', confidence: null },
             sessionId: 's1',
             source: 'native_vad',
             transcript: 'please cancel that and call my mother instead now',
@@ -442,6 +447,7 @@ describe('local voice engine live barge-in', () => {
         // the 800 ms protected head -> held (no abort/rearm).
         hooks!.onEndpointSignal({
             detectedAt: handle.speakingStartedAt + Math.floor(PROTECTED_HEAD_MS / 8),
+            endpoint: { reason: 'acoustic_endpoint', confidence: null },
             sessionId: 's1',
             source: 'native_vad',
             transcript: 'please cancel that and call my mother instead now',
@@ -456,15 +462,11 @@ describe('local voice engine live barge-in', () => {
         await handle.turnPromise;
     });
 
-    // L3.T4: the barge-in interrupt seam must truncate the persisted assistant
-    // turn down to the confirmed-played boundary so the transcript reflects what
-    // was actually heard. These prove the WIRING (the engine forwards the
-    // played-ms into the truncation owner on a real barge-in, and never on a
-    // clean completion); the truncation math itself is covered in
-    // `voiceTurnTruncation.spec.ts`.
-    it('a real barge-in truncates the persisted assistant turn to the played boundary', async () => {
-        const truncateSpy = registerTruncationSpy();
+    // The barge-in interrupt seam marks the full generated assistant turn as
+    // interrupted. It never guesses a heard-text prefix from elapsed playback.
+    it('a real barge-in marks the persisted assistant turn interrupted', async () => {
         const engine = await loadLocalVoiceEngineWithCompatState();
+        const { isVoiceTurnInterrupted } = await import('@/voice/transcript/voiceTurnInterruption');
         await registerControlSessionBinding('s1', 's1');
         await configureReplySpeakingSession();
         const handle = await driveReplyToSpeaking(engine, REPLY_TEXT);
@@ -476,6 +478,7 @@ describe('local voice engine live barge-in', () => {
 
         hooks!.onEndpointSignal({
             detectedAt: handle.speakingStartedAt + 5_000,
+            endpoint: { reason: 'acoustic_endpoint', confidence: null },
             sessionId: 's1',
             source: 'native_vad',
             transcript: 'please cancel that and call my mother instead now',
@@ -484,19 +487,14 @@ describe('local voice engine live barge-in', () => {
         await vi.waitFor(() => {
             expect(hooks!.startCapture).toHaveBeenCalledTimes(1);
         });
-        expect(truncateSpy).toHaveBeenCalledTimes(1);
-        expect(truncateSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ conversationSessionId: 's1', playedMs: expect.any(Number) }),
-        );
-        const playedMs = (truncateSpy.mock.calls[0]?.[0] as { playedMs: number }).playedMs;
-        expect(playedMs).toBeGreaterThanOrEqual(0);
+        expect(isVoiceTurnInterrupted('m1')).toBe(true);
 
         await handle.turnPromise;
     });
 
-    it('a clean completion does not truncate the persisted assistant turn', async () => {
-        const truncateSpy = registerTruncationSpy();
+    it('a clean completion does not mark the assistant turn interrupted', async () => {
         const engine = await loadLocalVoiceEngineWithCompatState();
+        const { isVoiceTurnInterrupted } = await import('@/voice/transcript/voiceTurnInterruption');
         await registerControlSessionBinding('s1', 's1');
         await configureReplySpeakingSession();
         const handle = await driveReplyToSpeaking(engine, REPLY_TEXT);
@@ -506,6 +504,6 @@ describe('local voice engine live barge-in', () => {
         await handle.turnPromise;
         await flushMicrotasks(4);
 
-        expect(truncateSpy).not.toHaveBeenCalled();
+        expect(isVoiceTurnInterrupted('m1')).toBe(false);
     });
 });

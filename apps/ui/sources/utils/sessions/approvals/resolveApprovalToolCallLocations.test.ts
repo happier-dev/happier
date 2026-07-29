@@ -12,7 +12,7 @@ function approval(params: Partial<ApprovalRequestV1> & Pick<ApprovalRequestV1, '
         status: 'open',
         createdAtMs: 1,
         updatedAtMs: 1,
-        createdBy: { surface: 'session_agent', sessionId: 's1' },
+        createdBy: { surface: 'agent', sessionId: 's1' },
         actionId: 'session.list',
         actionArgs: {},
         summary: 'List sessions',

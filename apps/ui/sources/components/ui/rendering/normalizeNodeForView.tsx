@@ -45,7 +45,16 @@ export function normalizeNodeForView(node: React.ReactNode): React.ReactNode {
         );
     }
     if (React.isValidElement(node) && 'children' in ((node.props ?? {}) as Record<string, unknown>)) {
-        return React.cloneElement(node, undefined, normalizeChildrenForView((node.props as any).children));
+        const rawChildren = (node.props as { children?: React.ReactNode }).children;
+        // Preserve a SINGLE child as a single node. `React.Children.map` always
+        // returns an array (even for one child), which would make strict
+        // single-child consumers throw — notably RNGH's `GestureDetector` web
+        // wrapper, which calls `React.Children.only(children)`. Only fan the
+        // children out when there genuinely is more than one.
+        const normalizedChildren = Array.isArray(rawChildren)
+            ? normalizeChildrenForView(rawChildren)
+            : normalizeNodeForView(rawChildren);
+        return React.cloneElement(node, undefined, normalizedChildren);
     }
     return node;
 }

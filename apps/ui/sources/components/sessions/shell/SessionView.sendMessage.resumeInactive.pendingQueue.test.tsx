@@ -16,7 +16,9 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
-const enqueuePendingMessageSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
+const enqueuePendingMessageSpy = vi.hoisted(() => vi.fn(async (
+    ..._args: any[]
+): Promise<void | { localId: string; accepted: boolean }> => undefined));
 const submitMessageSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
 const sendMessageSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
 const resumeSessionSpy = vi.hoisted(() =>
@@ -65,6 +67,15 @@ const inactiveSessionUiState = vi.hoisted(() => ({
 }));
 const sessionOptimisticThinkingAt = vi.hoisted(() => ({
     current: null as number | null,
+}));
+const sessionResumingAt = vi.hoisted(() => ({
+    current: null as number | null,
+}));
+const storageStoreRef = vi.hoisted(() => ({
+    current: null as any,
+}));
+const sessionFixtureRef = vi.hoisted(() => ({
+    current: null as any,
 }));
 const draftHookSpies = vi.hoisted(() => ({
     clearDraft: vi.fn(),
@@ -131,7 +142,6 @@ const themeColors = vi.hoisted(() => ({
 let authCredentials: any = { token: 't', secret: 's' };
 const pendingFireAndForget: Promise<unknown>[] = [];
 
-vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
     LinearGradient: 'LinearGradient',
 }));
@@ -257,6 +267,9 @@ installSessionShellCommonModuleMocks({
             get optimisticThinkingAt() {
                 return sessionOptimisticThinkingAt.current;
             },
+            get resumingAt() {
+                return sessionResumingAt.current;
+            },
         };
 
         const localSettingsFixture: Partial<LocalSettings> = {
@@ -272,7 +285,6 @@ installSessionShellCommonModuleMocks({
         const settingsFixture: Partial<Settings> = {
             experiments: true,
             featureToggles: {},
-            codexBackendMode: 'acp',
             sessionMessageSendMode: 'server_pending',
             sessionBusySteerSendPolicy: 'steer_immediately',
         };
@@ -288,8 +300,7 @@ installSessionShellCommonModuleMocks({
             updatedAt: 1,
         };
 
-        return createStorageModuleStub({
-            storage: createStorageStoreMock({
+        const storage = createStorageStoreMock({
                     sessions: { s1: session },
                     machines: {
                         'm-target': {
@@ -319,11 +330,15 @@ installSessionShellCommonModuleMocks({
                         ...settingsState.current,
                         experiments: true,
                         featureToggles: {},
-                        codexBackendMode: 'acp',
                     },
                     sessionListIndexByServerId: {},
-            }),
-            useSession: () => session,
+        });
+        storageStoreRef.current = storage;
+        sessionFixtureRef.current = session;
+
+        return createStorageModuleStub({
+            storage,
+            useSession: () => storage((state) => state.sessions.s1 ?? null),
             useIsDataReady: () => true,
             useRealtimeStatus: () => 'connected',
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
@@ -483,11 +498,14 @@ vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => (
 vi.mock(
     '@/components/sessions/model/useSessionMachineReachability',
     async (importOriginal) => {
-        const { createSessionMachineReachabilityModuleMock } = await import('@/dev/testkit/mocks/sessionMachineReachability');
+        const {
+            createReachableSessionMachineReachability,
+            createSessionMachineReachabilityModuleMock,
+        } = await import('@/dev/testkit/mocks/sessionMachineReachability');
         return createSessionMachineReachabilityModuleMock({
             importOriginal,
             overrides: {
-                useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
+                useSessionMachineReachability: createReachableSessionMachineReachability,
                 useSessionReachableMachineTarget: () => ({ machineId: 'm-target', basePath: '/tmp/target' }),
             },
         });
@@ -515,6 +533,8 @@ vi.mock('@/sync/sync', () => ({
         refreshSessions: async () => {},
         onSessionVisible: () => {},
         markSessionLiveTailIntent: () => {},
+        getAcceptedExternalSessionTailCursor: () => null,
+        subscribeAcceptedExternalSessionTailCursor: () => () => {},
         sendMessage: (...args: any[]) => sendMessageSpy(...args),
         enqueuePendingMessage: (...args: any[]) => enqueuePendingMessageSpy(...args),
         submitMessage: (...args: any[]) => submitMessageSpy(...args),
@@ -637,14 +657,6 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         options?.onLocalPendingProjectionCreated?.({ localId });
     }
 
-    function expectDirectSendProjectionOptions() {
-        return expect.objectContaining({
-            localId: undefined,
-            onLocalPendingProjectionCreated: expect.any(Function),
-            profileId: undefined,
-        });
-    }
-
     beforeEach(() => {
         (globalThis as { __DEV__?: boolean }).__DEV__ = false;
         authCredentials = { token: 't', secret: 's' };
@@ -662,6 +674,12 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         sessionStateOverrides.current = {};
         machineEncryptionAvailable.current = false;
         sessionOptimisticThinkingAt.current = null;
+        sessionResumingAt.current = null;
+        if (storageStoreRef.current && sessionFixtureRef.current) {
+            storageStoreRef.current.setState((state: any) => ({
+                sessions: { ...state.sessions, s1: sessionFixtureRef.current },
+            }));
+        }
         inactiveSessionUiState.current = { noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true };
         canResumeSessionWithOptionsSpy.mockReset();
         canResumeSessionWithOptionsSpy.mockImplementation(
@@ -770,8 +788,9 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await screen.unmount();
     });
 
-    it('toggles resuming connection status around pending-queue wake', async () => {
+    it('renders the canonical resuming lifecycle marker around pending-queue wake', async () => {
         sessionMetadataOverrides.current = { version: '0.1.0' };
+        sessionStateOverrides.current = { presence: 'online' };
         machineEncryptionAvailable.current = true;
         inactiveSessionUiState.current = {
             noticeKind: 'none',
@@ -780,6 +799,13 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         };
         let resolveResume: ((value: ResumeSessionResult) => void) | null = null;
         resumeSessionSpy.mockImplementationOnce(() => {
+            sessionResumingAt.current = Date.now();
+            storageStoreRef.current?.setState((state: any) => ({
+                sessions: {
+                    ...state.sessions,
+                    s1: { ...sessionFixtureRef.current, resumingAt: sessionResumingAt.current },
+                },
+            }));
             return new Promise<ResumeSessionResult>((resolve) => {
                 resolveResume = resolve;
             });
@@ -808,6 +834,13 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
 
         await act(async () => {
             sessionOptimisticThinkingAt.current = Date.now();
+            sessionResumingAt.current = null;
+            storageStoreRef.current?.setState((state: any) => ({
+                sessions: {
+                    ...state.sessions,
+                    s1: { ...sessionFixtureRef.current, resumingAt: null },
+                },
+            }));
             resolveResume?.({ type: 'success' });
             await pendingFireAndForget[0];
         });
@@ -853,7 +886,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await screen.unmount();
     });
 
-    it('bypasses server-pending enqueue when the send action is forced immediate', async () => {
+    it('persists a send_now Pending action when the send action is forced immediate', async () => {
         sessionMetadataOverrides.current = { version: '0.1.0' };
         sessionStateOverrides.current = {
             active: true,
@@ -868,10 +901,10 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
 
         const screen = await renderSessionView({ routeServerId: 'server-cache' });
         pendingFireAndForget.length = 0;
-        let resolveSend: (() => void) | null = null;
-        sendMessageSpy.mockImplementationOnce(async (...args: unknown[]) => new Promise<void>((resolve) => {
+        let resolveEnqueue: (() => void) | null = null;
+        enqueuePendingMessageSpy.mockImplementationOnce(async (...args: unknown[]) => new Promise<void>((resolve) => {
             notifyLocalPendingProjection(args);
-            resolveSend = resolve;
+            resolveEnqueue = resolve;
         }));
 
         const agentInput = findAgentInput(screen);
@@ -886,20 +919,23 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         expect(pendingFireAndForget.length).toBeGreaterThan(0);
         expect(findAgentInput(screen).props.value).toBe('');
         await act(async () => {
-            resolveSend?.();
+            resolveEnqueue?.();
             await pendingFireAndForget[0];
         });
 
-        expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
-        expect(submitMessageSpy).not.toHaveBeenCalled();
-        expect(sendMessageSpy).toHaveBeenCalledTimes(1);
-        expect(sendMessageSpy).toHaveBeenCalledWith(
+        expect(enqueuePendingMessageSpy).toHaveBeenCalledWith(
             's1',
             'hello now',
             undefined,
-            undefined,
-            expectDirectSendProjectionOptions(),
+            { happierDeliveryIntentV1: 'explicit_immediate' },
+            expect.objectContaining({
+                localId: undefined,
+                requestedAction: { v: 1, kind: 'send_now' },
+                onLocalPendingProjectionCreated: expect.any(Function),
+            }),
         );
+        expect(submitMessageSpy).not.toHaveBeenCalled();
+        expect(sendMessageSpy).not.toHaveBeenCalled();
         expect(resumeSessionSpy).not.toHaveBeenCalled();
         expect(inputComposerPersistenceSpies.clearTransientInputState).toHaveBeenCalledTimes(1);
         expect(findAgentInput(screen).props.value).toBe('');
@@ -907,7 +943,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await screen.unmount();
     });
 
-    it('restores the submitted draft when a direct handoff fails before durable acceptance', async () => {
+    it('keeps the submitted draft clear while an ambiguous enqueue retains Pending custody', async () => {
         sessionMetadataOverrides.current = { version: '0.1.0' };
         sessionStateOverrides.current = {
             active: true,
@@ -919,9 +955,51 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             inactiveStatusTextKey: null,
             shouldShowInput: true,
         };
-        sendMessageSpy.mockImplementationOnce(async (...args: unknown[]) => {
+        enqueuePendingMessageSpy.mockImplementationOnce(async (...args: unknown[]) => {
+            notifyLocalPendingProjection(args, 'ambiguous-local-id');
+            return { localId: 'ambiguous-local-id', accepted: false };
+        });
+
+        const screen = await renderSessionView({ routeServerId: 'server-cache' });
+        pendingFireAndForget.length = 0;
+
+        const agentInput = findAgentInput(screen);
+        await act(async () => {
+            agentInput.props.onChangeText('owned by pending');
+        });
+        await act(async () => {
+            agentInput.props.onSend({ forceImmediate: true });
+        });
+
+        expect(pendingFireAndForget.length).toBeGreaterThan(0);
+        await act(async () => {
+            await pendingFireAndForget[0];
+        });
+
+        expect(enqueuePendingMessageSpy).toHaveBeenCalledTimes(1);
+        expect(inputComposerPersistenceSpies.clearTransientInputState).toHaveBeenCalledTimes(1);
+        expect(inputComposerPersistenceSpies.restoreTransientInputState).not.toHaveBeenCalled();
+        expect(draftHookSpies.restoreDraftForSessionIfCurrentValueMatches).not.toHaveBeenCalled();
+        expect(findAgentInput(screen).props.value).toBe('');
+
+        await screen.unmount();
+    });
+
+    it('restores the submitted draft when send_now enqueue fails before durable acceptance', async () => {
+        sessionMetadataOverrides.current = { version: '0.1.0' };
+        sessionStateOverrides.current = {
+            active: true,
+            presence: 'online',
+            agentStateVersion: 1,
+        };
+        inactiveSessionUiState.current = {
+            noticeKind: 'none',
+            inactiveStatusTextKey: null,
+            shouldShowInput: true,
+        };
+        enqueuePendingMessageSpy.mockImplementationOnce(async (...args: unknown[]) => {
             notifyLocalPendingProjection(args);
-            throw new Error('send rejected');
+            throw new Error('enqueue rejected');
         });
 
         const screen = await renderSessionView({ routeServerId: 'server-cache' });
@@ -940,7 +1018,8 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             await pendingFireAndForget[0];
         });
 
-        expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+        expect(enqueuePendingMessageSpy).toHaveBeenCalledTimes(1);
+        expect(sendMessageSpy).not.toHaveBeenCalled();
         expect(inputComposerPersistenceSpies.restoreTransientInputState).toHaveBeenCalledTimes(1);
         expect(findAgentInput(screen).props.value).toBe('retry me');
 

@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { SessionSplitCanvasScreen } from '@/components/sessions/canvas/SessionSplitCanvasScreen';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
+import { TranscriptSameSessionHandoffProvider } from '@/components/sessions/transcript/viewport/lifecycle/transcriptSameSessionHandoff';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { SessionCockpitShell } from '@/components/workspaceCockpit/session/SessionCockpitShell';
@@ -22,6 +23,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { normalizeSessionListKeyParts } from '@/sync/domains/session/listing/sessionListKeyNormalization';
+import { selectSessionViewShellSessionForRouteState } from '@/components/sessions/shell/sessionViewStableSession';
 
 type InitialMobileSurfaceHintCache = Readonly<{
     sessionId: string;
@@ -143,7 +145,16 @@ export default function SessionRouteIndex() {
         `SessionRoute.ensureSessionVisible gen=${activeServerGeneration}`,
         routeScope.hydrationOptions,
     );
-    const sessionCached = Boolean(storage.getState().sessions[sessionId] ?? null);
+    const expectedSessionServerId = routeHydrationState.serverId ?? routeScope.serverId;
+    const sessionCached = storage((state) => Boolean(selectSessionViewShellSessionForRouteState(
+        {
+            sessions: state.sessions,
+            sessionListIndexByServerId: state.sessionListIndexByServerId,
+            concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId,
+        },
+        sessionId,
+        expectedSessionServerId,
+    )));
     const authRecoveryState = React.useMemo(() => {
         return resolveSessionRouteAuthRecoveryState({
             routeParams: params as Record<string, string | string[] | undefined>,
@@ -166,37 +177,41 @@ export default function SessionRouteIndex() {
         );
     }
 
-    if (cockpitEnabled) {
-        const surface = resolveSessionMobileSurfaceIntent({
-            routeKind: 'index',
-            activeRightTabId: pane.scopeState?.right?.activeTabId,
-            detailsTargetPresent: (pane.scopeState?.details?.tabs?.length ?? 0) > 0,
-            persistedSurface: initialMobileSurfaceHint,
-            terminalTabAvailable,
-        });
-        return (
-            <SessionCockpitShell
-                sessionId={sessionId}
-                scopeId={scopeId}
-                surface={surface}
-                jumpToSeq={jumpToSeq}
-                paneUrlState={paneUrlState ?? undefined}
-                initialAttachmentDrafts={recoverableAttachmentDrafts}
-                terminalTabAvailable={terminalTabAvailable}
-                routeServerId={routeServerId.trim() || undefined}
-                routeHydrationState={routeHydrationState}
-            />
-        );
-    }
-
     return (
-        <SessionSplitCanvasScreen
+        <TranscriptSameSessionHandoffProvider
+            desiredExperience={cockpitEnabled ? 'cockpit' : 'classic'}
             sessionId={sessionId}
-            routeServerId={routeServerId.trim() || undefined}
-            jumpToSeq={jumpToSeq}
-            paneUrlState={paneUrlState ?? undefined}
-            initialAttachmentDrafts={recoverableAttachmentDrafts}
-            routeHydrationState={routeHydrationState}
-        />
+        >
+            {(experience) => experience === 'cockpit'
+                ? (
+                    <SessionCockpitShell
+                        sessionId={sessionId}
+                        scopeId={scopeId}
+                        surface={resolveSessionMobileSurfaceIntent({
+                            routeKind: 'index',
+                            activeRightTabId: pane.scopeState?.right?.activeTabId,
+                            detailsTargetPresent: (pane.scopeState?.details?.tabs?.length ?? 0) > 0,
+                            persistedSurface: initialMobileSurfaceHint,
+                            terminalTabAvailable,
+                        })}
+                        jumpToSeq={jumpToSeq}
+                        paneUrlState={paneUrlState ?? undefined}
+                        initialAttachmentDrafts={recoverableAttachmentDrafts}
+                        terminalTabAvailable={terminalTabAvailable}
+                        routeServerId={routeServerId.trim() || undefined}
+                        routeHydrationState={routeHydrationState}
+                    />
+                )
+                : (
+                    <SessionSplitCanvasScreen
+                        sessionId={sessionId}
+                        routeServerId={routeServerId.trim() || undefined}
+                        jumpToSeq={jumpToSeq}
+                        paneUrlState={paneUrlState ?? undefined}
+                        initialAttachmentDrafts={recoverableAttachmentDrafts}
+                        routeHydrationState={routeHydrationState}
+                    />
+                )}
+        </TranscriptSameSessionHandoffProvider>
     );
 }

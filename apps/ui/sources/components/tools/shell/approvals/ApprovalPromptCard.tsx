@@ -1,21 +1,20 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { getActionSpec, type ApprovalRequestV1 } from '@happier-dev/protocol';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
-import { getActionSpec, type ApprovalRequestV1 } from '@happier-dev/protocol';
-
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Modal } from '@/modal';
-import { useApprovalDecisionHandler } from './useApprovalDecisionHandler';
-import { ApprovalDecisionFooter } from './ApprovalDecisionFooter';
-import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
 import { buildPermissionToolCallRoute, canOpenPermissionToolCallRoute } from '@/utils/sessions/permissions/buildPermissionToolCallRoute';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
+import { ApprovalDecisionFooter } from './ApprovalDecisionFooter';
+import { useApprovalDecisionHandler } from './useApprovalDecisionHandler';
 
 const PROMPT_CARD_HORIZONTAL_PADDING = 12;
 const PROMPT_CARD_ICON_SIZE = 18;
@@ -23,13 +22,7 @@ const PROMPT_CARD_ICON_TEXT_GAP = 6;
 const PROMPT_CARD_TEXT_COLUMN_START =
     PROMPT_CARD_HORIZONTAL_PADDING + PROMPT_CARD_ICON_SIZE + PROMPT_CARD_ICON_TEXT_GAP;
 
-function resolveActionTitle(approval: ApprovalRequestV1): string {
-    try {
-        return getActionSpec(approval.actionId).title || approval.actionId;
-    } catch {
-        return approval.actionId;
-    }
-}
+type ApprovalPromptCardArtifact = Pick<DecryptedArtifact, 'id' | 'header'>;
 
 function getPreviewSummary(preview: unknown): string | null {
     if (!preview || typeof preview !== 'object' || Array.isArray(preview)) return null;
@@ -39,13 +32,22 @@ function getPreviewSummary(preview: unknown): string | null {
     return summary || null;
 }
 
+function resolveActionTitle(approval: ApprovalRequestV1): string {
+    try {
+        return getActionSpec(approval.actionId).title || approval.actionId;
+    } catch {
+        return approval.actionId;
+    }
+}
+
 export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: Readonly<{
-    artifact: DecryptedArtifact;
+    artifact: ApprovalPromptCardArtifact;
     approval: ApprovalRequestV1;
     sessionId: string;
-    metadata: Metadata | null;
+    metadata?: Metadata | null;
     location?: PermissionToolCallMessageLocation | null;
-    canApprovePermissions: boolean;
+    canApprovePermissions?: boolean;
+    canApprove?: boolean;
     disabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     chrome?: 'card' | 'inline';
 }>) {
@@ -56,7 +58,8 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
     const chrome = props.chrome ?? 'card';
     const actionTitle = React.useMemo(() => resolveActionTitle(props.approval), [props.approval]);
     const previewSummary = React.useMemo(() => getPreviewSummary(props.approval.preview), [props.approval.preview]);
-    const approvalDisabled = !props.canApprovePermissions || Boolean(props.disabledReason);
+    const canApprove = props.canApprovePermissions ?? props.canApprove ?? true;
+    const approvalDisabled = !canApprove || Boolean(props.disabledReason);
     const canOpenToolRoute = canOpenPermissionToolCallRoute(props.location ?? null);
 
     const onViewTool = React.useCallback(() => {
@@ -88,7 +91,7 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
         <View testID="approval-prompt-card" style={[styles.container, chrome === 'inline' ? styles.containerInline : null]}>
             <View style={styles.header}>
                 <View style={styles.icon}>
-                    <Ionicons name="checkmark-circle-outline" size={16} color={theme.colors.state.neutral.foreground} />
+                    <Ionicons name="shield-checkmark-outline" size={16} color={theme.colors.state.neutral.foreground} />
                 </View>
                 <View style={styles.headerText}>
                     <Text style={styles.title} numberOfLines={1}>
@@ -110,11 +113,13 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
                     </Pressable>
                 ) : null}
             </View>
+
             {previewSummary ? (
                 <View style={styles.preview}>
                     <Text style={styles.previewText}>{previewSummary}</Text>
                 </View>
             ) : null}
+
             <View style={styles.actions}>
                 <ApprovalDecisionFooter
                     disabled={approvalDisabled}

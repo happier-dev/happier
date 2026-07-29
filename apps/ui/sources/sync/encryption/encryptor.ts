@@ -26,8 +26,12 @@ export interface Decryptor {
     decrypt(data: Uint8Array[], options?: DecryptOptions): Promise<(any | null)[]>;
 }
 
+type Base64DecryptFunction = ((data: readonly string[], options?: DecryptOptions) => Promise<(any | null)[]>) & {
+    shouldDecryptBase64?: (data: readonly string[]) => boolean;
+};
+
 export interface Base64Decryptor {
-    decryptBase64(data: readonly string[], options?: DecryptOptions): Promise<(any | null)[]>;
+    decryptBase64: Base64DecryptFunction;
 }
 
 type MaybeBase64Decryptor = Decryptor & Partial<Base64Decryptor>;
@@ -56,12 +60,37 @@ export type AES256EncryptionOptions = Partial<AesStringCryptoAdapter> & Readonly
 }>;
 
 export const DEFAULT_AES_BATCH_CONCURRENCY_LIMIT = 4;
+const DEFAULT_AES_BASE64_DECRYPT_WORKER_THRESHOLD_BYTES = 256 * 1024;
+const STATIC_EXPO_PUBLIC_HAPPIER_CRYPTO_JSON_DECRYPT_WORKER_THRESHOLD_BYTES =
+    process.env.EXPO_PUBLIC_HAPPIER_CRYPTO_JSON_DECRYPT_WORKER_THRESHOLD_BYTES;
 
 export function normalizeAesBatchConcurrencyLimit(value: number | null | undefined): number {
     if (typeof value !== 'number' || !Number.isFinite(value)) {
         return DEFAULT_AES_BATCH_CONCURRENCY_LIMIT;
     }
     return Math.max(1, Math.trunc(value));
+}
+
+function readAesBase64DecryptWorkerThresholdBytes(): number {
+    const raw = String(STATIC_EXPO_PUBLIC_HAPPIER_CRYPTO_JSON_DECRYPT_WORKER_THRESHOLD_BYTES ?? '').trim();
+    if (!raw) return DEFAULT_AES_BASE64_DECRYPT_WORKER_THRESHOLD_BYTES;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return DEFAULT_AES_BASE64_DECRYPT_WORKER_THRESHOLD_BYTES;
+    return Math.max(0, Math.min(64 * 1024 * 1024, parsed));
+}
+
+function estimateBase64PayloadBytes(value: string): number {
+    return Math.floor(String(value ?? '').replace(/\s/g, '').length * 3 / 4);
+}
+
+function shouldUseLargePayloadAesBase64Path(values: readonly string[]): boolean {
+    const threshold = readAesBase64DecryptWorkerThresholdBytes();
+    if (threshold <= 0) return values.length > 0;
+    return values.some((value) => estimateBase64PayloadBytes(value) >= threshold);
+}
+
+async function yieldBetweenLargeAesPayloads(): Promise<void> {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
 async function mapWithConcurrency<T, R>(
@@ -94,7 +123,7 @@ async function mapWithConcurrency<T, R>(
 export class SecretBoxEncryption implements Encryptor, Decryptor {
     private readonly secretKey: Uint8Array;
     private readonly nativeCryptoWorker?: NativeJsonDecryptWorkerBinding;
-    readonly decryptBase64?: (data: readonly string[], options?: DecryptOptions) => Promise<(any | null)[]>;
+    readonly decryptBase64?: Base64DecryptFunction;
 
     constructor(secretKey: Uint8Array, options: SecretBoxEncryptionOptions = {}) {
         this.secretKey = secretKey;
@@ -237,7 +266,7 @@ export class AES256Encryption implements Encryptor, Decryptor {
     private readonly encryptString: AesStringCryptoAdapter['encryptString'];
     private readonly decryptString: AesStringCryptoAdapter['decryptString'];
     private readonly nativeCryptoWorker?: NativeJsonDecryptWorkerBinding;
-    readonly decryptBase64?: (data: readonly string[], options?: DecryptOptions) => Promise<(any | null)[]>;
+    readonly decryptBase64?: Base64DecryptFunction;
 
     constructor(secretKey: Uint8Array, options: AES256EncryptionOptions = {}) {
         this.secretKey = secretKey;
@@ -248,6 +277,10 @@ export class AES256Encryption implements Encryptor, Decryptor {
         this.nativeCryptoWorker = options.nativeCryptoWorker;
         if (this.nativeCryptoWorker) {
             this.decryptBase64 = async (data, decryptOptions = {}) => this.decryptBase64WithNativeWorker(data, decryptOptions);
+            this.decryptBase64.shouldDecryptBase64 = () => true;
+        } else {
+            this.decryptBase64 = async (data, decryptOptions = {}) => this.decryptBase64WithoutNativeWorker(data, decryptOptions);
+            this.decryptBase64.shouldDecryptBase64 = shouldUseLargePayloadAesBase64Path;
         }
     }
 
@@ -310,13 +343,26 @@ export class AES256Encryption implements Encryptor, Decryptor {
     }
 
     private async decryptBase64Reference(data: readonly string[]): Promise<(any | null)[]> {
-        return await mapWithConcurrency(data, this.batchConcurrencyLimit, async (item) => {
+        const hasLargePayload = shouldUseLargePayloadAesBase64Path(data);
+        const decryptOne = async (item: string): Promise<any | null> => {
             try {
-                return (await this.decryptReference([decodeBase64(item, 'base64')]))[0] ?? null;
+                const decrypted = await this.decryptReference([decodeBase64(item, 'base64')]);
+                return decrypted.length > 0 ? decrypted[0] : null;
             } catch {
                 return null;
             }
-        });
+        };
+        if (!hasLargePayload) {
+            return await mapWithConcurrency(data, this.batchConcurrencyLimit, decryptOne);
+        }
+        const results: (any | null)[] = [];
+        for (const item of data) {
+            results.push(await decryptOne(item));
+            if (estimateBase64PayloadBytes(item) >= readAesBase64DecryptWorkerThresholdBytes()) {
+                await yieldBetweenLargeAesPayloads();
+            }
+        }
+        return results;
     }
 
     private async decryptBase64WithNativeWorker(
@@ -339,6 +385,17 @@ export class AES256Encryption implements Encryptor, Decryptor {
                 }
                 return await referenceRun();
             },
+        );
+    }
+
+    private async decryptBase64WithoutNativeWorker(
+        data: readonly string[],
+        _options: DecryptOptions = {},
+    ): Promise<(any | null)[]> {
+        return await syncPerformanceTelemetry.measureAsync(
+            'sync.encryption.crypto.aes.decrypt',
+            { items: data.length, concurrency: this.batchConcurrencyLimit },
+            async () => this.decryptBase64Reference(data),
         );
     }
 }

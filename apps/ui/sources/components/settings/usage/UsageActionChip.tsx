@@ -13,6 +13,7 @@ type UsageActionChipProps = Readonly<{
     label: string;
     testID?: string;
     iconName?: React.ComponentProps<typeof Ionicons>['name'];
+    accessory?: React.ReactNode;
     onPress: () => void;
 }>;
 
@@ -38,7 +39,7 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 export const UsageActionChip = React.memo(function UsageActionChip(props: UsageActionChipProps) {
-    const { label, testID, iconName, onPress } = props;
+    const { label, testID, iconName, accessory, onPress } = props;
     const { theme } = useUnistyles();
 
     return (
@@ -54,6 +55,7 @@ export const UsageActionChip = React.memo(function UsageActionChip(props: UsageA
             <View>
                 <Text style={styles.chipText}>{label}</Text>
             </View>
+            {accessory}
         </Pressable>
     );
 });

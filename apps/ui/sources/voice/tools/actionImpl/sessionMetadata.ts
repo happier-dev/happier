@@ -3,13 +3,18 @@ import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToH
 import { normalizeNonEmptyString } from './shared';
 import type { SessionMetadataLike } from '@/sync/domains/session/listing/sessionListLookupState';
 
-export function resolveVoiceSessionTitleFromMetadata(metadata: SessionMetadataLike): string | null {
+export function resolveVoiceSessionSharedTitleFromMetadata(metadata: SessionMetadataLike): string | null {
   const summary = metadata && typeof metadata === 'object' && metadata.summary && typeof metadata.summary === 'object'
     ? normalizeNonEmptyString((metadata.summary as { text?: unknown }).text)
     : null;
   const summaryText = metadata && typeof metadata === 'object'
     ? normalizeNonEmptyString(metadata.summaryText)
     : null;
+  return summary ?? summaryText;
+}
+
+export function resolveVoiceSessionTitleFromMetadata(metadata: SessionMetadataLike): string | null {
+  const summary = resolveVoiceSessionSharedTitleFromMetadata(metadata);
   const name = metadata && typeof metadata === 'object'
     ? normalizeNonEmptyString(metadata.name)
     : null;
@@ -18,7 +23,7 @@ export function resolveVoiceSessionTitleFromMetadata(metadata: SessionMetadataLi
     : null;
   const pathLabel = path ? normalizeNonEmptyString(path.split('/').filter(Boolean).at(-1)) : null;
 
-  return summary ?? summaryText ?? name ?? pathLabel;
+  return summary ?? name ?? pathLabel;
 }
 
 export function resolveVoiceSessionLocationLabelFromMetadata(metadata: SessionMetadataLike): string | null {

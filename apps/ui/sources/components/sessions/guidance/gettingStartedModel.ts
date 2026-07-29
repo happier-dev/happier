@@ -43,6 +43,7 @@ export function computeSessionGettingStartedDecision(params: Readonly<{
     machines: MachinesSummary;
 }>): SessionGettingStartedDecisionKind {
     if (!params.sessionsReady) return 'loading';
+    if (params.sessionCount > 0) return 'select_session';
     if (params.machines.machineCount === 0 && params.machines.hasUnknownServers) {
         return 'loading';
     }
@@ -68,7 +69,13 @@ export type SessionGettingStartedViewModelInput = Readonly<{
         allowedServerIds: ReadonlyArray<string>;
     }>;
     serverSelectionGroups: ReadonlyArray<Readonly<{ id: string; name: string }>> | null | undefined;
-    activeServerProfile: Readonly<{ id: string; name: string; serverUrl: string }>;
+    activeServerProfile: Readonly<{
+        id: string;
+        name: string;
+        serverUrl: string;
+        serverIdentityId?: string | null;
+        legacyServerIds?: readonly string[];
+    }>;
     machineListByServerId: Readonly<Record<string, ReadonlyArray<Readonly<{ active: boolean; revokedAt?: number | null }>> | null | undefined>>;
 }>;
 
@@ -81,10 +88,19 @@ export type SessionGettingStartedViewModel = Readonly<{
     showServerSetup: boolean;
 }>;
 
+type SessionGettingStartedServerProfile = Readonly<{
+    id: string;
+    name: string;
+    serverUrl: string;
+    serverIdentityId?: string | null;
+    legacyServerIds?: readonly string[];
+}>;
+
 export type SessionGettingStartedMachinesInput = Readonly<{
     activeMachines: SessionGettingStartedViewModelInput['activeMachines'];
     localDaemonStatus?: SessionGettingStartedViewModelInput['localDaemonStatus'];
     selection: SessionGettingStartedViewModelInput['selection'];
+    activeServerProfile?: SessionGettingStartedViewModelInput['activeServerProfile'] | null;
     machineListByServerId: SessionGettingStartedViewModelInput['machineListByServerId'];
 }>;
 
@@ -112,14 +128,46 @@ function applyLocalDaemonHealthHint(
     };
 }
 
+function resolveActiveProfileServerIdAliases(
+    profile: SessionGettingStartedViewModelInput['activeServerProfile'] | null | undefined,
+    serverId: string,
+): readonly string[] {
+    if (!profile) return [];
+    const normalizedServerId = String(serverId ?? '').trim();
+    const candidates = [
+        profile.id,
+        profile.serverIdentityId ?? '',
+        ...(profile.legacyServerIds ?? []),
+    ]
+        .map((candidate) => String(candidate ?? '').trim())
+        .filter((candidate, index, candidates) => candidate.length > 0 && candidates.indexOf(candidate) === index);
+    if (!normalizedServerId || !candidates.includes(normalizedServerId)) return [];
+    return candidates.filter((candidate) => candidate !== normalizedServerId);
+}
+
 export function resolveActiveServerProfile(
-    serverProfiles: ReadonlyArray<Readonly<{ id: string; name: string; serverUrl: string }>>,
+    serverProfiles: ReadonlyArray<SessionGettingStartedServerProfile>,
     activeServerId: string,
-): { id: string; name: string; serverUrl: string } {
-    const byId = new Map(serverProfiles.map((p) => [p.id, p] as const));
-    const match = byId.get(activeServerId) ?? serverProfiles[0] ?? null;
+): SessionGettingStartedViewModelInput['activeServerProfile'] {
+    const normalizedActiveServerId = String(activeServerId ?? '').trim();
+    const directMatch = normalizedActiveServerId
+        ? serverProfiles.find((profile) => profile.id === normalizedActiveServerId) ?? null
+        : null;
+    const aliasMatch = normalizedActiveServerId
+        ? serverProfiles.find((profile) => {
+            if (profile.serverIdentityId === normalizedActiveServerId) return true;
+            return Boolean(profile.legacyServerIds?.includes(normalizedActiveServerId));
+        }) ?? null
+        : null;
+    const match = directMatch ?? aliasMatch ?? serverProfiles[0] ?? null;
     if (match) {
-        return { id: match.id, name: match.name, serverUrl: match.serverUrl };
+        return {
+            id: match.id,
+            name: match.name,
+            serverUrl: match.serverUrl,
+            serverIdentityId: match.serverIdentityId ?? null,
+            legacyServerIds: match.legacyServerIds ?? [],
+        };
     }
     return { id: activeServerId, name: activeServerId || 'server', serverUrl: '' };
 }
@@ -140,6 +188,7 @@ export function resolveSessionGettingStartedMachinesSummary(input: SessionGettin
     const activeServerMachines = resolveServerScopedMachines({
         serverId: input.selection.activeServerId,
         activeServerId: input.selection.activeServerId,
+        serverIdAliases: resolveActiveProfileServerIdAliases(input.activeServerProfile, input.selection.activeServerId),
         activeMachines: input.activeMachines,
         machineListByServerId: input.machineListByServerId,
     });
@@ -147,6 +196,7 @@ export function resolveSessionGettingStartedMachinesSummary(input: SessionGettin
         const machines = resolveServerScopedMachines({
             serverId,
             activeServerId: input.selection.activeServerId,
+            serverIdAliases: resolveActiveProfileServerIdAliases(input.activeServerProfile, serverId),
             activeMachines: input.activeMachines,
             machineListByServerId: input.machineListByServerId,
         });

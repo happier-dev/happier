@@ -3,26 +3,26 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit';
 import {
-  flashListChatListHarnessState,
-  renderFlashListChatListSession,
-  resetFlashListChatListHarness,
+  chatListHarnessState,
+  renderChatListHarnessSession,
+  resetChatListHarness,
 } from '@/dev/testkit/harness/chatListHarness';
-import { installFlashListChatListCommonModuleMocks } from '@/dev/testkit/harness/chatListHarnessModuleMocks';
+import { installChatListHarnessCommonModuleMocks } from '@/dev/testkit/harness/chatListHarnessModuleMocks';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const buildChatListItemsMock = vi.fn((..._args: any[]): any[] => []);
 
-let renderedTurnViewProps: any[] = [];
+let renderedMessageViewProps: any[] = [];
 
-installFlashListChatListCommonModuleMocks();
+installChatListHarnessCommonModuleMocks();
 
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
   useReducedMotionPreference: () => false,
 }));
 
 vi.mock('@/components/sessions/chatListItems', async () => (
-  (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListItemsModuleMock(buildChatListItemsMock)
+  (await import('@/dev/testkit/harness/chatListHarness')).createChatListHarnessItemsModuleMock(buildChatListItemsMock)
 ));
 
 vi.mock('@/components/sessions/transcript/motion/TranscriptMotionProvider', () => ({
@@ -42,18 +42,13 @@ vi.mock('./ChatFooter', () => ({
 }));
 
 vi.mock('./MessageView', () => ({
-  MessageView: () => React.createElement('MessageView'),
-  MessageViewWithSessionCommon: () => React.createElement('MessageViewWithSessionCommon'),
-}));
-
-vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
-  TurnView: (props: any) => {
-    renderedTurnViewProps.push(props);
-    return React.createElement('TurnView', props);
+  MessageView: (props: any) => {
+    renderedMessageViewProps.push(props);
+    return React.createElement('MessageView');
   },
-  TurnViewWithSessionCommon: (props: any) => {
-    renderedTurnViewProps.push(props);
-    return React.createElement('TurnViewWithSessionCommon', props);
+  MessageViewWithSessionCommon: (props: any) => {
+    renderedMessageViewProps.push(props);
+    return React.createElement('MessageViewWithSessionCommon');
   },
 }));
 
@@ -73,20 +68,9 @@ vi.mock('@/utils/system/fireAndForget', () => ({
   fireAndForget: (p: any) => p,
 }));
 
-vi.mock('@/sync/sync', () => ({
-  sync: {
-    loadOlderMessages: vi.fn(),
-    loadNewerMessages: vi.fn(),
-    hasDeferredNewerMessages: () => false,
-    getSyncTuning: () => ({
-      transcriptWebInitialPinStabilizeMs: 0,
-      transcriptWebInitialPinRetryIntervalMs: 250,
-      transcriptForwardPrefetchThresholdPx: 800,
-      transcriptBackwardPrefetchThresholdPx: 0,
-      transcriptFlashListEstimatedItemSize: 48,
-    }),
-  },
-}));
+vi.mock('@/sync/sync', async () => (
+  (await import('@/dev/testkit/harness/chatListHarness')).createChatListHarnessSyncModuleMock()
+));
 
 describe('ChatList (turn thinking expansion wiring)', () => {
   afterEach(() => {
@@ -94,22 +78,26 @@ describe('ChatList (turn thinking expansion wiring)', () => {
   });
 
   beforeEach(() => {
-    resetFlashListChatListHarness();
+    resetChatListHarness({
+      syncTuningState: {
+        transcriptForwardPrefetchThresholdPx: 800,
+        transcriptEstimatedItemSizePx: 48,
+      },
+    });
     buildChatListItemsMock.mockReset();
-    renderedTurnViewProps = [];
+    renderedMessageViewProps = [];
   });
 
-  it('passes thinking expansion helpers into TurnView when in turns mode', async () => {
-    flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
-    flashListChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
-    flashListChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
-    flashListChatListHarnessState.settingValues.transcriptListImplementation = 'flash_v2';
-    flashListChatListHarnessState.settingValues.sessionThinkingDisplayMode = 'inline';
-    flashListChatListHarnessState.settingValues.sessionThinkingInlinePresentation = 'summary';
+  it('passes controlled thinking expansion into turn-derived message unit rows', async () => {
+    chatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+    chatListHarnessState.settingValues.transcriptGroupToolCalls = false;
+    chatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+    chatListHarnessState.settingValues.sessionThinkingDisplayMode = 'inline';
+    chatListHarnessState.settingValues.sessionThinkingInlinePresentation = 'summary';
 
     const thinkingMessage = { kind: 'agent-text', id: 't1', localId: null, createdAt: 2, text: 'think', isThinking: true };
     const userMessage = { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' };
-    flashListChatListHarnessState.sessionMessagesState = {
+    chatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [userMessage, thinkingMessage],
     };
@@ -118,35 +106,35 @@ describe('ChatList (turn thinking expansion wiring)', () => {
       { kind: 'message', id: thinkingMessage.id, messageId: thinkingMessage.id, createdAt: thinkingMessage.createdAt, seq: null },
     ]);
 
-    const screen = await renderFlashListChatListSession();
+    const screen = await renderChatListHarnessSession();
 
-    const firstTurnProps = renderedTurnViewProps[0];
-    expect(firstTurnProps).toBeTruthy();
-    expect(typeof firstTurnProps.resolveThinkingExpanded).toBe('function');
-    expect(typeof firstTurnProps.setThinkingExpanded).toBe('function');
-    expect(firstTurnProps.resolveThinkingExpanded('t1')).toBe(false);
+    // Turns decompose into per-message unit rows (plan N2c); the list-owned controlled
+    // thinking expansion reaches the thinking unit row through ChatListMessageRow.
+    const firstThinkingProps = renderedMessageViewProps.find((p) => p?.message?.id === 't1');
+    expect(firstThinkingProps).toBeTruthy();
+    expect(firstThinkingProps?.thinkingExpanded).toBe(false);
+    expect(typeof firstThinkingProps?.onThinkingExpandedChange).toBe('function');
 
     await act(async () => {
-      firstTurnProps.setThinkingExpanded('t1', true);
+      firstThinkingProps.onThinkingExpandedChange(true);
     });
 
-    const lastTurnProps = renderedTurnViewProps[renderedTurnViewProps.length - 1];
-    expect(lastTurnProps.resolveThinkingExpanded('t1')).toBe(true);
+    const lastThinkingProps = [...renderedMessageViewProps].reverse().find((p) => p?.message?.id === 't1');
+    expect(lastThinkingProps?.thinkingExpanded).toBe(true);
 
     await screen.unmount();
   });
 
-  it('keeps turn message lookup available when the messages map changes', async () => {
-    flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
-    flashListChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
-    flashListChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
-    flashListChatListHarnessState.settingValues.transcriptListImplementation = 'flash_v2';
-    flashListChatListHarnessState.settingValues.sessionThinkingDisplayMode = 'inline';
-    flashListChatListHarnessState.settingValues.sessionThinkingInlinePresentation = 'summary';
+  it('keeps unit rows reading live messages when the messages map changes', async () => {
+    chatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+    chatListHarnessState.settingValues.transcriptGroupToolCalls = false;
+    chatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+    chatListHarnessState.settingValues.sessionThinkingDisplayMode = 'inline';
+    chatListHarnessState.settingValues.sessionThinkingInlinePresentation = 'summary';
 
     const initialUserMessage = { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'initial user' };
     const initialAgentMessage = { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'initial answer', isThinking: false };
-    flashListChatListHarnessState.sessionMessagesState = {
+    chatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [initialUserMessage, initialAgentMessage],
     };
@@ -156,15 +144,14 @@ describe('ChatList (turn thinking expansion wiring)', () => {
     ]);
 
     const { ChatList } = await import('./ChatList');
-    const screen = await renderFlashListChatListSession();
+    const screen = await renderChatListHarnessSession();
 
-    const firstTurnProps = renderedTurnViewProps[0];
-    expect(typeof firstTurnProps?.getMessageById).toBe('function');
-    expect(firstTurnProps?.getMessageById?.('u1')?.text).toBe('initial user');
+    const firstUserProps = renderedMessageViewProps.find((p) => p?.message?.id === 'u1');
+    expect(firstUserProps?.message?.text).toBe('initial user');
 
     const updatedUserMessage = { ...initialUserMessage, text: 'updated user' };
     const updatedAgentMessage = { ...initialAgentMessage, text: 'updated answer' };
-    flashListChatListHarnessState.sessionMessagesState = {
+    chatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [updatedUserMessage, updatedAgentMessage],
     };
@@ -172,41 +159,40 @@ describe('ChatList (turn thinking expansion wiring)', () => {
     await act(async () => {
       // Message updates bump the session seq in production; the ChatList memo
       // (buildTranscriptRenderSignature) needs a signature-relevant change to re-render.
-      await screen.update(<ChatList session={{ ...flashListChatListHarnessState.sessionState, seq: 1 }} />);
+      await screen.update(<ChatList session={{ ...chatListHarnessState.sessionState, seq: 1 }} />);
     });
 
-    const lastTurnProps = renderedTurnViewProps[renderedTurnViewProps.length - 1];
-    expect(typeof lastTurnProps?.getMessageById).toBe('function');
-    expect(lastTurnProps?.getMessageById?.('u1')?.text).toBe('updated user');
-    expect(lastTurnProps?.getMessageById?.('a1')?.text).toBe('updated answer');
+    const lastUserProps = [...renderedMessageViewProps].reverse().find((p) => p?.message?.id === 'u1');
+    const lastAgentProps = [...renderedMessageViewProps].reverse().find((p) => p?.message?.id === 'a1');
+    expect(lastUserProps?.message?.text).toBe('updated user');
+    expect(lastAgentProps?.message?.text).toBe('updated answer');
 
     await screen.unmount();
   });
 
-  it('passes transcript session common into TurnView when in turns mode', async () => {
-    flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
-    flashListChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
-    flashListChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
-    flashListChatListHarnessState.settingValues.transcriptListImplementation = 'flash_v2';
-    flashListChatListHarnessState.settingValues.sessionThinkingDisplayMode = 'inline';
-    flashListChatListHarnessState.settingValues.sessionThinkingInlinePresentation = 'summary';
-    flashListChatListHarnessState.settingValues.sessionThinkingInlineChrome = 'plain';
-    flashListChatListHarnessState.settingValues.transcriptStreamingSmoothingEnabled = false;
-    flashListChatListHarnessState.settingValues.transcriptStreamingSettleDelayMs = 0;
-    flashListChatListHarnessState.settingValues.transcriptStreamingPartialOutputEnabled = true;
-    flashListChatListHarnessState.settingValues.transcriptStreamingMarkdownRenderingEnabled = false;
-    flashListChatListHarnessState.settingValues.transcriptMessageTimestampDisplayMode = 'always';
-    flashListChatListHarnessState.settingValues.sessionReplayEnabled = false;
-    flashListChatListHarnessState.settingValues.sessionReplayStrategy = 'recent_messages';
-    flashListChatListHarnessState.settingValues.sessionReplaySummaryRunnerV1 = null;
-    flashListChatListHarnessState.settingValues.sessionReplayMaxSeedChars = 120_000;
-    flashListChatListHarnessState.settingValues.toolViewTimelineChromeMode = 'cards';
-    flashListChatListHarnessState.settingValues.transcriptToolCallsCollapsedPreviewCount = 1;
-    flashListChatListHarnessState.settingValues.transcriptToolCallsGroupShowBackground = false;
+  it('passes transcript session common into turn-derived unit rows', async () => {
+    chatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+    chatListHarnessState.settingValues.transcriptGroupToolCalls = false;
+    chatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+    chatListHarnessState.settingValues.sessionThinkingDisplayMode = 'inline';
+    chatListHarnessState.settingValues.sessionThinkingInlinePresentation = 'summary';
+    chatListHarnessState.settingValues.sessionThinkingInlineChrome = 'plain';
+    chatListHarnessState.settingValues.transcriptStreamingSmoothingEnabled = false;
+    chatListHarnessState.settingValues.transcriptStreamingSettleDelayMs = 0;
+    chatListHarnessState.settingValues.transcriptStreamingPartialOutputEnabled = true;
+    chatListHarnessState.settingValues.transcriptStreamingMarkdownRenderingEnabled = false;
+    chatListHarnessState.settingValues.transcriptMessageTimestampDisplayMode = 'always';
+    chatListHarnessState.settingValues.sessionReplayEnabled = false;
+    chatListHarnessState.settingValues.sessionReplayStrategy = 'recent_messages';
+    chatListHarnessState.settingValues.sessionReplaySummaryRunnerV1 = null;
+    chatListHarnessState.settingValues.sessionReplayMaxSeedChars = 120_000;
+    chatListHarnessState.settingValues.toolViewTimelineChromeMode = 'cards';
+    chatListHarnessState.settingValues.transcriptToolCallsCollapsedPreviewCount = 1;
+    chatListHarnessState.settingValues.transcriptToolCallsGroupShowBackground = false;
 
     const userMessage = { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' };
     const agentMessage = { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'answer', isThinking: false };
-    flashListChatListHarnessState.sessionMessagesState = {
+    chatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [userMessage, agentMessage],
     };
@@ -215,9 +201,9 @@ describe('ChatList (turn thinking expansion wiring)', () => {
       { kind: 'message', id: agentMessage.id, messageId: agentMessage.id, createdAt: agentMessage.createdAt, seq: null },
     ]);
 
-    const screen = await renderFlashListChatListSession();
+    const screen = await renderChatListHarnessSession();
 
-    const firstTurnProps = renderedTurnViewProps[0];
+    const firstTurnProps = renderedMessageViewProps.find((p) => p?.message?.id === 'u1');
     expect(firstTurnProps?.messageDisplayCommon).toEqual(expect.objectContaining({
       sessionThinkingDisplayMode: 'inline',
       transcriptMessageTimestampDisplayMode: 'always',
@@ -231,7 +217,7 @@ describe('ChatList (turn thinking expansion wiring)', () => {
       transcriptToolCallsCollapsedPreviewCount: 1,
     }));
     expect(firstTurnProps?.toolRouteCommon).toEqual(expect.objectContaining({
-      reducerState: null,
+      messagesById: expect.any(Object),
     }));
 
     await screen.unmount();

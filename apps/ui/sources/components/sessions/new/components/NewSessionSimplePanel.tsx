@@ -5,7 +5,7 @@ import { AgentInput } from '@/components/sessions/agentInput';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import { t } from '@/text';
-import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1, ProviderErrorV1 } from '@happier-dev/protocol';
 import type { HandleCreateSessionOptions } from '../hooks/useCreateNewSession';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
@@ -20,6 +20,7 @@ import {
     shouldRenderNewSessionLaunchPendingPreview,
 } from '@/components/sessions/new/components/NewSessionLaunchPendingPreview';
 import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
+import { NewSessionProviderLaunchError } from '@/components/sessions/new/components/NewSessionProviderLaunchError';
 
 const SIMPLE_NEW_SESSION_MIN_TOP_GAP = 8;
 
@@ -39,6 +40,8 @@ export type NewSessionSimplePanelProps = Readonly<{
     canCreate: boolean;
     isCreating: boolean;
     pendingLaunchAttempt?: NewSessionLaunchAttempt | null;
+    providerLaunchError?: ProviderErrorV1 | null;
+    retryProviderLaunch?: () => void;
     emptyAutocompletePrefixes: React.ComponentProps<typeof AgentInput>['autocompletePrefixes'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
     onAutocompleteSuggestionSelect?: React.ComponentProps<typeof AgentInput>['onAutocompleteSuggestionSelect'];
@@ -271,6 +274,10 @@ function NewSessionSimplePanelComposer({
         >
             <View style={{ paddingHorizontal: props.newSessionSidePadding, width: '100%', alignSelf: 'stretch' }}>
                 <View style={{ width: '100%', alignSelf: 'center' }}>
+                    <NewSessionProviderLaunchError
+                        error={props.providerLaunchError}
+                        retry={props.retryProviderLaunch}
+                    />
                     <AgentInput
                         value={props.sessionPrompt}
                         onChangeText={props.setSessionPrompt}

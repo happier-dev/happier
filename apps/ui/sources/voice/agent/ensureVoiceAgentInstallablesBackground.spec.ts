@@ -32,7 +32,7 @@ describe('ensureVoiceAgentInstallablesBackground', () => {
 
   it('prefers visible lookup session metadata machine ids when the raw session metadata is stale', async () => {
     storageGetState.mockReturnValue({
-      settings: { voice: { adapters: { local_conversation: {} } } },
+      settings: { voice: { providers: { local_conversation: { schemaVersion: 1, config: {} } } } },
       sessions: {
         s1: {
           id: 's1',
@@ -70,7 +70,7 @@ describe('ensureVoiceAgentInstallablesBackground', () => {
 
   it('uses the resolved session machine target before raw or visible metadata', async () => {
     storageGetState.mockReturnValue({
-      settings: { voice: { adapters: { local_conversation: {} } } },
+      settings: { voice: { providers: { local_conversation: { schemaVersion: 1, config: {} } } } },
       sessions: {
         s1: {
           id: 's1',

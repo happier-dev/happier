@@ -25,17 +25,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isPermissionDecisionPayload(value: unknown): value is Readonly<{
+function readPermissionDecisionPayload(value: unknown): Readonly<{
     action: 'allow' | 'deny';
     sessionId: string;
     requestId: string;
-    serverId: string;
-}> {
-    return isRecord(value)
-        && (value.action === 'allow' || value.action === 'deny')
-        && typeof value.sessionId === 'string'
-        && typeof value.requestId === 'string'
-        && typeof value.serverId === 'string';
+}> | null {
+    if (!isRecord(value) || typeof value.sessionId !== 'string' || typeof value.requestId !== 'string') {
+        return null;
+    }
+    const action = value.decision === 'allow' || value.decision === 'deny'
+        ? value.decision
+        : value.action === 'allow' || value.action === 'deny'
+            ? value.action
+            : null;
+    if (!action) {
+        return null;
+    }
+    return {
+        action,
+        sessionId: value.sessionId,
+        requestId: value.requestId,
+    };
 }
 
 function resolveNotificationCommandRoute(command: ActivityInteractionCommand): string | null {
@@ -179,8 +189,12 @@ export function useNotificationResponseRouting(params: Readonly<{
             // - the server is already active, OR
             // - the server is already saved (we can switch safely), OR
             // - (otherwise) navigate only and let the user handle it in-app.
-            if (command.kind === 'executeAction' && isPermissionDecisionPayload(command.payload)) {
-                const { action, sessionId: actionSessionId, requestId: actionRequestId } = command.payload;
+            const permissionDecisionPayload = command.kind === 'executeAction'
+                && command.actionId === 'session.permission.respond'
+                ? readPermissionDecisionPayload(command.payload)
+                : null;
+            if (command.kind === 'executeAction' && permissionDecisionPayload) {
+                const { action, sessionId: actionSessionId, requestId: actionRequestId } = permissionDecisionPayload;
                 if (!serverUrl) {
                     router.push(route);
                     return;
@@ -301,8 +315,12 @@ export function useNotificationResponseRouting(params: Readonly<{
                 }
             }
 
-            if (command.kind === 'executeAction' && isPermissionDecisionPayload(command.payload)) {
-                const { action, sessionId: actionSessionId, requestId: actionRequestId } = command.payload;
+            const activeServerPermissionDecisionPayload = command.kind === 'executeAction'
+                && command.actionId === 'session.permission.respond'
+                ? readPermissionDecisionPayload(command.payload)
+                : null;
+            if (command.kind === 'executeAction' && activeServerPermissionDecisionPayload) {
+                const { action, sessionId: actionSessionId, requestId: actionRequestId } = activeServerPermissionDecisionPayload;
                 fireAndForget((async () => {
                     try {
                         await performPermissionAction({ sessionId: actionSessionId, requestId: actionRequestId, action });

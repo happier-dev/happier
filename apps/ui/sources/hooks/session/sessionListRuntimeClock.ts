@@ -63,7 +63,7 @@ export function createSessionListRuntimeClock(): SessionListRuntimeClock {
         }
         scheduledWakeAtMs = earliest;
         if (earliest === null) return;
-        const delayMs = Math.max(0, earliest - Date.now() + 1);
+        const delayMs = Math.max(0, earliest - Date.now());
         timeoutId = setTimeout(fire, delayMs);
     }
 

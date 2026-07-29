@@ -102,6 +102,45 @@ describe('daemonWorkspaceFiles direct export', () => {
         }));
     });
 
+    it('cleans the destination and does not enter relay or bulk fallback after cancellation', async () => {
+        const controller = new AbortController();
+        const rpcCall = vi.fn(async (params: any) => {
+            if (params.machineMethod === RPC_METHODS.STAT_FILE) {
+                return { success: true, exists: true, kind: 'file', sizeBytes: 5 };
+            }
+            throw new Error(`unexpected method after cancellation: ${params.machineMethod}`);
+        });
+        createWorkspaceFileTransferRpcCallerMock.mockImplementation(() => ({ call: rpcCall }));
+        callGuardedMachineRpcWithPolicyMock.mockImplementationOnce(async () => {
+            controller.abort();
+            return { success: false, error: 'Direct export unavailable' };
+        });
+        relayFileDownloadMock.mockResolvedValueOnce({
+            ok: false as const,
+            error: 'Relay must not start after cancellation',
+        });
+        const cleanup = vi.fn(async () => {});
+
+        const { downloadDaemonWorkspaceFileToDestination } = await import('../families/workspaceFileTransfers');
+        const result = await downloadDaemonWorkspaceFileToDestination({
+            machineId: 'machine-1',
+            serverId: 'server-a',
+            rootPath: '/repo',
+            request: { path: 'hello.txt', asZip: false },
+            destination: {
+                writeBytes: async () => {},
+                close: async () => {},
+                cleanup,
+            },
+            signal: controller.signal,
+        });
+
+        expect(result).toEqual({ ok: false, error: 'Download canceled' });
+        expect(cleanup).toHaveBeenCalledTimes(1);
+        expect(relayFileDownloadMock).not.toHaveBeenCalled();
+        expect(rpcCall).toHaveBeenCalledTimes(1);
+    });
+
     it('tries direct export first, then relay-v2, before falling back to the bulk path for inline base64 reads', async () => {
         const rpcCall = vi.fn(async (params: any) => {
             if (params.machineMethod === RPC_METHODS.STAT_FILE) {
@@ -234,7 +273,58 @@ describe('daemonWorkspaceFiles direct export', () => {
             request: { downloadId: 'bulk-download-fallback', index: 0 },
         }));
         expect(close).toHaveBeenCalledTimes(1);
-        expect(cleanup).not.toHaveBeenCalled();
+        expect(cleanup).toHaveBeenCalledTimes(2);
+    });
+
+    it('resets the destination between direct, relay, and bulk carrier attempts', async () => {
+        const calls: string[] = [];
+        const rpcCall = vi.fn(async (params: any) => {
+            if (params.machineMethod === RPC_METHODS.STAT_FILE) {
+                return { success: true, exists: true, kind: 'file', sizeBytes: 5 };
+            }
+            if (params.machineMethod === RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT) {
+                calls.push('bulkInit');
+                return {
+                    success: true,
+                    downloadId: 'bulk-download-reset',
+                    chunkSizeBytes: 5,
+                    sizeBytes: 5,
+                    name: 'hello.txt',
+                };
+            }
+            if (params.machineMethod === RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK) {
+                return { success: true, isLast: true, contentBase64: 'aGVsbG8=' };
+            }
+            if (params.machineMethod === RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE) {
+                return { success: true };
+            }
+            throw new Error(`unexpected method: ${params.machineMethod}`);
+        });
+        createWorkspaceFileTransferRpcCallerMock.mockImplementation(() => ({ call: rpcCall }));
+        relayFileDownloadMock.mockImplementationOnce(async () => {
+            calls.push('relay');
+            return { ok: false as const, error: 'Relay unavailable' };
+        });
+        const cleanup = vi.fn(async () => {
+            calls.push('cleanup');
+        });
+
+        const { downloadDaemonWorkspaceFileToDestination } = await import('../families/workspaceFileTransfers');
+        const result = await downloadDaemonWorkspaceFileToDestination({
+            machineId: 'machine-1',
+            serverId: 'server-a',
+            rootPath: '/repo',
+            request: { path: 'hello.txt', asZip: false },
+            destination: {
+                writeBytes: async () => {},
+                close: async () => {},
+                cleanup,
+            },
+        });
+
+        expect(result).toEqual({ ok: true, name: 'hello.txt', sizeBytes: 5 });
+        expect(calls).toEqual(['cleanup', 'relay', 'cleanup', 'bulkInit']);
+        expect(cleanup).toHaveBeenCalledTimes(2);
     });
 
     it('fails closed before starting carrier fallback when the destination does not provide cleanup', async () => {

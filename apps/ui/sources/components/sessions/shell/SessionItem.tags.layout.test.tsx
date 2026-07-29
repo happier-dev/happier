@@ -6,10 +6,10 @@ import { SESSION_ACTION_EDIT_TAGS_ID } from '@/components/sessions/actions/sessi
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import { createModelBackedSessionItemTestComponent } from './sessionItemRowViewModelTestFixture';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: (props: any) => React.createElement('Swipeable', props),
@@ -49,12 +49,12 @@ installSessionShellCommonModuleMocks({
             importOriginal,
             overrides: {
                 useHasUnreadMessages: () => false,
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'sessionListIdentityDisplay') return 'avatar';
                     if (key === 'sessionListActiveColorModeV1') return 'activityAndAttention';
                     if (key === 'sessionListNarrowWorkingIndicatorStyle') return 'spinner';
                     return undefined;
-                },
+                } }),
                 useProfile: () => ({
                     id: 'u1',
                     timestamp: 0,
@@ -65,6 +65,9 @@ installSessionShellCommonModuleMocks({
                     linkedProviders: [],
                     connectedServices: [],
                     connectedServicesV2: [],
+                    connectedServiceCredentialRevisionsV1: [],
+                    connectedAccountsV4: [],
+                    connectedAccountGroupsV4: [],
                 }),
                 useSession: () => null,
                 useSessionListMeaningfulActivityAt: () => null,

@@ -90,7 +90,7 @@ describe('resolveTranscriptRollbackActions', () => {
         expect(second).toBe(first);
     });
 
-    it('exposes rollback-to-point only on completed turn-start user messages', () => {
+    it('exposes rollback-to-point for Codex app-server when a trusted rollback turn start exists', () => {
         const session = createActiveSession({
             path: '/workspace',
             host: 'localhost',
@@ -143,7 +143,7 @@ describe('resolveTranscriptRollbackActions', () => {
         })).toEqual({});
     });
 
-    it('excludes historical user messages from rollback-to-point actions', () => {
+    it('keeps historical message filtering independent when projecting app-server point rollback actions', () => {
         const session = createActiveSession({
             path: '/workspace',
             host: 'localhost',
@@ -165,6 +165,35 @@ describe('resolveTranscriptRollbackActions', () => {
             messageIdsOldestFirst: ['u1', 'a1', 'u2'],
             messagesById,
             rollbackRanges: [{ startSeqInclusive: 1, endSeqInclusive: 2 }],
+        })).toEqual({
+            u2: {
+                target: { type: 'before_user_message', userMessageSeq: 3 },
+                restoredDraftText: 'second prompt',
+            },
+        });
+    });
+
+    it('keeps completed app-server turn rollback actions after the session is no longer active', () => {
+        const session: Session = {
+            ...createActiveSession({
+                path: '/workspace',
+                host: 'localhost',
+                flavor: 'codex',
+                codexBackendMode: 'appServer',
+            }),
+            active: false,
+            rollbackEligibleTurnStarts: [3],
+        };
+        const messagesById: Record<string, Message> = {
+            u1: userTextMessage('u1', 1, 'initial prompt'),
+            u2: userTextMessage('u2', 3, 'second prompt'),
+        };
+
+        expect(resolveTranscriptRollbackActions({
+            session,
+            messageIdsOldestFirst: ['u1', 'u2'],
+            messagesById,
+            rollbackRanges: [],
         })).toEqual({
             u2: {
                 target: { type: 'before_user_message', userMessageSeq: 3 },

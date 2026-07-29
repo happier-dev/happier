@@ -19,7 +19,7 @@ export function createAbortActionButton(params: Readonly<{
             <Pressable
                 testID="agent-input-abort"
                 accessibilityRole="button"
-                accessibilityLabel={t('runs.stop.stopRunA11y')}
+                accessibilityLabel={t('agentInput.stopCodingTurn')}
                 style={(state) => [
                     params.buttonStyle,
                     state.pressed ? params.buttonPressedStyle : null,

@@ -1,7 +1,9 @@
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+
 import { encodeBase64, decodeBase64 } from '@/encryption/base64';
-import { encryptBox } from '@/encryption/libsodium';
 import { decodeHex } from '@/encryption/hex';
 import sodium from '@/encryption/libsodium.lib';
+import { getRandomBytes } from '@/platform/cryptoRandom';
 
 const CONTENT_KEY_BINDING_PREFIX = new TextEncoder().encode('Happy content key v1\u0000');
 
@@ -10,13 +12,11 @@ export function encryptDataKeyForRecipientV0(
     recipientContentPublicKeyB64: string
 ): string {
     const recipientPublicKey = decodeBase64(recipientContentPublicKeyB64, 'base64');
-    const bundle = encryptBox(sessionDataKey, recipientPublicKey);
-
-    const out = new Uint8Array(1 + bundle.length);
-    out[0] = 0;
-    out.set(bundle, 1);
-
-    return encodeBase64(out, 'base64');
+    return encodeBase64(sealEncryptedDataKeyEnvelopeV1({
+        dataKey: sessionDataKey,
+        recipientPublicKey,
+        randomBytes: getRandomBytes,
+    }), 'base64');
 }
 
 export function verifyRecipientContentPublicKeyBinding(params: {

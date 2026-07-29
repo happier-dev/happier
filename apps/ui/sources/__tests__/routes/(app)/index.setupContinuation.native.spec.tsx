@@ -6,13 +6,10 @@ import type { PendingSetupIntent } from '@/sync/domains/pending/pendingSetupInte
 
 vi.mock('@/assets/images/logotype-light.png', () => ({ default: 'logotype-light' }));
 vi.mock('@/assets/images/logotype-dark.png', () => ({ default: 'logotype-dark' }));
-vi.mock('@/components/onboarding', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/components/onboarding')>();
-    return {
-        ...actual,
-        OnboardingWizardSurface: () => null,
-    };
-});
+vi.mock('@/components/onboarding', () => ({
+    OnboardingWizardSurface: () => null,
+    PreAuthOnboardingWizardEntry: () => null,
+}));
 vi.mock('@/components/onboarding/PreAuthOnboardingWizardEntry', () => ({
     PreAuthOnboardingWizardEntry: () => null,
 }));

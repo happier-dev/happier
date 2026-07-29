@@ -10,11 +10,14 @@ import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/tes
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-const setClipboardStringAsyncMock = vi.hoisted(() => vi.fn(async () => {}));
+const setClipboardStringSafeMock = vi.hoisted(() => vi.fn(async () => true));
+const modalAlertMock = vi.hoisted(() => vi.fn());
 
 afterEach(() => {
     standardCleanup();
-    setClipboardStringAsyncMock.mockReset();
+    setClipboardStringSafeMock.mockReset();
+    setClipboardStringSafeMock.mockResolvedValue(true);
+    modalAlertMock.mockReset();
 });
 
 vi.mock('react-native-mmkv', () => {
@@ -79,15 +82,17 @@ vi.mock('@/text', async () => {
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
+    return createModalModuleMock({
+        spies: { alert: modalAlertMock },
+    }).module;
 });
 
 vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' }, deviceName: 'test-device' },
 }));
 
-vi.mock('expo-clipboard', () => ({
-    setStringAsync: setClipboardStringAsyncMock,
+vi.mock('@/utils/ui/clipboard', () => ({
+    setClipboardStringSafe: setClipboardStringSafeMock,
 }));
 
 vi.mock('@/constants/Typography', () => ({
@@ -147,7 +152,7 @@ describe('SystemStatusView app runtime info', () => {
         const text = screen.getTextContent();
         expect(text).toContain('bugReports.composer.environment.appVersionLabel');
         expect(text).toContain('1.2.3');
-        expect(text).toContain('settingsProviders.releaseChannelTitle');
+        expect(text).toContain('settingsAgents.releaseChannelTitle');
         expect(text).toContain('preview');
 
         const copyRow = screen.find((node) => (
@@ -156,9 +161,10 @@ describe('SystemStatusView app runtime info', () => {
         ));
         await pressTestInstanceAsync(copyRow, 'copy system status JSON');
 
-        expect(setClipboardStringAsyncMock).toHaveBeenCalledTimes(1);
+        expect(setClipboardStringSafeMock).toHaveBeenCalledTimes(1);
+        expect(modalAlertMock).not.toHaveBeenCalled();
 
-        const clipboardCalls = setClipboardStringAsyncMock.mock.calls as unknown as Array<Array<string>>;
+        const clipboardCalls = setClipboardStringSafeMock.mock.calls as unknown as Array<Array<string>>;
         const clipboardPayload = clipboardCalls[0]?.[0];
         const payload = JSON.parse(String(clipboardPayload ?? '{}'));
         expect(payload.environment).toMatchObject({

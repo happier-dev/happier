@@ -2,11 +2,17 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });
+
+const { module: capturedLegendList } = createCapturingLegendListMock({ renderItems: true });
+vi.mock('@legendapp/list/react-native', () => ({
+    LegendList: capturedLegendList.LegendList,
+}));
 
 /**
  * FR3-9 — Directory drill-down animation must apply on the virtualized path

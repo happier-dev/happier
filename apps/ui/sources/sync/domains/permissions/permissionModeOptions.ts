@@ -5,7 +5,7 @@ import type { PermissionMode } from './permissionTypes';
 import type { Metadata } from '../state/storageTypes';
 import { CLAUDE_PERMISSION_MODES, CODEX_LIKE_PERMISSION_MODES, normalizePermissionModeForGroup } from './permissionTypes';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
-import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
 
 export type PermissionModeOption = Readonly<{
     value: PermissionMode;

@@ -1,15 +1,33 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { FitAddon } from '@xterm/addon-fit';
-import { WebLinksAddon } from '@xterm/addon-web-links';
-import { WebglAddon } from '@xterm/addon-webgl';
+import type { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 
 import '@xterm/xterm/css/xterm.css';
+import {
+    createXtermFitAddon,
+    loadXtermWebLinksAddon,
+    tryLoadXtermWebglAddon,
+} from './addons';
+import {
+    buildXtermWriteCompleteEvent,
+    copyTerminalBytes,
+    decodeTerminalBytesForPreview,
+    estimateUtf8ByteLength,
+    type XtermWriteBytesInput,
+    type XtermWriteCompleteEvent,
+} from './bytes';
+import {
+    createXtermWriteQueue,
+    DEFAULT_XTERM_MAX_PENDING_WRITE_BYTES,
+    type XtermRejectedWrite,
+    type XtermWriteQueue,
+} from './writeQueue';
 
 export type XtermTerminalHandle = Readonly<{
-    write: (data: string) => void;
+    write: (data: string) => boolean;
+    writeBytes: (input: XtermWriteBytesInput) => boolean;
     clear: () => void;
     focus: () => void;
     hasSelection: () => boolean;
@@ -18,8 +36,13 @@ export type XtermTerminalHandle = Readonly<{
 
 export type XtermTerminalViewProps = Readonly<{
     onInput: (data: string) => void;
+    onPaste?: (data: string) => void | Promise<unknown>;
+    onLink?: (url: string) => void;
     onResize: (cols: number, rows: number) => void;
     onReady: (cols: number, rows: number) => void;
+    onWriteComplete?: (event: XtermWriteCompleteEvent) => void;
+    onWriteRejected?: (event: XtermRejectedWrite) => void;
+    maxPendingWriteBytes?: number;
     fontSize: number;
     testID?: string;
 }>;
@@ -28,6 +51,9 @@ const DEFAULT_FONT_FAMILY =
     'Menlo, ui-monospace, SFMono-Regular, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
 
 const OUTPUT_PREVIEW_MAX_CHARS = 4096;
+const READY_FIT_RETRY_DELAY_MS = 25;
+const READY_FIT_MAX_RETRIES = 40;
+const DISPOSE_AFTER_UNMOUNT_DELAY_MS = 50;
 
 type TerminalWithInternalRenderer = Terminal & Readonly<{
     _core?: Readonly<{
@@ -39,9 +65,25 @@ type TerminalWithInternalRenderer = Terminal & Readonly<{
     }>;
 }>;
 
+type TerminalWithInternalViewport = Terminal & {
+    _core?: {
+        viewport?: {
+            syncScrollArea?: (...args: unknown[]) => void;
+        };
+    };
+};
+
 function isXtermRendererReady(term: Terminal | null): boolean {
     const renderer = (term as TerminalWithInternalRenderer | null)?._core?._renderService?._renderer?.value;
     return renderer != null;
+}
+
+function suppressQueuedXtermViewportSync(term: Terminal): void {
+    const viewport = (term as TerminalWithInternalViewport)._core?.viewport;
+    if (typeof viewport?.syncScrollArea !== 'function') {
+        return;
+    }
+    viewport.syncScrollArea = () => {};
 }
 
 export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerminalViewProps>(function XtermTerminalView(
@@ -52,26 +94,37 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
     const containerRef = React.useRef<HTMLDivElement | null>(null);
     const terminalRef = React.useRef<Terminal | null>(null);
     const fitAddonRef = React.useRef<FitAddon | null>(null);
+    const writeQueueRef = React.useRef<XtermWriteQueue | null>(null);
     const resizeTimeoutRef = React.useRef<number | null>(null);
+    const readyFitRetryTimeoutRef = React.useRef<number | null>(null);
+    const readyFitRetryCountRef = React.useRef(0);
     const didReportReadyRef = React.useRef(false);
     const lastReportedSizeRef = React.useRef<{ cols: number; rows: number } | null>(null);
 
     const onInputRef = React.useRef(props.onInput);
+    const onPasteRef = React.useRef(props.onPaste);
+    const onLinkRef = React.useRef(props.onLink);
     const onResizeRef = React.useRef(props.onResize);
     const onReadyRef = React.useRef(props.onReady);
+    const onWriteCompleteRef = React.useRef(props.onWriteComplete);
+    const onWriteRejectedRef = React.useRef(props.onWriteRejected);
+    const maxPendingWriteBytesRef = React.useRef(props.maxPendingWriteBytes ?? DEFAULT_XTERM_MAX_PENDING_WRITE_BYTES);
     onInputRef.current = props.onInput;
+    onPasteRef.current = props.onPaste;
+    onLinkRef.current = props.onLink;
     onResizeRef.current = props.onResize;
     onReadyRef.current = props.onReady;
+    onWriteCompleteRef.current = props.onWriteComplete;
+    onWriteRejectedRef.current = props.onWriteRejected;
+    maxPendingWriteBytesRef.current = props.maxPendingWriteBytes ?? DEFAULT_XTERM_MAX_PENDING_WRITE_BYTES;
 
-    const pendingWriteRef = React.useRef('');
     const writeRafRef = React.useRef<number | null>(null);
-    const isWritingRef = React.useRef(false);
 
     const outputPreviewRef = React.useRef('');
     const outputPreviewDirtyRef = React.useRef(false);
 
     const resetWriteState = React.useCallback(() => {
-        pendingWriteRef.current = '';
+        writeQueueRef.current?.clear();
         outputPreviewRef.current = '';
         outputPreviewDirtyRef.current = false;
         if (containerRef.current) {
@@ -81,7 +134,6 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
             window.cancelAnimationFrame(writeRafRef.current);
         }
         writeRafRef.current = null;
-        isWritingRef.current = false;
     }, []);
 
     const applyOutputPreviewAttribute = React.useCallback(() => {
@@ -97,37 +149,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
     }, []);
 
     const flushWrites = React.useCallback(() => {
-        if (isWritingRef.current) {
-            return;
-        }
-        const term = terminalRef.current;
-        if (!term) {
-            return;
-        }
-        if (!pendingWriteRef.current) {
-            return;
-        }
-
-        const chunk = pendingWriteRef.current;
-        pendingWriteRef.current = '';
-
-        isWritingRef.current = true;
-        term.write(chunk, () => {
-            isWritingRef.current = false;
-            if (!pendingWriteRef.current) {
-                return;
-            }
-            if (typeof window !== 'undefined') {
-                writeRafRef.current = window.requestAnimationFrame(() => {
-                    writeRafRef.current = null;
-                    applyOutputPreviewAttribute();
-                    flushWrites();
-                });
-            } else {
-                applyOutputPreviewAttribute();
-                flushWrites();
-            }
-        });
+        writeQueueRef.current?.flush();
     }, [applyOutputPreviewAttribute]);
 
     const scheduleFlushWrites = React.useCallback(() => {
@@ -146,27 +168,75 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         }
     }, [applyOutputPreviewAttribute, flushWrites]);
 
-    const enqueueWrite = React.useCallback((data: string) => {
-        if (!data) {
+    const ensureWriteQueue = React.useCallback(() => {
+        if (writeQueueRef.current) {
+            return writeQueueRef.current;
+        }
+        writeQueueRef.current = createXtermWriteQueue({
+            canWrite: () => terminalRef.current !== null,
+            write: (data, callback) => {
+                terminalRef.current?.write(data, callback);
+            },
+            schedule: () => scheduleFlushWrites(),
+            maxPendingBytes: maxPendingWriteBytesRef.current,
+            onReject: (event) => onWriteRejectedRef.current?.(event),
+        });
+        return writeQueueRef.current;
+    }, [scheduleFlushWrites]);
+
+    const appendOutputPreview = React.useCallback((data: string | Uint8Array) => {
+        const preview = typeof data === 'string' ? data : decodeTerminalBytesForPreview(data);
+        if (!preview) {
             return;
         }
-        pendingWriteRef.current += data;
-        const nextPreview = outputPreviewRef.current + data;
+        const nextPreview = outputPreviewRef.current + preview;
         outputPreviewRef.current =
             nextPreview.length > OUTPUT_PREVIEW_MAX_CHARS
                 ? nextPreview.slice(nextPreview.length - OUTPUT_PREVIEW_MAX_CHARS)
                 : nextPreview;
         outputPreviewDirtyRef.current = true;
-        scheduleFlushWrites();
-    }, [scheduleFlushWrites]);
+    }, []);
 
-    const reportSize = React.useCallback((cols: number, rows: number, kind: 'ready' | 'resize') => {
+    const enqueueWrite = React.useCallback((data: string) => {
+        if (!data) {
+            return true;
+        }
+        const accepted = ensureWriteQueue().enqueue({
+            data,
+            byteLength: estimateUtf8ByteLength(data),
+        });
+        if (!accepted) {
+            return false;
+        }
+        appendOutputPreview(data);
+        return true;
+    }, [appendOutputPreview, ensureWriteQueue]);
+
+    const enqueueWriteBytes = React.useCallback((input: XtermWriteBytesInput) => {
+        if (input.bytes.byteLength === 0) {
+            return true;
+        }
+        const bytes = copyTerminalBytes(input.bytes);
+        const completion = buildXtermWriteCompleteEvent({ ...input, bytes });
+        const accepted = ensureWriteQueue().enqueue({
+            data: bytes,
+            byteLength: bytes.byteLength,
+            onComplete: () => onWriteCompleteRef.current?.(completion),
+        });
+        if (!accepted) {
+            return false;
+        }
+        appendOutputPreview(bytes);
+        return true;
+    }, [appendOutputPreview, ensureWriteQueue]);
+
+    const reportSize = React.useCallback((cols: number, rows: number, _kind: 'ready' | 'resize') => {
         const previous = lastReportedSizeRef.current;
         if (!previous || previous.cols !== cols || previous.rows !== rows) {
             lastReportedSizeRef.current = { cols, rows };
             onResizeRef.current(cols, rows);
         }
-        if (kind === 'ready' && !didReportReadyRef.current) {
+        if (!didReportReadyRef.current) {
             didReportReadyRef.current = true;
             onReadyRef.current(cols, rows);
         }
@@ -177,30 +247,32 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         const term = terminalRef.current;
         const container = containerRef.current;
         if (!fitAddon || !term || !container) {
-            return;
+            return false;
         }
         if (!term.element || !term.element.isConnected) {
-            return;
+            return false;
         }
 
         const rect = container.getBoundingClientRect();
         if (rect.width < 24 || rect.height < 24) {
-            return;
+            return false;
         }
         if (!isXtermRendererReady(term)) {
-            return;
+            return false;
         }
 
         try {
             fitAddon.fit();
             reportSize(term.cols, term.rows, kind);
+            return true;
         } catch {
-            // ignored
+            return false;
         }
     }, [reportSize]);
 
     React.useImperativeHandle(ref, () => ({
         write: enqueueWrite,
+        writeBytes: enqueueWriteBytes,
         clear: () => {
             const term = terminalRef.current;
             if (!term) {
@@ -214,7 +286,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         focus: () => terminalRef.current?.focus(),
         hasSelection: () => terminalRef.current?.hasSelection() ?? false,
         getSelectionText: () => terminalRef.current?.getSelection() ?? '',
-    }), [enqueueWrite, resetWriteState]);
+    }), [enqueueWrite, enqueueWriteBytes, resetWriteState]);
 
     React.useEffect(() => {
         const container = containerRef.current;
@@ -227,7 +299,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
             fontFamily: DEFAULT_FONT_FAMILY,
             fontSize: Math.max(8, Math.round(props.fontSize)),
             scrollback: 5000,
-            screenReaderMode: false,
+            screenReaderMode: true,
             theme: {
                 background: theme.colors.surface.base,
                 foreground: theme.colors.text.primary,
@@ -236,16 +308,13 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
             },
         });
         terminalRef.current = term;
+        ensureWriteQueue();
 
-        const fitAddon = new FitAddon();
+        const fitAddon = createXtermFitAddon();
         fitAddonRef.current = fitAddon;
         term.loadAddon(fitAddon);
-        term.loadAddon(new WebLinksAddon());
-        try {
-            term.loadAddon(new WebglAddon());
-        } catch {
-            // WebGL renderer unavailable; fall back to canvas.
-        }
+        loadXtermWebLinksAddon(term, (uri) => onLinkRef.current?.(uri));
+        tryLoadXtermWebglAddon(term);
 
         term.open(container);
 
@@ -287,7 +356,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
                             if (!text) {
                                 return;
                             }
-                            onInputRef.current(text);
+                            void onPasteRef.current?.(text);
                         })
                         .catch(() => {});
                 }
@@ -302,9 +371,27 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
             onInputRef.current(data);
         });
 
+        const scheduleReadyFitRetry = () => {
+            if (didReportReadyRef.current || readyFitRetryTimeoutRef.current !== null) {
+                return;
+            }
+            if (readyFitRetryCountRef.current >= READY_FIT_MAX_RETRIES) {
+                return;
+            }
+            readyFitRetryCountRef.current += 1;
+            readyFitRetryTimeoutRef.current = window.setTimeout(() => {
+                readyFitRetryTimeoutRef.current = null;
+                if (!fitTerminal('ready')) {
+                    scheduleReadyFitRetry();
+                }
+            }, READY_FIT_RETRY_DELAY_MS);
+        };
+
         const initTimer = typeof window !== 'undefined'
             ? window.setTimeout(() => {
-                fitTerminal('ready');
+                if (!fitTerminal('ready')) {
+                    scheduleReadyFitRetry();
+                }
                 term.focus();
                 scheduleFlushWrites();
             }, 20)
@@ -336,17 +423,31 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
                 window.clearTimeout(resizeTimeoutRef.current);
                 resizeTimeoutRef.current = null;
             }
+            if (readyFitRetryTimeoutRef.current !== null && typeof window !== 'undefined') {
+                window.clearTimeout(readyFitRetryTimeoutRef.current);
+                readyFitRetryTimeoutRef.current = null;
+            }
 
             resizeObserver?.disconnect();
 
-            term.dispose();
+            resetWriteState();
+            suppressQueuedXtermViewportSync(term);
+            // xterm queues internal viewport sync work during open(); suppress stale callbacks before renderer teardown.
+            if (typeof window !== 'undefined') {
+                window.setTimeout(() => {
+                    term.dispose();
+                }, DISPOSE_AFTER_UNMOUNT_DELAY_MS);
+            } else {
+                term.dispose();
+            }
             terminalRef.current = null;
+            writeQueueRef.current = null;
             fitAddonRef.current = null;
             didReportReadyRef.current = false;
+            readyFitRetryCountRef.current = 0;
             lastReportedSizeRef.current = null;
-            resetWriteState();
         };
-    }, [fitTerminal, props.fontSize, resetWriteState, scheduleFlushWrites, theme.colors.surface.base, theme.colors.surface.selected, theme.colors.text.primary]);
+    }, [ensureWriteQueue, fitTerminal, props.fontSize, props.maxPendingWriteBytes, resetWriteState, scheduleFlushWrites, theme.colors.surface.base, theme.colors.surface.selected, theme.colors.text.primary]);
 
     React.useEffect(() => {
         const term = terminalRef.current;

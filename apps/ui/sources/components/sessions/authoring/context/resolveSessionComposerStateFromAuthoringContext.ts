@@ -21,7 +21,10 @@ export function resolveSessionComposerStateFromAuthoringContext(
             snapshot: context.snapshot,
             session: context.session,
             permissionModeOverride: context.draft.permissionMode as SessionComposerState['permissionMode'] | null,
-            modelModeOverride: context.draft.modelId as SessionComposerState['modelMode'] | null,
+            modelModeOverride: (
+                context.draft.modelSelection?.ref.modelId
+                ?? context.draft.modelId
+            ) as SessionComposerState['modelMode'] | null,
             profileIdOverride: context.draft.profileId ?? null,
             currentPathOverride: context.draft.directory,
         });

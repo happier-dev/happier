@@ -222,6 +222,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     function Test() {
       const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -285,6 +286,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     function Test() {
       const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -345,6 +347,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     function Test() {
       const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -405,6 +408,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     function Test() {
       const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -483,6 +487,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     function Test() {
       const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -572,6 +577,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     function Test() {
       const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -670,6 +676,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     function Test() {
       const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',

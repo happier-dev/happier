@@ -16,28 +16,6 @@ const preemptEntryRestoreEffect = (
     ...overrides,
 });
 
-const cancelMountSettleBottomPinEffect = (
-    overrides: Partial<Extract<
-        NativeUserScrollTakeoverApplyEffect,
-        { type: 'native-user-scroll-cancel-native-mount-settle-bottom-pin' }
-    >> = {},
-): NativeUserScrollTakeoverApplyEffect => ({
-    sessionId: 'session-a',
-    type: 'native-user-scroll-cancel-native-mount-settle-bottom-pin',
-    ...overrides,
-});
-
-const suppressAutoPinEffect = (
-    overrides: Partial<Extract<
-        NativeUserScrollTakeoverApplyEffect,
-        { type: 'native-user-scroll-suppress-native-mount-settle-auto-pin' }
-    >> = {},
-): NativeUserScrollTakeoverApplyEffect => ({
-    sessionId: 'session-a',
-    type: 'native-user-scroll-suppress-native-mount-settle-auto-pin',
-    ...overrides,
-});
-
 const clearInitialViewportObservationEffect = (
     overrides: Partial<Extract<
         NativeUserScrollTakeoverApplyEffect,
@@ -71,10 +49,7 @@ describe('native user-scroll takeover apply effects', () => {
         expect(resolveNativeUserScrollTakeoverApplyEffects({
             effects: [
                 preemptEntryRestoreEffect({ sessionId: 'session-b' }),
-                {
-                    sessionId: 'session-a',
-                    type: 'native-touch-cancel-scheduled-pin',
-                },
+                { sessionId: 'session-a', type: 'native-touch-release-live-tail' },
             ],
             sessionId: 'session-a',
         })).toEqual([]);
@@ -83,8 +58,6 @@ describe('native user-scroll takeover apply effects', () => {
     it('returns all current-session native user-scroll takeover effects in order', () => {
         const effects = [
             preemptEntryRestoreEffect(),
-            cancelMountSettleBottomPinEffect(),
-            suppressAutoPinEffect(),
             clearInitialViewportObservationEffect(),
             recordIntentTimestampEffect({ timestampMs: 456 }),
         ];

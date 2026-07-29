@@ -23,6 +23,11 @@ export function useFullscreenDetailsRouteController(
 ): FullscreenDetailsRouteController {
     const lastDismissalSignatureRef = React.useRef<string | null>(null);
     const previousDetailsIsOpenRef = React.useRef(input.detailsIsOpen);
+    const onUnmountRef = React.useRef(input.onUnmount);
+
+    React.useEffect(() => {
+        onUnmountRef.current = input.onUnmount;
+    }, [input.onUnmount]);
 
     React.useEffect(() => {
         lastDismissalSignatureRef.current = null;
@@ -31,9 +36,9 @@ export function useFullscreenDetailsRouteController(
 
     React.useEffect(() => {
         return () => {
-            input.onUnmount?.();
+            onUnmountRef.current?.();
         };
-    }, [input.onUnmount]);
+    }, []);
 
     const dismissRoute = React.useCallback(() => {
         const signature = [

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { WebTranscriptScrollMetrics } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
 import { createTranscriptLifecycleHost } from './lifecycleHost';
@@ -41,7 +41,6 @@ function webScrollIngressInput(
         hasRenderedItems: true,
         isLoaded: true,
         isWarmKeepAliveInstance: false,
-        lastNativePinOffset: null,
         lastScrollOffsetForIntent: 20,
         lastUserScrollIntentAtMs: 0,
         loadOlderInFlight: false,
@@ -52,7 +51,6 @@ function webScrollIngressInput(
         nativeMountSettleDeadlineReached: false,
         nativeMountSettleStable: true,
         nowMs: 1300,
-        pendingBottomPin: false,
         pinEnabled: true,
         pinThresholdPx: 72,
         platform: 'web',
@@ -62,8 +60,15 @@ function webScrollIngressInput(
         },
         sessionId: 'session-a',
         userIntentRecentMs: 500,
-        usesNativeFlashListBottomMaintenance: false,
         wantsPinned: false,
+        webMovementFact: {
+            atEndPublicationCause: 'layout',
+            direction: null,
+            downwardIntent: false,
+            isGenuineUserMovement: false,
+            movedSinceLastObservation: false,
+            upwardIntent: false,
+        },
         ...overrides,
     };
 }
@@ -81,7 +86,6 @@ function scrollIngressCallbacks(
     return {
         activeViewportCommandOwner: () => 'follow',
         applyEntryRestoreOwnerEffects: () => {},
-        applyNativeMountSettlePassiveDriftRepinObservation: () => {},
         applyNativePrependOwnerEffects: () => {},
         applyScrollObservationPlan(plan, callbacks) {
             callbacks.continueAfterEarlyEffects({
@@ -102,20 +106,13 @@ function scrollIngressCallbacks(
         observeNativeBlankRecovery: () => {},
         observeNativePrependOwner: () => {},
         observeOlderPaginationScroll: () => {},
-        observeWebGenuineScrollMovement: () => ({
-            webMovedSinceLastObservation: true,
-            webObservedUpwardIntent: true,
-            webObservedUserScrollMovement: true,
-        }),
-        observeWebTranscriptNavigationVisibility: () => {},
+        observeTranscriptNavigationVisibility: () => {},
         preemptEntryRestoreTransaction: () => {},
         promotePendingJumpSeqViewportSnapshot: () => false,
         recordNativeScrollObservation: () => {},
         recordNativeVisibleWindowTelemetry: () => {},
         recordWebRouteJumpProtectionClearingMovement: () => {},
-        refreshInFlightWebPrependAnchor: () => {},
         resolveWebScrollMetrics: () => null,
-        retargetPendingWebPrependAnchorForUserScroll: () => {},
         shouldIgnoreNativeInvalidScrollObservation: () => false,
         trustedNativePrependScroll: () => [],
         updateNativeViewportPaintObserved: () => {},
@@ -125,6 +122,76 @@ function scrollIngressCallbacks(
 }
 
 describe('observeTranscriptScrollIngress', () => {
+    it('still observes exact-top pagination when jump promotion consumes generic viewport publication', () => {
+        const observeOlderPaginationScroll = vi.fn();
+        const applyScrollObservationPlan = vi.fn(() => false);
+
+        observeTranscriptScrollIngress(webScrollIngressInput(), scrollIngressCallbacks({
+            applyScrollObservationPlan,
+            observeOlderPaginationScroll,
+            promotePendingJumpSeqViewportSnapshot: () => true,
+            resolveWebScrollMetrics: () => webMetrics({
+                clientHeight: 500,
+                scrollHeight: 2000,
+                scrollTop: 0,
+            }),
+        }));
+
+        expect(observeOlderPaginationScroll).toHaveBeenCalledOnce();
+        expect(observeOlderPaginationScroll).toHaveBeenCalledWith({
+            contentHeight: 1200,
+            distanceFromBottom: 1500,
+            layoutHeight: 400,
+            offsetY: 0,
+            trigger: 'edge-reached',
+            webMetrics: expect.objectContaining({
+                clientHeight: 500,
+                scrollHeight: 2000,
+                scrollTop: 0,
+            }),
+        });
+        expect(applyScrollObservationPlan).not.toHaveBeenCalled();
+    });
+
+    it('consumes the renderer movement fact without independently reclassifying the same Legend event', () => {
+        const lifecycleHost = createTranscriptLifecycleHost();
+        lifecycleHost.enterSession({
+            platform: 'web',
+            sessionId: 'session-a',
+            shouldFollowLiveTail: false,
+        });
+        const preemptEntryRestoreTransaction = vi.fn();
+        const recordWebRouteJumpProtectionClearingMovement = vi.fn();
+        const verifyWebEntryRestoreTransaction = vi.fn();
+
+        observeTranscriptScrollIngress(webScrollIngressInput({
+            lastScrollOffsetForIntent: 400,
+            webMovementFact: {
+                atEndPublicationCause: 'layout',
+                direction: 1,
+                downwardIntent: false,
+                isGenuineUserMovement: false,
+                movedSinceLastObservation: true,
+                upwardIntent: false,
+            },
+        }), scrollIngressCallbacks({
+            lifecycleHost,
+            preemptEntryRestoreTransaction,
+            recordWebRouteJumpProtectionClearingMovement,
+            resolveWebScrollMetrics: () => webMetrics({
+                clientHeight: 400,
+                scrollHeight: 1200,
+                scrollTop: 800,
+            }),
+            verifyWebEntryRestoreTransaction,
+        }));
+
+        expect(preemptEntryRestoreTransaction).not.toHaveBeenCalled();
+        expect(recordWebRouteJumpProtectionClearingMovement).not.toHaveBeenCalled();
+        expect(verifyWebEntryRestoreTransaction).toHaveBeenCalledOnce();
+        expect(lifecycleHost.getState().bottomFollowState.mode).toBe('released');
+    });
+
     it('routes invalid native offsets to blank recovery outside telemetry recording', () => {
         const log: string[] = [];
 
@@ -155,29 +222,88 @@ describe('observeTranscriptScrollIngress', () => {
         ]);
     });
 
-    it('refreshes the web prepend anchor when older pagination starts during a discrete scroll observation', () => {
-        const log: string[] = [];
-        let loadOlderInFlight = false;
+    it('fails closed before lifecycle effects when a web renderer omits its movement fact', () => {
+        const applyScrollObservationPlan = vi.fn(() => false);
+        const observeTranscriptNavigationVisibility = vi.fn();
+        const preemptEntryRestoreTransaction = vi.fn();
+        const verifyWebEntryRestoreTransaction = vi.fn();
 
-        observeTranscriptScrollIngress(webScrollIngressInput(), scrollIngressCallbacks({
-            observeOlderPaginationScroll(input) {
-                log.push(`older:${input.trigger}`);
-                loadOlderInFlight = true;
-                return loadOlderInFlight;
-            },
-            refreshInFlightWebPrependAnchor(input) {
-                log.push(`refresh:${input.userScrolledDuringLoad}`);
-            },
+        const result = observeTranscriptScrollIngress(webScrollIngressInput({
+            webMovementFact: undefined,
+        }), scrollIngressCallbacks({
+            applyScrollObservationPlan,
+            observeTranscriptNavigationVisibility,
+            preemptEntryRestoreTransaction,
             resolveWebScrollMetrics: () => webMetrics({
-                clientHeight: 500,
-                scrollHeight: 2000,
-                scrollTop: 0,
+                clientHeight: 400,
+                scrollHeight: 1200,
+                scrollTop: 800,
+            }),
+            verifyWebEntryRestoreTransaction,
+        }));
+
+        expect(result.consumed).toBe(true);
+        expect(result.observation?.platform).toBe('web');
+        expect(observeTranscriptNavigationVisibility).not.toHaveBeenCalled();
+        expect(preemptEntryRestoreTransaction).not.toHaveBeenCalled();
+        expect(verifyWebEntryRestoreTransaction).not.toHaveBeenCalled();
+        expect(applyScrollObservationPlan).not.toHaveBeenCalled();
+    });
+
+    it('publishes navigation visibility with the renderer web movement classification', () => {
+        const observeTranscriptNavigationVisibility = vi.fn();
+
+        observeTranscriptScrollIngress(webScrollIngressInput({
+            webMovementFact: {
+                atEndPublicationCause: 'user',
+                direction: -1,
+                downwardIntent: false,
+                isGenuineUserMovement: true,
+                movedSinceLastObservation: true,
+                upwardIntent: true,
+            },
+        }), scrollIngressCallbacks({
+            observeTranscriptNavigationVisibility,
+            resolveWebScrollMetrics: () => webMetrics({
+                clientHeight: 400,
+                scrollHeight: 1200,
+                scrollTop: 600,
             }),
         }));
 
-        expect(log).toEqual([
-            'older:edge-reached',
-            'refresh:true',
-        ]);
+        expect(observeTranscriptNavigationVisibility).toHaveBeenCalledWith({ genuineUserMovement: true });
+    });
+
+    // React Native puts `isTrusted` on the WEB synthetic event wrapper only; a
+    // native scroll payload never carries it, so deriving the release signal from
+    // it would answer `false` forever and a native jump landing would pin the rail
+    // to the landed turn for the rest of the session. The app-owned open-drag fact
+    // is the native user-authority signal.
+    it('derives the native release signal from the open drag, not from event trust', () => {
+        const withoutDrag = vi.fn();
+        observeTranscriptScrollIngress(webScrollIngressInput({
+            eventNativeEvent: {
+                contentOffset: { y: 300 },
+                contentSize: { height: 1200 },
+                layoutMeasurement: { height: 400 },
+            },
+            nativeListDragActive: false,
+            platform: 'native',
+            webMovementFact: undefined,
+        }), scrollIngressCallbacks({ observeTranscriptNavigationVisibility: withoutDrag }));
+        expect(withoutDrag).toHaveBeenCalledWith({ genuineUserMovement: false });
+
+        const withDrag = vi.fn();
+        observeTranscriptScrollIngress(webScrollIngressInput({
+            eventNativeEvent: {
+                contentOffset: { y: 300 },
+                contentSize: { height: 1200 },
+                layoutMeasurement: { height: 400 },
+            },
+            nativeListDragActive: true,
+            platform: 'native',
+            webMovementFact: undefined,
+        }), scrollIngressCallbacks({ observeTranscriptNavigationVisibility: withDrag }));
+        expect(withDrag).toHaveBeenCalledWith({ genuineUserMovement: true });
     });
 });

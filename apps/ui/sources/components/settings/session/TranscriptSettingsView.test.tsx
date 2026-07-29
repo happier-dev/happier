@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderSettingsView } from '@/dev/testkit';
 import { installSessionSettingsCommonModuleMocks } from './sessionSettingsViewTestHelpers';
+import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,7 +15,7 @@ installSessionSettingsCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettingMutable: (name: string) => {
+                useSettingMutable: createUseSettingMutableMockFromReader((name) => {
                     if (name === 'transcriptGroupingMode') {
                         return ['turns', vi.fn()];
                     }
@@ -37,7 +38,7 @@ installSessionSettingsCommonModuleMocks({
                         return ['hover_web_hidden_mobile', setTranscriptMessageTimestampDisplayMode];
                     }
                     return [null, vi.fn()];
-                },
+                }),
             },
         });
     },

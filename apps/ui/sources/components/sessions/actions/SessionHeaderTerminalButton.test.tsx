@@ -52,6 +52,7 @@ const pane: AppPaneScopeApi = {
     setBottomTab: setBottomTabSpy,
     setBottomTabState: vi.fn(),
     openDetailsTab: openDetailsTabSpy,
+    replaceDetailsTab: vi.fn(),
     setDetailsTabState: vi.fn(),
     pinDetailsTab: vi.fn(),
     unpinDetailsTab: vi.fn(),
@@ -93,6 +94,23 @@ describe('SessionHeaderTerminalButton', () => {
         scopeState.details.isOpen = false;
         scopeState.details.activeTabKey = null;
         scopeState.details.tabs = [];
+    });
+
+    it('switches an open attached terminal back to the workspace shell instead of closing the pane', async () => {
+        const { setSessionTerminalMode, readSessionTerminalMode } = await import('../terminal/sessionTerminalMode');
+        setSessionTerminalMode('s1', 'session_attach');
+        const scopeState = pane.scopeState;
+        if (!scopeState) throw new Error('Expected pane scope state');
+        scopeState.bottom.isOpen = true;
+        scopeState.bottom.activeTabId = 'terminal';
+
+        const { SessionHeaderTerminalButton } = await import('./SessionHeaderTerminalButton');
+        const screen = await renderScreen(<SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" />);
+        await screen.pressByTestIdAsync('session-header-terminal-button');
+
+        expect(readSessionTerminalMode('s1')).toBe('workspace_shell');
+        expect(closeBottomSpy).not.toHaveBeenCalled();
+        expect(openBottomSpy).toHaveBeenCalledWith({ tabId: 'terminal' });
     });
 
     it('opens terminal in the bottom pane when docked to bottom', async () => {

@@ -42,6 +42,13 @@ const preferredSessionServerIdState = vi.hoisted(() => {
 });
 const resolveSessionTargetServerIdSpy = vi.fn<(sessionId: string) => string | null>();
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (!Array.isArray(style)) {
+        return style && typeof style === 'object' ? style as Record<string, unknown> : {};
+    }
+    return Object.assign({}, ...style.map(flattenStyle));
+}
+
 installTranscriptCommonModuleMocks({
     storage: async (importOriginal) => {
         const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
@@ -122,7 +129,13 @@ describe('TranscriptRollbackActionButton', () => {
         );
         expect(getTranscriptModalMockRef().current).not.toBeNull();
         expect(getTranscriptModalMockRef().current.spies.alert).not.toHaveBeenCalled();
-        expect(screen.findByTestId('rollback-action')?.props.accessibilityLabel).toBe('session.rollback.latestTurnA11y');
+        const rollbackAction = screen.findByTestId('rollback-action');
+        expect(rollbackAction?.props.accessibilityLabel).toBe('session.rollback.latestTurnA11y');
+        const rollbackStyle = typeof rollbackAction?.props.style === 'function'
+            ? rollbackAction.props.style({ pressed: false })
+            : rollbackAction?.props.style;
+        expect(flattenStyle(rollbackStyle).minWidth).toBeGreaterThanOrEqual(44);
+        expect(flattenStyle(rollbackStyle).minHeight).toBeGreaterThanOrEqual(44);
         expect(createDefaultActionExecutorSpy).toHaveBeenCalledWith(expect.objectContaining({
             resolveServerIdForSessionId: expect.any(Function),
         }));
@@ -155,6 +168,32 @@ describe('TranscriptRollbackActionButton', () => {
 
         expect(createDefaultActionExecutorSpy.mock.calls.at(-1)?.[0]?.resolveServerIdForSessionId?.('s1')).toBe('server-reactive');
         await screen.unmount();
+    });
+
+    it('uses a physical 48dp Android target without overlapping hit slop', async () => {
+        const { Platform } = await import('react-native');
+        const previousPlatform = Platform.OS;
+        (Platform as { OS: string }).OS = 'android';
+        try {
+            const { TranscriptRollbackActionButton } = await import('./TranscriptRollbackActionButton');
+            const screen = await renderScreen(
+                <TranscriptRollbackActionButton
+                    sessionId="session-1"
+                    testID="rollback-action"
+                />,
+            );
+
+            const rollbackAction = screen.findByTestId('rollback-action');
+            const rollbackStyle = typeof rollbackAction?.props.style === 'function'
+                ? rollbackAction.props.style({ pressed: false })
+                : rollbackAction?.props.style;
+            expect(flattenStyle(rollbackStyle).minWidth).toBeGreaterThanOrEqual(48);
+            expect(flattenStyle(rollbackStyle).minHeight).toBeGreaterThanOrEqual(48);
+            expect(rollbackAction?.props.hitSlop).toBeUndefined();
+            await screen.unmount();
+        } finally {
+            (Platform as { OS: string }).OS = previousPlatform;
+        }
     });
 
     it('alerts when the underlying rollback RPC result is not ok', async () => {

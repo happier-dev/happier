@@ -1,5 +1,8 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { serverFetch } from '@/sync/http/client';
+import {
+  serverFetch,
+  type ExpectedActiveServerFetchBasis,
+} from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
 
@@ -25,7 +28,10 @@ const ConnectedServiceQuotasV2ResponseSchema = z.object({
 export async function getConnectedServiceQuotaSnapshotSealed(
   credentials: AuthCredentials,
   params: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>,
-  opts?: Readonly<{ signal?: AbortSignal }>,
+  opts?: Readonly<{
+    signal?: AbortSignal;
+    expectedActiveServer?: ExpectedActiveServerFetchBasis;
+  }>,
 ): Promise<Readonly<{
   sealed: SealedConnectedServiceQuotaSnapshotV1;
   metadata: {
@@ -46,7 +52,12 @@ export async function getConnectedServiceQuotaSnapshotSealed(
           'Content-Type': 'application/json',
         },
       },
-      { includeAuth: false },
+      {
+        includeAuth: false,
+        ...(opts?.expectedActiveServer
+          ? { expectedActiveServer: opts.expectedActiveServer }
+          : {}),
+      },
     );
 
     if (response.status === 404) return null;
@@ -77,6 +88,9 @@ export async function getConnectedServiceQuotaSnapshotSealed(
 export async function requestConnectedServiceQuotaSnapshotRefresh(
   credentials: AuthCredentials,
   params: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>,
+  opts?: Readonly<{
+    expectedActiveServer?: ExpectedActiveServerFetchBasis;
+  }>,
 ): Promise<boolean> {
   return await backoff(async () => {
     const response = await serverFetch(
@@ -89,7 +103,12 @@ export async function requestConnectedServiceQuotaSnapshotRefresh(
         },
         body: JSON.stringify({}),
       },
-      { includeAuth: false },
+      {
+        includeAuth: false,
+        ...(opts?.expectedActiveServer
+          ? { expectedActiveServer: opts.expectedActiveServer }
+          : {}),
+      },
     );
 
     if (response.status === 404) return false;

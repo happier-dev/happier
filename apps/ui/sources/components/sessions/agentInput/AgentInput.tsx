@@ -1,73 +1,104 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import {
     Ionicons,
-    Octicons } from '@expo/vector-icons';
+    Octicons,
+} from '@expo/vector-icons';
 import * as React from 'react';
-import { View,
+import {
+    View,
     Platform,
     useWindowDimensions,
     ViewStyle,
     Pressable,
-    ScrollView } from 'react-native';
+    ScrollView,
+} from 'react-native';
 import { layout } from '@/components/ui/layout/layout';
+import { STAGE_SPOTLIGHT_TARGET_IDS } from '@/components/onboarding/tour/stage/stageSpotlightTargetIds';
+import {
+    useSpotlightTarget,
+} from '@/components/onboarding/tour/stage/useSpotlightTarget';
 import { useComposerKeyboardLayoutContext } from '@/components/sessions/keyboardAvoidance';
-import { createBackdropNativeStyle,
-    createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
-import { MultiTextInput,
+import {
+    createBackdropNativeStyle,
+    createBackdropWebStyle,
+} from '@/components/ui/overlays/createBackdropLayerStyle';
+import {
+    MultiTextInput,
     KeyPressEvent,
-    type MultiTextInputSubmitBehavior } from '@/components/ui/forms/MultiTextInput';
+    type MultiTextInputSubmitBehavior,
+} from '@/components/ui/forms/MultiTextInput';
 import {
     TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS,
     isLargeTextInputValueLength,
 } from '@/components/ui/forms/largeTextInputPolicy';
 import { MULTI_TEXT_INPUT_BASE_FONT_SIZE } from '@/components/ui/forms/multiTextInputTypography';
 import { Typography } from '@/constants/Typography';
-import type { PermissionMode,
-    ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import { findModelOptionForEffectiveModelId,
+import type {
+    PermissionMode,
+    ModelMode,
+} from '@/sync/domains/permissions/permissionTypes';
+import {
+    findModelOptionForEffectiveModelId,
     getModelOptionsForSession,
     supportsFreeformModelSelectionForSession,
-    type ModelOption } from '@/sync/domains/models/modelOptions';
+    type ModelOption,
+} from '@/sync/domains/models/modelOptions';
 import { describeEffectiveModelMode } from '@/sync/domains/models/describeEffectiveModelMode';
+import {
+    ReportedModelStatusIcon,
+    reportedModelSummary,
+    type ReportedModelStatus,
+} from '@/components/sessions/modelPicker/reportedModelPresentation';
 import { Modal } from '@/modal';
 import {
     getPermissionModeBadgeLabelForAgentType,
     getPermissionModeLabelForAgentType,
     getPermissionModeOptionsForSession,
-    } from '@/sync/domains/permissions/permissionModeOptions';
+} from '@/sync/domains/permissions/permissionModeOptions';
 import { describeEffectivePermissionMode } from '@/sync/domains/permissions/describeEffectivePermissionMode';
 import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
-import { hapticsLight,
-    hapticsError } from '@/components/ui/theme/haptics';
+import {
+    hapticsLight,
+    hapticsError,
+} from '@/components/ui/theme/haptics';
 import { type ShakeInstance } from '@/components/ui/feedback/Shaker';
-import { StatusDot } from '@/components/ui/status/StatusDot';
-import { findActiveWord,
-    type ActiveWord } from '@/components/autocomplete/findActiveWord';
+import {
+    findActiveWord,
+    type ActiveWord,
+} from '@/components/autocomplete/findActiveWord';
 import { useActiveSuggestions } from '@/components/autocomplete/useActiveSuggestions';
-import { TextInputState,
-    MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
+import {
+    TextInputState,
+    MultiTextInputHandle,
+} from '@/components/ui/forms/MultiTextInput';
 import { applySuggestion } from '@/components/autocomplete/applySuggestion';
-import { useCommandMenuKeyboard,
-    type CommandMenuAnchor } from '@/components/ui/commandMenu';
+import {
+    useCommandMenuKeyboard,
+    type CommandMenuAnchor,
+} from '@/components/ui/commandMenu';
 import { useTextInputCaretRect } from '@/hooks/ui/textInputCaretRect';
-import { type ModelPickerProbeState } from '@/components/model/ModelPickerOverlay';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
-import { StyleSheet,
-    useUnistyles } from 'react-native-unistyles';
+import {
+    StyleSheet,
+    useUnistyles,
+} from 'react-native-unistyles';
 import {
     useSessionMessagesById,
     useSessionMessagesReducerState,
     useSessionMessagesVersion,
     useSessionTranscriptIds,
     useSetting,
-    } from '@/sync/domains/state/storage';
+} from '@/sync/domains/state/storage';
 import { useUserMessageHistory } from '@/hooks/session/useUserMessageHistory';
 import { Theme } from '@/theme';
 import { t } from '@/text';
 import { Metadata } from '@/sync/domains/state/storageTypes';
-import { getProfileEnvironmentVariables,
-    type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
-import { DEFAULT_AGENT_ID,
+import {
+    getProfileEnvironmentVariables,
+    type AIBackendProfile,
+} from '@/sync/domains/profiles/profileCompatibility';
+import {
+    DEFAULT_AGENT_ID,
     getAgentCore,
     type AgentId,
 } from '@/agents/catalog/catalog';
@@ -80,6 +111,11 @@ import { AgentInputScrollableChipRow } from './layout/AgentInputScrollableChipRo
 import { PathAndResumeRow } from './layout/PathAndResumeRow';
 import { getHasAnyAgentInputActions, shouldShowSecondaryControlRow } from './layout/actionBarLogic';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useVoiceDictation } from '@/voice/dictation/useVoiceDictation';
+import {
+    resolveVoiceDictationFailureTranslationKey,
+    resolveVoiceDictationStartErrorTranslationKey,
+} from '@/voice/dictation/voiceDictationErrorCopy';
 import {
     clampNumber,
     computeAgentInputDefaultMaxHeight,
@@ -88,12 +124,14 @@ import {
     resolveAgentInputHostPanelMaxHeight,
     type AgentInputPanelMaxHeightMode,
 } from './inputMaxHeight';
-import { getContextWarning } from './contextWarning';
-import { resolveContextWarningWindowTokens } from './resolveContextWarningWindowTokens';
 import { shouldRenderPermissionChip } from './permissionChipVisibility';
 import { type AgentInputContentPopoverConfig } from './components/AgentInputContentPopover';
 import { AgentInputEngineDetail } from './components/AgentInputEngineDetail';
-import { AgentInputProviderUsageBadge } from './components/AgentInputProviderUsageBadge';
+import {
+    SessionInstrumentStrip,
+    type SessionInstrumentStripPermission,
+    type SessionInstrumentStripQuota,
+} from './instrumentStrip';
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
 import { AgentInputAttachmentsRow } from './components/AgentInputAttachmentsRow';
 import { AgentInputOverlayLayer } from './components/AgentInputOverlayLayer';
@@ -113,6 +151,8 @@ import { recordLargeTextInputDiagnostic } from '@/utils/system/userInteractionDi
 import { buildAgentInputSelectionOverlayViewModel } from './selection/buildAgentInputSelectionOverlayViewModel';
 import { useAgentInputSelectionAnchors } from './selection/useAgentInputSelectionAnchors';
 import { useAgentInputSelectionOverlayController } from './selection/useAgentInputSelectionOverlayController';
+import { deferAgentInputPopoverClose } from './selection/deferAgentInputPopoverClose';
+import { useAgentInputExternalPickerRequest } from './selection/useAgentInputExternalPickerRequest';
 import { computeSessionModePickerControl } from '@/sync/domains/sessionControl/sessionModeControl';
 import {
     computeAcpConfigOptionControls,
@@ -126,6 +166,7 @@ import { Text } from '@/components/ui/text/Text';
 import { buildGlassCastShadowStyle } from '@/shadowElevation';
 import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 import { isGlassComposerSurface } from './composerSurfaceStyle';
+import { COMPOSER_SURFACE_RADIUS } from './composerContentInset';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
 import { resolvePermissionToolCallLocations } from '@/utils/sessions/permissions/resolvePermissionToolCallLocations';
 import { resolveApprovalToolCallLocations } from '@/utils/sessions/approvals/resolveApprovalToolCallLocations';
@@ -136,7 +177,7 @@ import {
 import { buildSessionMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { useLocalSetting } from '@/sync/store/hooks';
-import type { AcpConfigOptionOverridesV1, SessionContextUsageSnapshotV1 } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import { useWebFileDropZone } from '@/hooks/ui/useWebFileDropZone';
 import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
 import { extractWebAttachmentFilesFromDataTransfer } from '@/utils/files/webAttachmentDataTransfer';
@@ -147,10 +188,10 @@ import type {
     AgentInputStatusBadge as AgentInputStatusBadgeDescriptor,
 } from './agentInputContracts';
 import type { AgentInputSendIntentOptions, AgentInputSendOptions } from './agentInputSendOptions';
-import { AgentInputStatusBadge } from './status/AgentInputStatusBadge';
 import type { AgentInputChipPickerOption } from './components/AgentInputChipPickerTypes';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { insertTextAtSelection } from './insertTextAtSelection';
+import { applyDictationToComposer } from './applyDictationToComposer';
 import { subscribeToIosHardwareShiftEnter } from './subscribeToIosHardwareShiftEnter';
 import {
     COMPOSER_ABORT_CONFIRMATION_WINDOW_MS,
@@ -164,7 +205,6 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { SyncPerformanceReactProfiler } from '@/components/ui/performance/SyncPerformanceReactProfiler';
 import type { PromptInvocationSuggestionMetadata } from '@/sync/domains/input/slashCommands/promptInvocationSuggestion';
 import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
-import type { ConnectedServiceQuotaGaugeViewModel } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import {
     buildStructuredInputMetaOverrides,
     createStructuredInputMentionFromSuggestion,
@@ -198,9 +238,9 @@ const AGENT_INPUT_CONTAINER_VERTICAL_PADDING = 4;
 const AGENT_INPUT_CONTAINER_VERTICAL_CHROME_HEIGHT = AGENT_INPUT_CONTAINER_VERTICAL_PADDING * 2;
 const AGENT_INPUT_PANEL_PADDING_TOP = 2;
 const AGENT_INPUT_PANEL_PADDING_BOTTOM = 8;
-// Composer panel corner radius. Shared by the panel surface and its cast-shadow
-// wrapper so the drop shadow follows the same rounded shape.
-const AGENT_INPUT_PANEL_RADIUS = Platform.select({ default: 16, android: 20 });
+// Composer panel corner radius. Shared by the panel surface, its cast-shadow wrapper so the drop
+// shadow follows the same rounded shape, and the auxiliary banners stacked above the panel.
+const AGENT_INPUT_PANEL_RADIUS = COMPOSER_SURFACE_RADIUS;
 const AGENT_INPUT_PANEL_VERTICAL_CHROME_HEIGHT = AGENT_INPUT_PANEL_PADDING_TOP + AGENT_INPUT_PANEL_PADDING_BOTTOM;
 const AGENT_INPUT_VARIABLE_SECTION_CONTENT_PADDING_BOTTOM = 4;
 
@@ -289,8 +329,6 @@ interface AgentInputProps {
     onSend: (options?: AgentInputSendOptions) => void;
     submitAccessibilityLabel?: string;
     sendIcon?: React.ReactNode;
-    onMicPress?: () => void;
-    isMicActive?: boolean;
     permissionMode?: PermissionMode;
     onPermissionModeChange?: (mode: PermissionMode) => void;
     onPermissionClick?: () => void;
@@ -311,12 +349,14 @@ interface AgentInputProps {
     /**
      * Optional: show a probe/loading state + refresh control in the ACP mode picker.
      */
-    acpSessionModeOptionsOverrideProbe?: ModelPickerProbeState;
+    acpSessionModeOptionsOverrideProbe?: OptionPickerProbeState;
     acpConfigOptionsOverride?: ReadonlyArray<AcpConfigOption>;
-    acpConfigOptionsOverrideProbe?: ModelPickerProbeState;
+    acpConfigOptionsOverrideProbe?: OptionPickerProbeState;
     acpConfigOptionOverridesOverride?: AcpConfigOptionOverridesV1 | null;
     onAcpConfigOptionChange?: (configId: string, valueId: AcpConfigOptionValueId) => void;
     modelMode?: ModelMode;
+    /** Whether the session runtime is active; omitted when this composer has no runtime. */
+    sessionActive?: boolean;
     onModelModeChange?: (mode: ModelMode) => void;
     /**
      * Optional override for model picker options.
@@ -328,7 +368,11 @@ interface AgentInputProps {
      * Optional: show a probe/loading state + refresh control in the model picker.
      * Intended for preflight (no-session) flows that dynamically probe models.
      */
-    modelOptionsOverrideProbe?: ModelPickerProbeState;
+    modelOptionsOverrideProbe?: OptionPickerProbeState;
+    /** Optional domain-owned model list UI; AgentInput still owns the surrounding engine detail. */
+    modelContentOverride?: React.ReactNode;
+    /** Changes to a non-empty key open the model/agent picker for an explicit external action. */
+    openModelPickerRequestKey?: string | null;
     metadata?: Metadata | null;
     onAbort?: () => void | Promise<void>;
     showAbortButton?: boolean;
@@ -338,26 +382,17 @@ interface AgentInputProps {
         dotColor: string;
         isPulsing?: boolean;
     };
-    providerUsageGauge?: ConnectedServiceQuotaGaugeViewModel | null;
-    onProviderUsageRecoveryCreditPress?: () => void;
-    providerUsageRecoveryCreditPending?: boolean;
+    /**
+     * Plan/quota usage bundle rendered by the instrument strip. Data path stays
+     * System-B-owned (SessionView); the strip only restyles the trigger.
+     */
+    instrumentQuota?: SessionInstrumentStripQuota | null;
     statusBadges?: ReadonlyArray<AgentInputStatusBadgeDescriptor>;
     activeStatusBadgeKey?: string | null;
     onActiveStatusBadgeKeyChange?: (key: string | null) => void;
     autocompletePrefixes: string[];
     autocompleteSuggestions: (query: string) => Promise<AutocompleteSuggestion[]>;
     onAutocompleteSuggestionSelect?: AgentInputAutocompleteSelectionHandler;
-    usageData?: {
-        inputTokens: number;
-        outputTokens: number;
-        cacheCreation: number;
-        cacheRead: number;
-        contextSize: number;
-        contextWindowTokens?: number;
-        contextSnapshot?: SessionContextUsageSnapshotV1;
-        contextSnapshotStale?: boolean;
-    };
-    alwaysShowContextSize?: boolean;
     onFileViewerPress?: () => void;
     agentType?: AgentId;
     agentLabel?: string | null;
@@ -414,6 +449,42 @@ interface AgentInputProps {
     panelStyle?: ViewStyle;
     maxWidthCap?: number | null;
     extraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
+    /**
+     * A control rendered immediately before the submit button, at the trailing
+     * edge of the action row.
+     *
+     * `extraActionChips` places contributions in the LEADING chip row, which in
+     * a live session already carries model, mode, target, permission, account,
+     * attach, mention, branch and diff. A *mode* that must stay operable while
+     * the trailing slot is a Stop button — Voice being the case this exists for —
+     * has nowhere to go there.
+     *
+     * Purely additive: when omitted the action row is byte-identical to before.
+     */
+    trailingAccessory?: React.ReactNode;
+    /**
+     * Whether the submit button may become the dictation mic when the composer
+     * is empty. Defaults to `true` (today's behaviour).
+     *
+     * Hosts that surface speech through their own control set this `false` so
+     * the submit button means exactly one thing — send, or stop. That also
+     * un-shadows `showStopWhenEmpty` in `AgentInputSubmitButton`, which is
+     * currently unreachable whenever the `voice` feature is on, because
+     * `showDictation` always wins for an empty composer.
+     */
+    submitDictation?: boolean;
+    /**
+     * A control pinned to the top-right of the text field itself.
+     *
+     * This is where an affordance belongs when it **acts on the field's text**
+     * rather than on the session — dictation being the case it exists for, since
+     * dictation appends words to the input and nothing else.
+     *
+     * The composer owns the stacking: the accessory takes the expand toggle's
+     * slot while that toggle is hidden, and drops one row beneath it when the
+     * toggle appears, so the two never collide.
+     */
+    fieldAccessory?: React.ReactNode;
     attachments?: ReadonlyArray<AgentInputAttachment>;
     onAttachmentsAdded?: (files: readonly File[]) => void;
     hasSendableAttachments?: boolean;
@@ -509,6 +580,20 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     innerContainer: {
         width: '100%',
         position: 'relative',
+    },
+    // Mirrors AgentInputExpansionToggle's 24pt slot so the two stack cleanly.
+    fieldAccessory: {
+        position: 'absolute',
+        top: 6,
+        right: 6,
+        zIndex: 2,
+        width: 24,
+        height: 24,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    fieldAccessoryBelowToggle: {
+        top: 34,
     },
     // Default (non-glass) composer surface — the original styling: standard input
     // background + hairline surface border, no drop shadow.
@@ -692,11 +777,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     permissionModeText: {
         fontSize: 11,
-        ...Typography.default(),
-    },
-    contextWarningText: {
-        fontSize: 11,
-        marginLeft: 8,
         ...Typography.default(),
     },
 
@@ -1041,8 +1121,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const liveTextStatusRef = React.useRef(liveTextStatus);
     const hasText = liveTextStatus.hasText;
     const hasSendableContent = hasText || props.hasSendableAttachments === true;
-    const micPressHandler = voiceEnabled ? props.onMicPress : undefined;
-    const micActive = voiceEnabled && props.isMicActive === true;
+    const dictation = useVoiceDictation(props.sessionId);
     const [fileDragActive, setFileDragActive] = React.useState(false);
     const handleFilesDroppedToComposer = React.useCallback((event: any) => {
         const onAttachmentsAdded = props.onAttachmentsAdded;
@@ -1085,8 +1164,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const sessionModelsState = React.useMemo(() => {
         if (props.modelOptionsOverride) return { hasSessionModelsState: false, availableCount: 0 };
         const raw = readSessionModelsState(props.metadata ?? null);
-        const provider = typeof raw?.provider === 'string' ? raw.provider.trim() : '';
-        if (!provider || provider !== agentId) return { hasSessionModelsState: false, availableCount: 0 };
+        const stateAgentId = typeof raw?.agentId === 'string' ? raw.agentId.trim() : '';
+        if (!stateAgentId || stateAgentId !== agentId) return { hasSessionModelsState: false, availableCount: 0 };
         const available = Array.isArray(raw?.availableModels) ? raw.availableModels : [];
         return { hasSessionModelsState: true, availableCount: available.length };
     }, [agentId, props.metadata, props.modelOptionsOverride]);
@@ -1105,11 +1184,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return baseModelOptions;
     }, [baseModelOptions, props.modelOptionsOverride, sessionModelsState.availableCount, sessionModelsState.hasSessionModelsState]);
 
-    const sessionModelOptionsProbe = React.useMemo<ModelPickerProbeState | null>(() => {
+    const sessionModelOptionsProbe = React.useMemo<OptionPickerProbeState | null>(() => {
         if (props.modelOptionsOverride) return null;
         if (!sessionModelsState.hasSessionModelsState) return null;
         if (sessionModelsState.availableCount > 0) return null;
-        const phase: ModelPickerProbeState['phase'] = lastNonEmptySessionModelOptionsRef.current ? 'refreshing' : 'loading';
+        const phase: OptionPickerProbeState['phase'] = lastNonEmptySessionModelOptionsRef.current ? 'refreshing' : 'loading';
         return { phase };
     }, [props.modelOptionsOverride, sessionModelsState.availableCount, sessionModelsState.hasSessionModelsState]);
 
@@ -1151,34 +1230,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 // Always show a stable "profile" icon so the chip reads as Profile selection (not "current provider").
                 return 'person-circle-outline';
             }, []);
-
-    const contextWindowTokens = React.useMemo(
-        () => resolveContextWarningWindowTokens({
-            agentId,
-            metadata: props.metadata ?? null,
-            usageData: props.usageData,
-        }),
-        [agentId, props.metadata, props.usageData],
-    );
-
-    const contextWarning = React.useMemo(() => {
-        const alwaysShow = props.alwaysShowContextSize ?? false;
-        if (typeof contextWindowTokens !== 'number') {
-            return null;
-        }
-        if (!props.usageData && !alwaysShow) {
-            return null;
-        }
-
-        return getContextWarning({
-            contextSize: props.usageData?.contextSize ?? 0,
-            contextWindowTokens,
-            contextSnapshot: props.usageData?.contextSnapshot,
-            contextSnapshotStale: props.usageData?.contextSnapshotStale,
-            alwaysShow,
-            theme,
-        });
-    }, [contextWindowTokens, props.alwaysShowContextSize, props.usageData, theme]);
 
     const agentInputEnterToSend = useSetting('agentInputEnterToSend');
     const agentInputEnterToSendNative = useSetting('agentInputEnterToSendNative');
@@ -1437,6 +1488,53 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         props.inputPersistence?.onSelectionChangePersist(newState.selection, newState.text.length);
     }, [hasRetainedHistorySession, messageHistory, props.inputPersistence, updateActiveWordState, updateInputSelectionState, updateStructuredInputMentions]);
 
+    const handleDictationPress = React.useCallback(async () => {
+        try {
+            const result = await dictation.toggle();
+            if (result.kind !== 'completed') return;
+            if (!result.text) {
+                Modal.alert(t('voiceAssistant.dictationNoSpeech'));
+                return;
+            }
+            applyDictationToComposer({
+                input: inputRef.current,
+                state: inputStateRef.current,
+                text: result.text,
+            });
+        } catch (error) {
+            if (
+                error instanceof Error
+                && error.message === 'mic_permission_denied'
+            ) {
+                return;
+            }
+            const busyTranslationKey =
+                resolveVoiceDictationStartErrorTranslationKey(error);
+            if (busyTranslationKey) {
+                Modal.alert(t('common.error'), t(busyTranslationKey));
+                return;
+            }
+            Modal.alert(t('common.error'), t('errors.dictationFailed'));
+        }
+    }, [dictation.toggle]);
+
+    React.useEffect(() => {
+        if (!dictation.failure) return;
+        if (dictation.failure.kind !== 'mic_permission_denied') {
+            Modal.alert(
+                t('common.error'),
+                t(resolveVoiceDictationFailureTranslationKey(dictation.failure.reason)),
+            );
+        }
+        dictation.dismissFailure(dictation.failure.id);
+    }, [dictation.dismissFailure, dictation.failure]);
+
+    const dictationPressHandler = voiceEnabled && props.sessionId && props.submitDictation !== false
+        ? handleDictationPress
+        : undefined;
+    const dictationStatus = voiceEnabled ? dictation.status : 'idle';
+    const dictationActive = dictationStatus !== 'idle';
+
     React.useEffect(() => {
         historyAppliedInputStateRef.current = null;
     }, [props.sessionId, historyScope]);
@@ -1672,6 +1770,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     // Action menu popover state
     const composerAnchorRef = React.useRef<View>(null);
+    const stageSpotlightRef = React.useRef<View>(null);
+    const stageSpotlightProps = useSpotlightTarget(
+        stageSpotlightRef,
+        props.sessionId ? STAGE_SPOTLIGHT_TARGET_IDS.composerQueue : null,
+    );
 
     const {
         commandMenuOpen,
@@ -1801,13 +1904,37 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         });
     }, [agentId, props.metadata, props.modelMode]);
 
-    const effectiveModelLabel = React.useMemo(() => {
-        const found = modelOptions.find((o) => o.value === effectiveModelPolicy.effectiveModelId);
+    const selectedModelLabel = React.useMemo(() => {
+        const found = findModelOptionForEffectiveModelId(modelOptions, effectiveModelPolicy.selectedModelId);
         if (found) return found.label;
-        return effectiveModelPolicy.effectiveModelId === 'default'
+        return effectiveModelPolicy.selectedModelId === 'default'
             ? t('agentInput.model.useCliSettings')
-            : effectiveModelPolicy.effectiveModelId;
-    }, [effectiveModelPolicy.effectiveModelId, modelOptions]);
+            : effectiveModelPolicy.selectedModelId;
+    }, [effectiveModelPolicy.selectedModelId, modelOptions]);
+
+    const appliedModelPresentation = React.useMemo(() => {
+        const appliedModelId = effectiveModelPolicy.appliedModelId;
+        if (!appliedModelId) return null;
+        const found = findModelOptionForEffectiveModelId(modelOptions, appliedModelId);
+        const label = found?.label ?? appliedModelId;
+        const status: ReportedModelStatus = props.sessionActive === true
+            ? 'running'
+            : props.sessionActive === false
+                ? 'last_used'
+                : 'last_reported';
+        return {
+            optionValue: found?.value ?? appliedModelId,
+            status,
+            summary: reportedModelSummary(status, label),
+        };
+    }, [effectiveModelPolicy.appliedModelId, modelOptions, props.sessionActive]);
+
+    const modelNotes = React.useMemo(() => {
+        if (props.sessionActive === false) {
+            return [t('agentInput.model.selectedForResume')];
+        }
+        return effectiveModelPolicy.notes;
+    }, [effectiveModelPolicy.notes, props.sessionActive]);
 
     const canEnterCustomModel = React.useMemo(() => {
         return supportsFreeformModelSelectionForSession(agentId, props.metadata ?? null);
@@ -1947,7 +2074,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (!props.onAcpConfigOptionChange) return null;
         // [1m]-tolerant: a Claude extended-context variant id (`<id>[1m]`) keeps the base
         // model's controls (Thinking / Ultracode) while the variant is selected.
-        const selectedModel = findModelOptionForEffectiveModelId(modelOptions, effectiveModelPolicy.effectiveModelId);
+        const selectedModel = findModelOptionForEffectiveModelId(modelOptions, effectiveModelPolicy.selectedModelId);
         if (!selectedModel?.modelOptions?.length) return null;
         return computeAcpConfigOptionControlsFromOverride({
             agentId,
@@ -1956,7 +2083,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         });
     }, [
         agentId,
-        effectiveModelPolicy.effectiveModelId,
+        effectiveModelPolicy.selectedModelId,
         modelOptions,
         props.acpConfigOptionOverridesOverride,
         props.onAcpConfigOptionChange,
@@ -1986,11 +2113,23 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         sessionModelOptionsProbe,
     ]);
 
-    const renderResolvedEngineDetail = React.useCallback((surfaceVariant: 'carded' | 'plain' = 'carded') => (
+    const renderResolvedEngineDetail = React.useCallback((
+        surfaceVariant: 'carded' | 'plain' = 'carded',
+        onRequestClose?: () => void,
+    ) => (
         <AgentInputEngineDetail
+            fillAvailableSpace
             modelOptions={modelOptions.map((option) => ({
                 value: option.value,
                 label: option.label,
+                ...(appliedModelPresentation?.optionValue === option.value ? {
+                    trailingStatusIcon: (
+                        <ReportedModelStatusIcon
+                            status={appliedModelPresentation.status}
+                        />
+                    ),
+                    accessibilityLabel: `${option.label}. ${appliedModelPresentation.summary}`,
+                } : {}),
                 description:
                     option.value === 'default'
                     && shouldShowModelOptionDescriptions
@@ -1999,17 +2138,19 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         : option.description,
                 ...(option.modelOptions ? { modelOptions: option.modelOptions } : {}),
             }))}
-            selectedModelId={effectiveModelPolicy.effectiveModelId}
-            effectiveModelLabel={effectiveModelLabel}
-            modelNotes={effectiveModelPolicy.notes}
+            selectedModelId={effectiveModelPolicy.selectedModelId}
+            modelSummary={appliedModelPresentation?.summary}
+            modelNotes={modelNotes}
             modelEmptyText={t('agentInput.model.configureInCli')}
             canEnterCustomModel={canEnterCustomModel}
             // Keep a single refresh affordance in the model section, but wire it to refresh all
             // probe surfaces that feed the engine popover (CLI detection, models, modes/config).
             modelProbe={unifiedEnginePickerProbe}
+            modelContentOverride={props.modelContentOverride}
             onSelectModel={(value) => {
                 hapticsLight();
                 props.onModelModeChange?.(value);
+                if (onRequestClose) deferAgentInputPopoverClose(onRequestClose);
             }}
             onSubmitCustomValue={canEnterCustomModel ? submitCustomModel : undefined}
             selectedModelOptionControls={selectedModelOptionControls}
@@ -2036,13 +2177,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     ), [
         acpConfigOptionControls,
         canEnterCustomModel,
-        effectiveModelLabel,
-        effectiveModelPolicy.effectiveModelId,
-        effectiveModelPolicy.notes,
+        effectiveModelPolicy.selectedModelId,
         modelOptions,
+        modelNotes,
+        appliedModelPresentation,
         unifiedEnginePickerProbe,
         shouldShowModelOptionDescriptions,
         props.onAcpConfigOptionChange,
+        props.modelContentOverride,
         props.onModelModeChange,
         submitCustomModel,
         selectedModelOptionControls,
@@ -2074,7 +2216,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             ),
             deferRenderDetailContent: true,
             deferredDetailContentCacheKey: `session-engine:${props.agentType}`,
-            renderDetailContent: () => renderResolvedEngineDetail('carded'),
+            renderDetailContent: ({ onRequestClose }) => renderResolvedEngineDetail('carded', onRequestClose),
         }];
     }, [
         effectiveAgentLabel,
@@ -2112,23 +2254,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         envVarsChipAnchorRef,
     } = useAgentInputSelectionAnchors();
     const [showActionMenu, setShowActionMenu] = React.useState(false);
-    const statusBadgeAnchorRef = React.useRef<any>(null);
-    const [uncontrolledActiveStatusBadgeKey, setUncontrolledActiveStatusBadgeKey] = React.useState<string | null>(null);
-    const activeStatusBadgeKey = props.activeStatusBadgeKey !== undefined
-        ? props.activeStatusBadgeKey
-        : uncontrolledActiveStatusBadgeKey;
-    const setActiveStatusBadgeKey = props.onActiveStatusBadgeKeyChange ?? setUncontrolledActiveStatusBadgeKey;
     const closeActionMenu = React.useCallback(() => {
         setShowActionMenu(false);
     }, []);
-    const closeStatusBadgePopover = React.useCallback(() => {
-        setActiveStatusBadgeKey(null);
-    }, [setActiveStatusBadgeKey]);
-    const activeStatusBadge = React.useMemo(() => (
-        activeStatusBadgeKey
-            ? props.statusBadges?.find((badge) => badge.key === activeStatusBadgeKey) ?? null
-            : null
-    ), [activeStatusBadgeKey, props.statusBadges]);
     const {
         activeSelectionOverlay,
         activeExtraCollapsedPopoverChip,
@@ -2147,6 +2275,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         hasEnvVarsPopover: Boolean(props.envVarsPopover),
         hasAgentPickerOptions,
         retainKeyboardLift: props.retainKeyboardLift,
+    });
+    useAgentInputExternalPickerRequest({
+        requestKey: props.openModelPickerRequestKey,
+        open: React.useCallback(() => {
+            if (!hasAgentPickerOptions) return;
+            openSelectionOverlay('agent', 'chip');
+        }, [hasAgentPickerOptions, openSelectionOverlay]),
     });
     const {
         showAgentPicker,
@@ -2188,6 +2323,19 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return getPermissionModeBadgeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
     }, [agentId, effectivePermissionPolicy.effectiveMode]);
 
+    const instrumentStripPermission = React.useMemo<SessionInstrumentStripPermission | null>(() => {
+        if (!shouldRenderPermissionChip(permissionChipLabel)) return null;
+        const mode = effectivePermissionPolicy.effectiveMode;
+        const color = mode === 'acceptEdits' ? theme.colors.permission.acceptEdits
+            : mode === 'bypassPermissions' ? theme.colors.permission.bypass
+                : mode === 'plan' ? theme.colors.permission.plan
+                    : mode === 'read-only' ? theme.colors.permission.readOnly
+                        : mode === 'safe-yolo' ? theme.colors.permission.safeYolo
+                            : mode === 'yolo' ? theme.colors.permission.yolo
+                                : theme.colors.text.secondary;
+        return { label: permissionChipLabel, color };
+    }, [permissionChipLabel, effectivePermissionPolicy.effectiveMode, theme]);
+
     const showPermissionChip = Boolean(props.onPermissionModeChange || props.onPermissionClick);
     const hasProfile = Boolean(props.onProfileClick || props.profilePopover);
     const hasEnvVars = Boolean(props.onEnvVarsClick || props.envVarsPopover);
@@ -2225,8 +2373,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         toggleSelectionOverlay,
     });
     const engineChipLabel = React.useMemo(() => {
-        return hasAgentPickerOptions ? effectiveModelLabel : resolvedAgentLabel;
-    }, [effectiveModelLabel, hasAgentPickerOptions, resolvedAgentLabel]);
+        return hasAgentPickerOptions ? selectedModelLabel : resolvedAgentLabel;
+    }, [hasAgentPickerOptions, resolvedAgentLabel, selectedModelLabel]);
     const engineChipAgentId = props.agentType ?? agentId;
     const hasRecipient = React.useMemo(() => {
         return (props.extraActionChips ?? []).some((chip) => chip.controlId === 'recipient');
@@ -2654,9 +2802,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     return (
         <SyncPerformanceReactProfiler id="sessions.agentInput">
             <View
+                ref={stageSpotlightRef}
+                collapsable={stageSpotlightProps.active ? false : undefined}
+                onLayout={stageSpotlightProps.onLayout}
                 pointerEvents={Platform.OS === 'web' ? 'auto' : undefined}
                 style={[
                     styles.container,
+                    stageSpotlightProps.style,
                     { paddingHorizontal: props.contentPaddingHorizontal ?? (screenWidth > 700 ? 16 : 8) },
                 ]}
             >
@@ -2754,85 +2906,21 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     testID="agent-input-command-menu"
                 />
 
-                {/* Connection status, context warning, status badges, and permission mode */}
-                {(props.connectionStatus || contextWarning || props.providerUsageGauge || (props.statusBadges && props.statusBadges.length > 0)) && (
-                    <View style={styles.statusContainer}>
-                        <View style={styles.statusRow}>
-                            {props.connectionStatus && (
-                                <View style={styles.connectionStatusGroup}>
-                                    <StatusDot
-                                        color={props.connectionStatus.dotColor}
-                                        isPulsing={props.connectionStatus.isPulsing}
-                                        size={6}
-                                        style={styles.statusDot}
-                                    />
-                                    <Text
-                                        testID={AGENT_INPUT_TEST_IDS.connectionStatusText}
-                                        style={[styles.statusText, { color: props.connectionStatus.color }]}
-                                    >
-                                        {props.connectionStatus.text}
-                                    </Text>
-                                </View>
-                            )}
-                            {contextWarning && (
-                                <Text
-                                    style={[
-                                        styles.statusText,
-                                        { color: contextWarning.color },
-                                    ]}
-                                >
-                                    {props.connectionStatus ? '• ' : ''}{contextWarning.text}
-                                </Text>
-                            )}
-                            {props.providerUsageGauge ? (
-                                <AgentInputProviderUsageBadge
-                                    viewModel={props.providerUsageGauge}
-                                    onRecoveryCreditPress={props.onProviderUsageRecoveryCreditPress}
-                                    recoveryCreditActionPending={props.providerUsageRecoveryCreditPending}
-                                />
-                            ) : null}
-                            {props.statusBadges?.map(({ key, renderPopover, onPress, ...badge }) => (
-                                <AgentInputStatusBadge
-                                    key={key}
-                                    anchorRef={renderPopover ? statusBadgeAnchorRef : undefined}
-                                    onPress={renderPopover
-                                        ? () => {
-                                            setActiveStatusBadgeKey(activeStatusBadgeKey === key ? null : key);
-                                            onPress?.();
-                                        }
-                                        : onPress}
-                                    renderPopover={renderPopover}
-                                    {...badge}
-                                />
-                            ))}
-                        </View>
-                        <View style={styles.permissionModeContainer}>
-                            {shouldRenderPermissionChip(permissionChipLabel) ? (
-                                <Text
-                                    style={[
-                                        styles.permissionModeText,
-                                        {
-                                            color: effectivePermissionPolicy.effectiveMode === 'acceptEdits' ? theme.colors.permission.acceptEdits :
-                                                effectivePermissionPolicy.effectiveMode === 'bypassPermissions' ? theme.colors.permission.bypass :
-                                                    effectivePermissionPolicy.effectiveMode === 'plan' ? theme.colors.permission.plan :
-                                                        effectivePermissionPolicy.effectiveMode === 'read-only' ? theme.colors.permission.readOnly :
-                                                            effectivePermissionPolicy.effectiveMode === 'safe-yolo' ? theme.colors.permission.safeYolo :
-                                                                effectivePermissionPolicy.effectiveMode === 'yolo' ? theme.colors.permission.yolo :
-                                                                    theme.colors.text.secondary, // Use secondary text color for default
-                                        },
-                                    ]}
-                                >
-                                    {permissionChipLabel}
-                                </Text>
-                            ) : null}
-                        </View>
-                    </View>
-                )}
-                {activeStatusBadge?.renderPopover?.({
-                    open: true,
-                    anchorRef: statusBadgeAnchorRef,
-                    onRequestClose: closeStatusBadgePopover,
-                })}
+                {/* Session instrument strip: connection status + context gauge, quota ring,
+                    git ±, extension badges, permission chip. Subscribes to the store itself
+                    (F-UI-11) so token ticks never re-render this memoized composer. */}
+                <SessionInstrumentStrip
+                    sessionId={props.sessionId}
+                    agentId={agentId}
+                    metadata={props.metadata ?? null}
+                    connectionStatus={props.connectionStatus ?? null}
+                    permission={instrumentStripPermission}
+                    quota={props.instrumentQuota ?? null}
+                    statusBadges={props.statusBadges}
+                    activeStatusBadgeKey={props.activeStatusBadgeKey}
+                    onActiveStatusBadgeKeyChange={props.onActiveStatusBadgeKeyChange}
+                    onGitPress={props.onFileViewerPress}
+                />
 
                 {/* Box 2: Action Area (Input + Send) */}
                 <View style={[styles.panelShadow, isGlassComposer ? styles.panelShadowGlass : null]}>
@@ -2923,6 +3011,18 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             onToggle={props.inputExpansion.onToggle}
                                         />
                                     ) : null}
+                                    {props.fieldAccessory ? (
+                                        <View
+                                            style={[
+                                                styles.fieldAccessory,
+                                                // Takes the toggle's slot while it is hidden; drops
+                                                // one row beneath it when the toggle appears.
+                                                shouldShowInputExpansionToggle ? styles.fieldAccessoryBelowToggle : null,
+                                            ]}
+                                        >
+                                            {props.fieldAccessory}
+                                        </View>
+                                    ) : null}
                                 </View>
                             </ScrollView>
                             <View
@@ -2958,17 +3058,20 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                 {renderedActionControlNodes as any}
                                             </View>
                                         )}
+                                        {props.trailingAccessory}
                                         <AgentInputSubmitButton
                                             testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionSend : AGENT_INPUT_TEST_IDS.newSessionSend}
                                             sessionId={props.sessionId}
                                             submitAccessibilityLabel={props.submitAccessibilityLabel}
-                                            disabled={Boolean(props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !micPressHandler && !canStopFromComposer))}
+                                            disabled={dictationActive
+                                                ? dictationStatus === 'transcribing'
+                                                : Boolean(props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !dictationPressHandler && !canStopFromComposer))}
                                             isSending={props.isSending}
                                             isStopping={isAborting}
                                             hasSendableContent={hasSendableContent}
                                             canStop={canStopFromComposer}
-                                            micPressHandler={micPressHandler}
-                                            micActive={micActive}
+                                            dictationPressHandler={dictationPressHandler}
+                                            dictationStatus={dictationStatus}
                                             onSend={handleSend}
                                             onStop={handleAbortPress}
                                         />
@@ -3097,6 +3200,18 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             onToggle={props.inputExpansion.onToggle}
                                         />
                                     ) : null}
+                                    {props.fieldAccessory ? (
+                                        <View
+                                            style={[
+                                                styles.fieldAccessory,
+                                                // Takes the toggle's slot while it is hidden; drops
+                                                // one row beneath it when the toggle appears.
+                                                shouldShowInputExpansionToggle ? styles.fieldAccessoryBelowToggle : null,
+                                            ]}
+                                        >
+                                            {props.fieldAccessory}
+                                        </View>
+                                    ) : null}
                                 </View>
                             </View>
                             <View
@@ -3132,17 +3247,20 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                     {renderedActionControlNodes as any}
                                                 </View>
                                             )}
+                                            {props.trailingAccessory}
                                             <AgentInputSubmitButton
                                                 testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionSend : AGENT_INPUT_TEST_IDS.newSessionSend}
                                                 sessionId={props.sessionId}
                                                 submitAccessibilityLabel={props.submitAccessibilityLabel}
-                                                disabled={Boolean(props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !micPressHandler && !canStopFromComposer))}
+                                                disabled={dictationActive
+                                                    ? dictationStatus === 'transcribing'
+                                                    : Boolean(props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !dictationPressHandler && !canStopFromComposer))}
                                                 isSending={props.isSending}
                                                 isStopping={isAborting}
                                                 hasSendableContent={hasSendableContent}
                                                 canStop={canStopFromComposer}
-                                                micPressHandler={micPressHandler}
-                                                micActive={micActive}
+                                                dictationPressHandler={dictationPressHandler}
+                                                dictationStatus={dictationStatus}
                                                 onSend={handleSend}
                                                 onStop={handleAbortPress}
                                             />

@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {
     getStorage,
     loadLocalVoiceEngineWithCompatState,
+    machineRpcWithServerScope,
     registerLocalVoiceEngineHarnessHooks,
+    setRecorderUri,
     setNextRecorderPrepareError,
 } from './localVoiceEngine.testHarness';
 
@@ -26,15 +29,15 @@ describe('local voice engine recording lifecycle', () => {
                 ...storage.getState().settings,
                 voice: {
                     ...storage.getState().settings.voice,
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: '',
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -60,45 +63,40 @@ describe('local voice engine recording lifecycle', () => {
         expect(getLocalVoiceState().error).toBe('stt_failed');
     });
 
-    it('times out STT request and resets to idle', async () => {
-        const storage = await getStorage();
-        storage.__setState({
-            settings: {
-                ...storage.getState().settings,
-                voice: {
-                    ...storage.getState().settings.voice,
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
-                            networkTimeoutMs: 50,
-                        },
-                    },
-                },
-            },
-        });
+    it('surfaces a missing finalized recording URI instead of silently completing an empty turn', async () => {
+        setRecorderUri(null);
 
-        (globalThis.fetch as any).mockImplementationOnce((_url: string, init?: RequestInit) => {
-            return new Promise<Response>((_resolve, reject) => {
-                const signal = init?.signal;
-                if (!signal) return;
-                signal.addEventListener(
-                    'abort',
-                    () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })),
-                    { once: true },
-                );
-            });
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
+        await toggleLocalVoiceTurn('s1');
+        await expect(toggleLocalVoiceTurn('s1')).resolves.toBeUndefined();
+
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+        expect(getLocalVoiceState().status).toBe('idle');
+        expect(getLocalVoiceState().error).toBe('recording_uri_missing');
+    });
+
+    it('maps a daemon STT request timeout to a recoverable idle failure', async () => {
+        const fallback = machineRpcWithServerScope.getMockImplementation();
+        machineRpcWithServerScope.mockImplementation(async (request: any) => {
+            if (request?.method === RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE) {
+                return {
+                    ok: false,
+                    error: 'request_timeout',
+                    errorCode: 'request_timeout',
+                    retryable: true,
+                };
+            }
+            if (!fallback) throw new Error('missing local voice machine RPC fallback');
+            return await fallback(request);
         });
 
         const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
         await toggleLocalVoiceTurn('s1');
 
-        const stopPromise = toggleLocalVoiceTurn('s1');
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        await expect(stopPromise).resolves.toBeUndefined();
+        await expect(toggleLocalVoiceTurn('s1')).resolves.toBeUndefined();
 
         expect(getLocalVoiceState().status).toBe('idle');
-        expect(getLocalVoiceState().error).toBe('stt_failed');
+        expect(getLocalVoiceState().error).toBe('stt_request_timeout');
     });
 
     it('delegates recorder-backed mic ownership to LocalVoiceCaptureOwner instead of concrete recorder creation in localVoiceEngine', async () => {

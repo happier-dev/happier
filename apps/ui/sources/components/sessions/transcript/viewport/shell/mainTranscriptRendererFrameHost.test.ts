@@ -3,125 +3,62 @@ import { describe, expect, it } from 'vitest';
 import { resolveMainTranscriptRendererFrameHost } from './mainTranscriptRendererFrameHost';
 
 const baseParams = {
-    autoFollowWhenPinned: true,
-    bottomFollowMode: 'following' as const,
-    configuredDrawDistance: undefined,
-    hasOpenViewportTransaction: false,
     layoutHeight: 600,
-    liveRegionActive: false,
-    nativeEntryShouldUseBottomMaintenance: true,
     nativeID: 'main-transcript-native-id',
-    pinEnabled: true,
     pinThresholdPx: 72,
     platformOS: 'ios',
+    sessionEntryShouldFollowBottom: true,
 };
 
 describe('main transcript renderer frame host', () => {
-    it('omits MVCP and native drawDistance on web', () => {
-        const host = resolveMainTranscriptRendererFrameHost({
+    it('resolves the web main frame with pin-threshold-derived Legend follow ratio', () => {
+        const frame = resolveMainTranscriptRendererFrameHost({
             ...baseParams,
             platformOS: 'web',
         });
 
-        expect(host.frame).toMatchObject({
+        expect(frame).toMatchObject({
             dataOrder: 'oldest-first',
+            platform: 'web',
+            renderer: 'legendList',
             rendererOptions: {
-                flashList: {
-                    drawDistance: undefined,
-                    inverted: false,
-                    maintainVisibleContentPosition: undefined,
+                identity: {
                     nativeID: 'main-transcript-native-id',
                 },
-                legend: {
-                    maintainScrollAtEndThreshold: 72 / 600,
+                initialPlacement: {
+                    atEnd: true,
                 },
+                continuousFollow: { endThresholdRatio: 72 / 600 },
             },
         });
-        expect(host.maintainVisibleContentPosition).toBeUndefined();
-        expect(host.telemetryMvcpPolicy).toBe('none');
     });
 
-    it('arms native MVCP threshold while following and hands it to the main shell frame', () => {
-        const host = resolveMainTranscriptRendererFrameHost(baseParams);
+    it('resolves the native main frame as newest-first Legend', () => {
+        const frame = resolveMainTranscriptRendererFrameHost(baseParams);
 
-        expect(host.maintainVisibleContentPosition).toEqual({
-            animateAutoScrollToBottom: false,
-            autoscrollToBottomThreshold: 72 / 600,
-            startRenderingFromBottom: true,
-        });
-        expect(host.frame).toMatchObject({
+        expect(frame).toMatchObject({
             dataOrder: 'newest-first',
-            rendererOptions: {
-                flashList: {
-                    drawDistance: 600,
-                    inverted: true,
-                    maintainVisibleContentPosition: host.maintainVisibleContentPosition,
-                    nativeID: 'main-transcript-native-id',
-                },
-                legend: {
-                    maintainScrollAtEndThreshold: 72 / 600,
-                },
-            },
+            platform: 'native',
+            renderer: 'legendList',
         });
-        expect(host.telemetryMvcpPolicy).toBe('autoscroll-threshold');
     });
 
-    it('keeps native offset correction armed without threshold while released or escaping when no carve is active', () => {
-        for (const bottomFollowMode of ['released', 'escaping'] as const) {
-            const host = resolveMainTranscriptRendererFrameHost({
-                ...baseParams,
-                bottomFollowMode,
-            });
-
-            expect(host.maintainVisibleContentPosition).toEqual({
-                startRenderingFromBottom: true,
-            });
-            expect(host.frame.rendererOptions.flashList.maintainVisibleContentPosition)
-                .toBe(host.maintainVisibleContentPosition);
-            expect(host.telemetryMvcpPolicy).toBe('start-rendering-from-bottom');
-        }
-    });
-
-    it('withholds the native bottom threshold while following with an active live-region carve', () => {
-        const host = resolveMainTranscriptRendererFrameHost({
+    it('falls back to the default follow ratio when layout geometry is unknown', () => {
+        const frame = resolveMainTranscriptRendererFrameHost({
             ...baseParams,
-            liveRegionActive: true,
+            layoutHeight: 0,
         });
 
-        expect(host.maintainVisibleContentPosition).toEqual({
-            startRenderingFromBottom: true,
-        });
-        expect(host.frame.rendererOptions.flashList.maintainVisibleContentPosition)
-            .toBe(host.maintainVisibleContentPosition);
-        expect(host.telemetryMvcpPolicy).toBe('start-rendering-from-bottom');
+        expect(frame.rendererOptions.continuousFollow.endThresholdRatio).toBe(0.1);
     });
 
-    it('keeps native MVCP stable and pauses only JS offset correction while released with an active live-region carve (NQA-F4)', () => {
-        const host = resolveMainTranscriptRendererFrameHost({
+    it('withholds Legend initial tail placement for a released entry so entry restore consumes the saved anchor first', () => {
+        const frame = resolveMainTranscriptRendererFrameHost({
             ...baseParams,
-            bottomFollowMode: 'released',
-            liveRegionActive: true,
+            platformOS: 'web',
+            sessionEntryShouldFollowBottom: false,
         });
 
-        // NQA-F4: the native MVCP object must not flap to {disabled:true}; the carve release
-        // window is represented by a separate FlashList JS correction pause flag.
-        expect(host.maintainVisibleContentPosition).toEqual({ startRenderingFromBottom: true });
-        expect(host.frame.rendererOptions.flashList.maintainVisibleContentPosition)
-            .toBe(host.maintainVisibleContentPosition);
-        expect(host.frame.rendererOptions.flashList.pauseOffsetCorrection).toBe(true);
-        expect(host.telemetryMvcpPolicy).toBe('start-rendering-from-bottom');
-    });
-
-    it('keeps explicit native drawDistance unchanged and otherwise uses the clamped viewport default', () => {
-        expect(resolveMainTranscriptRendererFrameHost({
-            ...baseParams,
-            configuredDrawDistance: 1600,
-            layoutHeight: 800,
-        }).frame.rendererOptions.flashList.drawDistance).toBe(1600);
-
-        expect(resolveMainTranscriptRendererFrameHost({
-            ...baseParams,
-            layoutHeight: 2400,
-        }).frame.rendererOptions.flashList.drawDistance).toBe(1200);
+        expect(frame.rendererOptions.initialPlacement.atEnd).toBe(false);
     });
 });

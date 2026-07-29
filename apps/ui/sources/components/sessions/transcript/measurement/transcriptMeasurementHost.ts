@@ -2,10 +2,8 @@ import {
     getDefaultTranscriptItemHeightCache,
     type TranscriptItemHeightCache,
 } from './transcriptItemHeightCache';
-import type { TranscriptRowLayoutMutation } from './TranscriptRowLayoutMutationContext';
 import {
     createTranscriptMeasurementReconciler,
-    type TranscriptGlobalInvalidationReason,
     type TranscriptMeasurementReconciler,
 } from './transcriptMeasurementReconciler';
 
@@ -14,16 +12,6 @@ export type TranscriptMeasurementHostPlatform = 'web' | 'native';
 export type TranscriptMeasurementContentSizeReason =
     | 'content-size-change'
     | 'stream-append';
-
-export type TranscriptMeasurementHostEffect =
-    | Readonly<{
-        type: 'clear-layout-cache';
-        reason: TranscriptGlobalInvalidationReason;
-    }>;
-
-export type TranscriptMeasurementHostRowLayoutMutationResult = Readonly<{
-    effects: readonly TranscriptMeasurementHostEffect[];
-}>;
 
 export type TranscriptMeasurementHostContentSizeObservation =
     | Readonly<{ status: 'ignored' }>
@@ -38,12 +26,7 @@ export type TranscriptMeasurementHostContentSizeObservation =
 
 export type TranscriptMeasurementHost = Readonly<{
     reconciler: TranscriptMeasurementReconciler;
-    advanceLayoutInvalidationCommitToken(): void;
     resetForSession(input: Readonly<{ sessionId: string }>): void;
-    observeRowLayoutMutation(input: Readonly<{
-        mutation: TranscriptRowLayoutMutation;
-        viewportTransactionOpen: boolean;
-    }>): TranscriptMeasurementHostRowLayoutMutationResult;
     observeContentSizeChange(input: Readonly<{
         platform: TranscriptMeasurementHostPlatform;
         sessionId: string;
@@ -88,43 +71,16 @@ export function createTranscriptMeasurementHost(
         cache: options.cache ?? getDefaultTranscriptItemHeightCache(),
     });
 
-    let layoutInvalidationCommitToken = 0;
     let nativeContentMeasurementSession: { sessionId: string; measured: boolean } | null = null;
     let lastMeasuredContentActivityKey: string | null = null;
 
     return {
         reconciler,
 
-        advanceLayoutInvalidationCommitToken() {
-            layoutInvalidationCommitToken += 1;
-        },
-
         resetForSession(input) {
             reconciler.resetForSession(input.sessionId);
             nativeContentMeasurementSession = { sessionId: input.sessionId, measured: false };
             lastMeasuredContentActivityKey = null;
-        },
-
-        observeRowLayoutMutation(input) {
-            const { reason, previousSignature, nextSignature } = input.mutation;
-            const decision = (reason === 'signature-change' && previousSignature !== undefined && nextSignature !== undefined)
-                ? reconciler.requestGlobalLayoutInvalidation({
-                    previous: previousSignature,
-                    next: nextSignature,
-                    viewportTransactionOpen: input.viewportTransactionOpen,
-                    commitToken: layoutInvalidationCommitToken,
-                })
-                : reconciler.requestGlobalLayoutInvalidation({
-                    structural: reason === 'expand' || reason === 'collapse',
-                    viewportTransactionOpen: input.viewportTransactionOpen,
-                    commitToken: layoutInvalidationCommitToken,
-                });
-
-            return {
-                effects: decision.clear
-                    ? [{ type: 'clear-layout-cache', reason: decision.reason }]
-                    : [],
-            };
         },
 
         observeContentSizeChange(input) {

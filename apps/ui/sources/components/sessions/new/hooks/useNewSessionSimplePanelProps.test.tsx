@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
+import { createProviderErrorV1 } from '@happier-dev/protocol';
 
 import { renderHook } from '@/dev/testkit';
 
@@ -74,6 +75,27 @@ describe('useNewSessionSimplePanelProps', () => {
 
         expect(hook.getCurrent().statusBadges).toBe(statusBadges);
 
+        await hook.unmount();
+    });
+
+    it('preserves the typed Provider launch refusal and updates its recovery callback', async () => {
+        const providerLaunchError = createProviderErrorV1('provider_not_enabled_on_machine', {
+            connectionId: 'pc_provider',
+            machineId: 'machine-1',
+        });
+        const firstRetry = vi.fn();
+        const secondRetry = vi.fn();
+        const hook = await renderHook((props: NewSessionSimplePanelProps) => useNewSessionSimplePanelProps(props), {
+            initialProps: createPanelProps({ providerLaunchError, retryProviderLaunch: firstRetry }),
+        });
+
+        expect(hook.getCurrent().providerLaunchError).toBe(providerLaunchError);
+        expect(hook.getCurrent().retryProviderLaunch).toBe(firstRetry);
+
+        await hook.rerender(createPanelProps({ providerLaunchError, retryProviderLaunch: secondRetry }));
+
+        expect(hook.getCurrent().providerLaunchError).toBe(providerLaunchError);
+        expect(hook.getCurrent().retryProviderLaunch).toBe(secondRetry);
         await hook.unmount();
     });
 

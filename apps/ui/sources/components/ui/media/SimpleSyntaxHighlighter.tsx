@@ -11,6 +11,13 @@ interface SimpleSyntaxHighlighterProps {
   code: string;
   language: string | null;
   selectable: boolean;
+  /**
+   * When true, long lines soft-wrap (`pre-wrap` + `break-word` on web) instead
+   * of preserving single-line `pre` layout for horizontal scroll containers.
+   * Used by wrapping code blocks (e.g. onboarding command cards, spec §2 /
+   * F-W13-1) where the full content must be readable without scrolling.
+   */
+  wrap?: boolean;
 }
 
 function resolveTokenColor(theme: any, tokenType: string, fallback: string): string {
@@ -25,17 +32,20 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
   code,
   language,
   selectable,
+  wrap = false,
 }) => {
   const { theme } = useUnistyles();
   const fallback = theme.colors.text.primary ?? '#111';
   const webTextWrapStyle: TextStyle | null = Platform.OS === 'web'
-    ? ({ whiteSpace: 'pre', display: 'inline-block' } as unknown as TextStyle)
+    ? wrap
+      ? ({ whiteSpace: 'pre-wrap', wordBreak: 'break-word' } as unknown as TextStyle)
+      : ({ whiteSpace: 'pre', display: 'inline-block' } as unknown as TextStyle)
     : null;
 
   const tokens = React.useMemo(() => tokenizeSimpleSyntaxText({ text: code, language }), [code, language]);
 
   return (
-    <View style={{ flexShrink: 0, alignSelf: 'flex-start' }}>
+    <View style={wrap ? { width: '100%' } : { flexShrink: 0, alignSelf: 'flex-start' }}>
       <Text
         selectable={selectable}
         style={[
@@ -43,8 +53,8 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
             fontFamily: Typography.mono().fontFamily,
             fontSize: 14,
             lineHeight: 20,
-            flexShrink: 0,
           },
+          wrap ? null : { flexShrink: 0 },
           webTextWrapStyle,
         ]}
       >

@@ -7,6 +7,7 @@ const getCredentialsForServerUrlSpy = vi.fn();
 const listServerProfilesSpy = vi.fn();
 const getActiveServerSnapshotSpy = vi.fn();
 const invalidateCachedTransferRoutesForServerSpy = vi.fn();
+let previousTransferRoutePositiveTtlMs: string | undefined;
 
 type SocketEventHandler = (...args: unknown[]) => void;
 
@@ -104,6 +105,7 @@ async function flushConcurrentCachePeriodicRefresh(): Promise<void> {
 }
 
 beforeEach(() => {
+    previousTransferRoutePositiveTtlMs = process.env.EXPO_PUBLIC_HAPPIER_MACHINE_TRANSFER_ROUTE_CACHE_POSITIVE_TTL_MS;
     vi.resetModules();
     vi.useFakeTimers();
     ioSpy.mockReset();
@@ -117,6 +119,11 @@ beforeEach(() => {
 afterEach(() => {
     vi.useRealTimers();
     delete process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT;
+    if (previousTransferRoutePositiveTtlMs === undefined) {
+        delete process.env.EXPO_PUBLIC_HAPPIER_MACHINE_TRANSFER_ROUTE_CACHE_POSITIVE_TTL_MS;
+    } else {
+        process.env.EXPO_PUBLIC_HAPPIER_MACHINE_TRANSFER_ROUTE_CACHE_POSITIVE_TTL_MS = previousTransferRoutePositiveTtlMs;
+    }
 });
 
 describe('concurrent session cache socket routing', () => {
@@ -370,6 +377,144 @@ describe('concurrent session cache socket routing', () => {
         expect(after.map((m: any) => m.id)).toEqual(['machine-1']);
         expect(after[0]?.seq).toBe(2);
 
+        stopConcurrentSessionCacheSync();
+    });
+
+    it('invalidates only the non-active server machine route when daemon state advances', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
+        process.env.EXPO_PUBLIC_HAPPIER_MACHINE_TRANSFER_ROUTE_CACHE_POSITIVE_TTL_MS = '3600000';
+        mockReachabilityOnline();
+
+        const fakeSocket = createSocketStub();
+        ioSpy.mockReturnValue(fakeSocket);
+        getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
+            if (serverUrl === 'https://stack-b.example.test') {
+                return { token: 'token-b', secret: 'secret-b' };
+            }
+            return null;
+        });
+        listServerProfilesSpy.mockReturnValue([
+            { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
+            { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
+        ]);
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://stack-a.example.test',
+            kind: 'stack',
+            generation: 1,
+        });
+
+        vi.doMock('socket.io-client', () => ({
+            io: (...args: unknown[]) => ioSpy(...args),
+        }));
+        vi.doMock('@/auth/storage/tokenStorage', () => ({
+            TokenStorage: {
+                getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
+            },
+            isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
+        }));
+        mockServerProfiles();
+        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
+            getActiveServerSnapshot: () => getActiveServerSnapshotSpy(),
+            subscribeActiveServer: () => () => {},
+        }));
+        vi.doUnmock('@/sync/domains/transfers/runtime/transferRouteCache');
+        vi.doMock('@/sync/encryption/encryption', () => ({
+            Encryption: {
+                create: async () => ({}) as unknown,
+            },
+        }));
+        vi.doMock('@/encryption/base64', () => ({
+            decodeBase64: () => new Uint8Array(32),
+        }));
+        vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
+            fetchAndApplySessions: async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
+                applySessions([]);
+            },
+        }));
+
+        let daemonStateVersion = 1;
+        vi.doMock('@/sync/engine/machines/syncMachines', () => ({
+            fetchAndApplyMachines: async ({ applyMachines }: { applyMachines: (machines: unknown[]) => void }) => {
+                applyMachines([{
+                    id: 'machine-b',
+                    seq: 1,
+                    createdAt: 1000,
+                    updatedAt: 2000,
+                    active: true,
+                    activeAt: 2000,
+                    metadata: { host: 'b-host' },
+                    metadataVersion: 1,
+                    daemonState: null,
+                    daemonStateVersion,
+                }]);
+            },
+        }));
+
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        storage.setState((state) => ({
+            ...state,
+            settings: {
+                ...state.settings,
+                ...settingsDefaults,
+                serverSelectionGroups: [
+                    {
+                        id: 'group-main',
+                        name: 'Main',
+                        serverIds: ['server-a', 'server-b'],
+                        presentation: 'grouped',
+                    },
+                ],
+                serverSelectionActiveTargetKind: 'group',
+                serverSelectionActiveTargetId: 'group-main',
+            },
+        }));
+
+        const { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } = await import('./concurrentSessionCache');
+        startConcurrentSessionCacheSync();
+        await flushConcurrentCacheStartup();
+        expect(storage.getState().machineListByServerId['server-b']?.[0]?.daemonStateVersion).toBe(1);
+
+        const {
+            readCachedMachineRpcDirectRoute,
+            recordCachedMachineRpcDirectRouteViable,
+            subscribeCachedMachineRpcDirectRoute,
+        } = await import('@/sync/domains/transfers/runtime/transferRouteCache');
+        recordCachedMachineRpcDirectRouteViable({ serverId: 'server-b', remoteMachineId: 'machine-b' });
+        recordCachedMachineRpcDirectRouteViable({ serverId: 'server-b', remoteMachineId: 'machine-other' });
+        recordCachedMachineRpcDirectRouteViable({ serverId: 'server-c', remoteMachineId: 'machine-b' });
+        const serverBRouteListener = vi.fn();
+        const serverCRouteListener = vi.fn();
+        const unsubscribeServerB = subscribeCachedMachineRpcDirectRoute(
+            { serverId: 'server-b', remoteMachineId: 'machine-b' },
+            serverBRouteListener,
+        );
+        const unsubscribeServerC = subscribeCachedMachineRpcDirectRoute(
+            { serverId: 'server-c', remoteMachineId: 'machine-b' },
+            serverCRouteListener,
+        );
+
+        await flushConcurrentCachePeriodicRefresh();
+        expect(serverBRouteListener).not.toHaveBeenCalled();
+        expect(readCachedMachineRpcDirectRoute({ serverId: 'server-b', remoteMachineId: 'machine-b' }))
+            .toMatchObject({ status: 'viable' });
+
+        daemonStateVersion = 2;
+        await flushConcurrentCachePeriodicRefresh();
+
+        expect(storage.getState().machineListByServerId['server-b']?.[0]?.daemonStateVersion).toBe(2);
+        expect(serverBRouteListener).toHaveBeenCalledTimes(1);
+        expect(serverCRouteListener).not.toHaveBeenCalled();
+        expect(readCachedMachineRpcDirectRoute({ serverId: 'server-b', remoteMachineId: 'machine-b' }))
+            .toEqual({ status: 'unknown' });
+        expect(readCachedMachineRpcDirectRoute({ serverId: 'server-b', remoteMachineId: 'machine-other' }))
+            .toMatchObject({ status: 'viable' });
+        expect(readCachedMachineRpcDirectRoute({ serverId: 'server-c', remoteMachineId: 'machine-b' }))
+            .toMatchObject({ status: 'viable' });
+
+        unsubscribeServerB();
+        unsubscribeServerC();
         stopConcurrentSessionCacheSync();
     });
 

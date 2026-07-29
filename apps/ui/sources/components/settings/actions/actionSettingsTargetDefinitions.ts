@@ -13,7 +13,7 @@ export type ActionSettingsTargetCategory = 'app' | 'voice' | 'integrations';
 export type ActionSettingsTargetId =
     | ActionUiPlacement
     | 'mcp'
-    | 'session_agent'
+    | 'agent'
     | 'voice'
     | 'cli'
     | 'contextual_ui';
@@ -68,6 +68,15 @@ const PLACEMENT_TARGETS: readonly ActionSettingsPlacementTargetDefinition[] = [
         titleKey: 'settingsActions.targets.session_info.title',
         subtitleKey: 'settingsActions.targets.session_info.subtitle',
         icon: 'information-circle-outline',
+        category: 'app',
+    },
+    {
+        id: 'pending_messages',
+        kind: 'placement',
+        placement: 'pending_messages',
+        titleKey: 'settingsActions.targets.pending_messages.title',
+        subtitleKey: 'settingsActions.targets.pending_messages.subtitle',
+        icon: 'chatbubble-ellipses-outline',
         category: 'app',
     },
     {
@@ -137,11 +146,11 @@ const SURFACE_TARGETS: readonly ActionSettingsSurfaceTargetDefinition[] = [
         category: 'voice',
     },
     {
-        id: 'session_agent',
+        id: 'agent',
         kind: 'surface',
-        surface: 'session_agent',
-        titleKey: 'settingsActions.targets.session_agent.title',
-        subtitleKey: 'settingsActions.targets.session_agent.subtitle',
+        surface: 'agent',
+        titleKey: 'settingsActions.targets.agent.title',
+        subtitleKey: 'settingsActions.targets.agent.subtitle',
         icon: 'sparkles-outline',
         category: 'integrations',
     },

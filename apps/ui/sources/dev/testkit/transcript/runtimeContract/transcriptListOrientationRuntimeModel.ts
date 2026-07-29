@@ -4,7 +4,6 @@ import {
     resolveTranscriptListPresentation,
     type TranscriptListPresentation,
 } from '@/components/sessions/transcript/listOrientation';
-import { resolveNativeInvertedBottomCommandOffset } from '@/components/sessions/transcript/viewport/driver/nativeInvertedRawScroll';
 
 export type TranscriptListRuntimePlatform = 'native' | 'web';
 
@@ -44,8 +43,9 @@ export function createTranscriptListOrientationRuntimeModel<T>(
         presentation,
         renderedItems: orientTranscriptListItems(params.items, presentation.orientation),
         resolveBottomRawScrollCommandOffset: (metrics) => {
+            // In an inverted (newest-first) presentation the raw bottom offset is 0 by definition.
             if (presentation.orientation === 'inverted') {
-                return resolveNativeInvertedBottomCommandOffset();
+                return 0;
             }
 
             return Math.max(0, Math.trunc(metrics.contentHeight - metrics.layoutHeight));

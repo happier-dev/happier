@@ -11,6 +11,7 @@ import {
     localSettingsDefaults,
     type LocalSettings,
 } from '@/sync/domains/settings/localSettings';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -34,7 +35,6 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock({ View: 'View' });
 });
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: undefined,
@@ -112,11 +112,11 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     return createStorageModuleMock({
         importOriginal,
         overrides: {
-            useSetting: (key: string) => {
+            useSetting: createUseSettingMock({ fallback: (key) => {
                 if (key === 'useProfiles') return false;
                 if (key === 'sessionUseTmux') return false;
                 return null;
-            },
+            } }),
             useLocalSettings: () => localSettingsState.value,
             useLocalSetting,
             useLocalSettingMutable: createUseLocalSettingMutableMock(useLocalSetting),

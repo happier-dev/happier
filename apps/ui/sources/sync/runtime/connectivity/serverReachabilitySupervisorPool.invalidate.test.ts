@@ -61,4 +61,45 @@ describe('serverReachabilitySupervisorPool (invalidate)', () => {
 
         unsubscribe();
     });
+
+    it('allows callers to force a re-probe while the supervisor still thinks the endpoint is online', async () => {
+        const runtimeFetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.endsWith('/health')) {
+                return new Response(null, { status: 200, headers: new Headers() });
+            }
+            return new Response(null, { status: 200, headers: new Headers() });
+        });
+        setRuntimeFetch(runtimeFetchSpy);
+
+        const states: Array<{ phase: string; reason: string | null }> = [];
+        const unsubscribe = subscribeServerReachabilityState('https://example.test', (state) => {
+            states.push({ phase: state.phase, reason: state.reason });
+        });
+
+        await startServerReachabilitySupervisor({ serverUrl: 'https://example.test', token: null });
+        expect(states.at(-1)?.phase).toBe('online');
+
+        runtimeFetchSpy.mockImplementation(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.endsWith('/health')) {
+                return new Response(null, {
+                    status: 503,
+                    headers: new Headers({
+                        'Retry-After': '1',
+                        'X-Happier-Retry-Reason': 'server_restarting',
+                    }),
+                });
+            }
+            return new Response(null, { status: 200, headers: new Headers() });
+        });
+
+        await invalidateServerReachabilitySupervisor({ serverUrl: 'https://example.test', token: null });
+
+        expect(states.at(-1)).toEqual({ phase: 'offline', reason: 'server_restarting' });
+        const healthCalls = runtimeFetchSpy.mock.calls.filter(([input]) => String(input).endsWith('/health'));
+        expect(healthCalls).toHaveLength(2);
+
+        unsubscribe();
+    });
 });

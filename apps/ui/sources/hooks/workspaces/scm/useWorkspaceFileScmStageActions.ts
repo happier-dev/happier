@@ -21,6 +21,7 @@ type DiffMode = 'included' | 'pending' | 'both';
 
 async function refreshWorkspaceScmSnapshot(scope: WorkspaceScopeBase): Promise<void> {
     const next = await scmRepositoryService.fetchSnapshotForMachinePath({
+        serverId: scope.serverId,
         machineId: scope.machineId,
         path: scope.rootPath,
     });
@@ -135,8 +136,8 @@ export function useWorkspaceFileScmStageActions(input: {
                 setIsApplyingStageSafe(true);
                 try {
                     const response = stage
-                        ? await machineScmChangeInclude(scope.machineId, { cwd: scope.rootPath, paths: [filePath] })
-                        : await machineScmChangeExclude(scope.machineId, { cwd: scope.rootPath, paths: [filePath] });
+                        ? await machineScmChangeInclude(scope.machineId, { cwd: scope.rootPath, paths: [filePath] }, { serverId: scope.serverId })
+                        : await machineScmChangeExclude(scope.machineId, { cwd: scope.rootPath, paths: [filePath] }, { serverId: scope.serverId });
 
                     if (!response.success) {
                         const errorMessage = getScmUserFacingError({
@@ -278,8 +279,8 @@ export function useWorkspaceFileScmStageActions(input: {
                 setIsApplyingStageSafe(true);
                 try {
                     const response = stageSelected
-                        ? await machineScmChangeInclude(scope.machineId, { cwd: scope.rootPath, patch })
-                        : await machineScmChangeExclude(scope.machineId, { cwd: scope.rootPath, patch });
+                        ? await machineScmChangeInclude(scope.machineId, { cwd: scope.rootPath, patch }, { serverId: scope.serverId })
+                        : await machineScmChangeExclude(scope.machineId, { cwd: scope.rootPath, patch }, { serverId: scope.serverId });
 
                     if (!response.success) {
                         const errorMessage = getScmUserFacingError({

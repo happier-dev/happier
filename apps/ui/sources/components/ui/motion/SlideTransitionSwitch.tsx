@@ -8,13 +8,13 @@
  * `current` slot.
  *
  * State machine rules — see plan §1572–§1693:
- *   - Sync rule (no transition active): keep `displayedChildren` synchronized with the
- *     latest `children` so the next transition's outgoing snapshot is fresh. The
+ *   - Sync rule (no transition active): keep the displayed-children ref synchronized
+ *     with the latest `children` so the next transition's outgoing snapshot is fresh. The
  *     rendered `current` slot uses `children` directly while not transitioning so
  *     same-key dynamic updates appear immediately.
  *   - Transition trigger: on `contentKey` mismatch, route through `useLayoutEffect` to
- *     set up the spring before the next paint. Replace direction OR reduced motion
- *     committed synchronously without a spring.
+ *     set up the animation before the next paint. Replace direction commits
+ *     synchronously; reduced motion uses a timing-driven crossfade.
  *   - Interrupt rule: a new key arriving mid-flight cancels the current spring and
  *     snap-commits to its intended target; the next render naturally re-enters and
  *     starts a fresh spring for the latest key.
@@ -30,6 +30,7 @@ import {
     runOnJS,
     useSharedValue,
     withSpring,
+    withTiming,
 } from 'react-native-reanimated';
 
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -42,20 +43,22 @@ type InFlightTarget = Readonly<{
     children: React.ReactNode;
     key: string | number;
     direction: SlideTransitionDirection;
+    generation: number;
 }>;
 
 export function SlideTransitionSwitch(props: SlideTransitionSwitchProps): React.ReactElement {
     const preferredReducedMotion = useReducedMotionPreference();
     const effectiveReducedMotion = props.reducedMotion ?? preferredReducedMotion;
     const resolvedPreset: SlideTransitionPreset = props.preset ?? 'compact';
-    const resolvedBlur = props.blur ?? false;
+    const resolvedBlur = props.blur ?? resolvedPreset === 'soft';
     const presetTokens = slideTransitionTokens[resolvedPreset];
 
-    const [displayedChildren, setDisplayedChildren] = React.useState<React.ReactNode>(props.children);
+    const displayedChildrenRef = React.useRef<React.ReactNode>(props.children);
     const [displayedKey, setDisplayedKey] = React.useState<string | number>(props.contentKey);
     const [activeDirection, setActiveDirection] = React.useState<SlideTransitionDirection>(props.direction);
     const progress = useSharedValue(0);
     const inFlightTargetRef = React.useRef<InFlightTarget | null>(null);
+    const transitionGenerationRef = React.useRef(0);
 
     // F13.2 — unmount cancellation. The spring callback uses runOnJS to call
     // commitInFlightTarget which performs setState on this component. If we
@@ -76,14 +79,14 @@ export function SlideTransitionSwitch(props: SlideTransitionSwitchProps): React.
 
     const commitDisplayed = React.useCallback(
         (nextChildren: React.ReactNode, nextKey: string | number) => {
-            setDisplayedChildren(() => nextChildren);
+            displayedChildrenRef.current = nextChildren;
             setDisplayedKey(nextKey);
             inFlightTargetRef.current = null;
         },
         [],
     );
 
-    const commitInFlightTarget = React.useCallback(() => {
+    const commitInFlightTarget = React.useCallback((expectedGeneration: number) => {
         // F13.2 — late spring callback after unmount: do nothing. Without this
         // guard `commitDisplayed` would call `setDisplayedChildren` /
         // `setDisplayedKey` on an unmounted component and React would log a
@@ -91,17 +94,17 @@ export function SlideTransitionSwitch(props: SlideTransitionSwitchProps): React.
         if (!isMountedRef.current) return;
         const target = inFlightTargetRef.current;
         if (target == null) return;
+        if (target.generation !== expectedGeneration) return;
         commitDisplayed(target.children, target.key);
     }, [commitDisplayed]);
 
-    // SYNC RULE: while not transitioning, keep `displayedChildren` ready for the
-    // NEXT transition's outgoing snapshot. The render path uses plain `children`
-    // for the current slot when not transitioning, so same-key dynamic updates
-    // appear without a frame lag.
-    React.useEffect(() => {
+    // SYNC RULE: after an idle render commits, refresh the outgoing snapshot
+    // without scheduling a second React commit. A layout effect keeps aborted
+    // concurrent renders from replacing the last committed snapshot.
+    React.useLayoutEffect(() => {
         if (isTransitioning) return;
         if (inFlightTargetRef.current !== null) return;
-        setDisplayedChildren(() => props.children);
+        displayedChildrenRef.current = props.children;
     }, [props.children, isTransitioning]);
 
     // NO-FLASH INVARIANT: after the spring callback commits the new
@@ -121,8 +124,8 @@ export function SlideTransitionSwitch(props: SlideTransitionSwitchProps): React.
     React.useLayoutEffect(() => {
         if (displayedKey === props.contentKey) return;
 
-        // Replace OR reduced-motion: instant commit, no spring, single layer.
-        if (props.direction === 'replace' || effectiveReducedMotion) {
+        // Replace: instant commit, no animation, single layer.
+        if (props.direction === 'replace') {
             if (inFlightTargetRef.current !== null) {
                 cancelAnimation(progress);
             }
@@ -138,6 +141,7 @@ export function SlideTransitionSwitch(props: SlideTransitionSwitchProps): React.
                 children: props.children,
                 key: props.contentKey,
                 direction: inFlightTargetRef.current.direction,
+                generation: inFlightTargetRef.current.generation,
             };
             return;
         }
@@ -154,13 +158,16 @@ export function SlideTransitionSwitch(props: SlideTransitionSwitchProps): React.
 
         // Fresh transition.
         setActiveDirection(props.direction);
+        const generation = transitionGenerationRef.current + 1;
+        transitionGenerationRef.current = generation;
         inFlightTargetRef.current = {
             children: props.children,
             key: props.contentKey,
             direction: props.direction,
+            generation,
         };
         const target = props.direction === 'forward' ? -1 : +1;
-        progress.value = withSpring(target, presetTokens.spring, (finished) => {
+        const commitWhenFinished = (finished?: boolean) => {
             'worklet';
             if (!finished) return;
             // React nodes live in inFlightTargetRef; the JS callback reads them there.
@@ -169,8 +176,11 @@ export function SlideTransitionSwitch(props: SlideTransitionSwitchProps): React.
             // commits the new displayedKey, flashing stale content for one frame.
             // The reset is the JS side's job, in a useLayoutEffect keyed on the
             // committed `displayedKey` (runs AFTER React paints the new tree).
-            runOnJS(commitInFlightTarget)();
-        });
+            runOnJS(commitInFlightTarget)(generation);
+        };
+        progress.value = effectiveReducedMotion
+            ? withTiming(target, { duration: presetTokens.reducedMotionDurationMs }, commitWhenFinished)
+            : withSpring(target, presetTokens.spring, commitWhenFinished);
     }, [
         props.contentKey,
         props.direction,
@@ -184,7 +194,7 @@ export function SlideTransitionSwitch(props: SlideTransitionSwitchProps): React.
     ]);
 
     const containerStyle: StyleProp<ViewStyle> | undefined = props.style;
-    const currentSlot = isTransitioning ? displayedChildren : props.children;
+    const currentSlot = isTransitioning ? displayedChildrenRef.current : props.children;
     const incomingSlotForward = isTransitioning && activeDirection === 'forward' ? props.children : undefined;
     const incomingSlotBackward = isTransitioning && activeDirection === 'backward' ? props.children : undefined;
 

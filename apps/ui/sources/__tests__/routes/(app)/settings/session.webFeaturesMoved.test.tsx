@@ -41,11 +41,11 @@ afterEach(() => {
     resetSessionSettingsEntryState();
 });
 
-describe('Session settings (web features moved)', () => {
-    it('shows Enter-to-send and Message history inside Session settings (web)', async () => {
-        const mod = await import('@/app/(app)/settings/session');
-        const SessionSettingsScreen = mod.default;
-        const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
+describe('Session composer settings (web features moved)', () => {
+    it('shows Enter-to-send and Message history inside Session composer settings (web)', async () => {
+        const mod = await import('@/app/(app)/settings/session/composer');
+        const SessionComposerSettingsScreen = mod.default;
+        const screen = await renderSettingsView(React.createElement(SessionComposerSettingsScreen));
 
         const titles = screen.findAllByType('Item' as any).map((item) => item.props.title);
         const dropdowns = screen.findAllByType('DropdownMenu' as any);

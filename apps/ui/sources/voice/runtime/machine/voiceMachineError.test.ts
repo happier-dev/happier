@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
     classifyMicSessionFailure,
@@ -9,23 +9,70 @@ import {
 } from './voiceMachineError';
 
 describe('createVoiceMachineError', () => {
-    it('resolves recoverability from the per-kind table when omitted', () => {
-        expect(createVoiceMachineError({ kind: 'provider_error', reason: 'x' })).toEqual({
-            kind: 'provider_error',
-            reason: 'x',
-            recoverable: true,
-        });
+    it('mints complete structured policy for a preflight microphone denial', () => {
         expect(createVoiceMachineError({ kind: 'mic_permission_denied', reason: 'denied' })).toEqual({
             kind: 'mic_permission_denied',
             reason: 'denied',
+            phase: 'preflight',
+            retryPolicy: 'user_action',
+            recoveryAction: 'open_settings',
+            presentation: 'permission_required',
+            recoverable: true,
+        });
+    });
+
+    it('mints complete structured policy for active-session microphone revocation', () => {
+        expect(createVoiceMachineError({ kind: 'mic_permission_revoked', reason: 'revoked' })).toEqual({
+            kind: 'mic_permission_revoked',
+            reason: 'revoked',
+            phase: 'active_session',
+            retryPolicy: 'user_action',
+            recoveryAction: 'open_settings_then_reconnect',
+            presentation: 'error',
             recoverable: false,
         });
     });
 
-    it('respects an explicit recoverable override', () => {
-        expect(
-            createVoiceMachineError({ kind: 'mic_permission_denied', reason: 'denied', recoverable: true }),
-        ).toMatchObject({ recoverable: true });
+    it.each([
+        ['authentication_required', 'user_action', 'connect_agent'],
+        ['session_unavailable', 'never', 'none'],
+        ['unsupported_runtime', 'user_action', 'install_agent_runtime'],
+        ['update_required', 'user_action', 'update_agent_runtime'],
+        ['feature_unavailable', 'never', 'none'],
+    ] as const)('keeps %s recovery truthful without collapsing it to retry', (kind, retryPolicy, recoveryAction) => {
+        expect(createVoiceMachineError({ kind, reason: kind })).toMatchObject({
+            kind,
+            phase: 'preflight',
+            retryPolicy,
+            recoveryAction,
+            presentation: 'error',
+        });
+    });
+
+    it.each([
+        'session_unavailable',
+        'feature_unavailable',
+    ] as const)('keeps the hard %s error non-recoverable until external state changes', (kind) => {
+        expect(createVoiceMachineError({ kind, reason: kind })).toMatchObject({
+            kind,
+            retryPolicy: 'never',
+            recoveryAction: 'none',
+            recoverable: false,
+        });
+    });
+
+    it('derives all policy fields from kind and does not accept caller overrides', () => {
+        expectTypeOf<Parameters<typeof createVoiceMachineError>[0]>()
+            .not.toHaveProperty('recoverable');
+        expect(createVoiceMachineError({ kind: 'provider_error', reason: 'x' })).toEqual({
+            kind: 'provider_error',
+            reason: 'x',
+            phase: 'runtime',
+            retryPolicy: 'user_action',
+            recoveryAction: 'retry',
+            presentation: 'notice',
+            recoverable: true,
+        });
     });
 });
 
@@ -43,17 +90,66 @@ describe('classifyMicSessionFailure', () => {
         expect(classifyMicSessionFailure({ kind: 'mic_ended', reason: 'device_lost' })).toEqual({
             kind: 'mic_ended',
             reason: 'device_lost',
+            phase: 'active_session',
+            retryPolicy: 'immediate_once',
+            recoveryAction: 'reconnect',
+            presentation: 'notice',
             recoverable: true,
         });
+    });
+
+    it('uses only the canonical retry vocabulary for every error kind', () => {
+        const kinds = [
+            'mic_permission_denied',
+            'mic_permission_revoked',
+            'mic_ended',
+            'mic_plateau',
+            'transport_disconnect',
+            'provider_error',
+            'provider_auth_invalid',
+            'reconnect_exhausted',
+            'audio_context_suspended',
+            'stt_timeout',
+            'tts_failed',
+            'turn_aborted',
+            'authentication_required',
+            'session_unavailable',
+            'unsupported_runtime',
+            'update_required',
+            'feature_unavailable',
+        ] as const;
+        expect(kinds.map((kind) => createVoiceMachineError({ kind, reason: kind }).retryPolicy))
+            .toEqual([
+                'user_action',
+                'user_action',
+                'immediate_once',
+                'immediate_once',
+                'backoff',
+                'user_action',
+                'user_action',
+                'user_action',
+                'immediate_once',
+                'user_action',
+                'user_action',
+                'never',
+                'user_action',
+                'never',
+                'user_action',
+                'user_action',
+                'never',
+            ]);
     });
 });
 
 describe('classifyRealtimeProviderFailure', () => {
-    it('classifies permission errors as non-recoverable permission denial', () => {
+    it('classifies permission errors as actionable preflight permission denial', () => {
         const error = Object.assign(new Error('permission_denied'), { name: 'NotAllowedError' });
         expect(classifyRealtimeProviderFailure(error)).toMatchObject({
             kind: 'mic_permission_denied',
-            recoverable: false,
+            phase: 'preflight',
+            retryPolicy: 'user_action',
+            recoveryAction: 'open_settings',
+            presentation: 'permission_required',
         });
     });
 
@@ -75,7 +171,8 @@ describe('classifyVoiceMachineError', () => {
     it('maps permission errors to mic_permission_denied', () => {
         expect(classifyVoiceMachineError({ name: 'NotAllowedError' })).toMatchObject({
             kind: 'mic_permission_denied',
-            recoverable: false,
+            phase: 'preflight',
+            retryPolicy: 'user_action',
         });
     });
 

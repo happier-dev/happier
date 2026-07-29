@@ -3,7 +3,7 @@ import type { Settings } from '@/sync/domains/settings/settings';
 
 export type NewSessionTranscriptStorage = 'persisted' | 'direct';
 
-type DirectTranscriptStorageSettings = Partial<Settings>;
+type DirectTranscriptStorageSettings = Readonly<Record<string, unknown>>;
 
 export function supportsDirectTranscriptStorageForNewSession(params: Readonly<{
     agentId: AgentId;

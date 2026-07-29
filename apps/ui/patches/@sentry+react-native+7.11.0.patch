@@ -1,0 +1,16 @@
+diff --git a/node_modules/@sentry/react-native/ios/RNSentry.mm b/node_modules/@sentry/react-native/ios/RNSentry.mm
+index 3461af8..4d2b9bf 100644
+--- a/node_modules/@sentry/react-native/ios/RNSentry.mm
++++ b/node_modules/@sentry/react-native/ios/RNSentry.mm
+@@ -177,7 +177,10 @@ - (NSMutableDictionary *)prepareOptions:(NSDictionary *)options
+     }
+ 
+ #if SENTRY_TARGET_REPLAY_SUPPORTED
+-    [RNSentryReplay postInit];
++    // HAPPIER PATCH(sentry-native-replay-postinit-guard): keep replay postInit behind runtime enablement.
++    if (isSessionReplayEnabled) {
++        [RNSentryReplay postInit];
++    }
+ #endif
+ 
+     resolve(@YES);

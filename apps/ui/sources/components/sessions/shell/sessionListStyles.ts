@@ -146,6 +146,10 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         borderRadius: 999,
         marginLeft: 4,
     },
+    headerActiveFilterBadge: {
+        top: -2,
+        right: -3,
+    },
     headerControls: {
         flexDirection: 'row' as const,
         alignItems: 'center' as const,

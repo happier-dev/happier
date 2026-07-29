@@ -7,6 +7,7 @@ export const reanimatedMotionTokens = {
     easing: {
         standard: Easing.bezier(0.2, 0, 0, 1),
         emphasized: Easing.bezier(0.2, 0, 0, 1),
+        stageCamera: Easing.bezier(0.22, 0.82, 0.2, 1),
         linear: Easing.linear,
     },
 } as const;

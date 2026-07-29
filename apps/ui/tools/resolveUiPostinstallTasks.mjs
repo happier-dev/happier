@@ -9,6 +9,8 @@ function parseOptionalBoolean(raw) {
 export function resolveUiPostinstallTasks({ env }) {
     const tasks = [
         'patch-package',
+        'verify-native-patch-compilation',
+        'verify-sentry-native-replay-postinit-patch',
         'verify-expo-router-web-modal-patch',
         'install-react-native-enriched-markdown-web-wasm',
         'verify-react-native-enriched-markdown-web-streaming-patch',
@@ -25,6 +27,7 @@ export function resolveUiPostinstallTasks({ env }) {
             'vendor-codemirror-webview-bundle',
             'vendor-xterm-webview-bundle',
             'vendor-tiptap-webview-bundle',
+            'vendor-mermaid-webview-bundle',
         )
     }
 

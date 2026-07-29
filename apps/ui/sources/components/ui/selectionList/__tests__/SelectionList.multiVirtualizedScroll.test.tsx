@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
 
 import type {
     SelectionListOption,
@@ -13,6 +14,11 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });
+
+const { module: capturedLegendList } = createCapturingLegendListMock({ renderItems: true });
+vi.mock('@legendapp/list/react-native', () => ({
+    LegendList: capturedLegendList.LegendList,
+}));
 
 function makeOptions(count: number, prefix: string): ReadonlyArray<SelectionListOption> {
     return Array.from({ length: count }, (_, i) => ({

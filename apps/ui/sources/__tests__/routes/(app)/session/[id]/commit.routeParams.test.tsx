@@ -53,6 +53,14 @@ vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
     SessionCommitDetailsView: (props: any) => sessionCommitDetailsViewSpy(props),
 }));
 
+vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
+    useHydrateSessionForRoute: (sessionId: string) => ({
+        kind: sessionId ? 'available' : 'missing',
+        sessionId,
+        cause: sessionId ? undefined : 'not_found',
+    }),
+}));
+
 vi.mock('@/components/ui/panels/shouldRedirectDetailsRouteToPanes', () => ({
     shouldRedirectDetailsRouteToPanes: () => false,
 }));

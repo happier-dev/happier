@@ -1,7 +1,7 @@
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopedStorageKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
-import { fromRecord, toRecord, type PendingSetupIntent } from './pendingSetupIntent.shared';
+import { emitPendingSetupIntentChanged, fromRecord, fromSerializedRecord, toRecord, type PendingSetupIntent } from './pendingSetupIntent.shared';
 import { getActivePendingServerUrl, isPendingServerUrlActive, normalizePendingServerUrl, pendingServerScopedKey } from './pendingServerScopedKeys';
 
 const scope = readStorageScopeFromEnv();
@@ -31,8 +31,7 @@ function readRecord(storage: Storage, key: string): PendingSetupIntent | null {
     try {
         const raw = storage.getItem(key);
         if (!raw) return null;
-        const parsed = JSON.parse(raw) as unknown;
-        const record = fromRecord(parsed);
+        const record = fromSerializedRecord(raw);
         if (!record) {
             storage.removeItem(key);
             return null;
@@ -41,6 +40,30 @@ function readRecord(storage: Storage, key: string): PendingSetupIntent | null {
     } catch {
         storage.removeItem(key);
         return null;
+    }
+}
+
+function listStorageKeys(storage: Storage): string[] {
+    const keys: string[] = [];
+    for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index);
+        if (typeof key === 'string') keys.push(key);
+    }
+    return keys;
+}
+
+function dropMismatchedServerScopedIntent(storage: Storage, activeServerScopedKey: string | null): void {
+    for (const key of listStorageKeys(storage)) {
+        if (!key.startsWith(`${STORAGE_KEY_SERVER_PREFIX}:`)) continue;
+        if (activeServerScopedKey && key === activeServerScopedKey) continue;
+        const record = readRecord(storage, key);
+        if (!record) continue;
+        try {
+            storage.removeItem(key);
+            console.debug('[pendingSetupIntent] dropped server-scoped setup intent after relay URL mismatch');
+        } catch {
+            // ignore storage failures
+        }
     }
 }
 
@@ -58,9 +81,11 @@ export function setPendingSetupIntent(value: PendingSetupIntent): void {
             storage.setItem(serverAccountScopedStorageKey(STORAGE_KEY_PREFIX, activeScope), payload);
             const serverScopedKey = resolveActiveServerScopedKey();
             if (serverScopedKey) storage.removeItem(serverScopedKey);
+            emitPendingSetupIntentChanged();
             return;
         }
         storage.setItem(pendingServerScopedKey(STORAGE_KEY_SERVER_PREFIX, serverUrl), payload);
+        emitPendingSetupIntentChanged();
     } catch {
         // ignore storage failures
     }
@@ -77,6 +102,9 @@ export function getPendingSetupIntent(): PendingSetupIntent | null {
     const serverScopedKey = resolveActiveServerScopedKey();
     const record = serverScopedKey ? readRecord(storage, serverScopedKey) : null;
     if (record) return record;
+    if (activeScope) {
+        dropMismatchedServerScopedIntent(storage, serverScopedKey);
+    }
 
     const legacy = readRecord(storage, STORAGE_KEY) ?? readRecord(storage, LEGACY_MMKV_STORAGE_KEY);
     if (!legacy) return null;
@@ -117,6 +145,7 @@ export function clearPendingSetupIntent(): void {
             storage.removeItem(STORAGE_KEY);
             storage.removeItem(LEGACY_MMKV_STORAGE_KEY);
         }
+        emitPendingSetupIntentChanged();
     } catch {
         // ignore storage failures
     }
@@ -140,6 +169,7 @@ export function migratePendingSetupIntentScopes(
                 try {
                     storage.setItem(canonicalKey, JSON.stringify(record));
                     hasCanonicalRecord = true;
+                    emitPendingSetupIntentChanged();
                 } catch {
                     // ignore storage failures
                 }

@@ -4,6 +4,8 @@ import { PluginReactNativeUnavailable } from './PluginReactNativeUnavailable';
 
 type PluginUiBoundaryProps = Readonly<{
     surfaceId: string;
+    /** Immutable artifact identity; changing it permits a fresh render attempt. */
+    resetKey?: string;
     children: React.ReactNode;
     onCrash?: (surfaceId: string, error: Error) => void;
 }>;
@@ -21,6 +23,18 @@ export class PluginUiBoundary extends React.Component<PluginUiBoundaryProps, Plu
 
     componentDidCatch(error: Error): void {
         this.props.onCrash?.(this.props.surfaceId, error);
+    }
+
+    componentDidUpdate(previousProps: PluginUiBoundaryProps): void {
+        if (
+            this.state.error
+            && (
+                previousProps.surfaceId !== this.props.surfaceId
+                || previousProps.resetKey !== this.props.resetKey
+            )
+        ) {
+            this.setState({ error: null });
+        }
     }
 
     render(): React.ReactNode {

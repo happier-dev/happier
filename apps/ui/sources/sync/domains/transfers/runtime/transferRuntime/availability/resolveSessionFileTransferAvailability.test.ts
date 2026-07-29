@@ -3,6 +3,54 @@ import { describe, expect, it } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 describe('resolveSessionFileTransferAvailability', () => {
+    it('routes predecessor lan_http-only state to relay without selecting direct peer', async () => {
+        const { resolveSessionFileTransferAvailability } = await import('./resolveSessionFileTransferAvailability');
+        const serverFeatures = FeaturesResponseSchema.parse({
+            features: {
+                machines: {
+                    enabled: true,
+                    transfer: {
+                        enabled: true,
+                        directPeer: { enabled: true },
+                        serverRouted: { enabled: true },
+                    },
+                },
+            },
+            capabilities: {},
+        });
+
+        const result = resolveSessionFileTransferAvailability({
+            sessionAvailable: true,
+            machineTargetAvailable: true,
+            serverFeatures,
+            directPeerRoute: { status: 'viable', checkedAt: 10, expiresAt: 20 },
+            machineRpcDirectRoute: {
+                status: 'unavailable',
+                checkedAt: 10,
+                expiresAt: 20,
+                failureReason: 'machine_rpc_direct_unavailable',
+            },
+            machineDaemonState: {
+                transfer: {
+                    supported: { import: true, export: true },
+                    listenerClasses: {
+                        loopback_http: { enabled: false, configured: false, active: false },
+                        lan_http: { enabled: true, configured: true, active: true },
+                        tailscale_serve_https: { enabled: false, configured: false, active: false, available: false },
+                    },
+                    lifecycle: { mode: 'lazy_idle_shutdown', version: 1 },
+                },
+            },
+        });
+
+        expect(result.daemonDirectPeerDiagnostics.activeRouteKinds).toEqual([]);
+        expect(result.daemonDirectPeerDiagnostics.route.status).toBe('unavailable');
+        expect(result.decision).toEqual(expect.objectContaining({
+            kind: 'selected',
+            preferredRouteKind: 'server_relay_stream',
+        }));
+    });
+
     it('does not prefer direct peer when the daemon transfer state does not advertise a configured transfer listener', async () => {
         const { resolveSessionFileTransferAvailability } = await import('./resolveSessionFileTransferAvailability');
 

@@ -1,11 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import {
+    RPC_METHODS,
+    SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS,
+    type SocketRpcAuthorizationContext,
+} from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { resetScopedMachineDataKeyCacheForTests } from './serverScopedRpcPool';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
-type MachineRpcSpy = (machineId: string, method: string, params: unknown, options?: { timeoutMs?: number }) => Promise<unknown>;
+type MachineRpcSpy = (machineId: string, method: string, params: unknown, options?: {
+    timeoutMs?: number;
+    authorization?: SocketRpcAuthorizationContext;
+    onIssued?: () => void;
+}) => Promise<unknown>;
 
 const machineRpcSpy = vi.hoisted(() => vi.fn<MachineRpcSpy>());
 const createEphemeralSocketSpy = vi.hoisted(() => vi.fn());
@@ -66,12 +74,14 @@ function installDefaultPeerMediationFallback(): void {
         method: string;
         payload: unknown;
         timeoutMs?: number;
+        authorization?: SocketRpcAuthorizationContext;
         serverFallback: (input: {
             serverId?: string | null;
             machineId: string;
             method: string;
             payload: unknown;
             timeoutMs?: number;
+            authorization?: SocketRpcAuthorizationContext;
             reasonCode: string;
         }) => Promise<unknown>;
     }) => await params.serverFallback({
@@ -80,6 +90,7 @@ function installDefaultPeerMediationFallback(): void {
         method: params.method,
         payload: params.payload,
         timeoutMs: params.timeoutMs,
+        authorization: params.authorization,
         reasonCode: 'server_required',
     }));
 }
@@ -148,12 +159,14 @@ describe('machineRpcWithServerScope', () => {
             method: string;
             payload: unknown;
             timeoutMs?: number;
+            authorization?: SocketRpcAuthorizationContext;
             serverFallback: (input: {
                 serverId?: string | null;
                 machineId: string;
                 method: string;
                 payload: unknown;
                 timeoutMs?: number;
+                authorization?: SocketRpcAuthorizationContext;
                 reasonCode: string;
             }) => Promise<unknown>;
         }) => await params.serverFallback({
@@ -162,6 +175,7 @@ describe('machineRpcWithServerScope', () => {
             method: params.method,
             payload: params.payload,
             timeoutMs: params.timeoutMs,
+            authorization: params.authorization,
             reasonCode: 'topology_unavailable',
         }));
 
@@ -182,6 +196,85 @@ describe('machineRpcWithServerScope', () => {
         );
     });
 
+    it('supplies canonical server feature relay fallback decisions to peer-mediated heavy voice rpc', async () => {
+        const relayCaps = {
+            maxBitrateBps: 64_000,
+            maxFramesPerSecond: 50,
+            maxFrameBytes: 16_000,
+            maxDurationMs: 60_000,
+            maxTotalBytes: 1_000_000,
+            maxConcurrentStreamsPerAccount: 2,
+            maxConcurrentStreamsPerSocket: 1,
+            maxConcurrentStreamsPerMachine: 1,
+        };
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://server-a.example.test',
+            kind: 'custom',
+            generation: 1,
+        });
+        getReadyServerFeaturesSpy.mockResolvedValueOnce({
+            features: {
+                machines: {
+                    liveStream: {
+                        serverRouted: { enabled: true },
+                    },
+                },
+            },
+            capabilities: {
+                machines: {
+                    liveStream: {
+                        serverRouted: {
+                            caps: relayCaps,
+                            disabledReason: null,
+                        },
+                    },
+                },
+            },
+        });
+        machineRpcWithPeerMediationRouteSpy.mockImplementationOnce(async (params: {
+            resolveRelayFallback?: (input: {
+                method: string;
+                reasonCode: string;
+                policy: { relayFallback?: unknown };
+            }) => Promise<unknown>;
+        }) => {
+            expect(params.resolveRelayFallback).toEqual(expect.any(Function));
+            return await params.resolveRelayFallback?.({
+                method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK,
+                reasonCode: 'topology_unavailable',
+                policy: {
+                    relayFallback: {
+                        flowKind: 'daemon_voice_audio',
+                        defaultSharedServerMode: 'disabled',
+                        authorizationRequired: true,
+                        relayCapsRequired: true,
+                        meteringRequired: true,
+                        lifecycleReceiptRequired: true,
+                        capProfile: 'machine_live_stream_relay_caps_v1',
+                    },
+                },
+            });
+        });
+
+        const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+        const result = await machineRpcWithServerScope({
+            machineId: 'machine-1',
+            method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK,
+            payload: { streamId: 'stream-1', seq: 1 },
+        });
+
+        expect(result).toMatchObject({
+            ok: true,
+            routeKind: 'server_relay',
+            caps: relayCaps,
+        });
+        expect(getReadyServerFeaturesSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: undefined,
+            timeoutMs: undefined,
+        }));
+    });
+
     it('delegates to apiSocket.machineRPC when target server is omitted', async () => {
         getActiveServerSnapshotSpy.mockReturnValue({
             serverId: 'server-a',
@@ -197,6 +290,10 @@ describe('machineRpcWithServerScope', () => {
             machineId: 'machine-1',
             method: 'method-test',
             payload: { value: 1 },
+            authorization: {
+                kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
+                sessionId: 'sess_1',
+            },
         });
 
         expect(result).toEqual({ ok: true });
@@ -205,6 +302,10 @@ describe('machineRpcWithServerScope', () => {
             'method-test',
             { value: 1 },
             expect.objectContaining({
+                authorization: {
+                    kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
+                    sessionId: 'sess_1',
+                },
                 timeoutMs: expect.any(Number),
             }),
         );
@@ -218,6 +319,92 @@ describe('machineRpcWithServerScope', () => {
             remoteMachineId: 'machine-1',
         })).toEqual({ status: 'unknown' });
         expect(createEphemeralSocketSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not fall back after an exact active machine RPC has been issued', async () => {
+        vi.useFakeTimers();
+        try {
+            getActiveServerSnapshotSpy.mockReturnValue({
+                serverId: 'server-a', serverUrl: 'https://server-a.example.test', kind: 'custom', generation: 1,
+            });
+            machineRpcSpy.mockImplementation(async (_machineId, _method, _params, options) => {
+                options?.onIssued?.();
+                return await new Promise<never>(() => {});
+            });
+            const onIssued = vi.fn();
+            const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+            const result = machineRpcWithServerScope({
+                machineId: 'machine-1', method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+                payload: { sessionId: 'session-1' }, timeoutMs: 25, onIssued,
+            });
+            const settled = result.then(
+                () => ({ state: 'resolved' as const }),
+                (error: unknown) => ({ state: 'rejected' as const, error }),
+            );
+
+            await vi.advanceTimersByTimeAsync(25);
+            await expect(settled).resolves.toMatchObject({ state: 'rejected', error: expect.any(Error) });
+            expect(onIssued).toHaveBeenCalledTimes(1);
+            expect(createEphemeralSocketSpy).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('fences delayed active preparation after exact scoped fallback starts', async () => {
+        vi.useFakeTimers();
+        try {
+            getActiveServerSnapshotSpy.mockReturnValue({
+                serverId: 'server-a', serverUrl: 'https://server-a.example.test', kind: 'custom', generation: 1,
+            });
+            let releaseActive!: () => void;
+            const activeGate = new Promise<void>((resolve) => { releaseActive = resolve; });
+            let activeEmits = 0;
+            machineRpcSpy.mockImplementation(async (_machineId, _method, _params, options) => {
+                await activeGate;
+                options?.onIssued?.();
+                activeEmits += 1;
+                return { source: 'late-active' };
+            });
+            getCredentialsSpy.mockResolvedValue({ token: 'token-a', secret: 'secret-a' });
+            const machineEncryption = {
+                encryptRaw: vi.fn(async () => 'encrypted-payload'),
+                decryptRaw: vi.fn(async () => ({ source: 'scoped' })),
+            };
+            createEncryptionSpy.mockResolvedValue({
+                decryptEncryptionKey: vi.fn(async () => null),
+                initializeMachines: vi.fn(async () => {}),
+                getMachineEncryption: vi.fn(() => machineEncryption),
+            });
+            vi.stubGlobal('fetch', vi.fn(async () => ({
+                ok: true,
+                json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
+            })));
+            const scopedEmit = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
+            createEphemeralSocketSpy.mockResolvedValue({
+                timeout: vi.fn(() => ({ emitWithAck: scopedEmit })),
+                emit: vi.fn(),
+                disconnect: vi.fn(),
+            });
+            const onIssued = vi.fn();
+            const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+            const result = machineRpcWithServerScope({
+                machineId: 'machine-1', method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+                payload: { sessionId: 'session-1' }, timeoutMs: 25, onIssued,
+            });
+
+            await vi.advanceTimersByTimeAsync(25);
+            await expect(result).resolves.toEqual({ source: 'scoped' });
+            releaseActive();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(scopedEmit).toHaveBeenCalledTimes(1);
+            expect(onIssued).toHaveBeenCalledTimes(1);
+            expect(activeEmits).toBe(0);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('fails closed: forces scoped route for guarded methods when transfer feature payload is unavailable', async () => {
@@ -319,6 +506,10 @@ describe('machineRpcWithServerScope', () => {
             payload: { value: 2 },
             serverId: 'server-b',
             timeoutMs: 5000,
+            authorization: {
+                kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
+                sessionId: 'sess_2',
+            },
         });
 
         expect(result).toEqual({ decoded: true });
@@ -346,6 +537,10 @@ describe('machineRpcWithServerScope', () => {
             method: 'machine-1:method-test',
             params: 'encrypted-payload',
             timeoutMs: expect.any(Number),
+            authorization: {
+                kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
+                sessionId: 'sess_2',
+            },
         }));
         const emitWithAckCalls = emitWithAck.mock.calls as unknown as Array<
             [string, { method: string; params: string; timeoutMs: number }]
@@ -535,7 +730,7 @@ describe('machineRpcWithServerScope', () => {
         expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
     });
 
-    it('falls back to a scoped socket when the active machine rpc call hangs past the timeout', async () => {
+    it('falls back to a scoped socket with a fresh timeout budget when the active machine rpc call hangs', async () => {
         vi.useFakeTimers();
         getActiveServerSnapshotSpy.mockReturnValue({
             serverId: 'server-a',
@@ -585,14 +780,14 @@ describe('machineRpcWithServerScope', () => {
         expect(createEphemeralSocketSpy).toHaveBeenCalledWith(expect.objectContaining({
             serverUrl: 'https://server-a.example.test',
             token: 'token-a',
-            timeoutMs: 1,
+            timeoutMs: 1_000,
         }));
         expect(machineEncryption.encryptRaw).toHaveBeenCalledWith({ handoffId: 'handoff_1' });
         expect(machineEncryption.decryptRaw).toHaveBeenCalledWith('encrypted-result');
         expect(emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CALL, {
             method: 'machine-1:daemon.sessionHandoff.prepareTarget',
             params: 'encrypted-payload',
-            timeoutMs: 1,
+            timeoutMs: 1_000,
         });
         expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
         vi.useRealTimers();
@@ -675,6 +870,65 @@ describe('machineRpcWithServerScope', () => {
             timeoutMs: 1_000,
         }));
         expect(machineEncryption.encryptRaw).not.toHaveBeenCalled();
+        vi.useRealTimers();
+    });
+
+    it('reports the total rpc budget when a late scoped rpc emit exhausts the remaining timeout', async () => {
+        vi.useFakeTimers();
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://server-a.example.test',
+            kind: 'custom',
+            generation: 1,
+        });
+        getCredentialsSpy.mockResolvedValue({ token: 'token-a', secret: 'secret-a' });
+
+        const machineEncryption = {
+            encryptRaw: vi.fn(async () => 'encrypted-payload'),
+            decryptRaw: vi.fn(async () => ({ decoded: true })),
+        };
+        createEncryptionSpy.mockResolvedValue({
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeMachines: vi.fn(async () => {}),
+            getMachineEncryption: vi.fn(() => machineEncryption),
+        });
+
+        vi.stubGlobal('fetch', vi.fn(async () => ({
+            ok: true,
+            json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
+        })));
+
+        const emitWithAck = vi.fn(() => new Promise(() => {}));
+        const fakeSocket = {
+            timeout: vi.fn(() => ({ emitWithAck })),
+            emit: vi.fn(),
+            disconnect: vi.fn(),
+        };
+        createEphemeralSocketSpy.mockImplementationOnce(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 999));
+            return fakeSocket;
+        });
+
+        const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+        const rpcPromise = machineRpcWithServerScope({
+            machineId: 'machine-1',
+            method: 'daemon.sessionHandoff.prepareTarget',
+            payload: { handoffId: 'handoff_1' },
+            timeoutMs: 1_000,
+            preferScoped: true,
+        });
+        const capturedError = rpcPromise.catch((error: unknown) => error);
+
+        await vi.advanceTimersByTimeAsync(1_000);
+
+        await expect(capturedError).resolves.toMatchObject({
+            code: 'MACHINE_RPC_TIMEOUT',
+            timeoutMs: 1_000,
+            remainingTimeoutMs: 1,
+            message: expect.stringContaining('after 1000ms'),
+        });
+        expect(fakeSocket.timeout).toHaveBeenCalledWith(1);
+        expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
         vi.useRealTimers();
     });
 

@@ -11,6 +11,7 @@ import {
     resetSessionSettingsEntryState,
     sessionSettingsEntryState,
 } from './sessionSettingsEntryTestHelpers';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -105,10 +106,10 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => await createSt
                 sessionSettingsEntryState.settingsState[key] = next;
             },
         ] as any,
-        useSetting: (key: string) => {
+        useSetting: createUseSettingMock({ fallback: (key) => {
             if (key === 'recentMachinePaths') return [];
             return null;
-        },
+        } }),
     },
 }));
 
@@ -134,12 +135,12 @@ afterEach(() => {
     resetSessionSettingsEntryState();
 });
 
-describe('Session settings (summary runner text-node guard)', () => {
+describe('Session resume settings (summary runner text-node guard)', () => {
     it('does not emit raw text nodes under non-Text parents when summary runner controls are visible', async () => {
-        const mod = await import('@/app/(app)/settings/session');
-        const SessionSettingsScreen = mod.default;
+        const mod = await import('@/app/(app)/settings/session/resume');
+        const SessionResumeSettingsScreen = mod.default;
 
-        const screen = await renderScreen(React.createElement(SessionSettingsScreen));
+        const screen = await renderScreen(React.createElement(SessionResumeSettingsScreen));
         const badNodes = collectUnexpectedRawTextNodes(screen.tree.toJSON());
         expect(badNodes).toEqual([]);
     });

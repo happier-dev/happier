@@ -82,7 +82,7 @@ function mockSessionsDomainBoundaries() {
     }));
 }
 
-function createHarness(createSessionsDomain: any, createReducer: any) {
+function createHarness(createSessionsDomain: any, createReducer: any, initialStateOverrides: Record<string, unknown> = {}) {
     let state: any = {
         sessions: {},
         sessionListRenderables: {},
@@ -105,6 +105,7 @@ function createHarness(createSessionsDomain: any, createReducer: any) {
         },
         profile: { id: 'account_a' },
         settings: { groupInactiveSessionsByProject: false },
+        ...initialStateOverrides,
     };
 
     const get = () => state;
@@ -118,18 +119,131 @@ function createHarness(createSessionsDomain: any, createReducer: any) {
 }
 
 describe('sessions domain: thinking grace', () => {
+    it('owns a bounded resuming marker until genuine post-attach activity settles it', async () => {
+        mockSessionsDomainBoundaries();
+
+        const scheduledTimeouts = new Map<number, { callback: () => void; delay: number }>();
+        let nextTimeoutId = 1;
+        let nowMs = Date.parse('2026-02-05T00:00:00.000Z');
+        vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback: Parameters<typeof setTimeout>[0], delay?: number) => {
+            const timeoutId = nextTimeoutId++;
+            if (typeof callback === 'function') {
+                scheduledTimeouts.set(timeoutId, {
+                    callback: callback as () => void,
+                    delay: typeof delay === 'number' ? delay : 0,
+                });
+            }
+            return timeoutId as unknown as ReturnType<typeof setTimeout>;
+        });
+        vi.spyOn(globalThis, 'clearTimeout').mockImplementation((timeoutId: Parameters<typeof clearTimeout>[0]) => {
+            scheduledTimeouts.delete(timeoutId as unknown as number);
+        });
+
+        const { createReducer } = await import('../../reducer/reducer');
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain, createReducer, {
+            sessionListRowStateByServerId: { server_1: {} },
+            sessionListIndexByServerId: {},
+        });
+        const baseSession = (overrides: Partial<Session>): Session => ({
+            id: 's1',
+            seq: 0,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 0,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 1,
+            ...overrides,
+        });
+
+        domain.applySessions([baseSession({
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: nowMs - 60_000,
+        })]);
+        domain.markSessionOptimisticThinking('s1');
+        domain.markSessionResuming('s1');
+
+        expect(get().sessions.s1?.resumingAt).toBe(nowMs);
+        expect(get().sessionListRenderables.s1?.resumingAt).toBe(nowMs);
+        expect(get().sessionListRowStateByServerId.server_1?.s1?.resumingAt).toBe(nowMs);
+        const decay = [...scheduledTimeouts.values()].find((timeout) => timeout.delay === 30_000);
+        expect(decay).toBeDefined();
+
+        nowMs += 500;
+        domain.applySessions([baseSession({
+            active: true,
+            activeAt: nowMs,
+            presence: 'online',
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: nowMs - 60_500,
+        })]);
+        expect(get().sessions.s1?.resumingAt).toBe(nowMs - 500);
+
+        nowMs += 500;
+        domain.applySessions([baseSession({
+            active: true,
+            activeAt: nowMs,
+            presence: 'online',
+            thinking: true,
+            thinkingAt: nowMs,
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: nowMs,
+        })]);
+        expect(get().sessions.s1?.resumingAt ?? null).toBeNull();
+        expect(get().sessionListRenderables.s1?.resumingAt ?? null).toBeNull();
+        expect(get().sessionListRowStateByServerId.server_1?.s1?.resumingAt ?? null).toBeNull();
+
+        nowMs += 500;
+        domain.applySessions([baseSession({
+            active: false,
+            activeAt: nowMs,
+            presence: nowMs,
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: nowMs - 60_000,
+        })]);
+        domain.markSessionResuming('s1');
+        expect(get().sessions.s1?.resumingAt).toBe(nowMs);
+
+        nowMs += 500;
+        domain.applySessions([baseSession({
+            active: true,
+            activeAt: nowMs,
+            presence: 'online',
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: nowMs - 60_500,
+        })]);
+        expect(get().sessions.s1?.resumingAt ?? null).toBeNull();
+
+        domain.markSessionResuming('s1');
+        expect(get().sessions.s1?.resumingAt).toBe(nowMs);
+        const secondDecay = [...scheduledTimeouts.values()].find((timeout) => timeout.delay === 30_000);
+        expect(secondDecay).toBeDefined();
+        secondDecay?.callback();
+        expect(get().sessions.s1?.resumingAt ?? null).toBeNull();
+    });
+
     it('starts thinkingGraceUntil only after thinking turns off (prevents UI flicker without streaming churn)', async () => {
         mockSessionsDomainBoundaries();
 
-        const scheduledTimeouts = new Map<number, () => void>();
+        const scheduledTimeouts = new Map<number, { callback: () => void; delay: number }>();
         let nextTimeoutId = 1;
         let nowMs = Date.parse('2026-02-05T00:00:00.000Z');
 
         vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
-        vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback: Parameters<typeof setTimeout>[0]) => {
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback: Parameters<typeof setTimeout>[0], delay?: number) => {
             const timeoutId = nextTimeoutId++;
             if (typeof callback === 'function') {
-                scheduledTimeouts.set(timeoutId, callback as () => void);
+                scheduledTimeouts.set(timeoutId, {
+                    callback: callback as () => void,
+                    delay: typeof delay === 'number' ? delay : 0,
+                });
             }
             return timeoutId as unknown as ReturnType<typeof setTimeout>;
         });
@@ -187,11 +301,12 @@ describe('sessions domain: thinking grace', () => {
         const graceUntil = get().sessions.s1?.thinkingGraceUntil ?? null;
         expect(typeof graceUntil).toBe('number');
         expect(graceUntil).toBeGreaterThan(t1);
-        expect(scheduledTimeouts.size).toBe(1);
+        const graceTimeouts = [...scheduledTimeouts.values()].filter((timeout) => timeout.delay === 3_000);
+        expect(graceTimeouts).toHaveLength(1);
 
         // Once the grace timer expires, the marker clears without polling.
         nowMs = (graceUntil as number) + 1;
-        const expireThinkingGrace = scheduledTimeouts.values().next().value;
+        const expireThinkingGrace = graceTimeouts[0]?.callback;
         expect(typeof expireThinkingGrace).toBe('function');
         expireThinkingGrace?.();
 
@@ -201,15 +316,18 @@ describe('sessions domain: thinking grace', () => {
     it('clears optimistic thinking and grace when a terminal primary turn projection arrives', async () => {
         mockSessionsDomainBoundaries();
 
-        const scheduledTimeouts = new Map<number, () => void>();
+        const scheduledTimeouts = new Map<number, { callback: () => void; delay: number }>();
         let nextTimeoutId = 1;
         let nowMs = Date.parse('2026-02-05T00:00:00.000Z');
 
         vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
-        vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback: Parameters<typeof setTimeout>[0]) => {
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback: Parameters<typeof setTimeout>[0], delay?: number) => {
             const timeoutId = nextTimeoutId++;
             if (typeof callback === 'function') {
-                scheduledTimeouts.set(timeoutId, callback as () => void);
+                scheduledTimeouts.set(timeoutId, {
+                    callback: callback as () => void,
+                    delay: typeof delay === 'number' ? delay : 0,
+                });
             }
             return timeoutId as unknown as ReturnType<typeof setTimeout>;
         });
@@ -268,7 +386,9 @@ describe('sessions domain: thinking grace', () => {
         expect(get().sessions.s1?.thinking).toBe(false);
         expect(get().sessions.s1?.optimisticThinkingAt ?? null).toBeNull();
         expect(get().sessions.s1?.thinkingGraceUntil ?? null).toBeNull();
-        expect(scheduledTimeouts.size).toBe(0);
+        expect([...scheduledTimeouts.values()].filter((timeout) => (
+            timeout.delay === 3_000 || timeout.delay === 15_000
+        ))).toHaveLength(0);
     });
 
     it('does not keep legacy thinking or start grace after a terminal turn projection', async () => {
@@ -326,6 +446,6 @@ describe('sessions domain: thinking grace', () => {
         expect(get().sessions.s1?.thinkingGraceUntil ?? null).toBeNull();
         expect(get().sessionListRenderables.s1?.thinking).toBe(false);
         expect(get().sessionListRenderables.s1?.thinkingGraceUntil ?? null).toBeNull();
-        expect(globalThis.setTimeout).toHaveBeenCalledTimes(0);
+        expect(vi.mocked(globalThis.setTimeout).mock.calls.some(([, delay]) => delay === 3_000)).toBe(false);
     });
 });

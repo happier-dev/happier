@@ -19,6 +19,43 @@ describe('splitMarkdownRenderSegments', () => {
         expect(next).toBe(first);
     });
 
+    it('does not retain very large static markdown as a cache entry', () => {
+        const markdown = [
+            '## Very large transcript message',
+            '',
+            'Large transcript prose '.repeat(2_000),
+        ].join('\n');
+
+        expect(markdown.length).toBeGreaterThan(32_000);
+
+        const first = splitMarkdownRenderSegments({ markdown, streamingMode: 'static' });
+        const next = splitMarkdownRenderSegments({ markdown, streamingMode: 'static' });
+
+        expect(next).not.toBe(first);
+        expect(next).toEqual(first);
+    });
+
+    it('bounds retained static markdown by content weight rather than entry count alone', () => {
+        const markdownEntries = Array.from({ length: 9 }, (_, index) => (
+            `entry-${index}\n${String(index).repeat(31_000)}`
+        ));
+        const first = splitMarkdownRenderSegments({
+            markdown: markdownEntries[0]!,
+            streamingMode: 'static',
+        });
+
+        for (const markdown of markdownEntries.slice(1)) {
+            splitMarkdownRenderSegments({ markdown, streamingMode: 'static' });
+        }
+
+        const revisited = splitMarkdownRenderSegments({
+            markdown: markdownEntries[0]!,
+            streamingMode: 'static',
+        });
+        expect(revisited).not.toBe(first);
+        expect(revisited).toEqual(first);
+    });
+
     it('keeps enriched prose segment keys stable during append-only streaming updates', () => {
         const first = splitMarkdownRenderSegments({
             markdown: ['Stable block', 'Draft one'].join('\n'),

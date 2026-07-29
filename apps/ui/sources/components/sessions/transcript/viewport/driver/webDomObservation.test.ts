@@ -30,6 +30,117 @@ function metrics(element: FakeScroller): WebTranscriptScrollMetrics {
 }
 
 describe('createWebDomScrollObservation', () => {
+    it('keeps interleaved user evidence for the movement after a programmatic write echo', () => {
+        const observation = createWebDomScrollObservation();
+        const element = new FakeScroller(1000, 400, 500);
+
+        observation.observeGenuineScrollMovement({
+            distanceFromBottom: 100,
+            fallbackObservedScrollTop: null,
+            isTrusted: false,
+            metrics: metrics(element),
+            pinThresholdPx: 72,
+            semanticContext: {
+                atEndNonUserCause: 'layout',
+                isUserInputActive: false,
+                nowMs: 1000,
+            },
+            sustainFrames: 2,
+        });
+        observation.recordProgrammaticScrollTopWrite({ element, targetScrollTop: 300 });
+        observation.recordUserScrollInput({ direction: -1, nowMs: 1100 });
+
+        const echo = observation.observeGenuineScrollMovement({
+            distanceFromBottom: 300,
+            fallbackObservedScrollTop: null,
+            isTrusted: true,
+            metrics: metrics(element),
+            pinThresholdPx: 72,
+            semanticContext: {
+                atEndNonUserCause: 'command',
+                isUserInputActive: false,
+                nowMs: 1100,
+            },
+            sustainFrames: 2,
+        });
+        expect(echo).toMatchObject({
+            atEndPublicationCause: 'command',
+            direction: null,
+            downwardIntent: false,
+            isGenuineUserMovement: false,
+            movedSinceLastObservation: false,
+            upwardIntent: false,
+        });
+
+        element.scrollTop = 200;
+        const movement = observation.observeGenuineScrollMovement({
+            distanceFromBottom: 400,
+            fallbackObservedScrollTop: null,
+            isTrusted: true,
+            metrics: metrics(element),
+            pinThresholdPx: 72,
+            semanticContext: {
+                atEndNonUserCause: 'layout',
+                isUserInputActive: false,
+                nowMs: 1120,
+            },
+            sustainFrames: 2,
+        });
+        expect(movement).toMatchObject({
+            atEndPublicationCause: 'user',
+            direction: -1,
+            isGenuineUserMovement: true,
+            movedSinceLastObservation: true,
+            upwardIntent: true,
+        });
+    });
+
+    it('invalidates old continuation at a committed epoch while accepting direct new evidence', () => {
+        const observation = createWebDomScrollObservation();
+        const element = new FakeScroller(1000, 400, 200);
+        const observe = (nowMs: number) => observation.observeGenuineScrollMovement({
+            distanceFromBottom: Math.max(0, element.scrollHeight - element.clientHeight - element.scrollTop),
+            fallbackObservedScrollTop: null,
+            isTrusted: false,
+            metrics: metrics(element),
+            pinThresholdPx: 72,
+            semanticContext: {
+                atEndNonUserCause: 'layout',
+                isUserInputActive: false,
+                nowMs,
+            },
+            sustainFrames: 2,
+        });
+
+        observe(1000);
+        observation.recordUserScrollInput({ direction: 1, nowMs: 1100 });
+        element.scrollTop = 300;
+        expect(observe(1100).atEndPublicationCause).toBe('user');
+
+        element.scrollTop = 350;
+        expect(observe(1200)).toMatchObject({
+            atEndPublicationCause: 'user',
+            direction: 1,
+            isGenuineUserMovement: true,
+        });
+
+        observation.invalidateUserMovementAuthority();
+        element.scrollTop = 400;
+        expect(observe(1250)).toMatchObject({
+            atEndPublicationCause: 'layout',
+            direction: 1,
+            isGenuineUserMovement: false,
+        });
+
+        observation.recordUserScrollInput({ direction: 1, nowMs: 1260 });
+        element.scrollTop = 450;
+        expect(observe(1260)).toMatchObject({
+            atEndPublicationCause: 'user',
+            direction: 1,
+            isGenuineUserMovement: true,
+        });
+    });
+
     it('records landed programmatic writes and excludes their trusted scroll echo from user movement', () => {
         const observation = createWebDomScrollObservation();
         const element = new FakeScroller(1000, 400, 0);

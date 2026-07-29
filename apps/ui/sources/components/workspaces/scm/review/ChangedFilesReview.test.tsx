@@ -77,25 +77,10 @@ vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
 
 vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
     DiffFilesListView: React.forwardRef((props: any, ref: any) => {
-        const [flashListCrashed, setFlashListCrashed] = React.useState(false);
         diffFilesListViewSpy(props);
 
-        React.useEffect(() => {
-            if (typeof globalThis.window === 'undefined' || typeof globalThis.window.addEventListener !== 'function') return;
-            const onError = (event: any) => {
-                const message = String(event?.message ?? event?.error?.message ?? '');
-                if (message.includes('not enough layouts')) {
-                    setFlashListCrashed(true);
-                }
-            };
-            globalThis.window.addEventListener('error', onError);
-            return () => {
-                globalThis.window.removeEventListener?.('error', onError);
-            };
-        }, []);
-
         React.useImperativeHandle(ref, () => ({
-            clearLayoutCacheOnUpdate: vi.fn(),
+            clearMeasurementCache: vi.fn(),
             scrollToIndex: flashListScrollToIndexSpy,
             scrollToOffset: vi.fn(),
         }));
@@ -145,79 +130,18 @@ vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
             return React.createElement(React.Fragment, { key: file.key }, row, inline);
         };
 
-        const content = flashListCrashed
-            ? React.createElement(
-                'FlatList',
-                props,
-                header,
-                data.map((item: any, index: number) => renderFile(item, index)),
-                footer,
-            )
-            : React.createElement(
-                'FlashList',
-                props,
-                header,
-                data.map((item: any, index: number) => renderFile(item, index)),
-                footer,
-            );
-
-        return content;
+        return React.createElement(
+            'VirtualizedList',
+            props,
+            header,
+            data.map((item: any, index: number) => renderFile(item, index)),
+            footer,
+        );
     }),
 }));
 
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (cb: any) => deferOnWebSpy(cb),
-}));
-
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
-    FlashList: React.forwardRef((props: any, ref: any) => {
-        React.useImperativeHandle(ref, () => ({
-            scrollToIndex: flashListScrollToIndexSpy,
-            // Some callers may attempt to read the underlying scroll node on web.
-            getScrollableNode: () => null,
-        }));
-        const data = Array.isArray(props.data) ? props.data : [];
-        React.useEffect(() => {
-        if (typeof props.onViewableItemsChanged !== 'function') return;
-            const indices = Array.isArray(flashListViewableIndicesOverride)
-                ? flashListViewableIndicesOverride
-                : data.map((_item: any, index: number) => index);
-            props.onViewableItemsChanged({
-                viewableItems: indices.map((index: number) => ({ index })),
-            });
-        }, [data, props.onViewableItemsChanged]);
-
-        const header =
-            props.ListHeaderComponent
-                ? (typeof props.ListHeaderComponent === 'function'
-                    ? props.ListHeaderComponent()
-                    : props.ListHeaderComponent)
-                : null;
-        const footer =
-            props.ListFooterComponent
-                ? (typeof props.ListFooterComponent === 'function'
-                    ? props.ListFooterComponent()
-                    : props.ListFooterComponent)
-                : null;
-
-        return React.createElement(
-            'FlashList',
-            {
-                ...props,
-                testID: props.testID ?? changedFilesReviewListTestId(),
-            },
-            header,
-            data.map((item: any, index: number) => {
-                const key =
-                    typeof props.keyExtractor === 'function'
-                        ? props.keyExtractor(item, index)
-                        : (item?.key ?? String(index));
-                const child = typeof props.renderItem === 'function' ? props.renderItem({ item, index }) : null;
-                return React.createElement('FlashListItem', { key }, child);
-            }),
-            footer,
-        );
-    }),
 }));
 
 installFilesContentCommonModuleMocks({
@@ -1545,7 +1469,7 @@ describe('ChangedFilesReview', () => {
         flashListViewableIndicesOverride = null;
     });
 
-    it('keeps FlashList renderItem stable while diffs load', async () => {
+    it('keeps the virtualized list renderItem stable while diffs load', async () => {
         wrapLinesInDiffsSetting = true;
         showLineNumbersSetting = true;
         sessionScmDiffFileSpy.mockClear();

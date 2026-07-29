@@ -22,16 +22,10 @@ const keyboardLayoutState = vi.hoisted(() => ({
     windowWidth: 390,
 }));
 
-vi.mock('@/agents/registry/registryUiBehavior', () => ({
-    buildNewSessionOptionsFromUiState: () => ({}),
-    buildResumeCapabilityOptionsFromUiState: () => ({}),
-    getNewSessionPreflightIssues: () => [],
-    getNewSessionRelevantInstallableDepKeys: () => [],
-    resolveAgentUiBehavior: () => ({}),
-    resolveAgentUiBehaviorFromFlavor: () => ({}),
-    supportsDetectedMcpConfigScan: () => false,
-    supportsEditableSessionGoals: () => false,
-}));
+vi.mock('@/agents/registry/registryUiBehavior', async () => {
+    const { createRegistryUiBehaviorModuleMock } = await import('@/dev/testkit/mocks/registryUiBehavior');
+    return createRegistryUiBehaviorModuleMock();
+});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');

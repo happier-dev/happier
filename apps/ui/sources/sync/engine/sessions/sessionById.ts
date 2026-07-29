@@ -1,12 +1,24 @@
 import {
+  openSessionOwnerMetadataV1,
+  projectSessionOwnerCompatibilityViewV1,
+  SessionSharedMetadataV1Schema,
   SessionTurnsProjectionV1Schema,
   type SessionTurnsProjectionV1,
   type V2SessionByIdResponse,
 } from '@happier-dev/protocol';
+import type {
+  SessionMetadataTupleMutationSnapshotV1,
+} from '@happier-dev/cli-common/sessionMetadata';
 
-import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
+import type {
+  AgentState,
+  Metadata,
+  Session,
+} from '@/sync/domains/state/storageTypes';
+import { MetadataSchema } from '@/sync/domains/state/storageTypes';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { reportNewAgentRequestsFromSessionTransition } from '@/voice/context/reportNewAgentRequestsFromSessionTransition';
 import {
   createNotAuthenticatedError,
@@ -14,7 +26,16 @@ import {
   isTerminalAuthError,
 } from '@/sync/runtime/connectivity/authErrors';
 
-import { parsePlainSessionAgentState, parsePlainSessionMetadata } from './parsePlainSessionPayload';
+import {
+  parseDecryptedSessionMetadata,
+  parsePlainSessionAgentState,
+  parsePlainSessionMetadata,
+  readSessionMetadataLayoutVersion,
+  tryParsePlainSessionAgentState,
+} from './parsePlainSessionPayload';
+import {
+  classifySessionTupleApplyCurrentness,
+} from '@/sync/store/domains/sessionTupleApplyCurrentness';
 import {
   looksLikeCurrentV2SessionNotFound404,
   looksLikeMissingV2SessionRoute404,
@@ -23,8 +44,10 @@ import {
 } from './sessionHttpCompat';
 
 type SessionEncryption = {
+  encryptRaw?: (payload: unknown) => Promise<string>;
   decryptAgentState: (version: number, value: string | null) => Promise<any>;
   decryptMetadata: (version: number, value: string) => Promise<any>;
+  decryptMetadataPayload?: (version: number, value: string) => Promise<unknown | null>;
 };
 
 export type SessionByIdEncryption = {
@@ -40,6 +63,15 @@ type SessionByIdHttpRead = Readonly<{
   status: number;
   body: unknown;
 }>;
+type HydratedSessionById = Omit<
+  V2SessionByIdResponse['session'],
+  'metadata' | 'ownerMetadata'
+> & {
+  metadata: Session['metadata'];
+  ownerMetadataView?: Session['ownerMetadataView'];
+};
+export type HydratedSessionMetadataTupleMutationSnapshot =
+  SessionMetadataTupleMutationSnapshotV1<Metadata, AgentState>;
 
 const sessionByIdHttpReadsByRequest = new WeakMap<SessionByIdRequest, Map<string, Promise<SessionByIdHttpRead>>>();
 const scopedSessionByIdHttpReads = new Map<string, Promise<SessionByIdHttpRead>>();
@@ -183,14 +215,28 @@ export async function fetchAndApplySessionById(params: Readonly<{
   log: { log: (message: string) => void };
   timeoutMs?: number;
   includeTurnsProjection?: boolean;
+  includeMetadataTupleMutationSnapshot?: boolean;
+  isCurrent?: () => boolean;
 }>): Promise<{
   ok: boolean;
-  session: (V2SessionByIdResponse['session'] & { metadata: Metadata | null }) | null;
+  session: HydratedSessionById | null;
+  metadataTupleMutationSnapshot?:
+    | HydratedSessionMetadataTupleMutationSnapshot
+    | null;
   errorCode?: string;
   httpStatus?: number;
 }> {
   const sessionId = String(params.sessionId ?? '').trim();
   if (!sessionId) return { ok: false, session: null, errorCode: 'invalid_session_id' };
+  const isCurrent = () => params.isCurrent?.() !== false;
+  const staleResult = () => ({
+    ok: false as const,
+    session: null,
+    errorCode: 'stale_response',
+    ...(params.includeMetadataTupleMutationSnapshot === true
+      ? { metadataTupleMutationSnapshot: null }
+      : {}),
+  });
 
   const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 10_000;
   let responseOk = false;
@@ -214,6 +260,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
     params.log.log(`[sessionById] Failed to fetch session ${sessionId}: ${err instanceof Error ? err.message : 'unknown error'}`);
     return { ok: false, session: null, errorCode: 'network_error' };
   }
+  if (!isCurrent()) return staleResult();
 
   if (!responseOk) {
     if (isAuthenticationResponseStatus(responseStatus)) {
@@ -274,6 +321,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
   const encryptionMode: 'e2ee' | 'plain' = row.encryptionMode === 'plain' ? 'plain' : 'e2ee';
 
   if (encryptionMode === 'plain') {
+    if (!isCurrent()) return staleResult();
     params.sessionDataKeys.delete(sessionId);
     params.sessionDataKeyEnvelopes?.delete(sessionId);
   } else {
@@ -283,22 +331,26 @@ export async function fetchAndApplySessionById(params: Readonly<{
       const decrypted = cachedKey && params.sessionDataKeyEnvelopes?.get(sessionId) === row.dataEncryptionKey
         ? cachedKey
         : await params.encryption.decryptEncryptionKey(row.dataEncryptionKey);
+      if (!isCurrent()) return staleResult();
       if (decrypted) {
         sessionKeys.set(sessionId, decrypted);
-        params.sessionDataKeys.set(sessionId, decrypted);
-        params.sessionDataKeyEnvelopes?.set(sessionId, row.dataEncryptionKey);
       } else {
         sessionKeys.set(sessionId, null);
-        params.sessionDataKeys.delete(sessionId);
-        params.sessionDataKeyEnvelopes?.delete(sessionId);
       }
     } else {
       sessionKeys.set(sessionId, null);
-      params.sessionDataKeys.delete(sessionId);
-      params.sessionDataKeyEnvelopes?.delete(sessionId);
     }
 
     await params.encryption.initializeSessions(sessionKeys);
+    if (!isCurrent()) return staleResult();
+    const decrypted = sessionKeys.get(sessionId) ?? null;
+    if (decrypted) {
+      params.sessionDataKeys.set(sessionId, decrypted);
+      params.sessionDataKeyEnvelopes?.set(sessionId, row.dataEncryptionKey!);
+    } else {
+      params.sessionDataKeys.delete(sessionId);
+      params.sessionDataKeyEnvelopes?.delete(sessionId);
+    }
   }
 
   const sessionEncryption = encryptionMode === 'plain' ? null : params.encryption.getSessionEncryption(sessionId);
@@ -307,15 +359,72 @@ export async function fetchAndApplySessionById(params: Readonly<{
     return { ok: false, session: null, errorCode: 'session_encryption_not_found' };
   }
 
-  const [metadata, agentState] = encryptionMode === 'plain'
+  const metadataLayoutVersion = readSessionMetadataLayoutVersion(row.metadataLayoutVersion);
+  const hasFullAgentStateProjection = metadataLayoutVersion === 0
+    || (
+      typeof row.ownerMetadata === 'string'
+      && typeof row.agentStateVersion === 'number'
+      && Object.prototype.hasOwnProperty.call(row, 'agentState')
+    );
+  const agentStateVersion = row.agentStateVersion ?? 0;
+  const [decryptedMetadata, agentState] = encryptionMode === 'plain'
     ? [
-      parsePlainSessionMetadata(row.metadata),
-      parsePlainSessionAgentState(row.agentState),
+      parsePlainSessionMetadata(row.metadata, row.metadataLayoutVersion),
+      hasFullAgentStateProjection
+        ? parsePlainSessionAgentState(row.agentState ?? null)
+        : null,
     ] as const
     : await Promise.all([
-      sessionEncryption!.decryptMetadata(row.metadataVersion, row.metadata),
-      sessionEncryption!.decryptAgentState(row.agentStateVersion, row.agentState),
+      metadataLayoutVersion === 1
+        ? sessionEncryption!.decryptMetadataPayload?.(row.metadataVersion, row.metadata)
+          ?? Promise.resolve(null)
+        : sessionEncryption!.decryptMetadata(row.metadataVersion, row.metadata),
+      hasFullAgentStateProjection
+        ? sessionEncryption!.decryptAgentState(
+          agentStateVersion,
+          row.agentState ?? null,
+        )
+        : Promise.resolve(null),
     ]);
+  if (!isCurrent()) return staleResult();
+  const metadata = encryptionMode === 'plain'
+    ? decryptedMetadata
+    : parseDecryptedSessionMetadata(decryptedMetadata, row.metadataLayoutVersion);
+  const strictSharedMetadata = metadataLayoutVersion === 1
+    ? SessionSharedMetadataV1Schema.safeParse(decryptedMetadata)
+    : null;
+  const layout1SharedMetadata = strictSharedMetadata?.success
+    ? strictSharedMetadata.data
+    : null;
+  if (
+    metadataLayoutVersion === 1
+    && (metadata === null || !layout1SharedMetadata)
+  ) {
+    params.log.log(`[sessionById] Shared metadata unavailable for ${sessionId}`);
+    return { ok: false, session: null, errorCode: 'metadata_unavailable' };
+  }
+  const ownerMetadata = row.metadataLayoutVersion === 1
+    && typeof row.ownerMetadata === 'string'
+    ? openSessionOwnerMetadataV1({
+      material: resolveAccountScopedCryptoMaterialFromCredentials(params.credentials),
+      ciphertext: row.ownerMetadata,
+    })
+    : null;
+  const projectedOwnerMetadataView = metadataLayoutVersion === 1
+    && layout1SharedMetadata
+    && ownerMetadata
+      ? MetadataSchema.safeParse(
+          projectSessionOwnerCompatibilityViewV1({
+            sharedMetadata: layout1SharedMetadata,
+            ownerMetadata,
+          }),
+        )
+      : null;
+  const ownerMetadataView = metadataLayoutVersion === 0
+    ? metadata
+    : projectedOwnerMetadataView?.success
+      ? projectedOwnerMetadataView.data
+      : null;
 
   const accessLevel = row.share?.accessLevel;
   const normalizedAccessLevel = accessLevel === 'view' || accessLevel === 'edit' || accessLevel === 'admin' ? accessLevel : undefined;
@@ -327,18 +436,128 @@ export async function fetchAndApplySessionById(params: Readonly<{
       request: params.request,
       log: params.log,
     });
+  if (!isCurrent()) return staleResult();
   const rollbackEligibleTurnStarts = sessionTurns
     ? listRollbackEligibleTurnStarts(sessionTurns)
     : undefined;
+  const metadataTupleMutationSnapshot:
+    | HydratedSessionMetadataTupleMutationSnapshot
+    | null = params.includeMetadataTupleMutationSnapshot !== true
+      || !metadata
+      ? null
+      : metadataLayoutVersion === 0
+        ? (() => {
+          const metadataVersion =
+            Number.isSafeInteger(row.metadataVersion)
+            && row.metadataVersion >= 0
+            && row.metadataVersion < Number.MAX_SAFE_INTEGER
+              ? row.metadataVersion
+              : null;
+          const exactAgentStateVersion =
+            Number.isSafeInteger(row.agentStateVersion)
+            && (row.agentStateVersion ?? -1) >= 0
+            && (row.agentStateVersion ?? Number.MAX_SAFE_INTEGER)
+                < Number.MAX_SAFE_INTEGER
+              ? row.agentStateVersion!
+              : null;
+          const agentStateCiphertext =
+            row.agentState === null
+              ? null
+              : typeof row.agentState === 'string'
+                && row.agentState.length > 0
+                ? row.agentState
+                : undefined;
+          const migrationAgentState = row.agentState === null
+            ? null
+            : encryptionMode === 'plain'
+              && typeof row.agentState === 'string'
+              ? tryParsePlainSessionAgentState(row.agentState)
+              : agentState;
+          if (
+            metadataVersion === null
+            || exactAgentStateVersion === null
+            || typeof row.metadata !== 'string'
+            || row.metadata.length === 0
+            || agentStateCiphertext === undefined
+            || (
+              row.ownerMetadata !== null
+              && row.ownerMetadata !== undefined
+            )
+            || migrationAgentState === undefined
+            || (
+              agentStateCiphertext !== null
+              && migrationAgentState === null
+            )
+          ) {
+            return null;
+          }
+          return {
+            mode: 'legacy_owner' as const,
+            metadataLayoutVersion: 0 as const,
+            metadataVersion,
+            metadataCiphertext: row.metadata,
+            ownerMetadata: null,
+            agentStateVersion: exactAgentStateVersion,
+            agentStateCiphertext,
+            value: {
+              metadata,
+              agentState: migrationAgentState,
+            },
+          };
+        })()
+        : metadataLayoutVersion === 1
+          ? (
+        typeof row.ownerMetadata === 'string'
+        && ownerMetadata
+        && ownerMetadataView
+        && typeof row.agentStateVersion === 'number'
+        && Object.prototype.hasOwnProperty.call(row, 'agentState')
+          ? {
+            mode: 'owner',
+            metadataLayoutVersion: 1,
+            metadataVersion: row.metadataVersion,
+            sharedMetadataCiphertext: row.metadata,
+            ownerMetadataCiphertext: row.ownerMetadata,
+            agentStateVersion: row.agentStateVersion,
+            agentStateCiphertext: row.agentState ?? null,
+            value: {
+              metadata: ownerMetadataView,
+              sharedMetadata: layout1SharedMetadata!,
+              ownerMetadata,
+              agentState,
+            },
+          }
+          : normalizedAccessLevel
+            ? {
+              mode: 'shared_editor',
+              metadataLayoutVersion: 1,
+              metadataVersion: row.metadataVersion,
+              sharedMetadataCiphertext: row.metadata,
+              value: {
+                metadata,
+                sharedMetadata: layout1SharedMetadata!,
+                ownerMetadata: null,
+                agentState: null,
+              },
+            }
+            : null
+          )
+          : null;
+  const {
+    ownerMetadata: _ownerMetadataCiphertext,
+    ...rowWithoutOwnerMetadata
+  } = row;
 
   const nextSession = {
-    ...row,
+    ...rowWithoutOwnerMetadata,
     serverId: typeof params.serverId === 'string' && params.serverId.trim().length > 0 ? params.serverId.trim() : undefined,
     encryptionMode,
     thinking: false,
     thinkingAt: 0,
     metadata,
+    ownerMetadataView,
     agentState,
+    agentStateVersion,
     accessLevel: normalizedAccessLevel,
     canApprovePermissions: row.share?.canApprovePermissions ?? undefined,
     ...(sessionTurns
@@ -350,15 +569,27 @@ export async function fetchAndApplySessionById(params: Readonly<{
   };
 
   const previousSession = params.getExistingSession?.(sessionId);
+  if (
+    !classifySessionTupleApplyCurrentness(
+      previousSession,
+      nextSession,
+    ).fullyCurrent
+  ) {
+    return staleResult();
+  }
+  if (!isCurrent()) return staleResult();
   params.applySessions([nextSession]);
   reportNewAgentRequestsFromSessionTransition(previousSession, nextSession);
 
   return {
     ok: true,
     session: {
-      ...row,
+      ...rowWithoutOwnerMetadata,
       serverId: typeof params.serverId === 'string' && params.serverId.trim().length > 0 ? params.serverId.trim() : undefined,
       metadata,
+      ownerMetadataView,
+      agentState,
+      agentStateVersion,
       ...(sessionTurns
         ? {
           sessionTurns,
@@ -366,5 +597,8 @@ export async function fetchAndApplySessionById(params: Readonly<{
         }
         : {}),
     },
+    ...(params.includeMetadataTupleMutationSnapshot === true
+      ? { metadataTupleMutationSnapshot }
+      : {}),
   };
 }

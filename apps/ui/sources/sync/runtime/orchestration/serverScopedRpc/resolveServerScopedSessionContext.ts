@@ -1,4 +1,7 @@
-import { TokenStorage } from '@/auth/storage/tokenStorage';
+import {
+  TokenStorage,
+  type AuthCredentials,
+} from '@/auth/storage/tokenStorage';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import {
   areServerProfileIdentifiersEquivalent,
@@ -6,6 +9,7 @@ import {
   resolveServerProfileScopeIdForIdentifier,
 } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { parseToken } from '@/utils/auth/parseToken';
 
 import type { ScopedRpcSessionEncryptionContext } from './serverScopedRpcTypes';
 
@@ -20,7 +24,10 @@ export type ResolvedServerSessionRpcContext =
       timeoutMs: number;
       targetServerId: string;
       targetServerUrl: string;
+      targetAccountId: string;
       token: string;
+      /** Present for contexts produced by the runtime; optional for injected adapters. */
+      credentials?: AuthCredentials;
       encryption: ScopedRpcSessionEncryptionContext;
     }>;
 
@@ -40,7 +47,9 @@ async function buildScopedContext(params: Readonly<{
     timeoutMs: params.timeoutMs,
     targetServerId: params.serverId,
     targetServerUrl: params.serverUrl,
+    targetAccountId: parseToken(credentials.token),
     token: credentials.token,
+    credentials,
     encryption,
   };
 }

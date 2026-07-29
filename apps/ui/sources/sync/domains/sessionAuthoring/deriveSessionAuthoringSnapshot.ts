@@ -1,5 +1,5 @@
-import { resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
-import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
+import { resolveModelSelectionIntentFromSessionMetadata, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
+import { buildBackendTargetKeyV2, SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
 
 import { isAgentId } from '@/agents/catalog/catalog';
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
@@ -15,18 +15,18 @@ import {
     normalizeTerminalFromSessionMetadata,
     normalizeTranscriptStorage,
     resolveCanonicalCodexBackendMode,
-    resolveMetadataModelOverride,
 } from './sessionAuthoringNormalization';
 import type { SessionAuthoringSnapshot } from './sessionAuthoringSnapshot';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export function deriveSessionAuthoringSnapshot(params: Readonly<{
     session: Pick<
         Session,
-        'id' | 'encryptionMode' | 'metadata' | 'permissionMode' | 'permissionModeUpdatedAt' | 'modelMode' | 'modelModeUpdatedAt'
+        'id' | 'encryptionMode' | 'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView' | 'permissionMode' | 'permissionModeUpdatedAt' | 'modelMode' | 'modelModeUpdatedAt'
     >;
     sessionDekBase64?: string | null;
 }>): SessionAuthoringSnapshot {
-    const metadata = params.session.metadata;
+    const metadata = readSessionOwnerMetadataView(params.session as Session);
     const codexBackendMode = resolveCanonicalCodexBackendMode({
         codexBackendMode: metadata?.codexBackendMode,
         experimentalCodexAcp: metadata && Object.prototype.hasOwnProperty.call(metadata, 'experimentalCodexAcp')
@@ -37,12 +37,17 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
         session: params.session as Session,
     });
     const backendTarget = defaultBackend?.backendTarget ?? null;
+    const agentTargetKey = backendTarget ? buildBackendTargetKeyV2(backendTarget) : null;
     const permissionOverride = getPermissionModeOverrideForSpawn(params.session as Session);
     const metadataPermission = resolvePermissionIntentFromSessionMetadata(metadata);
     const metadataPermissionMode = metadataPermission?.intent ?? null;
     const metadataPermissionModeUpdatedAt = metadataPermission?.updatedAt ?? null;
-    const modelOverride = getModelOverrideForSpawn(params.session as Session);
-    const metadataModelOverride = resolveMetadataModelOverride(params.session);
+    const metadataModelIntent = agentTargetKey
+        ? resolveModelSelectionIntentFromSessionMetadata(metadata, agentTargetKey)
+        : null;
+    const modelSelection = agentTargetKey
+        ? getModelOverrideForSpawn(params.session as Session, agentTargetKey)?.modelSelection ?? null
+        : null;
     const rawMcpSelection = metadata && Object.prototype.hasOwnProperty.call(metadata, 'mcpSelection')
         ? (metadata as Record<string, unknown>).mcpSelection
         : undefined;
@@ -64,8 +69,9 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
         profileId: normalizeOptionalString(metadata?.profileId),
         permissionMode: permissionOverride?.permissionMode ?? metadataPermissionMode,
         permissionModeUpdatedAt: permissionOverride?.permissionModeUpdatedAt ?? metadataPermissionModeUpdatedAt,
-        modelId: modelOverride?.modelId ?? metadataModelOverride.modelId,
-        modelUpdatedAt: modelOverride?.modelUpdatedAt ?? metadataModelOverride.modelUpdatedAt,
+        modelSelection,
+        modelId: modelSelection?.ref.modelId ?? null,
+        modelUpdatedAt: modelSelection?.updatedAt ?? metadataModelIntent?.updatedAt ?? null,
         mcpSelection: parsedMcpSelection?.success ? parsedMcpSelection.data : null,
         connectedServices: normalizeSessionAuthoringConnectedServices(
             metadata && Object.prototype.hasOwnProperty.call(metadata, 'connectedServices')

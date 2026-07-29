@@ -5,7 +5,7 @@ import {
     planNativeTranscriptViewportAnchorMeasuredOffsetRestore,
     planNativeTranscriptViewportAnchorRestore,
     resolveNativeTranscriptViewportAnchorRestoreObservation,
-    type NativeTranscriptViewportFlashListRef,
+    type NativeTranscriptViewportRef,
 } from '@/components/sessions/transcript/viewport/driver/transcriptNativeViewportAnchor';
 
 type Item = Readonly<{
@@ -24,10 +24,8 @@ function createRef(params: Readonly<{
     scrollOffset: number;
     visibleRange?: { startIndex: number; endIndex: number };
     layouts: Readonly<Record<number, { x: number; y: number; width: number; height: number }>>;
-}>): NativeTranscriptViewportFlashListRef<Item> {
+}>): NativeTranscriptViewportRef {
     return {
-        scrollToIndex: () => undefined,
-        scrollToOffset: () => undefined,
         computeVisibleIndices: params.visibleRange ? () => params.visibleRange! : undefined,
         getFirstVisibleIndex: () => params.visibleRange?.startIndex ?? 0,
         getLayout: (index: number) => params.layouts[index],
@@ -85,8 +83,6 @@ describe('transcriptNativeViewportAnchor', () => {
     it('returns no_measurable_items when the native offset read throws during capture', () => {
         const result = captureNativeTranscriptViewportAnchor({
             ref: {
-                scrollToIndex: () => undefined,
-                scrollToOffset: () => undefined,
                 computeVisibleIndices: () => ({ startIndex: 1, endIndex: 1 }),
                 getLayout: (index: number) => (
                     index === 1 ? { x: 0, y: 180, width: 320, height: 90 } : undefined
@@ -123,11 +119,9 @@ describe('transcriptNativeViewportAnchor', () => {
         },
     );
 
-    it('returns methods_unavailable when required FlashList measurement methods are absent', () => {
+    it('returns methods_unavailable when required native measurement methods are absent', () => {
         const result = captureNativeTranscriptViewportAnchor({
             ref: {
-                scrollToIndex: () => undefined,
-                scrollToOffset: () => undefined,
             },
             data: items,
             focusOffsetPx: 64,
@@ -150,8 +144,6 @@ describe('transcriptNativeViewportAnchor', () => {
 
         const result = captureNativeTranscriptViewportAnchor({
             ref: {
-                scrollToIndex: () => undefined,
-                scrollToOffset: () => undefined,
                 getFirstVisibleIndex: () => 10,
                 getLayout: (index) => {
                     layoutCalls.push(index);
@@ -261,8 +253,6 @@ describe('transcriptNativeViewportAnchor', () => {
     it('waits for layout when the native restore observation offset read throws', () => {
         const result = resolveNativeTranscriptViewportAnchorRestoreObservation({
             ref: {
-                scrollToIndex: () => undefined,
-                scrollToOffset: () => undefined,
                 computeVisibleIndices: () => ({ startIndex: 1, endIndex: 2 }),
                 getLayout: (index: number) => (
                     index === 2 ? { x: 0, y: 240, width: 320, height: 100 } : undefined
@@ -302,8 +292,6 @@ describe('transcriptNativeViewportAnchor', () => {
     it('falls back to visible-index confirmation only when pixel measurement APIs are unavailable', () => {
         const result = resolveNativeTranscriptViewportAnchorRestoreObservation({
             ref: {
-                scrollToIndex: () => undefined,
-                scrollToOffset: () => undefined,
                 computeVisibleIndices: () => ({ startIndex: 1, endIndex: 2 }),
             },
             index: 2,

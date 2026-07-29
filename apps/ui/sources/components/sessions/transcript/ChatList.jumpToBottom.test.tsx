@@ -3,23 +3,23 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import { standardCleanup } from '@/dev/testkit';
 import {
-  flashListChatListHarnessState,
-  renderFlashListChatListSession,
-  requireCapturedFlashListProps,
-  resetFlashListChatListHarness,
-  triggerFlashListChatListScroll,
+  chatListHarnessState,
+  renderChatListHarnessSession,
+  resetChatListHarness,
+  triggerLegendChatListScroll,
+  triggerLegendChatListWheel,
 } from '@/dev/testkit/harness/chatListHarness';
-import { installFlashListChatListCommonModuleMocks } from '@/dev/testkit/harness/chatListHarnessModuleMocks';
+import { installChatListHarnessCommonModuleMocks } from '@/dev/testkit/harness/chatListHarnessModuleMocks';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-installFlashListChatListCommonModuleMocks();
+installChatListHarnessCommonModuleMocks();
 
 let previousRequestAnimationFrame: typeof globalThis.requestAnimationFrame | undefined;
 let previousCancelAnimationFrame: typeof globalThis.cancelAnimationFrame | undefined;
 
 vi.mock('@/components/sessions/chatListItems', async () => (
-  (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListItemsModuleMock()
+  (await import('@/dev/testkit/harness/chatListHarness')).createChatListHarnessItemsModuleMock()
 ));
 
 vi.mock('./ChatFooter', () => ({
@@ -53,7 +53,7 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 }));
 
 vi.mock('@/sync/sync', async () =>
-  (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListSyncModuleMock({
+  (await import('@/dev/testkit/harness/chatListHarness')).createChatListHarnessSyncModuleMock({
     loadOlderMessages: vi.fn(),
     loadNewerMessages: vi.fn(),
     hasDeferredNewerMessages: () => false,
@@ -67,6 +67,21 @@ describe('ChatList (jump-to-bottom)', () => {
     isTrusted: true,
   } as const;
 
+  async function detachFromTail() {
+    // Seed detached Legend geometry, then drive a user wheel + the resulting scroll so the
+    // adapter classifies the at-end flip out of following as USER-caused.
+    chatListHarnessState.legendListState = {
+      contentLength: 3000,
+      scrollLength: 600,
+      scroll: 200,
+      isAtEnd: false,
+      isNearEnd: false,
+      isWithinMaintainScrollAtEndThreshold: false,
+    };
+    await triggerLegendChatListWheel(-100, { turns: 1 });
+    await triggerLegendChatListScroll(200, viewportGeometry, { turns: 1 });
+  }
+
   afterEach(() => {
     standardCleanup();
     globalThis.requestAnimationFrame = previousRequestAnimationFrame as typeof globalThis.requestAnimationFrame;
@@ -76,13 +91,16 @@ describe('ChatList (jump-to-bottom)', () => {
   beforeEach(() => {
     previousRequestAnimationFrame = globalThis.requestAnimationFrame;
     previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
-    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
-      callback(0);
-      return 1;
-    }) as typeof globalThis.requestAnimationFrame;
-    globalThis.cancelAnimationFrame = (() => {}) as typeof globalThis.cancelAnimationFrame;
-    resetFlashListChatListHarness();
-    flashListChatListHarnessState.sessionState = {
+    // Timeout-based shim: the Legend adapter's bounded settle monitor re-schedules itself
+    // via rAF, so a synchronous shim would recurse unboundedly.
+    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => (
+      setTimeout(() => callback(Date.now()), 0) as unknown as number
+    )) as typeof globalThis.requestAnimationFrame;
+    globalThis.cancelAnimationFrame = ((handle: number) => {
+      clearTimeout(handle as unknown as ReturnType<typeof setTimeout>);
+    }) as typeof globalThis.cancelAnimationFrame;
+    resetChatListHarness();
+    chatListHarnessState.sessionState = {
       id: 'session-1',
       seq: 0,
       metadata: null,
@@ -90,22 +108,21 @@ describe('ChatList (jump-to-bottom)', () => {
       canApprovePermissions: true,
       agentState: null,
     };
-    flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
-    flashListChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
-    flashListChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
-    flashListChatListHarnessState.settingValues.transcriptListImplementation = 'flash_v2';
-    flashListChatListHarnessState.settingValues.transcriptScrollPinEnabled = true;
-    flashListChatListHarnessState.settingValues.transcriptScrollPinOffsetThresholdPx = 72;
-    flashListChatListHarnessState.settingValues.transcriptScrollJumpToBottomEnabled = true;
-    flashListChatListHarnessState.settingValues.transcriptScrollJumpToBottomMinNewCount = 1;
-    flashListChatListHarnessState.settingValues.transcriptScrollJumpToBottomAnimateScroll = false;
-    flashListChatListHarnessState.settingValues.transcriptMotionPreset = 'off';
-    flashListChatListHarnessState.settingValues.transcriptAnimateNewItemsEnabled = false;
+    chatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
+    chatListHarnessState.settingValues.transcriptGroupToolCalls = false;
+    chatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+    chatListHarnessState.settingValues.transcriptScrollPinEnabled = true;
+    chatListHarnessState.settingValues.transcriptScrollPinOffsetThresholdPx = 72;
+    chatListHarnessState.settingValues.transcriptScrollJumpToBottomEnabled = true;
+    chatListHarnessState.settingValues.transcriptScrollJumpToBottomMinNewCount = 1;
+    chatListHarnessState.settingValues.transcriptScrollJumpToBottomAnimateScroll = false;
+    chatListHarnessState.settingValues.transcriptMotionPreset = 'off';
+    chatListHarnessState.settingValues.transcriptAnimateNewItemsEnabled = false;
   });
 
   it('shows a jump-to-bottom button when unpinned and new messages arrive', async () => {
     const onViewportChange = vi.fn();
-    flashListChatListHarnessState.sessionMessagesState = {
+    chatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [
         { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
@@ -113,32 +130,30 @@ describe('ChatList (jump-to-bottom)', () => {
       ],
     };
 
-    const screen = await renderFlashListChatListSession();
+    const screen = await renderChatListHarnessSession();
     const { ChatList } = await import('./ChatList');
     await screen.update(
       <ChatList
-        session={{ ...flashListChatListHarnessState.sessionState }}
+        session={{ ...chatListHarnessState.sessionState }}
         onViewportChange={onViewportChange}
       />,
     );
-    requireCapturedFlashListProps();
-    await screen.triggerInitialFill({ contentHeight: 3000, contentWidth: 400, layoutHeight: 600, layoutWidth: 400 });
 
     // Scroll up (unpinned)
-    await triggerFlashListChatListScroll(200, viewportGeometry, { turns: 1 });
+    await detachFromTail();
 
     // New message arrives
-    flashListChatListHarnessState.sessionMessagesState = {
+    chatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [
-        ...(flashListChatListHarnessState.sessionMessagesState.messages ?? []),
+        ...(chatListHarnessState.sessionMessagesState.messages ?? []),
         { kind: 'agent-text', id: 'a2', localId: null, createdAt: 3, text: 'a2' },
       ],
     };
 
     await screen.update(
       <ChatList
-        session={{ ...flashListChatListHarnessState.sessionState }}
+        session={{ ...chatListHarnessState.sessionState }}
         onViewportChange={onViewportChange}
       />,
     );
@@ -161,21 +176,19 @@ describe('ChatList (jump-to-bottom)', () => {
   });
 
   it('shows a jump-to-bottom button when an existing newest turn grows while unpinned', async () => {
-    flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
-    flashListChatListHarnessState.sessionMessagesState = {
+    chatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+    chatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [
         { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
       ],
     };
 
-    const screen = await renderFlashListChatListSession();
-    requireCapturedFlashListProps();
-    await screen.triggerInitialFill({ contentHeight: 3000, contentWidth: 400, layoutHeight: 600, layoutWidth: 400 });
+    const screen = await renderChatListHarnessSession();
 
-    await triggerFlashListChatListScroll(200, viewportGeometry, { turns: 1 });
+    await detachFromTail();
 
-    flashListChatListHarnessState.sessionMessagesState = {
+    chatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [
         { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
@@ -184,7 +197,7 @@ describe('ChatList (jump-to-bottom)', () => {
     };
 
     const { ChatList } = await import('./ChatList');
-    await screen.update(<ChatList session={{ ...flashListChatListHarnessState.sessionState }} />);
+    await screen.update(<ChatList session={{ ...chatListHarnessState.sessionState }} />);
 
     const jumpButtons = screen.findAllByTestId('transcript-jump-to-bottom');
     expect(jumpButtons.length).toBeGreaterThan(0);

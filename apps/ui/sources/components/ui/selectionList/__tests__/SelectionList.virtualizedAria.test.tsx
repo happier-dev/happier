@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { createCapturingFlashListMock } from '@/dev/testkit/mocks/flashList';
+import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
 
 import type {
     SelectionListOption,
@@ -15,15 +15,12 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
-const { module: capturedFlashList, state: flashListState } = createCapturingFlashListMock({
-    componentName: 'FlashListMock',
-    itemWrapperName: 'FlashListItemMock',
+const { module: capturedLegendList, state: legendListState } = createCapturingLegendListMock({
     renderItems: true,
 });
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
-    FlashList: capturedFlashList.FlashList,
-    flashListRuntime: { usingFallback: true },
+vi.mock('@legendapp/list/react-native', () => ({
+    LegendList: capturedLegendList.LegendList,
 }));
 
 function makeOptions(count: number, prefix = 'opt'): ReadonlyArray<SelectionListOption> {
@@ -46,7 +43,7 @@ function defaultProps(rootStep: SelectionListStep, overrides: Partial<SelectionL
 }
 
 /**
- * R9 — Blocker 4: virtualized rows MUST carry the same ARIA wrapper semantics
+ * R9 — Blocker 4: virtualized rows MUST carry the same actionable ARIA semantics
  * as the plain (non-virtualized) path, otherwise screen readers cannot
  * navigate the listbox via `aria-activedescendant` (the focused row's `id`
  * resolves to nothing on the web DOM).
@@ -56,12 +53,58 @@ function defaultProps(rootStep: SelectionListStep, overrides: Partial<SelectionL
  *  - aria-selected reflecting the selection state
  *  - id = `<rootTestID>:<stepId>:option:<optionId>` matching the plain path's
  *    option testID/id (the same id used by the input's aria-activedescendant)
- *  - testID = `<rootTestID>:<stepId>:option-wrapper:<optionId>` matching the
- *    plain path's wrapper testID format
+ * The layout-only wrapper keeps its canonical wrapper testID but must not own
+ * a second role or activation target.
  */
 describe('SelectionList virtualized row ARIA parity (R9 blocker 4)', () => {
+    it.each([
+        {
+            name: 'fallback identity',
+            option: { id: 'focused-fallback', label: 'Focused fallback' },
+            expectedId: 'sl:root:option:focused-fallback',
+        },
+        {
+            name: 'explicit identity',
+            option: {
+                id: 'focused-explicit',
+                testID: 'custom-focused-option',
+                label: 'Focused explicit',
+            },
+            expectedId: 'custom-focused-option',
+        },
+    ])('keeps section-virtualized aria-activedescendant identical and unique for $name', async ({
+        option,
+        expectedId,
+    }) => {
+        legendListState.reset();
+        const root: SelectionListStep = {
+            id: 'root',
+            inputPlaceholder: 'Search',
+            sections: [{
+                kind: 'static',
+                id: 'forced',
+                options: [option],
+                virtualization: 'force',
+            }],
+        };
+        const { SelectionList } = await import('../SelectionList');
+        const screen = await renderScreen(
+            <SelectionList
+                {...defaultProps(root, { selectedOptionId: option.id })}
+            />,
+        );
+
+        const input = screen.findByTestId('sl:header:input');
+        const row = screen.findByTestId(expectedId);
+        const matchingIds = screen.tree.root.findAll((node) => node.props?.id === expectedId);
+
+        expect(input?.props['aria-activedescendant']).toBe(expectedId);
+        expect(row?.props.id).toBe(expectedId);
+        expect(matchingIds).toHaveLength(1);
+    });
+
     it('virtualized rows expose role="option" + aria-selected + id matching the plain path', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         const root: SelectionListStep = {
             id: 'root',
             inputPlaceholder: 'Search',
@@ -84,18 +127,21 @@ describe('SelectionList virtualized row ARIA parity (R9 blocker 4)', () => {
         // sl:root:option-wrapper:<id>.
         for (let i = 0; i < 3; i += 1) {
             const wrapper = screen.findByTestId(`sl:root:option-wrapper:opt-${i}`);
+            const option = screen.findByTestId(`sl:root:option:opt-${i}`);
             expect(wrapper).not.toBeNull();
-            // role="option" + aria-selected on the wrapper element.
-            expect(wrapper?.props.role).toBe('option');
-            expect(wrapper?.props.id).toBe(`sl:root:option:opt-${i}`);
-            const ariaSelected = wrapper?.props['aria-selected'];
+            expect(wrapper?.props.role).toBeUndefined();
+            expect(option?.props.role).toBe('option');
+            expect(option?.props.id).toBe(`sl:root:option:opt-${i}`);
+            expect(option?.props['aria-posinset']).toBe(i + 1);
+            expect(option?.props['aria-setsize']).toBe(3);
+            const ariaSelected = option?.props['aria-selected'];
             // The selected row (opt-1) should carry aria-selected=true; others false.
             expect(ariaSelected).toBe(i === 1);
         }
     });
 
     it('exposes the same option testID structure for virtualized rows as the plain path', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         const root: SelectionListStep = {
             id: 'root',
             inputPlaceholder: 'Search',
@@ -111,7 +157,7 @@ describe('SelectionList virtualized row ARIA parity (R9 blocker 4)', () => {
         const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(<SelectionList {...defaultProps(root)} />);
         // FlashList must be mounted for >50 rows.
-        expect(flashListState.props).not.toBeNull();
+        expect(legendListState.props).not.toBeNull();
         // Each rendered row carries the canonical option testID.
         const probe = screen.findByTestId('sl:root:option:opt-0');
         expect(probe).not.toBeNull();
@@ -119,8 +165,8 @@ describe('SelectionList virtualized row ARIA parity (R9 blocker 4)', () => {
         expect(probeWrapper).not.toBeNull();
     });
 
-    it('applies option accessibility labels to virtualized option wrappers', async () => {
-        flashListState.props = null;
+    it('applies option accessibility labels to virtualized actionable option rows', async () => {
+        legendListState.reset();
         const optionWithA11yName = {
             id: 'native',
             label: 'Backend native auth',
@@ -141,9 +187,9 @@ describe('SelectionList virtualized row ARIA parity (R9 blocker 4)', () => {
         const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(<SelectionList {...defaultProps(root)} />);
 
-        const wrapper = screen.findByTestId('sl:root:option-wrapper:native');
+        const option = screen.findByTestId('sl:root:option:native');
 
-        expect(wrapper?.props.accessibilityLabel).toBe('Anthropic · Backend native auth');
-        expect(wrapper?.props['aria-label']).toBe('Anthropic · Backend native auth');
+        expect(option?.props.accessibilityLabel).toBe('Anthropic · Backend native auth');
+        expect(option?.props['aria-label']).toBe('Anthropic · Backend native auth');
     });
 });

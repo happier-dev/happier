@@ -19,6 +19,7 @@ let mobileWorkspaceExperience: 'classic' | 'cockpit' = 'classic';
 let lastMobileSurfaceBySessionId: Record<string, string> = {};
 let terminalTabAvailable = false;
 let sessionsById: Record<string, unknown> = {};
+const storageListeners = new Set<() => void>();
 const terminalAvailabilityCalls: Array<unknown> = [];
 const routeParams = vi.hoisted(() => ({
     value: { id: 'session-1' } as Record<string, string | undefined>,
@@ -104,19 +105,28 @@ vi.mock('@/components/sessions/terminal/useSessionTerminalAvailability', () => (
 vi.mock('@/sync/domains/state/storageStore', () => {
     const buildState = () => ({
         sessions: sessionsById,
+        sessionListIndexByServerId: {},
+        concurrentSessionListCacheByServerId: {},
         getProjectForSession: () => null,
         localSettings: {
             sessionLastMobileSurfaceBySessionId: lastMobileSurfaceBySessionId,
         },
     });
     const storage = Object.assign(
-        (selector?: (state: Record<string, unknown>) => unknown) => (
-            typeof selector === 'function'
-                ? selector(buildState())
-                : buildState()
+        (selector?: (state: Record<string, unknown>) => unknown) => React.useSyncExternalStore(
+            (listener) => {
+                storageListeners.add(listener);
+                return () => storageListeners.delete(listener);
+            },
+            () => typeof selector === 'function' ? selector(buildState()) : buildState(),
+            () => typeof selector === 'function' ? selector(buildState()) : buildState(),
         ),
         {
             getState: () => buildState(),
+            subscribe: (listener: () => void) => {
+                storageListeners.add(listener);
+                return () => storageListeners.delete(listener);
+            },
         },
     );
     return {
@@ -187,6 +197,7 @@ describe('session route index', () => {
         lastMobileSurfaceBySessionId = {};
         terminalTabAvailable = false;
         sessionsById = {};
+        storageListeners.clear();
         terminalAvailabilityCalls.length = 0;
         routeParams.value = { id: 'session-1' };
         activeServerRuntimeState.snapshot = { generation: 1 };
@@ -218,6 +229,29 @@ describe('session route index', () => {
         expect(screen.findAllByType('ActivitySpinner')).toHaveLength(1);
         expect(screen.findAllByType('SessionView')).toHaveLength(0);
         expect(screen.findAllByType('SessionCockpitShell')).toHaveLength(0);
+    });
+
+    it('mounts the session view reactively when the scoped session lands after route hydration started', async () => {
+        routeParams.value = { id: 'session-1', serverId: 'server-a' };
+        hydrateSessionForRouteSpy.mockImplementation((sessionId: string) => ({
+            kind: 'loading' as const,
+            sessionId,
+            reason: 'store-miss' as const,
+        }));
+        const Route = await import('@/app/(app)/session/[id]');
+        const screen = await renderScreen(React.createElement(Route.default));
+
+        expect(screen.findAllByType('ActivitySpinner')).toHaveLength(1);
+
+        await act(async () => {
+            sessionsById = {
+                'session-1': { id: 'session-1', serverId: 'server-a', active: false, seq: 0 },
+            };
+            for (const listener of storageListeners) listener();
+        });
+
+        expect(screen.findAllByType('ActivitySpinner')).toHaveLength(0);
+        expect(screen.findAllByType('SessionView')).toHaveLength(1);
     });
 
     it('shows a loading spinner before mounting the cockpit shell while hydration is pending', async () => {

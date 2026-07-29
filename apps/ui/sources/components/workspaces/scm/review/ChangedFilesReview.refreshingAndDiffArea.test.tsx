@@ -68,24 +68,8 @@ vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
 
 vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
     DiffFilesListView: React.forwardRef((props: any, ref: any) => {
-        const [flashListCrashed, setFlashListCrashed] = React.useState(false);
-
-        React.useEffect(() => {
-            if (typeof globalThis.window === 'undefined' || typeof globalThis.window.addEventListener !== 'function') return;
-            const onError = (event: any) => {
-                const message = String(event?.message ?? event?.error?.message ?? '');
-                if (message.includes('not enough layouts')) {
-                    setFlashListCrashed(true);
-                }
-            };
-            globalThis.window.addEventListener('error', onError);
-            return () => {
-                globalThis.window?.removeEventListener?.('error', onError);
-            };
-        }, []);
-
         React.useImperativeHandle(ref, () => ({
-            clearLayoutCacheOnUpdate: vi.fn(),
+            clearMeasurementCache: vi.fn(),
             scrollToIndex: flashListScrollToIndexSpy,
             scrollToOffset: vi.fn(),
             getScrollableNode: () => flashListScrollableNodeOverride ?? flashListScrollableNode,
@@ -126,73 +110,18 @@ vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
             return React.createElement(React.Fragment, { key: file.key }, row, inline);
         };
 
-        const content = flashListCrashed
-            ? React.createElement(
-                'FlatList',
-                props,
-                header,
-                data.map((item: any, index: number) => renderFile(item, index)),
-                footer,
-            )
-            : React.createElement(
-                'FlashList',
-                props,
-                header,
-                data.map((item: any, index: number) => renderFile(item, index)),
-                footer,
-            );
-
-        return content;
+        return React.createElement(
+            'VirtualizedList',
+            props,
+            header,
+            data.map((item: any, index: number) => renderFile(item, index)),
+            footer,
+        );
     }),
 }));
 
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (cb: any) => deferOnWebSpy(cb),
-}));
-
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
-    FlashList: React.forwardRef((props: any, ref: any) => {
-        React.useImperativeHandle(ref, () => ({
-            scrollToIndex: flashListScrollToIndexSpy,
-            // Some callers may attempt to read the underlying scroll node on web.
-            getScrollableNode: () => flashListScrollableNodeOverride ?? flashListScrollableNode,
-        }));
-        const data = Array.isArray(props.data) ? props.data : [];
-        React.useEffect(() => {
-        if (typeof props.onViewableItemsChanged !== 'function') return;
-            props.onViewableItemsChanged({
-                viewableItems: data.map((_item: any, index: number) => ({ index })),
-            });
-        }, [data, props.onViewableItemsChanged]);
-
-        const header =
-            props.ListHeaderComponent
-                ? (typeof props.ListHeaderComponent === 'function'
-                    ? props.ListHeaderComponent()
-                    : props.ListHeaderComponent)
-                : null;
-        const footer =
-            props.ListFooterComponent
-                ? (typeof props.ListFooterComponent === 'function'
-                    ? props.ListFooterComponent()
-                    : props.ListFooterComponent)
-                : null;
-
-        return React.createElement(
-            'FlashList',
-            props,
-            header,
-            data.map((item: any, index: number) => {
-                const key =
-                    typeof props.keyExtractor === 'function'
-                        ? props.keyExtractor(item, index)
-                        : (item?.key ?? String(index));
-                const child = typeof props.renderItem === 'function' ? props.renderItem({ item, index }) : null;
-                return React.createElement('FlashListItem', { key }, child);
-            }),
-            footer,
-        );
-    }),
 }));
 
 installFilesContentCommonModuleMocks({
@@ -1291,7 +1220,7 @@ describe('ChangedFilesReview', () => {
         }
     });
 
-    it('restores the nested web scroll root when FlashList exposes only a host node', async () => {
+    it('restores the nested web scroll root when the virtualized list exposes only a host node', async () => {
         vi.useFakeTimers();
         sessionScmDiffFileSpy.mockClear();
         sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
@@ -1615,51 +1544,4 @@ describe('ChangedFilesReview', () => {
         expect(screen.findAllByType('ScmChangeRow' as any)).toHaveLength(1);
     });
 
-    it('falls back to FlatList on web when FlashList throws "not enough layouts"', async () => {
-        sessionScmDiffFileSpy.mockClear();
-
-        const globalWindowContainer = globalThis as unknown as { window?: unknown };
-        const prevWindow = globalWindowContainer.window;
-        const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
-        try {
-            globalWindowContainer.window = {
-                addEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
-                    const arr = listeners.get(type) ?? [];
-                    arr.push(fn);
-                    listeners.set(type, arr);
-                },
-                removeEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
-                    const arr = listeners.get(type) ?? [];
-                    listeners.set(type, arr.filter((f) => f !== fn));
-                },
-            };
-
-            const screen = await renderChangedFilesReview({
-                allRepositoryChangedFiles: [fileA, fileB],
-            });
-            await flushReviewEffects();
-
-            expect(screen.findAllByType('FlashList' as any)).toHaveLength(1);
-            expect(listeners.get('error')?.length ?? 0).toBeGreaterThan(0);
-
-            const errorMessage = 'index out of bounds, not enough layouts';
-            const handler = (listeners.get('error') ?? [])[0];
-            const fakeEvent = {
-                message: errorMessage,
-                error: new Error(errorMessage),
-                preventDefault: vi.fn(),
-                stopImmediatePropagation: vi.fn(),
-            } as unknown as ErrorEvent;
-
-            await act(async () => {
-                (handler as EventListener)(fakeEvent);
-            });
-            await flushReviewEffects();
-
-            expect(screen.findAllByType('FlatList' as any).length).toBeGreaterThan(0);
-            expect(screen.findAllByType('FlashList' as any)).toHaveLength(0);
-        } finally {
-            globalWindowContainer.window = prevWindow;
-        }
-    });
 });

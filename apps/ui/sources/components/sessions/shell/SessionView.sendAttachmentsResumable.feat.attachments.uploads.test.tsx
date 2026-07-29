@@ -57,7 +57,6 @@ const TEST_SERVER_ACCOUNT_SCOPE = null;
 const resolveSessionComposerSendMock = vi.fn((..._args: any[]) => ({ kind: 'send', text: 'hello' }));
 const chatListPropsSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
     LinearGradient: 'LinearGradient',
 }));
@@ -149,11 +148,14 @@ vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => (
 vi.mock(
     '@/components/sessions/model/useSessionMachineReachability',
     async (importOriginal) => {
-        const { createSessionMachineReachabilityModuleMock } = await import('@/dev/testkit/mocks/sessionMachineReachability');
+        const {
+            createReachableSessionMachineReachability,
+            createSessionMachineReachabilityModuleMock,
+        } = await import('@/dev/testkit/mocks/sessionMachineReachability');
         return createSessionMachineReachabilityModuleMock({
             importOriginal,
             overrides: {
-                useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
+                useSessionMachineReachability: createReachableSessionMachineReachability,
                 useSessionReachableMachineTarget: () => ({ machineId: 'm1', basePath: '/tmp' }),
             },
         });
@@ -185,6 +187,8 @@ vi.mock('@/sync/sync', () => ({
         publishSessionModelOverrideToMetadata: async () => {},
         refreshSessions: async () => {},
         onSessionVisible: () => {},
+        getAcceptedExternalSessionTailCursor: () => null,
+        subscribeAcceptedExternalSessionTailCursor: () => () => {},
         sendMessage: (...args: any[]) => sendMessageSpy(...args),
         enqueuePendingMessage: (...args: any[]) => enqueuePendingMessageSpy(...args),
         updatePendingMessage: (...args: any[]) => updatePendingMessageSpy(...args),
@@ -396,7 +400,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
             supportsVendorResume: true,
             experimental: true,
         },
-        uiConnectedService: { serviceId: null, label: 'Provider', connectRoute: null },
+        uiConnectedService: { serviceId: null, labelKey: 'agentInput.agent.codex', connectRoute: null },
     }),
     getAgentResumeExperimentsFromSettings: () => null,
     getNewSessionRelevantInstallableDepKeys: () => [],
@@ -441,7 +445,7 @@ vi.mock('@/utils/system/fireAndForget', () => ({
         const tag = typeof opts?.tag === 'string' ? opts.tag : '';
         // This test is validating the resumable attachment send flow; ignore unrelated
         // fire-and-forget work (analytics, mount-time prefetch, etc).
-        if (tag.startsWith('SessionView.sendMessage') || tag === 'SessionView.pendingMessageEdit.save') {
+        if (tag === 'SessionView.sendMessage.attachments' || tag === 'SessionView.pendingMessageEdit.save') {
             pendingFireAndForget.push(p);
         }
         return p;

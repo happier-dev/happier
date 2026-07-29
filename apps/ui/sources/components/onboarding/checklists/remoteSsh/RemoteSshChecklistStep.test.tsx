@@ -585,7 +585,7 @@ describe('RemoteSshChecklistStep', () => {
         expect(screen.findByTestId('remote-ssh-step-plan-row-install_relay_runtime')).toBeTruthy();
         expect(screen.findAllByTestId('remote-ssh-step-plan-row-install_daemon')).toHaveLength(0);
         const flattenedPlanStatusSlotStyle = flattenStyle(planStatusSlot.props.style);
-        expect(flattenedPlanStatusSlotStyle.borderWidth ?? 0).toBe(0);
+        expect(flattenedPlanStatusSlotStyle.borderWidth).toBe(1);
         expect(Number(flattenedPlanStatusSlotStyle.width)).toBeGreaterThan(26);
         expect(Number(flattenedPlanStatusSlotStyle.height)).toBeGreaterThan(26);
         await flushHookEffects({ cycles: 3, turns: 3 });
@@ -606,7 +606,7 @@ describe('RemoteSshChecklistStep', () => {
         }
         expect(screen.findByTestId('remote-ssh-step-execution')).toBeTruthy();
         const flattenedExecutionStatusSlotStyle = flattenStyle(executionStatusSlot.props.style);
-        expect(flattenedExecutionStatusSlotStyle.borderWidth ?? 0).toBe(0);
+        expect(flattenedExecutionStatusSlotStyle.borderWidth).toBe(1);
         expect(Number(flattenedExecutionStatusSlotStyle.width)).toBeGreaterThan(26);
         expect(Number(flattenedExecutionStatusSlotStyle.height)).toBeGreaterThan(26);
     });
@@ -690,7 +690,7 @@ describe('RemoteSshChecklistStep', () => {
         }
         expect(screen.findByTestId('remote-ssh-step-complete-checklist-row-install_relay_runtime')).toBeTruthy();
         const flattenedCompleteStatusSlotStyle = flattenStyle(completeStatusSlot.props.style);
-        expect(flattenedCompleteStatusSlotStyle.borderWidth ?? 0).toBe(0);
+        expect(flattenedCompleteStatusSlotStyle.borderWidth).toBe(1);
         expect(Number(flattenedCompleteStatusSlotStyle.width)).toBeGreaterThan(26);
         expect(Number(flattenedCompleteStatusSlotStyle.height)).toBeGreaterThan(26);
         expect(screen.getTextContent()).toContain('https://public-relay.example.test');

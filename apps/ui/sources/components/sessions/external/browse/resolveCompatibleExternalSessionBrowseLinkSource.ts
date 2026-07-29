@@ -20,8 +20,16 @@ function isCompatibleExternalSessionBrowseLinkSource(selectedSource: ExternalSes
             return false;
         }
         if (selectedSource.home === 'connectedService') {
-            return normalizeOptionalString(selectedSource.connectedServiceId) === normalizeOptionalString(candidateSource.connectedServiceId)
-                && normalizeOptionalString(selectedSource.connectedServiceProfileId) === normalizeOptionalString(candidateSource.connectedServiceProfileId);
+            if (normalizeOptionalString(selectedSource.connectedServiceId) !== normalizeOptionalString(candidateSource.connectedServiceId)) {
+                return false;
+            }
+            const selectedGroupId = normalizeOptionalString(selectedSource.connectedServiceGroupId);
+            const candidateGroupId = normalizeOptionalString(candidateSource.connectedServiceGroupId);
+            if (selectedGroupId !== null || candidateGroupId !== null) {
+                return selectedGroupId !== null && selectedGroupId === candidateGroupId;
+            }
+            return normalizeOptionalString(selectedSource.connectedServiceProfileId)
+                === normalizeOptionalString(candidateSource.connectedServiceProfileId);
         }
         return true;
     }

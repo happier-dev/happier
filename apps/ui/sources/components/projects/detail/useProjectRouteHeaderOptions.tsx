@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -11,6 +10,7 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 
 import { ProjectHeaderActions } from './ProjectHeaderActions';
 import { resolveProjectRouteHeaderTitle } from './projectRouteState';
+import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
 
 export function useProjectRouteHeaderOptions(params: Readonly<{
     workspaceRef: WorkspaceRefV1 | null;
@@ -19,21 +19,29 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
     showWorktreesButton: boolean;
     showWorkspaceExperienceButton?: boolean;
     workspaceExperienceToggleA11yLabel?: string;
+    onBack?: () => void;
     onToggleWorkspaceExperience?: () => void;
     onToggleWorktrees?: () => void;
     onOpenTerminal: () => void;
 }>): Readonly<Record<string, unknown>> {
-    const router = useRouter();
+    const routerRef = useProjectRouteRouterRef();
     const navigation = useNavigation();
     const { theme } = useUnistyles();
+    const navigationRef = React.useRef(navigation);
+    navigationRef.current = navigation;
+    const onBack = params.onBack;
 
     const handleBack = React.useCallback(() => {
+        if (onBack) {
+            onBack();
+            return;
+        }
         safeRouterBack({
-            router,
-            navigation,
+            router: routerRef.current,
+            navigation: navigationRef.current,
             fallbackHref: '/projects',
         });
-    }, [navigation, router]);
+    }, [onBack, routerRef]);
 
     return React.useMemo(() => ({
         headerShown: true,
@@ -76,6 +84,7 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
     }), [
         handleBack,
         params.activeRootPath,
+        params.onBack,
         params.onOpenTerminal,
         params.onToggleWorkspaceExperience,
         params.onToggleWorktrees,

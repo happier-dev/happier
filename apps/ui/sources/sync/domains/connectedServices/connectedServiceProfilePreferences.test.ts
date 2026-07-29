@@ -2,9 +2,20 @@ import { describe, expect, it } from 'vitest';
 
 import {
   connectedServiceProfileKey,
+  pruneConnectedServiceProfilePreferencesForDeletedProfile,
+  pruneQualifiedConnectedAccountPreferences,
   resolveConnectedServiceDefaultProfileId,
   resolveConnectedServiceProfileLabel,
+  resolveQualifiedConnectedAccountDefaultId,
+  resolveQualifiedConnectedAccountLabel,
+  updateQualifiedConnectedAccountDefaultId,
+  updateQualifiedConnectedAccountLabel,
 } from './connectedServiceProfilePreferences';
+
+const qualifiedGithubService = {
+  pluginId: 'happier.scm.hosting.github',
+  localId: 'github-account',
+};
 
 describe('connectedServiceProfilePreferences', () => {
   it('builds a stable profile key', () => {
@@ -58,5 +69,102 @@ describe('connectedServiceProfilePreferences', () => {
       defaultProfileByServiceId: { anthropic: 'missing' },
     });
     expect(selected).toBe('personal');
+  });
+
+  it('prunes stale default and profile labels for a deleted profile without touching unrelated preferences', () => {
+    const pruned = pruneConnectedServiceProfilePreferencesForDeletedProfile({
+      serviceId: 'anthropic',
+      profileId: 'work/team',
+      connectedServicesDefaultProfileByServiceId: {
+        anthropic: 'work/team',
+        openai: 'codex',
+      },
+      connectedServicesProfileLabelByKey: {
+        'anthropic/work%2Fteam': 'Encoded label',
+        'anthropic/work/team': 'Legacy label',
+        'anthropic/personal': 'Personal',
+        'openai/codex': 'Codex',
+      },
+    });
+
+    expect(pruned.connectedServicesDefaultProfileByServiceId).toEqual({ openai: 'codex' });
+    expect(pruned.connectedServicesProfileLabelByKey).toEqual({
+      'anthropic/personal': 'Personal',
+      'openai/codex': 'Codex',
+    });
+  });
+
+  it('prefers qualified account preferences and falls back only to its mapped built-in key', () => {
+    expect(resolveQualifiedConnectedAccountLabel({
+      service: qualifiedGithubService,
+      legacyServiceId: 'github',
+      accountId: 'work',
+      labelsByKey: {
+        'github/work': 'Legacy',
+        'happier.scm.hosting.github%2Fgithub-account/work': 'Qualified',
+      },
+    })).toBe('Qualified');
+    expect(resolveQualifiedConnectedAccountDefaultId({
+      service: qualifiedGithubService,
+      legacyServiceId: 'github',
+      connectedAccountIds: ['personal', 'work'],
+      defaultAccountByServiceKey: {
+        github: 'work',
+      },
+    })).toBe('work');
+  });
+
+  it('writes only the qualified owner and removes its mapped compatibility preference', () => {
+    expect(updateQualifiedConnectedAccountLabel({
+      service: qualifiedGithubService,
+      legacyServiceId: 'github',
+      accountId: 'work',
+      label: ' Team ',
+      labelsByKey: {
+        'github/work': 'Legacy',
+        'openai/voice': 'Voice',
+      },
+    })).toEqual({
+      'happier.scm.hosting.github%2Fgithub-account/work': 'Team',
+      'openai/voice': 'Voice',
+    });
+    expect(updateQualifiedConnectedAccountDefaultId({
+      service: qualifiedGithubService,
+      legacyServiceId: 'github',
+      accountId: 'work',
+      defaultAccountByServiceKey: {
+        github: 'personal',
+        openai: 'voice',
+      },
+    })).toEqual({
+      'happier.scm.hosting.github/github-account': 'work',
+      openai: 'voice',
+    });
+  });
+
+  it('prunes only the deleted exact account across qualified and mapped compatibility keys', () => {
+    expect(pruneQualifiedConnectedAccountPreferences({
+      service: qualifiedGithubService,
+      legacyServiceId: 'github',
+      accountId: 'work',
+      defaultAccountByServiceKey: {
+        'happier.scm.hosting.github/github-account': 'personal',
+        github: 'work',
+        openai: 'voice',
+      },
+      labelsByKey: {
+        'happier.scm.hosting.github%2Fgithub-account/work': 'Qualified',
+        'github/work': 'Legacy',
+        'github/personal': 'Personal',
+      },
+    })).toEqual({
+      connectedServicesDefaultProfileByServiceId: {
+        'happier.scm.hosting.github/github-account': 'personal',
+        openai: 'voice',
+      },
+      connectedServicesProfileLabelByKey: {
+        'github/personal': 'Personal',
+      },
+    });
   });
 });

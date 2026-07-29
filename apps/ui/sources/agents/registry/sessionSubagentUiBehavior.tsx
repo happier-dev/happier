@@ -1,10 +1,15 @@
 import * as React from 'react';
 
 import { AGENT_IDS } from '@/agents/registry/registryCore';
-import { resolveAgentUiBehavior, resolveAgentUiBehaviorFromFlavor } from '@/agents/registry/registryUiBehavior';
+import { resolveAgentUiBehavior, resolveAgentUiBehaviorFromSessionMetadata } from '@/agents/registry/registryUiBehavior';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+
+function resolveAgentUiBehaviorFromSession(session: Session) {
+    return resolveAgentUiBehaviorFromSessionMetadata(readSessionOwnerMetadataView(session));
+}
 
 export function getSessionSubagentLaunchCards(params: Readonly<{
     sessionId: string;
@@ -13,7 +18,7 @@ export function getSessionSubagentLaunchCards(params: Readonly<{
     subagents: readonly SessionSubagent[];
 }>): readonly React.ReactNode[] {
     if (!params.session) return [];
-    const behavior = resolveAgentUiBehaviorFromFlavor(params.session.metadata?.flavor);
+    const behavior = resolveAgentUiBehaviorFromSession(params.session);
     const renderLaunchCards = behavior?.sessionSubagents?.renderLaunchCards;
     if (!renderLaunchCards) return [];
     return renderLaunchCards({
@@ -26,7 +31,7 @@ export function getSessionSubagentLaunchCards(params: Readonly<{
 
 export function hasSessionSubagentLaunchCards(session: Session | null): boolean {
     if (!session) return false;
-    const behavior = resolveAgentUiBehaviorFromFlavor(session.metadata?.flavor);
+    const behavior = resolveAgentUiBehaviorFromSession(session);
     return typeof behavior?.sessionSubagents?.renderLaunchCards === 'function';
 }
 
@@ -35,7 +40,7 @@ export function createSessionTeammateLauncherDetailsTab(params: Readonly<{
     teamId: string;
 }>): DetailsTab | null {
     if (!params.session) return null;
-    const behavior = resolveAgentUiBehaviorFromFlavor(params.session.metadata?.flavor);
+    const behavior = resolveAgentUiBehaviorFromSession(params.session);
     const createTab = behavior?.sessionSubagents?.createTeammateLauncherDetailsTab;
     if (!createTab) return null;
     return createTab({
@@ -46,7 +51,7 @@ export function createSessionTeammateLauncherDetailsTab(params: Readonly<{
 
 export function hasSessionTeammateLauncher(session: Session | null): boolean {
     if (!session) return false;
-    const behavior = resolveAgentUiBehaviorFromFlavor(session.metadata?.flavor);
+    const behavior = resolveAgentUiBehaviorFromSession(session);
     return typeof behavior?.sessionSubagents?.createTeammateLauncherDetailsTab === 'function';
 }
 

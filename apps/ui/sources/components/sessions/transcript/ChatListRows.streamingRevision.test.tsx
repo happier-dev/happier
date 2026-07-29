@@ -81,7 +81,7 @@ vi.mock('@/components/sessions/transcript/structured/StructuredMessageBlock', ()
     renderStructuredMessage: () => null,
     StructuredMessageBlock: () => React.createElement('StructuredMessageBlock'),
 }));
-vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({ shouldShowMessageCopyButton: () => false }));
+vi.mock('@/components/sessions/transcript/transcriptRowActionVisibility', () => ({ shouldShowTranscriptRowActions: () => false, shouldShowTranscriptRowPinAction: () => false }));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => true }));
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({ isCommittedMessageDiscarded: () => false }));
 vi.mock('@/utils/url/sessionFileDeepLink', () => ({ buildSessionFileDeepLink: () => '' }));
@@ -139,6 +139,7 @@ const messageDisplayCommon = {
     transcriptStreamingSmoothingEnabled: true,
     transcriptMessageSelectionEnabled: true,
     transcriptMessageSendToSessionEnabled: false,
+    debugInformationEnabled: false,
     workspacePath: null,
 } satisfies TranscriptMessageDisplayCommon;
 

@@ -6,6 +6,7 @@ import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { localSettingsParse } from '@/sync/domains/settings/localSettings';
 import {
     isFreshTimestamp,
+    SESSION_OPTIMISTIC_PENDING_THINKING_MS,
     SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
 } from '@/sync/domains/session/attention/runtimePresentation';
 import {
@@ -13,12 +14,20 @@ import {
     readCachedPendingRequestObservedAt,
     type PendingRequestObservedAtCacheEntry,
 } from '@/sync/domains/session/pending/pendingRequestObservedAtCache';
+import {
+    deriveLatestPendingAgentStateRequestObservedAt,
+    derivePendingRequestFlagsFromAgentState,
+    readPendingAgentStateCompletedRequestSignature,
+    readPendingAgentStateRequestSignature,
+} from '@/sync/domains/session/pending/listPendingSessionRequests';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { resolveActivityAttentionDeliveryPlan } from '@/activity/delivery/resolveActivityAttentionDeliveryPlan';
 import { AttentionDeviceOverridesV1Schema } from '@/sync/domains/settings/attentionDeviceOverridesV1';
 import type { StorageState } from '@/sync/store/types';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 import { buildActivityBadgeStateFromOverview, type ActivityBadgeSessionOptions } from './buildActivityBadgeState';
 import {
@@ -61,59 +70,13 @@ function readNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : null;
 }
 
-function readFreshnessBit(value: unknown, nowMs: number): 0 | 1 {
+function readFreshnessBit(
+    value: unknown,
+    nowMs: number,
+    staleMs: number = SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
+): 0 | 1 {
     const timestamp = readNumber(value);
-    return isFreshTimestamp(timestamp, nowMs, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS) ? 1 : 0;
-}
-
-function readRequestSignature(value: unknown): string {
-    if (!value || typeof value !== 'object') return '';
-    const requests = value as Record<string, {
-        createdAt?: unknown;
-        kind?: unknown;
-        tool?: unknown;
-    }>;
-    return collectRecordIds(requests).sort().map((requestId) => {
-        const request = requests[requestId];
-        return [
-            requestId,
-            typeof request?.tool === 'string' ? request.tool : '',
-            typeof request?.kind === 'string' ? request.kind : '',
-            readNumber(request?.createdAt) ?? '',
-        ].join(':');
-    }).join('|');
-}
-
-function readCompletedRequestSignature(value: unknown): string {
-    if (!value || typeof value !== 'object') return '';
-    const completed = value as Record<string, { completedAt?: unknown; createdAt?: unknown }>;
-    return collectRecordIds(completed).sort().map((requestId) => {
-        const request = completed[requestId];
-        return [
-            requestId,
-            readNumber(request?.completedAt) ?? '',
-            readNumber(request?.createdAt) ?? '',
-        ].join(':');
-    }).join('|');
-}
-
-function hasCompletedRequest(completedValue: unknown, requestId: string): boolean {
-    if (!completedValue || typeof completedValue !== 'object') return false;
-    const completed = completedValue as Record<string, { completedAt?: unknown } | undefined>;
-    return completed[requestId]?.completedAt != null;
-}
-
-function readLatestPendingAgentRequestCreatedAt(value: unknown, completedValue: unknown): number | null {
-    if (!value || typeof value !== 'object') return null;
-    const requests = value as Record<string, { createdAt?: unknown } | undefined>;
-    let latest: number | null = null;
-    for (const requestId of collectRecordIds(requests)) {
-        if (hasCompletedRequest(completedValue, requestId)) continue;
-        const createdAt = readNumber(requests[requestId]?.createdAt);
-        if (createdAt === null) continue;
-        latest = latest === null ? createdAt : Math.max(latest, createdAt);
-    }
-    return latest;
+    return isFreshTimestamp(timestamp, nowMs, staleMs) ? 1 : 0;
 }
 
 function hasProjectedPendingRequestCounts(session: Session): boolean {
@@ -122,7 +85,8 @@ function hasProjectedPendingRequestCounts(session: Session): boolean {
 }
 
 function hasPendingAgentRequests(session: Session): boolean {
-    return hasRecordValues(session.agentState?.requests ?? {});
+    const flags = derivePendingRequestFlagsFromAgentState(session.agentState);
+    return flags.hasPendingPermissionRequests || flags.hasPendingUserActionRequests;
 }
 
 function hasRenderablePendingRequestProjection(renderable: SessionListRenderableSession): boolean {
@@ -130,7 +94,7 @@ function hasRenderablePendingRequestProjection(renderable: SessionListRenderable
 }
 
 function buildSessionActivitySignature(session: Session): string {
-    const metadata = session.metadata;
+    const metadata = readSessionOwnerMetadataView(session);
     const readState = metadata?.readStateV1;
     const agentState = session.agentState;
     return [
@@ -140,23 +104,25 @@ function buildSessionActivitySignature(session: Session): string {
         session.presence,
         session.thinking === true ? 1 : 0,
         readNumber(session.thinkingAt) ?? '',
+        readNumber(session.optimisticThinkingAt) ?? '',
         session.latestTurnStatus ?? '',
         readNumber(session.latestTurnStatusObservedAt) ?? '',
         readNumber(session.meaningfulActivityAt) ?? '',
         readNumber(session.seq) ?? '',
+        readNumber(session.pendingBlockedCount) ?? '',
         hasProjectedPendingRequestCounts(session) ? readNumber(session.updatedAt) ?? '' : '',
         readNumber(session.latestReadyEventSeq) ?? '',
         readNumber(session.lastViewedSessionSeq) ?? '',
         readNumber(readState?.sessionSeq) ?? '',
         readNumber(readState?.pendingActivityAt) ?? '',
         metadata?.systemSessionV1?.hidden === true ? 1 : 0,
-        metadata?.externalSessionV1 ? 1 : 0,
+        readExternalSessionLink(metadata) ? 1 : 0,
         metadata?.externalSessionAttentionV1 ? JSON.stringify(metadata.externalSessionAttentionV1) : '',
         readNumber(session.pendingPermissionRequestCount) ?? '',
         readNumber(session.pendingUserActionRequestCount) ?? '',
         readNumber(session.pendingRequestObservedAt) ?? '',
-        readRequestSignature(agentState?.requests),
-        readCompletedRequestSignature(agentState?.completedRequests),
+        readPendingAgentStateRequestSignature(agentState?.requests),
+        readPendingAgentStateCompletedRequestSignature(agentState?.completedRequests),
     ].join('\u001f');
 }
 
@@ -166,6 +132,7 @@ function buildRenderableActivitySignature(renderable: SessionListRenderableSessi
     return [
         renderable.id,
         readNumber(renderable.seq) ?? '',
+        readNumber(renderable.pendingBlockedCount) ?? '',
         hasRenderablePendingRequestProjection(renderable) ? readNumber(renderable.updatedAt) ?? '' : '',
         renderable.hasUnreadMessages === true ? 1 : 0,
         renderable.metadataUnavailable === true ? 1 : 0,
@@ -177,6 +144,7 @@ function buildRenderableActivitySignature(renderable: SessionListRenderableSessi
         renderable.presence,
         renderable.thinking === true ? 1 : 0,
         readNumber(renderable.thinkingAt) ?? '',
+        readNumber(renderable.optimisticThinkingAt) ?? '',
         renderable.latestTurnStatus ?? '',
         readNumber(renderable.latestTurnStatusObservedAt) ?? '',
         readNumber(renderable.meaningfulActivityAt) ?? '',
@@ -206,12 +174,13 @@ function buildRuntimeFreshnessSignature(
 ): string {
     const agentState = session.agentState;
     const pendingRequestObservedAt =
-        readLatestPendingAgentRequestCreatedAt(agentState?.requests, agentState?.completedRequests)
+        deriveLatestPendingAgentStateRequestObservedAt(agentState)
         ?? readNumber(session.pendingRequestObservedAt)
         ?? transcriptPendingRequestObservedAt;
 
     return [
         readFreshnessBit(session.thinkingAt, nowMs),
+        readFreshnessBit(session.optimisticThinkingAt, nowMs, SESSION_OPTIMISTIC_PENDING_THINKING_MS),
         readFreshnessBit(session.latestTurnStatusObservedAt, nowMs),
         readFreshnessBit(session.meaningfulActivityAt, nowMs),
         readFreshnessBit(pendingRequestObservedAt, nowMs),
@@ -224,6 +193,7 @@ function buildRenderableRuntimeFreshnessSignature(
 ): string {
     return [
         readFreshnessBit(renderable.thinkingAt, nowMs),
+        readFreshnessBit(renderable.optimisticThinkingAt, nowMs, SESSION_OPTIMISTIC_PENDING_THINKING_MS),
         readFreshnessBit(renderable.latestTurnStatusObservedAt, nowMs),
         readFreshnessBit(renderable.meaningfulActivityAt, nowMs),
         readFreshnessBit(renderable.pendingRequestObservedAt, nowMs),
@@ -463,10 +433,27 @@ export function createLocalActivityBadgeSnapshotSelector(
     const pendingRequestObservedAtCache = new Map<string, PendingRequestObservedAtCacheEntry>();
     let previousSignature: string | null = null;
     let previousSnapshot: LocalActivityBadgeSnapshot | null = null;
+    let previousDeltaRevision: number | null = null;
+    let previousNowMs: number | null = null;
 
     return (state) => {
         const now = new Date();
         const nowMs = now.getTime();
+        const renderableDelta = state.sessionListRenderableDelta;
+        if (
+            previousSnapshot
+            && renderableDelta
+            && previousDeltaRevision !== null
+            && renderableDelta.revision !== previousDeltaRevision
+            && renderableDelta.rebuiltSessionListIndex !== true
+            && renderableDelta.changedSessionIds.length === 0
+            && renderableDelta.removedSessionIds.length === 0
+            && previousNowMs === nowMs
+            && previousSnapshot.isDataReady === state.isDataReady
+        ) {
+            previousDeltaRevision = renderableDelta.revision;
+            return previousSnapshot;
+        }
         const badgeModel = resolveBadgeModel(params, now);
         const localSourceAvailable = hasLocalActivitySource(state)
             || params.friendRequestCount > 0
@@ -514,10 +501,14 @@ export function createLocalActivityBadgeSnapshotSelector(
             ].join('\u001c');
 
         if (previousSignature === snapshotSignature && previousSnapshot) {
+            previousDeltaRevision = renderableDelta?.revision ?? null;
+            previousNowMs = nowMs;
             return previousSnapshot;
         }
 
         previousSignature = snapshotSignature;
+        previousDeltaRevision = renderableDelta?.revision ?? null;
+        previousNowMs = nowMs;
         if (badgeModel.channelDisabled) {
             previousSnapshot = {
                 channelDisabled: true,

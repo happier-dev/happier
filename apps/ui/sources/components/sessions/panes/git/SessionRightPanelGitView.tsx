@@ -13,7 +13,8 @@ import { useScmCommitHistory } from '@/hooks/session/files/useScmCommitHistory';
 import { useFilesScmOperations } from '@/hooks/session/files/useFilesScmOperations';
 import { usePublishBranchAction } from '@/hooks/session/sourceControl/usePublishBranchAction';
 import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
-import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
+import { createScmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
+import { useDaemonScmContributionCatalog } from '@/scm/registry/useDaemonScmContributionCatalog';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useScmAdaptivePolling } from '@/scm/refresh/useScmAdaptivePolling';
 import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
@@ -44,6 +45,7 @@ import {
     useSetting,
     useSettingMutable,
 } from '@/sync/domains/state/storage';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import type { ScmStatusFiles } from '@/scm/scmStatusFiles';
 import { t } from '@/text';
 import { SCM_OPERATION_ERROR_CODES, type ScmOperationErrorCode } from '@happier-dev/protocol';
@@ -130,6 +132,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     }, []);
 
     const session = useSession(props.sessionId);
+    const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
     const scmSnapshot = useSessionProjectScmSnapshot(props.sessionId);
     const lastGoodScmSnapshot = useLastNonNullValue(scmSnapshot, { resetKey: props.sessionId });
     const effectiveScmSnapshot = scmSnapshot ?? lastGoodScmSnapshot;
@@ -153,10 +156,18 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
     const activeServerSnapshot = useActiveServerSnapshot();
     const project = useProjectForSession(props.sessionId);
+    const contributionCatalog = useDaemonScmContributionCatalog({
+        machineId: project?.key.machineId ?? ownerMetadata?.machineId ?? null,
+        serverId: project?.key.serverId ?? session?.serverId ?? activeServerSnapshot.serverId,
+    });
+    const backendUiRegistry = React.useMemo(
+        () => createScmUiBackendRegistry(contributionCatalog),
+        [contributionCatalog],
+    );
     const projectSessionIds = useProjectSessions(project?.id ?? null);
     const hasGlobalOperationInFlight = Boolean(inFlightScmOperation);
     const sessionPath = resolveSessionWorkspacePath({
-        sessionPath: session?.metadata?.path ?? null,
+        sessionPath: ownerMetadata?.path ?? null,
         projectPath: project?.key?.rootPath ?? null,
     });
     const { machineReachable, machineRpcTargetAvailable } = useSessionMachineReachability(props.sessionId);
@@ -661,7 +672,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         (request: Parameters<typeof sessionScmHostingRepositoryPublish>[1]) => sessionScmHostingRepositoryPublish(props.sessionId, request),
         [props.sessionId],
     );
-    const publishRemediationMachineId = normalizeOptionalRouteSegment(project?.key.machineId ?? session?.metadata?.machineId ?? null);
+    const publishRemediationMachineId = normalizeOptionalRouteSegment(project?.key.machineId ?? ownerMetadata?.machineId ?? null);
     const publishRemediationServerId = normalizeOptionalRouteSegment(project?.key.serverId ?? session?.serverId ?? activeServerSnapshot.serverId);
     const openGitHubConnectedService = React.useCallback(() => {
         router.push({ pathname: '/(app)/settings/connected-services/[serviceId]', params: { serviceId: 'github' } });
@@ -716,7 +727,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         );
     }
 
-    const scmUiPlugin = scmUiBackendRegistry.getPluginForSnapshot(effectiveScmSnapshot);
+    const scmUiPlugin = backendUiRegistry.getPluginForSnapshot(effectiveScmSnapshot);
     const backendLabel = scmUiPlugin.displayName;
     const commitActionLabel = scmUiPlugin.commitActionConfig(effectiveScmSnapshot).label;
 

@@ -3,9 +3,10 @@ import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionW
 import type { SessionRealtimeScmScope } from '@/sync/domains/session/realtime/sessionRealtimeVisibility';
 import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
 import { isSessionPathWithinRepoRoot } from '@/scm/sync/paths';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 type SessionRealtimeScmScopeState = Readonly<{
-  sessions?: Record<string, Pick<Session, 'id' | 'metadata'>>;
+  sessions?: Record<string, Pick<Session, 'id' | 'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView'>>;
   getProjectForSession?: (sessionId: string) => { key?: { machineId?: string | null; path?: string | null } } | null;
   getSessionProjectScmSnapshot?: (sessionId: string) => ScmWorkingSnapshot | null;
 }>;
@@ -26,11 +27,11 @@ function normalizeText(value: unknown): string | null {
 function readMachineScopeId(
   state: SessionRealtimeScmScopeState,
   sessionId: string,
-  session: Pick<Session, 'metadata'>,
+  session: Pick<Session, 'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView'>,
 ): string | null {
   const workspaceContext = readSessionWorkspaceContext(state, sessionId);
   return normalizeText(workspaceContext.projectMachineId)
-    ?? normalizeText(resolveProjectMachineScopeId(session.metadata ?? {}));
+    ?? normalizeText(resolveProjectMachineScopeId(readSessionOwnerMetadataView(session) ?? {}));
 }
 
 export function buildSessionRealtimeScmScopeFromSnapshot(

@@ -84,6 +84,35 @@ export const getLanguageDisplayName = (language: Language) => {
 };
 
 /**
+ * Present an arbitrary validated BCP-47 language hint using the active UI
+ * locale, while retaining the canonical language list as the fallback/native
+ * name owner. This covers provider-supported base and regional tags without a
+ * second provider-specific language-name table.
+ */
+export function getLanguageDisplayNameForCode(code: string, displayLocale = 'en'): string {
+    const normalized = code.trim();
+    if (!normalized) return code;
+    const [languageCode, regionCode] = normalized.split('-');
+    const canonical = LANGUAGES.find((language) => language.code === normalized)
+        ?? LANGUAGES.find((language) => typeof language.code === 'string' && language.code.split('-')[0] === languageCode);
+    try {
+        const languageNames = new Intl.DisplayNames([displayLocale], { type: 'language' });
+        const regionNames = new Intl.DisplayNames([displayLocale], { type: 'region' });
+        const localizedLanguage = languageNames.of(languageCode) ?? canonical?.name ?? languageCode;
+        const nativeSuffix = canonical?.nativeName
+            && canonical.nativeName.toLocaleLowerCase(displayLocale) !== localizedLanguage.toLocaleLowerCase(displayLocale)
+            ? ` (${canonical.nativeName})`
+            : '';
+        const localizedRegion = regionCode ? regionNames.of(regionCode) : null;
+        return `${localizedLanguage}${nativeSuffix}${localizedRegion ? ` - ${localizedRegion}` : ''}`;
+    } catch {
+        if (!canonical) return normalized;
+        if (!regionCode || canonical.code === normalized) return getLanguageDisplayName(canonical);
+        return `${canonical.name}${canonical.name === canonical.nativeName ? '' : ` (${canonical.nativeName})`} - ${regionCode}`;
+    }
+}
+
+/**
  * Find a language by its code (including null for autodetect)
  */
 export const findLanguageByCode = (code: string | null): Language | undefined => {

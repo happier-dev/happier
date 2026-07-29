@@ -34,6 +34,10 @@ export type TranscriptNavigationEntry = Readonly<{
     loaded: boolean;
 }>;
 
+/**
+ * One transcript row as the navigation derivation sees it. Rows sourced from the remote history
+ * page carry `loaded: false`: they anchor a turn the transcript window does not currently hold.
+ */
 export type TranscriptNavigationLoadedMessage = Readonly<{
     sessionId: string;
     messageId: string;
@@ -44,26 +48,12 @@ export type TranscriptNavigationLoadedMessage = Readonly<{
     text: string | null;
     createdAtMs: number | null;
     loaded?: boolean;
-    derivationFacts?: TranscriptNavigationLoadedMessageDerivationFacts;
-}>;
-
-export type TranscriptNavigationLoadedMessageDerivationFacts = Readonly<{
-    sessionId: string;
-    routeMessageId: string | null;
-    seq: number | null;
-    transcriptBlockIndex: number | null;
-    role: TranscriptNavigationRole;
-    textPreview: string | null;
-    createdAtMs: number | null;
-}>;
-
-export type TranscriptNavigationRemoteUserTurn = Readonly<{
-    sessionId?: string | null;
-    seq: number;
-    text: string;
-    createdAtMs: number | null;
-    /** Route id of the remote message when the history source can provide it; used to identity-merge with loaded rows. */
-    routeMessageId?: string | null;
+    /**
+     * Set by the row builders, which already normalized every field (including the clamped text
+     * preview). Derivation then reuses the row as-is instead of re-running markdown stripping on
+     * every pass.
+     */
+    preNormalized?: true;
 }>;
 
 export type TranscriptNavigationPin = Readonly<{
@@ -81,7 +71,8 @@ export type DeriveTranscriptNavigationEntriesParams = Readonly<{
     sessionId: string;
     mode: TranscriptNavigationDerivationMode;
     loadedMessages: readonly TranscriptNavigationLoadedMessage[];
-    remoteUserTurns: readonly TranscriptNavigationRemoteUserTurn[];
+    /** Rows recovered from the remote history page; merged with `loadedMessages` by row identity. */
+    remoteMessages: readonly TranscriptNavigationLoadedMessage[];
     pins: readonly TranscriptNavigationPin[];
     previousEntries?: readonly TranscriptNavigationEntry[] | null;
 }>;

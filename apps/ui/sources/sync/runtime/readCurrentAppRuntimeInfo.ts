@@ -21,6 +21,16 @@ function toTrimmedString(value: unknown): string | null {
     return text ? text : null;
 }
 
+function resolveReportedAppVersion(params: Readonly<{
+    expoVersion: string | null;
+    nativeApplicationVersion: string | null;
+}>): string | null {
+    if (params.expoVersion && params.expoVersion !== '0.0.0') {
+        return params.expoVersion;
+    }
+    return params.nativeApplicationVersion ?? params.expoVersion;
+}
+
 function resolveConfiguredUpdateChannel(): string | null {
     const requestHeaders = Constants.expoConfig?.updates?.requestHeaders;
     if (!requestHeaders || typeof requestHeaders !== 'object') {
@@ -44,10 +54,14 @@ function resolveLaunchSource(updateId: string | null): AppRuntimeLaunchSource {
 export function readCurrentAppRuntimeInfo(): CurrentAppRuntimeInfo {
     const updateId = toTrimmedString(Updates.updateId);
     const createdAt = Updates.createdAt instanceof Date ? Updates.createdAt.toISOString() : null;
+    const nativeApplicationVersion = toTrimmedString(Application.nativeApplicationVersion);
 
     return {
-        appVersion: toTrimmedString(Constants.expoConfig?.version),
-        nativeApplicationVersion: toTrimmedString(Application.nativeApplicationVersion),
+        appVersion: resolveReportedAppVersion({
+            expoVersion: toTrimmedString(Constants.expoConfig?.version),
+            nativeApplicationVersion,
+        }),
+        nativeApplicationVersion,
         nativeBuildVersion: toTrimmedString(Application.nativeBuildVersion),
         applicationId: toTrimmedString(Application.applicationId),
         updateChannel: toTrimmedString(Updates.channel) ?? resolveConfiguredUpdateChannel(),

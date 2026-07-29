@@ -8,6 +8,7 @@ import { promptDaemonUnavailableRetry } from '@/utils/errors/daemonUnavailableAl
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { resolvePersistedDaemonConversationSessionId } from '@/voice/binding/voiceConversationBindingPersistence';
 import { persistVoiceAutoTargetMachineId, readVoiceAutoTargetMachineId } from '@/voice/persistence/voiceAutoTargetMachineSettings';
+import { readLocalConversationVoiceSettings, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 
 type RecoveryDecision =
     | Readonly<{ kind: 'not_applicable' | 'cancel' | 'retry' }>
@@ -19,7 +20,7 @@ type RecoveryDecision =
       }>;
 
 function readVoiceAgentSettings(state: any): any | null {
-    return state?.settings?.voice?.adapters?.local_conversation?.agent ?? null;
+    return readLocalConversationVoiceSettings(voiceSettingsParse(state?.settings?.voice)).agent;
 }
 
 function resolveReplaySourceConversationSessionId(_state: any): string | null {
@@ -53,7 +54,7 @@ export async function recoverUnavailableGlobalVoiceAutoMachine(): Promise<Recove
     const agentSettings = readVoiceAgentSettings(state);
     if (!agentSettings) return { kind: 'not_applicable' };
     if ((agentSettings.backend ?? 'daemon') !== 'daemon') return { kind: 'not_applicable' };
-    if ((agentSettings.machineTargetMode ?? 'auto') !== 'auto') return { kind: 'not_applicable' };
+    if (voiceSettingsParse(state?.settings?.voice).executionMachine.mode !== 'auto') return { kind: 'not_applicable' };
 
     const stickyMachineId = readVoiceAutoTargetMachineId(state);
     if (!stickyMachineId) return { kind: 'not_applicable' };

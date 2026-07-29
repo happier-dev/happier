@@ -4,11 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { standardCleanup } from '@/dev/testkit';
 import {
-    flashListChatListHarnessState,
-    renderFlashListChatListSession,
-    resetFlashListChatListHarness,
+    chatListHarnessState,
+    renderChatListHarnessSession,
+    resetChatListHarness,
 } from '@/dev/testkit/harness/chatListHarness';
-import { installFlashListChatListCommonModuleMocks } from '@/dev/testkit/harness/chatListHarnessModuleMocks';
+import { installChatListHarnessCommonModuleMocks } from '@/dev/testkit/harness/chatListHarnessModuleMocks';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { PersistedSessionMessagePinV1 } from '@/sync/domains/messages/pins/sessionMessagePins';
 import type { Message } from '@/sync/domains/messages/messageTypes';
@@ -74,10 +74,10 @@ vi.mock('react-native-mmkv', () => {
     return { MMKV };
 });
 
-installFlashListChatListCommonModuleMocks();
+installChatListHarnessCommonModuleMocks();
 
 vi.mock('@/components/sessions/chatListItems', async () => (
-    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListItemsModuleMock(buildChatListItemsMock)
+    (await import('@/dev/testkit/harness/chatListHarness')).createChatListHarnessItemsModuleMock(buildChatListItemsMock)
 ));
 
 vi.mock('./ChatFooter', () => ({
@@ -138,6 +138,7 @@ vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
 vi.mock('@/components/markdown/enriched/preloadEnrichedMarkdownRuntime', () => ({
     isEnrichedMarkdownRuntimePreloaded: () => true,
     preloadEnrichedMarkdownRuntime: () => Promise.resolve(),
+    useEnrichedMarkdownRuntimeStatus: () => 'ready',
 }));
 
 vi.mock('@/sync/domains/state/agentStateCapabilities', () => ({
@@ -149,7 +150,7 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 }));
 
 vi.mock('@/sync/sync', async () => (
-    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListSyncModuleMock({
+    (await import('@/dev/testkit/harness/chatListHarness')).createChatListHarnessSyncModuleMock({
         loadOlderMessages: loadOlderMessagesMock,
         loadNewerMessages: loadNewerMessagesMock,
         prefetchForkedTranscriptContext: prefetchForkedTranscriptContextMock,
@@ -175,7 +176,7 @@ function pin(overrides: Partial<PersistedSessionMessagePinV1> = {}): PersistedSe
 }
 
 function seedTranscriptMessages() {
-    flashListChatListHarnessState.sessionMessagesState = {
+    chatListHarnessState.sessionMessagesState = {
         isLoaded: true,
         messages: [
             {
@@ -229,22 +230,21 @@ describe('ChatList message pins host wiring', () => {
         capturedMessageViewProps = [];
         capturedToolGroupRowProps = [];
         buildChatListItemsMock.mockClear();
-        resetFlashListChatListHarness({
+        resetChatListHarness({
             syncTuningState: {
-                transcriptWebHotTailItemCount: 0,
             },
         });
-        flashListChatListHarnessState.activeServerAccountScope = scopeA;
-        flashListChatListHarnessState.sessionState = {
-            ...flashListChatListHarnessState.sessionState,
+        chatListHarnessState.activeServerAccountScope = scopeA;
+        chatListHarnessState.sessionState = {
+            ...chatListHarnessState.sessionState,
             id: 'session-1',
             seq: 8,
             active: true,
             metadata: { flavor: 'codex', codexBackendMode: 'appServer' },
         };
-        flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
-        flashListChatListHarnessState.settingValues.transcriptGroupToolCalls = true;
-        flashListChatListHarnessState.settingValues.toolViewTimelineChromeMode = 'cards';
+        chatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
+        chatListHarnessState.settingValues.transcriptGroupToolCalls = true;
+        chatListHarnessState.settingValues.toolViewTimelineChromeMode = 'cards';
     });
 
     afterEach(() => {
@@ -267,7 +267,7 @@ describe('ChatList message pins host wiring', () => {
         savePersistedSessionMessagePins('session-1', [otherScopePin], scopeB);
         seedTranscriptMessages();
 
-        const screen = await renderFlashListChatListSession();
+        const screen = await renderChatListHarnessSession();
 
         const userRowProps = capturedMessageViewProps.filter((props) => props.message?.id === 'u1').at(-1);
         const assistantRowProps = capturedMessageViewProps.filter((props) => props.message?.id === 'a1').at(-1);

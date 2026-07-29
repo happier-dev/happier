@@ -147,10 +147,6 @@ vi.mock('@/utils/system/bugReportActionTrail', () => ({
     recordBugReportUserAction: vi.fn(),
 }));
 
-vi.mock('@/sync/api/account/apiVendorTokens', () => ({
-    disconnectVendorToken: vi.fn(async () => {}),
-}));
-
 vi.mock('@/sync/domains/profiles/profile', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/profiles/profile')>();
     return {
@@ -164,7 +160,7 @@ vi.mock('@/sync/domains/profiles/profile', async (importOriginal) => {
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'gemini'],
     DEFAULT_AGENT_ID: 'agent_default',
-    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', label: 'Anthropic', connectRoute: null } }),
+    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', labelKey: 'agentInput.agent.claude', connectRoute: null } }),
     getAgentIconSource: () => null,
     getAgentIconTintColor: () => null,
     resolveAgentIdFromConnectedServiceId: () => null,

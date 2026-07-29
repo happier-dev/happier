@@ -16,7 +16,8 @@ const backSpy = vi.fn();
 const pushSpy = vi.fn();
 const executeSpy = vi.fn(async () => ({ ok: true as const, result: {} }));
 const createDefaultActionExecutorSpy = vi.fn();
-const fetchArtifactWithBodySpy = vi.fn(async () => null);
+const fetchArtifactWithBodySpy = vi.fn(async (): Promise<unknown> => null);
+const updateArtifactWithHeaderSpy = vi.fn(async (_artifactId: string, _header: unknown, _body: string) => {});
 const resolvePreferredServerIdForSessionIdSpy = vi.fn((_: string) => 'server-cache');
 let modalConfirmResult = true;
 const defaultApprovalArtifactBody = {
@@ -25,7 +26,7 @@ const defaultApprovalArtifactBody = {
     createdAtMs: 1,
     updatedAtMs: 1,
     createdBy: {
-        surface: 'session_agent',
+        surface: 'agent',
         agentId: 'codex',
         sessionId: 'session-1',
     },
@@ -55,6 +56,68 @@ function createApprovalArtifact(serverId?: string) {
         body: JSON.stringify({
             ...defaultApprovalArtifactBody,
             ...(serverId ? { serverId } : {}),
+        }),
+    };
+}
+
+function createTargetActionApprovalArtifact() {
+    return {
+        id: 'target-artifact-1',
+        header: {
+            v: 1,
+            kind: 'target_action_approval.v1',
+            title: 'Publish the release notes',
+            approvalStatus: 'open',
+            qualifiedActionId: 'acme.publisher/actions/releases/publish',
+            subjectFingerprint: 'b'.repeat(64),
+        },
+        body: JSON.stringify({
+            v: 1,
+            kind: 'plugin_target_action',
+            status: 'open',
+            createdAtMs: 1,
+            updatedAtMs: 1,
+            createdBy: { surface: 'agent', agentId: 'codex', sessionId: 'session-1' },
+            requestedSurface: 'agent',
+            qualifiedActionId: 'acme.publisher/actions/releases/publish',
+            input: { secretToken: 'must-not-render', body: 'private draft' },
+            accountId: 'account-secret',
+            resourceId: 'resource-secret',
+            generation: 'generation-7',
+            policyFingerprint: 'a'.repeat(64),
+            subjectFingerprint: 'b'.repeat(64),
+            summary: 'Publish the release notes',
+        }),
+    };
+}
+
+function createExecutionRunHostActionApprovalArtifact() {
+    return {
+        id: 'host-action-artifact-1',
+        header: {
+            v: 1,
+            kind: 'execution_run_host_action_approval.v1',
+            title: 'Create 1 proposed review comment',
+            approvalStatus: 'open',
+            actionId: 'reviews.comments.create',
+            sessionId: 'session-1',
+            sessions: ['session-1'],
+            runId: 'run-1',
+            subjectFingerprint: 'c'.repeat(64),
+            serverId: 'server-1',
+        },
+        body: JSON.stringify({
+            v: 1, kind: 'execution_run_host_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent', sessionId: 'session-1' }, requestedSurface: 'agent',
+            actionId: 'reviews.comments.create', sessionId: 'session-1', runId: 'run-1', callId: 'call-1',
+            profileId: 'acme.review/review', pluginId: 'acme.review', agentId: 'claude', projectId: 'project-1',
+            workspaceId: 'workspace-1', serverId: 'server-1',
+            proposalCount: 1,
+            proposalPreview: [{
+                pathLabel: 'src/a.ts', pathSha256: 'a'.repeat(64), startLine: 7, endLine: 7,
+                bodySha256: 'b'.repeat(64), bodyPreview: 'Use the canonical owner.',
+            }],
+            subjectFingerprint: 'c'.repeat(64), summary: 'Create 1 proposed review comment',
         }),
     };
 }
@@ -257,6 +320,7 @@ vi.mock('@/sync/sync', () => ({
     sync: {
         getCredentials: () => ({ token: 'test' }),
         fetchArtifactWithBody: fetchArtifactWithBodySpy,
+        updateArtifactWithHeader: updateArtifactWithHeaderSpy,
     },
 }));
 
@@ -282,6 +346,7 @@ describe('ApprovalDetailScreen', () => {
         executeSpy.mockClear();
         createDefaultActionExecutorSpy.mockReset();
         fetchArtifactWithBodySpy.mockClear();
+        updateArtifactWithHeaderSpy.mockClear();
         resolvePreferredServerIdForSessionIdSpy.mockReset();
         resolvePreferredServerIdForSessionIdSpy.mockReturnValue('server-cache');
         modalConfirmResult = true;
@@ -289,6 +354,162 @@ describe('ApprovalDetailScreen', () => {
         machineFixtures = createMachineFixtures();
         storageState = createStorageState();
         currentArtifact = createApprovalArtifact();
+    });
+
+    it('renders a redacted plugin target action and updates only that artifact', async () => {
+        currentArtifact = createTargetActionApprovalArtifact();
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="target-artifact-1" />);
+
+        const text = screen.getTextContent();
+        expect(text).toContain('Publish the release notes');
+        expect(text).toContain('acme.publisher');
+        expect(text).toContain('releases/publish');
+        expect(text).toContain('approvals.generation');
+        expect(text).not.toContain('must-not-render');
+        expect(text).not.toContain('account-secret');
+        expect(text).not.toContain('resource-secret');
+        expect(text).not.toContain('a'.repeat(64));
+
+        await screen.pressByTestIdAsync('approvals.approve');
+        expect(executeSpy).not.toHaveBeenCalled();
+        expect(updateArtifactWithHeaderSpy).toHaveBeenCalledTimes(1);
+        const [artifactId, header, body] = updateArtifactWithHeaderSpy.mock.calls[0]!;
+        expect(artifactId).toBe('target-artifact-1');
+        expect(header).toMatchObject({ kind: 'target_action_approval.v1', approvalStatus: 'approved' });
+        expect(JSON.parse(body)).toMatchObject({
+            kind: 'plugin_target_action',
+            status: 'approved',
+            qualifiedActionId: 'acme.publisher/actions/releases/publish',
+            subjectFingerprint: 'b'.repeat(64),
+            decision: { kind: 'approve' },
+        });
+    });
+
+    it('renders and updates only the execution-run host-action approval artifact', async () => {
+        currentArtifact = createExecutionRunHostActionApprovalArtifact();
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="host-action-artifact-1" />);
+
+        const text = screen.getTextContent();
+        expect(text).toContain('Create 1 proposed review comment');
+        expect(text).toContain('acme.review');
+        expect(text).toContain('reviews.comments.create');
+        expect(text).toContain('approvals.proposedComments');
+        expect(text).toContain('Use the canonical owner.');
+        expect(text).not.toContain('project-1');
+        expect(text).not.toContain('c'.repeat(64));
+
+        await screen.pressByTestIdAsync('approvals.approve');
+        expect(executeSpy).not.toHaveBeenCalled();
+        expect(updateArtifactWithHeaderSpy).toHaveBeenCalledTimes(1);
+        const [artifactId, header, body] = updateArtifactWithHeaderSpy.mock.calls[0]!;
+        expect(artifactId).toBe('host-action-artifact-1');
+        expect(header).toMatchObject({
+            kind: 'execution_run_host_action_approval.v1', approvalStatus: 'approved',
+            actionId: 'reviews.comments.create', runId: 'run-1',
+        });
+        expect(JSON.parse(body)).toMatchObject({
+            kind: 'execution_run_host_action', status: 'approved',
+            decision: { kind: 'approve' }, subjectFingerprint: 'c'.repeat(64),
+        });
+    });
+
+    it('fails closed when a target header is paired with a built-in body', async () => {
+        currentArtifact = {
+            ...createApprovalArtifact(),
+            id: 'target-artifact-1',
+            header: createTargetActionApprovalArtifact().header,
+        };
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="target-artifact-1" />);
+
+        expect(screen.getTextContent()).toContain('approvals.loadError');
+        expect(screen.findByTestId('approvals.approve')).toBeNull();
+        expect(executeSpy).not.toHaveBeenCalled();
+        expect(updateArtifactWithHeaderSpy).not.toHaveBeenCalled();
+    });
+
+    it('reloads the authoritative artifact after a decision version conflict', async () => {
+        currentArtifact = createTargetActionApprovalArtifact();
+        const authoritative = {
+            ...createTargetActionApprovalArtifact(),
+            header: { ...createTargetActionApprovalArtifact().header, approvalStatus: 'approved' },
+            body: JSON.stringify({
+                ...JSON.parse(createTargetActionApprovalArtifact().body),
+                status: 'approved',
+                updatedAtMs: 2,
+                decision: { kind: 'approve', decidedAtMs: 2 },
+            }),
+        };
+        updateArtifactWithHeaderSpy.mockRejectedValueOnce(new Error('Artifact was modified by another client. Please refresh and try again.'));
+        fetchArtifactWithBodySpy.mockResolvedValueOnce(authoritative);
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="target-artifact-1" />);
+
+        await screen.pressByTestIdAsync('approvals.approve');
+
+        expect(fetchArtifactWithBodySpy).toHaveBeenCalledWith('target-artifact-1');
+        expect(storageState.updateArtifact).toHaveBeenCalledWith(authoritative);
+        expect(executeSpy).not.toHaveBeenCalled();
+    });
+
+    it('writes exact reject and cancel transitions without executing client-side', async () => {
+        currentArtifact = createTargetActionApprovalArtifact();
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+        const rejectScreen = await renderScreen(<ApprovalDetailScreen artifactId="target-artifact-1" />);
+        await rejectScreen.pressByTestIdAsync('approvals.reject');
+        expect(JSON.parse(updateArtifactWithHeaderSpy.mock.calls[0]![2])).toMatchObject({
+            status: 'rejected', decision: { kind: 'reject' },
+        });
+
+        updateArtifactWithHeaderSpy.mockClear();
+        const cancelScreen = await renderScreen(<ApprovalDetailScreen artifactId="target-artifact-1" />);
+        await cancelScreen.pressByTestIdAsync('approvals.cancel');
+        const canceled = JSON.parse(updateArtifactWithHeaderSpy.mock.calls[0]![2]);
+        expect(canceled).toMatchObject({ status: 'canceled' });
+        expect(canceled).not.toHaveProperty('decision');
+        expect(executeSpy).not.toHaveBeenCalled();
+    });
+
+    it('guards same-frame duplicate decisions and removes controls for terminal artifacts', async () => {
+        currentArtifact = createTargetActionApprovalArtifact();
+        let release!: () => void;
+        updateArtifactWithHeaderSpy.mockImplementationOnce(async () => await new Promise<void>((resolve) => { release = resolve; }));
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="target-artifact-1" />);
+        const approve = screen.findByTestId('approvals.approve');
+        expect(approve).not.toBeNull();
+        await act(async () => {
+            approve!.props.onPress();
+            approve!.props.onPress();
+            await Promise.resolve();
+        });
+        expect(updateArtifactWithHeaderSpy).toHaveBeenCalledTimes(1);
+        await act(async () => release());
+
+        currentArtifact = {
+            ...createTargetActionApprovalArtifact(),
+            header: { ...createTargetActionApprovalArtifact().header, approvalStatus: 'approved' },
+            body: JSON.stringify({
+                ...JSON.parse(createTargetActionApprovalArtifact().body),
+                status: 'approved', updatedAtMs: 2, decision: { kind: 'approve', decidedAtMs: 2 },
+            }),
+        };
+        const terminal = await renderScreen(<ApprovalDetailScreen artifactId="target-artifact-1" />);
+        expect(terminal.findByTestId('approvals.approve')).toBeNull();
+        expect(terminal.findByTestId('approvals.reject')).toBeNull();
+        expect(terminal.findByTestId('approvals.cancel')).toBeNull();
+    });
+
+    it('provides explicit accessible labels for all target decision controls', async () => {
+        currentArtifact = createTargetActionApprovalArtifact();
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="target-artifact-1" />);
+
+        expect(screen.findByTestId('approvals.approve')?.props.accessibilityLabel).toBe('approvals.approve');
+        expect(screen.findByTestId('approvals.reject')?.props.accessibilityLabel).toBe('approvals.reject');
+        expect(screen.findByTestId('approvals.cancel')?.props.accessibilityLabel).toBe('common.cancel');
     });
 
     it('renders requester, session context, and structured action details', async () => {

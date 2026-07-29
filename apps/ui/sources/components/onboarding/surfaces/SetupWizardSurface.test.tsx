@@ -2,8 +2,9 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { storage } from '@/sync/domains/state/storageStore';
 
 import { WizardModalShell } from '../ui/WizardModalShell';
 
@@ -28,10 +29,17 @@ const runtimeFetchMock = vi.hoisted(() => vi.fn(async (input: RequestInfo | URL,
         url.includes('https://unreachable-relay.example.test')
         && url.endsWith('/health')
     ) {
-        return new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+        return new Response(JSON.stringify({ ok: false }), { status: 404, headers: { 'content-type': 'application/json' } });
     }
     return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
 }));
+const machineCapabilitiesDetectMock = vi.hoisted(() => vi.fn(async () => ({
+    supported: true,
+    response: {
+        protocolVersion: 1,
+        results: {},
+    },
+})));
 const systemTaskRunnerState = vi.hoisted(() => {
     const state = {
         nextResult: null as import('@happier-dev/protocol').SystemTaskResult | null,
@@ -70,6 +78,35 @@ const systemTaskRunnerState = vi.hoisted(() => {
 const setupThisComputerWizardStepMock = vi.hoisted(() => ({
     forceBackHidden: false,
 }));
+const emptyMachineListByServerId = vi.hoisted(() => ({} as Record<string, never>));
+
+const syncStoreHooksMockState = vi.hoisted(() => ({
+    sessions: [] as Array<Record<string, unknown>>,
+    machines: {} as Record<string, Record<string, unknown>>,
+}));
+const nativeSshAvailabilityMock = vi.hoisted(() => ({
+    available: false,
+}));
+
+vi.mock('@happier-dev/ssh-native', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@happier-dev/ssh-native')>();
+    return {
+        ...actual,
+        getNativeSshAvailability: () => nativeSshAvailabilityMock.available
+            ? {
+                available: true as const,
+                platform: 'ios' as const,
+                engine: 'libssh2' as const,
+                moduleVersion: 'test',
+                supportsLoopbackTunnel: true,
+                supportsPersistentHostKeyStorage: true,
+            }
+            : {
+                available: false as const,
+                reason: 'native-module-missing' as const,
+            },
+    };
+});
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -91,6 +128,13 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (input: RequestInfo | URL, init?: RequestInit) => runtimeFetchMock(input, init),
 }));
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/ops')>();
+    return {
+        ...actual,
+        machineCapabilitiesDetect: machineCapabilitiesDetectMock,
+    };
+});
 vi.mock('@/components/systemTasks', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/components/systemTasks')>();
     return {
@@ -177,17 +221,17 @@ vi.mock('../checklists/remoteSsh/RemoteSshChecklistStep', () => ({
 vi.mock('../ui/WizardTerminalHandoff', () => ({
     WizardTerminalHandoff: (props: Record<string, unknown>) => React.createElement('WizardTerminalHandoff', props),
 }));
-vi.mock('../steps/ProvidersLogoMultiSelect', () => ({
-    ProvidersLogoMultiSelect: (props: Record<string, unknown>) => React.createElement('ProvidersLogoMultiSelect', props),
+vi.mock('../steps/AgentsLogoMultiSelect', () => ({
+    AgentsLogoMultiSelect: (props: Record<string, unknown>) => React.createElement('AgentsLogoMultiSelect', props),
 }));
 vi.mock('../steps/relayAccess/RelayAccessPrerequisitesStep', () => ({
     RelayAccessPrerequisitesStep: (props: Record<string, unknown>) => React.createElement('RelayAccessPrerequisitesStep', props),
 }));
-vi.mock('../steps/WizardProviderSetupStep', () => ({
-    WizardProviderSetupStep: (props: Record<string, unknown>) => React.createElement('WizardProviderSetupStep', props),
+vi.mock('../steps/WizardAgentSetupStep', () => ({
+    WizardAgentSetupStep: (props: Record<string, unknown>) => React.createElement('WizardAgentSetupStep', props),
 }));
-vi.mock('@/components/settings/providers/setup/ProviderSetupFlow', () => ({
-    ProviderSetupFlow: (props: Record<string, unknown>) => React.createElement('ProviderSetupFlow', props),
+vi.mock('@/components/settings/agents/setup/AgentSetupFlow', () => ({
+    AgentSetupFlow: (props: Record<string, unknown>) => React.createElement('AgentSetupFlow', props),
 }));
 vi.mock('@/modal/portal/ModalPortalTarget', () => ({
     ModalPortalTargetProvider: (props: Record<string, unknown>) =>
@@ -207,9 +251,30 @@ vi.mock('@/components/settings/server/localControl/LocalRelayAccessControlSectio
 }));
 const activeServerSwitchMocks = vi.hoisted(() => ({
     upsertActivateAndSwitchServer: vi.fn(async () => true),
-    normalizeServerUrl: (value: string) => value,
+    normalizeServerUrl: (value: string) => String(value).trim() === 'not a url' ? null : value,
 }));
 vi.mock('@/sync/domains/server/activeServerSwitch', () => activeServerSwitchMocks);
+vi.mock('@/sync/store/hooks', () => ({
+    useAllSessions: () => syncStoreHooksMockState.sessions,
+    useAllMachines: () => {
+        const machines = storage((state) => state.machines);
+        return React.useMemo(() => Object.values(machines), [machines]);
+    },
+    useMachineCliDetectionTarget: (machineId: string | null) => {
+        const normalized = typeof machineId === 'string' ? machineId.trim() : '';
+        const machine = storage((state) => normalized ? (state.machines[normalized] ?? null) : null);
+        const daemonStateVersion = typeof machine?.daemonStateVersion === 'number' ? machine.daemonStateVersion : 0;
+        const isOnline = Boolean(machine);
+        return React.useMemo(() => ({
+            daemonStateVersion: typeof machine?.daemonStateVersion === 'number' ? machine.daemonStateVersion : 0,
+            isOnline,
+        }), [daemonStateVersion, isOnline]);
+    },
+    useMachineListByServerId: () => storage((state) => state.machineListByServerId ?? emptyMachineListByServerId),
+    useSetting: (_key: string) => null,
+    useLocalSetting: (key: string) => key === 'uiFontScale' ? 1 : null,
+    useMachine: (machineId: string) => syncStoreHooksMockState.machines[machineId] ?? null,
+}));
 
 const pendingSetupIntentMocks = vi.hoisted(() => ({
     getPendingSetupIntent: vi.fn(),
@@ -228,9 +293,35 @@ vi.mock('@/sync/domains/pending/pendingSetupIntent', async () => {
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({
-        translate: (key: string) => key,
+        translate: (key: string, params?: Record<string, unknown>) => {
+            if (!params) return key;
+            const values = Object.values(params)
+                .map((value) => String(value))
+                .join(' ');
+            return values ? `${key} ${values}` : key;
+        },
     });
 });
+vi.mock('@/text/i18n', () => ({
+    DEFAULT_LANGUAGE: 'en',
+    SUPPORTED_LANGUAGE_CODES: ['en'],
+    SUPPORTED_LANGUAGES: { en: { code: 'en', nativeName: 'English', englishName: 'English' } },
+    getAllTranslationKeys: () => [],
+    getLanguageEnglishName: () => 'English',
+    getLanguageNativeName: () => 'English',
+    getPreferredLanguage: () => 'en',
+    getTranslationValue: () => undefined,
+    hasTranslation: () => false,
+    setPreferredLanguageFromSettings: () => undefined,
+    t: (key: string, params?: Record<string, unknown>) => {
+        if (!params) return key;
+        const values = Object.values(params)
+            .map((value) => String(value))
+            .join(' ');
+        return values ? `${key} ${values}` : key;
+    },
+    tLoose: (key: string) => key,
+}));
 
 vi.mock('react-native-safe-area-context', () => ({
     SafeAreaInsetsContext: React.createContext({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -240,6 +331,51 @@ vi.mock('react-native-safe-area-context', () => ({
         insets: { top: 0, bottom: 0, left: 0, right: 0 },
     },
 }));
+
+function directChildTestIDs(node: { props: { children?: React.ReactNode } } | null | undefined): string[] {
+    return React.Children.toArray(node?.props.children)
+        .map((child) => {
+            if (!React.isValidElement<{ testID?: string; testIDPrefix?: string }>(child)) {
+                return null;
+            }
+            if (typeof child.props.testID === 'string') {
+                return child.props.testID;
+            }
+            if (typeof child.props.testIDPrefix === 'string') {
+                return `${child.props.testIDPrefix}-download-cta`;
+            }
+            return null;
+        })
+        .filter((testID): testID is string => typeof testID === 'string');
+}
+
+async function applyConnectedMachine(machineId: string, host: string): Promise<void> {
+    const activeAt = Date.now() + 1_000;
+    syncStoreHooksMockState.machines[machineId] = {
+        id: machineId,
+        metadata: { host },
+    };
+    await act(async () => {
+        storage.getState().applyMachines([
+            createMachineFixture({
+                id: machineId,
+                active: true,
+                activeAt,
+                updatedAt: activeAt,
+                metadata: {
+                    host,
+                    platform: 'darwin',
+                    happyCliVersion: '0.0.0-test',
+                    happyHomeDir: '/Users/tester/.happy-dev',
+                    homeDir: '/Users/tester',
+                },
+            }),
+        ]);
+    });
+    await act(async () => {
+        await flushHookEffects({ cycles: 8, turns: 8 });
+    });
+}
 
 describe('SetupWizardSurface', () => {
     beforeEach(() => {
@@ -251,6 +387,17 @@ describe('SetupWizardSurface', () => {
         pendingSetupIntentMocks.setPendingSetupIntent.mockClear();
         relayDriftBannerMock.value = null;
         setupThisComputerWizardStepMock.forceBackHidden = false;
+        syncStoreHooksMockState.sessions = [];
+        syncStoreHooksMockState.machines = {};
+        nativeSshAvailabilityMock.available = false;
+        machineCapabilitiesDetectMock.mockReset();
+        machineCapabilitiesDetectMock.mockImplementation(async () => ({
+            supported: true,
+            response: {
+                protocolVersion: 1,
+                results: {},
+            },
+        }));
         systemTaskRunnerState.nextResult = null;
         systemTaskRunnerState.startMock.mockReset();
         systemTaskRunnerState.cancelMock.mockReset();
@@ -440,7 +587,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        expect(screen.findByType('WizardProviderSetupStep' as never)).toBeTruthy();
+        expect(screen.findByType('WizardAgentSetupStep' as never)).toBeTruthy();
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as never)).toHaveLength(0);
     });
 
@@ -506,7 +653,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const providersStep = screen.findByType('WizardProviderSetupStep' as never);
+        const providersStep = screen.findByType('WizardAgentSetupStep' as never);
         expect(providersStep.props.machineId).toBe('mach-local');
     });
 
@@ -533,51 +680,139 @@ describe('SetupWizardSurface', () => {
         expect(screen.findByType('RelayHostLocalChecklistStep' as never)).toBeTruthy();
     });
 
-    it('guides web users to continue setup in the terminal or desktop app', async () => {
+    it('guides web users through live machine arrival before provider setup', async () => {
         vi.resetModules();
         vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
+        const previousStorageState = storage.getState();
 
-        const { SetupWizardSurface } = await import('./SetupWizardSurface');
-        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
-            isDesktopShell: false,
-        }));
+        try {
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                machines: {},
+                machineListByServerId: {},
+            }));
+            const { SetupWizardSurface } = await import('./SetupWizardSurface');
+            const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+                isDesktopShell: false,
+            }));
 
-        const localBranch = screen.findByTestId('setupWizard-branch:local');
-        expect(localBranch).toBeTruthy();
+            const localBranch = screen.findByTestId('setupWizard-branch:local');
+            expect(localBranch).toBeTruthy();
 
-        await act(async () => {
-            const handler = localBranch?.props.action ?? localBranch?.props.onPress;
-            await handler?.();
-        });
+            await act(async () => {
+                const handler = localBranch?.props.action ?? localBranch?.props.onPress;
+                await handler?.();
+            });
 
-        const continueButton = screen.findByTestId('setupWizard.surface-primary');
-        expect(continueButton).toBeTruthy();
+            const continueButton = screen.findByTestId('setupWizard.surface-primary');
+            expect(continueButton).toBeTruthy();
 
-        await act(async () => {
-            const handler = continueButton?.props.action ?? continueButton?.props.onPress;
-            await handler?.();
-        });
+            await act(async () => {
+                const handler = continueButton?.props.action ?? continueButton?.props.onPress;
+                await handler?.();
+            });
 
-        expect(screen.findByTestId('setupWizard-web-machine-setup-handoff-terminal')).toBeTruthy();
-        expect(screen.findAllByType('LocalDaemonControlSection' as never)).toHaveLength(0);
+            const stack = screen.findByTestId('setupWizard-machine-arrival-stack');
+            expect(stack).toBeTruthy();
+            expect(directChildTestIDs(stack).slice(0, 2)).toEqual([
+                'setupWizard-machine-arrival',
+                'setupWizard-machine-arrival-desktop-app-download-cta',
+            ]);
+            expect(screen.findByTestId('setupWizard-machine-arrival')).toBeTruthy();
+            expect(screen.findByTestId('machine-arrival-card-status:variant:neutral')).toBeTruthy();
+            expect(screen.findByTestId('setupWizard-machine-arrival-desktop-app-download-cta')).toBeTruthy();
+            expect(screen.findAllByType('WizardTerminalHandoff' as never)).toHaveLength(0);
+            expect(screen.findAllByType('LocalDaemonControlSection' as never)).toHaveLength(0);
+            expect(screen.findByTestId('setupWizard.surface-primary')?.props.disabled).toBe(true);
+            expect(screen.getTextContent()).toContain('setupOnboarding.setupThisComputerConnectHonesty');
 
-        const handoff = screen.findByType('WizardTerminalHandoff' as never) as unknown as {
-            props: { steps?: Array<{ code?: unknown; windowsCode?: unknown }> };
-        };
-        const codes = (handoff.props.steps ?? [])
-            .map((step) => (typeof step.code === 'string' ? step.code : ''))
-            .join('\n');
-        expect(codes).toContain('&& happier setup');
-        expect(codes).toContain('--relay-url https://relay.example.test');
-        expect(codes).not.toContain('happier auth login');
-        expect(codes).not.toContain('happier daemon install');
-        expect(codes).toContain('curl -fsSL');
-        const windowsCodes = (handoff.props.steps ?? [])
-            .map((step) => (typeof step.windowsCode === 'string' ? step.windowsCode : ''))
-            .join('\n');
-        expect(windowsCodes).toContain('install.ps1');
+            machineCapabilitiesDetectMock.mockImplementation(async () => ({
+                supported: true,
+                response: {
+                    protocolVersion: 1,
+                    results: {
+                        'cli.claude': { ok: true, checkedAt: Date.now(), data: { available: true } },
+                        'cli.codex': { ok: true, checkedAt: Date.now(), data: { available: false } },
+                    },
+                },
+            }));
+            await applyConnectedMachine('mach-web-arrival', 'web-arrival.test');
 
+            expect(screen.findByTestId('setupWizard-web-providers-handoff')).toBeTruthy();
+            // D22 (r2 user decision): readiness is merged INTO the selection grid — no
+            // standalone readiness row. Detected providers flow into the grid as
+            // readyAgentIds (locked-selected + green dot, asserted in the grid's own
+            // unit tests); undetected ones stay plain selectable tiles.
+            expect(screen.findAllByTestId('setupWizard-provider-readiness')).toHaveLength(0);
+            const providersSelect = screen.findByType('AgentsLogoMultiSelect' as never) as unknown as {
+                props: { readyAgentIds?: readonly string[]; agentIds?: readonly string[] };
+            } | null;
+            expect(providersSelect).toBeTruthy();
+            expect(providersSelect?.props.readyAgentIds).toEqual(['claude']);
+            expect(providersSelect?.props.agentIds).toContain('codex');
+            // The old text-label / variant-marker badges are gone.
+            expect(screen.findAllByTestId('setupWizard-provider-readiness:claude:label')).toHaveLength(0);
+            expect(screen.findAllByTestId('setupWizard-provider-readiness:claude:variant:success')).toHaveLength(0);
+        } finally {
+            storage.setState(previousStorageState);
+            vi.resetModules();
+        }
+    });
+
+    it('keeps web users on the connected-machine step after backing up from providers', async () => {
         vi.resetModules();
+        vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
+        const previousStorageState = storage.getState();
+
+        try {
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                machines: {},
+                machineListByServerId: {},
+            }));
+            const { SetupWizardSurface } = await import('./SetupWizardSurface');
+            const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+                isDesktopShell: false,
+            }));
+
+            const localBranch = screen.findByTestId('setupWizard-branch:local');
+            await act(async () => {
+                const handler = localBranch?.props.action ?? localBranch?.props.onPress;
+                await handler?.();
+            });
+
+            const continueButton = screen.findByTestId('setupWizard.surface-primary');
+            await act(async () => {
+                const handler = continueButton?.props.action ?? continueButton?.props.onPress;
+                await handler?.();
+            });
+
+            expect(screen.findByTestId('setupWizard-machine-arrival')).toBeTruthy();
+            expect(screen.findByTestId('setupWizard.surface-primary')?.props.disabled).toBe(true);
+
+            await applyConnectedMachine('mach-web-back-arrival', 'web-back-arrival.test');
+
+            expect(screen.findByTestId('setupWizard-web-providers-handoff')).toBeTruthy();
+
+            const backButton = screen.findByTestId('setupWizard.surface-back');
+            await act(async () => {
+                const handler = backButton?.props.action ?? backButton?.props.onPress;
+                await handler?.();
+            });
+            await flushHookEffects({ cycles: 8, turns: 8 });
+
+            expect(screen.findByTestId('setupWizard-machine-arrival')).toBeTruthy();
+            expect(screen.findByTestId('machine-arrival-card-status:variant:success')).toBeTruthy();
+            expect(screen.findByTestId('setupWizard.surface-progress')?.props.children).toBe('setupOnboarding.progressQuietLabel 2 4');
+            expect(screen.findByTestId('setupWizard.surface-primary')?.props.disabled).toBe(false);
+
+            vi.resetModules();
+        } finally {
+            storage.setState(previousStorageState);
+            vi.resetModules();
+        }
     });
 
     it('guides native users to continue setup on a desktop instead of starting system tasks locally', async () => {
@@ -605,7 +840,15 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        expect(screen.findByTestId('setupWizard-web-machine-setup-handoff-terminal')).toBeTruthy();
+        const stack = screen.findByTestId('setupWizard-machine-arrival-stack');
+        expect(stack).toBeTruthy();
+        expect(directChildTestIDs(stack).slice(0, 2)).toEqual([
+            'setupWizard-machine-arrival',
+            'setupWizard-machine-arrival-desktop-app-download-cta',
+        ]);
+        expect(screen.findByTestId('setupWizard-machine-arrival')).toBeTruthy();
+        expect(screen.findByTestId('machine-arrival-card-status:variant:neutral')).toBeTruthy();
+        expect(screen.findByTestId('setupWizard.surface-primary')?.props.disabled).toBe(true);
         expect(screen.findAllByType('SetupThisComputerWizardStep' as never)).toHaveLength(0);
 
         vi.resetModules();
@@ -736,7 +979,7 @@ describe('SetupWizardSurface', () => {
         vi.resetModules();
     });
 
-    it('includes password auth in the web remote SSH handoff without retaining the password itself', async () => {
+    it('preserves the web remote SSH password while navigating within the same wizard mount', async () => {
         vi.resetModules();
         vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
 
@@ -801,7 +1044,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        expect(screen.findByTestId('setupWizard-web-remote-ssh-sshPasswordInput')?.props.value).toBe('');
+        expect(screen.findByTestId('setupWizard-web-remote-ssh-sshPasswordInput')?.props.value).toBe('super-secret');
 
         vi.resetModules();
     });
@@ -809,102 +1052,117 @@ describe('SetupWizardSurface', () => {
     it('guides web users to continue provider setup in the terminal or desktop app', async () => {
         vi.resetModules();
         vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
+        const previousStorageState = storage.getState();
 
-        const { SetupWizardSurface } = await import('./SetupWizardSurface');
-        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
-            isDesktopShell: false,
-        }));
+        try {
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                machines: {},
+                machineListByServerId: {},
+            }));
+            const { SetupWizardSurface } = await import('./SetupWizardSurface');
+            const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+                isDesktopShell: false,
+            }));
 
-        const localBranch = screen.findByTestId('setupWizard-branch:local');
-        await act(async () => {
-            const handler = localBranch?.props.action ?? localBranch?.props.onPress;
-            await handler?.();
-        });
+            const localBranch = screen.findByTestId('setupWizard-branch:local');
+            await act(async () => {
+                const handler = localBranch?.props.action ?? localBranch?.props.onPress;
+                await handler?.();
+            });
 
-        const continueButton = screen.findByTestId('setupWizard.surface-primary');
-        await act(async () => {
-            const handler = continueButton?.props.action ?? continueButton?.props.onPress;
-            await handler?.();
-        });
+            const continueButton = screen.findByTestId('setupWizard.surface-primary');
+            await act(async () => {
+                const handler = continueButton?.props.action ?? continueButton?.props.onPress;
+                await handler?.();
+            });
 
-        // setup_this_computer handoff (already covered elsewhere)
-        expect(screen.findByTestId('setupWizard-web-machine-setup-handoff')).toBeTruthy();
+            // setup_this_computer live arrival (covered in detail elsewhere)
+            expect(screen.findByTestId('setupWizard-machine-arrival')).toBeTruthy();
 
-        // advance to providers step
-        const continueToProviders = screen.findByTestId('setupWizard.surface-primary');
-        await act(async () => {
-            const handler = continueToProviders?.props.action ?? continueToProviders?.props.onPress;
-            await handler?.();
-        });
+            await applyConnectedMachine('mach-web-provider', 'web-provider.test');
 
-        expect(screen.findByTestId('setupWizard-web-providers-handoff')).toBeTruthy();
-        expect(screen.findAllByType('ProviderSetupFlow' as never)).toHaveLength(0);
-        const providersHandoff = screen.findByType('WizardTerminalHandoff' as never) as unknown as {
-            props: { steps?: Array<{ code?: unknown }> };
-        };
-        const codes = (providersHandoff.props.steps ?? [])
-            .map((step) => (typeof step.code === 'string' ? step.code : ''))
-            .join('\n');
-        expect(codes).toContain('curl -fsSL https://happier.dev/install | bash');
-        expect(codes).toContain('&& happier providers setup');
-        expect(codes).not.toContain('happier auth login');
-        expect(codes).not.toContain('--run providers-setup');
+            expect(screen.findByTestId('setupWizard-web-providers-handoff')).toBeTruthy();
+            expect(screen.findAllByType('AgentSetupFlow' as never)).toHaveLength(0);
+            const providersHandoff = screen.findByType('WizardTerminalHandoff' as never) as unknown as {
+                props: { steps?: Array<{ code?: unknown }> };
+            };
+            const codes = (providersHandoff.props.steps ?? [])
+                .map((step) => (typeof step.code === 'string' ? step.code : ''))
+                .join('\n');
+            expect(codes).toContain('curl -fsSL https://happier.dev/install | bash');
+            expect(codes).toContain('&& happier providers setup');
+            expect(codes).not.toContain('happier auth login');
+            expect(codes).not.toContain('--run providers-setup');
 
-        const providersSelect = screen.findByType('ProvidersLogoMultiSelect' as never) as unknown as {
-            props: { providerIds?: readonly string[]; onToggleProvider?: (providerId: string) => void };
-        };
-        await act(async () => {
-            providersSelect.props.onToggleProvider?.('claude');
-            providersSelect.props.onToggleProvider?.('codex');
-        });
+            const providersSelect = screen.findByType('AgentsLogoMultiSelect' as never) as unknown as {
+                props: { providerIds?: readonly string[]; onToggleAgent?: (providerId: string) => void };
+            };
+            await act(async () => {
+                providersSelect.props.onToggleAgent?.('claude');
+                providersSelect.props.onToggleAgent?.('codex');
+            });
 
-        const updatedProvidersHandoff = screen.findByType('WizardTerminalHandoff' as never) as unknown as {
-            props: { steps?: Array<{ code?: unknown }> };
-        };
-        const updatedCodes = (updatedProvidersHandoff.props.steps ?? [])
-            .map((step) => (typeof step.code === 'string' ? step.code : ''))
-            .join('\n');
-        expect(updatedCodes).toContain('&& happier providers setup');
-        expect(updatedCodes).toContain('--providers claude,codex');
+            const updatedProvidersHandoff = screen.findByType('WizardTerminalHandoff' as never) as unknown as {
+                props: { steps?: Array<{ code?: unknown }> };
+            };
+            const updatedCodes = (updatedProvidersHandoff.props.steps ?? [])
+                .map((step) => (typeof step.code === 'string' ? step.code : ''))
+                .join('\n');
+            expect(updatedCodes).toContain('&& happier providers setup');
+            expect(updatedCodes).toContain('--providers claude,codex');
 
-        vi.resetModules();
+            vi.resetModules();
+        } finally {
+            storage.setState(previousStorageState);
+            vi.resetModules();
+        }
     });
 
     it('shows only setup-supported providers in the web provider selector', async () => {
         vi.resetModules();
         vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
+        const previousStorageState = storage.getState();
 
-        const { SetupWizardSurface } = await import('./SetupWizardSurface');
-        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
-            isDesktopShell: false,
-        }));
+        try {
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                machines: {},
+                machineListByServerId: {},
+            }));
+            const { SetupWizardSurface } = await import('./SetupWizardSurface');
+            const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+                isDesktopShell: false,
+            }));
 
-        const localBranch = screen.findByTestId('setupWizard-branch:local');
-        await act(async () => {
-            const handler = localBranch?.props.action ?? localBranch?.props.onPress;
-            await handler?.();
-        });
+            const localBranch = screen.findByTestId('setupWizard-branch:local');
+            await act(async () => {
+                const handler = localBranch?.props.action ?? localBranch?.props.onPress;
+                await handler?.();
+            });
 
-        const continueButton = screen.findByTestId('setupWizard.surface-primary');
-        await act(async () => {
-            const handler = continueButton?.props.action ?? continueButton?.props.onPress;
-            await handler?.();
-        });
+            const continueButton = screen.findByTestId('setupWizard.surface-primary');
+            await act(async () => {
+                const handler = continueButton?.props.action ?? continueButton?.props.onPress;
+                await handler?.();
+            });
 
-        await act(async () => {
-            const handler = screen.findByTestId('setupWizard.surface-primary')?.props.action
-                ?? screen.findByTestId('setupWizard.surface-primary')?.props.onPress;
-            await handler?.();
-        });
+            await applyConnectedMachine('mach-web-provider-select', 'web-provider-select.test');
 
-        const providersSelect = screen.findByType('ProvidersLogoMultiSelect' as never) as unknown as {
-            props: { providerIds?: readonly string[] };
-        };
-        expect(providersSelect.props.providerIds).toContain('claude');
-        expect(providersSelect.props.providerIds).toContain('codex');
-        expect(providersSelect.props.providerIds).not.toContain('customAcp');
+            const providersSelect = screen.findByType('AgentsLogoMultiSelect' as never) as unknown as {
+                props: { agentIds?: readonly string[] };
+            };
+            expect(providersSelect.props.agentIds).toContain('claude');
+            expect(providersSelect.props.agentIds).toContain('codex');
+            expect(providersSelect.props.agentIds).not.toContain('customAcp');
 
-        vi.resetModules();
+            vi.resetModules();
+        } finally {
+            storage.setState(previousStorageState);
+            vi.resetModules();
+        }
     });
 
     it('allows users to skip the setup-this-computer step after authentication', async () => {
@@ -929,6 +1187,8 @@ describe('SetupWizardSurface', () => {
         });
 
         expect(screen.findByTestId('setupWizard.surface-skip')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('setupOnboarding.setupThisComputerSkipLabel');
+        expect(screen.getTextContent()).toContain('setupOnboarding.setupThisComputerConnectHonesty');
 
         vi.resetModules();
     });
@@ -961,9 +1221,25 @@ describe('SetupWizardSurface', () => {
         vi.resetModules();
     });
 
-    it('guides web users through local relay hosting via terminal handoff and explicit relay URL paste', async () => {
+    it('guides web users through local relay hosting via terminal handoff and verified relay URL paste', async () => {
         vi.resetModules();
         vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
+        const previousFetchImpl = runtimeFetchMock.getMockImplementation();
+        let webRelayReachable = false;
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (
+                url.includes('https://web-relay.example.ts.net')
+                && url.endsWith('/health')
+            ) {
+                return webRelayReachable
+                    ? new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })
+                    : new Response(JSON.stringify({ ok: false }), { status: 404, headers: { 'content-type': 'application/json' } });
+            }
+            return previousFetchImpl
+                ? previousFetchImpl(input, init)
+                : new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+        });
 
         const { SetupWizardSurface } = await import('./SetupWizardSurface');
         const screen = await renderScreen(React.createElement(SetupWizardSurface, {
@@ -985,14 +1261,34 @@ describe('SetupWizardSurface', () => {
         expect(screen.findByTestId('setupWizard-web-relay-host-handoff')).toBeTruthy();
         expect(screen.findByTestId('setupWizard-web-relay-download-desktop')).toBeTruthy();
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as never)).toHaveLength(0);
+        expect(screen.findByTestId('setupWizard.surface-primary')?.props.disabled).toBe(true);
 
         const relayUrlInput = screen.findByTestId('setupWizard-relay-url-input');
         if (!relayUrlInput) {
             throw new Error('Expected relay url input to be present.');
         }
         await act(async () => {
+            relayUrlInput.props.onChangeText?.('not a url');
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(screen.findByTestId('setupWizard.surface-primary')?.props.disabled).toBe(true);
+        expect(screen.getTextContent()).toContain('setupOnboarding.webRelayHostInvalidUrl');
+
+        await act(async () => {
+            relayUrlInput.props.onChangeText?.('https://web-relay.example.ts.net');
+        });
+        await flushHookEffects({ cycles: 4, turns: 4 });
+
+        expect(screen.findByTestId('server-settings-add-reachability-remediation')).toBeTruthy();
+        expect(screen.findByTestId('setupWizard.surface-primary')?.props.disabled).toBe(true);
+
+        webRelayReachable = true;
+        await act(async () => {
             relayUrlInput.props.onChangeText?.('https://local-relay.example.test');
         });
+        await flushHookEffects({ cycles: 6, turns: 6 });
+        expect(screen.findByTestId('setupWizard.surface-primary')?.props.disabled).toBe(false);
 
         const continueAfterRelayHost = screen.findByTestId('setupWizard.surface-primary');
         await act(async () => {
@@ -1010,6 +1306,13 @@ describe('SetupWizardSurface', () => {
 
         expect(screen.findByTestId('setupWizard-confirmSwitchRelay')).toBeTruthy();
 
+        runtimeFetchMock.mockImplementation(
+            previousFetchImpl
+            ?? (async (input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({ ok: true }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            })),
+        );
         vi.resetModules();
     });
 
@@ -1268,7 +1571,7 @@ describe('SetupWizardSurface', () => {
         expect(pendingSetupIntentMocks.setPendingSetupIntent).toHaveBeenCalledTimes(0);
         expect(routerMock.spies.replace).toHaveBeenCalledTimes(0);
 
-        expect(screen.findAllByType('ProviderSetupFlow' as never)).toHaveLength(0);
+        expect(screen.findByType('WizardAgentSetupStep' as never)).toBeTruthy();
     });
 
     it('switches to the hosted relay when the user confirms switching', async () => {
@@ -1718,7 +2021,7 @@ describe('SetupWizardSurface', () => {
             ) {
                 return relayReachable
                     ? new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })
-                    : new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+                    : new Response(JSON.stringify({ ok: false }), { status: 404, headers: { 'content-type': 'application/json' } });
             }
             return previousFetchImpl
                 ? previousFetchImpl(input, init)
@@ -1851,12 +2154,16 @@ describe('SetupWizardSurface', () => {
         const screen = await renderScreen(React.createElement(SetupWizardSurface, {
             isDesktopShell: true,
         }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
 
         expect(screen.findByType('RemoteSshChecklistStep' as never)).toBeTruthy();
         const remoteSection = screen.findByType('RemoteSshChecklistStep' as never) as unknown as {
             props: { initialInstallRelayRuntime?: unknown };
         };
         expect(remoteSection.props.initialInstallRelayRuntime).toBe(true);
+        expect(pendingSetupIntentMocks.setPendingSetupIntent).not.toHaveBeenCalledWith(expect.objectContaining({
+            phase: 'post_auth',
+        }));
     });
 
     it('propagates the remote machine id to the providers wizard step after remote SSH bootstrap completes', async () => {
@@ -1909,8 +2216,423 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const providersStep = screen.findByType('WizardProviderSetupStep' as never);
+        const providersStep = screen.findByType('WizardAgentSetupStep' as never);
         expect(providersStep).toBeTruthy();
         expect(providersStep.props.machineId).toBe('mach-remote');
+    });
+
+    it('finishes setup with a connected-machine summary and starts a preselected new session', async () => {
+        syncStoreHooksMockState.sessions = [{ id: 'session-existing' }];
+        syncStoreHooksMockState.machines = {
+            'mach-remote': {
+                id: 'mach-remote',
+                metadata: { host: 'remote-host.test' },
+            },
+        };
+
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: true,
+        }));
+
+        const remoteBranch = screen.findByTestId('setupWizard-branch:remote');
+        await act(async () => {
+            const handler = remoteBranch?.props.action ?? remoteBranch?.props.onPress;
+            await handler?.();
+        });
+
+        const continueButton = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueButton?.props.action ?? continueButton?.props.onPress;
+            await handler?.();
+        });
+
+        const remoteSection = screen.findByType('RemoteSshChecklistStep' as never) as unknown as {
+            props: {
+                onCompleted?: (payload: {
+                    machineId: string | null;
+                    relayRuntimeUrl: string | null;
+                    relayAccessTarget: null;
+                    mode: string;
+                }) => void;
+            };
+        };
+        await act(async () => {
+            remoteSection.props.onCompleted?.({
+                machineId: 'mach-remote',
+                relayRuntimeUrl: null,
+                relayAccessTarget: null,
+                mode: 'remoteMachine',
+            });
+        });
+
+        const proceedAfterRemote = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = proceedAfterRemote?.props.action ?? proceedAfterRemote?.props.onPress;
+            await handler?.();
+        });
+
+        const continueAfterProviders = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueAfterProviders?.props.action ?? continueAfterProviders?.props.onPress;
+            await handler?.();
+        });
+
+        expect(screen.findByTestId('setupWizard-done-machine-summary')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('setupOnboarding.doneConnectedMachineSummary');
+        expect(screen.getTextContent()).toContain('remote-host.test');
+        expect(screen.findByTestId('setupWizard-done-existing-sessions')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('setupOnboarding.doneStartFirstSession');
+
+        await act(async () => {
+            const startButton = screen.findByTestId('setupWizard.surface-primary');
+            const handler = startButton?.props.action ?? startButton?.props.onPress;
+            await handler?.();
+        });
+
+        expect(routerMock.spies.push).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                machineId: 'mach-remote',
+                spawnServerId: 'relay-profile',
+            },
+        });
+    });
+
+    it('finishes web setup with the arrived-machine summary and live existing-session count', async () => {
+        vi.resetModules();
+        vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
+        const previousStorageState = storage.getState();
+        syncStoreHooksMockState.sessions = [{ id: 'session-existing' }];
+
+        try {
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                machines: {},
+                machineListByServerId: {},
+            }));
+            const { SetupWizardSurface } = await import('./SetupWizardSurface');
+            const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+                isDesktopShell: false,
+            }));
+
+            const localBranch = screen.findByTestId('setupWizard-branch:local');
+            await act(async () => {
+                const handler = localBranch?.props.action ?? localBranch?.props.onPress;
+                await handler?.();
+            });
+
+            const continueToSetup = screen.findByTestId('setupWizard.surface-primary');
+            await act(async () => {
+                const handler = continueToSetup?.props.action ?? continueToSetup?.props.onPress;
+                await handler?.();
+            });
+
+            expect(screen.findByTestId('setupWizard.surface-primary')?.props.disabled).toBe(true);
+            await applyConnectedMachine('mach-web-finale', 'web-finale.test');
+
+            expect(screen.findByTestId('setupWizard-web-providers-handoff')).toBeTruthy();
+
+            const continueAfterProviders = screen.findByTestId('setupWizard.surface-primary');
+            await act(async () => {
+                const handler = continueAfterProviders?.props.action ?? continueAfterProviders?.props.onPress;
+                await handler?.();
+            });
+
+            expect(screen.findByTestId('setupWizard-done-machine-summary')).toBeTruthy();
+            expect(screen.getTextContent()).toContain('setupOnboarding.doneConnectedMachineSummary');
+            expect(screen.getTextContent()).toContain('web-finale.test');
+            expect(screen.findByTestId('setupWizard-done-existing-sessions')).toBeTruthy();
+
+            await act(async () => {
+                const startButton = screen.findByTestId('setupWizard.surface-primary');
+                const handler = startButton?.props.action ?? startButton?.props.onPress;
+                await handler?.();
+            });
+
+            expect(routerMock.spies.push).toHaveBeenCalledWith({
+                pathname: '/new',
+                params: {
+                    machineId: 'mach-web-finale',
+                    spawnServerId: 'relay-profile',
+                },
+            });
+        } finally {
+            storage.setState(previousStorageState);
+            vi.resetModules();
+        }
+    });
+
+    type SetupMatrixPlatform = 'desktop' | 'web' | 'native';
+    type SetupMatrixScope = 'all' | 'machine' | 'relay';
+    type SetupMatrixStep =
+        | 'setup_chooser'
+        | 'setup_this_computer'
+        | 'host_relay_local'
+        | 'remote_ssh_setup'
+        | 'relay_access'
+        | 'confirm_switch_relay'
+        | 'providers_optional';
+    type RenderedSetupScreen = Awaited<ReturnType<typeof renderScreen>>;
+
+    const renderSetupMatrix = async (
+        platform: SetupMatrixPlatform,
+        props: Partial<import('./SetupWizardSurface').SetupWizardSurfaceProps> = {},
+    ) => {
+        vi.resetModules();
+        vi.doMock('react-native', installReactNativeWebMock({
+            Platform: { OS: platform === 'native' ? 'ios' : 'web' },
+        }));
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        return renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: platform === 'desktop',
+            ...props,
+        }));
+    };
+
+    const pressSetup = async (screen: RenderedSetupScreen, testID: string) => {
+        const node = screen.findByTestId(testID);
+        expect(node).toBeTruthy();
+        await act(async () => {
+            const handler = node?.props.action ?? node?.props.onPress;
+            await handler?.();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+    };
+
+    const expectSetupStep = (screen: RenderedSetupScreen, stepId: SetupMatrixStep) => {
+        switch (stepId) {
+            case 'setup_chooser':
+                expect(screen.findByTestId('setupWizard-branch:local') ?? screen.findByTestId('setupWizard-branch:relayLocal')).toBeTruthy();
+                return;
+            case 'setup_this_computer':
+                expect(
+                    screen.findByTestId('setupWizard-setup-this-computer')
+                    ?? screen.findByTestId('setupWizard-machine-arrival'),
+                ).toBeTruthy();
+                return;
+            case 'host_relay_local':
+                expect(
+                    screen.findByTestId('setupWizard-relay-host-local')
+                    ?? screen.findByTestId('setupWizard-web-relay-host-handoff'),
+                ).toBeTruthy();
+                return;
+            case 'remote_ssh_setup':
+                expect(
+                    screen.findByTestId('setupWizard-terminal-handoff')
+                    ?? (screen.findAllByType('RemoteSshChecklistStep' as never)[0] ?? null),
+                ).toBeTruthy();
+                return;
+            case 'relay_access':
+                expect(
+                    screen.findAllByType('LocalRelayAccessControlSection' as never)[0]
+                    ?? screen.findByTestId('setupWizard-web-relay-access-handoff'),
+                ).toBeTruthy();
+                return;
+            case 'confirm_switch_relay':
+                expect(screen.findByTestId('setupWizard-confirmSwitchRelay')).toBeTruthy();
+                return;
+            case 'providers_optional':
+                expect(
+                    screen.findAllByType('WizardAgentSetupStep' as never)[0]
+                    ?? screen.findByTestId('setupWizard-web-providers-handoff'),
+                ).toBeTruthy();
+                return;
+        }
+    };
+
+    const enterDesktopRelaySwitchConfirmation = async (props: Partial<import('./SetupWizardSurface').SetupWizardSurfaceProps> = {}) => {
+        const screen = await renderSetupMatrix('desktop', props);
+
+        await pressSetup(screen, 'setupWizard-branch:relayLocal');
+        await pressSetup(screen, 'setupWizard.surface-primary');
+
+        const localRelaySection = screen.findByType('RelayHostLocalChecklistStep' as never) as unknown as {
+            props: { onStatusChange?: (status: unknown) => void };
+        };
+        await act(async () => {
+            localRelaySection.props.onStatusChange?.({
+                relayUrl: 'https://local-relay.example.test',
+            });
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        await pressSetup(screen, 'setupWizard.surface-primary');
+        expectSetupStep(screen, 'relay_access');
+
+        await pressSetup(screen, 'setupWizard.surface-primary');
+        expectSetupStep(screen, 'confirm_switch_relay');
+
+        return screen;
+    };
+
+    it('hides native remote-machine setup when the native SSH runtime is unavailable', async () => {
+        nativeSshAvailabilityMock.available = false;
+        const screen = await renderSetupMatrix('native', { scope: 'machine' });
+
+        expect(screen.findByTestId('setupWizard-branch:local')).toBeTruthy();
+        expect(screen.findAllByTestId('setupWizard-branch:remote')).toHaveLength(0);
+    });
+
+    it('routes native remote-machine setup through the existing SSH checklist when runtime availability allows it', async () => {
+        nativeSshAvailabilityMock.available = true;
+        const screen = await renderSetupMatrix('native', { scope: 'machine' });
+
+        await pressSetup(screen, 'setupWizard-branch:remote');
+        await pressSetup(screen, 'setupWizard.surface-primary');
+
+        const nativeChecklist = screen.findByType('RemoteSshChecklistStep' as never) as unknown as {
+            props: { runner?: unknown };
+        };
+        expect(nativeChecklist).toBeTruthy();
+        expect(nativeChecklist.props.runner).toBeUndefined();
+        expect(screen.findAllByTestId('setupWizard-terminal-handoff')).toHaveLength(0);
+    });
+
+    it.each([
+        { platform: 'desktop', scope: 'all', local: true, relayLocal: true, remote: true, remoteRelay: true },
+        { platform: 'web', scope: 'all', local: true, relayLocal: true, remote: true, remoteRelay: true },
+        { platform: 'native', scope: 'all', local: true, relayLocal: true, remote: true, remoteRelay: true },
+        { platform: 'desktop', scope: 'machine', local: true, relayLocal: false, remote: true, remoteRelay: false },
+        { platform: 'web', scope: 'machine', local: true, relayLocal: false, remote: true, remoteRelay: false },
+        { platform: 'native', scope: 'machine', local: true, relayLocal: false, remote: true, remoteRelay: false },
+        { platform: 'desktop', scope: 'relay', local: false, relayLocal: true, remote: false, remoteRelay: true },
+        { platform: 'web', scope: 'relay', local: false, relayLocal: true, remote: false, remoteRelay: true },
+        { platform: 'native', scope: 'relay', local: false, relayLocal: true, remote: false, remoteRelay: true },
+    ] as const)('characterizes setup chooser scope=$scope on $platform', async (row) => {
+        nativeSshAvailabilityMock.available = row.platform === 'native';
+        const screen = await renderSetupMatrix(row.platform, { scope: row.scope as SetupMatrixScope });
+
+        expect(Boolean(screen.findByTestId('setupWizard-branch:local'))).toBe(row.local);
+        expect(Boolean(screen.findByTestId('setupWizard-branch:relayLocal'))).toBe(row.relayLocal);
+        expect(Boolean(screen.findByTestId('setupWizard-branch:remote'))).toBe(row.remote);
+        expect(Boolean(screen.findByTestId('setupWizard-branch:remoteRelay'))).toBe(row.remoteRelay);
+        expectSetupStep(screen, 'setup_chooser');
+
+        vi.resetModules();
+    });
+
+    it.each([
+        { branch: 'local', platform: 'desktop', rowTestID: 'setupWizard-branch:local', expectedStepId: 'setup_this_computer' },
+        { branch: 'local', platform: 'web', rowTestID: 'setupWizard-branch:local', expectedStepId: 'setup_this_computer' },
+        { branch: 'local', platform: 'native', rowTestID: 'setupWizard-branch:local', expectedStepId: 'setup_this_computer' },
+        { branch: 'relayLocal', platform: 'desktop', rowTestID: 'setupWizard-branch:relayLocal', expectedStepId: 'host_relay_local' },
+        { branch: 'relayLocal', platform: 'web', rowTestID: 'setupWizard-branch:relayLocal', expectedStepId: 'host_relay_local' },
+        { branch: 'relayLocal', platform: 'native', rowTestID: 'setupWizard-branch:relayLocal', expectedStepId: 'host_relay_local' },
+        { branch: 'remote', platform: 'desktop', rowTestID: 'setupWizard-branch:remote', expectedStepId: 'remote_ssh_setup' },
+        { branch: 'remote', platform: 'web', rowTestID: 'setupWizard-branch:remote', expectedStepId: 'remote_ssh_setup' },
+        { branch: 'remote', platform: 'native', rowTestID: 'setupWizard-branch:remote', expectedStepId: 'remote_ssh_setup' },
+        { branch: 'remoteRelay', platform: 'desktop', rowTestID: 'setupWizard-branch:remoteRelay', expectedStepId: 'remote_ssh_setup' },
+        { branch: 'remoteRelay', platform: 'web', rowTestID: 'setupWizard-branch:remoteRelay', expectedStepId: 'remote_ssh_setup' },
+        { branch: 'remoteRelay', platform: 'native', rowTestID: 'setupWizard-branch:remoteRelay', expectedStepId: 'remote_ssh_setup' },
+    ] as const)('characterizes setup chooser branch advance: $branch on $platform', async (row) => {
+        nativeSshAvailabilityMock.available = row.platform === 'native';
+        const screen = await renderSetupMatrix(row.platform);
+
+        await pressSetup(screen, row.rowTestID);
+        await pressSetup(screen, 'setupWizard.surface-primary');
+
+        expectSetupStep(screen, row.expectedStepId);
+
+        vi.resetModules();
+    });
+
+    it.each([
+        { platform: 'desktop', primaryDisabledBeforeSignal: true, advancesWithoutSignal: false },
+        { platform: 'web', primaryDisabledBeforeSignal: true, advancesWithoutSignal: false },
+        { platform: 'native', primaryDisabledBeforeSignal: true, advancesWithoutSignal: false },
+    ] as const)('characterizes setup-this-computer current gating on $platform', async (row) => {
+        const screen = await renderSetupMatrix(row.platform, {
+            initialSetupAction: 'local',
+            initialStepId: 'setup_this_computer',
+        });
+
+        expectSetupStep(screen, 'setup_this_computer');
+        expect(screen.findByTestId('setupWizard.surface-primary')?.props.disabled).toBe(row.primaryDisabledBeforeSignal);
+
+        if (row.advancesWithoutSignal) {
+            await pressSetup(screen, 'setupWizard.surface-primary');
+            expectSetupStep(screen, 'providers_optional');
+        } else if (row.platform === 'desktop') {
+            const localSetup = screen.findByType('SetupThisComputerWizardStep' as never) as unknown as {
+                props: { onSucceeded?: (machineId: string | null) => void };
+            };
+            await act(async () => {
+                localSetup.props.onSucceeded?.('mach-local');
+            });
+            await pressSetup(screen, 'setupWizard.surface-primary');
+            expectSetupStep(screen, 'providers_optional');
+        } else {
+            expectSetupStep(screen, 'setup_this_computer');
+        }
+
+        vi.resetModules();
+    });
+
+    it.each([
+        ['web', 'web'],
+        ['native', 'native'],
+    ] as const)('characterizes relay-local URL unset/set advance on %s', async (_label, platform) => {
+        const screen = await renderSetupMatrix(platform, {
+            initialSetupAction: 'relayLocal',
+            initialStepId: 'host_relay_local',
+        });
+
+        expect(screen.findByTestId('setupWizard.surface-primary')?.props.disabled).toBe(true);
+
+        const relayUrlInput = screen.findByTestId('setupWizard-relay-url-input');
+        expect(relayUrlInput).toBeTruthy();
+        await act(async () => {
+            relayUrlInput?.props.onChangeText?.(`https://${platform}.relay-local.example.test`);
+        });
+        await flushHookEffects({ cycles: 6, turns: 6 });
+        expect(screen.findByTestId('setupWizard.surface-primary')?.props.disabled).toBe(false);
+
+        await pressSetup(screen, 'setupWizard.surface-primary');
+        expectSetupStep(screen, 'relay_access');
+
+        await pressSetup(screen, 'setupWizard.surface-primary');
+        expectSetupStep(screen, 'confirm_switch_relay');
+
+        vi.resetModules();
+    });
+
+    it('characterizes relay switch keep vs switch effects', async () => {
+        const onExit = vi.fn();
+        const screen = await enterDesktopRelaySwitchConfirmation({ onExit });
+
+        expectSetupStep(screen, 'confirm_switch_relay');
+
+        await pressSetup(screen, 'setupWizard.surface-primary');
+        expectSetupStep(screen, 'providers_optional');
+        expect(activeServerSwitchMocks.upsertActivateAndSwitchServer).not.toHaveBeenCalled();
+        expect(pendingSetupIntentMocks.setPendingSetupIntent).not.toHaveBeenCalled();
+        expect(onExit).not.toHaveBeenCalled();
+
+        const switchScreen = await enterDesktopRelaySwitchConfirmation({ onExit });
+        const switchChoice = switchScreen.findByTestId('setupWizard-confirmSwitchRelay.choice:switch');
+        expect(switchChoice).toBeTruthy();
+        await act(async () => {
+            await switchChoice?.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        await pressSetup(switchScreen, 'setupWizard.surface-primary');
+
+        expect(activeServerSwitchMocks.upsertActivateAndSwitchServer).toHaveBeenLastCalledWith({
+            serverUrl: 'https://local-relay.example.test',
+            source: 'url',
+            scope: 'device',
+        });
+        expect(pendingSetupIntentMocks.setPendingSetupIntent).toHaveBeenLastCalledWith({
+            branch: 'thisComputer',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://local-relay.example.test',
+        });
+        expect(onExit).toHaveBeenCalledTimes(1);
+        expect(routerMock.spies.replace).toHaveBeenLastCalledWith('/');
+
+        vi.resetModules();
     });
 });

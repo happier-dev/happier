@@ -13,6 +13,10 @@ import type { ScopedSocketClient, ScopedSocketConnectParams } from './serverScop
 
 type SocketLike = Readonly<{
     connected: boolean;
+    // socket.io-client assigns `id` once the connection handshake completes; it is undefined
+    // while disconnected and changes across reconnects. Surfaced via `getSocketId()` so per-tab
+    // transports can target this exact connection.
+    id?: string;
     connect: () => void;
     disconnect: () => void;
     on: (event: string, cb: (...args: any[]) => void) => void;
@@ -325,6 +329,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             emit: (event: string, payload: any) => entry.socket.emit(event, payload),
             on: (event: string, listener: (...args: any[]) => void) => entry.socket.on(event, listener),
             off: (event: string, listener: (...args: any[]) => void) => entry.socket.off(event, listener),
+            getSocketId: () => entry.socket.id ?? '',
             disconnect: () => releaseOnce(),
         };
     };

@@ -26,6 +26,10 @@ import {
     REVIEW_COMMENT_LINE_AFFORDANCE_ICON_TEST_ID,
     REVIEW_COMMENT_LINE_AFFORDANCE_TEST_ID,
 } from '@/components/ui/code/reviewComments/ReviewCommentLineAffordance';
+import {
+    buildPierreInitialPresentationCacheKey,
+    usePierreInitialPresentation,
+} from './pierreInitialPresentation.web';
 
 const HAPPIER_PIERRE_LINE_CLICK_HANDLED_KEY = '__happierPierreLineClickHandled';
 
@@ -568,9 +572,29 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         const pathFromProp = typeof props.filePath === 'string' && props.filePath.trim() ? props.filePath.trim() : null;
         const pathCandidate = pathFromProp ?? (typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim() : null);
         const languageOverride = resolvePierreLanguageOverride(pathCandidate);
-        if (!languageOverride) return parsed;
-        return { ...parsed, lang: languageOverride };
-    }, [parsedPatch, props.filePath]);
+        const name = pathCandidate ?? 'diff';
+        return {
+            ...parsed,
+            ...(languageOverride ? { lang: languageOverride } : {}),
+            cacheKey: buildPierreInitialPresentationCacheKey({
+                fileName: name,
+                language: languageOverride,
+                patch: sanitizedPatch,
+            }),
+        };
+    }, [parsedPatch, props.filePath, sanitizedPatch]);
+    const initialPresentationForceFallback = usePierreInitialPresentation({
+        cacheKey: fileDiff.cacheKey ?? buildPierreInitialPresentationCacheKey({
+            fileName: typeof fileDiff.name === 'string' ? fileDiff.name : 'diff',
+            language: typeof fileDiff.lang === 'string' ? fileDiff.lang : null,
+            patch: sanitizedPatch,
+        }),
+        containerRef,
+        fileDiff,
+        parsedPatch,
+        pool,
+        virtualized: props.virtualized === true,
+    });
 
     const baseOptions = React.useMemo<FileDiffOptions<React.ReactNode>>(() => {
         return buildPierreDiffOptionsBase({
@@ -867,6 +891,19 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
     const wrapperStyle = props.virtualized
         ? ({ ...typographyStyle, ...selectionStyle, maxHeight: 'inherit' } as React.CSSProperties)
         : ({ ...typographyStyle, ...selectionStyle } as React.CSSProperties);
+
+    if (initialPresentationForceFallback) {
+        return (
+            <div
+                ref={containerRef}
+                data-testid="pierre-diff-viewer"
+                className="happier-pierre-diff-wrapper"
+                style={wrapperStyle}
+            >
+                {fallbackNode}
+            </div>
+        );
+    }
 
     return (
         <div

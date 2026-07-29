@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol';
 
 import { buildResumeHappySessionRpcParams } from './resumeSessionPayload';
 
@@ -8,19 +9,25 @@ describe('buildResumeHappySessionRpcParams', () => {
             sessionId: 's1',
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-            modelId: 'claude-sonnet-4-5',
-            modelUpdatedAt: 123,
+            modelSelection: SessionModelSelectionV1Schema.parse({
+                v: 1,
+                updatedAt: 123,
+                ref: { agentTargetKey: 'backend:claude', providerConnectionId: 'pc_work', modelId: 'claude-sonnet-4-5' },
+            }),
         })).toEqual({
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
             backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            modelId: 'claude-sonnet-4-5',
-            modelUpdatedAt: 123,
+            modelSelection: {
+                v: 1,
+                updatedAt: 123,
+                ref: { agentTargetKey: 'backend:claude', providerConnectionId: 'pc_work', modelId: 'claude-sonnet-4-5' },
+            },
         });
     });
 
-    test('omits model override when pair is incomplete', () => {
+    test('omits legacy bare model override fields', () => {
         expect(buildResumeHappySessionRpcParams({
             sessionId: 's1',
             directory: '/tmp',
@@ -46,18 +53,26 @@ describe('buildResumeHappySessionRpcParams', () => {
         });
     });
 
-    test('omits sentinel default model override', () => {
+    test('preserves an exact structured model id named default', () => {
         expect(buildResumeHappySessionRpcParams({
             sessionId: 's1',
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-            modelId: 'default',
-            modelUpdatedAt: 123,
-        } as any)).toEqual({
+            modelSelection: {
+                v: 1,
+                updatedAt: 123,
+                ref: { agentTargetKey: 'backend:claude', providerConnectionId: null, modelId: 'default' },
+            },
+        })).toEqual({
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
             backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+            modelSelection: {
+                v: 1,
+                updatedAt: 123,
+                ref: { agentTargetKey: 'backend:claude', providerConnectionId: null, modelId: 'default' },
+            },
         });
     });
 
@@ -103,12 +118,20 @@ describe('buildResumeHappySessionRpcParams', () => {
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             initialTranscriptAfterSeq: 36,
+            executionAuthorization: {
+                provenance: 'user_request',
+                requestId: ' pending-local-36 ',
+            },
         } as any)).toEqual({
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
             backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
             initialTranscriptAfterSeq: 36,
+            executionAuthorization: {
+                provenance: 'user_request',
+                requestId: ' pending-local-36 ',
+            },
         });
     });
 
@@ -222,8 +245,8 @@ describe('buildResumeHappySessionRpcParams', () => {
             codexBackendMode: 'appServer',
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
-                provider: expect.objectContaining({
+                agentId: 'codex',
+                agent: expect.objectContaining({
                     backendMode: 'appServer',
                 }),
             },
@@ -244,8 +267,8 @@ describe('buildResumeHappySessionRpcParams', () => {
             codexBackendMode: 'acp',
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
-                provider: expect.objectContaining({
+                agentId: 'codex',
+                agent: expect.objectContaining({
                     backendMode: 'acp',
                 }),
             },
@@ -260,8 +283,8 @@ describe('buildResumeHappySessionRpcParams', () => {
             experimentalCodexAcp: true,
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
-                provider: {
+                agentId: 'codex',
+                agent: {
                     backendMode: 'appServer',
                     providerSessionId: 'codex-session-2',
                 },
@@ -274,8 +297,8 @@ describe('buildResumeHappySessionRpcParams', () => {
             codexBackendMode: 'appServer',
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
-                provider: {
+                agentId: 'codex',
+                agent: {
                     backendMode: 'appServer',
                     providerSessionId: 'codex-session-2',
                 },
@@ -290,8 +313,8 @@ describe('buildResumeHappySessionRpcParams', () => {
             backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
-                provider: {
+                agentId: 'codex',
+                agent: {
                     backendMode: 'appServer',
                     providerSessionId: 'codex-session-1',
                 },
@@ -304,8 +327,8 @@ describe('buildResumeHappySessionRpcParams', () => {
             codexBackendMode: 'appServer',
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
-                provider: {
+                agentId: 'codex',
+                agent: {
                     backendMode: 'appServer',
                     providerSessionId: 'codex-session-1',
                 },
@@ -320,7 +343,7 @@ describe('buildResumeHappySessionRpcParams', () => {
             backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             agentRuntimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
+                agentId: 'codex',
                 provider: {
                     backendMode: 'appServer',
                     providerSessionId: 'legacy-thread',
@@ -374,8 +397,8 @@ describe('buildResumeHappySessionRpcParams', () => {
             codexBackendMode: 'appServer',
             runtimeDescriptorV1: expect.objectContaining({
                 v: 1,
-                providerId: 'codex',
-                provider: expect.objectContaining({
+                agentId: 'codex',
+                agent: expect.objectContaining({
                     backendMode: 'appServer',
                     providerSessionId: 'codex-session-canonical',
                 }),

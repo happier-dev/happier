@@ -6,6 +6,7 @@ import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfigured
 
 export interface AppConfig {
     variant?: string;
+    identityVariant?: string;
     cliNpmDistTag?: string;
     postHogKey?: string;
     postHogHost?: string;

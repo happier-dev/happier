@@ -20,38 +20,30 @@ export function useTranscriptNativeViewportLifecycle(params: Readonly<{
     closeEntryViewportOwnership: (outcome: 'confirmed') => void;
     consumedSessionEntryViewportRef: MutableRef<{ entryKind: string; sessionId: string } | null>;
     entryRestoreOwner: EntryRestoreOwner;
-    entrySliceWindowRef: MutableRef<{ sessionId: string; anchorRowId: string } | null>;
     lifecycleHost: TranscriptLifecycleHost;
     lastUserScrollIntentAtMsRef: MutableRef<number>;
     measurementHost: TranscriptMeasurementHost;
-    nativeMountSettleAutoPinSuppressedRef: MutableRef<boolean>;
     nativeInitialViewportPendingObservationRef: MutableRef<boolean>;
-    pendingNativeMountSettleBottomPinHostRef: MutableRef<MutableRef<boolean> | null>;
     platformOS: string;
     preemptEntryRestoreTransaction: () => void;
     sessionEntryViewportRef: MutableRef<SessionEntryViewportRefValue>;
     sessionId: string;
     sessionOpenLatch: SessionOpenLatch;
-    setEntrySliceWindow: (value: { sessionId: string; anchorRowId: string } | null) => void;
     setNativeInitialViewportPendingObservation: (pending: boolean) => void;
 }>) {
     const {
         closeEntryViewportOwnership,
         consumedSessionEntryViewportRef,
         entryRestoreOwner,
-        entrySliceWindowRef,
         lifecycleHost,
         lastUserScrollIntentAtMsRef,
         measurementHost,
         nativeInitialViewportPendingObservationRef,
-        nativeMountSettleAutoPinSuppressedRef,
-        pendingNativeMountSettleBottomPinHostRef,
         platformOS,
         preemptEntryRestoreTransaction,
         sessionEntryViewportRef,
         sessionId,
         sessionOpenLatch,
-        setEntrySliceWindow,
         setNativeInitialViewportPendingObservation,
     } = params;
 
@@ -76,17 +68,7 @@ export function useTranscriptNativeViewportLifecycle(params: Readonly<{
                             sessionId,
                         };
                         sessionEntryViewportRef.current = null;
-                        entrySliceWindowRef.current = null;
-                        setEntrySliceWindow(null);
                     }
-                    break;
-                case 'native-user-scroll-cancel-native-mount-settle-bottom-pin':
-                    if (pendingNativeMountSettleBottomPinHostRef.current) {
-                        pendingNativeMountSettleBottomPinHostRef.current.current = false;
-                    }
-                    break;
-                case 'native-user-scroll-suppress-native-mount-settle-auto-pin':
-                    nativeMountSettleAutoPinSuppressedRef.current = true;
                     break;
                 case 'native-user-scroll-clear-native-initial-viewport-pending-observation':
                     updateNativeInitialViewportPendingObservation(false);
@@ -98,14 +80,10 @@ export function useTranscriptNativeViewportLifecycle(params: Readonly<{
         }
     }, [
         consumedSessionEntryViewportRef,
-        entrySliceWindowRef,
         lastUserScrollIntentAtMsRef,
-        nativeMountSettleAutoPinSuppressedRef,
-        pendingNativeMountSettleBottomPinHostRef,
         preemptEntryRestoreTransaction,
         sessionEntryViewportRef,
         sessionId,
-        setEntrySliceWindow,
         updateNativeInitialViewportPendingObservation,
     ]);
 
@@ -177,16 +155,12 @@ export function useTranscriptNativeViewportLifecycle(params: Readonly<{
             ) {
                 continue;
             }
-            if (pendingNativeMountSettleBottomPinHostRef.current) {
-                pendingNativeMountSettleBottomPinHostRef.current.current = false;
-            }
             markNativeInitialViewportAppliedForCurrentSession({
                 entrySettleBaselineContentHeight: effect.entrySettleBaselineContentHeight,
             });
         }
     }, [
         markNativeInitialViewportAppliedForCurrentSession,
-        pendingNativeMountSettleBottomPinHostRef,
         sessionId,
     ]);
 

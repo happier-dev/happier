@@ -1,6 +1,7 @@
 import type { TracedMessage } from '../reducerTracer';
 import type { ReducerState } from '../reducer';
 import { setThinkingMergeCursor } from '../helpers/mergeCursors';
+import { normalizeTranscriptSeq } from '../../domains/messages/transcriptOrdering';
 
 export function runModeSwitchEventsPhase(params: Readonly<{
     state: ReducerState;
@@ -29,7 +30,7 @@ export function runModeSwitchEventsPhase(params: Readonly<{
             state.messages.set(mid, {
                 id: mid,
                 realID: msg.id,
-                seq: typeof msg.seq === 'number' ? msg.seq : null,
+                seq: normalizeTranscriptSeq(msg.seq),
                 localId: msg.localId ?? null,
                 role: 'agent',
                 createdAt: msg.createdAt,

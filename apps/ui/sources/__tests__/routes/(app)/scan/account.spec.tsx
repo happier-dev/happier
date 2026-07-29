@@ -39,7 +39,7 @@ vi.mock('@/components/qr/QrCodeScannerView', () => ({
     },
 }));
 
-vi.mock('@/components/onboarding', () => ({
+vi.mock('@/components/onboarding/ui/WizardModalShell', () => ({
     WizardModalShell: (props: any) => React.createElement('WizardModalShell', props, props.children),
 }));
 

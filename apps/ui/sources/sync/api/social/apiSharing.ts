@@ -13,8 +13,6 @@ import {
     CreatePublicShareRequest,
     AccessPublicShareResponse,
     PublicShareAccessLogsResponse,
-    PublicShareBlockedUsersResponse,
-    BlockPublicShareUserRequest,
     ShareNotFoundError,
     PublicShareNotFoundError,
     ConsentRequiredError,
@@ -347,82 +345,6 @@ export async function accessPublicShare(
         }
 
         return await response.json();
-    });
-}
-
-/**
- * Get blocked users for public share
- */
-export async function getPublicShareBlockedUsers(
-    credentials: AuthCredentials,
-    sessionId: string
-): Promise<PublicShareBlockedUsersResponse> {
-    return await backoff(async () => {
-        const request = createSessionSharingRequest(credentials, sessionId);
-        const response = await request(`/v1/sessions/${sessionId}/public-share/blocked-users`, { method: 'GET' });
-
-        if (!response.ok) {
-            if (response.status === 403) {
-                throw new SessionSharingError('Forbidden');
-            }
-            if (response.status === 404) {
-                throw new PublicShareNotFoundError();
-            }
-            throw new Error(`Failed to get blocked users: ${response.status}`);
-        }
-
-        return await response.json();
-    });
-}
-
-/**
- * Block user from public share
- */
-export async function blockPublicShareUser(
-    credentials: AuthCredentials,
-    sessionId: string,
-    request: BlockPublicShareUserRequest
-): Promise<void> {
-    return await backoff(async () => {
-        const scopedRequest = createSessionSharingRequest(credentials, sessionId);
-        const response = await scopedRequest(`/v1/sessions/${sessionId}/public-share/blocked-users`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(request)
-        });
-
-        if (!response.ok) {
-            if (response.status === 403) {
-                throw new SessionSharingError('Forbidden');
-            }
-            if (response.status === 404) {
-                throw new PublicShareNotFoundError();
-            }
-            throw new Error(`Failed to block user: ${response.status}`);
-        }
-    });
-}
-
-/**
- * Unblock user from public share
- */
-export async function unblockPublicShareUser(
-    credentials: AuthCredentials,
-    sessionId: string,
-    blockedUserId: string
-): Promise<void> {
-    return await backoff(async () => {
-        const request = createSessionSharingRequest(credentials, sessionId);
-        const response = await request(`/v1/sessions/${sessionId}/public-share/blocked-users/${blockedUserId}`, { method: 'DELETE' });
-
-        if (!response.ok) {
-            if (response.status === 403) {
-                throw new SessionSharingError('Forbidden');
-            }
-            throw new Error(`Failed to unblock user: ${response.status}`);
-        }
     });
 }
 

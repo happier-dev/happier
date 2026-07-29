@@ -8,6 +8,7 @@ import {
     type PeerTcpTunnelFrameV1,
     type PeerTcpTunnelOpenResponseV1,
     type PeerTcpTunnelOpenV1,
+    type PeerTcpTunnelOpenV2,
     type PeerTcpTunnelRelayEnvelope,
 } from '@happier-dev/protocol';
 
@@ -29,9 +30,18 @@ export type OpenPeerTcpTunnelClientResult =
       }>;
 
 export type PeerTcpTunnelClientStream = Readonly<{
-    sendFrame: (frame: PeerTcpTunnelFrameV1) => Promise<void> | void;
-    onFrame: (handler: (frame: PeerTcpTunnelFrameV1) => void) => () => void;
+    sendFrame: (frame: Exclude<PeerTcpTunnelFrameV1, { kind: 'open' }>) => Promise<void> | void;
+    onFrame: (handler: (frame: Exclude<PeerTcpTunnelFrameV1, { kind: 'open' }>) => void) => () => void;
     sendSubstreamOpen?: (substreamId: string) => Promise<void> | void;
+    sendSubstreamDataFrame?: (
+        substreamId: string,
+        frame: Readonly<{
+            tunnelId: string;
+            direction: Extract<PeerTcpTunnelFrameV1, { kind: 'data' }>['direction'];
+            sequence: number;
+            payloadBytes: Uint8Array;
+        }>,
+    ) => Promise<void> | void;
     sendSubstreamFrame?: (
         substreamId: string,
         frame: Exclude<PeerTcpTunnelFrameV1, { kind: 'open' }>,
@@ -48,6 +58,7 @@ export type PeerTcpTunnelClientStream = Readonly<{
 }>;
 
 export type PeerTcpTunnelRelaySocketClient = Readonly<{
+    socketId: string;
     send: (
         event: typeof PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
         envelope: PeerTcpTunnelRelayEnvelope,
@@ -55,8 +66,10 @@ export type PeerTcpTunnelRelaySocketClient = Readonly<{
     onEnvelope: (handler: (envelope: PeerTcpTunnelRelayEnvelope) => void) => () => void;
 }>;
 
+type PeerTcpTunnelDirectOpen = PeerTcpTunnelOpenV1 | PeerTcpTunnelOpenV2;
+
 export async function openPeerTcpTunnel(input: Readonly<{
-    open: PeerTcpTunnelOpenV1;
+    open: PeerTcpTunnelDirectOpen;
     directPeerDecision: FeatureDecision | null | undefined;
     serverRoutedDecision: FeatureDecision | null | undefined;
     resolveLoopback: (request: Readonly<{
@@ -65,7 +78,7 @@ export async function openPeerTcpTunnel(input: Readonly<{
         targetMachineId: string;
     }>) => Promise<PeerLoopbackRouteAvailabilityResult>;
     postOpen: (request: Readonly<{
-        open: PeerTcpTunnelOpenV1;
+        open: PeerTcpTunnelDirectOpen;
     }>) => Promise<PeerTcpTunnelOpenResponseV1>;
     loopbackEndpointUrl?: string;
     WebSocketCtor?: PeerTcpTunnelWebSocketCtor;
@@ -73,7 +86,7 @@ export async function openPeerTcpTunnel(input: Readonly<{
     serverRelayScopeUserId?: string;
     serverRelaySocket?: PeerTcpTunnelRelaySocketClient;
     openLoopbackStream?: (request: Readonly<{
-        open: PeerTcpTunnelOpenV1;
+        open: PeerTcpTunnelDirectOpen;
         response: PeerTcpTunnelOpenResponseV1;
     }>) => Promise<PeerTcpTunnelClientStream>;
     openServerRelayStream?: (request: Readonly<{
@@ -97,12 +110,9 @@ export async function openPeerTcpTunnel(input: Readonly<{
         };
     }
 
-    const selectedOpen: PeerTcpTunnelOpenV1 = {
-        ...input.open,
-        routeKind: availability.routeKind,
-    };
-
     if (availability.routeKind === 'server_relay') {
+        if (input.open.v === 2) return { ok: false, reasonCode: 'proof_version_route_mismatch' };
+        const selectedOpen: PeerTcpTunnelOpenV1 = { ...input.open, routeKind: 'server_relay' };
         const relaySocket = input.serverRelaySocket;
         const relayScopeUserId = input.serverRelayScopeUserId;
         const openServerRelayStream = input.openServerRelayStream
@@ -110,6 +120,7 @@ export async function openPeerTcpTunnel(input: Readonly<{
                 relayScopeUserId && relaySocket
                     ? (request: Readonly<{ open: PeerTcpTunnelOpenV1 }>) => openPeerTcpTunnelRelayStream({
                         scopeUserId: relayScopeUserId,
+                        relaySocketId: relaySocket.socketId,
                         open: request.open,
                         send: relaySocket.send,
                         onEnvelope: relaySocket.onEnvelope,
@@ -120,6 +131,17 @@ export async function openPeerTcpTunnel(input: Readonly<{
             return {
                 ok: false,
                 reasonCode: 'stream_transport_unavailable',
+            };
+        }
+        if (
+            !relaySocket
+            || relaySocket.socketId.length === 0
+            || selectedOpen.relayAuthorization?.payload.v !== 2
+            || selectedOpen.relayAuthorization.payload.relaySocketId !== relaySocket.socketId
+        ) {
+            return {
+                ok: false,
+                reasonCode: 'relay_socket_binding_mismatch',
             };
         }
         return {
@@ -138,12 +160,14 @@ export async function openPeerTcpTunnel(input: Readonly<{
         };
     }
 
+    const selectedOpen: PeerTcpTunnelDirectOpen = { ...input.open, routeKind: 'loopback_direct' };
+
     const loopbackEndpointUrl = input.loopbackEndpointUrl;
     const openLoopbackStream = input.openLoopbackStream
         ?? (
             loopbackEndpointUrl
                 ? (request: Readonly<{
-                    open: PeerTcpTunnelOpenV1;
+                    open: PeerTcpTunnelDirectOpen;
                     response: PeerTcpTunnelOpenResponseV1;
                 }>) => openPeerTcpTunnelLoopbackStream({
                     endpointUrl: loopbackEndpointUrl,

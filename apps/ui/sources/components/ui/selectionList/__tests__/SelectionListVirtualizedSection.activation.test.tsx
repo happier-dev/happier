@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { createCapturingFlashListMock } from '@/dev/testkit/mocks/flashList';
+import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
 
 import type { SelectionListOption, SelectionListSection } from '../_types';
 
@@ -11,15 +11,12 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
-const { module: capturedFlashList, state: flashListState } = createCapturingFlashListMock({
-    componentName: 'FlashListMock',
-    itemWrapperName: 'FlashListItemMock',
+const { module: capturedLegendList, state: legendListState } = createCapturingLegendListMock({
     renderItems: true,
 });
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
-    FlashList: capturedFlashList.FlashList,
-    flashListRuntime: { usingFallback: true },
+vi.mock('@legendapp/list/react-native', () => ({
+    LegendList: capturedLegendList.LegendList,
 }));
 
 /**
@@ -36,7 +33,7 @@ vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
  */
 describe('SelectionListVirtualizedSection activation contract (F2)', () => {
     it('invokes the row press handler exactly once and bubbles the option to onSelectOption (no inner option.onSelect)', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
 
         const optionOnSelect = vi.fn();
@@ -67,7 +64,7 @@ describe('SelectionListVirtualizedSection activation contract (F2)', () => {
         );
 
         // Sanity: FlashList mounted (forced).
-        expect(flashListState.props).not.toBeNull();
+        expect(legendListState.props).not.toBeNull();
 
         // The rendered Item carries the canonical option testID.
         const itemNode = screen.findByTestId('sl:root:option:row-0');
@@ -86,7 +83,7 @@ describe('SelectionListVirtualizedSection activation contract (F2)', () => {
     });
 
     it('does not call onSelectOption when the option is disabled', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
 
         const optionOnSelect = vi.fn();

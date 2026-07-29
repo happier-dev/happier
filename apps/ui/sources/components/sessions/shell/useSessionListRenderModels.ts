@@ -60,6 +60,7 @@ const EMPTY_SESSION_LIST_RENDER_MODELS = {
         scopeHintByLegacyWorkspaceKey: new Map<string, WorkspaceScopeBase>(),
     },
     rowViewModels: [] as ReadonlyArray<SessionListRowViewModel | null>,
+    rowRenderableByKey: EMPTY_SESSION_LIST_ROW_RENDERABLES_BY_KEY,
     selectionScopeRowViewModels: [] as ReadonlyArray<SessionListRowViewModel | null>,
 } satisfies Readonly<{
     listItems: ReadonlyArray<SessionListIndexItem>;
@@ -69,6 +70,7 @@ const EMPTY_SESSION_LIST_RENDER_MODELS = {
     hasMultipleMachines: boolean;
     projectHeaderViewModelState: SessionListProjectHeaderViewModelState;
     rowViewModels: ReadonlyArray<SessionListRowViewModel | null>;
+    rowRenderableByKey: ReadonlyMap<string, SessionListRenderableSession>;
     selectionScopeRowViewModels: ReadonlyArray<SessionListRowViewModel | null>;
 }>;
 
@@ -429,12 +431,14 @@ export function useSessionListRenderModels(input: Readonly<{
             hasMultipleMachines: sessionReachabilitySummary.hasMultipleMachines,
             projectHeaderViewModelState,
             rowViewModels,
+            rowRenderableByKey,
             selectionScopeRowViewModels,
         };
     }, [
         listItems,
         projectHeaderViewModelState,
         rowViewModels,
+        rowRenderableByKey,
         selectionScopeListItems,
         selectionScopeRowViewModels,
         sessionReachabilitySummary.displayById,

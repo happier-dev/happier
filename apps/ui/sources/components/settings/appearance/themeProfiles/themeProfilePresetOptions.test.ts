@@ -58,7 +58,7 @@ describe('themeProfilePresetOptions', () => {
 
     it('uses the inferred custom mode in preset source options', () => {
         const options = buildThemePresetSourceOptions({
-            activeProfileId: null,
+            activeProfileIds: { light: null, dark: null },
             profiles: [profile({ light: {}, dark: { 'background.canvas': '#08080A' } })],
         });
         const custom = options.find((option) => option.id === 'theme_order');
@@ -68,7 +68,7 @@ describe('themeProfilePresetOptions', () => {
 
     it('uses explicit custom asset appearance instead of inferring from color override counts', () => {
         const options = buildThemePresetSourceOptions({
-            activeProfileId: null,
+            activeProfileIds: { light: null, dark: null },
             profiles: [withAssetAppearance(profile({
                 light: { 'background.canvas': '#FFFFFF' },
                 dark: {},
@@ -80,7 +80,7 @@ describe('themeProfilePresetOptions', () => {
     });
 
     it('uses built-in preset metadata for curated theme modes', () => {
-        const options = buildThemePresetSourceOptions({ activeProfileId: null, profiles: [] });
+        const options = buildThemePresetSourceOptions({ activeProfileIds: { light: null, dark: null }, profiles: [] });
 
         expect(options.find((option) => option.id === 'premiumDark')?.preferredMode).toBe('dark');
         expect(options.find((option) => option.id === 'pitchDark')?.preferredMode).toBe('dark');

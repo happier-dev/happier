@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { enterDemoMode, resetDemoModeDepthForTests } from '@/demoMode/runtime/enterExitDemoMode';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 
@@ -9,6 +10,22 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 describe('capabilities ops server-scoped routing', () => {
     beforeEach(() => {
         machineRpcWithServerScopeMock.mockReset();
+    });
+
+    afterEach(() => {
+        resetDemoModeDepthForTests();
+    });
+
+    it('does not detect live machine capabilities in demo mode', async () => {
+        enterDemoMode();
+        const { machineCapabilitiesDetect } = await import('./capabilities');
+
+        await expect(machineCapabilitiesDetect(
+            'demo-machine',
+            { checklistId: 'new_session' },
+            { serverId: 'demo-server', timeoutMs: 2500 },
+        )).resolves.toEqual({ supported: false, reason: 'not-supported' });
+        expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
     });
 
     it('routes describe requests with server id', async () => {

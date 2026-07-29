@@ -17,12 +17,26 @@ export function usePaneAnimatedPresence(input: Readonly<{
     const nodeRef = React.useRef<React.ReactNode | null>(input.node);
     const [present, setPresent] = React.useState(input.targetOpen);
     const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const animationRunIdRef = React.useRef(0);
 
     React.useEffect(() => {
         if (timeoutRef.current) {
             clearTimeout(timeoutRef.current);
             timeoutRef.current = null;
         }
+
+        const runId = animationRunIdRef.current + 1;
+        animationRunIdRef.current = runId;
+        const settleDurationMs = Math.max(0, input.durationMs);
+        const settleProgress = (value: number, onSettled?: () => void) => {
+            if (animationRunIdRef.current !== runId) return;
+            if (timeoutRef.current) {
+                clearTimeout(timeoutRef.current);
+                timeoutRef.current = null;
+            }
+            progress.setValue(value);
+            onSettled?.();
+        };
 
         if (input.targetOpen) {
             nodeRef.current = input.node;
@@ -32,7 +46,13 @@ export function usePaneAnimatedPresence(input: Readonly<{
                 duration: input.durationMs,
                 easing: motionTokens.easing.standard,
                 useNativeDriver: input.useNativeDriver,
-            }).start();
+            }).start((result) => {
+                if (result?.finished === false) return;
+                settleProgress(1);
+            });
+            timeoutRef.current = setTimeout(() => {
+                settleProgress(1);
+            }, settleDurationMs);
             return;
         }
 
@@ -42,15 +62,22 @@ export function usePaneAnimatedPresence(input: Readonly<{
             duration: input.durationMs,
             easing: motionTokens.easing.standard,
             useNativeDriver: input.useNativeDriver,
-        }).start();
+        }).start((result) => {
+            if (result?.finished === false) return;
+            settleProgress(0, () => {
+                setPresent(false);
+            });
+        });
         timeoutRef.current = setTimeout(() => {
-            timeoutRef.current = null;
-            setPresent(false);
-        }, input.durationMs);
+            settleProgress(0, () => {
+                setPresent(false);
+            });
+        }, settleDurationMs);
     }, [input.durationMs, input.node, input.targetOpen, input.useNativeDriver, present, progress]);
 
     React.useEffect(() => {
         return () => {
+            animationRunIdRef.current += 1;
             if (timeoutRef.current) {
                 clearTimeout(timeoutRef.current);
             }

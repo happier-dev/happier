@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol';
 
 import { decodeAutomationTemplate, encodeAutomationTemplate } from './automationTemplateCodec';
 
@@ -42,6 +43,48 @@ describe('automationTemplateCodec', () => {
         expect(decodeAutomationTemplate('')).toBeNull();
         expect(decodeAutomationTemplate('{')).toBeNull();
         expect(decodeAutomationTemplate(JSON.stringify({ directory: '' }))).toBeNull();
+    });
+
+    it('roundtrips provider-bound model selection identity', () => {
+        const modelSelection = SessionModelSelectionV1Schema.parse({
+            v: 1,
+            updatedAt: 123,
+            ref: {
+                agentTargetKey: 'backend:codex',
+                providerConnectionId: 'pc_01J00000000000000000000000',
+                modelId: 'openai/gpt-5.5',
+            },
+        });
+
+        const decoded = decodeAutomationTemplate(encodeAutomationTemplate({
+            directory: '/tmp/project',
+            backendTarget: { kind: 'backend', backendId: 'codex' },
+            modelSelection,
+        }));
+
+        expect(decoded?.modelSelection).toEqual(modelSelection);
+    });
+
+    it('writes only the canonical selection when legacy model fields are also present', () => {
+        const encoded = encodeAutomationTemplate({
+            directory: '/tmp/project',
+            modelSelection: SessionModelSelectionV1Schema.parse({
+                v: 1,
+                updatedAt: 123,
+                ref: {
+                    agentTargetKey: 'backend:codex',
+                    providerConnectionId: null,
+                    modelId: 'gpt-5.5',
+                },
+            }),
+            modelId: 'legacy-model',
+            modelUpdatedAt: 10,
+        });
+
+        expect(JSON.parse(encoded)).not.toEqual(expect.objectContaining({
+            modelId: expect.anything(),
+            modelUpdatedAt: expect.anything(),
+        }));
     });
 
     it('maps legacy experimentalCodexAcp payloads onto canonical codexBackendMode on decode', () => {

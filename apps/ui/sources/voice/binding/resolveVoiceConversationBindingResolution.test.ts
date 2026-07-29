@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const ensureVoiceConversationSessionForVoiceHome = vi.fn();
 const ensureVoiceConversationSessionForSessionRoot = vi.fn();
@@ -21,9 +21,14 @@ vi.mock('@/voice/agent/voiceAgentRecoveryReplayState', () => ({
 }));
 
 import { registerVoiceAdapters, resetVoiceAdapterRegistryForTests } from '@/voice/session/voiceAdapterRegistry';
-import { createBuiltinVoiceAdapters } from '@/voice/adapters/registerBuiltinVoiceAdapters';
+import {
+  createBuiltinVoiceAdapterAssembly,
+  type BuiltinVoiceAdapterAssembly,
+} from '@/voice/adapters/registerBuiltinVoiceAdapters';
 
 describe('ensureVoiceConversationBindingResolution', () => {
+  let adapterAssembly: BuiltinVoiceAdapterAssembly;
+
   beforeEach(() => {
     ensureVoiceConversationSessionForVoiceHome.mockReset();
     ensureVoiceConversationSessionForSessionRoot.mockReset();
@@ -32,12 +37,16 @@ describe('ensureVoiceConversationBindingResolution', () => {
     // The resolver reads transcript-mode via the provider registry capability
     // rather than branching on provider ids, so register the builtin adapters.
     resetVoiceAdapterRegistryForTests();
-    registerVoiceAdapters(createBuiltinVoiceAdapters());
+    adapterAssembly = createBuiltinVoiceAdapterAssembly();
+    registerVoiceAdapters(adapterAssembly.adapters);
   });
 
-  it('binds realtime voice to the target session root when a target session exists', async () => {
-    ensureVoiceConversationSessionForSessionRoot.mockResolvedValue('voice-root-s1');
+  afterEach(async () => {
+    resetVoiceAdapterRegistryForTests();
+    await adapterAssembly.dispose();
+  });
 
+  it('does not create a generic shadow session for direct-media realtime providers', async () => {
     const { ensureVoiceConversationBindingResolution } = await import('./resolveVoiceConversationBindingResolution');
     const resolution = await ensureVoiceConversationBindingResolution({
       providerId: 'realtime_elevenlabs',
@@ -46,13 +55,8 @@ describe('ensureVoiceConversationBindingResolution', () => {
       settings: {},
     });
 
-    expect(resolution).toEqual({
-      conversationSessionId: 'voice-root-s1',
-      controlSessionId: '__voice_agent__',
-      transcriptMode: 'synthetic',
-      targetSessionId: 's1',
-    });
-    expect(ensureVoiceConversationSessionForSessionRoot).toHaveBeenCalledWith({ sessionId: 's1' });
+    expect(resolution).toBeNull();
+    expect(ensureVoiceConversationSessionForSessionRoot).not.toHaveBeenCalled();
     expect(ensureVoiceConversationSessionForVoiceHome).not.toHaveBeenCalled();
   });
 
@@ -66,11 +70,12 @@ describe('ensureVoiceConversationBindingResolution', () => {
       requestedTargetSessionId: null,
       settings: {
         voice: {
-          adapters: {
-            local_conversation: {
+          executionMachine: { mode: 'auto', machineId: null, autoMachineId: null },
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               conversationMode: 'agent',
               agent: { backend: 'daemon' },
-            },
+            } },
           },
         },
       },
@@ -96,11 +101,11 @@ describe('ensureVoiceConversationBindingResolution', () => {
       requestedTargetSessionId: null,
       settings: {
         voice: {
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               conversationMode: 'agent',
               agent: { backend: 'daemon' },
-            },
+            } },
           },
         },
       },
@@ -126,11 +131,11 @@ describe('ensureVoiceConversationBindingResolution', () => {
       requestedTargetSessionId: 's1',
       settings: {
         voice: {
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               conversationMode: 'agent',
               agent: { backend: 'daemon' },
-            },
+            } },
           },
         },
       },
@@ -156,11 +161,11 @@ describe('ensureVoiceConversationBindingResolution', () => {
       requestedTargetSessionId: 's1',
       settings: {
         voice: {
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               conversationMode: 'agent',
               agent: { backend: 'daemon', stayInVoiceHome: true },
-            },
+            } },
           },
         },
       },
@@ -196,11 +201,11 @@ describe('ensureVoiceConversationBindingResolution', () => {
       requestedTargetSessionId: null,
       settings: {
         voice: {
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               conversationMode: 'agent',
-              agent: { backend: 'daemon', machineTargetMode: 'auto' },
-            },
+              agent: { backend: 'daemon' },
+            } },
           },
         },
       },
@@ -227,11 +232,11 @@ describe('ensureVoiceConversationBindingResolution', () => {
       requestedTargetSessionId: 's2',
       settings: {
         voice: {
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               conversationMode: 'agent',
               agent: { backend: 'openai_compat' },
-            },
+            } },
           },
         },
       },
@@ -247,9 +252,10 @@ describe('ensureVoiceConversationBindingResolution', () => {
     ensureVoiceConversationSessionForSessionRoot.mockResolvedValue('voice-root-custom');
     // A third provider, contributed only through the registry capability.
     registerVoiceAdapters([
-      ...createBuiltinVoiceAdapters(),
+      ...adapterAssembly.adapters,
       {
         id: 'custom_provider',
+        engineKind: 'realtime',
         start: vi.fn(),
         stop: vi.fn(),
         toggle: vi.fn(),
@@ -275,6 +281,45 @@ describe('ensureVoiceConversationBindingResolution', () => {
       transcriptMode: 'synthetic',
       targetSessionId: 's9',
     });
+  });
+
+  it('delegates an exact provider-owned binding without creating a shadow conversation session', async () => {
+    registerVoiceAdapters([
+      ...adapterAssembly.adapters,
+      {
+        id: 'native_session_provider',
+        engineKind: 'realtime',
+        start: vi.fn(),
+        stop: vi.fn(),
+        toggle: vi.fn(),
+        interrupt: vi.fn(),
+        setMuted: vi.fn(),
+        sendContextUpdate: vi.fn(),
+        getSnapshot: vi.fn(),
+        resolveConversationBinding: vi.fn(async ({ controlSessionId, requestedTargetSessionId }) => ({
+          conversationSessionId: controlSessionId,
+          transcriptMode: 'native_session' as const,
+          targetSessionId: requestedTargetSessionId,
+        })),
+      },
+    ]);
+
+    const { ensureVoiceConversationBindingResolution } = await import('./resolveVoiceConversationBindingResolution');
+    const resolution = await ensureVoiceConversationBindingResolution({
+      providerId: 'native_session_provider',
+      controlSessionId: 'codex-session-1',
+      requestedTargetSessionId: 'codex-session-1',
+      settings: {},
+    });
+
+    expect(resolution).toEqual({
+      conversationSessionId: 'codex-session-1',
+      controlSessionId: 'codex-session-1',
+      transcriptMode: 'native_session',
+      targetSessionId: 'codex-session-1',
+    });
+    expect(ensureVoiceConversationSessionForSessionRoot).not.toHaveBeenCalled();
+    expect(ensureVoiceConversationSessionForVoiceHome).not.toHaveBeenCalled();
   });
 
   it('returns null for providers that do not expose a hidden voice conversation session', async () => {

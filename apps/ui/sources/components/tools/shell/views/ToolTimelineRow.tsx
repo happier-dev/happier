@@ -28,6 +28,8 @@ import {
     type ToolViewExpandedDetailLevelSetting,
 } from '@/components/tools/normalization/policy/resolveToolViewDetailDefaultsForChromeMode';
 import { ToolTimelineRowHeader } from '@/components/tools/shell/views/timeline/ToolTimelineRowHeader';
+import { TranscriptJumpAttention } from '@/components/sessions/transcript/navigation/TranscriptJumpHighlightOverlay';
+import type { ToolRowPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
 import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
 import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
 import {
@@ -42,8 +44,12 @@ import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveIna
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { Text } from '@/components/ui/text/Text';
 import { resolveToolErrorSummary } from '@/components/tools/shell/presentation/resolveToolErrorSummary';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { buildApprovalToolCallLocation, doesApprovalMatchToolCall } from './toolApprovalPromptMatching';
+import { isAskUserQuestionToolName } from '@happier-dev/protocol';
+import { resolveToolPermissionTerminalErrorMessage } from '@/components/tools/shell/permissions/resolveToolPermissionTerminalErrorMessage';
+
+const TOOL_TIMELINE_ROW_HIGHLIGHT_RADIUS = 10;
 
 export const ToolTimelineRow = React.memo((props: {
     tool: ToolCall;
@@ -51,6 +57,9 @@ export const ToolTimelineRow = React.memo((props: {
     messages?: Message[];
     sessionId?: string;
     messageId?: string;
+    /** Row seq, so a seq-targeted transcript jump can land its highlight here. */
+    jumpHighlightSeq?: number | null;
+    headerAction?: ToolRowPinAction | null;
     approvalRequests?: readonly OpenApprovalArtifactForSession[];
     forcePermissionPromptsInTranscript?: boolean;
     interaction?: {
@@ -196,6 +205,7 @@ export const ToolTimelineRow = React.memo((props: {
     const sidechainHydration = useEnsureSidechainsLoaded({
         enabled:
             effectiveIsExpanded &&
+            props.interaction?.disableToolNavigation !== true &&
             isSubAgentTranscriptTool,
         sessionId: props.sessionId,
         sidechainIds: [transcriptSidechainId],
@@ -236,28 +246,50 @@ export const ToolTimelineRow = React.memo((props: {
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
     const showTaskRunningIndicator = isSubAgentTranscriptTool;
     const statusKind = resolveToolStatusIndicatorKind(toolForRendering);
-    const errorSummary = statusKind === 'error' ? (resolveToolErrorSummary(toolForRendering) ?? t('common.error')) : null;
-    const headerStatusIndicator =
+    const terminalStatusSummary =
         statusKind === 'error'
+            ? (resolveToolErrorSummary(toolForRendering) ?? t('common.error'))
+            : statusKind === 'permission_blocked'
+                ? (
+                    resolveToolPermissionTerminalErrorMessage({
+                        tool: toolForRendering,
+                        metadata: props.metadata,
+                        permissionDisabledReason: props.interaction?.permissionDisabledReason,
+                    }) ?? t('errors.permissionDenied')
+                )
+                : null;
+    const headerStatusIndicator =
+        terminalStatusSummary
             ? (
-                <View style={styles.headerError}>
-                    <Ionicons testID="tool-timeline-row-error" name="alert-circle" size={18} color={theme.colors.state.danger.foreground} />
-                    <Text style={styles.headerErrorText} numberOfLines={1}>
-                        {errorSummary}
+                <View
+                    testID={statusKind === 'permission_blocked' ? 'tool-timeline-row-permission-blocked' : 'tool-timeline-row-error'}
+                    accessible={true}
+                    accessibilityLabel={terminalStatusSummary}
+                    style={styles.headerTerminalStatus}
+                >
+                    <Ionicons
+                        name={statusKind === 'permission_blocked' ? 'remove-circle-outline' : 'alert-circle'}
+                        size={18}
+                        color={theme.colors.state.danger.foreground}
+                    />
+                    <Text style={styles.headerTerminalStatusText} numberOfLines={1}>
+                        {terminalStatusSummary}
                     </Text>
                 </View>
             )
             : showTaskRunningIndicator && toolForRendering.state === 'running'
-                ? <ActivitySpinner size="small" color={theme.colors.text.secondary} />
+                ? <ActivitySpinner size={iconMatchedSpinnerSize(18)} color={theme.colors.text.secondary} />
                 : null;
     const headerPrimaryActions = headerActions ?? null;
+    const headerRightElements = [headerStatusIndicator, headerPrimaryActions].filter(Boolean);
     const headerRightElement =
-        headerStatusIndicator && headerPrimaryActions ? (
+        headerRightElements.length > 1 ? (
             <View style={styles.headerRightContent}>
-                {headerStatusIndicator}
-                {headerPrimaryActions}
+                {headerRightElements.map((element, index) => (
+                    <React.Fragment key={index}>{element}</React.Fragment>
+                ))}
             </View>
-        ) : (headerStatusIndicator ?? headerPrimaryActions);
+        ) : (headerRightElements[0] ?? null);
 
     const isBodyVisible = inlineDetailLevel !== 'title' && inlineDetailLevel !== 'compact';
     const bodyDetailLevel: 'summary' | 'full' = inlineDetailLevel === 'full' ? 'full' : 'summary';
@@ -282,8 +314,12 @@ export const ToolTimelineRow = React.memo((props: {
                     : null
             : null;
 
-    const actionRequiredStatusText = isPendingUserAction ? t('status.actionRequired') : null;
-    const headerStatusText = effectiveDetailLevel === 'title' ? null : (actionRequiredStatusText ?? statusText);
+    const pendingUserActionStatusText = !isPendingUserAction
+        ? null
+        : isAskUserQuestionToolName(toolForRendering.name)
+            ? t('status.waitingForYourResponse')
+            : t('status.actionRequired');
+    const headerStatusText = effectiveDetailLevel === 'title' ? null : (pendingUserActionStatusText ?? statusText);
     const resolvedPermissionPromptSurface = props.forcePermissionPromptsInTranscript
         ? 'transcript'
         : resolvePermissionPromptSurface(permissionPromptSurface);
@@ -347,7 +383,13 @@ export const ToolTimelineRow = React.memo((props: {
     ]);
 
     return (
-        <View style={styles.container}>
+        <TranscriptJumpAttention
+            sessionId={props.sessionId ?? ''}
+            routeMessageId={routeMessageId}
+            seq={props.jumpHighlightSeq ?? null}
+            radius={TOOL_TIMELINE_ROW_HIGHLIGHT_RADIUS}
+            style={styles.container}
+        >
             <ToolTimelineRowHeader
                 testID="tool-timeline-row"
                 openActionTestID="tool-timeline-row-open"
@@ -360,6 +402,8 @@ export const ToolTimelineRow = React.memo((props: {
                 canOpen={canOpen}
                 onOpen={handleOpen}
                 rightElement={headerRightElement}
+                revealAction={props.headerAction?.node ?? null}
+                revealActionSticky={props.headerAction?.pinned === true}
                 disclosure={disclosure}
             />
 
@@ -390,7 +434,7 @@ export const ToolTimelineRow = React.memo((props: {
 
             {permissionFooter}
             {approvalCards}
-        </View>
+        </TranscriptJumpAttention>
     );
 });
 
@@ -409,13 +453,13 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 6,
     },
-    headerError: {
+    headerTerminalStatus: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
         minWidth: 0,
     },
-    headerErrorText: {
+    headerTerminalStatusText: {
         color: theme.colors.state.danger.foreground,
         fontSize: 12,
         fontWeight: '600',

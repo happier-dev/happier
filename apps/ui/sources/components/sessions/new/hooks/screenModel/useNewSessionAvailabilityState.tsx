@@ -14,7 +14,6 @@ import {
     type ResolvedBackendCatalogEntry,
 } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { isAgentAuthProbeSafeForBackgroundChecks } from '@happier-dev/agents';
-import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentInstallablesBackground';
 import { getInstallablesRegistryEntries } from '@/capabilities/installablesRegistry';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
@@ -33,7 +32,6 @@ import {
     resolveBackendEntryUnavailabilityReasonForNewSession,
     resolveProfileAvailabilityForNewSession,
 } from '@/components/sessions/new/modules/newSessionAgentSelection';
-import { fireAndForget } from '@/utils/system/fireAndForget';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
@@ -307,36 +305,6 @@ export function useNewSessionAvailabilityState(params: Readonly<{
             refreshSelectedMachineCapabilities();
         });
     }, [cliAvailability.refresh, initialRefreshKey, refreshSelectedMachineCapabilities, selectedMachineOnline]);
-
-    React.useEffect(() => {
-        if (!params.selectedMachineId) return;
-        if (wizardInstallableDeps.length === 0) return;
-
-        const machine = params.machines.find((candidate) => candidate.id === params.selectedMachineId);
-        if (!machine || !isMachineOnline(machine)) return;
-        const selectedMachineId = params.selectedMachineId;
-
-        return runAfterInteractionsWithFallback(() => {
-            fireAndForget(
-                ensureAgentInstallablesBackground({
-                    agentId: params.agentType,
-                    machineId: selectedMachineId,
-                    serverId: params.capabilityServerId,
-                    settings: params.settings,
-                    resumeSessionId: params.resumeSessionId,
-                }),
-                { tag: `NewSessionScreenModel.installables.ensure.${params.agentType}` },
-            );
-        });
-    }, [
-        params.agentType,
-        params.capabilityServerId,
-        params.machines,
-        params.resumeSessionId,
-        params.selectedMachineId,
-        params.settings,
-        wizardInstallableDeps.length,
-    ]);
 
     const [hiddenCliWarningKeys, setHiddenCliWarningKeys] = React.useState<Record<string, boolean>>(() => ({
         ...readTemporaryHiddenCliWarningKeys(params.selectedMachineId),

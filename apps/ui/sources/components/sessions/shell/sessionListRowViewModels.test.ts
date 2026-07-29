@@ -4,6 +4,7 @@ import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionLis
 import { SESSION_OPTIMISTIC_PENDING_THINKING_MS } from '@/sync/domains/session/attention/runtimePresentation';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
+import { t } from '@/text';
 import { buildSessionListRowViewModels } from './sessionListRowViewModels';
 
 function createRenderableSession(id: string): SessionListRenderableSession {
@@ -229,5 +230,149 @@ describe('buildSessionListRowViewModels', () => {
 
         expect(rows[0]?.sessionStatus?.state).toBe('thinking');
         expect(rows[0]?.nextRuntimeFreshnessAtMs).toBe(optimisticThinkingAt + SESSION_OPTIMISTIC_PENDING_THINKING_MS);
+    });
+
+    it('keeps pushed external-Agent status separate from hosted control and shares its expiry wake', () => {
+        const item = {
+            type: 'session',
+            sessionId: 'sess_external_observation',
+            serverId: 'server_a',
+            storageKind: 'direct',
+            groupKey: 'group-a',
+            groupKind: 'date',
+        } satisfies SessionListIndexItem;
+        const session = createRenderableSession(item.sessionId);
+        const rows = buildSessionListRowViewModels({
+            listItems: [item],
+            reachableSessionDisplayById: new Map(),
+            rowRenderableByKey: new Map([[rowKey(item), {
+                ...session,
+                presence: 900,
+                metadata: {
+                    ...session.metadata!,
+                    externalSessionV1: {
+                        v: 1,
+                        agentId: 'opencode',
+                        machineId: 'machine-a',
+                        remoteSessionId: 'native-session-1',
+                        source: {
+                            kind: 'opencodeServer',
+                            directory: '/repo/stable',
+                        },
+                    },
+                    externalAgentObservationV1: {
+                        v: 1,
+                        qualifiedLinkIdentity: {
+                            v: 1,
+                            agent: {
+                                pluginId: 'happier.opencode',
+                                localId: 'opencode',
+                            },
+                            source: {
+                                kind: 'opencode.server',
+                                contractVersion: 1,
+                            },
+                        },
+                        linkGeneration: 'link-generation-1',
+                        status: 'working',
+                        observedAtMs: 900,
+                        expiresAtMs: 1_100,
+                    },
+                },
+            }]]),
+            relativeNowMs: 1_000,
+            runtimeNowMs: 1_000,
+            workingTextMode: 'static',
+            hasMultipleMachines: false,
+            pinnedSessionKeys: new Set(),
+            sessionTags: {},
+            selectedSessionId: null,
+            showServerBadge: false,
+            showPinnedServerBadge: false,
+        });
+
+        expect((rows[0] as any)?.externalSessionRuntime).toMatchObject({
+            controlConnectivity: 'offline',
+            detachedActivity: 'unknown',
+            externalAgent: {
+                state: 'working',
+                labelKey: 'status.workingExternally',
+            },
+        });
+        expect((rows[0] as any)?.externalSessionIdentity).toMatchObject({
+            agentId: 'opencode',
+            storageLabel: t('sessionsList.storageExternalFilter'),
+            machineLabel: 'test.local',
+        });
+        expect(rows[0]?.nextRuntimeFreshnessAtMs).toBe(1_100);
+        expect(rows[0]?.sessionStatus).toMatchObject({
+            state: 'disconnected',
+            isConnected: false,
+        });
+
+        const expiredRows = buildSessionListRowViewModels({
+            listItems: [item],
+            reachableSessionDisplayById: new Map(),
+            rowRenderableByKey: new Map([[rowKey(item), rows[0]!.session!]]),
+            relativeNowMs: 1_101,
+            runtimeNowMs: 1_101,
+            workingTextMode: 'static',
+            hasMultipleMachines: false,
+            pinnedSessionKeys: new Set(),
+            sessionTags: {},
+            selectedSessionId: null,
+            showServerBadge: false,
+            showPinnedServerBadge: false,
+        });
+
+        expect((expiredRows[0] as any)?.externalSessionRuntime).toMatchObject({
+            controlConnectivity: 'offline',
+            detachedActivity: 'unknown',
+            externalAgent: {
+                state: 'unknown',
+                labelKey: 'status.externalStatusUnknown',
+            },
+        });
+        expect(expiredRows[0]?.nextRuntimeFreshnessAtMs).toBeNull();
+        expect(expiredRows[0]?.sessionStatus).toMatchObject({
+            state: 'disconnected',
+            isConnected: false,
+        });
+    });
+
+    it('does not present malformed external-session-shaped metadata as a linked session', () => {
+        const item = {
+            type: 'session',
+            sessionId: 'sess_malformed_external',
+            serverId: 'server_a',
+            storageKind: 'persisted',
+            groupKey: 'group-a',
+            groupKind: 'date',
+        } satisfies SessionListIndexItem;
+        const session = createRenderableSession(item.sessionId);
+        const malformedSession = {
+            ...session,
+            metadata: {
+                ...session.metadata!,
+                externalSessionV1: { v: 1 },
+            },
+        } as unknown as SessionListRenderableSession;
+
+        const rows = buildSessionListRowViewModels({
+            listItems: [item],
+            reachableSessionDisplayById: new Map(),
+            rowRenderableByKey: new Map([[rowKey(item), malformedSession]]),
+            relativeNowMs: 1_000,
+            runtimeNowMs: 1_000,
+            hasMultipleMachines: false,
+            pinnedSessionKeys: new Set(),
+            sessionTags: {},
+            selectedSessionId: null,
+            showServerBadge: false,
+            showPinnedServerBadge: false,
+        });
+
+        expect(rows[0]?.externalSessionIdentity).toBeNull();
+        expect(rows[0]?.externalSessionRuntime).toBeNull();
     });
 });

@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,13 +23,13 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     return createStorageModuleMock({
         importOriginal,
         overrides: {
-            useSetting: (key: string) => {
+            useSetting: createUseSettingMock({ fallback: (key) => {
                 if (key === 'filesDiffSyntaxHighlightingMode') return 'simple';
                 if (key === 'filesDiffTokenizationMaxBytes') return 100_000;
                 if (key === 'filesDiffTokenizationMaxLines') return 5_000;
                 if (key === 'filesDiffTokenizationMaxLineLength') return 1_000;
                 return null;
-            },
+            } }),
         },
     });
 });

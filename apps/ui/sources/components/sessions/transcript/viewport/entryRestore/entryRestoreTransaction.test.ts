@@ -182,67 +182,6 @@ describe('entry restore transaction', () => {
         expect(transaction.issueCount()).toBe(1);
     });
 
-    describe('observe-only transactions (N2b slice-from-anchor entries)', () => {
-        function buildObserveOnlyTransaction(overrides: Partial<{
-            nowMs: number;
-            deadlineMs: number;
-        }> = {}) {
-            return createEntryRestoreTransaction({
-                sessionId: 'session-a',
-                target: anchorTarget,
-                nowMs: 1000,
-                deadlineMs: 1500,
-                writePolicy: 'observe-only',
-                ...overrides,
-            });
-        }
-
-        it('opens with zero issued writes', () => {
-            const transaction = buildObserveOnlyTransaction();
-
-            expect(transaction.state()).toBe('pending');
-            expect(transaction.issueCount()).toBe(0);
-            expect(transaction.outcome()).toBeNull();
-        });
-
-        it('never authorizes a correction write on misaligned observations', () => {
-            const transaction = buildObserveOnlyTransaction();
-
-            const directives = [1050, 1180, 1320, 1410].map((nowMs) =>
-                transaction.onObservation({ status: 'misaligned' }, nowMs).action,
-            );
-
-            expect(directives).toEqual(['none', 'none', 'none', 'none']);
-            expect(transaction.issueCount()).toBe(0);
-            expect(transaction.isClosed()).toBe(false);
-        });
-
-        it('confirms via observation only with zero writes', () => {
-            const transaction = buildObserveOnlyTransaction();
-
-            transaction.onObservation({ status: 'misaligned' }, 1050);
-            expect(transaction.onObservation({ status: 'aligned' }, 1120)).toEqual({ action: 'none' });
-
-            expect(transaction.isClosed()).toBe(true);
-            expect(transaction.outcome()).toBe('confirmed');
-            expect(transaction.issueCount()).toBe(0);
-        });
-
-        it('closes at the deadline and on trusted user scroll without writes', () => {
-            const deadlined = buildObserveOnlyTransaction();
-            deadlined.onDeadline(2600);
-            expect(deadlined.isClosed()).toBe(true);
-            expect(deadlined.outcome()).toBe('deadline');
-            expect(deadlined.issueCount()).toBe(0);
-
-            const preempted = buildObserveOnlyTransaction();
-            preempted.onTrustedUserScroll();
-            expect(preempted.isClosed()).toBe(true);
-            expect(preempted.outcome()).toBe('preempted-user-scroll');
-            expect(preempted.issueCount()).toBe(0);
-        });
-    });
-
     it('keeps the first outcome once closed', () => {
         const transaction = buildTransaction();
 

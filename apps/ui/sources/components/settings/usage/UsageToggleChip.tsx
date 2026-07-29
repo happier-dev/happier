@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { shadowLevelStyle } from '@/shadowElevation';
+import { usageSignatureAccent } from './usageAccent';
 
 interface UsageToggleChipProps {
     label: string;
@@ -53,7 +54,7 @@ export const UsageToggleChip: React.FC<UsageToggleChipProps> = ({
     onPress,
 }) => {
     const { theme } = useUnistyles();
-    const resolvedAccentColor = accentColor ?? theme.colors.accent.blue;
+    const resolvedAccentColor = accentColor ?? usageSignatureAccent(theme);
 
     return (
         <Pressable

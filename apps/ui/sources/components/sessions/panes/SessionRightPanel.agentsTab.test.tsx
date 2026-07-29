@@ -48,6 +48,7 @@ installSessionDetailsPanelCommonModuleMocks({
 });
 
 vi.mock('@/constants/Typography', () => ({
+    FontWeights: { regular: '400', semiBold: '500', bold: '600' },
     Typography: {
         default: () => ({}),
         mono: () => ({}),
@@ -159,6 +160,31 @@ describe('SessionRightPanel (core tabs)', () => {
         expect(findHostByTestId(screen, 'session-rightpanel-surface-git')).toBeNull();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-agents')).toBeNull();
+    });
+
+    it('only asks the navigation pane to reveal the transcript when this panel replaces it', async () => {
+        scopeState = { right: { isOpen: true, activeTabId: 'navigation', tabState: {} } };
+        const { SessionRightPanel } = await import('./SessionRightPanel');
+
+        // Desktop pane: the transcript is mounted beside this panel, so a jump must not
+        // close the reader's navigation list to "reveal" something already visible.
+        const beside = await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
+        expect(beside.findByType('SessionTranscriptNavigationPane')?.props.onRevealTranscript).toBeUndefined();
+
+        // Mobile screen presentation: this panel IS the route, the transcript is another one.
+        const onRequestClose = vi.fn();
+        const asScreen = await renderScreen(
+            <SessionRightPanel
+                sessionId="s1"
+                scopeId="session:s1"
+                presentation="screen"
+                onRequestClose={onRequestClose}
+            />,
+        );
+        const reveal = asScreen.findByType('SessionTranscriptNavigationPane')?.props.onRevealTranscript;
+        expect(typeof reveal).toBe('function');
+        (reveal as () => void)();
+        expect(onRequestClose).toHaveBeenCalledTimes(1);
     });
 
     it('keeps a single agents surface test id when the agents tab is active', async () => {

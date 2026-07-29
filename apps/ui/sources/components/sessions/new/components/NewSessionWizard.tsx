@@ -42,7 +42,12 @@ import {
 import type { HandleCreateSessionOptions } from '../hooks/useCreateNewSession';
 import { buildNewSessionProfileSelectionPopover } from '@/components/sessions/new/components/buildNewSessionProfileSelectionPopover';
 import { NewSessionProfilesBrowserContent } from '@/components/sessions/new/components/NewSessionProfilesBrowserContent';
-import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
+import type {
+    AcpConfigOptionOverridesV1,
+    ProviderErrorV1,
+    SessionModelSelectionV1,
+} from '@happier-dev/protocol';
+import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import {
@@ -61,11 +66,14 @@ import type {
     NewSessionWizardSelectionSectionId,
 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
+import type { SessionModelProjectionGroup } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
+import type { SessionModelPickerExperimentalConfirmationController } from '@/components/sessions/modelPicker/SessionModelPicker';
 import {
     NewSessionLaunchPendingPreview,
     shouldRenderNewSessionLaunchPendingPreview,
 } from '@/components/sessions/new/components/NewSessionLaunchPendingPreview';
 import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
+import { NewSessionProviderLaunchError } from '@/components/sessions/new/components/NewSessionProviderLaunchError';
 
 
 export interface NewSessionWizardLayoutProps {
@@ -134,7 +142,16 @@ export interface NewSessionWizardAgentProps {
     acpConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
     setAcpConfigOptionOverride?: (configId: string, value: string) => void;
     modelMode: ModelMode | undefined;
+    modelSelection?: SessionModelSelectionV1 | null;
     setModelMode: (mode: ModelMode) => void;
+    setModelSelection?: (selection: SessionModelSelectionV1 | null) => void;
+    providerModelGroups?: readonly SessionModelProjectionGroup[];
+    providerModelProjectionAuthoritative?: boolean;
+    providerModelProjectionError?: ProviderErrorV1 | null;
+    retryProviderModelProjection?: (() => Promise<void> | void) | null;
+    providerCurrentSelectionRecovery?: DaemonProviderCurrentSelectionRecoveryV1 | null;
+    hiddenNativeModelKeys?: ReadonlySet<string>;
+    experimentalModelConfirmation?: SessionModelPickerExperimentalConfirmationController;
     selectedIndicatorColor: string;
     profileMap: Map<string, AIBackendProfile>;
     permissionMode: PermissionMode;
@@ -170,6 +187,8 @@ export interface NewSessionWizardFooterProps {
     canCreate: boolean;
     isCreating: boolean;
     pendingLaunchAttempt?: NewSessionLaunchAttempt | null;
+    providerLaunchError?: ProviderErrorV1 | null;
+    retryProviderLaunch?: () => void;
     submitAccessibilityLabel?: React.ComponentProps<typeof AgentInput>['submitAccessibilityLabel'];
     emptyAutocompletePrefixes: React.ComponentProps<typeof AgentInput>['autocompletePrefixes'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
@@ -373,7 +392,16 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         favoriteModelSelections,
         setFavoriteModelSelections,
         modelMode,
+        modelSelection,
         setModelMode,
+        setModelSelection,
+        providerModelGroups,
+        providerModelProjectionAuthoritative,
+        providerModelProjectionError,
+        retryProviderModelProjection,
+        providerCurrentSelectionRecovery,
+        hiddenNativeModelKeys,
+        experimentalModelConfirmation,
         selectedIndicatorColor,
         profileMap,
         permissionMode,
@@ -456,7 +484,9 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
     );
     const modelPresentation = resolveWizardAdaptivePresentation(
         sectionPresentation.models,
-        modelOptions.length > 8 ? 'compact' : 'expanded',
+        modelOptions.length + (providerModelGroups ?? []).reduce((count, group) => count + group.rows.length, 0) > 8
+            ? 'compact'
+            : 'expanded',
     );
     const machineVisibleRowCount = React.useMemo(() => countVisibleWizardMachineRows({
         machines,
@@ -483,7 +513,9 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
     const modelOptionsProbePhase = modelOptionsProbe?.phase ?? 'idle';
     const modelOptionsProbeIsBusy = modelOptionsProbePhase === 'loading' || modelOptionsProbePhase === 'refreshing';
     const hasModelOptionsProbeAffordance = modelOptionsProbeIsBusy || typeof modelOptionsProbe?.onRefresh === 'function';
-    const shouldRenderModelSection = modelOptions.length > 0 || hasModelOptionsProbeAffordance;
+    const shouldRenderModelSection = modelOptions.length > 0
+        || (providerModelGroups ?? []).some((group) => group.rows.length > 0)
+        || hasModelOptionsProbeAffordance;
     const pairAgentAndModelSections = useSelectionColumns && shouldRenderModelSection;
     const warningBackgroundColor = theme.colors.state?.warning?.background ?? theme.colors.box?.warning?.background;
     const warningBorderColor = theme.colors.state?.warning?.border ?? theme.colors.box?.warning?.border;
@@ -581,6 +613,10 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                             ) : null}
                             <View style={{ paddingHorizontal: newSessionSidePadding, width: '100%', alignSelf: 'stretch' }}>
                                 <View style={{ maxWidth: layout.maxWidth, width: '100%', alignSelf: 'center' }}>
+                                    <NewSessionProviderLaunchError
+                                        error={props.footer.providerLaunchError}
+                                        retry={props.footer.retryProviderLaunch}
+                                    />
                                     {isCreating && shouldRenderNewSessionLaunchPendingPreview(props.footer.pendingLaunchAttempt) ? (
                                         <View style={{ paddingBottom: 8 }}>
                                             <NewSessionLaunchPendingPreview launchAttempt={props.footer.pendingLaunchAttempt} />
@@ -969,12 +1005,27 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                             presentation={modelPresentation}
                                             modelOptions={modelOptions}
                                             selectedModelId={modelMode}
+                                            selectedModelSelection={modelSelection}
                                             selectedIndicatorColor={selectedIndicatorColor}
                                             selectedBackendEntry={selectedBackendEntry}
                                             popoverBoundaryRef={props.popoverBoundaryRef}
                                             favoriteModelSelections={favoriteModelSelections}
                                             onFavoriteModelSelectionsChange={setFavoriteModelSelections}
+                                            providerGroups={providerModelGroups}
+                                            providerProjectionAuthoritative={providerModelProjectionAuthoritative === true}
+                                            providerProjectionError={providerModelProjectionError}
+                                            retryProviderProjection={retryProviderModelProjection}
+                                            currentSelectionRecovery={providerCurrentSelectionRecovery}
+                                            hiddenNativeModelKeys={hiddenNativeModelKeys}
+                                            experimentalConfirmation={experimentalModelConfirmation}
                                             onSelectModel={setModelMode}
+                                            onSelectSelection={setModelSelection ? (ref) => {
+                                                setModelSelection(ref ? {
+                                                    v: 1,
+                                                    updatedAt: Date.now(),
+                                                    ref,
+                                                } : null);
+                                            } : undefined}
                                         />
                                         </View>
                                     )}

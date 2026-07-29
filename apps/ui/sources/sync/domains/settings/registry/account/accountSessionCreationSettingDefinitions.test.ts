@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS,
+    NEW_SESSION_PRESENTATION_MODES,
     resolveNewSessionWizardSectionPresentation,
 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 
@@ -13,6 +14,20 @@ describe('account session creation setting definitions', () => {
 
     it('defaults the new-session wizard column layout preference to disabled', () => {
         expect(ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS.newSessionWizardColumnsEnabled.default).toBe(false);
+    });
+
+    it('defaults the new-session route presentation mode to auto', () => {
+        expect(NEW_SESSION_PRESENTATION_MODES).toEqual(['auto', 'screen', 'modal']);
+        expect(ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS.newSessionPresentationModeV1.default).toBe('auto');
+        expect(ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS.newSessionPresentationModeV1.storageScope).toBe('account');
+    });
+
+    it('accepts only supported new-session route presentation modes', () => {
+        const schema = ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS.newSessionPresentationModeV1.schema;
+
+        expect(schema.parse('screen')).toBe('screen');
+        expect(schema.parse('modal')).toBe('modal');
+        expect(schema.parse('invalid')).toBe('auto');
     });
 
     it('stores remembered engine selections as account-scoped session creation settings', () => {
@@ -34,6 +49,32 @@ describe('account session creation setting definitions', () => {
         expect(parsed).toEqual({
             models: 'dropdown',
             machines: 'list',
+        });
+    });
+
+    it('imports flat Oh My Pi selection and keeps the local setting structured', () => {
+        const schema = ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS.lastUsedBackendTarget.schema;
+
+        expect(schema.parse({
+            kind: 'builtInAgent',
+            agentId: 'ohMyPi',
+        })).toEqual({
+            kind: 'agent',
+            identity: {
+                pluginId: 'happier.agent.ohmypi',
+                localId: 'ohmypi',
+            },
+        });
+    });
+
+    it('imports a predecessor Oh My Pi transcript-default key into the qualified identity', () => {
+        const schema = ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS
+            .newSessionDefaultPersistenceModeByTargetKeyV1.schema;
+
+        expect(schema.parse({
+            'agent:ohMyPi': 'direct',
+        })).toEqual({
+            'agent:happier.agent.ohmypi/ohmypi': 'direct',
         });
     });
 });

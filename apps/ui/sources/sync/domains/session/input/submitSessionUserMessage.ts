@@ -1,5 +1,8 @@
+import { readPendingLocalId, withSessionUserMessageDeliveryIntentMeta } from '@happier-dev/protocol';
+
 import { getPendingQueueWakeResumeOptions } from '@/sync/domains/pending/pendingQueueWake';
 import { classifyAgentSessionComposerNonSteerablePayload } from '@/agents/registry/registryUiBehavior';
+import { HappyError } from '@/utils/errors/errors';
 import {
     canDirectSubmitUserMessageNow,
     decideSessionMessageDelivery,
@@ -13,10 +16,15 @@ import type {
     DirectMessageBypassReason,
     PendingMessageSubmitResult,
     SessionSubmitPort,
+    SubmitPersistence,
     SubmitSessionUserMessageOptions,
     SubmitSessionUserMessageResult,
 } from './types';
 import { recordSessionMessageDeliveryDecision } from './sessionMessageDeliveryTelemetry';
+import {
+    canSendUserMessageToSession,
+    SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE,
+} from './sessionMessageSendEligibility';
 
 type ResolvedSubmitDecision = Readonly<{
     decision: SessionMessageDeliveryDecision;
@@ -30,10 +38,66 @@ function getErrorMessage(error: unknown, fallback: string): string {
     return error instanceof Error && error.message.trim().length > 0 ? error.message : fallback;
 }
 
+function getErrorCode(error: unknown): string | undefined {
+    if (error instanceof HappyError && typeof error.code === 'string' && error.code.trim().length > 0) {
+        return error.code;
+    }
+    if (!error || typeof error !== 'object' || Array.isArray(error)) {
+        return undefined;
+    }
+    const code = (error as Readonly<Record<string, unknown>>).errorCode;
+    return typeof code === 'string' && code.trim().length > 0 ? code : undefined;
+}
+
+function getSubmitSendFailure(error: unknown, fallback: string): Pick<SubmitSessionUserMessageResult, 'errorCode' | 'errorMessage'> {
+    const errorCode = getErrorCode(error);
+    return {
+        ...(errorCode ? { errorCode } : {}),
+        errorMessage: getErrorMessage(error, fallback),
+    };
+}
+
 function readLocalId(result: PendingMessageSubmitResult | DirectMessageSubmitResult): string | undefined {
     return result && typeof result === 'object' && typeof result.localId === 'string'
         ? result.localId
         : undefined;
+}
+
+type DirectSubmitPersistence = Extract<SubmitPersistence, 'pending' | 'transcript_committed' | 'provider_direct'>;
+
+function readDirectSubmitPersistence(result: DirectMessageSubmitResult): DirectSubmitPersistence | undefined {
+    if (!result || typeof result !== 'object') {
+        return undefined;
+    }
+    switch (result.persistence) {
+        case 'pending':
+        case 'transcript_committed':
+        case 'provider_direct':
+            return result.persistence;
+        default:
+            return undefined;
+    }
+}
+
+function hasTranscriptCommitEvidence(result: DirectMessageSubmitResult): boolean {
+    return Boolean(
+        result
+            && typeof result === 'object'
+            && typeof result.seq === 'number'
+            && Number.isFinite(result.seq),
+    );
+}
+
+function resolveDirectSubmitPersistence(
+    result: DirectMessageSubmitResult,
+    sawLocalPendingProjection: boolean,
+): DirectSubmitPersistence {
+    return readDirectSubmitPersistence(result)
+        ?? (hasTranscriptCommitEvidence(result)
+            ? 'transcript_committed'
+            : sawLocalPendingProjection
+                ? 'pending'
+                : 'transcript_committed');
 }
 
 function resolveSubmitDecision(opts: SubmitSessionUserMessageOptions): SessionMessageDeliveryDecision {
@@ -59,7 +123,13 @@ function resolveSubmitDecision(opts: SubmitSessionUserMessageOptions): SessionMe
 }
 
 function requestedPendingQueue(opts: SubmitSessionUserMessageOptions): boolean {
-    return (opts.explicitMode ?? opts.configuredMode) === 'server_pending';
+    const requestedMode = opts.explicitMode ?? opts.configuredMode;
+    return requestedMode === 'server_pending' || requestedMode === 'interrupt';
+}
+
+function usesExistingDurablePendingMessage(opts: SubmitSessionUserMessageOptions): boolean {
+    return opts.existingDurablePendingMessage === true
+        && readPendingLocalId(opts.localId) !== null;
 }
 
 function isUnknownPendingQueueSupport(decision: SessionMessageDeliveryDecision): boolean {
@@ -71,6 +141,9 @@ function shouldFailClosedForUnknownPendingSupport(
     opts: SubmitSessionUserMessageOptions,
     decision: SessionMessageDeliveryDecision,
 ): boolean {
+    if (usesExistingDurablePendingMessage(opts)) {
+        return false;
+    }
     if (!isUnknownPendingQueueSupport(decision)) {
         return false;
     }
@@ -99,6 +172,9 @@ function shouldRejectUnsupportedPendingQueue(
     opts: SubmitSessionUserMessageOptions,
     mode: MessageSendMode,
 ): boolean {
+    if (usesExistingDurablePendingMessage(opts)) {
+        return false;
+    }
     if (!requestedPendingQueue(opts) || !isPendingQueueSubmitKnownUnsupported(opts.session)) {
         return false;
     }
@@ -134,6 +210,26 @@ function rejectUnknownPendingQueueSupport(errorMessage?: string): SubmitSessionU
             ? `The pending queue could not be confirmed for this session: ${errorMessage}`
             : 'The pending queue could not be confirmed for this session. Try again after the session refreshes or send this message immediately.',
     };
+}
+
+function rejectInactiveSessionNotResumable(): SubmitSessionUserMessageResult {
+    return {
+        type: 'rejected',
+        persistence: 'none',
+        wake: { attempted: false, state: 'not_needed' },
+        errorCode: SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE,
+        errorMessage: 'This inactive session cannot be resumed, so the message was not queued.',
+    };
+}
+
+function shouldRejectInactiveNonResumablePendingWake(
+    opts: SubmitSessionUserMessageOptions,
+    decision: SessionMessageDeliveryDecision,
+): boolean {
+    if (decision.mode !== 'server_pending') return false;
+    return !canSendUserMessageToSession(opts.session, {
+        resumeCapabilityOptions: opts.resumeCapabilityOptions,
+    });
 }
 
 async function resolveSubmitDecisionWithSupportRefresh(
@@ -220,14 +316,15 @@ async function directSend(
     try {
         let didMarkOutboundHandoff = false;
         let handoffLocalId: string | undefined;
-        const markOutboundHandoff = (localId?: string) => {
+        let sawLocalPendingProjection = false;
+        const markOutboundHandoff = (persistence: DirectSubmitPersistence, localId?: string) => {
             if (didMarkOutboundHandoff) {
                 return;
             }
             didMarkOutboundHandoff = true;
             handoffLocalId = localId;
             opts.onOutboundHandoff?.({
-                persistence: 'transcript_committed',
+                persistence,
                 ...(localId ? { localId } : {}),
             });
         };
@@ -236,7 +333,10 @@ async function directSend(
             localId: opts.localId ?? undefined,
             bypassPendingQueueReason,
             onLocalPendingProjectionCreated: opts.onOutboundHandoff
-                ? ({ localId }: { localId: string }) => markOutboundHandoff(localId)
+                ? ({ localId }: { localId: string }) => {
+                    sawLocalPendingProjection = true;
+                    markOutboundHandoff('pending', localId);
+                }
                 : undefined,
         };
         const sendResult = await port.sendMessage(
@@ -247,12 +347,14 @@ async function directSend(
             sendOptions,
         );
         const localId = readLocalId(sendResult) ?? handoffLocalId ?? opts.localId ?? undefined;
+        const persistence = resolveDirectSubmitPersistence(sendResult, sawLocalPendingProjection);
         if (!didMarkOutboundHandoff) {
-            markOutboundHandoff(localId);
+            markOutboundHandoff(persistence, localId);
         }
         return {
             type: 'success',
-            persistence: 'transcript_committed',
+            persistence,
+            ...(sendResult?.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
             wake: { attempted: false, state: 'not_needed' },
             localId,
         };
@@ -261,7 +363,7 @@ async function directSend(
             type: 'send_failed',
             persistence: 'none',
             wake: { attempted: false, state: 'not_needed' },
-            errorMessage: getErrorMessage(error, 'Failed to send message'),
+            ...getSubmitSendFailure(error, 'Failed to send message'),
         };
     }
 }
@@ -269,7 +371,9 @@ async function directSend(
 async function enqueuePending(
     port: SessionSubmitPort,
     opts: SubmitSessionUserMessageOptions,
+    decision: SessionMessageDeliveryDecision,
 ): Promise<SubmitSessionUserMessageResult> {
+    const requestedAction = opts.requestedAction ?? decision.requestedAction ?? { v: 1, kind: 'enqueue' as const };
     const wakeOpts = getPendingQueueWakeResumeOptions({
         sessionId: opts.sessionId,
         session: opts.session,
@@ -280,12 +384,32 @@ async function enqueuePending(
     });
 
     let enqueueResult: PendingMessageSubmitResult;
+    let didMarkOutboundHandoff = false;
+    let handoffLocalId: string | undefined;
+    const markOutboundHandoff = (localId?: string) => {
+        if (didMarkOutboundHandoff) {
+            return;
+        }
+        didMarkOutboundHandoff = true;
+        handoffLocalId = localId;
+        opts.onOutboundHandoff?.({
+            persistence: 'pending',
+            ...(localId ? { localId } : {}),
+        });
+    };
     try {
         enqueueResult = await port.enqueuePendingMessage(
             opts.sessionId,
             opts.text,
             opts.displayText,
-            opts.metaOverrides,
+            withSessionUserMessageDeliveryIntentMeta(opts.metaOverrides, decision.intent),
+            {
+                localId: opts.localId,
+                requestedAction,
+                onLocalPendingProjectionCreated: opts.onOutboundHandoff
+                    ? ({ localId }) => markOutboundHandoff(localId)
+                    : undefined,
+            },
         );
     } catch (error) {
         return {
@@ -296,11 +420,34 @@ async function enqueuePending(
         };
     }
 
-    const localId = readLocalId(enqueueResult);
-    opts.onOutboundHandoff?.({
-        persistence: 'pending',
-        ...(localId ? { localId } : {}),
-    });
+    const localId = readLocalId(enqueueResult) ?? handoffLocalId;
+    markOutboundHandoff(localId);
+    if (enqueueResult && typeof enqueueResult === 'object' && enqueueResult.cancelled === true) {
+        return {
+            type: 'rejected',
+            persistence: 'none',
+            wake: { attempted: false, state: 'not_needed' },
+            errorCode: 'PENDING_MESSAGE_CANCELLED',
+            errorMessage: 'Pending message was cancelled before dispatch',
+            localId,
+        };
+    }
+    if (enqueueResult && typeof enqueueResult === 'object' && enqueueResult.accepted === false) {
+        return {
+            type: 'wake_pending',
+            persistence: 'pending',
+            wake: { attempted: false, state: 'not_needed' },
+            localId,
+        };
+    }
+    if (enqueueResult && typeof enqueueResult === 'object' && enqueueResult.terminal === true) {
+        return {
+            type: 'success',
+            persistence: 'pending',
+            wake: { attempted: false, state: 'not_needed' },
+            localId,
+        };
+    }
     if (!wakeOpts) {
         return {
             type: 'wake_pending',
@@ -389,16 +536,88 @@ export async function submitSessionUserMessage(
         return rejectUnknownPendingQueueSupport(resolved.supportRefreshErrorMessage);
     }
 
-    if (mode === 'server_pending') {
-        return enqueuePending(port, effectiveOpts);
+    if (!usesExistingDurablePendingMessage(effectiveOpts) && shouldRejectInactiveNonResumablePendingWake(effectiveOpts, decision)) {
+        return rejectInactiveSessionNotResumable();
     }
 
-    if (mode === 'interrupt') {
+    if (usesExistingDurablePendingMessage(effectiveOpts)) {
+        const localId = effectiveOpts.localId!;
+        const requestedAction = effectiveOpts.requestedAction ?? decision.requestedAction ?? { v: 1, kind: 'enqueue' as const };
         try {
-            await port.abortSession?.(effectiveOpts.sessionId);
-        } catch {
-            // Best effort only; sending the user message still proceeds.
+            if (!port.updatePendingRequestedAction) {
+                throw new Error('Pending action mutation is unavailable');
+            }
+            await port.updatePendingRequestedAction(effectiveOpts.sessionId, localId, requestedAction);
+        } catch (error) {
+            const errorMessage = getErrorMessage(error, 'Failed to update pending action');
+            return {
+                type: 'wake_failed',
+                persistence: 'pending',
+                wake: { attempted: true, state: 'failed', errorMessage },
+                errorMessage,
+                localId,
+            };
         }
+        if (effectiveOpts.session.active === false) {
+            const wakeOpts = getPendingQueueWakeResumeOptions({
+                sessionId: effectiveOpts.sessionId,
+                session: effectiveOpts.session,
+                resumeCapabilityOptions: effectiveOpts.resumeCapabilityOptions,
+                resumeTargetOverride: effectiveOpts.resumeTargetOverride,
+                permissionOverride: effectiveOpts.permissionOverride,
+                canWakeMachineId: port.canWakeMachineId,
+            });
+            if (!wakeOpts) {
+                const errorMessage = 'This inactive session cannot be resumed; the pending message remains queued.';
+                return {
+                    type: 'wake_failed',
+                    persistence: 'pending',
+                    wake: { attempted: false, state: 'failed', errorMessage },
+                    errorCode: SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE,
+                    errorMessage,
+                    localId,
+                };
+            }
+            try {
+                const wakeResult = await port.resumeSession({
+                    ...wakeOpts,
+                    executionAuthorization: {
+                        provenance: 'user_request',
+                        requestId: localId,
+                    },
+                    ...(effectiveOpts.serverId ? { serverId: effectiveOpts.serverId } : {}),
+                });
+                if (wakeResult.type === 'error') {
+                    return {
+                        type: 'wake_pending',
+                        persistence: 'pending',
+                        wake: { attempted: true, state: 'failed', errorMessage: wakeResult.errorMessage },
+                        errorCode: wakeResult.errorCode,
+                        errorMessage: wakeResult.errorMessage,
+                        localId,
+                    };
+                }
+            } catch (error) {
+                const errorMessage = getErrorMessage(error, 'Failed to resume session');
+                return {
+                    type: 'wake_pending',
+                    persistence: 'pending',
+                    wake: { attempted: true, state: 'failed', errorMessage },
+                    errorMessage,
+                    localId,
+                };
+            }
+        }
+        return {
+            type: 'success',
+            persistence: 'pending',
+            wake: { attempted: false, state: 'not_needed' },
+            localId,
+        };
+    }
+
+    if (mode === 'server_pending' || mode === 'interrupt') {
+        return enqueuePending(port, effectiveOpts, decision);
     }
 
     return directSend(

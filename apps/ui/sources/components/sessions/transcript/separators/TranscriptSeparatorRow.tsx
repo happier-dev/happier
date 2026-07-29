@@ -68,6 +68,9 @@ export function TranscriptSeparatorRow(props: Readonly<{
         ) : (
           <View
             testID={props.chipTestID}
+            accessible
+            accessibilityLabel={props.accessibilityLabel ?? props.title}
+            accessibilityRole="text"
             style={[
               styles.chip,
               chipChrome === 'minimal' ? styles.chipMinimal : null,

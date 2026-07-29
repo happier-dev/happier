@@ -109,7 +109,7 @@ describe('ContextBar', () => {
         const screen = await renderScreen(React.createElement(ContextBar, {
             mode: 'machine_only',
             machine: {
-                title: 'settingsProviders.targetMachineTitle',
+                title: 'settingsAgents.targetMachineTitle',
                 selectedId: 'machine-1',
                 subtitle: 'Laptop',
                 items: [{ id: 'machine-1', title: 'Laptop' }],
@@ -118,7 +118,7 @@ describe('ContextBar', () => {
         }));
 
         const dropdown = screen.findByType('DropdownMenu');
-        expect(dropdown.props.itemTrigger.title).toBe('settingsProviders.targetMachineTitle');
+        expect(dropdown.props.itemTrigger.title).toBe('settingsAgents.targetMachineTitle');
     });
 
     it('shows a workspace browse button when browse config is provided', async () => {

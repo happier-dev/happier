@@ -39,7 +39,6 @@ const baseAttempt = {
         sessionId: 'session-a',
         shouldFollowBottom: false,
     },
-    slice: { capable: false as const },
     userScrollObserved: false,
 } satisfies EntryRestoreOwnerAttemptInput<Readonly<{ id: string }>>;
 
@@ -52,16 +51,27 @@ function executeEffects(effects: readonly EntryRestoreOwnerEffect[]) {
 }
 
 describe('entry restore owner', () => {
-    it('attempt anchored native entry opens the transaction and returns one semantic restore-anchor command', () => {
+    it.each([-2, 0, 2])(
+        'attempt anchored native entry emits one keyed semantic restore at offset %i',
+        (itemOffsetPx) => {
         const owner = createEntryRestoreOwner();
 
-        const effects = owner.attempt(baseAttempt);
+        const effects = owner.attempt({
+            ...baseAttempt,
+            restoredViewport: {
+                ...baseAttempt.restoredViewport,
+                anchor: {
+                    ...baseAttempt.restoredViewport.anchor,
+                    itemOffsetPx,
+                },
+            },
+        });
 
         expect(executeEffects(effects)).toEqual([
             {
                 command: {
                     anchor: targetAnchor,
-                    itemOffsetPx: 84,
+                    itemOffsetPx,
                     reason: 'entry-restore',
                     sessionId: 'session-a',
                     type: 'restore-anchor',
@@ -87,7 +97,8 @@ describe('entry restore owner', () => {
             observedDistanceFromBottom: 40,
             sessionId: 'session-a',
         })).toBe(120);
-    });
+        },
+    );
 
     it('content and layout churn after the initial write does not reissue entry restore', () => {
         const owner = createEntryRestoreOwner();
@@ -184,89 +195,49 @@ describe('entry restore owner', () => {
         expect(owner.telemetryState('session-a')).toBe('open');
     });
 
-    it('observe-only slice entry never emits a scroll command and reveals slice on close', () => {
-        const owner = createEntryRestoreOwner();
-
-        const effects = owner.attempt({
-            ...baseAttempt,
-            exactAnchorIndex: null,
-            slice: {
-                anchorRowId: 'msg:m-20',
-                capable: true,
-                renderedAnchor: anchor,
-                renderedAnchorIndex: 2,
-                target: {
-                    anchorItemOffsetPx: 84,
-                    anchorMessageId: 'm-20',
-                    anchorSeq: 20,
-                    kind: 'slice',
-                },
-                writeFree: true,
-            },
-        });
-
-        expect(executeEffects(effects)).toEqual([]);
-        expect(effectTypes(effects)).toContain('set-entry-slice-window');
-
-        const closed = owner.observeNative({
-            contentHeight: 2400,
-            layoutHeight: 600,
-            nowMs: 1100,
-            observation: { status: 'aligned' },
-            sessionId: 'session-a',
-        });
-
-        expect(executeEffects(closed)).toEqual([]);
-        expect(effectTypes(closed)).toEqual([
-            'clear-entry-deadline',
-            'close-entry-ownership',
-            'record-restore-decision',
-            'native-initial-viewport-applied',
-            'reveal-entry-slice-window',
-        ]);
-        expect(owner.telemetryState('session-a')).toBe('closed');
-    });
-
-    it('falls through from a missing slice anchor to the durable loaded anchor instead of materializing older pages', () => {
+    it('carries the normalized durable anchor sequence for identity materialization', () => {
         const owner = createEntryRestoreOwner();
 
         const effects = owner.attempt({
             ...baseAttempt,
             canMaterializeOlder: true,
-            exactAnchorIndex: 2,
+            exactAnchorIndex: null,
             nearestAnchorIndex: null,
             restoredViewport: {
                 ...baseAttempt.restoredViewport,
-                anchorSeqLoaded: true,
-            },
-            slice: {
-                anchorRowId: null,
-                capable: true,
-                renderedAnchor: null,
-                renderedAnchorIndex: null,
-                target: {
-                    anchorItemOffsetPx: 84,
-                    anchorMessageId: 'stale-server-m-20',
-                    anchorSeq: 20,
-                    kind: 'slice',
+                anchor: {
+                    ...anchor,
+                    seq: 20.9,
                 },
-                writeFree: true,
+                anchorSeqLoaded: false,
             },
         });
 
-        expect(effectTypes(effects)).not.toContain('request-bounded-materialization');
-        expect(executeEffects(effects)).toEqual([
-            {
-                command: {
-                    anchor: targetAnchor,
-                    itemOffsetPx: 84,
-                    reason: 'entry-restore',
-                    sessionId: 'session-a',
-                    type: 'restore-anchor',
-                },
-                type: 'execute-command',
+        expect(effects).toContainEqual({
+            targetSeq: 20,
+            type: 'request-bounded-materialization',
+        });
+    });
+
+    it('keeps distance-only growth targetless even when bounded materialization is available', () => {
+        const owner = createEntryRestoreOwner();
+
+        const effects = owner.attempt({
+            ...baseAttempt,
+            canMaterializeOlder: true,
+            exactAnchorIndex: null,
+            nearestAnchorIndex: null,
+            restoredViewport: {
+                ...baseAttempt.restoredViewport,
+                anchor: null,
+                offsetY: 3000,
             },
-        ]);
+        });
+
+        expect(effects).toContainEqual({
+            targetSeq: null,
+            type: 'request-bounded-materialization',
+        });
     });
 
     it('disposeForExit telemeters the transaction session and does not schedule current-session paint effects', () => {
@@ -322,33 +293,54 @@ describe('entry restore owner', () => {
         ]);
     });
 
-    it('requires exact bottom confirmation for web bottom entry restore before closing', () => {
+    it('re-anchors a distance restore once settled measurements shrink content below the issued height', () => {
+        // Live capture 2026-07-13 (Happier-Perf sim, streaming session): the open fill
+        // measured content at an estimate-inflated 13708px, the persisted distance (177px
+        // from bottom) was written as an absolute offset into that space, then real row
+        // measurements shrank content to 9216px. The offset clamped to the bottom
+        // (distance 0) and the shrink direction blacked out every observation — the
+        // transaction never spent its correction and the viewport landed at the tail.
         const owner = createEntryRestoreOwner();
-
-        owner.beginWebBottom({
-            contentHeight: 10_785,
-            deadlineMs: 1500,
-            layoutHeight: 779,
-            nowMs: 1000,
-            sessionId: 'session-a',
+        owner.attempt({
+            ...baseAttempt,
+            contentHeight: 13708,
+            layoutHeight: 690,
+            exactAnchorIndex: null,
+            restoredViewport: {
+                ...baseAttempt.restoredViewport,
+                anchor: null,
+                offsetY: 177,
+            },
         });
 
-        const nearBottom = owner.observeWebHostFacts({
-            contentHeight: 10_785,
-            distanceFromBottom: 63,
-            layoutHeight: 779,
-            nowMs: 1050,
+        const hostFacts = (overrides: Readonly<{
+            contentHeight?: number;
+            mountSettleStable?: boolean;
+            nowMs?: number;
+        }>) => ({
+            contentHeight: 9216,
+            distanceFromBottom: 0,
+            layoutHeight: 690,
+            nowMs: 1300,
+            observedOffsetY: 8527,
             resolveAnchorObservation: () => null,
+            resolveSliceObservation: () => null,
             sessionId: 'session-a',
-            tolerancePx: 72,
+            tolerancePx: 32,
+            ...overrides,
         });
 
-        expect(executeEffects(nearBottom)).toEqual([
+        // Mid-churn (mount settle not yet stable): judgment stays withheld — no writes.
+        expect(executeEffects(owner.observeNativeHostFacts(hostFacts({ mountSettleStable: false })))).toEqual([]);
+
+        // Post-settle: the still-open transaction re-judges in distance space and spends
+        // its single correction against the SETTLED geometry.
+        expect(executeEffects(owner.observeNativeHostFacts(hostFacts({ mountSettleStable: true, nowMs: 1400 })))).toEqual([
             {
                 command: {
                     animated: false,
-                    contentHeight: 10_785,
-                    distanceFromLiveTailPx: 0,
+                    contentHeight: 9216,
+                    distanceFromLiveTailPx: 177,
                     reason: 'entry-restore',
                     sessionId: 'session-a',
                     type: 'restore-distance',
@@ -356,163 +348,15 @@ describe('entry restore owner', () => {
                 type: 'execute-command',
             },
         ]);
-        expect(effectTypes(nearBottom)).not.toContain('close-entry-ownership');
+
+        // The single-correction budget is spent (anti-storm invariant E1): further churn
+        // holds ownership without writing.
+        expect(executeEffects(owner.observeNativeHostFacts(hostFacts({
+            contentHeight: 9000,
+            mountSettleStable: true,
+            nowMs: 1500,
+        })))).toEqual([]);
         expect(owner.telemetryState('session-a')).toBe('open');
-
-        const exactBottom = owner.observeWebHostFacts({
-            contentHeight: 10_785,
-            distanceFromBottom: 0,
-            layoutHeight: 779,
-            nowMs: 1100,
-            resolveAnchorObservation: () => null,
-            sessionId: 'session-a',
-            tolerancePx: 72,
-        });
-
-        expect(effectTypes(exactBottom)).toEqual([
-            'clear-entry-deadline',
-            'close-entry-ownership',
-            'record-restore-decision',
-        ]);
-        expect(owner.telemetryState('session-a')).toBe('closed');
-    });
-
-    it('rechecks web bottom confirmation after late content-height settle and requests one corrective repin', () => {
-        const owner = createEntryRestoreOwner();
-
-        owner.beginWebBottom({
-            contentHeight: 11_556,
-            deadlineMs: 1500,
-            layoutHeight: 334,
-            nowMs: 1000,
-            sessionId: 'session-a',
-        });
-
-        const initiallyAligned = owner.observeWebHostFacts({
-            contentHeight: 11_556,
-            distanceFromBottom: 0,
-            layoutHeight: 334,
-            nowMs: 1050,
-            resolveAnchorObservation: () => null,
-            sessionId: 'session-a',
-            tolerancePx: 72,
-            wantsPinned: true,
-        });
-
-        expect(effectTypes(initiallyAligned)).toContain('close-entry-ownership');
-        expect(owner.telemetryState('session-a')).toBe('closed');
-
-        const lateSettled = owner.observeWebHostFacts({
-            contentHeight: 11_548,
-            distanceFromBottom: 8,
-            layoutHeight: 334,
-            nowMs: 1100,
-            resolveAnchorObservation: () => null,
-            sessionId: 'session-a',
-            tolerancePx: 72,
-            wantsPinned: true,
-        });
-        const repeatedLateSettled = owner.observeWebHostFacts({
-            contentHeight: 11_548,
-            distanceFromBottom: 8,
-            layoutHeight: 334,
-            nowMs: 1120,
-            resolveAnchorObservation: () => null,
-            sessionId: 'session-a',
-            tolerancePx: 72,
-            wantsPinned: true,
-        });
-
-        expect(executeEffects(lateSettled)).toEqual([]);
-        expect(lateSettled).toEqual([
-            {
-                reason: 'mount-settle',
-                sessionId: 'session-a',
-                type: 'request-bottom-follow-write',
-                writer: 'settle-reconfirm',
-            },
-        ]);
-        expect(executeEffects(repeatedLateSettled)).toEqual([]);
-    });
-
-    it('clears the web bottom settle confirmation after trusted-scroll preemption', () => {
-        const owner = createEntryRestoreOwner();
-
-        owner.beginWebBottom({
-            contentHeight: 11_556,
-            deadlineMs: 1500,
-            layoutHeight: 334,
-            nowMs: 1000,
-            sessionId: 'session-a',
-        });
-        owner.observeWebHostFacts({
-            contentHeight: 11_556,
-            distanceFromBottom: 0,
-            layoutHeight: 334,
-            nowMs: 1050,
-            resolveAnchorObservation: () => null,
-            sessionId: 'session-a',
-            tolerancePx: 72,
-            wantsPinned: true,
-        });
-
-        owner.preempt({ reason: 'trusted-scroll', sessionId: 'session-a' });
-        const afterEscapeStreamAppend = owner.observeWebHostFacts({
-            contentHeight: 11_700,
-            distanceFromBottom: 180,
-            layoutHeight: 334,
-            nowMs: 1100,
-            resolveAnchorObservation: () => null,
-            sessionId: 'session-a',
-            tolerancePx: 72,
-            wantsPinned: false,
-        });
-
-        expect(executeEffects(afterEscapeStreamAppend)).toEqual([]);
-        expect(effectTypes(afterEscapeStreamAppend)).toEqual([]);
-    });
-
-    it('requests scheduler authority instead of emitting a direct web bottom settle command', () => {
-        const owner = createEntryRestoreOwner();
-
-        owner.beginWebBottom({
-            contentHeight: 11_556,
-            deadlineMs: 1500,
-            layoutHeight: 334,
-            nowMs: 1000,
-            sessionId: 'session-a',
-        });
-        owner.observeWebHostFacts({
-            contentHeight: 11_556,
-            distanceFromBottom: 0,
-            layoutHeight: 334,
-            nowMs: 1050,
-            resolveAnchorObservation: () => null,
-            sessionId: 'session-a',
-            tolerancePx: 72,
-            wantsPinned: true,
-        });
-
-        const lateSettled = owner.observeWebHostFacts({
-            contentHeight: 11_548,
-            distanceFromBottom: 8,
-            layoutHeight: 334,
-            nowMs: 1100,
-            resolveAnchorObservation: () => null,
-            sessionId: 'session-a',
-            tolerancePx: 72,
-            wantsPinned: true,
-        });
-
-        expect(executeEffects(lateSettled)).toEqual([]);
-        expect(lateSettled).toEqual([
-            {
-                reason: 'mount-settle',
-                sessionId: 'session-a',
-                type: 'request-bottom-follow-write',
-                writer: 'settle-reconfirm',
-            },
-        ]);
     });
 
     it('on web, does not permanently close the transaction when items are empty before fill settles', () => {

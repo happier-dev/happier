@@ -38,6 +38,11 @@ import { useVisibleSessionListSourceState } from './useVisibleSessionListSourceS
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { readSessionRuntimePresentationFreshnessExpirations } from '@/sync/domains/session/attention/runtimePresentation';
 import { useSessionListRuntimeNowMs, useSessionListRuntimeWake } from './sessionListRuntimeClock';
+import {
+    readExternalAgentObservationPresentationInput,
+    resolveExternalAgentPresentationState,
+} from '@/components/sessions/presentation/externalSessionRuntimePresentation';
+import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 
 type SessionListGroupOrderV1 = Readonly<Record<string, ReadonlyArray<string> | undefined>>;
 type PinnedSessionKeysV1 = ReadonlyArray<string>;
@@ -66,8 +71,7 @@ function buildFolderAwareSessionListIndex(params: Readonly<{
     sessionFolderViewModeV1: unknown;
     sessionFolderAssignmentsBySessionKey: Readonly<Record<string, string | null>>;
 }>): FolderAwareSessionListIndexResult {
-    const folderTreeEnabled = params.storageFilter !== 'direct'
-        && params.sessionFoldersFeatureEnabled
+    const folderTreeEnabled = params.sessionFoldersFeatureEnabled
         && params.sessionFolderViewModeV1 === 'tree';
     if (!folderTreeEnabled) {
         return { items: params.source, folderFocus: null };
@@ -192,7 +196,6 @@ function buildVisibleSessionListIndex(params: Readonly<{
     sessionListSectionModeV1: 'activity' | 'single';
     sessionListAttentionPromotionModeV1: 'off' | 'global' | 'withinGroups';
     sessionListWorkingPlacementModeV1: 'off' | 'global' | 'withinGroups';
-    sessionListSeparateBackgroundWorkV1: boolean;
     sessionListFolderSortModeV1: 'foldersFirst' | 'mixed';
     activeSessionId: string | null;
     normalizedGroupOrder: SessionListGroupOrderV1;
@@ -243,7 +246,6 @@ function buildVisibleSessionListIndex(params: Readonly<{
         workingPlacement: {
             mode: params.sessionListWorkingPlacementModeV1,
             retainSessionKeys: params.retainWorkingSessionKeys,
-            separateBackgroundWork: params.sessionListSeparateBackgroundWorkV1,
         },
         presentation: {
             enabled: params.selection.enabled,
@@ -285,7 +287,6 @@ export function useVisibleSessionListViewState(
     const sessionListWorkingPlacementModeV1 = normalizeSessionListWorkingPlacementMode(
         useSetting('sessionListWorkingPlacementModeV1'),
     );
-    const sessionListSeparateBackgroundWorkV1 = useSetting('sessionListSeparateBackgroundWorkV1') === true;
     const sessionFolderViewModeV1 = useSetting('sessionFolderViewModeV1');
     const sessionFoldersFeatureEnabled = useFeatureEnabled('sessions.folders');
     const collapsedGroupKeysV1 = (useLocalSetting('collapsedGroupKeysV1') ?? {}) as Readonly<Record<string, boolean>>;
@@ -390,7 +391,6 @@ export function useVisibleSessionListViewState(
             sessionListFolderSortModeV1,
             sessionListAttentionPromotionModeV1,
             sessionListWorkingPlacementModeV1,
-            sessionListSeparateBackgroundWorkV1,
             activeSessionId,
             normalizedGroupOrder,
             sessionListGroupOrderV1,
@@ -425,7 +425,6 @@ export function useVisibleSessionListViewState(
         sessionWorkspaceOrderV1,
         sessionListAttentionPromotionModeV1,
         sessionListWorkingPlacementModeV1,
-        sessionListSeparateBackgroundWorkV1,
         sessionRowStateByServerId,
         sessionIdsWithOpenApprovals,
         sessionFolderAssignmentsBySessionKey,
@@ -453,6 +452,17 @@ export function useVisibleSessionListViewState(
             if (!row) continue;
             for (const expiresAtMs of readSessionRuntimePresentationFreshnessExpirations(row, runtimeNowMs)) {
                 nextAtMs = nextAtMs === null ? expiresAtMs : Math.min(nextAtMs, expiresAtMs);
+            }
+            if (readExternalSessionLink(row.metadata)) {
+                const externalAgentExpiryAtMs = resolveExternalAgentPresentationState(
+                    readExternalAgentObservationPresentationInput(row.metadata),
+                    runtimeNowMs,
+                ).nextExpiryAtMs;
+                if (externalAgentExpiryAtMs !== null) {
+                    nextAtMs = nextAtMs === null
+                        ? externalAgentExpiryAtMs
+                        : Math.min(nextAtMs, externalAgentExpiryAtMs);
+                }
             }
         }
         return nextAtMs;
@@ -535,7 +545,7 @@ export function useVisibleSessionListViewState(
     ]);
 
     const folderFocus = React.useMemo(() => {
-        if (storageFilter === 'direct' || !sessionFoldersFeatureEnabled || sessionFolderViewModeV1 !== 'tree' || !source) return null;
+        if (!sessionFoldersFeatureEnabled || sessionFolderViewModeV1 !== 'tree' || !source) return null;
         return applySessionFolderTreeToSessionListIndex({
             source,
             folders: sessionFoldersV1,

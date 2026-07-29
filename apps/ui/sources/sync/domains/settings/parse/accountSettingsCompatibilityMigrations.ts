@@ -1,18 +1,153 @@
-import { normalizeCodexBackendMode } from '@happier-dev/protocol';
+import {
+    SecretStringV1Schema,
+    VoiceCredentialBindingV1Schema,
+} from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { z } from 'zod';
 
 import { getAgentCore } from '@/agents/registry/registryCore';
 import {
-    buildProviderUniverseBackendTargetKey,
-    listProviderUniverseIds,
-} from '@/agents/providers/registry/providerUniverse';
+    buildAgentUniverseBackendTargetKey,
+    listAgentUniverseIds,
+} from '@/agents/catalog/agentUniverse';
 import { CLAUDE_PERMISSION_MODES, CODEX_LIKE_PERMISSION_MODES, isPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 
 import { SessionTmuxMachineOverrideSchema } from '../registry/account/accountRuntimeSettingDefinitions';
 import { TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES } from '../registry/account/accountTranscriptToolSettingDefinitions';
+import { VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER } from '../voiceSettings';
 import { migrateAccountFeatureToggles } from './accountSettingsFeatureToggleMigration';
 import { normalizeAccountSettingsServerSelection } from './accountSettingsServerSelectionNormalization';
+
+function ownRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function readPath(root: unknown, path: readonly string[]): unknown {
+    let current: unknown = root;
+    for (const segment of path) {
+        const record = ownRecord(current);
+        if (!record || !Object.prototype.hasOwnProperty.call(record, segment)) return undefined;
+        current = record[segment];
+    }
+    return current;
+}
+
+function writePath(root: Record<string, unknown>, path: readonly string[], value: unknown): void {
+    let current = root;
+    path.forEach((segment, index) => {
+        if (index === path.length - 1) {
+            current[segment] = value;
+            return;
+        }
+        const child = ownRecord(current[segment]) ?? {};
+        current[segment] = child;
+        current = child;
+    });
+}
+
+function deletePath(root: Record<string, unknown>, path: readonly string[]): void {
+    let current: Record<string, unknown> | null = root;
+    for (let index = 0; index < path.length - 1; index += 1) {
+        current = ownRecord(current?.[path[index]!]);
+        if (!current) return;
+    }
+    if (current) delete current[path[path.length - 1]!];
+}
+
+function migrateLegacyVoiceSavedSecrets(input: Record<string, unknown>, next: Record<string, unknown>): void {
+    const rawVoice = ownRecord(input.voice);
+    const voice = ownRecord(next.voice);
+    if (!rawVoice || !voice) return;
+    const adapters = ownRecord(rawVoice.adapters);
+    if (!adapters) return;
+
+    const candidates = [
+        { providerId: 'realtime_elevenlabs', slotId: 'api_key', path: ['realtime_elevenlabs', 'byo', 'apiKey'], canonicalPath: ['providers', 'realtime_elevenlabs', 'config', 'byo', 'apiKey'] },
+        { providerId: 'google_gemini', slotId: 'api_key', path: ['local_direct', 'stt', 'googleGemini', 'apiKey'], canonicalPath: ['providers', 'local_direct', 'config', 'stt', 'providers', 'google_gemini', 'config', 'apiKey'] },
+        { providerId: 'google_cloud', slotId: 'api_key', path: ['local_direct', 'tts', 'googleCloud', 'apiKey'], canonicalPath: ['providers', 'local_direct', 'config', 'tts', 'providers', 'google_cloud', 'config', 'apiKey'] },
+        { providerId: 'openai_compat', slotId: 'stt_api_key', path: ['local_direct', 'stt', 'openaiCompat', 'apiKey'], canonicalPath: ['providers', 'local_direct', 'config', 'stt', 'openaiCompat', 'apiKey'] },
+        { providerId: 'openai_compat', slotId: 'tts_api_key', path: ['local_direct', 'tts', 'openaiCompat', 'apiKey'], canonicalPath: ['providers', 'local_direct', 'config', 'tts', 'openaiCompat', 'apiKey'] },
+        { providerId: 'openai_compat', slotId: 'chat_api_key', path: ['local_conversation', 'agent', 'openaiCompat', 'chatApiKey'], canonicalPath: ['providers', 'local_conversation', 'config', 'agent', 'openaiCompat', 'chatApiKey'] },
+    ] as const;
+    const secrets = Array.isArray(next.secrets) ? [...next.secrets] : [];
+    const bindings = Array.isArray(voice.credentialBindings)
+        ? [...voice.credentialBindings]
+        : [];
+    const preservedAdapters: Record<string, unknown> = {};
+
+    for (const candidate of candidates) {
+        const rawSecret = readPath(adapters, candidate.path);
+        if (rawSecret == null) continue;
+        const existingBindingIndex = bindings.findIndex((entry) => {
+            const parsed = VoiceCredentialBindingV1Schema.safeParse(entry);
+            return parsed.success && parsed.data.providerId === candidate.providerId;
+        });
+        const existingBinding = existingBindingIndex < 0
+            ? null
+            : VoiceCredentialBindingV1Schema.safeParse(bindings[existingBindingIndex]);
+        const parsedSecret = SecretStringV1Schema.safeParse(rawSecret);
+        if (!parsedSecret.success) {
+            writePath(preservedAdapters, candidate.path, rawSecret);
+            deletePath(voice, candidate.canonicalPath);
+            continue;
+        }
+        const boundSecretId = existingBinding?.success
+            ? existingBinding.data.credentialBindings.account?.[candidate.slotId]
+            : undefined;
+        if (boundSecretId) {
+            const boundSecret = secrets.find((entry) => ownRecord(entry)?.id === boundSecretId);
+            if (JSON.stringify(ownRecord(boundSecret)?.encryptedValue) !== JSON.stringify(parsedSecret.data)) {
+                writePath(preservedAdapters, candidate.path, rawSecret);
+            }
+            deletePath(voice, candidate.canonicalPath);
+            continue;
+        }
+        const secretId = `voice:${candidate.providerId}:${candidate.slotId}`;
+        const colliding = secrets.find((entry) => ownRecord(entry)?.id === secretId);
+        if (colliding && JSON.stringify(ownRecord(colliding)?.encryptedValue) !== JSON.stringify(parsedSecret.data)) {
+            writePath(preservedAdapters, candidate.path, rawSecret);
+            deletePath(voice, candidate.canonicalPath);
+            continue;
+        }
+        if (!colliding) {
+            secrets.push({
+                id: secretId,
+                name: `Voice: ${candidate.providerId}`,
+                kind: 'apiKey',
+                encryptedValue: parsedSecret.data,
+                createdAt: 0,
+                updatedAt: 0,
+            });
+        }
+        const current = existingBinding?.success ? existingBinding.data : null;
+        const replacement = {
+            providerId: candidate.providerId,
+            credentialBindings: {
+                ...(current?.credentialBindings ?? {}),
+                account: {
+                    ...(current?.credentialBindings.account ?? {}),
+                    [candidate.slotId]: secretId,
+                },
+            },
+        };
+        if (existingBindingIndex >= 0) bindings[existingBindingIndex] = replacement;
+        else bindings.push(replacement);
+        deletePath(voice, candidate.canonicalPath);
+    }
+
+    next.secrets = secrets;
+    voice.credentialBindings = bindings;
+    if (Object.keys(preservedAdapters).length > 0) {
+        voice.adapters = preservedAdapters;
+        voice[VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER] = true;
+    } else {
+        delete voice.adapters;
+        delete voice[VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER];
+    }
+    next.voice = voice;
+}
 
 export function applyAccountSettingsCompatibilityMigrations<TSettings extends Record<string, unknown>>(params: {
     input: Record<string, unknown>;
@@ -22,6 +157,8 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
 }): TSettings {
     const { input, inputSchemaVersion, supportedSchemaVersion } = params;
     const next = { ...params.settings } as Record<string, unknown>;
+
+    migrateLegacyVoiceSavedSecrets(input, next);
 
     if (next.preferredLanguage === 'zh') {
         next.preferredLanguage = 'zh-Hans';
@@ -108,10 +245,10 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
             : {};
         const legacyByAgent = input.backendEnabledById;
         if (legacyByAgent && typeof legacyByAgent === 'object' && !Array.isArray(legacyByAgent)) {
-            for (const agentId of listProviderUniverseIds()) {
+            for (const agentId of listAgentUniverseIds()) {
                 const raw = (legacyByAgent as Record<string, unknown>)[agentId];
                 if (typeof raw === 'boolean') {
-                    byTargetKey[buildProviderUniverseBackendTargetKey(agentId)] = raw;
+                    byTargetKey[buildAgentUniverseBackendTargetKey(agentId)] = raw;
                 }
             }
         }
@@ -124,10 +261,10 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
             : {};
         const legacyByAgent = input.backendCliSourcePreferenceById;
         if (legacyByAgent && typeof legacyByAgent === 'object' && !Array.isArray(legacyByAgent)) {
-            for (const agentId of listProviderUniverseIds()) {
+            for (const agentId of listAgentUniverseIds()) {
                 const raw = (legacyByAgent as Record<string, unknown>)[agentId];
                 if (raw === 'system-first' || raw === 'managed-first') {
-                    byTargetKey[buildProviderUniverseBackendTargetKey(agentId)] = raw;
+                    byTargetKey[buildAgentUniverseBackendTargetKey(agentId)] = raw;
                 }
             }
         }
@@ -140,13 +277,13 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
             : {};
         const legacyByAgent = input.sessionDefaultPermissionModeByAgent;
         if (legacyByAgent && typeof legacyByAgent === 'object' && !Array.isArray(legacyByAgent)) {
-            for (const agentId of listProviderUniverseIds()) {
+            for (const agentId of listAgentUniverseIds()) {
                 const raw = (legacyByAgent as Record<string, unknown>)[agentId];
                 if (isPermissionMode(raw)) {
                     const group = getAgentCore(agentId).permissions.modeGroup;
                     const allowed = group === 'codexLike' ? CODEX_LIKE_PERMISSION_MODES : CLAUDE_PERMISSION_MODES;
                     if (!(allowed as readonly string[]).includes(raw)) continue;
-                    byTargetKey[buildProviderUniverseBackendTargetKey(agentId)] = raw;
+                    byTargetKey[buildAgentUniverseBackendTargetKey(agentId)] = raw;
                 }
             }
         }
@@ -154,10 +291,10 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
             const parsed = parsePermissionIntentAlias(input.lastUsedPermissionMode);
             if (parsed) {
                 const seededMode: PermissionMode = parsed === 'plan' ? 'read-only' : parsed;
-                for (const to of listProviderUniverseIds()) {
+                for (const to of listAgentUniverseIds()) {
                     const group = getAgentCore(to).permissions.modeGroup;
                     const allowed = group === 'codexLike' ? CODEX_LIKE_PERMISSION_MODES : CLAUDE_PERMISSION_MODES;
-                    byTargetKey[buildProviderUniverseBackendTargetKey(to)] =
+                    byTargetKey[buildAgentUniverseBackendTargetKey(to)] =
                         (allowed as readonly string[]).includes(seededMode) ? seededMode : 'default';
                 }
             }
@@ -171,23 +308,14 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
             : {};
         const legacyByAgent = input.newSessionDefaultPersistenceModeByAgentV1;
         if (legacyByAgent && typeof legacyByAgent === 'object' && !Array.isArray(legacyByAgent)) {
-            for (const agentId of listProviderUniverseIds()) {
+            for (const agentId of listAgentUniverseIds()) {
                 const raw = (legacyByAgent as Record<string, unknown>)[agentId];
                 if (raw === 'direct' || raw === 'persisted') {
-                    byTargetKey[buildProviderUniverseBackendTargetKey(agentId)] = raw;
+                    byTargetKey[buildAgentUniverseBackendTargetKey(agentId)] = raw;
                 }
             }
         }
         next.newSessionDefaultPersistenceModeByTargetKeyV1 = byTargetKey;
-    }
-
-    if (inputSchemaVersion < 6) {
-        const migrated = normalizeCodexBackendMode(input.codexBackendMode);
-        if (migrated) {
-            next.codexBackendMode = migrated;
-        } else if (!normalizeCodexBackendMode(next.codexBackendMode)) {
-            next.codexBackendMode = 'appServer';
-        }
     }
 
     if (inputSchemaVersion < 4 && !Object.prototype.hasOwnProperty.call(input, 'sessionThinkingInlinePresentation') && next.sessionThinkingDisplayMode === 'inline') {
@@ -204,6 +332,17 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
         && next.filesDiffPresentationStyle === 'split'
     ) {
         next.filesDiffPresentationStyle = 'unified';
+    }
+
+    // The tab-bar blur preference was generalized into a single "glass surfaces"
+    // control governing every floating glass panel (tab bar, jump-to-bottom, …).
+    if (!('glassBlurEnabled' in input) && 'tabBarBlurEnabled' in input) {
+        const parsed = z.boolean().safeParse(input.tabBarBlurEnabled);
+        if (parsed.success) next.glassBlurEnabled = parsed.data;
+    }
+    if (!('glassBlurIntensity' in input) && 'tabBarBlurIntensity' in input) {
+        const parsed = z.enum(['light', 'regular', 'strong'] as const).safeParse(input.tabBarBlurIntensity);
+        if (parsed.success) next.glassBlurIntensity = parsed.data;
     }
 
     next.featureToggles = migrateAccountFeatureToggles({

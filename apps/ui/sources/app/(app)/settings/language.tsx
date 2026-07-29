@@ -85,14 +85,14 @@ export default function LanguageSettingsScreen() {
                         icon={<Ionicons 
                             name="language-outline" 
                             size={29} 
-                            color={theme.colors.accent.blue}
+                            color={currentSelection === option.key ? theme.colors.text.primary : theme.colors.text.secondary}
                         />}
                         rightElement={
                             currentSelection === option.key ? (
                                 <Ionicons 
                                     name="checkmark" 
                                     size={20} 
-                                    color={theme.colors.accent.blue}
+                                    color={theme.colors.text.primary}
                                 />
                             ) : null
                         }

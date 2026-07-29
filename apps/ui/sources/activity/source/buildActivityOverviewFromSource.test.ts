@@ -219,6 +219,7 @@ describe('buildActivityOverviewFromSource', () => {
                 },
             },
             nowMs: 1_000,
+            directActionsEnabled: true,
         });
 
         expect(overview.counts.unread).toBe(1);
@@ -272,7 +273,199 @@ describe('buildActivityOverviewFromSource', () => {
         });
     });
 
-    it('excludes non-user-facing session rows from activity candidates', () => {
+    it('does not promote provider runtime activity when hydrating a cached renderable row', () => {
+        const nowMs = 1_000_000;
+        const renderable = buildSessionListRenderableFromSession(createSessionFixture({
+            id: 'provider-runtime',
+            active: true,
+            activeAt: nowMs - 20_000,
+            presence: 'online',
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: nowMs - 1_000,
+            runtimeActivityRevision: nowMs + 60_000,
+        }));
+
+        const overview = buildActivityOverviewFromSource({
+            source: {
+                ...createSource({ sessions: [] }),
+                sessionsById: {},
+                sessionListRenderablesById: {},
+                sessionListIndexByServerId: {},
+                concurrentSessionListCacheByServerId: {
+                    'server-b': {
+                        serverName: 'Server B',
+                        sessions: {
+                            [renderable.id]: renderable,
+                        },
+                    },
+                },
+            },
+            nowMs,
+        });
+
+        expect(overview.counts.thinking).toBe(0);
+        expect(overview.candidates[0]).toMatchObject({
+            sessionId: 'provider-runtime',
+            attentionState: 'quiet',
+            hasAttention: false,
+        });
+    });
+
+    it('surfaces and clears same-seq newer permission summaries without inventing request identity', () => {
+        const canonicalSession = createSessionFixture({
+            id: 'hidden-summary-permission',
+            serverId: 'server-a',
+            seq: 4,
+            lastViewedSessionSeq: 4,
+            active: true,
+            presence: 'online',
+            agentStateVersion: 6,
+            agentState: null,
+            metadata: {
+                path: '/tmp/hidden-summary-permission',
+                host: 'test-host',
+                systemSessionV1: { v: 1, key: 'voice_conversation_retired', hidden: true },
+            },
+        });
+        const source = createSource({ sessions: [canonicalSession] });
+        const pendingRenderable = {
+            ...source.sessionListRenderablesById[canonicalSession.id]!,
+            agentStateVersion: 7,
+            hasPendingPermissionRequests: true,
+            hasPendingUserActionRequests: false,
+            pendingRequestObservedAt: 975,
+        };
+
+        const pendingOverview = buildActivityOverviewFromSource({
+            source: {
+                ...source,
+                sessionListRenderablesById: {
+                    [canonicalSession.id]: pendingRenderable,
+                },
+            },
+            nowMs: 1_000,
+            directActionsEnabled: true,
+        });
+
+        expect(pendingOverview.counts.permissionRequired).toBe(1);
+        expect(pendingOverview.candidates).toHaveLength(1);
+        expect(pendingOverview.candidates[0]).toMatchObject({
+            sessionId: canonicalSession.id,
+            attentionState: 'permission_required',
+            route: `/session/${canonicalSession.id}?serverId=server-a`,
+        });
+        expect(pendingOverview.candidates[0]!.session.agentState).toBeNull();
+
+        const clearedOverview = buildActivityOverviewFromSource({
+            source: {
+                ...source,
+                sessionListRenderablesById: {
+                    [canonicalSession.id]: {
+                        ...pendingRenderable,
+                        agentStateVersion: 8,
+                        hasPendingPermissionRequests: false,
+                        pendingRequestObservedAt: null,
+                    },
+                },
+            },
+            nowMs: 1_000,
+            directActionsEnabled: true,
+        });
+
+        expect(clearedOverview.counts.permissionRequired).toBe(0);
+        expect(clearedOverview.candidates).toEqual([]);
+    });
+
+    it('counts blocked pending delivery as action-required source activity', () => {
+        const overview = buildActivityOverviewFromSource({
+            source: createSource({
+                sessions: [
+                    createSessionFixture({
+                        id: 'blocked-pending',
+                        pendingCount: 1,
+                        pendingBlockedCount: 1,
+                        updatedAt: 20,
+                    }),
+                ],
+            }),
+            nowMs: 1_000,
+        });
+
+        expect(overview.counts.actionRequired).toBe(1);
+        expect(overview.candidates[0]).toMatchObject({
+            sessionId: 'blocked-pending',
+            reasons: {
+                hasBlockedPendingDelivery: true,
+            },
+        });
+    });
+
+    it('discovers Voice custody from canonical sessions even though hidden sessions are absent from the user-facing index', () => {
+        const hiddenPermission = createSessionFixture({
+            id: 'hidden-unindexed-permission',
+            active: true,
+            presence: 'online',
+            seq: 2,
+            lastViewedSessionSeq: 2,
+            pendingPermissionRequestCount: 1,
+            pendingRequestObservedAt: 975,
+            agentState: pendingAgentState('permission', 975),
+            updatedAt: 45,
+            serverId: 'server-a',
+            metadata: {
+                path: '/tmp/hidden-unindexed-permission',
+                host: 'test-host',
+                systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+            },
+        });
+        const hiddenLateResult = createSessionFixture({
+            id: 'hidden-unindexed-late-result',
+            seq: 4,
+            latestReadyEventSeq: 4,
+            lastViewedSessionSeq: 1,
+            updatedAt: 40,
+            serverId: 'server-a',
+            metadata: {
+                path: '/tmp/hidden-unindexed-late-result',
+                host: 'test-host',
+                systemSessionV1: { v: 1, key: 'voice_conversation_retired', hidden: true },
+            },
+        });
+        const source = createSource({
+            sessions: [hiddenPermission, hiddenLateResult],
+        });
+
+        const overview = buildActivityOverviewFromSource({
+            source: {
+                ...source,
+                // The canonical session list intentionally excludes hidden system
+                // sessions. Activity custody must therefore discover these records
+                // from the hydrated canonical session map rather than the list index.
+                sessionListIndexByServerId: {
+                    'server-a': [],
+                },
+            },
+            nowMs: 1_000,
+            directActionsEnabled: true,
+        });
+
+        expect(overview.candidates.map((candidate) => candidate.sessionId)).toEqual([
+            'hidden-unindexed-permission',
+            'hidden-unindexed-late-result',
+        ]);
+        expect(overview.counts).toMatchObject({
+            unread: 1,
+            permissionRequired: 1,
+            totalAttention: 2,
+        });
+        expect(overview.candidates[0]).toMatchObject({
+            route: '/session/hidden-unindexed-permission?serverId=server-a',
+            directActionCapability: { canExecute: true, reason: 'allowed' },
+        });
+    });
+
+    it('keeps quiet hidden system sessions out while surfacing hidden pending permissions and late results', () => {
         const visible = createSessionFixture({
             id: 'visible-unread',
             seq: 4,
@@ -281,14 +474,59 @@ describe('buildActivityOverviewFromSource', () => {
             updatedAt: 30,
         });
         const hidden = createSessionFixture({
-            id: 'hidden-system',
+            id: 'hidden-late-result',
             seq: 4,
+            latestReadyEventSeq: 4,
             lastViewedSessionSeq: 1,
             updatedAt: 40,
             metadata: {
                 path: '/tmp/hidden-system',
                 host: 'test-host',
                 systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true },
+            },
+        });
+        const hiddenPermission = createSessionFixture({
+            id: 'hidden-permission',
+            active: true,
+            presence: 'online',
+            seq: 2,
+            lastViewedSessionSeq: 2,
+            pendingPermissionRequestCount: 1,
+            pendingRequestObservedAt: 975,
+            agentState: pendingAgentState('permission', 975),
+            updatedAt: 45,
+            metadata: {
+                path: '/tmp/hidden-permission',
+                host: 'test-host',
+                systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+            },
+        });
+        const hiddenQuiet = createSessionFixture({
+            id: 'hidden-quiet',
+            seq: 4,
+            lastViewedSessionSeq: 4,
+            updatedAt: 35,
+            metadata: {
+                path: '/tmp/hidden-quiet',
+                host: 'test-host',
+                systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+            },
+        });
+        const unrelatedHiddenPermission = createSessionFixture({
+            id: 'voice-transcript-history',
+            active: true,
+            presence: 'online',
+            seq: 5,
+            latestReadyEventSeq: 5,
+            lastViewedSessionSeq: 1,
+            pendingPermissionRequestCount: 1,
+            pendingRequestObservedAt: 980,
+            agentState: pendingAgentState('permission', 980),
+            updatedAt: 55,
+            metadata: {
+                path: '/tmp/voice-transcript-history',
+                host: 'test-host',
+                systemSessionV1: { v: 1, key: 'voice_transcript_history', hidden: true },
             },
         });
         const unavailable = {
@@ -305,26 +543,113 @@ describe('buildActivityOverviewFromSource', () => {
 
         const overview = buildActivityOverviewFromSource({
             source: {
-                ...createSource({ sessions: [visible, hidden] }),
+                ...createSource({ sessions: [visible, hidden, hiddenPermission, hiddenQuiet, unrelatedHiddenPermission] }),
                 sessionListRenderablesById: {
                     [visible.id]: buildSessionListRenderableFromSession(visible),
                     [hidden.id]: buildSessionListRenderableFromSession(hidden),
+                    [hiddenPermission.id]: buildSessionListRenderableFromSession(hiddenPermission),
+                    [hiddenQuiet.id]: buildSessionListRenderableFromSession(hiddenQuiet),
+                    [unrelatedHiddenPermission.id]: buildSessionListRenderableFromSession(unrelatedHiddenPermission),
                     [unavailable.id]: unavailable,
                 },
                 sessionListIndexByServerId: {
                     'server-a': [
                         { type: 'session', sessionId: visible.id, serverId: 'server-a', serverName: 'Server A' },
                         { type: 'session', sessionId: hidden.id, serverId: 'server-a', serverName: 'Server A' },
+                        { type: 'session', sessionId: hiddenPermission.id, serverId: 'server-a', serverName: 'Server A' },
+                        { type: 'session', sessionId: hiddenQuiet.id, serverId: 'server-a', serverName: 'Server A' },
+                        { type: 'session', sessionId: unrelatedHiddenPermission.id, serverId: 'server-a', serverName: 'Server A' },
                         { type: 'session', sessionId: unavailable.id, serverId: 'server-a', serverName: 'Server A' },
                     ],
                 },
             },
             nowMs: 1_000,
+            directActionsEnabled: true,
         });
 
-        expect(overview.candidates.map((candidate) => candidate.sessionId)).toEqual(['visible-unread']);
-        expect(overview.counts.unread).toBe(1);
-        expect(overview.counts.totalAttention).toBe(1);
+        expect(overview.candidates.map((candidate) => candidate.sessionId)).toEqual([
+            'hidden-permission',
+            'hidden-late-result',
+            'visible-unread',
+        ]);
+        expect(overview.counts).toMatchObject({
+            unread: 2,
+            permissionRequired: 1,
+            totalAttention: 3,
+        });
+        expect(overview.candidates[0]).toMatchObject({
+            sessionId: 'hidden-permission',
+            route: '/session/hidden-permission?serverId=server-a',
+            target: 'open-session:hidden-permission?serverId=server-a',
+            directActionCapability: {
+                canExecute: true,
+                reason: 'allowed',
+            },
+        });
+    });
+
+    it('keeps permission and late-result custody reachable after a Voice session is retired and attention freshness expires', () => {
+        const retiredPermission = createSessionFixture({
+            id: 'retired-permission',
+            active: true,
+            presence: 'online',
+            seq: 2,
+            lastViewedSessionSeq: 2,
+            pendingPermissionRequestCount: 1,
+            pendingRequestObservedAt: 975,
+            agentState: pendingAgentState('permission', 975),
+            updatedAt: 45,
+            metadata: {
+                path: '/tmp/retired-permission',
+                host: 'test-host',
+                systemSessionV1: { v: 1, key: 'voice_conversation_retired', hidden: true },
+            },
+        });
+        const retiredLateResult = createSessionFixture({
+            id: 'retired-late-result',
+            seq: 4,
+            latestReadyEventSeq: 4,
+            lastViewedSessionSeq: 1,
+            updatedAt: 40,
+            metadata: {
+                path: '/tmp/retired-late-result',
+                host: 'test-host',
+                systemSessionV1: { v: 1, key: 'voice_conversation_retired', hidden: true },
+            },
+        });
+        const retiredQuiet = createSessionFixture({
+            id: 'retired-quiet',
+            seq: 4,
+            lastViewedSessionSeq: 4,
+            updatedAt: 35,
+            metadata: {
+                path: '/tmp/retired-quiet',
+                host: 'test-host',
+                systemSessionV1: { v: 1, key: 'voice_conversation_retired', hidden: true },
+            },
+        });
+
+        const overview = buildActivityOverviewFromSource({
+            source: createSource({
+                sessions: [retiredPermission, retiredLateResult, retiredQuiet],
+            }),
+            nowMs: 200_000,
+            directActionsEnabled: true,
+        });
+
+        expect(overview.candidates.map((candidate) => candidate.sessionId)).toEqual([
+            'retired-permission',
+            'retired-late-result',
+        ]);
+        expect(overview.counts).toMatchObject({
+            unread: 1,
+            permissionRequired: 1,
+            totalAttention: 2,
+        });
+        expect(overview.candidates[0]).toMatchObject({
+            route: '/session/retired-permission?serverId=server-a',
+            directActionCapability: { canExecute: true, reason: 'allowed' },
+        });
     });
 
     it('builds a stable fingerprint that ignores generated time fields outside visible meaning', () => {

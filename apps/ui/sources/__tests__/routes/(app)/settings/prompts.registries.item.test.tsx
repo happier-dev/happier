@@ -3,6 +3,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionSettingsEntryModuleMocks } from './sessionSettingsEntryTestHelpers';
+import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -38,7 +39,7 @@ installSessionSettingsEntryModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettingMutable: () => [{ v: 1, sources: [] }, vi.fn()],
+                useSettingMutable: createUseSettingMutableMockFromReader(() => [{ v: 1, sources: [] }, vi.fn()]),
             },
         });
     },

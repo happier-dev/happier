@@ -36,6 +36,7 @@ export interface UsageQueryParams {
     startTime?: number; // Unix timestamp in seconds
     endTime?: number;   // Unix timestamp in seconds
     groupBy?: UsagePeriodGranularity;
+    timeZoneOffsetMinutes?: number;
     costMode?: 'auto' | 'reported' | 'estimated';
     focus?: {
         dimension: string;
@@ -68,8 +69,8 @@ function buildFocusFilters(focus?: UsageQueryParams['focus']): UsageAnalyticsQue
     }
 
     switch (focus.dimension) {
-        case 'provider':
-            return { providerIds: [focus.key] };
+        case 'agent':
+            return { agentIds: [focus.key] };
         case 'model':
             return { modelIds: [focus.key] };
         case 'session':
@@ -126,6 +127,7 @@ export async function queryUsage(
                 : params.groupBy === 'month'
                     ? 'month'
                     : 'day',
+            timeZoneOffsetMinutes: params.timeZoneOffsetMinutes ?? 0,
             costMode: params.costMode ?? 'auto',
             includeInsights: true,
             includeActivity: true,
@@ -134,7 +136,7 @@ export async function queryUsage(
             includeMessageStats: true,
             activityResolution: 'both',
             breakdowns: [
-                'provider',
+                'agent',
                 'model',
                 'session',
                 'project',
@@ -256,6 +258,7 @@ export async function getUsageForPeriod(
         startTime,
         endTime,
         groupBy: definition.granularity,
+        timeZoneOffsetMinutes: -new Date().getTimezoneOffset(),
         focus,
         costMode,
     });

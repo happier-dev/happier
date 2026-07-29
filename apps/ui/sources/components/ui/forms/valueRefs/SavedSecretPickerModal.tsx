@@ -3,7 +3,7 @@ import * as React from 'react';
 import type { CustomModalInjectedProps } from '@/modal';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SecretsList } from '@/components/secrets/SecretsList';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 import { t } from '@/text';
 
 export type SavedSecretPickerModalProps = CustomModalInjectedProps & Readonly<{
@@ -12,7 +12,7 @@ export type SavedSecretPickerModalProps = CustomModalInjectedProps & Readonly<{
 }>;
 
 export function SavedSecretPickerModal(props: SavedSecretPickerModalProps) {
-    const [liveSecrets, setLiveSecrets] = useSettingMutable('secrets');
+    const [liveSecrets, setLiveSecrets] = useSavedSecretsMutable();
 
     return (
         <ItemList keyboardShouldPersistTaps="handled">

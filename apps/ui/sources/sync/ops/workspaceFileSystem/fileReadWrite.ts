@@ -10,6 +10,10 @@ import {
 } from '@/sync/domains/transfers/runtime/transferRuntime';
 
 import type { WorkspaceFileSystemTarget } from './directoryBrowsing';
+import { runTransferFinalizeRecovery } from '@/components/transfers/recovery/runTransferFinalizeRecovery';
+import { t } from '@/text';
+import { isTransferFinalizeRecoveryFailure } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/directTransferFinalizeRecovery';
+import type { WorkspaceFileUploadFinalizeResponse } from '@/sync/domains/transfers/runtime/transferRuntime/families/workspaceFileTransfers';
 
 const WORKSPACE_FILE_INLINE_MAX_BYTES_ENV_KEY = 'EXPO_PUBLIC_HAPPIER_SESSION_FILE_INLINE_MAX_BYTES';
 const DEFAULT_WORKSPACE_FILE_INLINE_MAX_BYTES = 256 * 1024;
@@ -135,7 +139,7 @@ export async function workspaceWriteFile(
 
     try {
         const sha256 = bytesToHex(await digest('SHA-256', contentBytes));
-        const upload = await uploadDaemonWorkspaceFileFromReader({
+        let upload = await uploadDaemonWorkspaceFileFromReader({
             machineId: target.machineId,
             serverId: target.serverId,
             rootPath: target.rootPath,
@@ -151,6 +155,26 @@ export async function workspaceWriteFile(
                 sha256,
             },
         });
+
+        if (isTransferFinalizeRecoveryFailure<WorkspaceFileUploadFinalizeResponse>(upload)) {
+            const recoveryResult = await runTransferFinalizeRecovery({
+                recovery: upload.recovery,
+                title: t('transferRecovery.title'),
+                message: t('transferRecovery.message'),
+            });
+            if (recoveryResult?.status === 'finalized') {
+                upload = recoveryResult.response;
+            } else {
+                upload = {
+                    success: false,
+                    error: recoveryResult?.status === 'unavailable'
+                        ? t('transferRecovery.unavailable')
+                        : recoveryResult?.status === 'discarded'
+                            ? t('transferRecovery.discarded')
+                            : upload.error,
+                };
+            }
+        }
 
         if (upload.success !== true) {
             return {

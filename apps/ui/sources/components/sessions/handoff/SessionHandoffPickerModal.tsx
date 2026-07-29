@@ -37,7 +37,9 @@ import {
 import { sync } from '@/sync/sync';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
-import { resolveMachineExactSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness';
+import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
+import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 import type { SessionHandoffPickerResult } from './openSessionHandoffPicker';
 
@@ -130,24 +132,31 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
         if (sessionRenderable) return sessionRenderable;
         return sessions.find((session: any) => normalizeId(session?.id) === normalizeId(sessionId)) ?? null;
     }, [sessionId, sessionRecord, sessionRenderable, sessions]);
+    const currentSessionMetadata = React.useMemo(() => {
+        if (sessionRecord) return readSessionOwnerMetadataView(sessionRecord);
+        if ((sessionRenderable?.metadataLayoutVersion ?? 0) !== 0) return null;
+        return sessionRenderable?.metadata ?? null;
+    }, [sessionRecord, sessionRenderable]);
     const resolvedSourceMachineId = React.useMemo(
         () => resolveSessionHandoffPickerSourceMachineId({
             sourceMachineId,
-            sessionMetadata: (currentSession as any)?.metadata,
+            sessionMetadata: currentSessionMetadata,
         }),
-        [currentSession, sourceMachineId],
+        [currentSessionMetadata, sourceMachineId],
     );
     const sourceMachine = React.useMemo(() => {
         if (!resolvedSourceMachineId) return null;
         return allServerMachines.find((machine: any) => normalizeId(machine?.id) === resolvedSourceMachineId) ?? null;
     }, [allServerMachines, resolvedSourceMachineId]);
-    const isExternalSession = Boolean((currentSession as any)?.metadata?.externalSessionV1);
+    const isExternalSession = Boolean(
+        readExternalSessionLink(currentSessionMetadata),
+    );
     const workspaceTransferPathSafety = React.useMemo(
         () => {
-            const sourceHomeDir = (currentSession as any)?.metadata?.homeDir;
+            const sourceHomeDir = currentSessionMetadata?.homeDir;
             const fallbackSourceHomeDir = (sourceMachine as any)?.metadata?.homeDir;
             const sourcePath = resolveAbsolutePath(
-                String((currentSession as any)?.metadata?.path ?? '').trim(),
+                String(currentSessionMetadata?.path ?? '').trim(),
                 sourceHomeDir ?? fallbackSourceHomeDir,
             );
             return evaluateSessionHandoffWorkspaceTransferSourcePathSafety({
@@ -156,7 +165,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                 fallbackSourceHomeDir,
             });
         },
-        [currentSession, sourceMachine],
+        [currentSessionMetadata, sourceMachine],
     );
 
     const machines = React.useMemo(() => {
@@ -218,7 +227,10 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
         [machines, selectedMachineId],
     );
     const selectedMachineReadiness = React.useMemo(
-        () => resolveMachineExactSpawnReadiness(selectedMachine as any, selectedMachineId),
+        () => resolveMachineSpawnReadiness({
+            machine: selectedMachine as any,
+            selectedMachineId,
+        }),
         [selectedMachine, selectedMachineId],
     );
     const [workspaceTransferEnabled, setWorkspaceTransferEnabled] = React.useState(sessionHandoffDefaults.workspaceTransferEnabled);

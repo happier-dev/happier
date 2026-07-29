@@ -33,8 +33,65 @@ function defineSizeProperty(node: Element, property: 'clientHeight' | 'scrollHei
     });
 }
 
+type ScrollRecorder = Readonly<{
+    writes: string[];
+    scrollToCalls: unknown[][];
+    originalScrollTo: () => void;
+}>;
+
+/**
+ * Instrument an element so every scroll mutation attempted against it is observable:
+ * - direct `scrollTop` / `scrollLeft` assignments are recorded,
+ * - `scrollTo(...)` invocations are recorded,
+ * - the installed `scrollTo` identity is captured so a replacement is detectable.
+ */
+function instrumentScrollElement(
+    node: HTMLElement,
+    input?: Readonly<{ honorsDomScrollToOptions?: boolean }>,
+): ScrollRecorder {
+    const writes: string[] = [];
+    const scrollToCalls: unknown[][] = [];
+    let scrollTop = 0;
+    let scrollLeft = 0;
+
+    Object.defineProperty(node, 'scrollTop', {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+            writes.push(`scrollTop=${value}`);
+            scrollTop = Number.isFinite(value) ? value : 0;
+        },
+    });
+    Object.defineProperty(node, 'scrollLeft', {
+        configurable: true,
+        get: () => scrollLeft,
+        set: (value: number) => {
+            writes.push(`scrollLeft=${value}`);
+            scrollLeft = Number.isFinite(value) ? value : 0;
+        },
+    });
+
+    const honorsDomScrollToOptions = input?.honorsDomScrollToOptions ?? true;
+    const originalScrollTo = (...args: unknown[]) => {
+        scrollToCalls.push(args);
+        const first = args[0];
+        if (first && typeof first === 'object') {
+            if (!honorsDomScrollToOptions) return;
+            const anyFirst = first as any;
+            if (typeof anyFirst.top === 'number') scrollTop = anyFirst.top;
+            if (typeof anyFirst.left === 'number') scrollLeft = anyFirst.left;
+            return;
+        }
+        if (typeof args[0] === 'number') scrollLeft = args[0] as number;
+        if (typeof args[1] === 'number') scrollTop = args[1] as number;
+    };
+    (node as any).scrollTo = originalScrollTo;
+
+    return { writes, scrollToCalls, originalScrollTo };
+}
+
 describe('PierreScrollRootVirtualizerProvider (web)', () => {
-    it('patches element scrollTo to support ScrollToOptions objects when missing', async () => {
+    it('never binds to, writes to, or patches a taller scrollable ancestor outside the diff subtree', async () => {
         vi.resetModules();
         setupSpy.mockClear();
         cleanUpSpy.mockClear();
@@ -48,67 +105,80 @@ describe('PierreScrollRootVirtualizerProvider (web)', () => {
         document.body.appendChild(container);
         const root = createRoot(container);
 
-        let scrollRoot: HTMLDivElement | null = null;
-        let scrollTop = 0;
-        let scrollLeft = 0;
+        let ancestorRoot: HTMLDivElement | null = null;
+        let nestedRoot: HTMLDivElement | null = null;
+        let ancestorRecorder: ScrollRecorder | null = null;
 
         await act(async () => {
             root.render(
                 React.createElement(
-                    PierreScrollRootVirtualizerProvider,
-                    null,
+                    'div',
+                    {
+                        // The route-level scroller (in the app: the transcript scroller). It is taller
+                        // than anything inside the diff subtree, so the "largest clientHeight wins"
+                        // heuristic selects it.
+                        ref: (node: HTMLDivElement | null) => {
+                            if (!node || node === ancestorRoot) return;
+                            ancestorRoot = node;
+                            node.style.overflowY = 'auto';
+                            defineSizeProperty(node, 'clientHeight', 640);
+                            defineSizeProperty(node, 'scrollHeight', 2400);
+                            // RN-web-like host: exposes scrollTo but ignores DOM ScrollToOptions.
+                            ancestorRecorder = instrumentScrollElement(node, { honorsDomScrollToOptions: false });
+                        },
+                    },
                     React.createElement(
-                        'div',
+                        PierreScrollRootVirtualizerProvider,
                         null,
-                        React.createElement('div', {
-                            'data-testid': 'nested-scroll-root',
-                            ref: (node: HTMLDivElement | null) => {
-                                if (!node || node === scrollRoot) return;
-                                scrollRoot = node;
-                                node.style.overflowY = 'auto';
-                                defineSizeProperty(node, 'clientHeight', 120);
-                                defineSizeProperty(node, 'scrollHeight', 560);
-
-                                // Simulate a browser environment where element.scrollTo only supports numeric args
-                                // and ignores ScrollToOptions objects (this breaks Pierre's scrollFix calls unless we patch).
-                                Object.defineProperty(node, 'scrollTop', {
-                                    configurable: true,
-                                    get: () => scrollTop,
-                                    set: (value: number) => {
-                                        scrollTop = Number.isFinite(value) ? value : 0;
-                                    },
-                                });
-                                Object.defineProperty(node, 'scrollLeft', {
-                                    configurable: true,
-                                    get: () => scrollLeft,
-                                    set: (value: number) => {
-                                        scrollLeft = Number.isFinite(value) ? value : 0;
-                                    },
-                                });
-                                (node as any).scrollTo = (x: unknown, y?: unknown) => {
-                                    if (typeof x === 'number') scrollLeft = x;
-                                    if (typeof y === 'number') scrollTop = y;
-                                };
-                            },
-                        }),
+                        React.createElement(
+                            'div',
+                            null,
+                            React.createElement('div', {
+                                ref: (node: HTMLDivElement | null) => {
+                                    if (!node || node === nestedRoot) return;
+                                    nestedRoot = node;
+                                    node.style.overflowY = 'auto';
+                                    defineSizeProperty(node, 'clientHeight', 120);
+                                    defineSizeProperty(node, 'scrollHeight', 560);
+                                },
+                            }),
+                        ),
                     ),
                 ),
             );
         });
 
-        expect(scrollRoot).not.toBeNull();
+        // Let the post-mount rebind probing run.
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        });
+
+        expect(ancestorRoot).not.toBeNull();
+        expect(nestedRoot).not.toBeNull();
+        expect(ancestorRecorder).not.toBeNull();
         expect(setupSpy).toHaveBeenCalled();
 
-        // Without the provider patch, this call would be a no-op (our stub ignores object args).
-        scrollRoot!.scrollTo({ top: 150, left: 0, behavior: 'instant' } as any);
-        expect(scrollRoot!.scrollTop).toBe(150);
+        // (1) The resolved scroll root must live inside the diff subtree.
+        const boundRoots = setupSpy.mock.calls.map((call) => call[0]);
+        expect(boundRoots).not.toContain(ancestorRoot);
+        expect(setupSpy.mock.calls.at(-1)?.[0]).toBe(nestedRoot);
+
+        // (2) The foreign ancestor's scroll position is byte-identical across provider mount, and no
+        // write was even attempted against it.
+        expect(ancestorRecorder!.writes).toEqual([]);
+        expect(ancestorRecorder!.scrollToCalls).toEqual([]);
+        expect(ancestorRoot!.scrollTop).toBe(0);
+        expect(ancestorRoot!.scrollLeft).toBe(0);
+
+        // (3) The provider must not replace scroll methods on an element it does not own.
+        expect((ancestorRoot as any).scrollTo).toBe(ancestorRecorder!.originalScrollTo);
 
         await act(async () => {
             root.unmount();
         });
     });
 
-    it('translates ScrollToOptions into RN-web scrollTo({x,y}) calls when present', async () => {
+    it('binds virtualization to a nested scroll container without probing or patching it', async () => {
         vi.resetModules();
         setupSpy.mockClear();
         cleanUpSpy.mockClear();
@@ -123,9 +193,7 @@ describe('PierreScrollRootVirtualizerProvider (web)', () => {
         const root = createRoot(container);
 
         let scrollRoot: HTMLDivElement | null = null;
-        let scrollTop = 0;
-        let scrollLeft = 0;
-        const calls: unknown[][] = [];
+        let recorder: ScrollRecorder | null = null;
 
         await act(async () => {
             root.render(
@@ -143,96 +211,16 @@ describe('PierreScrollRootVirtualizerProvider (web)', () => {
                                 node.style.overflowY = 'auto';
                                 defineSizeProperty(node, 'clientHeight', 120);
                                 defineSizeProperty(node, 'scrollHeight', 560);
-
-                                Object.defineProperty(node, 'scrollTop', {
-                                    configurable: true,
-                                    get: () => scrollTop,
-                                    set: (value: number) => {
-                                        scrollTop = Number.isFinite(value) ? value : 0;
-                                    },
-                                });
-                                Object.defineProperty(node, 'scrollLeft', {
-                                    configurable: true,
-                                    get: () => scrollLeft,
-                                    set: (value: number) => {
-                                        scrollLeft = Number.isFinite(value) ? value : 0;
-                                    },
-                                });
-
-                                // Simulate RN-web ScrollView semantics:
-                                // - supports object args with {x,y}
-                                // - supports deprecated numeric args scrollTo(y, x, animated)
-                                // - ignores DOM ScrollToOptions {top,left}
-                                (node as any).scrollTo = (arg1: unknown, arg2?: unknown) => {
-                                    calls.push([arg1, arg2]);
-                                    if (arg1 && typeof arg1 === 'object') {
-                                        const anyArg = arg1 as any;
-                                        if (typeof anyArg.y === 'number') scrollTop = anyArg.y;
-                                        if (typeof anyArg.x === 'number') scrollLeft = anyArg.x;
-                                        return;
-                                    }
-                                    if (typeof arg1 === 'number') scrollTop = arg1;
-                                    if (typeof arg2 === 'number') scrollLeft = arg2;
-                                };
-                            },
-                        }),
-                    ),
-                ),
-            );
-        });
-
-        expect(scrollRoot).not.toBeNull();
-        expect(setupSpy).toHaveBeenCalled();
-
-        calls.length = 0;
-        scrollRoot!.scrollTo({ top: 150, left: 0, behavior: 'instant' } as any);
-        expect(scrollRoot!.scrollTop).toBe(150);
-        const lastCall = calls.at(-1)?.[0] as any;
-        expect(lastCall && typeof lastCall === 'object').toBe(true);
-        expect(lastCall).toEqual(expect.objectContaining({ x: 0, y: 150 }));
-
-        await act(async () => {
-            root.unmount();
-        });
-    });
-
-    it('binds virtualization to a nested scroll container when present', async () => {
-        vi.resetModules();
-        setupSpy.mockClear();
-        cleanUpSpy.mockClear();
-
-        (globalThis as any).IntersectionObserver = class {};
-        (globalThis as any).ResizeObserver = class {};
-
-        const { PierreScrollRootVirtualizerProvider } = await import('./PierreScrollRootVirtualizerProvider.web');
-
-        const container = document.createElement('div');
-        document.body.appendChild(container);
-        const root = createRoot(container);
-
-        let scrollRoot: HTMLDivElement | null = null;
-
-        await act(async () => {
-            root.render(
-                React.createElement(
-                    PierreScrollRootVirtualizerProvider,
-                    null,
-                    React.createElement(
-                        'div',
-                        null,
-                        React.createElement('div', {
-                            'data-testid': 'nested-scroll-root',
-                            ref: (node: HTMLDivElement | null) => {
-                                if (!node || node === scrollRoot) return;
-                                scrollRoot = node;
-                                node.style.overflowY = 'auto';
-                                defineSizeProperty(node, 'clientHeight', 120);
-                                defineSizeProperty(node, 'scrollHeight', 560);
+                                recorder = instrumentScrollElement(node, { honorsDomScrollToOptions: false });
                             },
                         }, React.createElement('div', { style: { height: '1000px' } })),
                     ),
                 ),
             );
+        });
+
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 50));
         });
 
         expect(scrollRoot).not.toBeNull();
@@ -242,6 +230,11 @@ describe('PierreScrollRootVirtualizerProvider (web)', () => {
         // When the scroll root is an element, we should not pass an external content container.
         // Pierre will infer the correct content container from the scroll root itself.
         expect(contentContainer).toBeUndefined();
+
+        // Binding is observation only: no probe writes, no method replacement, even on our own root.
+        expect(recorder!.writes).toEqual([]);
+        expect(recorder!.scrollToCalls).toEqual([]);
+        expect((scrollRoot as any).scrollTo).toBe(recorder!.originalScrollTo);
 
         await act(async () => {
             root.unmount();
@@ -339,76 +332,7 @@ describe('PierreScrollRootVirtualizerProvider (web)', () => {
         });
     });
 
-    it('rebinds from an initial ancestor scroll root to a better nested root when it becomes available', async () => {
-        vi.resetModules();
-        setupSpy.mockClear();
-        cleanUpSpy.mockClear();
-
-        (globalThis as any).IntersectionObserver = class {};
-        (globalThis as any).ResizeObserver = class {};
-
-        const { PierreScrollRootVirtualizerProvider } = await import('./PierreScrollRootVirtualizerProvider.web');
-
-        const container = document.createElement('div');
-        document.body.appendChild(container);
-        const root = createRoot(container);
-
-        let ancestorRoot: HTMLDivElement | null = null;
-        let nestedRoot: HTMLDivElement | null = null;
-
-        await act(async () => {
-            root.render(
-                React.createElement(
-                    PierreScrollRootVirtualizerProvider,
-                    null,
-                    React.createElement(
-                        'div',
-                        {
-                            ref: (node: HTMLDivElement | null) => {
-                                if (!node || node === ancestorRoot) return;
-                                ancestorRoot = node;
-                                node.style.overflowY = 'auto';
-                                defineSizeProperty(node, 'clientHeight', 160);
-                                defineSizeProperty(node, 'scrollHeight', 560);
-                            },
-                        },
-                        React.createElement('div', {
-                            ref: (node: HTMLDivElement | null) => {
-                                if (!node || node === nestedRoot) return;
-                                nestedRoot = node;
-                                node.style.overflowY = 'auto';
-                                // Match (or exceed) the ancestor scroll root height so the provider
-                                // can prefer the nested root once it becomes scrollable.
-                                defineSizeProperty(node, 'clientHeight', 160);
-                                // Not scrollable at first.
-                                defineSizeProperty(node, 'scrollHeight', 120);
-                            },
-                        }),
-                    ),
-                ),
-            );
-        });
-
-        expect(ancestorRoot).not.toBeNull();
-        expect(nestedRoot).not.toBeNull();
-        expect(setupSpy).toHaveBeenCalled();
-        expect(setupSpy.mock.calls.at(-1)?.[0]).toBe(ancestorRoot);
-        expect(setupSpy.mock.calls.at(-1)?.[1]).toBeUndefined();
-
-        defineSizeProperty(nestedRoot!, 'scrollHeight', 880);
-        await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 50));
-        });
-
-        expect(setupSpy.mock.calls.at(-1)?.[0]).toBe(nestedRoot);
-        expect(setupSpy.mock.calls.at(-1)?.[1]).toBeUndefined();
-
-        await act(async () => {
-            root.unmount();
-        });
-    });
-
-    it('prefers a larger ancestor scroll root over a small nested scrollable descendant', async () => {
+    it('stays on the document fallback rather than adopting an ancestor while the nested root is not yet scrollable', async () => {
         vi.resetModules();
         setupSpy.mockClear();
         cleanUpSpy.mockClear();
@@ -434,26 +358,23 @@ describe('PierreScrollRootVirtualizerProvider (web)', () => {
                             if (!node || node === ancestorRoot) return;
                             ancestorRoot = node;
                             node.style.overflowY = 'auto';
-                            defineSizeProperty(node, 'clientHeight', 640);
-                            defineSizeProperty(node, 'scrollHeight', 2400);
+                            defineSizeProperty(node, 'clientHeight', 160);
+                            defineSizeProperty(node, 'scrollHeight', 560);
                         },
                     },
                     React.createElement(
                         PierreScrollRootVirtualizerProvider,
                         null,
-                        React.createElement(
-                            'div',
-                            null,
-                            React.createElement('div', {
-                                ref: (node: HTMLDivElement | null) => {
-                                    if (!node || node === nestedRoot) return;
-                                    nestedRoot = node;
-                                    node.style.overflowY = 'auto';
-                                    defineSizeProperty(node, 'clientHeight', 120);
-                                    defineSizeProperty(node, 'scrollHeight', 560);
-                                },
-                            }),
-                        ),
+                        React.createElement('div', {
+                            ref: (node: HTMLDivElement | null) => {
+                                if (!node || node === nestedRoot) return;
+                                nestedRoot = node;
+                                node.style.overflowY = 'auto';
+                                defineSizeProperty(node, 'clientHeight', 160);
+                                // Not scrollable at first.
+                                defineSizeProperty(node, 'scrollHeight', 120);
+                            },
+                        }),
                     ),
                 ),
             );
@@ -462,8 +383,16 @@ describe('PierreScrollRootVirtualizerProvider (web)', () => {
         expect(ancestorRoot).not.toBeNull();
         expect(nestedRoot).not.toBeNull();
         expect(setupSpy).toHaveBeenCalled();
-        expect(setupSpy.mock.calls.at(-1)?.[0]).toBe(ancestorRoot);
+        expect(setupSpy.mock.calls.at(-1)?.[0]).toBe(document);
+
+        defineSizeProperty(nestedRoot!, 'scrollHeight', 880);
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        });
+
+        expect(setupSpy.mock.calls.at(-1)?.[0]).toBe(nestedRoot);
         expect(setupSpy.mock.calls.at(-1)?.[1]).toBeUndefined();
+        expect(setupSpy.mock.calls.map((call) => call[0])).not.toContain(ancestorRoot);
 
         await act(async () => {
             root.unmount();

@@ -7,15 +7,16 @@ import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const hydrateSessionSpy = vi.hoisted(() => vi.fn((sessionId: string, reason: string) => ({
+const hydrateSessionSpy = vi.hoisted(() => vi.fn((sessionId: string, reason: string, options?: unknown) => ({
     kind: 'available' as const,
     sessionId,
 })));
 const useSessionSpy = vi.hoisted(() => vi.fn<(sessionId: string) => unknown>());
-const runListSpy = vi.hoisted(() => vi.fn<(sessionId: string, options: unknown) => Promise<{ ok: true; runs: never[] }>>(async () => ({ ok: true, runs: [] })));
+const runListSpy = vi.hoisted(() => vi.fn<(sessionId: string, request: unknown, options?: unknown) => Promise<{ ok: true; runs: never[] }>>(async () => ({ ok: true, runs: [] })));
+let routeParams: Record<string, string | string[] | undefined> = { id: ['s1', 's2'] };
 
 const routerMock = createExpoRouterMock({
-    params: { id: ['s1', 's2'] },
+    params: () => routeParams,
     router: {
         push: vi.fn(),
         back: vi.fn(),
@@ -24,13 +25,12 @@ const routerMock = createExpoRouterMock({
     },
 });
 
-vi.mock('expo-router', () => routerMock.module);
 vi.mock('expo-router', async () => {
     const actual = await vi.importActual<typeof import('expo-router')>('expo-router');
     return {
         ...actual,
-        useFocusEffect: () => {},
         ...routerMock.module,
+        useFocusEffect: () => {},
     };
 });
 
@@ -59,11 +59,12 @@ vi.mock('@/text', async () => {
 });
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
-    useHydrateSessionForRoute: (sessionId: string, reason: string) => hydrateSessionSpy(sessionId, reason),
+    useHydrateSessionForRoute: (sessionId: string, reason: string, options?: unknown) =>
+        hydrateSessionSpy(sessionId, reason, options),
 }));
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
-    sessionExecutionRunList: (sessionId: string, options: unknown) => runListSpy(sessionId, options),
+    sessionExecutionRunList: (sessionId: string, request: unknown, options?: unknown) => runListSpy(sessionId, request, options),
 }));
 
 vi.mock('@/hooks/session/useSessionExecutionRunLaunchability', () => ({
@@ -88,6 +89,7 @@ describe('session runs route', () => {
             metadata: null,
         });
         runListSpy.mockClear();
+        routeParams = { id: ['s1', 's2'] };
     });
 
     afterEach(() => {
@@ -99,7 +101,17 @@ describe('session runs route', () => {
 
         await renderScreen(<RunsRoute />);
 
-        expect(hydrateSessionSpy).toHaveBeenCalledWith('s1', 'SessionRunsScreen.hydrate');
+        expect(hydrateSessionSpy).toHaveBeenCalledWith('s1', 'SessionRunsScreen.hydrate', undefined);
         expect(useSessionSpy).toHaveBeenCalledWith('s1');
+    });
+
+    it('passes route server scope through hydration and run-list RPCs', async () => {
+        routeParams = { id: 's1', serverId: ['server-route', 'server-ignored'] };
+        const { default: RunsRoute } = await import('@/app/(app)/session/[id]/runs');
+
+        await renderScreen(<RunsRoute />);
+
+        expect(hydrateSessionSpy).toHaveBeenCalledWith('s1', 'SessionRunsScreen.hydrate', { serverId: 'server-route' });
+        expect(runListSpy).toHaveBeenCalledWith('s1', {}, { serverId: 'server-route' });
     });
 });

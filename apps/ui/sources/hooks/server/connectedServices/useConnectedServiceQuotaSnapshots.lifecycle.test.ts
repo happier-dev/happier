@@ -5,6 +5,7 @@ import { act } from 'react-test-renderer';
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 
 import {
+    activeServerSnapshotState,
     createDeferredPlainSnapshot,
     getConnectedServiceQuotaSnapshotPlainSpy,
     makeQuotaSnapshot,
@@ -15,7 +16,9 @@ import {
 } from './useConnectedServiceQuotaSnapshots.testkit';
 
 describe('useConnectedServiceQuotaSnapshots fetch lifecycle', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        const { __resetConnectedServiceQuotaSnapshotStore } = await import('./connectedServiceQuotaSnapshotStore');
+        __resetConnectedServiceQuotaSnapshotStore();
         resetConnectedServiceQuotaSnapshotsTestState();
     });
 
@@ -184,9 +187,110 @@ describe('useConnectedServiceQuotaSnapshots fetch lifecycle', () => {
         expect(getConnectedServiceQuotaSnapshotPlainSpy).toHaveBeenCalledWith(stableCredentials, {
             serviceId: 'anthropic',
             profileId: 'work',
-        }, { signal: expect.any(AbortSignal) });
+        }, {
+            expectedActiveServer: {
+                serverId: 'server-a',
+                generation: 1,
+            },
+        });
         expect(hook.getCurrent().snapshotsByKey['anthropic/work']?.meters[0]?.meterId).toBe('weekly');
         expect(hook.getCurrent().loadingByKey['anthropic/work']).toBe(false);
+        await hook.unmount();
+    });
+
+    it('isolates the quota cache by active server even when credentials are identical', async () => {
+        getConnectedServiceQuotaSnapshotPlainSpy
+            .mockResolvedValueOnce(makeQuotaSnapshot({
+                serviceId: 'anthropic',
+                meterId: 'server-a',
+            }))
+            .mockResolvedValueOnce(makeQuotaSnapshot({
+                serviceId: 'anthropic',
+                meterId: 'server-b',
+            }));
+
+        const { useConnectedServiceQuotaSnapshots } = await import(
+            './useConnectedServiceQuotaSnapshots'
+        );
+        const hook = await renderHook(
+            () => useConnectedServiceQuotaSnapshots([
+                { serviceId: 'anthropic', profileId: 'work' },
+            ]),
+        );
+        await flushHookEffects({ cycles: 5, turns: 5 });
+        expect(
+            hook.getCurrent().snapshotsByKey['anthropic/work']?.meters[0]
+                ?.meterId,
+        ).toBe('server-a');
+
+        activeServerSnapshotState.current = {
+            serverId: 'server-b',
+            serverUrl: 'https://server-b.example.test',
+            generation: 2,
+        };
+        await hook.rerender();
+        await flushHookEffects({ cycles: 5, turns: 5 });
+
+        expect(getConnectedServiceQuotaSnapshotPlainSpy).toHaveBeenCalledTimes(
+            2,
+        );
+        expect(
+            hook.getCurrent().snapshotsByKey['anthropic/work']?.meters[0]
+                ?.meterId,
+        ).toBe('server-b');
+        await hook.unmount();
+    });
+
+    it('does not commit an in-flight quota snapshot after the same server reconnects', async () => {
+        const first = createDeferredPlainSnapshot();
+        getConnectedServiceQuotaSnapshotPlainSpy
+            .mockReturnValueOnce(first.promise)
+            .mockResolvedValueOnce(makeQuotaSnapshot({
+                serviceId: 'anthropic',
+                meterId: 'generation-2',
+            }));
+
+        const { useConnectedServiceQuotaSnapshots } = await import(
+            './useConnectedServiceQuotaSnapshots'
+        );
+        const hook = await renderHook(
+            () => useConnectedServiceQuotaSnapshots([
+                { serviceId: 'anthropic', profileId: 'work' },
+            ]),
+        );
+        await flushHookEffects({ cycles: 5, turns: 5 });
+        expect(
+            getConnectedServiceQuotaSnapshotPlainSpy,
+        ).toHaveBeenCalledTimes(1);
+
+        activeServerSnapshotState.current = {
+            serverId: 'server-a',
+            serverUrl: 'https://server-a.example.test',
+            generation: 2,
+        };
+        await hook.rerender();
+        await flushHookEffects({ cycles: 5, turns: 5 });
+
+        expect(
+            getConnectedServiceQuotaSnapshotPlainSpy,
+        ).toHaveBeenCalledTimes(2);
+        expect(
+            hook.getCurrent().snapshotsByKey['anthropic/work']
+                ?.meters[0]?.meterId,
+        ).toBe('generation-2');
+
+        await act(async () => {
+            first.resolve(makeQuotaSnapshot({
+                serviceId: 'anthropic',
+                meterId: 'generation-1',
+            }));
+        });
+        await flushHookEffects({ cycles: 5, turns: 5 });
+
+        expect(
+            hook.getCurrent().snapshotsByKey['anthropic/work']
+                ?.meters[0]?.meterId,
+        ).toBe('generation-2');
         await hook.unmount();
     });
 });

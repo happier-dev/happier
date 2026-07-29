@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 function getUiDir(): string {
     return join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..');
@@ -62,7 +62,7 @@ describe('metro.config.js (web)', () => {
         expect(config.watchFolders).toContain(resolve(repoRoot, 'packages/tests'));
     });
 
-    it('narrows CI watch folders for UI e2e Metro runs to internal package deps and hoisted Expo packages only', () => {
+    it('narrows CI watch folders for UI e2e Metro runs to internal workspace and hoisted Expo packages only', () => {
         const uiDir = getUiDir();
         const repoRoot = resolve(uiDir, '..', '..');
         const rootNodeModules = resolve(repoRoot, 'node_modules');
@@ -79,9 +79,46 @@ describe('metro.config.js (web)', () => {
         expect(config.watchFolders).toContain(rootNodeModules);
         expect(config.watchFolders).toContain(resolve(repoRoot, 'packages/protocol'));
         expect(config.watchFolders).toContain(resolve(repoRoot, 'packages/cli-common'));
+        expect(config.watchFolders).toContain(resolve(repoRoot, 'packages/plugins/opencode'));
         expect(config.resolver.disableHierarchicalLookup).toBe(true);
         expect(config.resolver.nodeModulesPaths).toContain(appNodeModules);
         expect(config.resolver.nodeModulesPaths).toContain(rootNodeModules);
+    });
+
+    it('resolves React Native private packages in narrowed native Metro runs', () => {
+        const uiDir = getUiDir();
+        const reactNativeDir = resolve(uiDir, 'node_modules/react-native');
+        const config = loadMetroConfig(uiDir, {
+            CI: '1',
+            EXPO_NO_METRO_WORKSPACE_ROOT: '1',
+            HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS: '1',
+        });
+        const expectedEntry = createRequire(join(reactNativeDir, 'package.json')).resolve(
+            '@react-native/virtualized-lists',
+        );
+
+        const resolved = config.resolver.resolveRequest(
+            {
+                originModulePath: join(reactNativeDir, 'Libraries/Modal/Modal.js'),
+                resolveRequest: () => {
+                    throw new Error('narrowed Metro default resolver cannot use hierarchical lookup');
+                },
+            },
+            '@react-native/virtualized-lists',
+            'android',
+        );
+        const blockList = Array.isArray(config.resolver.blockList)
+            ? config.resolver.blockList
+            : [config.resolver.blockList];
+
+        expect(resolved).toEqual({
+            type: 'sourceFile',
+            filePath: expectedEntry,
+        });
+        expect(config.watchFolders).toContain(dirname(expectedEntry));
+        expect(
+            blockList.some((entry: unknown) => entry instanceof RegExp && entry.test(expectedEntry)),
+        ).toBe(false);
     });
 
     it('watches the monorepo root node_modules (SHA-1 hashing for hoisted deps)', () => {
@@ -91,6 +128,34 @@ describe('metro.config.js (web)', () => {
         const config = loadMetroConfig(uiDir);
 
         expect(config.watchFolders).toContain(rootNodeModules);
+    });
+
+    it('resolves internal workspace package source exports through real package paths in local development', () => {
+        const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
+        const config = loadMetroConfig(uiDir, {
+            HAPPIER_STACK_STACK: null,
+            EXPO_NO_METRO_WORKSPACE_ROOT: null,
+            HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS: null,
+        });
+        const symlinkedSourcePath = resolve(
+            repoRoot,
+            'node_modules/@happier-dev/voice-modelpacks/src/index.ts',
+        );
+
+        const resolved = config.resolver.resolveRequest(
+            {
+                originModulePath: join(uiDir, 'index.ts'),
+                resolveRequest: () => ({ type: 'sourceFile', filePath: symlinkedSourcePath }),
+            },
+            '@happier-dev/voice-modelpacks',
+            'web',
+        );
+
+        expect(resolved).toEqual({
+            type: 'sourceFile',
+            filePath: resolve(repoRoot, 'packages/voice-modelpacks/src/index.ts'),
+        });
     });
 
     it('watches hoisted Expo packages when monorepo root node_modules is excluded (SHA-1 hashing)', () => {
@@ -133,7 +198,7 @@ describe('metro.config.js (web)', () => {
         const config = loadMetroConfig(uiDir);
 
         expect(config.resolver.useWatchman).toBe(false);
-        expect(config.watcher).not.toHaveProperty('useWatchman');
+        expect(config.watcher?.useWatchman).toBe(false);
         expect(config.watcher).not.toHaveProperty('unstable_workerThreads');
     });
 
@@ -173,6 +238,42 @@ describe('metro.config.js (web)', () => {
         ).toBe(true);
     });
 
+    it('blocks pack publication trees without hiding canonical workspace source or dist trees', () => {
+        const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
+        const config = loadMetroConfig(uiDir);
+        const blockList = Array.isArray(config.resolver.blockList)
+            ? config.resolver.blockList
+            : [config.resolver.blockList];
+        const packageRoot = resolve(repoRoot, 'packages/protocol');
+        const isBlocked = (candidatePath: string) => (
+            blockList.some((entry: unknown) => entry instanceof RegExp && entry.test(candidatePath))
+        );
+
+        for (const transientDirectoryName of [
+            '.tmp.publish-1',
+            '.backup.publish-1',
+            '.restore.publish-1',
+            '.dist.build.publish-1',
+            '.dist.hstack-stage-publish-1',
+            'dist.staging.publish-1',
+            'dist.probe.publish-1',
+        ]) {
+            expect(
+                isBlocked(join(packageRoot, transientDirectoryName, 'src/index.ts')),
+                transientDirectoryName,
+            ).toBe(true);
+        }
+
+        expect(
+            isBlocked(String.raw`C:\repo\packages\protocol\.tmp.publish-1\src\index.ts`),
+        ).toBe(true);
+        expect(isBlocked(join(packageRoot, 'src/index.ts'))).toBe(false);
+        expect(isBlocked(join(packageRoot, 'dist/index.js'))).toBe(false);
+        expect(isBlocked(join(packageRoot, '.tmp/index.ts'))).toBe(false);
+        expect(isBlocked(join(packageRoot, 'dist.staging/index.js'))).toBe(false);
+    });
+
     it('blocks nested dependency node_modules trees under watched app/root node_modules', () => {
         const uiDir = getUiDir();
         const config = loadMetroConfig(uiDir);
@@ -197,7 +298,11 @@ describe('metro.config.js (web)', () => {
 
     it('allows enabling Watchman via env var on machines where it is stable', () => {
         const uiDir = getUiDir();
-        const config = loadMetroConfig(uiDir, { CI: null, HAPPIER_UI_METRO_USE_WATCHMAN: '1' });
+        const config = loadMetroConfig(uiDir, {
+            CI: null,
+            HAPPIER_STACK_STACK: null,
+            HAPPIER_UI_METRO_USE_WATCHMAN: '1',
+        });
 
         expect(config.resolver.useWatchman).toBe(true);
         expect(config.watcher).not.toHaveProperty('useWatchman');
@@ -208,7 +313,19 @@ describe('metro.config.js (web)', () => {
         const config = loadMetroConfig(uiDir, { CI: '1', HAPPIER_UI_METRO_USE_WATCHMAN: '1' });
 
         expect(config.resolver.useWatchman).toBe(false);
-        expect(config.watcher).not.toHaveProperty('useWatchman');
+        expect(config.watcher?.useWatchman).toBe(false);
+    });
+
+    it('keeps Watchman disabled in stack runs even when HAPPIER_UI_METRO_USE_WATCHMAN=1', () => {
+        const uiDir = getUiDir();
+        const config = loadMetroConfig(uiDir, {
+            CI: null,
+            HAPPIER_STACK_STACK: 'preview-stack',
+            HAPPIER_UI_METRO_USE_WATCHMAN: '1',
+        });
+
+        expect(config.resolver.useWatchman).toBe(false);
+        expect(config.watcher?.useWatchman).toBe(false);
     });
 
     it('shims react-native to provide unstable_batchedUpdates (LegendList compatibility)', () => {
@@ -344,6 +461,46 @@ describe('metro.config.js (web)', () => {
             type: 'sourceFile',
             filePath: requireFromUi.resolve('@react-navigation/native'),
         });
+    });
+
+    it.each([
+        ['local', {}],
+        ['narrow stack', {
+            CI: '1',
+            EXPO_NO_METRO_WORKSPACE_ROOT: '1',
+            HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS: '1',
+        }],
+    ])('resolves compatible React Navigation history-prevention contracts in %s mode', (_label, env) => {
+        const uiDir = getUiDir();
+        const config = loadMetroConfig(uiDir, env);
+        const nativeResolution = config.resolver.resolveRequest(
+            { originModulePath: join(uiDir, 'index.ts') },
+            '@react-navigation/native',
+            'web',
+        );
+
+        expect(nativeResolution).toMatchObject({ type: 'sourceFile' });
+        const nativeEntry = nativeResolution.filePath as string;
+        const coreResolution = config.resolver.resolveRequest(
+            { originModulePath: nativeEntry },
+            '@react-navigation/core',
+            'web',
+        );
+
+        expect(coreResolution).toMatchObject({ type: 'sourceFile' });
+        const coreEntry = coreResolution.filePath as string;
+        const nativePackageRoot = resolve(dirname(nativeEntry), '..', '..');
+        const corePackageRoot = resolve(dirname(coreEntry), '..', '..');
+        const nativePackage = JSON.parse(readFileSync(join(nativePackageRoot, 'package.json'), 'utf8'));
+        const corePackage = JSON.parse(readFileSync(join(corePackageRoot, 'package.json'), 'utf8'));
+        const coreContainerSource = readFileSync(
+            join(corePackageRoot, 'src', 'BaseNavigationContainer.tsx'),
+            'utf8',
+        );
+
+        expect(nativePackage.version).toBe('7.3.8');
+        expect(corePackage.version).toBe('7.21.5');
+        expect(coreContainerSource).toContain("type: '__unsafe_event__'");
     });
 
     it('pins React singleton modules to the app workspace when an upstream resolver points at a nested navigation copy', () => {

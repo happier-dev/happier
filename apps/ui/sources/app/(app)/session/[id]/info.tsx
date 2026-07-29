@@ -7,9 +7,8 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Avatar } from '@/components/ui/avatar/Avatar';
-import { storage, useProfile, useSession, useLocalSetting, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { storage, useProfile, useSession, useLocalSetting, useSetting, useSessionOrganizationProjection } from '@/sync/domains/state/storage';
 import { getSessionName, useSessionStatus, formatOSPlatform, formatPathRelativeToHome, getSessionAvatarId } from '@/utils/sessions/sessionUtils';
-import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
 import { useUnistyles } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
@@ -21,10 +20,9 @@ import { Session } from '@/sync/domains/state/storageTypes';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { HappyError } from '@/utils/errors/errors';
-import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
-import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, getAgentCore } from '@/agents/catalog/catalog';
 import { getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
 import { useSessionSharingSupport } from '@/hooks/session/useSessionSharingSupport';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
@@ -43,7 +41,7 @@ import {
 } from '@/sync/domains/sessionHandoff/resolveSessionHandoffUiAvailability';
 import { getActionSpec } from '@happier-dev/protocol';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
-import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
+import { buildScopedSessionRouteHref, createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { useSessionHandoffSourceReachability, type SessionHandoffRuntimeAvailability } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
@@ -75,7 +73,7 @@ import { listVisibleSessionActionIds, resolveSessionReadStateActionId } from '@/
 import { createSessionActionInfoItemProps } from '@/components/sessions/actions/sessionActionPresentation';
 import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
-import { getTagsForSession, sessionTagKey, setTagsForSession } from '@/components/sessions/shell/sessionTagUtils';
+import { getTagsForSession, sessionTagKey } from '@/components/sessions/shell/sessionTagUtils';
 import { useSessionListMoveSheet } from '@/components/sessions/shell/move-sheet/useSessionListMoveSheet';
 import type { SessionListMoveSheetTarget } from '@/components/sessions/shell/move-sheet/buildSessionListMoveSheetTargets';
 import {
@@ -84,11 +82,29 @@ import {
     normalizeSessionFolders,
     type SessionFolderWorkspaceRefV1,
 } from '@/sync/domains/session/folders';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
-import { setSessionFolderAssignment } from '@/sync/ops/sessionFolders';
+import {
+    resolveSessionOrganizationMutationScope,
+    writeSessionOrganizationFolderAssignment,
+    writeSessionOrganizationPin,
+    writeSessionOrganizationTagLabels,
+    type SessionOrganizationMutationScope,
+} from '@/sync/ops/sessionOrganization';
+import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
+import {
+    buildSessionDebugInformation,
+    isSessionDebugInformationEnabled,
+    resolveProviderSessionArtifactPath,
+    resolveProviderSessionIdForDebug,
+} from '@/components/sessions/debug/sessionDebugInformation';
+import { stringifySessionDebugJson } from '@/components/sessions/debug/sessionDebugRedaction';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 
 type RawJsonSectionId = 'agentState' | 'metadata' | 'sessionStatus' | 'session';
+type RawJsonSnapshot = Readonly<{
+    section: RawJsonSectionId;
+    code: string;
+}>;
 
 const SESSION_INFO_IDLE_MOVE_RESULT = Object.freeze({
     instruction: Object.freeze({ kind: 'idle' as const }),
@@ -112,7 +128,7 @@ function resolveSessionInfoWorkspaceRef(
     session: Session,
     serverId: string | null,
 ): SessionFolderWorkspaceRefV1 | null {
-    const metadata = session.metadata;
+    const metadata = readSessionOwnerMetadataView(session);
     if (!metadata || typeof metadata !== 'object') return null;
     const record = metadata as Record<string, unknown>;
     const rootPath = typeof record.path === 'string' ? record.path : null;
@@ -184,11 +200,12 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     runtimeAvailability: SessionHandoffRuntimeAvailability;
     routeScope: ReturnType<typeof createSessionRouteServerScope>;
 }>) {
+    const metadata = readSessionOwnerMetadataView(session);
     const { theme } = useUnistyles();
     const router = useRouter();
     const profile = useProfile();
     const localDevModeEnabled = useLocalSetting('devModeEnabled');
-    const devModeEnabled = __DEV__ || localDevModeEnabled === true;
+    const devModeEnabled = isSessionDebugInformationEnabled(localDevModeEnabled);
     const sessionName = getSessionName(session);
     const sessionStatus = useSessionStatus(session, {
         subscribeToSession: false,
@@ -208,24 +225,21 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const actionsSettingsV1 = useSetting('actionsSettingsV1');
     const sessionReplayEnabled = useSetting('sessionReplayEnabled') === true;
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
-    const [pinnedSessionKeysV1, setPinnedSessionKeysV1] = useSettingMutable('pinnedSessionKeysV1');
-    const [sessionTagsV1, setSessionTagsV1] = useSettingMutable('sessionTagsV1');
-    const sessionFoldersV1 = useSetting('sessionFoldersV1');
     const { openMoveSheet } = useSessionListMoveSheet();
     const sharingSupported = useSessionSharingSupport();
     const automationsSupport = useAutomationsSupport();
     const showAutomations = automationsSupport?.enabled !== false;
-    const [expandedRawJsonSection, setExpandedRawJsonSection] = React.useState<RawJsonSectionId | null>(null);
+    const [expandedRawJsonSnapshot, setExpandedRawJsonSnapshot] = React.useState<RawJsonSnapshot | null>(null);
     // Check if CLI version is outdated
-    const isCliOutdated = session.metadata?.version && !isVersionSupported(session.metadata.version, MINIMUM_CLI_VERSION);
+    const isCliOutdated = metadata?.version && !isVersionSupported(metadata.version, MINIMUM_CLI_VERSION);
     const canManageSharing = !session.accessLevel || session.accessLevel === 'admin';
-    const agentId = resolveAgentIdFromSessionMetadata(session.metadata) ?? resolveAgentIdFromFlavor(session.metadata?.flavor) ?? DEFAULT_AGENT_ID;
+    const agentId = readSessionPresentationAgentId(session) ?? DEFAULT_AGENT_ID;
     const core = getAgentCore(agentId);
     const daemonProjectionMachineId = React.useMemo(() => {
-        const raw = typeof (session.metadata as any)?.machineId === 'string' ? (session.metadata as any).machineId : '';
+        const raw = typeof (metadata as any)?.machineId === 'string' ? (metadata as any).machineId : '';
         const trimmed = String(raw ?? '').trim();
         return trimmed.length > 0 ? trimmed : null;
-    }, [session.metadata]);
+    }, [metadata]);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
         machineId: daemonProjectionMachineId,
         serverId: sessionServerId ?? null,
@@ -267,11 +281,14 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                 const normalizedServerId = String(resolvedServerId).trim();
                 return normalizedServerId || null;
             },
-            openSession: (childSessionId) => {
-                router.push(routeScope.buildHref(childSessionId) as any);
+            openSession: (childSessionId, options) => {
+                router.push(buildScopedSessionRouteHref({
+                    sessionId: childSessionId,
+                    serverId: options?.serverId ?? sessionServerId,
+                }) as any);
             },
         }),
-        [routeScope, router, sessionServerId],
+        [router, sessionServerId],
     );
 
     const forkActionEnabled = React.useMemo(() => {
@@ -305,17 +322,31 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         runtimeAvailability,
     });
     const handoffSupported = handoffAvailability.available;
-    const newSessionSeedMachineId = reachableMachineId ?? session.metadata?.machineId ?? null;
-    const newSessionSeedDirectory = reachableMachineTarget?.basePath ?? session.metadata?.path ?? null;
+    const newSessionSeedMachineId = reachableMachineId ?? metadata?.machineId ?? null;
+    const newSessionSeedDirectory = reachableMachineTarget?.basePath ?? metadata?.path ?? null;
 
     const vendorResumeLabelKey = core.resume.uiVendorResumeIdLabelKey;
     const vendorResumeCopiedKey = core.resume.uiVendorResumeIdCopiedKey;
     const vendorResumeId = React.useMemo(() => {
-        return getAgentVendorResumeId(session.metadata, agentId);
-    }, [agentId, session.metadata]);
+        return getAgentVendorResumeId(metadata, agentId);
+    }, [agentId, metadata]);
+    const providerDisplayName = React.useMemo(() => t(core.displayNameKey), [core.displayNameKey]);
+    const providerSessionIdForDebug = React.useMemo(() => resolveProviderSessionIdForDebug({
+        metadata,
+        vendorResumeIdField: core.resume.vendorResumeIdField,
+    }), [core.resume.vendorResumeIdField, metadata]);
+    const providerSessionArtifactPath = React.useMemo(
+        () => resolveProviderSessionArtifactPath(metadata),
+        [metadata],
+    );
+    const sessionDebugInformation = React.useMemo(() => buildSessionDebugInformation({
+        session,
+        providerDisplayName,
+        providerSessionId: providerSessionIdForDebug,
+    }), [providerDisplayName, providerSessionIdForDebug, session]);
 
     const profileLabel = React.useMemo(() => {
-        const profileId = session.metadata?.profileId;
+        const profileId = metadata?.profileId;
         if (profileId === null || profileId === '') return t('profiles.noProfile');
         if (typeof profileId !== 'string') return t('status.unknown');
         const resolved = resolveProfileById(profileId, profiles);
@@ -323,19 +354,19 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             return getProfileDisplayName(resolved);
         }
         return t('status.unknown');
-    }, [profiles, session.metadata?.profileId]);
+    }, [metadata?.profileId, profiles]);
 
     const attachCommand = React.useMemo(() => {
-        return getAttachCommandForSession({ sessionId: session.id, terminal: session.metadata?.terminal });
-    }, [session.id, session.metadata?.terminal]);
+        return getAttachCommandForSession({ sessionId: session.id, terminal: metadata?.terminal });
+    }, [metadata?.terminal, session.id]);
 
     const tmuxTarget = React.useMemo(() => {
-        return getTmuxTargetForSession(session.metadata?.terminal);
-    }, [session.metadata?.terminal]);
+        return getTmuxTargetForSession(metadata?.terminal);
+    }, [metadata?.terminal]);
 
     const tmuxFallbackReason = React.useMemo(() => {
-        return getTmuxFallbackReason(session.metadata?.terminal);
-    }, [session.metadata?.terminal]);
+        return getTmuxFallbackReason(metadata?.terminal);
+    }, [metadata?.terminal]);
     const rawSessionStatus = React.useMemo(() => ({
         isConnected: sessionStatus.isConnected,
         statusText: sessionStatus.statusText,
@@ -349,63 +380,35 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         sessionStatus.statusDotColor,
         sessionStatus.statusText,
     ]);
+    const buildRawJsonCode = React.useCallback((section: RawJsonSectionId) => {
+        switch (section) {
+            case 'agentState':
+                return stringifySessionDebugJson(session.agentState);
+            case 'metadata':
+                return stringifySessionDebugJson(metadata);
+            case 'sessionStatus':
+                return stringifySessionDebugJson(rawSessionStatus);
+            case 'session':
+                return stringifySessionDebugJson(session);
+        }
+    }, [rawSessionStatus, session]);
     const toggleRawJsonSection = React.useCallback((section: RawJsonSectionId) => {
-        setExpandedRawJsonSection((current) => current === section ? null : section);
-    }, []);
+        setExpandedRawJsonSnapshot((current) => current?.section === section
+            ? null
+            : { section, code: buildRawJsonCode(section) });
+    }, [buildRawJsonCode]);
     const handleToggleAgentStateJson = React.useCallback(() => toggleRawJsonSection('agentState'), [toggleRawJsonSection]);
     const handleToggleMetadataJson = React.useCallback(() => toggleRawJsonSection('metadata'), [toggleRawJsonSection]);
     const handleToggleSessionStatusJson = React.useCallback(() => toggleRawJsonSection('sessionStatus'), [toggleRawJsonSection]);
     const handleToggleSessionJson = React.useCallback(() => toggleRawJsonSection('session'), [toggleRawJsonSection]);
-    const expandedRawJsonCode = React.useMemo(() => {
-        switch (expandedRawJsonSection) {
-            case 'agentState':
-                return JSON.stringify(session.agentState, null, 2);
-            case 'metadata':
-                return JSON.stringify(session.metadata, null, 2);
-            case 'sessionStatus':
-                return JSON.stringify(rawSessionStatus, null, 2);
-            case 'session':
-                return JSON.stringify(session, null, 2);
-            default:
-                return null;
-        }
-    }, [expandedRawJsonSection, rawSessionStatus, session]);
+    const expandedRawJsonSection = expandedRawJsonSnapshot?.section ?? null;
+    const expandedRawJsonCode = expandedRawJsonSnapshot?.code ?? null;
     const sessionLogPath = React.useMemo(() => {
-        const value = typeof (session.metadata as any)?.sessionLogPath === 'string'
-            ? (session.metadata as any).sessionLogPath.trim()
+        const value = typeof (metadata as any)?.sessionLogPath === 'string'
+            ? (metadata as any).sessionLogPath.trim()
             : '';
         return value.length > 0 ? value : null;
-    }, [session.metadata]);
-
-    const handleCopySessionId = useCallback(async () => {
-        if (!session) return;
-        try {
-            await Clipboard.setStringAsync(session.id);
-            Modal.alert(t('common.success'), t('sessionInfo.happySessionIdCopied'));
-        } catch (error) {
-            Modal.alert(t('common.error'), t('sessionInfo.failedToCopySessionId'));
-        }
-    }, [session]);
-
-    const handleCopyAttachCommand = useCallback(async () => {
-        if (!attachCommand) return;
-        try {
-            await Clipboard.setStringAsync(attachCommand);
-            Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: t('sessionInfo.attachFromTerminal') }));
-        } catch (error) {
-            Modal.alert(t('common.error'), t('sessionInfo.failedToCopyMetadata'));
-        }
-    }, [attachCommand]);
-
-    const handleCopyMetadata = useCallback(async () => {
-        if (!session?.metadata) return;
-        try {
-            await Clipboard.setStringAsync(JSON.stringify(session.metadata, null, 2));
-            Modal.alert(t('common.success'), t('sessionInfo.metadataCopied'));
-        } catch (error) {
-            Modal.alert(t('common.error'), t('sessionInfo.failedToCopyMetadata'));
-        }
-    }, [session]);
+    }, [metadata]);
 
     const handleNewSessionSameSetup = useCallback(() => {
         const dataId = storeTempData(buildNewSessionTempDataFromSessionConfiguration({
@@ -424,16 +427,6 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         } as any);
     }, [newSessionSeedDirectory, newSessionSeedMachineId, router, session, sessionServerId]);
 
-    const handleCopySessionLogPath = useCallback(async () => {
-        if (!sessionLogPath) return;
-        try {
-            await Clipboard.setStringAsync(sessionLogPath);
-            Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: t('sessionLog.logPathCopyLabel') }));
-        } catch {
-            Modal.alert(t('common.error'), t('sessionInfo.failedToCopyMetadata'));
-        }
-    }, [sessionLogPath]);
-
     const handleExitAfterSessionMutation = useCallback(() => {
         safeRouterBack({
             router,
@@ -448,11 +441,19 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const cachedSessionServerId = resolveServerIdForSessionIdFromLocalCache(session.id);
     const resolvedServerId = cachedSessionServerId ?? sessionServerId;
     const scopedMutationServerId = cachedSessionServerId ?? routeScope.serverId ?? sessionServerId ?? null;
+    const organizationProjection = useSessionOrganizationProjection(resolvedServerId ?? null);
+    const organizationListViewState = React.useMemo(() => buildSessionOrganizationListViewState({
+        serverId: resolvedServerId ?? '',
+        projection: organizationProjection,
+    }), [organizationProjection, resolvedServerId]);
+    const pinnedSessionKeysV1 = organizationListViewState.pinnedSessionKeysV1;
+    const sessionTagsV1 = organizationListViewState.sessionTagsV1;
+    const sessionFoldersV1 = organizationListViewState.sessionFoldersV1;
     const isPinnedSession = Boolean(
         resolvedServerId &&
-        Array.isArray(pinnedSessionKeysV1) &&
         pinnedSessionKeysV1.includes(`${resolvedServerId}:${session.id}`),
     );
+    const isArchivedSession = session.archivedAt != null;
     const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
     const sessionActionTarget = React.useMemo(() => createSessionActionTarget({
         session,
@@ -475,6 +476,18 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const sessionInfoTags = sessionSettingsKey
         ? getTagsForSession(sessionTagsV1 as Record<string, string[]> | null | undefined, sessionSettingsKey)
         : [];
+    const getSessionOrganizationMutationScopeOrThrow = useCallback(async (
+        serverIdRaw?: string | null,
+    ): Promise<SessionOrganizationMutationScope> => {
+        const serverId = typeof serverIdRaw === 'string' && serverIdRaw.trim()
+            ? serverIdRaw.trim()
+            : scopedMutationServerId;
+        const result = await resolveSessionOrganizationMutationScope(serverId);
+        if (!result.ok) {
+            throw new HappyError(t('errors.unknownError'), false);
+        }
+        return result.scope;
+    }, [scopedMutationServerId]);
     const pinInfoItemProps = React.useMemo(() => createSessionActionInfoItemProps({
         actionId: isPinnedSession ? SESSION_ACTION_UNPIN_ID : SESSION_ACTION_PIN_ID,
         iconColor: theme.colors.accent.blue,
@@ -530,15 +543,18 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             target: sessionActionTarget,
             context: {
                 operations: {
-                    setPinned: async (_sessionId, pinned) => {
-                        const current = Array.isArray(pinnedSessionKeysV1) ? pinnedSessionKeysV1 : [];
-                        const withoutSession = current.filter((key) => key !== sessionSettingsKey);
-                        await setPinnedSessionKeysV1(pinned ? [...withoutSession, sessionSettingsKey] : withoutSession);
+                    setPinned: async (_sessionId, pinned, opts) => {
+                        const scope = await getSessionOrganizationMutationScopeOrThrow(opts?.serverId ?? scopedMutationServerId);
+                        await writeSessionOrganizationPin({
+                            scope,
+                            sessionId: session.id,
+                            pinned,
+                        });
                     },
                 },
             },
         });
-    }, [isPinnedSession, pinnedSessionKeysV1, sessionActionTarget, sessionSettingsKey, setPinnedSessionKeysV1]);
+    }, [getSessionOrganizationMutationScopeOrThrow, isPinnedSession, scopedMutationServerId, session.id, sessionActionTarget, sessionSettingsKey]);
     const [pinningSession, performTogglePinned] = useHappyAction(handleTogglePinned);
 
     const handleEditTags = useCallback(async () => {
@@ -561,17 +577,18 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             input: { tags: nextTags },
             context: {
                 operations: {
-                    setTags: async (_sessionId, tags) => {
-                        await setSessionTagsV1(setTagsForSession(
-                            sessionTagsV1 as Record<string, string[]> | null | undefined,
-                            sessionSettingsKey,
-                            [...tags],
-                        ));
+                    setTags: async (_sessionId, tags, opts) => {
+                        const scope = await getSessionOrganizationMutationScopeOrThrow(opts?.serverId ?? scopedMutationServerId);
+                        await writeSessionOrganizationTagLabels({
+                            scope,
+                            sessionId: session.id,
+                            tags: [...tags],
+                        });
                     },
                 },
             },
         });
-    }, [sessionActionTarget, sessionInfoTags, sessionSettingsKey, sessionTagsV1, setSessionTagsV1]);
+    }, [getSessionOrganizationMutationScopeOrThrow, scopedMutationServerId, session.id, sessionActionTarget, sessionInfoTags, sessionSettingsKey]);
     const [editingTags, performEditTags] = useHappyAction(handleEditTags);
 
     const handleMoveToFolder = useCallback(async () => {
@@ -591,22 +608,9 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             context: {
                 operations: {
                     moveToFolder: async (_target, input) => {
-                        const serverId = typeof scopedMutationServerId === 'string' ? scopedMutationServerId.trim() : '';
-                        if (!serverId) {
-                            throw new HappyError(t('errors.unknownError'), false);
-                        }
-                        const serverProfile = getServerProfileById(serverId);
-                        if (!serverProfile) {
-                            throw new HappyError(t('errors.unknownError'), false);
-                        }
-                        const credentials = await TokenStorage.getCredentialsForServerUrl(serverProfile.serverUrl, { serverId: serverProfile.id });
-                        if (!credentials) {
-                            throw new HappyError(t('errors.unknownError'), false);
-                        }
-                        await setSessionFolderAssignment({
-                            credentials,
-                            serverId: serverProfile.id,
-                            serverUrl: serverProfile.serverUrl,
+                        const scope = await getSessionOrganizationMutationScopeOrThrow(scopedMutationServerId);
+                        await writeSessionOrganizationFolderAssignment({
+                            scope,
                             sessionId: session.id,
                             folderId: input?.folderId ?? null,
                         });
@@ -614,7 +618,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                 },
             },
         });
-    }, [moveTargets, openMoveSheet, scopedMutationServerId, session.id, sessionActionTarget, sessionFoldersEnabled, sessionName]);
+    }, [getSessionOrganizationMutationScopeOrThrow, moveTargets, openMoveSheet, scopedMutationServerId, session.id, sessionActionTarget, sessionFoldersEnabled, sessionName]);
     const [movingToFolder, performMoveToFolder] = useHappyAction(handleMoveToFolder);
 
     const handleStopAndMaybeArchive = useCallback(async () => {
@@ -660,7 +664,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         if (!res.ok) {
             throw new HappyError(res.error || t('errors.failedToForkSession'), false);
         }
-    }, [executor.execute, router, session.id]);
+    }, [executor.execute, session.id]);
 
     const [forkingSession, performFork] = useHappyAction(handleForkAction);
 
@@ -700,19 +704,18 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         handleExitAfterSessionMutation();
     });
 
-    const handleDeleteSession = useCallback(() => {
-        Modal.alert(
+    const handleDeleteSession = useCallback(async () => {
+        const confirmed = await Modal.confirm(
             t('sessionInfo.deleteSession'),
             t('sessionInfo.deleteSessionWarning'),
-            [
-                { text: t('common.cancel'), style: 'cancel' },
-                {
-                    text: t('sessionInfo.deleteSession'),
-                    style: 'destructive',
-                    onPress: performDelete
-                }
-            ]
+            {
+                cancelText: t('common.cancel'),
+                confirmText: t('sessionInfo.deleteSession'),
+                destructive: true,
+            },
         );
+        if (!confirmed) return;
+        await performDelete();
     }, [performDelete]);
 
     const handleRenameSession = useCallback(async () => {
@@ -741,19 +744,11 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         return new Date(timestamp).toLocaleString();
     }, []);
 
-    const handleCopyCommand = useCallback(async (command: string) => {
-        try {
-            await Clipboard.setStringAsync(command);
-            Modal.alert(t('common.success'), command);
-        } catch (error) {
-            Modal.alert(t('common.error'), t('common.error'));
-        }
-    }, []);
-
-    const handleCopyUpdateCommand = useCallback(async () => {
-        const updateCommand = 'happier self update';
-        await handleCopyCommand(updateCommand);
-    }, [handleCopyCommand]);
+    const updateCommand = 'happier self update';
+    const resumeCommand = React.useMemo(
+        () => t('sessionInfo.resumeCommand', { sessionId: session.id }),
+        [session.id],
+    );
 
     return (
         <>
@@ -799,7 +794,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             subtitle={t('sessionInfo.updateCliInstructions')}
                             icon={<Ionicons name="warning-outline" size={29} color={theme.colors.accent.orange} />}
                             showChevron={false}
-                            onPress={handleCopyUpdateCommand}
+                            copy={updateCommand}
                         />
                     </ItemGroup>
                 )}
@@ -812,21 +807,14 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                         title={t('sessionInfo.happySessionId')}
                         subtitle={`${session.id.substring(0, 8)}...${session.id.substring(session.id.length - 8)}`}
                         icon={<Ionicons name="finger-print-outline" size={29} color={theme.colors.accent.blue} />}
-                        onPress={handleCopySessionId}
+                        copy={session.id}
                     />
                     {vendorResumeId && vendorResumeLabelKey && vendorResumeCopiedKey && (
                         <Item
                             title={t(vendorResumeLabelKey)}
                             subtitle={`${vendorResumeId.substring(0, 8)}...${vendorResumeId.substring(vendorResumeId.length - 8)}`}
                             icon={<Ionicons name={core.ui.agentPickerIconName as any} size={29} color={theme.colors.accent.blue} />}
-                            onPress={async () => {
-                                try {
-                                    await Clipboard.setStringAsync(vendorResumeId);
-                                    Modal.alert(t('common.success'), t(vendorResumeCopiedKey));
-                                } catch (error) {
-                                    Modal.alert(t('common.error'), t('sessionInfo.failedToCopyMetadata'));
-                                }
-                            }}
+                            copy={vendorResumeId}
                         />
                     )}
                     <Item
@@ -872,6 +860,14 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                         icon={<Ionicons name="copy-outline" size={29} color={theme.colors.accent.blue} />}
                         onPress={handleNewSessionSameSetup}
                     />
+                    {devModeEnabled ? (
+                        <Item
+                            testID="session-info-copy-debug-information"
+                            title={t('sessionInfo.copyDebugInformation')}
+                            icon={<Ionicons name="copy-outline" size={29} color={theme.colors.accent.blue} />}
+                            copy={sessionDebugInformation.text}
+                        />
+                    ) : null}
                     {!session.accessLevel && forkActionEnabled && forkSupported && (
                         <Item
                             testID="session-info-fork-session"
@@ -898,7 +894,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             loading={updatingReadState}
                         />
                     ) : null}
-                    {sessionSettingsKey && pinInfoItemProps ? (
+                    {!isArchivedSession && sessionSettingsKey && pinInfoItemProps ? (
                         <Item
                             {...pinInfoItemProps}
                             onPress={performTogglePinned}
@@ -936,15 +932,15 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             onPress={() => router.push(routeScope.buildHref(session.id, { suffix: '/automations' }))}
                         />
                     ) : null}
-                        {!session.active && Boolean(vendorResumeId) && (
-                            <Item
-                                title={t('sessionInfo.copyResumeCommand')}
-                                subtitle={t('sessionInfo.resumeCommand', { sessionId: session.id })}
-                                icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.purple} />}
-                                showChevron={false}
-                                onPress={() => handleCopyCommand(t('sessionInfo.resumeCommand', { sessionId: session.id }))}
-                            />
-                        )}
+                    {!session.active && Boolean(vendorResumeId) && (
+                        <Item
+                            title={t('sessionInfo.copyResumeCommand')}
+                            subtitle={resumeCommand}
+                            icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.purple} />}
+                            showChevron={false}
+                            copy={resumeCommand}
+                        />
+                    )}
                     <Item
                         title={t('sessionInfo.viewSessionLogTitle')}
                         subtitle={t('sessionInfo.viewSessionLogSubtitle')}
@@ -1005,67 +1001,67 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                 </ItemGroup>
 
                 {/* Metadata */}
-                {session.metadata && (
+                {metadata && (
                     <ItemGroup title={t('sessionInfo.metadata')}>
                         <Item
                             title={t('sessionInfo.host')}
-                            subtitle={session.metadata.host}
+                            subtitle={metadata.host}
                             icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.accent.indigo} />}
                             showChevron={false}
                         />
                         <Item
                             title={t('sessionInfo.path')}
-                            subtitle={formatPathRelativeToHome(session.metadata.path, session.metadata.homeDir)}
+                            subtitle={formatPathRelativeToHome(metadata.path, metadata.homeDir)}
                             icon={<Ionicons name="folder-outline" size={29} color={theme.colors.accent.indigo} />}
                             showChevron={false}
                         />
-                        {session.metadata.version && (
+                        {metadata.version && (
                             <Item
                                 title={t('sessionInfo.cliVersion')}
-                                subtitle={session.metadata.version}
+                                subtitle={metadata.version}
                                 detail={isCliOutdated ? '⚠️' : undefined}
                                 icon={<Ionicons name="git-branch-outline" size={29} color={isCliOutdated ? theme.colors.accent.orange : theme.colors.accent.indigo} />}
                                 showChevron={false}
                             />
                         )}
-                        {session.metadata.os && (
+                        {metadata.os && (
                             <Item
                                 title={t('sessionInfo.operatingSystem')}
-                                subtitle={formatOSPlatform(session.metadata.os)}
+                                subtitle={formatOSPlatform(metadata.os)}
                                 icon={<Ionicons name="hardware-chip-outline" size={29} color={theme.colors.accent.indigo} />}
                                 showChevron={false}
                             />
                         )}
+                        <Item
+                            title={t('sessionInfo.aiProvider')}
+                            subtitle={resolveSessionActionDefaultBackendTitle({
+                                session,
+                                sessionActionDefaultBackendEntryTitle: sessionActionDefaultBackendEntry?.title ?? null,
+                                fallbackTitle: t(getAgentCore(agentId).displayNameKey),
+                            })}
+                            icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.indigo} />}
+                            showChevron={false}
+                        />
+                        {useProfiles && metadata.profileId !== undefined && (
                             <Item
-                                title={t('sessionInfo.aiProvider')}
-                                subtitle={resolveSessionActionDefaultBackendTitle({
-                                    session,
-                                    sessionActionDefaultBackendEntryTitle: sessionActionDefaultBackendEntry?.title ?? null,
-                                    fallbackTitle: t(getAgentCore(agentId).displayNameKey),
-                                })}
-                                icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.indigo} />}
+                                title={t('sessionInfo.aiProfile')}
+                                detail={profileLabel}
+                                icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.accent.indigo} />}
                                 showChevron={false}
                             />
-                            {useProfiles && session.metadata?.profileId !== undefined && (
-                                <Item
-                                    title={t('sessionInfo.aiProfile')}
-                                    detail={profileLabel}
-                                    icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.accent.indigo} />}
-                                    showChevron={false}
-                                />
-                            )}
-                            {session.metadata.hostPid && (
-                                <Item
-                                    title={t('sessionInfo.processId')}
-                                    subtitle={session.metadata.hostPid.toString()}
+                        )}
+                        {metadata.hostPid && (
+                            <Item
+                                title={t('sessionInfo.processId')}
+                                subtitle={metadata.hostPid.toString()}
                                 icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.indigo} />}
                                 showChevron={false}
                             />
                         )}
-                        {session.metadata.happyHomeDir && (
+                        {metadata.happyHomeDir && (
                             <Item
                                 title={t('sessionInfo.happyHome')}
-                                subtitle={formatPathRelativeToHome(session.metadata.happyHomeDir, session.metadata.homeDir)}
+                                subtitle={formatPathRelativeToHome(metadata.happyHomeDir, metadata.homeDir)}
                                 icon={<Ionicons name="home-outline" size={29} color={theme.colors.accent.indigo} />}
                                 showChevron={false}
                             />
@@ -1073,9 +1069,18 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                         {sessionLogPath && (
                             <Item
                                 title={t('sessionLog.logPathCopyLabel')}
-                                subtitle={formatPathRelativeToHome(sessionLogPath, session.metadata.homeDir)}
+                                subtitle={formatPathRelativeToHome(sessionLogPath, metadata.homeDir)}
                                 icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.accent.indigo} />}
-                                onPress={handleCopySessionLogPath}
+                                copy={sessionLogPath}
+                                showChevron={false}
+                            />
+                        )}
+                        {devModeEnabled && providerSessionArtifactPath && (
+                            <Item
+                                title={t('sessionInfo.providerSessionLogs', { provider: providerDisplayName })}
+                                subtitle={formatPathRelativeToHome(providerSessionArtifactPath, metadata.homeDir)}
+                                icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.accent.indigo} />}
+                                copy={providerSessionArtifactPath}
                                 showChevron={false}
                             />
                         )}
@@ -1084,7 +1089,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                                 title={t('sessionInfo.attachFromTerminal')}
                                 subtitle={attachCommand}
                                 icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.indigo} />}
-                                onPress={handleCopyAttachCommand}
+                                copy={attachCommand}
                                 showChevron={false}
                             />
                         )}
@@ -1107,7 +1112,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                         <Item
                             title={t('sessionInfo.copyMetadata')}
                             icon={<Ionicons name="copy-outline" size={29} color={theme.colors.accent.blue} />}
-                            onPress={handleCopyMetadata}
+                            copy={stringifySessionDebugJson(metadata)}
                         />
                     </ItemGroup>
                 )}
@@ -1180,7 +1185,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                                 )}
                             </>
                         )}
-                        {session.metadata && (
+                        {metadata && (
                             <>
                                 <Item
                                     title={t('sessionInfo.metadata')}
@@ -1264,9 +1269,11 @@ export default () => {
     const sourceMachineIdForHandoff = React.useMemo(
         () => resolveSessionHandoffSourceMachineId({
             reachableMachineId: reachableMachineIdForHandoff,
-            sessionMetadata: session?.metadata as any,
+            sessionMetadata: session
+                ? readSessionOwnerMetadataView(session) as any
+                : null,
         }),
-        [reachableMachineIdForHandoff, session?.metadata],
+        [reachableMachineIdForHandoff, session],
     );
     const runtimeAvailability = useSessionHandoffSourceReachability({
         serverId: sessionServerId,

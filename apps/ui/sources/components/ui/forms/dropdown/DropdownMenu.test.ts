@@ -10,7 +10,9 @@ import { installDropdownCommonModuleMocks } from './dropdownTestHelpers';
 installDropdownCommonModuleMocks();
 
 const useSelectableMenuSpy = vi.fn();
+const scrollRegistrySpy = vi.fn();
 let uiItemDensitySetting: 'comfortable' | 'cozy' | 'compact' = 'comfortable';
+let reducedMotion = false;
 
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (Array.isArray(style)) {
@@ -77,6 +79,23 @@ vi.mock('@/components/ui/forms/dropdown/SelectableMenuResults', () => ({
     },
 }));
 
+vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
+    useReducedMotionPreference: () => reducedMotion,
+}));
+
+vi.mock('@/components/ui/scroll/useScrollRectIntoView', () => ({
+    useScrollRectIntoViewRegistry: (args: any) => {
+        scrollRegistrySpy(args);
+        return {
+            scrollRef: { current: null },
+            registerItemLayout: () => () => {},
+            onViewportLayout: () => {},
+            onContentSizeChange: () => {},
+            onScroll: () => {},
+        };
+    },
+}));
+
 vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: (key: string) => {
         if (key === 'uiItemDensity') return uiItemDensitySetting;
@@ -109,7 +128,9 @@ describe('DropdownMenu', () => {
     beforeEach(() => {
         vi.resetModules();
         useSelectableMenuSpy.mockReset();
+        scrollRegistrySpy.mockReset();
         uiItemDensitySetting = 'comfortable';
+        reducedMotion = false;
     });
 
     afterEach(() => {
@@ -440,6 +461,22 @@ describe('DropdownMenu', () => {
         expect(typeof selectableResults?.props?.registerItemLayout).toBe('function');
     });
 
+    it('disables keyboard auto-scroll animation when reduced motion is enabled', async () => {
+        reducedMotion = true;
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }],
+            onSelect: () => {},
+            trigger: React.createElement('View'),
+            search: true,
+        }));
+
+        expect(scrollRegistrySpy).toHaveBeenCalledWith(expect.objectContaining({ animated: false }));
+    });
+
     it('uses popoverAnchorRef when provided', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
 
@@ -516,6 +553,7 @@ describe('DropdownMenu', () => {
         expect(item?.props?.detail).toBeUndefined();
         expect(item?.props?.subtitle).toBe('Second');
         expect(item?.props?.rightElement).toBeTruthy();
+        expect(item?.props?.webRole).toBe('button');
 
         const rightElementScreen = await renderScreen(item?.props?.rightElement);
 

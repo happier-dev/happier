@@ -1,4 +1,10 @@
-import { listVoiceActionBlockSpecs, listVoiceToolActionSpecs, type ActionId, type ActionSpec } from '@happier-dev/protocol';
+import {
+  isVoiceSdkSafeActionSpec,
+  listVoiceActionBlockSpecs,
+  listVoiceToolActionSpecs,
+  type ActionId,
+  type ActionSpec,
+} from '@happier-dev/protocol';
 
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { isInventoryPrivacyAction } from '@/sync/domains/settings/actionSettingsPolicy';
@@ -13,6 +19,12 @@ function isVoiceActionAvailableInState(state: Readonly<{ settings?: unknown }>, 
 
 export function resolveEnabledVoiceToolActionSpecsFromState(state: Readonly<{ settings?: unknown }>): readonly ActionSpec[] {
   return listVoiceToolActionSpecs().filter((spec) => isVoiceActionAvailableInState(state, spec));
+}
+
+export function resolveEnabledVoiceSdkSafeToolActionSpecsFromState(
+  state: Readonly<{ settings?: unknown }>,
+): readonly ActionSpec[] {
+  return resolveEnabledVoiceToolActionSpecsFromState(state).filter(isVoiceSdkSafeActionSpec);
 }
 
 export function resolveDisabledVoiceActionIdsFromState(state: Readonly<{ settings?: unknown }>): readonly ActionId[] {

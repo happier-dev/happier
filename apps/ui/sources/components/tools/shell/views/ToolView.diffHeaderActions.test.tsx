@@ -9,6 +9,7 @@ import {
     installToolShellCommonModuleMocks,
     makeToolCall,
 } from './ToolView.testHelpers';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -26,7 +27,7 @@ installToolShellCommonModuleMocks({
         (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'toolViewDetailLevelDefault') return 'summary';
                     if (key === 'toolViewDetailLevelDefaultLocalControl') return 'summary';
                     if (key === 'toolViewDetailLevelByToolName') return {};
@@ -36,7 +37,7 @@ installToolShellCommonModuleMocks({
                     if (key === 'showLineNumbersInToolViews') return false;
                     if (key === 'wrapLinesInDiffs') return true;
                     return null;
-                },
+                } }),
             },
         }),
     text: async () =>

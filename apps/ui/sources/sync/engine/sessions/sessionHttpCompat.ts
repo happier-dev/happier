@@ -1,6 +1,7 @@
 import {
     V2SessionListResponseSchema,
     V2SessionByIdNotFoundSchema,
+    parseSessionRuntimeActivityProjectionFields,
     type V2SessionListResponse,
     type V2SessionRecord,
 } from '@happier-dev/protocol';
@@ -13,6 +14,9 @@ import {
 import { HappyError } from '@/utils/errors/errors';
 
 type SessionRequest = (path: string, init: RequestInit) => Promise<Response>;
+type SessionListRequestHeadersOptions = Readonly<{
+    includeSessionListTiming?: boolean;
+}>;
 type ReadJsonSafeOptions = Readonly<{
     telemetryNamePrefix?: string;
     fields?: SyncPerformanceTelemetryFields;
@@ -26,11 +30,15 @@ const V2_SESSIONS_SERVER_TIMING_FIELD_BY_NAME: Readonly<Record<string, string>> 
     happier_v2_sessions_total: 'serverTimingTotalMs',
 };
 
-function buildSessionRequestHeaders(token: string): HeadersInit {
-    return {
+function buildSessionRequestHeaders(token: string, options?: SessionListRequestHeadersOptions): HeadersInit {
+    const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
     };
+    if (options?.includeSessionListTiming === true && syncPerformanceTelemetry.isEnabled()) {
+        headers['X-Happier-Session-List-Timing'] = '1';
+    }
+    return headers;
 }
 
 async function readJsonSafe(response: Response, options?: ReadJsonSafeOptions): Promise<unknown> {
@@ -69,6 +77,12 @@ function readNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function readNonNegativeInteger(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value)
+        ? Math.max(0, Math.trunc(value))
+        : undefined;
+}
+
 function readNullableNumber(value: unknown): number | null | undefined {
     if (value == null) return null;
     return readNumber(value);
@@ -96,6 +110,79 @@ function readOptionalString(value: unknown): string | undefined {
 function readNullableString(value: unknown): string | null | undefined {
     if (value == null) return null;
     return typeof value === 'string' ? value : undefined;
+}
+
+function readRuntimeActivityProjectionFields(
+    value: unknown,
+): Pick<
+    V2SessionRecord,
+    'runtimeActivityState'
+    | 'runtimeActivityActiveCount'
+    | 'runtimeActivityObservedAt'
+    | 'runtimeActivityRevision'
+> | null {
+    const parsed = parseSessionRuntimeActivityProjectionFields(value);
+    if (parsed.kind !== 'valid') return null;
+    return {
+        runtimeActivityState: parsed.projection.state,
+        runtimeActivityActiveCount: parsed.projection.activeCount,
+        runtimeActivityObservedAt: parsed.projection.observedAt,
+        runtimeActivityRevision: parsed.projection.revision,
+    };
+}
+
+function mergeCompatSessionAdditiveFields(session: V2SessionRecord, raw: unknown): V2SessionRecord {
+    if (!isRecord(raw)) return session;
+    const pendingBlockedCount = readNonNegativeInteger(raw.pendingBlockedCount);
+    const runtimeActivity = readRuntimeActivityProjectionFields(raw);
+    if (
+        pendingBlockedCount === undefined
+        && runtimeActivity === null
+    ) {
+        return session;
+    }
+    return {
+        ...session,
+        ...(pendingBlockedCount !== undefined ? { pendingBlockedCount } : {}),
+        ...(runtimeActivity ?? {}),
+    } as V2SessionRecord;
+}
+
+function mergeCompatSessionListAdditiveFields(
+    response: V2SessionListResponse,
+    raw: unknown,
+): V2SessionListResponse {
+    if (!isRecord(raw)) return response;
+    const rawSessions = raw.sessions;
+    if (!Array.isArray(rawSessions)) return response;
+    let changed = false;
+    const sessions = response.sessions.map((session, index) => {
+        const merged = mergeCompatSessionAdditiveFields(session, rawSessions[index]);
+        if (merged !== session) changed = true;
+        return merged;
+    });
+    const attentionNextCursor = readNullableString(raw.attentionNextCursor);
+    const attentionHasNext = readOptionalBoolean(raw.attentionHasNext);
+    if (
+        attentionNextCursor !== undefined
+        && attentionNextCursor !== response.attentionNextCursor
+    ) {
+        changed = true;
+    }
+    if (
+        attentionHasNext !== undefined
+        && attentionHasNext !== response.attentionHasNext
+    ) {
+        changed = true;
+    }
+    return changed
+        ? {
+            ...response,
+            sessions,
+            ...(attentionNextCursor !== undefined ? { attentionNextCursor } : {}),
+            ...(attentionHasNext !== undefined ? { attentionHasNext } : {}),
+        }
+        : response;
 }
 
 function parseServerTimingDurationMs(value: string): number | null {
@@ -136,6 +223,15 @@ function coerceStringPayload(value: unknown): string | null {
 
 function coerceLegacySessionRecord(raw: unknown): V2SessionRecord | null {
     if (!isRecord(raw)) return null;
+    if (
+        (
+            raw.metadataLayoutVersion !== undefined
+            && raw.metadataLayoutVersion !== 0
+        )
+        || raw.ownerMetadata !== undefined
+    ) {
+        return null;
+    }
 
     const id = readOptionalString(raw.id);
     const seq = readNumber(raw.seq);
@@ -167,7 +263,7 @@ function coerceLegacySessionRecord(raw: unknown): V2SessionRecord | null {
     const shareAccessLevel = readOptionalString(shareRecord?.accessLevel) ?? topLevelAccessLevel;
     const shareCanApprovePermissions = readOptionalBoolean(shareRecord?.canApprovePermissions) ?? topLevelCanApprovePermissions;
 
-    return {
+    const coerced: V2SessionRecord = {
         id,
         seq,
         createdAt,
@@ -198,6 +294,7 @@ function coerceLegacySessionRecord(raw: unknown): V2SessionRecord | null {
             || (raw.lastRuntimeIssue && typeof raw.lastRuntimeIssue === 'object')
                 ? raw.lastRuntimeIssue as V2SessionRecord['lastRuntimeIssue']
                 : undefined,
+        ...(readRuntimeActivityProjectionFields(raw) ?? {}),
         pendingCount: readNumber(raw.pendingCount) ?? undefined,
         pendingVersion: readNumber(raw.pendingVersion) ?? undefined,
         dataEncryptionKey: readNullableString(raw.dataEncryptionKey) ?? null,
@@ -211,6 +308,7 @@ function coerceLegacySessionRecord(raw: unknown): V2SessionRecord | null {
                 }
                 : null,
     };
+    return mergeCompatSessionAdditiveFields(coerced, raw);
 }
 
 function parseCompatSessionListResponse(raw: unknown, telemetryFields?: SyncPerformanceTelemetryFields): V2SessionListResponse | null {
@@ -224,7 +322,7 @@ function parseCompatSessionListResponse(raw: unknown, telemetryFields?: SyncPerf
 function parseCompatSessionListResponseValue(raw: unknown): V2SessionListResponse | null {
     const parsed = V2SessionListResponseSchema.safeParse(raw);
     if (parsed.success) {
-        return parsed.data;
+        return mergeCompatSessionListAdditiveFields(parsed.data, raw);
     }
 
     if (!isRecord(raw) || !Array.isArray(raw.sessions)) {
@@ -236,18 +334,39 @@ function parseCompatSessionListResponseValue(raw: unknown): V2SessionListRespons
         return null;
     }
 
-    return {
+    return mergeCompatSessionListAdditiveFields({
         sessions: sessions as V2SessionRecord[],
         nextCursor: typeof raw.nextCursor === 'string' ? raw.nextCursor : null,
         hasNext: raw.hasNext === true,
-    };
+    }, raw);
+}
+
+function hasUnsupportedExplicitSessionMetadataLayout(raw: unknown): boolean {
+    if (!isRecord(raw) || !Array.isArray(raw.sessions)) return false;
+    return raw.sessions.some((entry) =>
+        isRecord(entry)
+        && typeof entry.metadataLayoutVersion === 'number'
+        && entry.metadataLayoutVersion !== 0
+        && entry.metadataLayoutVersion !== 1,
+    );
+}
+
+function hasExplicitNonLegacySessionMetadataEnvelope(raw: unknown): boolean {
+    if (!isRecord(raw) || !Array.isArray(raw.sessions)) return false;
+    return raw.sessions.some((entry) =>
+        isRecord(entry)
+        && (
+            entry.metadataLayoutVersion === 1
+            || entry.ownerMetadata !== undefined
+        ),
+    );
 }
 
 export function parseCompatSessionByIdResponse(raw: unknown): { session: V2SessionRecord } | null {
     if (isRecord(raw) && isRecord(raw.session)) {
         const parsed = V2SessionListResponseSchema.safeParse({ sessions: [raw.session] });
         if (parsed.success && parsed.data.sessions[0]) {
-            return { session: parsed.data.sessions[0] };
+            return { session: mergeCompatSessionAdditiveFields(parsed.data.sessions[0], raw.session) };
         }
 
         const coerced = coerceLegacySessionRecord(raw.session);
@@ -310,6 +429,7 @@ export async function fetchSessionListPageCompat(params: Readonly<{
     token: string;
     sessionListPath?: string;
     cursor?: string | null;
+    attentionCursor?: string | null;
     limit: number;
     allowLegacyV1Fallback?: boolean;
     telemetryFields?: SyncPerformanceTelemetryFields;
@@ -317,6 +437,8 @@ export async function fetchSessionListPageCompat(params: Readonly<{
     sessions: V2SessionListResponse['sessions'];
     nextCursor: string | null;
     hasNext: boolean;
+    attentionNextCursor: string | null;
+    attentionHasNext: boolean;
     source: 'v2' | 'v1';
 }> {
     const allowLegacyV1Fallback = params.allowLegacyV1Fallback !== false;
@@ -328,10 +450,17 @@ export async function fetchSessionListPageCompat(params: Readonly<{
     if (params.cursor) {
         url.searchParams.set('cursor', params.cursor);
     }
+    if (params.attentionCursor) {
+        url.searchParams.set('attentionCursor', params.attentionCursor);
+    }
 
-    const v2Response = await params.request(url.pathname + url.search, {
-        headers: buildSessionRequestHeaders(params.token),
-    });
+    const v2Response = await syncPerformanceTelemetry.measureAsync(
+        'sync.sessions.snapshot.fetchPage.request',
+        params.telemetryFields,
+        async () => params.request(url.pathname + url.search, {
+            headers: buildSessionRequestHeaders(params.token, { includeSessionListTiming: true }),
+        }),
+    );
     const v2TelemetryFields = {
         ...(params.telemetryFields ?? {}),
         ...readV2SessionsServerTimingFields(v2Response),
@@ -355,8 +484,18 @@ export async function fetchSessionListPageCompat(params: Readonly<{
                 sessions: parsed.sessions,
                 nextCursor: typeof parsed.nextCursor === 'string' ? parsed.nextCursor : null,
                 hasNext: parsed.hasNext === true,
+                attentionNextCursor: typeof parsed.attentionNextCursor === 'string'
+                    ? parsed.attentionNextCursor
+                    : null,
+                attentionHasNext: parsed.attentionHasNext === true,
                 source: 'v2',
             };
+        }
+        if (hasUnsupportedExplicitSessionMetadataLayout(v2Body)) {
+            throw new Error('Unsupported Session metadata layout');
+        }
+        if (hasExplicitNonLegacySessionMetadataEnvelope(v2Body)) {
+            throw new Error('Invalid layout-1 Session metadata response');
         }
         if (!allowLegacyV1Fallback) {
             throw new Error('Invalid /v2/sessions response for session-by-id lookup');
@@ -396,6 +535,8 @@ export async function fetchSessionListPageCompat(params: Readonly<{
         sessions: parsedLegacy.sessions,
         nextCursor: null,
         hasNext: false,
+        attentionNextCursor: null,
+        attentionHasNext: false,
         source: 'v1',
     };
 }

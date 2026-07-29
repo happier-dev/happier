@@ -2,11 +2,14 @@ import {
     evaluateExistingSessionAutomationEligibility,
     type ExistingSessionAutomationEligibility,
 } from '@happier-dev/agents';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 type ExistingSessionAutomationSession = Readonly<{
     id?: string;
     encryptionMode?: 'e2ee' | 'plain';
     metadata?: Record<string, unknown> | null;
+    metadataLayoutVersion?: number;
+    ownerMetadataView?: Record<string, unknown> | null;
 }> | null | undefined;
 
 export type ExistingSessionAutomationAvailability =
@@ -53,7 +56,11 @@ export function resolveExistingSessionAutomationAvailability(input: Readonly<{
     }
 
     const eligibility = evaluateExistingSessionAutomationEligibility({
-        metadata: input.session.metadata,
+        metadata: readSessionOwnerMetadataView({
+            metadataLayoutVersion: input.session.metadataLayoutVersion,
+            metadata: input.session.metadata ?? null,
+            ownerMetadataView: input.session.ownerMetadataView,
+        }),
         accountSettings: input.accountSettings ?? null,
     });
     if (!eligibility.eligible) {

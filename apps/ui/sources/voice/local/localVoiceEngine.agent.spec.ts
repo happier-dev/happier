@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 
 import {
@@ -21,6 +21,7 @@ import {
     sendMessage,
 } from './localVoiceEngine.testHarness';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { VOICE_TOOL_RESULTS_JSON_PREFIX } from '@happier-dev/protocol';
 import type { VoiceAgentClient } from '@/voice/agent/types';
 
 const warmDaemonVoiceInferenceOnVoiceHomeAttachMock = vi.hoisted(() => vi.fn());
@@ -65,7 +66,7 @@ let localVoiceEngine: Awaited<ReturnType<typeof loadLocalVoiceEngineWithCompatSt
 let useVoiceTargetStore: typeof import('@/voice/runtime/voiceTargetStore').useVoiceTargetStore;
 
 describe('local voice engine agent behavior', () => {
-    registerLocalVoiceEngineHarnessHooks();
+    registerLocalVoiceEngineHarnessHooks({ resetModulesBetweenTests: false });
 
     beforeEach(async () => {
         warmDaemonVoiceInferenceOnVoiceHomeAttachMock.mockReset();
@@ -73,49 +74,91 @@ describe('local voice engine agent behavior', () => {
         localVoiceEngine = await loadLocalVoiceEngineWithCompatState();
     }, 180_000);
 
+    afterEach(async () => {
+        await localVoiceEngine.stopLocalVoiceSession();
+        await localVoiceEngine.stopLocalVoiceAgent('s1');
+        await localVoiceEngine.stopLocalVoiceAgent(VOICE_AGENT_GLOBAL_SESSION_ID);
+
+        const [
+            { voiceConversationRuntimeMachine },
+            { resetVoiceSessionRuntimeStateForTests },
+            { voiceSessionBindingStore },
+        ] = await Promise.all([
+            import('@/voice/runtime/machine/VoiceConversationRuntimeMachine'),
+            import('@/voice/session/voiceSessionStore'),
+            import('@/voice/binding/voiceConversationBindingStore'),
+        ]);
+        voiceConversationRuntimeMachine.reset();
+        await resetVoiceSessionRuntimeStateForTests();
+
+        for (const binding of voiceSessionBindingStore.getState().list()) {
+            voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
+        }
+        voiceSessionBindingStore.getState().replacePersistedBindings([]);
+
+        const targetState = useVoiceTargetStore.getState();
+        targetState.setScope('global');
+        targetState.setPrimaryActionSessionId(null);
+        targetState.setTrackedSessionIds([]);
+        targetState.setLastFocusedSessionId(null);
+    });
+
     it('agent mode (openai_compat) chats without persisting to the session when no tool actions are emitted', async () => {
         const storage = await getStorage();
+        const readyMachine = {
+            ...storage.getState().machines['machine-1'],
+            active: true,
+            activeAt: Date.now(),
+        };
         storage.__setState({
             settings: {
                 ...storage.getState().settings,
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                                 openaiCompat: {
-                                    ...storage.getState().settings.voice.adapters.local_conversation.tts.openaiCompat,
+                                    ...storage.getState().settings.voice.providers.local_conversation.config.tts.openaiCompat,
                                     baseUrl: 'http://localhost:8001',
                                 },
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'openai_compat',
                                 openaiCompat: {
-                                    ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
+                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
                                     chatBaseUrl: 'http://localhost:8002',
                                     chatApiKey: null,
                                     chatModel: 'fast-model',
                                     commitModel: 'commit-model',
                                 },
                             },
-                        },
+                        } },
                     },
                 },
             },
             sessions: {
                 ...storage.getState().sessions,
                 s1: { id: 's1', active: true, presence: 'online', metadata: { path: '/tmp', host: 'test' } },
+            },
+            machines: {
+                ...storage.getState().machines,
+                'machine-1': readyMachine,
+            },
+            machineListByServerId: {
+                ...storage.getState().machineListByServerId,
+                'server-a': [readyMachine],
             },
         });
 
@@ -153,31 +196,31 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'openai_compat',
                                 openaiCompat: {
-                                    ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
+                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
                                     chatBaseUrl: 'http://localhost:8002',
                                     chatApiKey: null,
                                     chatModel: 'fast-model',
                                     commitModel: 'commit-model',
                                 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -234,31 +277,31 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'openai_compat',
                                 openaiCompat: {
-                                    ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
+                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
                                     chatBaseUrl: 'http://localhost:8002',
                                     chatApiKey: null,
                                     chatModel: 'fast-model',
                                     commitModel: 'commit-model',
                                 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -300,7 +343,7 @@ describe('local voice engine agent behavior', () => {
         const hasToolResultsMessage = chatCalls.some((call: any[]) => {
             const body = JSON.parse(String(call?.[1]?.body ?? '{}'));
             const messages = Array.isArray(body?.messages) ? body.messages : [];
-            return messages.some((m: any) => typeof m?.content === 'string' && m.content.includes('VOICE_TOOL_RESULTS_JSON:'));
+            return messages.some((m: any) => typeof m?.content === 'string' && m.content.includes(VOICE_TOOL_RESULTS_JSON_PREFIX));
         });
         expect(hasToolResultsMessage).toBe(true);
     });
@@ -316,31 +359,31 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'openai_compat',
                                 openaiCompat: {
-                                    ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
+                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
                                     chatBaseUrl: 'http://localhost:8002',
                                     chatApiKey: null,
                                     chatModel: 'fast-model',
                                     commitModel: 'commit-model',
                                 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -389,31 +432,31 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'openai_compat',
                                 openaiCompat: {
-                                    ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
+                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
                                     chatBaseUrl: 'http://localhost:8002',
                                     chatApiKey: null,
                                     chatModel: 'fast-model',
                                     commitModel: 'commit-model',
                                 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -454,7 +497,7 @@ describe('local voice engine agent behavior', () => {
                     {
                         t: 'answerUserActionRequest',
                         args: {
-                            answers: [{ question: 'Continue?', answer: 'Yes' }],
+                            answers: [{ question: 'Continue?', values: ['Yes'] }],
                         },
                     },
                 ],
@@ -484,7 +527,7 @@ describe('local voice engine agent behavior', () => {
         expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
             sessionId: 's1',
             method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
-            payload: { id: 'req_question', approved: true, answers: { 'Continue?': 'Yes' } },
+            payload: { id: 'req_question', approved: true, answers: { 'Continue?': ['Yes'] } },
             serverId: 'server-a',
         });
 
@@ -496,7 +539,7 @@ describe('local voice engine agent behavior', () => {
                 (message: any) =>
                     message?.role === 'user' &&
                     typeof message?.content === 'string' &&
-                    message.content.startsWith('VOICE_TOOL_RESULTS_JSON:'),
+                    message.content.startsWith(VOICE_TOOL_RESULTS_JSON_PREFIX),
             );
 
         expect(toolResultsCarrier?.content).toContain('"t":"answerUserActionRequest"');
@@ -513,31 +556,31 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'openai_compat',
                                 openaiCompat: {
-                                    ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
+                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
                                     chatBaseUrl: 'http://localhost:8002',
                                     chatApiKey: null,
                                     chatModel: 'fast-model',
                                     commitModel: 'commit-model',
                                 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -562,7 +605,7 @@ describe('local voice engine agent behavior', () => {
                     {
                         t: 'answerUserActionRequest',
                         args: {
-                            answers: [{ question: 'Continue?', answer: 'Yes' }],
+                            answers: [{ question: 'Continue?', values: ['Yes'] }],
                         },
                     },
                 ],
@@ -597,7 +640,7 @@ describe('local voice engine agent behavior', () => {
                 (message: any) =>
                     message?.role === 'user' &&
                     typeof message?.content === 'string' &&
-                    message.content.startsWith('VOICE_TOOL_RESULTS_JSON:'),
+                    message.content.startsWith(VOICE_TOOL_RESULTS_JSON_PREFIX),
             );
 
         expect(toolResultsCarrier?.content).toContain('"errorCode":"no_permission_request"');
@@ -612,31 +655,31 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'openai_compat',
                                 openaiCompat: {
-                                    ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
+                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
                                     chatBaseUrl: 'http://localhost:8002',
                                     chatApiKey: null,
                                     chatModel: 'fast-model',
                                     commitModel: 'commit-model',
                                 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -674,31 +717,31 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'openai_compat',
                                 openaiCompat: {
-                                    ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
+                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
                                     chatBaseUrl: 'http://localhost:8002',
                                     chatApiKey: null,
                                     chatModel: 'fast-model',
                                     commitModel: 'commit-model',
                                 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -726,39 +769,44 @@ describe('local voice engine agent behavior', () => {
         expect(nextState.error).toBe('send_failed');
     });
 
-    it('falls back to openai_compat agent when daemon agent is unsupported and openai_compat is configured', async () => {
+    it('keeps the selected daemon owner retryable when its execution run is unsupported', async () => {
         const storage = await getStorage();
+        const readyMachine = {
+            ...storage.getState().machines['machine-1'],
+            active: true,
+            activeAt: Date.now(),
+        };
         storage.__setState({
             settings: {
                 ...storage.getState().settings,
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'daemon',
                                 openaiCompat: {
-                                    ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
+                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
                                     chatBaseUrl: 'http://localhost:8002',
                                     chatApiKey: null,
                                     chatModel: 'fast-model',
                                     commitModel: 'commit-model',
                                 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -766,30 +814,42 @@ describe('local voice engine agent behavior', () => {
                 ...storage.getState().sessions,
                 s1: { id: 's1', active: true, presence: 'online', modelMode: 'session-model', metadata: { flavor: 'claude' } },
             },
+            machines: {
+                ...storage.getState().machines,
+                'machine-1': readyMachine,
+            },
+            machineListByServerId: {
+                ...storage.getState().machineListByServerId,
+                'server-a': [readyMachine],
+            },
         });
 
         const error: any = new Error('unsupported');
         error.rpcErrorCode = 'VOICE_AGENT_UNSUPPORTED';
         daemonVoiceAgentStart.mockRejectedValueOnce(error);
 
-        (globalThis.fetch as any)
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ text: 'hello world' }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: 'Voice agent reply' } }] }),
-            });
+        (globalThis.fetch as any).mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({ text: 'hello world' }),
+        });
 
-        const { toggleLocalVoiceTurn } = localVoiceEngine;
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
         await toggleLocalVoiceTurn('s1');
 
-        expect(daemonVoiceAgentStart).toHaveBeenCalledTimes(1);
-        expect(globalThis.fetch).toHaveBeenCalledTimes(2);
-        expect((globalThis.fetch as any).mock.calls[1]?.[0]).toContain('/v1/chat/completions');
+        expect(daemonVoiceAgentStart).toHaveBeenCalledTimes(2);
+        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+        expect(
+            (globalThis.fetch as any).mock.calls.some((call: any[]) =>
+                String(call?.[0] ?? '').includes('/v1/chat/completions'),
+            ),
+        ).toBe(false);
         expect(sendMessage).not.toHaveBeenCalled();
+        expect(getLocalVoiceState()).toMatchObject({
+            status: 'idle',
+            sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+            error: 'send_failed',
+        });
     });
 
     it('recreates daemon agent handle when daemon reports VOICE_AGENT_NOT_FOUND', async () => {
@@ -800,24 +860,24 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'daemon',
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -855,28 +915,28 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'daemon',
                             },
                             streaming: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.streaming,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
                                 enabled: true,
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -917,29 +977,29 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'daemon',
                                 prewarmOnConnect: true,
                             },
                             streaming: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.streaming,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
                                 enabled: false,
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -967,29 +1027,29 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'daemon',
                                 prewarmOnConnect: true,
                             },
                             streaming: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.streaming,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
                                 enabled: false,
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -1025,27 +1085,28 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+          welcome: { enabled: true, mode: 'immediate', templateId: null },
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 provider: 'device',
                                 autoSpeakReplies: true,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'daemon',
                                 prewarmOnConnect: true,
-                                welcome: { enabled: true, mode: 'immediate', templateId: null },
+
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -1076,13 +1137,13 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 provider: 'local_neural',
                                 localNeural: {
                                     assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
@@ -1091,27 +1152,27 @@ describe('local voice engine agent behavior', () => {
                                 },
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 provider: 'local_neural',
                                 autoSpeakReplies: false,
                                 localNeural: {
                                     model: 'kokoro',
-                                    assetId: 'kokoro-tts-en-v1',
+                                    assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
                                     voiceId: 'af_heart',
                                     speed: 1,
                                     execution: 'daemon',
                                 },
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'daemon',
                                 prewarmOnConnect: true,
                             },
                             streaming: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.streaming,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
                                 enabled: false,
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -1139,6 +1200,89 @@ describe('local voice engine agent behavior', () => {
         );
     }, 60_000);
 
+    it('surfaces an attach-time daemon model warm failure through the canonical runtime error state', async () => {
+        let rejectWarm!: (error: unknown) => void;
+        warmDaemonVoiceInferenceOnVoiceHomeAttachMock.mockReturnValueOnce(
+            new Promise<void>((_resolve, reject) => {
+                rejectWarm = reject;
+            }),
+        );
+        const storage = await getStorage();
+        storage.__setState({
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_conversation',
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
+                            conversationMode: 'agent',
+                            tts: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
+                                provider: 'local_neural',
+                                autoSpeakReplies: false,
+                                localNeural: {
+                                    model: 'kokoro',
+                                    assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+                                    voiceId: 'af_heart',
+                                    speed: 1,
+                                    execution: 'daemon',
+                                },
+                            },
+                        } },
+                    },
+                },
+            },
+        });
+
+        const { getLocalVoiceState, toggleLocalVoiceTurn } = localVoiceEngine;
+        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+        expect(getLocalVoiceState().status).toBe('recording');
+
+        rejectWarm(Object.assign(
+            new Error('daemon_voice_inference_model_not_installed'),
+            { code: 'model_not_installed' },
+        ));
+        await flushMicrotasks(4);
+
+        expect(getLocalVoiceState()).toMatchObject({
+            status: 'idle',
+            sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+            error: 'daemon_voice_inference_model_not_installed',
+        });
+    }, 60_000);
+
+    it('does not revive a stopped Voice session when its attach-time warm fails late', async () => {
+        let rejectWarm!: (error: unknown) => void;
+        warmDaemonVoiceInferenceOnVoiceHomeAttachMock.mockReturnValueOnce(
+            new Promise<void>((_resolve, reject) => {
+                rejectWarm = reject;
+            }),
+        );
+
+        const {
+            getLocalVoiceState,
+            stopLocalVoiceSession,
+            toggleLocalVoiceTurn,
+        } = localVoiceEngine;
+        await toggleLocalVoiceTurn('voice-warm-cancelled');
+        await stopLocalVoiceSession();
+
+        rejectWarm(Object.assign(
+            new Error('daemon_voice_inference_runtime_unavailable'),
+            { code: 'runtime_unavailable' },
+        ));
+        await flushMicrotasks(4);
+
+        expect(getLocalVoiceState()).toMatchObject({
+            status: 'idle',
+            sessionId: 'voice-warm-cancelled',
+            error: null,
+        });
+    }, 60_000);
+
     it('resetLocalVoiceAgentPersistence clears persisted run metadata', async () => {
         const storage = await getStorage();
         storage.__setState({
@@ -1147,18 +1291,18 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'daemon',
                                 prewarmOnConnect: true,
                                 transcript: { persistenceMode: 'persistent', epoch: 1 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -1199,28 +1343,28 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'daemon',
                             },
                             streaming: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.streaming,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
                                 enabled: true,
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -1261,28 +1405,28 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'daemon',
                             },
                             streaming: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.streaming,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
                                 enabled: true,
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -1324,24 +1468,24 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'daemon',
                             },
                             streaming: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.streaming,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
                                 enabled: true,
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -1372,6 +1516,16 @@ describe('local voice engine agent behavior', () => {
                 nextCursor: 1,
                 done: true,
             };
+        });
+
+        const { voiceSessionBindingManager } = await import('@/voice/binding/voiceConversationBindingRuntime');
+        await expect(voiceSessionBindingManager.ensureBound({
+            adapterId: 'local_conversation',
+            controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+            requestedTargetSessionId: null,
+        })).resolves.toMatchObject({
+            controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+            conversationSessionId: 'voice-home-session',
         });
 
         const { sendLocalVoiceAgentTextUpdate } = localVoiceEngine;
@@ -1408,31 +1562,31 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: true,
                                 provider: 'device',
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'daemon',
                             },
                             streaming: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.streaming,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
                                 enabled: true,
                                 ttsEnabled: true,
                                 ttsChunkChars: 32,
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -1455,6 +1609,7 @@ describe('local voice engine agent behavior', () => {
             done: true,
         });
         expoSpeechSpeak.mockImplementation((_text: string, options: any) => {
+            options?.onStart?.();
             options?.onDone?.();
         });
 
@@ -1479,30 +1634,30 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: true,
                                 provider: 'device',
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'daemon',
                             },
                             streaming: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.streaming,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
                                 enabled: true,
                                 ttsEnabled: false,
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -1525,6 +1680,7 @@ describe('local voice engine agent behavior', () => {
             done: true,
         });
         expoSpeechSpeak.mockImplementation((_text: string, options: any) => {
+            options?.onStart?.();
             options?.onDone?.();
         });
 
@@ -1553,35 +1709,35 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                                 openaiCompat: {
-                                    ...storage.getState().settings.voice.adapters.local_conversation.tts.openaiCompat,
+                                    ...storage.getState().settings.voice.providers.local_conversation.config.tts.openaiCompat,
                                     baseUrl: 'http://localhost:8001',
                                 },
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'openai_compat',
                                 openaiCompat: {
-                                    ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
+                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
                                     chatBaseUrl: 'http://localhost:8002',
                                     chatApiKey: null,
                                     chatModel: 'fast-model',
                                     commitModel: 'commit-model',
                                 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -1640,31 +1796,31 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
                                 baseUrl: 'http://localhost:8000',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
                             },
                             agent: {
-                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                                 backend: 'openai_compat',
                                 openaiCompat: {
-                                    ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
+                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
                                     chatBaseUrl: 'http://localhost:8002',
                                     chatApiKey: null,
                                     chatModel: 'fast-model',
                                     commitModel: 'commit-model',
                                 },
                             },
-                        },
+                        } },
                     },
                 },
             },

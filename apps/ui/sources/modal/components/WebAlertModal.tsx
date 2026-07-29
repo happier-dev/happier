@@ -121,6 +121,7 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
         <BaseModal
             visible={true}
             onClose={onClose}
+            accessibilityLabel={config.accessibilityLabel ?? config.title}
             closeOnBackdrop={false}
             showBackdrop={showBackdrop}
             zIndexBase={zIndexBase}

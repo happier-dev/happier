@@ -1,9 +1,13 @@
 import type { AgentId } from '@/agents/catalog/catalog';
+import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
-import { getAgentStaticModels } from '@happier-dev/agents';
-import type { SessionContextUsageSnapshotV1 } from '@happier-dev/protocol';
+import { getAgentStaticModels, resolveModelSelectionIntentFromSessionMetadata } from '@happier-dev/agents';
+import {
+    readSessionProviderBindingMetadataV1,
+    type SessionContextUsageSnapshotV1,
+} from '@happier-dev/protocol';
 
 const CONTEXT_WARNING_WINDOW_RATIO = 0.95;
 
@@ -76,10 +80,25 @@ function resolveAssumedContextWindowTokens(params: Readonly<{
     metadata: Metadata | null | undefined;
     usageData?: ContextUsageData;
 }>): number | null {
-    const overrideModelId = normalizeModelId(params.metadata?.modelOverrideV1?.modelId);
+    const providerBinding = readSessionProviderBindingMetadataV1(params.metadata);
+    const selectionIntent = resolveModelSelectionIntentFromSessionMetadata(
+        params.metadata,
+        buildAgentUniverseBackendTargetKey(params.agentId),
+    );
+    const overrideModelId = normalizeModelId(selectionIntent?.selection?.modelId);
     const sessionModelsState = readSessionModelsState(params.metadata);
+    if (providerBinding !== null) {
+        if (!sessionModelsState || sessionModelsState.agentId !== params.agentId) return null;
+        const activeProviderModelId = normalizeModelId(sessionModelsState.currentModelId);
+        const activeProviderModel = Array.isArray(sessionModelsState.availableModels)
+            ? sessionModelsState.availableModels.find(
+                (model) => normalizeModelId(model.id) === activeProviderModelId,
+            )
+            : null;
+        return normalizeContextWindowTokens(activeProviderModel?.contextWindowTokens);
+    }
     let activeModelId = overrideModelId;
-    if (sessionModelsState && sessionModelsState.provider === params.agentId) {
+    if (sessionModelsState && sessionModelsState.agentId === params.agentId) {
         activeModelId = overrideModelId || normalizeModelId(sessionModelsState.currentModelId);
         const matchingModel = Array.isArray(sessionModelsState.availableModels)
             ? sessionModelsState.availableModels.find((model) => normalizeModelId(model.id) === activeModelId)

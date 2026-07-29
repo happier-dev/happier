@@ -161,6 +161,47 @@ describe('createEndpointSupervisedRequest', () => {
         expect(supervisor.invalidate).not.toHaveBeenCalled();
     });
 
+    it('reports proxy maintenance 503 responses as planned server restarts', async () => {
+        getCredentialsForServerUrlMock.mockResolvedValue(null);
+        runtimeFetchMock.mockResolvedValue(new Response('Server reload in progress', {
+            status: 503,
+            headers: {
+                'Retry-After': '2',
+                'X-Happier-Retry-Reason': 'server_restarting',
+            },
+        }));
+
+        const supervisor: ManagedEndpointSupervisor = {
+            start: vi.fn(async () => {}),
+            stop: vi.fn(async () => {}),
+            invalidate: vi.fn(),
+            reportFailure: vi.fn(),
+            reportProbeResult: vi.fn(),
+            waitUntilOnline: vi.fn(async () => {}),
+            getState: () => onlineState(),
+            subscribe: () => () => {},
+        };
+
+        const { createEndpointSupervisedRequest } = await import('./createEndpointSupervisedRequest');
+        const request = createEndpointSupervisedRequest({
+            serverId: 'server-a',
+            serverUrl: 'https://a.example.test',
+            token: 'token-1',
+            endpointSupervisor: supervisor,
+        });
+
+        const response = await request('/v1/sessions', { method: 'GET', headers: {} });
+
+        expect(response.status).toBe(503);
+        expect(supervisor.reportProbeResult).toHaveBeenCalledWith({
+            status: 'retry_later',
+            retryAfterMs: 2000,
+            reason: 'server_restarting',
+            errorMessage: 'HTTP 503',
+        }, undefined);
+        expect(supervisor.invalidate).not.toHaveBeenCalled();
+    });
+
     it('does not report unauthenticated 401 responses as endpoint auth failures', async () => {
         getCredentialsForServerUrlMock.mockResolvedValue(null);
         runtimeFetchMock.mockResolvedValue(new Response('{}', { status: 401, headers: new Headers() }));

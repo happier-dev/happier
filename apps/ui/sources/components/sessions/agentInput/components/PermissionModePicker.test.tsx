@@ -80,8 +80,14 @@ describe('PermissionModePicker', () => {
         const onSelect = vi.fn<(mode: PermissionMode) => void>();
         const { screen } = await renderPicker({ selected: 'default', onSelect });
 
-        expect(screen.findByTestId('permission-mode-default')).toBeTruthy();
-        expect(screen.findByTestId('permission-mode-yolo')).toBeTruthy();
+        const selected = screen.findByTestId('permission-mode-default');
+        const unselected = screen.findByTestId('permission-mode-yolo');
+        expect(selected).toBeTruthy();
+        expect(unselected).toBeTruthy();
+        expect(selected?.props.accessibilityRole).toBe('radio');
+        expect(selected?.props.accessibilityLabel).toBe('Default');
+        expect(selected?.props.accessibilityState).toEqual({ checked: true });
+        expect(unselected?.props.accessibilityState).toEqual({ checked: false });
 
         screen.pressByTestId('permission-mode-yolo');
 

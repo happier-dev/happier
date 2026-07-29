@@ -1,15 +1,19 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, Line, Text as SvgText } from 'react-native-svg';
 
 import { ChartTooltip, HorizontalChartFrame } from '@/components/ui/charts';
+import { DrawnLinePath } from '@/components/instrument';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { UsageAnalyticsTimelineBucket, UsageMetric } from '@/sync/api/account/usageAnalytics';
+import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
+import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
 
 import { buildUsageJourneyChartModel } from './buildUsageJourneyChartModel';
-import { formatUsageCurrency } from './formatUsageCurrency';
+import { usageSeriesColor, usageSignatureAccent } from './usageAccent';
+import { useEntrancesEnabled } from './sections/EntranceView';
 
 type UsageJourneyChartProps = Readonly<{
     timeline: readonly UsageAnalyticsTimelineBucket[];
@@ -118,35 +122,30 @@ function buildSegmentPath(points: readonly RankPoint[]): string {
 
 function formatBucketLabel(timestampMs: number, bucketCount: number): string {
     const date = new Date(timestampMs);
-    return new Intl.DateTimeFormat(undefined, bucketCount > 16 ? { month: 'short' } : { month: 'short', day: 'numeric' }).format(date);
+    return formatWithCachedDateTimeFormatter(date, undefined, bucketCount > 16 ? { month: 'short' } : { month: 'short', day: 'numeric' });
 }
 
 function formatMetricValue(value: number, metric: UsageMetric, currency: string): string {
     if (metric === 'cost') {
-        return formatUsageCurrency(value, currency);
+        return formatUsageCost(value, currency);
     }
-    if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
-    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-    if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-    return value.toFixed(0);
+    return formatTokenCount(value);
 }
 
 export function UsageJourneyChart(props: UsageJourneyChartProps): React.ReactElement | null {
     const { timeline, metric, currency = 'USD', testID } = props;
+    // Single guard source (R-L6 F1): no line draw-in replay on a revisit remount.
+    const entrancesEnabled = useEntrancesEnabled();
     const { theme } = useUnistyles();
 
     if (timeline.length === 0) {
         return null;
     }
 
-    const palette = [
-        theme.colors.accent.orange,
-        theme.colors.accent.blue,
-        theme.colors.accent.purple,
-        theme.colors.accent.green,
-        theme.colors.accent.indigo,
-        theme.colors.accent.yellow,
-    ];
+    // ONE-accent system (D-1): series are ORDERED tonal steps of the single
+    // signature accent, never different hues.
+    const seriesColorAt = (index: number) => usageSeriesColor(theme, index);
+    const accentFallback = usageSignatureAccent(theme);
 
     const bucketCount = timeline.length;
     const chartWidth = Math.max(JOURNEY_MIN_WIDTH, CHART_PADDING_X * 2 + Math.max(bucketCount, 8) * JOURNEY_BUCKET_WIDTH);
@@ -160,7 +159,7 @@ export function UsageJourneyChart(props: UsageJourneyChartProps): React.ReactEle
         chartTop: CHART_PADDING_TOP,
         chartBottom: CHART_HEIGHT - CHART_PADDING_BOTTOM,
     });
-    const colorByLabel = new Map(chartModel.series.map((series, index) => [series.label, palette[index % palette.length]]));
+    const colorByLabel = new Map(chartModel.series.map((series, index) => [series.label, seriesColorAt(index)]));
 
     return (
         <View testID={testID} style={styles.container}>
@@ -202,18 +201,9 @@ export function UsageJourneyChart(props: UsageJourneyChartProps): React.ReactEle
                         ))}
 
                         {chartModel.series.map(({ label, points }) => {
-                            const color = colorByLabel.get(label) ?? theme.colors.accent.blue;
+                            const color = colorByLabel.get(label) ?? accentFallback;
                             return (
                                 <React.Fragment key={label}>
-                                    <Path
-                                        d={buildSegmentPath(points)}
-                                        fill="none"
-                                        stroke={color}
-                                        strokeWidth={2}
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        strokeDasharray="2 6"
-                                    />
                                     {points.map((point) => (
                                         <Circle
                                             key={`${label}-${point.bucketIndex}`}
@@ -243,8 +233,32 @@ export function UsageJourneyChart(props: UsageJourneyChartProps): React.ReactEle
                             );
                         })}
                     </Svg>
+                    {/* Series lines draw themselves in once via the kit's DrawnLinePath
+                        (Skia path-trim at `full`, opacity fade otherwise/web). */}
                     {chartModel.series.map(({ label, points }) => {
-                        const color = colorByLabel.get(label) ?? theme.colors.accent.blue;
+                        const color = colorByLabel.get(label) ?? accentFallback;
+                        const path = buildSegmentPath(points);
+                        if (!path) return null;
+                        return (
+                            <View
+                                key={`line-${label}`}
+                                pointerEvents="none"
+                                style={{ position: 'absolute', top: 0, left: 0 }}
+                            >
+                                <DrawnLinePath
+                                    path={path}
+                                    width={chartWidth}
+                                    height={CHART_HEIGHT}
+                                    color={color}
+                                    strokeWidth={2}
+                                    animateOnMount={entrancesEnabled}
+                                    testID={`usage-journey-line-${label}`}
+                                />
+                            </View>
+                        );
+                    })}
+                    {chartModel.series.map(({ label, points }) => {
+                        const color = colorByLabel.get(label) ?? accentFallback;
                         return points.map((point) => {
                             const bucketTimestamp = timeline[point.bucketIndex]?.bucketStartMs ?? 0;
                             return (
@@ -277,7 +291,7 @@ export function UsageJourneyChart(props: UsageJourneyChartProps): React.ReactEle
                                 <View
                                     style={[
                                         styles.latestPillDot,
-                                        { backgroundColor: colorByLabel.get(leader.label ?? '') ?? theme.colors.accent.blue },
+                                        { backgroundColor: colorByLabel.get(leader.label ?? '') ?? accentFallback },
                                     ]}
                                 />
                                 <Text style={styles.latestPillText}>{leader.label}</Text>

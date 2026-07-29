@@ -90,7 +90,7 @@ function checkIfEnglish(path: string, value: any, englishValue: any, lang: strin
         // Provider/product names and other proper nouns are intentionally stable.
         // Keep this narrow: only ignore known name surfaces where translation is not expected.
         const properNounKeyPrefixes = [
-            'settingsProviders.plugins.',
+            'settingsAgents.plugins.',
             'agentInput.agent.',
             'profiles.builtInNames.',
             'profiles.machineLogin.',

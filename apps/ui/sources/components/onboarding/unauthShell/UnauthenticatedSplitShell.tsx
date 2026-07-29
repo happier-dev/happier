@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { StepTransitionDirection } from '@/components/ui/motion/StepTransitionFrame';
 
 import { BrandPanel } from './BrandPanel';
+import { StagePane } from './StagePane';
 import { WorkflowPanel, type WorkflowPanelPresentation } from './WorkflowPanel';
 import { useUnauthShellLayout } from './useUnauthShellLayout';
 
@@ -77,8 +78,8 @@ export type UnauthenticatedSplitShellProps = Readonly<{
  * Unified pre-auth shell for the Happier app. Owns the chrome around all
  * unauthenticated content:
  *
- * - **Desktop** (width > 720px): a 50/50 split with a persistent BrandPanel
- *   on the left and a swappable WorkflowPanel on the right.
+ * - **Desktop** (width > 720px): a split with a persistent StagePane (planet
+ *   + brand) on the left and the swappable WorkflowPanel on the right.
  * - **Mobile** (width ≤ 720px): either the one-time BrandPanel prelude
  *   (when `brandHeroSeenAt == null` and `allowMobileBrandHero === true`) or
  *   a full-screen WorkflowPanel.
@@ -99,12 +100,14 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
     const transitionDirection: StepTransitionDirection = props.transitionDirection ?? 'forward';
 
     if (layout === 'split') {
+        // R1 reference order (and journey D5): the planet/brand pane sits LEFT
+        // and the workflow column sits RIGHT on desktop.
         return (
             <View
                 testID={props.testID ?? 'unauth-shell-split'}
                 style={styles.splitRoot}
             >
-                <BrandPanel variant="desktop" />
+                <StagePane mode="brand" />
                 <WorkflowPanel
                     variant="desktop"
                     isWelcomeStep={props.isWelcomeStep}

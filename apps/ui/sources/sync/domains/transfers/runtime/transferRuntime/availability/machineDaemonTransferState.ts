@@ -13,7 +13,6 @@ export type MachineDaemonTransferListenerClassState = Readonly<{
 
 export type MachineDaemonTransferListenerClass =
     | 'loopback_http'
-    | 'lan_http'
     | 'tailscale_serve_https';
 
 export type MachineDaemonTransferState = Readonly<{
@@ -23,7 +22,6 @@ export type MachineDaemonTransferState = Readonly<{
     }>;
     listenerClasses: Readonly<{
         loopback_http: MachineDaemonTransferListenerClassState;
-        lan_http: MachineDaemonTransferListenerState;
         tailscale_serve_https: MachineDaemonTransferListenerState;
     }>;
     lifecycle: Readonly<{
@@ -46,7 +44,6 @@ export type MachineDaemonTransferDirectPeerDiagnostics = Readonly<{
 
 const TRANSFER_LISTENER_CLASS_ORDER: readonly MachineDaemonTransferListenerClass[] = [
     'loopback_http',
-    'lan_http',
     'tailscale_serve_https',
 ] as const;
 
@@ -163,7 +160,6 @@ export function readMachineDaemonTransferState(input: Readonly<{
     const lifecycleMode = (lifecycle as Record<string, unknown>).mode;
     const lifecycleVersion = readPositiveInteger((lifecycle as Record<string, unknown>).version);
     const loopbackHttp = readListenerState((listenerClasses as Record<string, unknown>).loopback_http);
-    const lanHttp = readListenerState((listenerClasses as Record<string, unknown>).lan_http);
     const tailscaleServeHttps = readListenerState((listenerClasses as Record<string, unknown>).tailscale_serve_https);
 
     if (
@@ -172,7 +168,6 @@ export function readMachineDaemonTransferState(input: Readonly<{
         || lifecycleMode !== 'lazy_idle_shutdown'
         || lifecycleVersion === null
         || !loopbackHttp
-        || !lanHttp
         || !tailscaleServeHttps
     ) {
         return null;
@@ -185,7 +180,6 @@ export function readMachineDaemonTransferState(input: Readonly<{
         },
         listenerClasses: {
             loopback_http: loopbackHttp,
-            lan_http: lanHttp,
             tailscale_serve_https: tailscaleServeHttps,
         },
         lifecycle: {

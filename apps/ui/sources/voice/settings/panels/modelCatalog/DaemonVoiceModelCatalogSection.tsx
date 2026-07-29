@@ -1,9 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
-import { Pressable } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
-
 import type { ModelPackKind } from '@happier-dev/protocol';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -15,23 +11,16 @@ import { DaemonVoiceInferenceClient } from '@/voice/runtime/daemonInference/Daem
 
 import type { ModelCatalogRow } from './buildModelCatalogRows';
 import { buildModelCatalogRows } from './buildModelCatalogRows';
-import { formatModelCatalogRowDetail } from './formatModelCatalogRowDetail';
+import { DaemonModelPackRow } from './DaemonModelPackRow';
 import type { DaemonVoiceModelCatalogErrorCode } from './useDaemonVoiceModelCatalogState';
 import { useDaemonVoiceModelCatalogState } from './useDaemonVoiceModelCatalogState';
 
 type ModelCatalogClient = Pick<
     DaemonVoiceInferenceClient,
-    'getModelsStatus' | 'installModel' | 'removeModel'
+    'listModels' | 'getModelsStatus' | 'installModel' | 'acceptModelPackLicense' | 'removeModel'
 >;
 
 export type DaemonVoiceModelCatalogController = ReturnType<typeof useDaemonVoiceModelCatalogState>;
-
-const REMOVE_BUTTON_STYLE = {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-} as const;
 
 /**
  * Service-level status copy for the catalog. Reuses the canonical daemon
@@ -52,6 +41,7 @@ function resolveCatalogStatusDetail(
         case 'feature_disabled':
             return t('settingsVoice.local.daemonInference.states.unavailable');
         case 'runtime_unavailable':
+        case 'unsupported_runtime_family':
             return t('settingsVoice.local.daemonInference.states.runtimeUnavailable');
         case 'request_timeout':
             return t('settingsVoice.local.daemonInference.states.requestTimeout');
@@ -62,100 +52,6 @@ function resolveCatalogStatusDetail(
     }
 }
 
-function ModelCatalogRowItem(props: Readonly<{
-    row: ModelCatalogRow;
-    actionInFlight: boolean;
-    onSetDefault: (packId: string) => void;
-    onInstall: (packId: string) => void;
-    onRemove: (row: ModelCatalogRow) => void;
-}>): React.ReactElement {
-    const { theme } = useUnistyles();
-    const { row } = props;
-    const canPromoteToDefault = row.canRemove && !row.isDefault;
-
-    const rightElement = row.isDefault ? (
-        <Ionicons
-            name="checkmark-circle"
-            size={22}
-            color={theme.colors.text.link}
-            accessibilityLabel={t('settingsVoice.local.models.defaultBadge')}
-        />
-    ) : row.canRemove ? (
-        <Pressable
-            testID={`voice-model-remove-${row.packId}`}
-            accessibilityRole="button"
-            accessibilityLabel={t('common.remove')}
-            hitSlop={4}
-            style={REMOVE_BUTTON_STYLE}
-            onPress={(event: any) => {
-                event?.stopPropagation?.();
-                if (props.actionInFlight) {
-                    return;
-                }
-                props.onRemove(row);
-            }}
-        >
-            <Ionicons
-                name="trash-outline"
-                size={20}
-                color={theme.colors.text.secondary}
-            />
-        </Pressable>
-    ) : row.canInstall ? (
-        <Ionicons
-            name="download-outline"
-            size={20}
-            color={theme.colors.text.secondary}
-        />
-    ) : undefined;
-
-    // When the daemon status is unknown the row carries no actionable state:
-    // no install (would fire against an unreachable/unhealthy daemon), no remove,
-    // no default promotion. Leave it inert until status is known.
-    const isUnknown = row.state === 'unknown';
-
-    // Primary tap: install/retry when not ready; installed rows promote to
-    // default. Removal is a separate right-side button so a row tap never
-    // deletes an installed model by surprise.
-    const onPress = isUnknown ? undefined : () => {
-        if (props.actionInFlight) {
-            return;
-        }
-        if (row.canInstall) {
-            props.onInstall(row.packId);
-            return;
-        }
-        if (canPromoteToDefault) {
-            props.onSetDefault(row.packId);
-            return;
-        }
-    };
-
-    return (
-        <Item
-            testID={`voice-model-row-${row.packId}`}
-            title={row.displayName}
-            subtitle={isUnknown
-                ? t('settingsVoice.local.models.unknownSubtitle')
-                : row.isDefault
-                    ? t('settingsVoice.local.models.defaultSubtitle')
-                    : row.canInstall
-                        ? t('settingsVoice.local.models.installSubtitle')
-                        : canPromoteToDefault
-                            ? t('settingsVoice.local.models.setDefaultSubtitle')
-                            : undefined}
-            detail={formatModelCatalogRowDetail(row)}
-            rightElement={isUnknown ? undefined : rightElement}
-            onPress={onPress}
-            loading={props.actionInFlight}
-            selected={row.isDefault}
-            showChevron={false}
-            destructive={row.state === 'error'}
-            accessibilityLabel={`${row.displayName}. ${formatModelCatalogRowDetail(row)}`}
-        />
-    );
-}
-
 function ModelCatalogGroup(props: Readonly<{
     title: string;
     footer?: string;
@@ -163,12 +59,12 @@ function ModelCatalogGroup(props: Readonly<{
     actionPackId: string | null;
     onSetDefault: (packId: string) => void;
     onInstall: (packId: string) => void;
-    onRemove: (row: ModelCatalogRow) => void;
+    onRemove: (packId: string) => Promise<void> | void;
 }>): React.ReactElement {
     return (
         <ItemGroup title={props.title} footer={props.footer}>
             {props.rows.map((row) => (
-                <ModelCatalogRowItem
+                <DaemonModelPackRow
                     key={row.packId}
                     row={row}
                     actionInFlight={props.actionPackId === row.packId}
@@ -204,7 +100,7 @@ export function DaemonVoiceModelCatalogSection(props: Readonly<{
         client: props.client,
         enabled: !props.catalogController,
     });
-    const { state, refresh, install, remove } = props.catalogController ?? ownedCatalog;
+    const { state, refresh, install, acceptLicense, remove } = props.catalogController ?? ownedCatalog;
 
     // The daemon health is unknown whenever the status request failed. Forces
     // every row uninstallable so an install/remove can never fire against an
@@ -215,10 +111,11 @@ export function DaemonVoiceModelCatalogSection(props: Readonly<{
         () => buildModelCatalogRows({
             statuses: state.statuses,
             statusUnavailable,
+            actionError: state.actionError,
             selectedSttPackId: props.selectedSttPackId,
             selectedTtsPackId: props.selectedTtsPackId,
         }),
-        [props.selectedSttPackId, props.selectedTtsPackId, state.statuses, statusUnavailable],
+        [props.selectedSttPackId, props.selectedTtsPackId, state.actionError, state.statuses, statusUnavailable],
     );
 
     const handleRetryStatus = React.useCallback(() => {
@@ -226,22 +123,22 @@ export function DaemonVoiceModelCatalogSection(props: Readonly<{
     }, [refresh]);
 
     const handleInstall = React.useCallback((packId: string) => {
-        fireAndForget(install(packId), { tag: 'DaemonVoiceModelCatalogSection.install' });
-    }, [install]);
-
-    const handleRemove = React.useCallback((row: ModelCatalogRow) => {
         fireAndForget((async () => {
-            const confirmed = await Modal.confirm(
-                t('settingsVoice.local.models.removeConfirmTitle'),
-                t('settingsVoice.local.models.removeConfirmBody', { name: row.displayName }),
-                { confirmText: t('common.remove'), destructive: true },
-            );
-            if (!confirmed) {
-                return;
+            const review = state.statuses.find((status) => status.packId === packId)?.licenseReview;
+            if (review && !review.accepted) {
+                const accepted = await Modal.confirm(
+                    review.licenseTitle,
+                    review.licenseText,
+                    { confirmText: t('common.continue') },
+                );
+                if (!accepted) return;
+                await acceptLicense(review);
             }
-            await remove(row.packId);
-        })(), { tag: 'DaemonVoiceModelCatalogSection.remove' });
-    }, [remove]);
+            await install(packId);
+        })(), { tag: 'DaemonVoiceModelCatalogSection.install' });
+    }, [acceptLicense, install, state.statuses]);
+
+    const handleRemove = React.useCallback((packId: string) => remove(packId), [remove]);
 
     const showStatusRow = state.loading || statusUnavailable;
 

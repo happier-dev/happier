@@ -16,6 +16,11 @@ import {
 } from '@/voice/input/turnTakingTelemetry';
 
 import type { VoiceConversationRuntimeMachine } from './VoiceConversationRuntimeMachine';
+import type {
+    VoicePlaybackInterruptionMode,
+    VoicePlaybackInterruptionResolution,
+} from '@/voice/runtime/playback/VoicePlaybackController';
+import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 
 /**
  * Automatic VAD-driven barge-in trigger (L3.T4) — the SINGLE owner of the
@@ -63,6 +68,14 @@ export type VoiceBargeInController = Readonly<{
     onTtsStarted: (ttsText: string | null | undefined) => void;
     /** Record that the agent stopped speaking. */
     onTtsStopped: () => void;
+    onUserSpeechCandidate: (input: Readonly<{
+        sessionId: string;
+        bargeInEnabled?: boolean;
+    }>) => Readonly<{
+        status: 'candidate';
+        playback: VoicePlaybackInterruptionMode;
+    }> | Readonly<{ status: 'ignored' }>;
+    cancelUserSpeechCandidate: (input: Readonly<{ sessionId: string }>) => void;
     /**
      * Evaluate a user-speech-during-playback signal and, if it is a real
      * barge-in, abort playback + interrupt + rearm. Returns once any rearm has
@@ -73,8 +86,12 @@ export type VoiceBargeInController = Readonly<{
 
 type VoiceBargeInControllerDeps = Readonly<{
     machine: VoiceConversationRuntimeMachine;
-    /** Aborts the in-flight TTS playback (engine wires this to playback interrupt). */
-    abortPlayback: () => void;
+    playback: Readonly<{
+        beginInterruptionCandidate: () => VoicePlaybackInterruptionMode;
+        resolveInterruptionCandidate: (resolution: VoicePlaybackInterruptionResolution) => void;
+    }>;
+    /** Provider-neutral local side effects (for example heard-text truncation) captured before destructive stop. */
+    onConfirmedInterruption?: () => void;
     /** Starts/rearms capture for the rearm leg of the interrupt. */
     startListening: (signal?: AbortSignal) => Promise<void>;
     telemetry?: TurnTakingTelemetry;
@@ -82,6 +99,9 @@ type VoiceBargeInControllerDeps = Readonly<{
     /** Backchannel/echo overrides; defaults applied when absent. */
     adaptiveConfig?: AdaptiveInterruptionConfig;
     echoGuard?: TextualEchoGuard;
+    candidateMaxMs?: number;
+    setTimer?: (task: () => void, waitMs: number) => ReturnType<typeof setTimeout>;
+    clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
 }>;
 
 const BACKCHANNEL_REASON_TO_TELEMETRY: Record<string, TurnTakingTelemetrySuppressionReason> = {
@@ -103,13 +123,59 @@ export function createVoiceBargeInController(deps: VoiceBargeInControllerDeps): 
     const adaptiveConfig: AdaptiveInterruptionConfig = deps.adaptiveConfig ?? {
         ignoredPhrases: DEFAULT_ADAPTIVE_INTERRUPTION_IGNORED_PHRASES,
     };
+    const setTimer = deps.setTimer ?? ((task, waitMs) => setTimeout(task, waitMs));
+    const clearTimer = deps.clearTimer ?? ((timer) => clearTimeout(timer));
+    const candidateMaxMs = Math.max(1, Math.floor(
+        deps.candidateMaxMs ?? VOICE_RUNTIME_CONFIG_DEFAULTS.turnTaking.interruption.candidateMaxMs,
+    ));
+    let candidate: Readonly<{
+        sessionId: string;
+        playback: VoicePlaybackInterruptionMode;
+        timer: ReturnType<typeof setTimeout>;
+    }> | null = null;
+
+    const clearCandidate = (
+        resolution: VoicePlaybackInterruptionResolution,
+        expectedSessionId?: string,
+    ): boolean => {
+        const active = candidate;
+        if (!active || (expectedSessionId && active.sessionId !== expectedSessionId)) return false;
+        candidate = null;
+        clearTimer(active.timer);
+        deps.playback.resolveInterruptionCandidate(resolution);
+        return true;
+    };
+
+    const beginCandidate = (input: Readonly<{ sessionId: string; bargeInEnabled?: boolean }>) => {
+        if (input.bargeInEnabled === false) return { status: 'ignored' as const };
+        const sessionId = String(input.sessionId ?? '').trim();
+        const snapshot = deps.machine.getSnapshot();
+        if (!sessionId || snapshot.state !== 'speaking' || snapshot.controlSessionId !== sessionId) {
+            return { status: 'ignored' as const };
+        }
+        if (candidate?.sessionId === sessionId) {
+            return { status: 'candidate' as const, playback: candidate.playback };
+        }
+        clearCandidate('false_alarm');
+        const playback = deps.playback.beginInterruptionCandidate();
+        const timer = setTimer(() => {
+            clearCandidate('false_alarm', sessionId);
+        }, candidateMaxMs);
+        candidate = { sessionId, playback, timer };
+        return { status: 'candidate' as const, playback };
+    };
 
     return {
         onTtsStarted: (ttsText) => {
             echoGuard.onTtsStarted(ttsText);
         },
         onTtsStopped: () => {
+            clearCandidate('false_alarm');
             echoGuard.onTtsStopped();
+        },
+        onUserSpeechCandidate: beginCandidate,
+        cancelUserSpeechCandidate: ({ sessionId }) => {
+            clearCandidate('false_alarm', String(sessionId ?? '').trim());
         },
         handleUserSpeechDuringPlayback: async (signal) => {
             if (signal.bargeInEnabled === false) {
@@ -126,6 +192,7 @@ export function createVoiceBargeInController(deps: VoiceBargeInControllerDeps): 
             if (!sessionId || snapshot.controlSessionId !== sessionId) {
                 return;
             }
+            beginCandidate({ sessionId, bargeInEnabled: signal.bargeInEnabled });
 
             // T3: drop the agent's own TTS echo before anything else.
             const echoDecision = echoGuard.evaluate(signal.transcript);
@@ -134,6 +201,7 @@ export function createVoiceBargeInController(deps: VoiceBargeInControllerDeps): 
                     sessionId,
                     reason: resolveEchoTelemetryReason(echoDecision),
                 });
+                clearCandidate('false_alarm', sessionId);
                 return;
             }
 
@@ -152,13 +220,19 @@ export function createVoiceBargeInController(deps: VoiceBargeInControllerDeps): 
                     sessionId,
                     reason: BACKCHANNEL_REASON_TO_TELEMETRY[backchannel.reason] ?? 'min_words',
                 });
+                clearCandidate('false_alarm', sessionId);
                 return;
             }
 
             // Confirmed barge-in: abort playback, then interrupt + rearm through
             // the machine's own public API (single owner; no duplicated interrupt
             // logic, no guard bypass).
-            deps.abortPlayback();
+            try {
+                deps.onConfirmedInterruption?.();
+            } catch {
+                // Transcript/telemetry side effects cannot prevent destructive media cancellation.
+            }
+            clearCandidate('confirmed', sessionId);
             telemetry.recordBargeIn({ sessionId, source: signal.source });
             echoGuard.onTtsStopped();
             await deps.machine.interruptAndRearmListening({

@@ -19,8 +19,8 @@ describe('sessionAttention (direct sessions)', () => {
                 v: 1,
                 scope: 'primary_session',
                 status: 'failed',
-                source: 'provider_status_error',
-                code: 'provider_status_error',
+                source: 'agent_status_error',
+                code: 'agent_status_error',
                 occurredAt: 1,
             },
         } as any)).toBe(true);
@@ -37,7 +37,7 @@ describe('sessionAttention (direct sessions)', () => {
             metadata: {
                 externalSessionV1: {
                     v: 1,
-                    providerId: 'codex',
+                    agentId: 'codex',
                     machineId: 'machine-1',
                     remoteSessionId: 'remote-1',
                     source: { kind: 'codexHome', home: 'user' },
@@ -66,7 +66,7 @@ describe('sessionAttention (direct sessions)', () => {
             metadata: {
                 externalSessionV1: {
                     v: 1,
-                    providerId: 'codex',
+                    agentId: 'codex',
                     machineId: 'machine-1',
                     remoteSessionId: 'remote-1',
                     source: { kind: 'codexHome', home: 'user' },
@@ -94,7 +94,7 @@ describe('sessionAttention (direct sessions)', () => {
             metadata: {
                 externalSessionV1: {
                     v: 1,
-                    providerId: 'codex',
+                    agentId: 'codex',
                     machineId: 'machine-1',
                     remoteSessionId: 'remote-1',
                     source: { kind: 'codexHome', home: 'user' },
@@ -124,7 +124,7 @@ describe('sessionAttention (direct sessions)', () => {
             metadata: {
                 externalSessionV1: {
                     v: 1,
-                    providerId: 'codex',
+                    agentId: 'codex',
                     machineId: 'machine-1',
                     remoteSessionId: 'remote-1',
                     source: { kind: 'codexHome', home: 'user' },
@@ -152,7 +152,7 @@ describe('sessionAttention (direct sessions)', () => {
             metadata: {
                 externalSessionV1: {
                     v: 1,
-                    providerId: 'codex',
+                    agentId: 'codex',
                     machineId: 'machine-1',
                     remoteSessionId: 'remote-1',
                     source: { kind: 'codexHome', home: 'user' },

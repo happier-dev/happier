@@ -70,4 +70,23 @@ describe('InlineRepoPathLabel', () => {
         expect(labels[0]!.props.children).toBe('README.md');
         expect(spacers).toHaveLength(1);
     });
+
+    it('lets the filename win the row when preferNameOverPath is set', async () => {
+        const { InlineRepoPathLabel } = await import('./InlineRepoPathLabel');
+
+        const screen = await renderScreen(
+            <InlineRepoPathLabel
+                fullPath="src/middleware/rateLimit.ts"
+                nameMaxWidth="70%"
+                preferNameOverPath
+            />,
+        );
+
+        const labels = screen.tree.root.findAllByType('Text' as never);
+        const nameLabel = labels[labels.length - 1]!;
+        expect(nameLabel.props.children).toBe('rateLimit.ts');
+        expect(nameLabel.props.ellipsizeMode).toBe('middle');
+        // preferNameOverPath lifts the basename cap so the path yields first.
+        expect(flattenStyle(nameLabel.props.style)).toMatchObject({ maxWidth: '100%' });
+    });
 });

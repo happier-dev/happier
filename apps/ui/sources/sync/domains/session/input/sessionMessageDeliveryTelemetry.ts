@@ -11,6 +11,7 @@ import {
     type BusySteerSendPolicy,
     type MessageSendMode,
 } from '../control/submitMode';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export function recordSessionMessageDeliveryDecision(params: Readonly<{
     sessionId: string;
@@ -36,6 +37,8 @@ export function recordSessionMessageDeliveryDecision(params: Readonly<{
         presence: session?.presence,
         thinking: session?.thinking,
         thinkingAt: session?.thinkingAt,
+        optimisticThinkingAt: session?.optimisticThinkingAt ?? null,
+        hasPendingUserMessages: (session?.pendingCount ?? 0) > 0,
         latestTurnStatus: session?.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: session?.latestTurnStatusObservedAt ?? null,
         meaningfulActivityAt: session?.meaningfulActivityAt ?? null,
@@ -44,14 +47,17 @@ export function recordSessionMessageDeliveryDecision(params: Readonly<{
     });
     const capabilities = session?.agentState?.capabilities;
     const requestedMode = params.explicitMode ?? params.configuredMode;
-    const cliVersion = typeof session?.metadata?.version === 'string'
-        ? session.metadata.version.trim()
+    const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
+    const cliVersion = typeof ownerMetadata?.version === 'string'
+        ? ownerMetadata.version.trim()
         : '';
 
     telemetry.record('ui.sessionMessage.delivery.decision', {
         sessionId: params.sessionId,
         callerSurface: params.callerSurface?.trim() || 'unknown',
-        requestedLocalId: params.localId?.trim() || null,
+        requestedLocalId: typeof params.localId === 'string' && params.localId.trim().length > 0
+            ? params.localId
+            : null,
         mode: params.selectedMode,
         decisionReason: params.decisionReason?.trim() || 'unknown',
         configuredMode: params.configuredMode,

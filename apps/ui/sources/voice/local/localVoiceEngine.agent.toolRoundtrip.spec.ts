@@ -2,12 +2,116 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { VOICE_TOOL_RESULTS_JSON_PREFIX } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createTransferRecipientKeyPair } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption';
+import {
+  readLocalConversationVoiceSettings,
+  writeLocalConversationVoiceSettings,
+  type VoiceSettings,
+} from '@/sync/domains/settings/voiceSettings';
 
 import {
   getStorage,
+  loadLocalVoiceEngineWithCompatState,
+  machineRpcWithServerScope,
   machineContributionRegistryProjectionDescribe,
   registerLocalVoiceEngineHarnessHooks,
 } from './localVoiceEngine.testHarness';
+
+const machineCapabilitiesBoundary = vi.hoisted(() => ({
+  invoke: vi.fn(),
+}));
+
+vi.mock('@/sync/ops/capabilities', () => ({
+  machineCapabilitiesInvoke: (...args: unknown[]) => machineCapabilitiesBoundary.invoke(...args),
+}));
+
+function findToolResultsCarrier() {
+  return machineRpcWithServerScope.mock.calls
+    .filter(([request]) => request?.method === RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_CHAT)
+    .flatMap(([request]) => Array.isArray(request?.payload?.messages) ? request.payload.messages : [])
+    .find((message: any) =>
+      message?.role === 'user'
+      && typeof message?.content === 'string'
+      && message.content.startsWith(VOICE_TOOL_RESULTS_JSON_PREFIX));
+}
+
+function queueOpenAiCompatDaemonRoundTrip(
+  transcript: string,
+  initialAgentReply: string,
+  followUpAgentReply: string,
+) {
+  const transcripts = [transcript];
+  const chatReplies = [initialAgentReply, followUpAgentReply];
+  machineRpcWithServerScope.mockImplementation(async (request: any) => {
+    switch (request?.method) {
+      case RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_INIT: {
+        const recipient = createTransferRecipientKeyPair();
+        return {
+          success: true,
+          uploadId: 'tool-roundtrip-upload',
+          chunkSizeBytes: 64 * 1024,
+          recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
+        };
+      }
+      case RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_CHUNK:
+        return { success: true };
+      case RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_FINALIZE:
+        return {
+          success: true,
+          uploadId: 'tool-roundtrip-upload',
+          sizeBytes: 3,
+          sha256: 'a'.repeat(64),
+        };
+      case RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE: {
+        const text = transcripts.shift();
+        if (!text) throw new Error('unexpected extra OpenAI-compatible transcription request');
+        return { ok: true, text };
+      }
+      case RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_CHAT: {
+        const text = chatReplies.shift();
+        if (!text) throw new Error('unexpected extra OpenAI-compatible chat request');
+        return { ok: true, text };
+      }
+      default:
+        throw new Error(`unexpected machine RPC method: ${String(request?.method)}`);
+    }
+  });
+}
+
+function configureOpenAiCompatAgentVoice(voice: VoiceSettings): VoiceSettings {
+  const current = readLocalConversationVoiceSettings(voice);
+  return writeLocalConversationVoiceSettings(
+    { ...voice, providerId: 'local_conversation' },
+    {
+      ...current,
+      conversationMode: 'agent',
+      stt: {
+        ...current.stt,
+        provider: 'openai_compat',
+        openaiCompat: { ...current.stt.openaiCompat, baseUrl: 'http://localhost:8000' },
+      },
+      tts: {
+        ...current.tts,
+        provider: 'openai_compat',
+        autoSpeakReplies: false,
+        openaiCompat: { ...current.tts.openaiCompat, baseUrl: 'http://localhost:8001' },
+      },
+      agent: {
+        ...current.agent,
+        backend: 'openai_compat',
+        openaiCompat: {
+          ...current.agent.openaiCompat,
+          chatBaseUrl: 'http://localhost:8002',
+          chatApiKey: null,
+          chatModel: 'fast-model',
+          commitModel: 'commit-model',
+        },
+      },
+    },
+  );
+}
 
 describe('local voice engine agent tool roundtrip', () => {
   registerLocalVoiceEngineHarnessHooks();
@@ -15,6 +119,9 @@ describe('local voice engine agent tool roundtrip', () => {
   beforeEach(() => {
     machineContributionRegistryProjectionDescribe.mockReset();
     machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' });
+    machineRpcWithServerScope.mockReset();
+    machineCapabilitiesBoundary.invoke.mockReset();
+    machineCapabilitiesBoundary.invoke.mockResolvedValue({ supported: false, reason: 'not-supported' });
   });
 
   it('sends discovery tool results back to the agent for follow-up turns', async () => {
@@ -22,37 +129,7 @@ describe('local voice engine agent tool roundtrip', () => {
     storage.__setState({
       settings: {
         ...storage.getState().settings,
-        voice: {
-          ...storage.getState().settings.voice,
-          providerId: 'local_conversation',
-          adapters: {
-            ...storage.getState().settings.voice.adapters,
-            local_conversation: {
-              ...storage.getState().settings.voice.adapters.local_conversation,
-              conversationMode: 'agent',
-              stt: {
-                ...storage.getState().settings.voice.adapters.local_conversation.stt,
-                baseUrl: 'http://localhost:8000',
-              },
-              tts: {
-                ...storage.getState().settings.voice.adapters.local_conversation.tts,
-                autoSpeakReplies: false,
-                baseUrl: 'http://localhost:8001',
-              },
-              agent: {
-                ...storage.getState().settings.voice.adapters.local_conversation.agent,
-                backend: 'openai_compat',
-                openaiCompat: {
-                  ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
-                  chatBaseUrl: 'http://localhost:8002',
-                  chatApiKey: null,
-                  chatModel: 'fast-model',
-                  commitModel: 'commit-model',
-                },
-              },
-            },
-          },
-        },
+        voice: configureOpenAiCompatAgentVoice(storage.getState().settings.voice),
       },
       sessions: {
         ...storage.getState().sessions,
@@ -74,40 +151,24 @@ describe('local voice engine agent tool roundtrip', () => {
       '</voice_actions>',
     ].join('\n');
 
-    (globalThis.fetch as any)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ text: 'show me available agent backends and claude models' }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ choices: [{ message: { content: `Let me check.\n\n${actionBlock}` } }] }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ choices: [{ message: { content: 'Found them.' } }] }),
-      });
+    expect(readLocalConversationVoiceSettings(storage.getState().settings.voice).agent.backend)
+      .toBe('openai_compat');
 
-    const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
-
-    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-
-    const chatCalls = (globalThis.fetch as any).mock.calls.filter((call: any[]) =>
-      String(call?.[0] ?? '').includes('/chat/completions'),
+    queueOpenAiCompatDaemonRoundTrip(
+      'show me available agent backends and claude models',
+      `Let me check.\n\n${actionBlock}`,
+      'Found them.',
     );
 
-    expect(chatCalls).toHaveLength(2);
+    const { toggleLocalVoiceTurn } = await loadLocalVoiceEngineWithCompatState();
 
-    const toolResultsCarrier = chatCalls
-      .map((call: any[]) => JSON.parse(String(call?.[1]?.body ?? '{}')))
-      .flatMap((body: any) => (Array.isArray(body?.messages) ? body.messages : []))
-      .find(
-        (message: any) =>
-          message?.role === 'user' &&
-          typeof message?.content === 'string' &&
-          message.content.startsWith('VOICE_TOOL_RESULTS_JSON:'),
-      );
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+
+    expect(machineRpcWithServerScope.mock.calls.filter(
+      ([request]) => request?.method === RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_CHAT,
+    )).toHaveLength(2);
+    const toolResultsCarrier = findToolResultsCarrier();
 
     expect(toolResultsCarrier?.content).toContain('"t":"listAgentBackends"');
     expect(toolResultsCarrier?.content).toContain('"t":"listAgentModels"');
@@ -127,37 +188,7 @@ describe('local voice engine agent tool roundtrip', () => {
           codex: true,
           opencode: true,
         },
-        voice: {
-          ...storage.getState().settings.voice,
-          providerId: 'local_conversation',
-          adapters: {
-            ...storage.getState().settings.voice.adapters,
-            local_conversation: {
-              ...storage.getState().settings.voice.adapters.local_conversation,
-              conversationMode: 'agent',
-              stt: {
-                ...storage.getState().settings.voice.adapters.local_conversation.stt,
-                baseUrl: 'http://localhost:8000',
-              },
-              tts: {
-                ...storage.getState().settings.voice.adapters.local_conversation.tts,
-                autoSpeakReplies: false,
-                baseUrl: 'http://localhost:8001',
-              },
-              agent: {
-                ...storage.getState().settings.voice.adapters.local_conversation.agent,
-                backend: 'openai_compat',
-                openaiCompat: {
-                  ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
-                  chatBaseUrl: 'http://localhost:8002',
-                  chatApiKey: null,
-                  chatModel: 'fast-model',
-                  commitModel: 'commit-model',
-                },
-              },
-            },
-          },
-        },
+        voice: configureOpenAiCompatAgentVoice(storage.getState().settings.voice),
       },
     });
 
@@ -169,38 +200,27 @@ describe('local voice engine agent tool roundtrip', () => {
       '</voice_actions>',
     ].join('\n');
 
-    (globalThis.fetch as any)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ text: 'list the available agent backends' }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ choices: [{ message: { content: `Let me check.\n\n${actionBlock}` } }] }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ choices: [{ message: { content: 'Found them.' } }] }),
-      });
-
-    const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
-
-    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-
-    const chatCalls = (globalThis.fetch as any).mock.calls.filter((call: any[]) =>
-      String(call?.[0] ?? '').includes('/chat/completions'),
+    queueOpenAiCompatDaemonRoundTrip(
+      'list the available agent backends',
+      `Let me check.\n\n${actionBlock}`,
+      'Found them.',
     );
 
-    const toolResultsCarrier = chatCalls
-      .map((call: any[]) => JSON.parse(String(call?.[1]?.body ?? '{}')))
-      .flatMap((body: any) => (Array.isArray(body?.messages) ? body.messages : []))
-      .find(
-        (message: any) =>
-          message?.role === 'user' &&
-          typeof message?.content === 'string' &&
-          message.content.startsWith('VOICE_TOOL_RESULTS_JSON:'),
-      );
+    expect(readLocalConversationVoiceSettings(storage.getState().settings.voice)).toMatchObject({
+      conversationMode: 'agent',
+      stt: { provider: 'openai_compat', openaiCompat: { baseUrl: 'http://localhost:8000' } },
+      agent: { backend: 'openai_compat' },
+    });
+
+    const { toggleLocalVoiceTurn } = await loadLocalVoiceEngineWithCompatState();
+
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+
+    expect(machineRpcWithServerScope.mock.calls.map(([request]) => request?.method)).toContain(
+      RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_INIT,
+    );
+    const toolResultsCarrier = findToolResultsCarrier();
 
     expect(toolResultsCarrier?.content).toContain('"agentId":"claude"');
     expect(toolResultsCarrier?.content).toContain('"label":"Claude"');
@@ -259,37 +279,7 @@ describe('local voice engine agent tool roundtrip', () => {
             },
           ],
         },
-        voice: {
-          ...storage.getState().settings.voice,
-          providerId: 'local_conversation',
-          adapters: {
-            ...storage.getState().settings.voice.adapters,
-            local_conversation: {
-              ...storage.getState().settings.voice.adapters.local_conversation,
-              conversationMode: 'agent',
-              stt: {
-                ...storage.getState().settings.voice.adapters.local_conversation.stt,
-                baseUrl: 'http://localhost:8000',
-              },
-              tts: {
-                ...storage.getState().settings.voice.adapters.local_conversation.tts,
-                autoSpeakReplies: false,
-                baseUrl: 'http://localhost:8001',
-              },
-              agent: {
-                ...storage.getState().settings.voice.adapters.local_conversation.agent,
-                backend: 'openai_compat',
-                openaiCompat: {
-                  ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
-                  chatBaseUrl: 'http://localhost:8002',
-                  chatApiKey: null,
-                  chatModel: 'fast-model',
-                  commitModel: 'commit-model',
-                },
-              },
-            },
-          },
-        },
+        voice: configureOpenAiCompatAgentVoice(storage.getState().settings.voice),
       },
     });
 
@@ -301,38 +291,18 @@ describe('local voice engine agent tool roundtrip', () => {
       '</voice_actions>',
     ].join('\n');
 
-    (globalThis.fetch as any)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ text: 'list the available configured backends' }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ choices: [{ message: { content: `Let me check.\n\n${actionBlock}` } }] }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ choices: [{ message: { content: 'Found them.' } }] }),
-      });
-
-    const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
-
-    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-
-    const chatCalls = (globalThis.fetch as any).mock.calls.filter((call: any[]) =>
-      String(call?.[0] ?? '').includes('/chat/completions'),
+    queueOpenAiCompatDaemonRoundTrip(
+      'list the available configured backends',
+      `Let me check.\n\n${actionBlock}`,
+      'Found them.',
     );
 
-    const toolResultsCarrier = chatCalls
-      .map((call: any[]) => JSON.parse(String(call?.[1]?.body ?? '{}')))
-      .flatMap((body: any) => (Array.isArray(body?.messages) ? body.messages : []))
-      .find(
-        (message: any) =>
-          message?.role === 'user' &&
-          typeof message?.content === 'string' &&
-          message.content.startsWith('VOICE_TOOL_RESULTS_JSON:'),
-      );
+    const { toggleLocalVoiceTurn } = await loadLocalVoiceEngineWithCompatState();
+
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+
+    const toolResultsCarrier = findToolResultsCarrier();
 
 	    expect(toolResultsCarrier?.content).toContain('"label":"Review bot"');
 	    expect(toolResultsCarrier?.content).toContain(`\"targetKey\":\"${reviewBotTargetKey}\"`);
@@ -346,37 +316,7 @@ describe('local voice engine agent tool roundtrip', () => {
 	        backendEnabledByTargetKey: {
 	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'plugin-review-bot' })]: true,
 	        },
-	        voice: {
-	          ...storage.getState().settings.voice,
-          providerId: 'local_conversation',
-          adapters: {
-            ...storage.getState().settings.voice.adapters,
-            local_conversation: {
-              ...storage.getState().settings.voice.adapters.local_conversation,
-              conversationMode: 'agent',
-              stt: {
-                ...storage.getState().settings.voice.adapters.local_conversation.stt,
-                baseUrl: 'http://localhost:8000',
-              },
-              tts: {
-                ...storage.getState().settings.voice.adapters.local_conversation.tts,
-                autoSpeakReplies: false,
-                baseUrl: 'http://localhost:8001',
-              },
-              agent: {
-                ...storage.getState().settings.voice.adapters.local_conversation.agent,
-                backend: 'openai_compat',
-                openaiCompat: {
-                  ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
-                  chatBaseUrl: 'http://localhost:8002',
-                  chatApiKey: null,
-                  chatModel: 'fast-model',
-                  commitModel: 'commit-model',
-                },
-              },
-            },
-          },
-        },
+	        voice: configureOpenAiCompatAgentVoice(storage.getState().settings.voice),
       },
     });
 
@@ -384,15 +324,14 @@ describe('local voice engine agent tool roundtrip', () => {
       supported: true,
       projection: {
         v: 1,
-        providersById: {
+        agentsById: {
           'plugin:review-bot': {
             id: 'plugin:review-bot',
-            providerId: 'plugin:review-bot',
             title: 'Review Bot Plugin',
             subtitle: undefined,
             channel: 'plugin',
             isBuiltIn: false,
-            providerAgentId: 'claude',
+            catalogAgentId: 'claude',
             iconAgentId: 'claude',
           },
         },
@@ -400,16 +339,15 @@ describe('local voice engine agent tool roundtrip', () => {
           'plugin-review-bot': {
             id: 'plugin-review-bot',
             backendId: 'plugin-review-bot',
-            providerId: 'plugin:review-bot',
+            agentId: 'plugin:review-bot',
             title: 'Review Bot (plugin)',
             subtitle: undefined,
-            providerAgentId: 'claude',
+            catalogAgentId: 'claude',
             iconAgentId: 'claude',
           },
         },
       },
     });
-
     const actionBlock = [
       '<voice_actions>',
       JSON.stringify({
@@ -418,38 +356,18 @@ describe('local voice engine agent tool roundtrip', () => {
       '</voice_actions>',
     ].join('\n');
 
-    (globalThis.fetch as any)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ text: 'list the available plugin backends' }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ choices: [{ message: { content: `Let me check.\n\n${actionBlock}` } }] }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ choices: [{ message: { content: 'Found them.' } }] }),
-      });
-
-    const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
-
-    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-
-    const chatCalls = (globalThis.fetch as any).mock.calls.filter((call: any[]) =>
-      String(call?.[0] ?? '').includes('/chat/completions'),
+    queueOpenAiCompatDaemonRoundTrip(
+      'list the available plugin backends',
+      `Let me check.\n\n${actionBlock}`,
+      'Found them.',
     );
 
-    const toolResultsCarrier = chatCalls
-      .map((call: any[]) => JSON.parse(String(call?.[1]?.body ?? '{}')))
-      .flatMap((body: any) => (Array.isArray(body?.messages) ? body.messages : []))
-      .find(
-        (message: any) =>
-          message?.role === 'user' &&
-          typeof message?.content === 'string' &&
-          message.content.startsWith('VOICE_TOOL_RESULTS_JSON:'),
-      );
+    const { toggleLocalVoiceTurn } = await loadLocalVoiceEngineWithCompatState();
+
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+
+    const toolResultsCarrier = findToolResultsCarrier();
 
     expect(toolResultsCarrier?.content).toContain('"label":"Review Bot (plugin)"');
     expect(toolResultsCarrier?.content).toContain('"targetKey":"backend:plugin-review-bot"');
@@ -464,37 +382,7 @@ describe('local voice engine agent tool roundtrip', () => {
 	        backendEnabledByTargetKey: {
 	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'plugin-review-bot' })]: true,
 	        },
-	        voice: {
-	          ...storage.getState().settings.voice,
-          providerId: 'local_conversation',
-          adapters: {
-            ...storage.getState().settings.voice.adapters,
-            local_conversation: {
-              ...storage.getState().settings.voice.adapters.local_conversation,
-              conversationMode: 'agent',
-              stt: {
-                ...storage.getState().settings.voice.adapters.local_conversation.stt,
-                baseUrl: 'http://localhost:8000',
-              },
-              tts: {
-                ...storage.getState().settings.voice.adapters.local_conversation.tts,
-                autoSpeakReplies: false,
-                baseUrl: 'http://localhost:8001',
-              },
-              agent: {
-                ...storage.getState().settings.voice.adapters.local_conversation.agent,
-                backend: 'openai_compat',
-                openaiCompat: {
-                  ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
-                  chatBaseUrl: 'http://localhost:8002',
-                  chatApiKey: null,
-                  chatModel: 'fast-model',
-                  commitModel: 'commit-model',
-                },
-              },
-            },
-          },
-        },
+	        voice: configureOpenAiCompatAgentVoice(storage.getState().settings.voice),
       },
     });
 
@@ -502,15 +390,14 @@ describe('local voice engine agent tool roundtrip', () => {
       supported: true,
       projection: {
         v: 1,
-        providersById: {
+        agentsById: {
           'plugin:review-bot': {
             id: 'plugin:review-bot',
-            providerId: 'plugin:review-bot',
             title: 'Review Bot Plugin',
             subtitle: undefined,
             channel: 'plugin',
             isBuiltIn: false,
-            providerAgentId: 'claude',
+            catalogAgentId: 'claude',
             iconAgentId: 'claude',
           },
         },
@@ -518,12 +405,25 @@ describe('local voice engine agent tool roundtrip', () => {
           'plugin-review-bot': {
             id: 'plugin-review-bot',
             backendId: 'plugin-review-bot',
-            providerId: 'plugin:review-bot',
+            agentId: 'plugin:review-bot',
             title: 'Review Bot (plugin)',
             subtitle: undefined,
-            providerAgentId: 'claude',
+            catalogAgentId: 'claude',
             iconAgentId: 'claude',
           },
+        },
+      },
+    });
+    machineCapabilitiesBoundary.invoke.mockResolvedValue({
+      supported: true,
+      response: {
+        ok: true,
+        result: {
+          availableModels: [
+            { id: 'default', name: 'Default' },
+            { id: 'review-model', name: 'Review Model' },
+          ],
+          supportsFreeform: true,
         },
       },
     });
@@ -547,38 +447,18 @@ describe('local voice engine agent tool roundtrip', () => {
       '</voice_actions>',
     ].join('\n');
 
-    (globalThis.fetch as any)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ text: 'list plugin backends and the plugin models' }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ choices: [{ message: { content: `Let me check.\n\n${actionBlock}` } }] }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ choices: [{ message: { content: 'Found them.' } }] }),
-      });
-
-    const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
-
-    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-
-    const chatCalls = (globalThis.fetch as any).mock.calls.filter((call: any[]) =>
-      String(call?.[0] ?? '').includes('/chat/completions'),
+    queueOpenAiCompatDaemonRoundTrip(
+      'list plugin backends and the plugin models',
+      `Let me check.\n\n${actionBlock}`,
+      'Found them.',
     );
 
-    const toolResultsCarrier = chatCalls
-      .map((call: any[]) => JSON.parse(String(call?.[1]?.body ?? '{}')))
-      .flatMap((body: any) => (Array.isArray(body?.messages) ? body.messages : []))
-      .find(
-        (message: any) =>
-          message?.role === 'user' &&
-          typeof message?.content === 'string' &&
-          message.content.startsWith('VOICE_TOOL_RESULTS_JSON:'),
-      );
+    const { toggleLocalVoiceTurn } = await loadLocalVoiceEngineWithCompatState();
+
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+
+    const toolResultsCarrier = findToolResultsCarrier();
 
     expect(toolResultsCarrier?.content).toContain('"targetKey":"backend:plugin-review-bot"');
     expect(toolResultsCarrier?.content).toContain('"agentId":"claude"');

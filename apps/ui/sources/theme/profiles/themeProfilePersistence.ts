@@ -9,13 +9,18 @@ import {
     isRouteSafeThemeProfileId,
     isReservedThemeProfileId,
 } from './themeProfileImportExport';
-import type { ThemeProfileV1, ThemeProfilesLocalStateV1 } from './themeProfileTypes';
+import type { ThemeProfileMode, ThemeProfileSelectionByMode, ThemeProfileV1, ThemeProfilesLocalStateV1 } from './themeProfileTypes';
 import { getBuiltInThemeProfileDefinition, isBuiltInThemeProfilePresetId } from './builtInThemeProfiles';
 import { inferThemeProfileAssetAppearance, isThemeProfileAssetAppearance } from './themeProfileAssetAppearance';
 
+export const DEFAULT_THEME_PROFILE_SELECTION_BY_MODE: ThemeProfileSelectionByMode = Object.freeze({
+    light: null,
+    dark: null,
+});
+
 export const DEFAULT_THEME_PROFILES_LOCAL_STATE: ThemeProfilesLocalStateV1 = Object.freeze({
     profiles: [],
-    activeProfileId: null,
+    activeProfileIds: DEFAULT_THEME_PROFILE_SELECTION_BY_MODE,
 });
 
 type ParseThemeProfilesLocalStateResult = Readonly<{
@@ -28,6 +33,20 @@ const isRecord = (value: unknown): value is Record<string, unknown> => (
 );
 
 const stableStringify = (value: unknown): string => JSON.stringify(value);
+
+const themeProfileModes = ['light', 'dark'] as const satisfies readonly ThemeProfileMode[];
+
+const isKnownThemeProfileId = (
+    value: unknown,
+    seenIds: ReadonlySet<string>,
+): value is string => (
+    typeof value === 'string' && (seenIds.has(value) || isBuiltInThemeProfilePresetId(value))
+);
+
+const sanitizeActiveProfileId = (
+    value: unknown,
+    seenIds: ReadonlySet<string>,
+): string | null => (isKnownThemeProfileId(value, seenIds) ? value : null);
 
 const parseThemeProfile = (value: unknown): Readonly<{ profile: ThemeProfileV1; changed: boolean }> | null => {
     if (!isRecord(value)) return null;
@@ -95,15 +114,31 @@ export const parseThemeProfilesLocalState = (value: unknown): ParseThemeProfiles
         changed = true;
     }
 
-    const activeProfileId = typeof value.activeProfileId === 'string'
-        && (seenIds.has(value.activeProfileId) || isBuiltInThemeProfilePresetId(value.activeProfileId))
-        ? value.activeProfileId
-        : null;
-    if (activeProfileId !== value.activeProfileId) {
+    let activeProfileIds: ThemeProfileSelectionByMode;
+    if (isRecord(value.activeProfileIds)) {
+        activeProfileIds = {
+            light: sanitizeActiveProfileId(value.activeProfileIds.light, seenIds),
+            dark: sanitizeActiveProfileId(value.activeProfileIds.dark, seenIds),
+        };
+        if (stableStringify(activeProfileIds) !== stableStringify(value.activeProfileIds)) {
+            changed = true;
+        }
+    } else {
+        const legacyActiveProfileId = sanitizeActiveProfileId(value.activeProfileId, seenIds);
+        activeProfileIds = {
+            light: legacyActiveProfileId,
+            dark: legacyActiveProfileId,
+        };
+        if (legacyActiveProfileId !== null || value.activeProfileId !== undefined) {
+            changed = true;
+        }
+    }
+
+    if (value.activeProfileId !== undefined) {
         changed = true;
     }
 
-    const state: ThemeProfilesLocalStateV1 = { profiles, activeProfileId };
+    const state: ThemeProfilesLocalStateV1 = { profiles, activeProfileIds };
     return {
         state,
         changed: changed || stableStringify(state) !== stableStringify(value),
@@ -146,3 +181,48 @@ export const findThemeProfileById = (
     state.profiles.find((profile) => profile.id === profileId)
     ?? (isBuiltInThemeProfilePresetId(profileId) ? getBuiltInThemeProfileDefinition(profileId)?.profile ?? null : null)
 );
+
+export const getActiveThemeProfileIdForMode = (
+    state: ThemeProfilesLocalStateV1,
+    mode: ThemeProfileMode,
+): string | null => state.activeProfileIds[mode] ?? null;
+
+export const findActiveThemeProfileForMode = (
+    state: ThemeProfilesLocalStateV1,
+    mode: ThemeProfileMode,
+): ThemeProfileV1 | null => findThemeProfileById(state, getActiveThemeProfileIdForMode(state, mode));
+
+export const setActiveThemeProfileForMode = (
+    state: ThemeProfilesLocalStateV1,
+    mode: ThemeProfileMode,
+    profileId: string | null,
+): ThemeProfilesLocalStateV1 => ({
+    ...state,
+    activeProfileIds: {
+        ...state.activeProfileIds,
+        [mode]: findThemeProfileById(state, profileId) ? profileId : null,
+    },
+});
+
+export const clearActiveThemeProfiles = (
+    state: ThemeProfilesLocalStateV1,
+): ThemeProfilesLocalStateV1 => ({
+    ...state,
+    activeProfileIds: DEFAULT_THEME_PROFILE_SELECTION_BY_MODE,
+});
+
+export const clearActiveThemeProfileReferences = (
+    state: ThemeProfilesLocalStateV1,
+    profileId: string,
+): ThemeProfilesLocalStateV1 => ({
+    ...state,
+    activeProfileIds: {
+        light: state.activeProfileIds.light === profileId ? null : state.activeProfileIds.light,
+        dark: state.activeProfileIds.dark === profileId ? null : state.activeProfileIds.dark,
+    },
+});
+
+export const isThemeProfileActive = (
+    state: ThemeProfilesLocalStateV1,
+    profileId: string,
+): boolean => themeProfileModes.some((mode) => state.activeProfileIds[mode] === profileId);

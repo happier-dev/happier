@@ -22,6 +22,46 @@ afterEach(async () => {
 });
 
 describe('serverFetch abort handling', () => {
+    it('refuses a request before fetch when its admitted server basis is no longer active', async () => {
+        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
+            getActiveServerSnapshot: () => ({
+                serverId: 'server-b',
+                serverUrl: 'https://server-b.example.test',
+                kind: 'custom',
+                generation: 9,
+            }),
+        }));
+        vi.doMock('@/auth/storage/tokenStorage', () => ({
+            TokenStorage: {
+                getCredentials: vi.fn(async () => null),
+                invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
+            },
+        }));
+        const fetchMock = vi.fn(async () =>
+            new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        const { serverFetch } = await import('./client');
+        await expect(serverFetch(
+            '/v3/connect/openai-codex/profiles/work/quotas/refresh',
+            {
+                method: 'POST',
+                headers: { Authorization: 'Bearer token-a' },
+            },
+            {
+                includeAuth: false,
+                retry: 'none',
+                expectedActiveServer: {
+                    serverId: 'server-a',
+                    generation: 7,
+                },
+            },
+        )).rejects.toMatchObject({
+            name: 'StaleServerGenerationError',
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it('aborts in-flight requests when abortServerFetches is called', async () => {
         vi.doMock('@/sync/domains/server/serverRuntime', () => ({
             getActiveServerSnapshot: () => ({

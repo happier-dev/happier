@@ -142,18 +142,21 @@ describe('buildTranscriptRowShellSignature', () => {
         messagesById: Readonly<Record<string, any>>;
         expandedToolCallsAnchorMessageIds?: ReadonlySet<string>;
         revisionsById?: Readonly<Record<string, number>>;
+        activeThinkingMessageId?: string | null;
+        latestCommittedActivityKey?: string | null;
+        sessionActive?: boolean;
     }>) {
         return buildTranscriptRowShellSignature({
-            activeThinkingMessageId: null,
+            activeThinkingMessageId: params.activeThinkingMessageId ?? null,
             expandedToolCallsAnchorMessageIds: params.expandedToolCallsAnchorMessageIds ?? new Set(),
             forkMessageMetadataById: null,
             getMessageById: (messageId) => params.messagesById[messageId] ?? null,
             getMessageRevisionById: (messageId) => params.revisionsById?.[messageId] ?? null,
             groupingMode: 'turns',
             item: params.item,
-            latestCommittedActivityKey: null,
+            latestCommittedActivityKey: params.latestCommittedActivityKey ?? null,
             resolveThinkingExpanded: () => false,
-            sessionActive: false,
+            sessionActive: params.sessionActive ?? false,
             widthBucket: 'w:400',
             fontScaleKey: 'fs:1',
         });
@@ -529,6 +532,135 @@ describe('buildTranscriptRowShellSignature', () => {
             expect(before.structuralKey.length).toBeLessThan(256);
             expect(before.structuralKey).not.toContain('xxxx');
             expect(bumped.structuralKey).not.toBe(before.structuralKey);
+        });
+    });
+
+    /**
+     * E-3 M3. `rowState: 'thinking'` is a GROWING classification: the measurement reconciler holds a
+     * monotonic height floor for growing rows and never releases it on a content change (that is what
+     * keeps a genuinely growing row from being under-reserved mid-frame). Assigning `'thinking'` from
+     * `message.isThinking === true` alone made the classification PERMANENT — every historical thinking
+     * block in the transcript stayed growing-classified forever and therefore stranded its tallest
+     * historical height as an inert-but-self-fulfilling `minHeight`. Liveness, not the message flag,
+     * decides whether a thinking block is still growing.
+     */
+    describe('thinking rowState is a LIVE classification, never a permanent one (E-3 M3)', () => {
+        function thinkingMessage(id: string) {
+            return {
+                kind: 'agent-text',
+                id,
+                text: 'reasoning...',
+                createdAt: 1,
+                isThinking: true,
+            } as any;
+        }
+
+        function thinkingTurnItem(agentMessageId: string): TranscriptRowShellItem {
+            return {
+                kind: 'turn',
+                id: `turn:${agentMessageId}`,
+                turn: {
+                    id: `turn:${agentMessageId}`,
+                    userMessageId: 'user-1',
+                    content: [{ kind: 'message', messageId: agentMessageId }],
+                },
+            };
+        }
+
+        it('classifies a settled historical thinking block as stable so its floor is shrink-capable', () => {
+            const signature = buildSignature({
+                item: messageItem('thinking-1'),
+                messagesById: { 'thinking-1': thinkingMessage('thinking-1') },
+                activeThinkingMessageId: null,
+                sessionActive: false,
+            });
+
+            expect(signature.rowState).toBe('stable');
+        });
+
+        it('classifies a settled thinking block as stable even while the session is still active', () => {
+            const signature = buildSignature({
+                item: messageItem('thinking-1'),
+                messagesById: {
+                    'thinking-1': thinkingMessage('thinking-1'),
+                    'agent-2': { kind: 'agent-text', id: 'agent-2', text: 'answer', createdAt: 2 } as any,
+                },
+                activeThinkingMessageId: null,
+                latestCommittedActivityKey: 'agent-2',
+                sessionActive: true,
+            });
+
+            expect(signature.rowState).toBe('stable');
+        });
+
+        it('does not strand a settled thinking block nested in a turn row', () => {
+            const signature = buildSignature({
+                item: thinkingTurnItem('thinking-1'),
+                messagesById: {
+                    'user-1': { kind: 'user-text', id: 'user-1', text: 'hi', createdAt: 1 } as any,
+                    'thinking-1': thinkingMessage('thinking-1'),
+                },
+                activeThinkingMessageId: null,
+                sessionActive: false,
+            });
+
+            expect(signature.rowState).toBe('stable');
+        });
+
+        it('keeps the ACTIVE thinking block growing-classified', () => {
+            const signature = buildSignature({
+                item: messageItem('thinking-1'),
+                messagesById: { 'thinking-1': thinkingMessage('thinking-1') },
+                activeThinkingMessageId: 'thinking-1',
+                sessionActive: true,
+            });
+
+            expect(signature.rowState).toBe('thinking');
+        });
+
+        it('keeps the latest committed thinking block growing while the session is active', () => {
+            const signature = buildSignature({
+                item: messageItem('thinking-1'),
+                messagesById: { 'thinking-1': thinkingMessage('thinking-1') },
+                activeThinkingMessageId: null,
+                latestCommittedActivityKey: 'thinking-1',
+                sessionActive: true,
+            });
+
+            expect(signature.rowState).toBe('thinking');
+        });
+
+        it('keeps a growing thinking turn row growing-classified', () => {
+            const signature = buildSignature({
+                item: thinkingTurnItem('thinking-1'),
+                messagesById: {
+                    'user-1': { kind: 'user-text', id: 'user-1', text: 'hi', createdAt: 1 } as any,
+                    'thinking-1': thinkingMessage('thinking-1'),
+                },
+                activeThinkingMessageId: 'thinking-1',
+                sessionActive: true,
+            });
+
+            expect(signature.rowState).toBe('thinking');
+        });
+
+        it('never lets the settle flip the recycle type (C1 T2 shape stability)', () => {
+            // rowState settles; the rendered SHELL SHAPE does not. A recycle-type flip would remount
+            // the cell into a different pool — the exact failure C1 T2 exists to prevent.
+            const message = thinkingMessage('thinking-1');
+            const live = resolveTranscriptRowItemType({
+                activeThinkingMessageId: 'thinking-1',
+                getMessageById: () => message,
+                item: messageItem('thinking-1'),
+            });
+            const settled = resolveTranscriptRowItemType({
+                activeThinkingMessageId: null,
+                getMessageById: () => message,
+                item: messageItem('thinking-1'),
+            });
+
+            expect(live).toBe('message:thinking');
+            expect(settled).toBe('message:thinking');
         });
     });
 });

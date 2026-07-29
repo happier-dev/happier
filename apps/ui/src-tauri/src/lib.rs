@@ -25,6 +25,9 @@ mod web_runtime_config;
 #[cfg(desktop)]
 mod desktop_boot_credentials;
 
+#[cfg(any(desktop, test))]
+mod browser;
+
 #[cfg(debug_assertions)]
 mod mcp_bridge;
 
@@ -60,6 +63,7 @@ pub fn run() {
             .manage(window_sizing::WindowSizingState::default())
             .manage(activity_overlay::ActivityOverlayState::default())
             .manage(pet_overlay::DesktopPetOverlayState::default())
+            .manage(browser::DesktopBrowserState::default())
             .invoke_handler(tauri::generate_handler![
                 app_updates::desktop_fetch_update,
                 app_updates::desktop_install_update,
@@ -93,6 +97,19 @@ pub fn run() {
                 window_chrome::desktop_start_window_dragging,
                 window_sizing::desktop_set_window_mode,
                 desktop_boot_credentials::desktop_read_stack_boot_credentials,
+                browser::desktop_browser_get_availability,
+                browser::desktop_browser_open_view,
+                browser::desktop_browser_navigate,
+                browser::desktop_browser_set_bounds,
+                browser::desktop_browser_set_pointer_passthrough,
+                browser::desktop_browser_close_view,
+                browser::desktop_browser_open_devtools,
+                browser::desktop_browser_get_page_info,
+                browser::desktop_browser_capture_snapshot,
+                browser::desktop_browser_capture_recording_frame,
+                browser::desktop_browser_drain_diagnostics,
+                browser::desktop_browser_eval_script,
+                browser::desktop_browser_dispatch_navigation,
                 activity_overlay::desktop_activity_overlay_sync,
                 activity_overlay::desktop_activity_overlay_get_window_state,
                 activity_overlay::desktop_activity_overlay_set_expanded,

@@ -14,6 +14,7 @@ import {
 import { useWorkflowRunForToolUseId } from '@/components/sessions/workState/useSessionWorkflowActivity';
 import type { WorkflowActivityRowViewModel } from '@/components/sessions/workState/sessionWorkflowActivityTypes';
 import type { SessionWorkflowAgentStatusV1, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 
 import type { ToolViewProps } from '../core/_registry';
 import { WorkflowAgentRow } from './WorkflowAgentRow';
@@ -110,11 +111,25 @@ function formatFooter(snapshot: SessionWorkflowRunSnapshotV1): string {
 export const WorkflowActivityView = React.memo<ToolViewProps>(({ tool, sessionId, metadata }) => {
     const [visibleAgentLimit, setVisibleAgentLimit] = React.useState(INLINE_AGENT_INITIAL_LIMIT);
     const toolUseId = typeof tool.id === 'string' ? tool.id : null;
-    const { detail } = useWorkflowRunForToolUseId({
+    const rowLayoutMutation = useTranscriptRowLayoutMutation();
+    const rowLayoutMutationSourceId = `workflow-activity:${toolUseId ?? 'unknown'}`;
+    const { detail: sourceDetail } = useWorkflowRunForToolUseId({
         sessionId: sessionId ?? '',
         metadata,
         toolUseId,
     });
+    // The records hook updates outside this component. Buffer its next value through a
+    // layout effect so the transcript owner can arm the visible-anchor hold before the
+    // state commit that replaces a compact shell/body with records-backed content.
+    const [detail, setDetail] = React.useState(sourceDetail);
+    React.useLayoutEffect(() => {
+        if (sourceDetail === detail) return;
+        rowLayoutMutation({
+            reason: 'content-change',
+            sourceId: rowLayoutMutationSourceId,
+        });
+        setDetail(sourceDetail);
+    }, [detail, rowLayoutMutation, rowLayoutMutationSourceId, sourceDetail]);
     const loadedRunId = detail?.state === 'loaded' ? detail.snapshot.runId : null;
 
     React.useEffect(() => {
@@ -193,7 +208,13 @@ export const WorkflowActivityView = React.memo<ToolViewProps>(({ tool, sessionId
             </View>
             {hiddenCount > 0 ? (
                 <Pressable
-                    onPress={() => setVisibleAgentLimit((current) => Math.min(snapshot.agents.length, current + INLINE_AGENT_PAGE_SIZE))}
+                    onPress={() => {
+                        rowLayoutMutation({
+                            reason: 'content-change',
+                            sourceId: rowLayoutMutationSourceId,
+                        });
+                        setVisibleAgentLimit((current) => Math.min(snapshot.agents.length, current + INLINE_AGENT_PAGE_SIZE));
+                    }}
                     accessibilityRole="button"
                     accessibilityLabel={t('tools.workflowActivityView.showMore', { count: hiddenCount })}
                     style={styles.showMore}

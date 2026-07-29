@@ -66,6 +66,10 @@ vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
 }));
 
+vi.mock('expo-device', () => ({
+    isDevice: true,
+}));
+
 vi.mock('@expo/vector-icons', async () => {
     const ReactModule = await import('react');
     return {
@@ -243,6 +247,30 @@ describe('QrCodeScannerView', () => {
         deviceState.windowWidth = 360;
         deviceState.windowHeight = 800;
         vi.stubGlobal('navigator', { maxTouchPoints: 5, mediaDevices: { getUserMedia: async () => ({}) } } as any);
+
+        const { QrCodeScannerView } = await import('./QrCodeScannerView');
+
+        const screen = await renderScreen(<QrCodeScannerView
+                    embedded
+                    title="t"
+                    permissionRequiredMessage="perm"
+                    onCancel={vi.fn()}
+                    onScan={vi.fn()}
+                    testIDPrefix="test"
+                />);
+
+        const matchingView = screen.findAllByType('View' as any).find((node) => {
+            const style = flattenStyle(node.props.style);
+            return typeof style.minHeight === 'number' && style.minHeight > 0;
+        });
+
+        expect(matchingView).toBeTruthy();
+    });
+
+    it('guarantees a non-zero preview surface for embedded native scanners', async () => {
+        deviceState.platformOs = 'ios';
+        deviceState.windowWidth = 360;
+        deviceState.windowHeight = 800;
 
         const { QrCodeScannerView } = await import('./QrCodeScannerView');
 

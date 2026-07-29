@@ -10,6 +10,7 @@ const METADATA_NESTED_FRESHNESS_RECORD_KEYS = new Set([
     'sessionModesV1',
     'acpSessionModelsV1',
     'sessionModelsV1',
+    'sessionAppliedModelV1',
     'acpConfigOptionsV1',
     'sessionConfigOptionsV1',
     'acpConfiguredBackendV1',

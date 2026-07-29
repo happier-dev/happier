@@ -1,4 +1,3 @@
-import { ConnectedServiceProfileDetailView } from '@/components/settings/connectedServices/profile/ConnectedServiceProfileDetailView';
+import { ConnectedAccountLegacyRouteRedirect } from '@/components/settings/connectedServices/account/ConnectedAccountLegacyRouteRedirect';
 
-export default ConnectedServiceProfileDetailView;
-
+export default ConnectedAccountLegacyRouteRedirect;

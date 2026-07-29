@@ -6,6 +6,8 @@ import {
     CANONICAL_AGENTS_UI_BEHAVIOR,
     resolveAgentUiBehavior,
     resolveAgentUiBehaviorFromFlavor,
+    resolveAgentUiBehaviorFromSessionMetadata,
+    resolvePendingDeliveryLabelKeyForSession,
     supportsEditableSessionGoals,
 } from './registryUiBehavior';
 
@@ -48,11 +50,86 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
         expect(behavior?.externalSessions?.browse?.getSourceOptions).toBeTypeOf('function');
     });
 
+    it('resolves provider behavior from canonical session runtime metadata before stale flavor', () => {
+        const behavior = resolveAgentUiBehaviorFromSessionMetadata({
+            flavor: 'claude',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                provider: {
+                    backendMode: 'appServer',
+                },
+            },
+        });
+
+        expect(behavior?.permissions?.footer?.stopHandling).toBe('denyOnly');
+        expect(behavior?.permissions?.footer?.supportsExecPolicyAmendment).toBe(true);
+    });
+
+    it('resolves layout-v1 Agent behavior only from the owner metadata view', () => {
+        const session = makeSession({
+            metadataLayoutVersion: 1,
+            metadata: {
+                v: 1,
+                flavor: 'codex',
+            } as unknown as Metadata,
+            ownerMetadataView: {
+                flavor: 'claude',
+            } as unknown as Metadata,
+        });
+
+        expect(resolvePendingDeliveryLabelKeyForSession({
+            session,
+            localId: null,
+            detail: 'custody_observed',
+        })).toBe('session.pendingMessages.deliveryStatus.queuedInClaude');
+        expect(resolvePendingDeliveryLabelKeyForSession({
+            session: makeSession({
+                metadataLayoutVersion: 1,
+                metadata: {
+                    v: 1,
+                    flavor: 'codex',
+                } as unknown as Metadata,
+                ownerMetadataView: null,
+            }),
+            localId: null,
+            detail: 'custody_observed',
+        })).toBeNull();
+    });
+
     it('keeps codex-specific permission footer overrides on the native codex agent', () => {
         const behavior = resolveAgentUiBehaviorFromFlavor('codex');
 
         expect(behavior?.permissions?.footer?.stopHandling).toBe('denyOnly');
         expect(behavior?.permissions?.footer?.supportsExecPolicyAmendment).toBe(true);
+    });
+
+    it('projects Claude context-window fallbacks through provider UI behavior', () => {
+        const contextWindow = resolveAgentUiBehavior('claude').contextWindow;
+
+        expect(contextWindow?.getDefaultContextWindowTokens?.()).toBe(200_000);
+        expect(contextWindow?.getContextWindowTokensForModel?.({ modelId: 'claude-sonnet-4-6[1m]' })).toBe(1_000_000);
+        expect(contextWindow?.bumpContextWindowTokensForObservedUsage?.({
+            contextWindowTokens: 200_000,
+            observedUsedTokens: 733_000,
+        })).toBe(1_000_000);
+    });
+
+    it('projects Claude AskUserQuestion presentation through the plugin behavior registry', () => {
+        expect(resolveAgentUiBehavior('claude').workflow?.resolveAskUserQuestionPresentation).toBeTypeOf('function');
+    });
+
+    it('projects pending delivery presentation through the Claude provider behavior', () => {
+        expect(resolveAgentUiBehavior('claude').pendingDelivery?.resolveLabelKey).toBeTypeOf('function');
+        expect(resolveAgentUiBehavior('codex').pendingDelivery?.resolveLabelKey).toBeUndefined();
+    });
+
+    it('projects current Codex catalog windows through provider UI behavior', () => {
+        const contextWindow = resolveAgentUiBehavior('codex').contextWindow;
+
+        expect(contextWindow?.getDefaultContextWindowTokens?.()).toBe(372_000);
+        expect(contextWindow?.getContextWindowTokensForModel?.({ modelId: 'gpt-5.6-sol' })).toBe(372_000);
+        expect(contextWindow?.getContextWindowTokensForModel?.({ modelId: 'gpt-5.4-mini' })).toBe(272_000);
     });
 
     it('uses the generic codex-decision footer behavior for opencode flavors', () => {
@@ -75,7 +152,7 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
             ...BASE_METADATA,
             agentRuntimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
+                agentId: 'codex',
                 provider: { backendMode: 'appServer' },
             },
         } satisfies Metadata;
@@ -83,7 +160,7 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
             ...BASE_METADATA,
             agentRuntimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
+                agentId: 'codex',
                 provider: { backendMode: 'acp' },
             },
         } satisfies Metadata;

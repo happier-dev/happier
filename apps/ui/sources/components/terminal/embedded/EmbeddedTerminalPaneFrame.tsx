@@ -3,13 +3,13 @@ import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { PrimaryCircleIconButton } from '@/components/ui/buttons/PrimaryCircleIconButton';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { resolveTerminalErrorCopy } from '@/components/sessions/terminal/terminalErrorCopy';
-import { EmbeddedTerminalToolbarIconButton } from './EmbeddedTerminalToolbarIconButton';
 import { embeddedTerminalPaneStyles } from './embeddedTerminalPaneStyles';
 import type { EmbeddedTerminalPaneController } from './types';
 
@@ -34,7 +34,9 @@ function resolveKeyboardBottomInset(value: number | undefined): number {
 export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPaneFrame(props: EmbeddedTerminalPaneFrameProps) {
     const { theme } = useUnistyles();
     const styles = embeddedTerminalPaneStyles;
-    const keyboardBottomInset = resolveKeyboardBottomInset(props.keyboardBottomInset);
+    const keyboardBottomInset = props.platformOS === 'android'
+        ? 0
+        : resolveKeyboardBottomInset(props.keyboardBottomInset);
     const terminalSurfaceStyle = keyboardBottomInset > 0
         ? [styles.terminalSurface, { marginBottom: keyboardBottomInset }]
         : styles.terminalSurface;
@@ -85,31 +87,47 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                 <View style={styles.toolbarRight}>
                     {props.toolbarActionsStart}
                     {props.onPaste ? (
-                        <EmbeddedTerminalToolbarIconButton
+                        <IconButton
                             testID={testId('paste')}
+                            iconName="clipboard-outline"
                             accessibilityLabel={t('common.paste')}
+                            tooltip={t('common.paste')}
+                            variant="plain"
+                            size={28}
+                            iconSize={18}
                             onPress={props.onPaste}
-                            icon="clipboard-outline"
                         />
                     ) : null}
-                    <EmbeddedTerminalToolbarIconButton
+                    <IconButton
                         testID={testId('clear')}
+                        iconName="trash-outline"
                         accessibilityLabel={t('common.reset')}
+                        tooltip={t('common.reset')}
+                        variant="plain"
+                        size={28}
+                        iconSize={18}
                         onPress={props.controller.clearTerminal}
-                        icon="trash-outline"
                     />
-                    <EmbeddedTerminalToolbarIconButton
+                    <IconButton
                         testID={testId('restart')}
+                        iconName="refresh-outline"
                         accessibilityLabel={t('common.refresh')}
+                        tooltip={t('common.refresh')}
+                        variant="plain"
+                        size={28}
+                        iconSize={18}
                         onPress={props.controller.requestRestart}
-                        icon="refresh-outline"
                     />
                     {props.onRequestClose ? (
-                        <EmbeddedTerminalToolbarIconButton
+                        <IconButton
                             testID={testId('close')}
+                            iconName="close-outline"
                             accessibilityLabel={t('common.close')}
+                            tooltip={t('common.close')}
+                            variant="plain"
+                            size={28}
+                            iconSize={18}
                             onPress={props.onRequestClose}
-                            icon="close-outline"
                         />
                     ) : null}
                 </View>

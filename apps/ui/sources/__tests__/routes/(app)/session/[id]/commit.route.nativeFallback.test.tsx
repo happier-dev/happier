@@ -76,6 +76,14 @@ vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
     SessionCommitDetailsView: () => React.createElement('SessionCommitDetailsView'),
 }));
 
+vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
+    useHydrateSessionForRoute: (sessionId: string) => ({
+        kind: sessionId ? 'available' : 'missing',
+        sessionId,
+        cause: sessionId ? undefined : 'not_found',
+    }),
+}));
+
 vi.mock('@/components/sessions/panes/url/sessionPaneUrlState', () => ({
     serializeSessionPaneUrlState: (state: any) => state?.details?.kind === 'commit'
         ? { details: 'commit', sha: state.details.sha }

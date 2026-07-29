@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { FlatList, Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
+import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import { useUnistyles } from 'react-native-unistyles';
 import { Octicons } from '@expo/vector-icons';
 
@@ -38,10 +39,13 @@ import { machineScmStashList } from '@/sync/ops/scm/machineScm';
 import { resolveSnapshotScmStashCount, useScmStashSummaryCount } from '@/scm/stash/useScmStashSummaryCount';
 import { WorkspaceSourceControlBranchMenu } from './WorkspaceSourceControlBranchMenu';
 import { applyWorkspaceFileStageAction, WorkspaceScmCommitSelectionToggleButton } from './WorkspaceScmCommitSelectionToggleButton';
-import { WorkspaceScmChangeDiscardButton } from './WorkspaceScmChangeDiscardButton';
+import { applyWorkspaceFileDiscardAction } from './applyWorkspaceFileDiscardAction';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { executeWorkspaceScmCommit } from './executeWorkspaceScmCommit';
 import { executeWorkspaceScmRemoteOperation } from './executeWorkspaceScmRemoteOperation';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 
 export type WorkspaceSourceControlViewProps = Readonly<{
     serverId: string;
@@ -68,6 +72,7 @@ function matchesQuery(filePath: string, query: string): boolean {
 
 export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceControlViewProps) => {
     const { theme } = useUnistyles();
+    const copyFeedback = useTemporaryCopyFeedback();
     const [searchQuery, setSearchQuery] = React.useState('');
     const [requestedChangedFilesViewMode, setChangedFilesViewMode] = React.useState<ChangedFilesViewMode>('repository');
     const [commitDraftMessage, setCommitDraftMessage] = React.useState('');
@@ -160,6 +165,14 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
         return filteredChangedFiles.filter((file) => isSelectedForCommit(file)).length;
     }, [commitSelectionCount, filteredChangedFiles, isSelectedForCommit, scmCommitStrategy]);
 
+    const [selectionModeUserOn, setSelectionModeUserOn] = React.useState(false);
+    const commitSelectionAvailable = scmWriteEnabled === true;
+    // Selection mode is opt-in: the per-file "+" toggles stay hidden until the user taps
+    // "Select files to commit". A non-empty selection forces it on so nothing is hidden.
+    const selectionModeActive = commitSelectionAvailable && (selectionModeUserOn || repositorySelectedCount > 0);
+    const enterSelectionMode = React.useCallback(() => setSelectionModeUserOn(true), []);
+    const exitSelectionMode = React.useCallback(() => setSelectionModeUserOn(false), []);
+
     const commitSelectionPathHints = React.useMemo(() => {
         return buildCommitSelectionPathHints({
             commitSelectionPaths,
@@ -194,8 +207,8 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
         snapshotCount: resolveSnapshotScmStashCount(snapshot),
         refreshKey: `${props.machineId}:${props.rootPath}:${snapshot?.fetchedAt ?? 0}`,
         load: React.useCallback(
-            async () => await machineScmStashList(props.machineId, { cwd: props.rootPath }),
-            [props.machineId, props.rootPath],
+            async () => await machineScmStashList(scope.machineId, { cwd: scope.rootPath }, { serverId: scope.serverId }),
+            [scope],
         ),
     });
 
@@ -318,7 +331,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
 
     return (
         <View style={{ flex: 1, minHeight: 0 }}>
-            <FlatList
+            <VirtualizedList
                 data={filteredChangedFiles}
                 keyExtractor={(file) => `workspace-scm-${file.fullPath}`}
                 ListHeaderComponent={(
@@ -368,6 +381,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                                 variant="rail"
                                 branchTrigger={(
                                     <WorkspaceSourceControlBranchMenu
+                                        serverId={props.serverId}
                                         machineId={props.machineId}
                                         rootPath={props.rootPath}
                                         currentBranch={scmStatusFiles.branch}
@@ -486,7 +500,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                             theme={theme}
                             file={file}
                             density="compact"
-                            leadingElement={scmWriteEnabled === true ? (
+                            leadingElement={selectionModeActive ? (
                                 <WorkspaceScmCommitSelectionToggleButton
                                     scope={scope}
                                     snapshot={snapshot ?? null}
@@ -512,24 +526,29 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                                 });
                             }}
                             trailingElement={(
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                                    {canDiscard ? (
-                                        <WorkspaceScmChangeDiscardButton
-                                            scope={scope}
-                                            machineId={props.machineId}
-                                            rootPath={props.rootPath}
-                                            snapshot={snapshot ?? null}
-                                            scmWriteEnabled={scmWriteEnabled === true}
-                                            commitStrategy={scmCommitStrategy}
-                                            file={file}
-                                            surface="files"
-                                            onAfterDiscard={refresh}
-                                        />
-                                    ) : null}
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                    <CopiedPill
+                                        visible={copyFeedback.isCopied(file.fullPath)}
+                                        testID={`workspace-scm-change-copy-feedback:${file.fullPath}`}
+                                    />
                                     <ScmChangeOverflowMenu
                                         title={file.fileName}
                                         filePath={file.fullPath}
+                                        onCopyPathSuccess={() => copyFeedback.markCopied(file.fullPath)}
                                         onRevealInTree={revealInTree}
+                                        onDiscard={canDiscard ? () => {
+                                            fireAndForget(applyWorkspaceFileDiscardAction({
+                                                scope,
+                                                machineId: props.machineId,
+                                                rootPath: props.rootPath,
+                                                file,
+                                                snapshot: snapshot ?? null,
+                                                scmWriteEnabled: scmWriteEnabled === true,
+                                                commitStrategy: scmCommitStrategy,
+                                                surface: 'files',
+                                                refreshAll: refresh,
+                                            }), { tag: 'WorkspaceSourceControlView.discard' });
+                                        } : undefined}
                                     />
                                 </View>
                             )}
@@ -572,6 +591,10 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                         selectionCount={repositorySelectedCount}
                         onClearSelection={repositorySelectedCount > 0 ? handleClearSelection : undefined}
                         onSelectAllSelection={isAtomicCommitStrategy(scmCommitStrategy) ? handleSelectAll : undefined}
+                        commitSelectionAvailable={commitSelectionAvailable}
+                        selectionModeActive={selectionModeActive}
+                        onEnterSelectionMode={enterSelectionMode}
+                        onExitSelectionMode={exitSelectionMode}
                         pushShortcut={commitAdjacentPushAction}
                         variant="railFooter"
                         commitMessageGeneratorEnabled={false}

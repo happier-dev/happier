@@ -1,6 +1,27 @@
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+
+function hasSyntacticDefaultExport(filePath: string, source: string): boolean {
+    const sourceFile = ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+    return sourceFile.statements.some((statement) => {
+        if (ts.isExportAssignment(statement)) {
+            return !statement.isExportEquals;
+        }
+
+        if (ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+            return statement.exportClause.elements.some((element) => element.name.text === 'default');
+        }
+
+        const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined;
+        return Boolean(
+            modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+            && modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword),
+        );
+    });
+}
 
 describe('expo-router route hygiene', () => {
     it('does not allow non-route helpers/tests to shadow the real Root Layout', () => {
@@ -82,9 +103,19 @@ describe('expo-router route hygiene', () => {
 
         const unexpected = walk(appRoot).filter((filePath) => {
             if (filePath.endsWith('.ts')) return true;
-            const fileName = filePath.split(/[\\/]/u).pop() ?? '';
-            return /^[A-Z].*\.tsx$/u.test(fileName);
+            if (!filePath.endsWith('.tsx')) return false;
+
+            const source = readFileSync(filePath, 'utf8');
+            return !hasSyntacticDefaultExport(filePath, source);
         });
         expect(unexpected).toEqual([]);
+    });
+
+    it('recognizes default exports by syntax rather than comments or strings', () => {
+        expect(hasSyntacticDefaultExport('direct.tsx', 'export default function Route() { return null; }')).toBe(true);
+        expect(hasSyntacticDefaultExport('named.tsx', 'export { Route as default } from "./Route";')).toBe(true);
+        expect(hasSyntacticDefaultExport('forwarded.tsx', 'export { default } from "./Route";')).toBe(true);
+        expect(hasSyntacticDefaultExport('comment.tsx', '// export default function Route() {}\nexport const helper = true;')).toBe(false);
+        expect(hasSyntacticDefaultExport('string.tsx', 'export const example = "export default";')).toBe(false);
     });
 });

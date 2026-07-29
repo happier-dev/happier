@@ -28,13 +28,6 @@ const bottomWriteContext: EntryRestoreCloseWriteContext = {
     kind: 'bottom',
 };
 
-const sliceAnchorWriteContext: EntryRestoreCloseWriteContext = {
-    distanceFromBottom: 84,
-    issuedContentHeight: 2600,
-    issuedLayoutHeight: 720,
-    kind: 'slice-anchor',
-};
-
 describe('entry restore close effects', () => {
     it('maps a confirmed current-session native anchor close to confirmed ownership, restored telemetry, and native applied effect', () => {
         expect(resolveEntryRestoreCloseEffects({
@@ -89,39 +82,20 @@ describe('entry restore close effects', () => {
         }
     });
 
-    it('reveals slice-anchor windows for every current-session native close outcome', () => {
-        const outcomes: readonly EntryRestoreTransactionOutcome[] = [
-            'confirmed',
-            'deadline',
-            'preempted-user-scroll',
-            'no-target',
-        ];
-
-        for (const outcome of outcomes) {
-            expect(resolveEntryRestoreCloseEffects({
-                currentSessionId: 'session-1',
-                outcome,
-                platform: 'native',
-                sessionId: 'session-1',
-                writeContext: sliceAnchorWriteContext,
-            })).toContainEqual({ type: 'reveal-entry-slice-window' });
-        }
-    });
-
-    it('does not run native paint/reveal effects for web or non-current session closes', () => {
+    it('does not run native paint effects for web or non-current session closes', () => {
         expect(resolveEntryRestoreCloseEffects({
             currentSessionId: 'session-1',
             outcome: 'confirmed',
             platform: 'web',
             sessionId: 'session-1',
-            writeContext: sliceAnchorWriteContext,
+            writeContext: anchorWriteContext,
         })).toEqual([
             { outcome: 'confirmed', type: 'close-entry-ownership' },
             {
-                contentHeight: 2600,
-                layoutHeight: 720,
+                contentHeight: 2400,
+                layoutHeight: 600,
                 mode: 'restore-anchor',
-                offsetY: 84,
+                offsetY: 120,
                 reason: 'restored',
                 type: 'restore-decision',
             },
@@ -132,14 +106,14 @@ describe('entry restore close effects', () => {
             outcome: 'confirmed',
             platform: 'native',
             sessionId: 'session-1',
-            writeContext: sliceAnchorWriteContext,
+            writeContext: anchorWriteContext,
         })).toEqual([
             { outcome: 'confirmed', type: 'close-entry-ownership' },
             {
-                contentHeight: 2600,
-                layoutHeight: 720,
+                contentHeight: 2400,
+                layoutHeight: 600,
                 mode: 'restore-anchor',
-                offsetY: 84,
+                offsetY: 120,
                 reason: 'restored',
                 type: 'restore-decision',
             },

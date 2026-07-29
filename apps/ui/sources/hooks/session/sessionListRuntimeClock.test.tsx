@@ -42,13 +42,14 @@ describe('sessionListRuntimeClock', () => {
 
         expect(early.getCurrent()).toBe(1_000);
         expect(late.getCurrent()).toBe(1_000);
+        expect(vi.getTimerCount()).toBe(1);
 
-        await flushHookEffects({ advanceTimersMs: 1_001, cycles: 1, turns: 2 });
+        await flushHookEffects({ advanceTimersMs: 1_000, cycles: 1, turns: 2 });
 
         // Both consumers observe the SAME timestamp even though only the early
         // consumer requested this wake — this is the single-clock invariant.
-        expect(early.getCurrent()).toBe(2_001);
-        expect(late.getCurrent()).toBe(2_001);
+        expect(early.getCurrent()).toBe(2_000);
+        expect(late.getCurrent()).toBe(2_000);
 
         await early.unmount();
         await late.unmount();
@@ -70,12 +71,12 @@ describe('sessionListRuntimeClock', () => {
             { initialProps: { wakeAtMs: 5_000, enabled: true } },
         );
 
-        await flushHookEffects({ advanceTimersMs: 1_001, cycles: 1, turns: 2 });
-        expect(late.getCurrent()).toBe(2_001);
+        await flushHookEffects({ advanceTimersMs: 1_000, cycles: 1, turns: 2 });
+        expect(late.getCurrent()).toBe(2_000);
 
         await flushHookEffects({ advanceTimersMs: 3_000, cycles: 1, turns: 2 });
-        expect(early.getCurrent()).toBe(5_001);
-        expect(late.getCurrent()).toBe(5_001);
+        expect(early.getCurrent()).toBe(5_000);
+        expect(late.getCurrent()).toBe(5_000);
 
         await early.unmount();
         await late.unmount();
@@ -101,9 +102,9 @@ describe('sessionListRuntimeClock', () => {
 
         await frozen.rerender({ wakeAtMs: 3_500, enabled: true });
         await flushHookEffects({ cycles: 1, turns: 2 });
-        await flushHookEffects({ advanceTimersMs: 501, cycles: 1, turns: 2 });
+        await flushHookEffects({ advanceTimersMs: 500, cycles: 1, turns: 2 });
 
-        expect(frozen.getCurrent()).toBe(3_501);
+        expect(frozen.getCurrent()).toBe(3_500);
 
         await frozen.unmount();
     });

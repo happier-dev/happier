@@ -24,17 +24,17 @@ function makeRequest(tool: string): PendingPermissionRequest {
 describe('resolveAskUserQuestionDecisionAnswers tool-name matching', () => {
   it('matches the canonical PascalCase AskUserQuestion tool name', () => {
     const answers = resolveAskUserQuestionDecisionAnswers(makeRequest('AskUserQuestion'), 'allow');
-    expect(answers).toEqual([{ question: 'Proceed with deploy?', answer: 'Yes, deploy' }]);
+    expect(answers).toEqual([{ question: 'Proceed with deploy?', values: ['Yes, deploy'] }]);
   });
 
   it('matches the snake_case ask_user_question tool name via the canonical helper', () => {
     const answers = resolveAskUserQuestionDecisionAnswers(makeRequest('ask_user_question'), 'allow');
-    expect(answers).toEqual([{ question: 'Proceed with deploy?', answer: 'Yes, deploy' }]);
+    expect(answers).toEqual([{ question: 'Proceed with deploy?', values: ['Yes, deploy'] }]);
   });
 
   it('matches case-insensitively', () => {
     const answers = resolveAskUserQuestionDecisionAnswers(makeRequest('askuserquestion'), 'deny');
-    expect(answers).toEqual([{ question: 'Proceed with deploy?', answer: 'No, cancel' }]);
+    expect(answers).toEqual([{ question: 'Proceed with deploy?', values: ['No, cancel'] }]);
   });
 
   it('returns null for unrelated tools', () => {

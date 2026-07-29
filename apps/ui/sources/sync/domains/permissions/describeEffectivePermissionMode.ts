@@ -8,7 +8,7 @@ import {
     readSessionModelsState,
     readSessionModesState,
 } from '@/sync/domains/sessionControl/readSessionControlMetadata';
-import { normalizePermissionModeForAgent, parsePermissionIntentAlias } from '@happier-dev/agents';
+import { parsePermissionIntentAlias, resolveProviderNativePermissionModeForAgent } from '@happier-dev/agents';
 
 export type EffectivePermissionModeDescription = Readonly<{
     effectiveMode: PermissionMode;
@@ -37,11 +37,11 @@ function noteForReason(reason: EffectivePermissionModeReason): string {
         case 'mode_mapped_for_provider':
             return `Mapped to ${reason.params?.providerMode ?? 'default'} for this provider.`;
         case 'read_only_enforced_by_tool_gating':
-            return 'Read-only is enforced by Happy via tool gating (write actions are denied).';
+            return 'Happier denies host-mediated ACP filesystem writes in Read Only and Plan. Trusted provider-native or direct writes remain best effort under the provider’s own policy.';
         case 'approval_setting_controls_auto_approval':
             return 'This setting controls tool auto-approval; sandbox limits may not change for the running session.';
         case 'read_only_best_effort':
-            return 'Read-only is best effort on this provider (mapped to Default).';
+            return 'Trusted provider-native or direct writes remain best effort under this provider’s own policy.';
         case 'mcp_sandbox_restrictions_apply_on_spawn':
             return 'This session uses MCP-style sandboxing: changing permissions mid-session updates approval behavior, but sandbox/environment restrictions apply at session start.';
         case 'applies_on_next_message':
@@ -76,7 +76,7 @@ export function describeEffectivePermissionMode(_params: {
         reasons.push({ code: 'plan_not_supported_for_provider' });
     }
 
-    const providerNative = normalizePermissionModeForAgent({ agentId, mode: effectiveMode });
+    const providerNative = resolveProviderNativePermissionModeForAgent({ agentId, mode: effectiveMode });
     if (providerNative !== effectiveMode) {
         reasons.push({ code: 'mode_mapped_for_provider', params: { providerMode: providerNative } });
     }
@@ -89,7 +89,7 @@ export function describeEffectivePermissionMode(_params: {
         }
     }
 
-    if (effectiveMode === 'read-only' && providerNative !== 'read-only') {
+    if (effectiveMode === 'read-only' && providerNative !== 'read-only' && group !== 'codexLike') {
         reasons.push({ code: 'read_only_best_effort' });
     }
 

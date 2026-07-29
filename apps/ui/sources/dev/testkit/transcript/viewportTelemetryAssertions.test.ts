@@ -21,7 +21,7 @@ function scrollWrite(overrides: ScrollWriteOverrides = {}): TranscriptViewportTe
         reason: 'entry-restore',
         sessionId: 'session:1',
         platform: 'ios',
-        listImplementation: 'flash_v2',
+        listImplementation: 'legend',
         mode: 'restore-distance',
         targetOffsetY: 100,
         timestampMs: 0,
@@ -34,7 +34,7 @@ function observed(overrides: ObservationOverrides = {}): TranscriptViewportTelem
         type: 'scroll-observed',
         sessionId: 'session:1',
         platform: 'ios',
-        listImplementation: 'flash_v2',
+        listImplementation: 'legend',
         mode: 'follow-bottom',
         offsetY: 100,
         reason: 'observed',
@@ -48,7 +48,7 @@ function decision(overrides: ObservationOverrides = {}): TranscriptViewportTelem
         type: 'restore-decision',
         sessionId: 'session:1',
         platform: 'ios',
-        listImplementation: 'flash_v2',
+        listImplementation: 'legend',
         mode: 'restore-anchor',
         reason: 'pending',
         timestampMs: 0,
@@ -90,7 +90,7 @@ describe('assertOneOwnerPerPhase', () => {
         ])).toThrow(/passive-drift/);
     });
 
-    it('ignores rejected writes and mvcp-skip records', () => {
+    it('ignores rejected writes', () => {
         const rejectedWrite: TranscriptViewportTelemetryEvent = {
             type: 'scroll-write-rejected',
             writer: 'native-scroll-to-offset',
@@ -99,7 +99,7 @@ describe('assertOneOwnerPerPhase', () => {
             activeOwner: 'entry',
             sessionId: 'session:1',
             platform: 'ios',
-            listImplementation: 'flash_v2',
+            listImplementation: 'legend',
             mode: 'restore-anchor',
             targetOffsetY: 1586,
             timestampMs: 20,
@@ -107,7 +107,6 @@ describe('assertOneOwnerPerPhase', () => {
         const events: TranscriptViewportTelemetryEvent[] = [
             scrollWrite({ reason: 'entry-restore', timestampMs: 10 }),
             rejectedWrite,
-            scrollWrite({ writer: 'mvcp-skip', reason: 'prepend-restore', mode: 'restore-anchor', timestampMs: 30 }),
         ];
 
         expect(() => assertOneOwnerPerPhase(events, [
@@ -175,8 +174,8 @@ describe('assertNoSilentBails', () => {
 
     it('passes when a web pending decision closes as observed', () => {
         const events = [
-            decision({ reason: 'pending', platform: 'web', listImplementation: 'web-fallback', timestampMs: 10 }),
-            decision({ reason: 'observed', platform: 'web', listImplementation: 'web-fallback', timestampMs: 50 }),
+            decision({ reason: 'pending', platform: 'web', listImplementation: 'legend', timestampMs: 10 }),
+            decision({ reason: 'observed', platform: 'web', listImplementation: 'legend', timestampMs: 50 }),
         ];
 
         expect(() => assertNoSilentBails(events)).not.toThrow();
@@ -184,8 +183,8 @@ describe('assertNoSilentBails', () => {
 
     it('passes when a web pending decision closes as not-ready', () => {
         const events = [
-            decision({ reason: 'pending', platform: 'web', listImplementation: 'web-fallback', timestampMs: 10 }),
-            decision({ reason: 'not-ready', platform: 'web', listImplementation: 'web-fallback', timestampMs: 50 }),
+            decision({ reason: 'pending', platform: 'web', listImplementation: 'legend', timestampMs: 10 }),
+            decision({ reason: 'not-ready', platform: 'web', listImplementation: 'legend', timestampMs: 50 }),
         ];
 
         expect(() => assertNoSilentBails(events)).not.toThrow();
@@ -446,7 +445,7 @@ describe('assertWebWregDiagnostics', () => {
         const events: TranscriptViewportTelemetryEvent[] = [
             observed({
                 platform: 'web',
-                listImplementation: 'flash_v2',
+                listImplementation: 'legend',
                 mode: 'user-unpinned',
                 reason: 'observed',
                 trigger: 'edge-reached',
@@ -466,7 +465,7 @@ describe('assertWebWregDiagnostics', () => {
         const events: TranscriptViewportTelemetryEvent[] = [
             observed({
                 platform: 'web',
-                listImplementation: 'flash_v2',
+                listImplementation: 'legend',
                 mode: 'user-unpinned',
                 reason: 'observed',
                 offsetY: 0,
@@ -477,21 +476,18 @@ describe('assertWebWregDiagnostics', () => {
                 domScrollTop: 0,
                 domScrollHeight: 1200,
                 domClientHeight: 600,
-                flashListContentHeight: 1180,
-                flashListLayoutHeight: 580,
+                listContentHeight: 1180,
+                listLayoutHeight: 580,
                 scrollable: true,
                 paginationPhase: 'armed',
                 paginationSuspendedReasons: [],
-                coldCount: 42,
-                hotCount: 3,
                 firstVisibleAnchorTestId: 'transcript-item-turn-1',
-                pendingWebPrependAnchorKind: 'none',
                 programmaticWebWrite: false,
                 timestampMs: 10,
             }),
             decision({
                 platform: 'web',
-                listImplementation: 'flash_v2',
+                listImplementation: 'legend',
                 mode: 'restore-anchor',
                 reason: 'restored',
                 trigger: 'prepend-restore',
@@ -502,17 +498,12 @@ describe('assertWebWregDiagnostics', () => {
                 domScrollTop: 180,
                 domScrollHeight: 1600,
                 domClientHeight: 600,
-                flashListContentHeight: 1580,
-                flashListLayoutHeight: 580,
+                listContentHeight: 1580,
+                listLayoutHeight: 580,
                 scrollable: true,
                 paginationPhase: 'idle',
                 paginationSuspendedReasons: [],
-                coldCount: 48,
-                hotCount: 3,
                 firstVisibleAnchorTestId: 'transcript-item-turn-1',
-                pendingWebPrependAnchorKind: 'stable',
-                pendingWebPrependAnchorId: 'transcript-anchor-message-m1',
-                pendingWebPrependAnchorIndex: 2,
                 programmaticWebWrite: true,
                 timestampMs: 40,
             }),

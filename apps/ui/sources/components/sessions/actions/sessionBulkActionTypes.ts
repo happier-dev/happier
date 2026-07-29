@@ -1,5 +1,7 @@
 import type { FeatureDecision } from '@happier-dev/protocol';
 
+import type { SessionFolderWorkspaceRefV1 } from '@/sync/domains/session/folders';
+
 export const SESSION_BULK_ACTION_IDS = {
     stop: 'ui.session.stop',
     archive: 'ui.session.archive',
@@ -30,7 +32,11 @@ export type SessionBulkActionRequest =
     | Readonly<{ id: typeof SESSION_BULK_ACTION_IDS.pin }>
     | Readonly<{ id: typeof SESSION_BULK_ACTION_IDS.unpin }>
     | Readonly<{ id: SessionBulkTagActionId; tags: readonly string[] }>
-    | Readonly<{ id: typeof SESSION_BULK_ACTION_IDS.moveToFolder; folderId: string | null }>;
+    | Readonly<{
+        id: typeof SESSION_BULK_ACTION_IDS.moveToFolder;
+        folderId: string | null;
+        destinationWorkspace: SessionFolderWorkspaceRefV1;
+    }>;
 
 export type SessionBulkReadState = 'read' | 'unread';
 
@@ -44,6 +50,8 @@ export type SessionBulkActionTarget = Readonly<{
     hasAdminAccess?: boolean;
     canStop?: boolean;
     canArchive?: boolean;
+    canMoveToFolder?: boolean;
+    workspace?: SessionFolderWorkspaceRefV1 | null;
     tags?: readonly string[];
     readState?: SessionBulkReadState;
 }>;
@@ -52,6 +60,7 @@ export type SessionBulkMutationResult = Readonly<{
     success: boolean;
     message?: string;
     code?: string;
+    recovery?: 'wait_for_inactive' | 'upgrade_runtime';
 }>;
 
 export type SessionBulkOperation<T = SessionBulkMutationResult> = (
@@ -67,6 +76,20 @@ export type SessionBulkFolderAssignmentOperation = (
     params: Readonly<{
         target: SessionBulkActionTarget;
         folderId: string | null;
+    }>,
+) => Promise<void>;
+
+export type SessionBulkPinOperation = (
+    params: Readonly<{
+        target: SessionBulkActionTarget;
+        pinned: boolean;
+    }>,
+) => Promise<void>;
+
+export type SessionBulkTagAssignmentOperation = (
+    params: Readonly<{
+        target: SessionBulkActionTarget;
+        tags: readonly string[];
     }>,
 ) => Promise<void>;
 
@@ -107,11 +130,8 @@ export type SessionBulkActionExecutionContext = Readonly<{
     cancelSignal?: SessionBulkActionCancelSignal;
     onProgress?: SessionBulkActionProgressListener;
 
-    pinnedSessionKeysV1?: readonly string[] | null;
-    setPinnedSessionKeysV1?: (next: string[]) => void | Promise<void>;
-
-    sessionTagsV1?: Readonly<Record<string, readonly string[]>> | null;
-    setSessionTagsV1?: (next: Record<string, string[]>) => void | Promise<void>;
+    setSessionPin?: SessionBulkPinOperation;
+    setSessionTagAssignments?: SessionBulkTagAssignmentOperation;
 
     hideInactiveSessions?: boolean;
     stopSession?: SessionBulkOperation;

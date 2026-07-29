@@ -14,6 +14,8 @@ import { t } from '@/text';
 import { useOptionalSessionScreenTestId } from '../shell/sessionScreenTestIds';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 import { isTerminalDetailsTab } from '@/components/terminal/terminalDetailsTabModel';
+import { readSessionTerminalMode, setSessionTerminalMode } from '@/components/sessions/terminal/sessionTerminalMode';
+import { SESSION_HEADER_BOXY_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
 
 export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessionId: string; scopeId: string }>) => {
     const { theme } = useUnistyles();
@@ -36,9 +38,11 @@ export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessio
 
     const onPress = React.useCallback(() => {
         if (!terminalEnabled) return;
+        const wasAttachedTerminal = readSessionTerminalMode(_props.sessionId) === 'session_attach';
+        setSessionTerminalMode(_props.sessionId, 'workspace_shell');
 
         if (dockLocation === 'bottom') {
-            if (bottomTerminalActive) {
+            if (bottomTerminalActive && !wasAttachedTerminal) {
                 pane.closeBottom();
                 return;
             }
@@ -48,7 +52,7 @@ export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessio
         }
 
         if (dockLocation === 'details') {
-            if (detailsTerminalActive) {
+            if (detailsTerminalActive && !wasAttachedTerminal) {
                 pane.closeDetailsTab(activeDetailsTab.key);
                 return;
             }
@@ -58,7 +62,7 @@ export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessio
         }
 
         // sidebar
-        if (rightTerminalActive) {
+        if (rightTerminalActive && !wasAttachedTerminal) {
             pane.closeRight();
             return;
         }
@@ -72,6 +76,7 @@ export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessio
         rightTerminalActive,
         terminalEnabled,
         activeDetailsTab,
+        _props.sessionId,
     ]);
 
     if (!terminalEnabled) return null;
@@ -91,7 +96,7 @@ export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessio
             accessibilityRole="button"
             accessibilityLabel={t('settings.terminal')}
         >
-            <Ionicons name="terminal-outline" size={22} color={theme.colors.chrome.header.foreground} />
+            <Ionicons name="terminal-outline" size={SESSION_HEADER_BOXY_ICON_SIZE_PX} color={theme.colors.chrome.header.foreground} />
         </Pressable>
     );
 });

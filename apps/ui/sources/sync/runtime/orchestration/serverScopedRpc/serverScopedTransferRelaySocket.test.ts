@@ -110,6 +110,7 @@ describe('resolveServerScopedTransferRelaySocket', () => {
         createEphemeralServerSocketClientSpy.mockResolvedValue({
             emit: vi.fn(),
             timeout: vi.fn(),
+            getSocketId: vi.fn(() => 'socket-scoped'),
             disconnect: socketDisconnectSpy,
             on: socketOnSpy,
             off: socketOffSpy,

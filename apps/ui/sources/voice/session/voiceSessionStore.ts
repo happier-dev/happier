@@ -17,6 +17,27 @@ const DEFAULT_SNAPSHOT: VoiceSessionSnapshot = {
 };
 
 let cachedCanonicalSnapshot: VoiceSessionSnapshot = DEFAULT_SNAPSHOT;
+let attemptSequence = 0;
+let activeAttemptId: string | null = null;
+let lastAttemptSnapshot: VoiceSessionSnapshot = DEFAULT_SNAPSHOT;
+
+function isAttemptActive(snapshot: VoiceSessionSnapshot): boolean {
+  return snapshot.status === 'connecting' || snapshot.status === 'connected';
+}
+
+function reconcileAttemptId(snapshot: VoiceSessionSnapshot): void {
+  const active = isAttemptActive(snapshot);
+  const previousActive = isAttemptActive(lastAttemptSnapshot);
+  const sessionChanged = active
+    && previousActive
+    && snapshot.sessionId !== lastAttemptSnapshot.sessionId;
+  if (active && (!previousActive || sessionChanged)) {
+    activeAttemptId = `voice-attempt:${++attemptSequence}`;
+  } else if (!active) {
+    activeAttemptId = null;
+  }
+  lastAttemptSnapshot = snapshot;
+}
 
 function isVoiceSessionSnapshotEqual(a: VoiceSessionSnapshot, b: VoiceSessionSnapshot): boolean {
   return (
@@ -28,6 +49,9 @@ function isVoiceSessionSnapshotEqual(a: VoiceSessionSnapshot, b: VoiceSessionSna
     && a.micMuted === b.micMuted
     && a.errorCode === b.errorCode
     && a.errorMessage === b.errorMessage
+    && a.errorRecoveryAction === b.errorRecoveryAction
+    && a.errorPresentation === b.errorPresentation
+    && a.presentationState === b.presentationState
   );
 }
 
@@ -44,6 +68,9 @@ function normalizeVoiceSessionSnapshot(snapshot: VoiceSessionSnapshot): VoiceSes
     // Ensure optional error fields clear when omitted from a later snapshot.
     errorCode: snapshot.errorCode,
     errorMessage: snapshot.errorMessage,
+    errorRecoveryAction: snapshot.errorRecoveryAction,
+    errorPresentation: snapshot.errorPresentation,
+    presentationState: snapshot.presentationState,
   };
 }
 
@@ -87,7 +114,13 @@ export function getVoiceSessionSnapshot(): VoiceSessionSnapshot {
 }
 
 export function setVoiceSessionSnapshot(snapshot: VoiceSessionSnapshot): void {
-  useVoiceSessionStore.getState().setSnapshot(snapshot);
+  const normalized = normalizeVoiceSessionSnapshot(snapshot);
+  reconcileAttemptId(normalized);
+  useVoiceSessionStore.getState().setSnapshot(normalized);
+}
+
+export function getVoiceSessionAttemptId(): string | null {
+  return activeAttemptId;
 }
 
 export function subscribeToVoiceSessionSnapshot(listener: () => void): () => void {
@@ -96,6 +129,9 @@ export function subscribeToVoiceSessionSnapshot(listener: () => void): () => voi
 
 export function resetVoiceSessionStoreForTests(): void {
   cachedCanonicalSnapshot = DEFAULT_SNAPSHOT;
+  attemptSequence = 0;
+  activeAttemptId = null;
+  lastAttemptSnapshot = DEFAULT_SNAPSHOT;
   useVoiceSessionStore.setState({
     ...DEFAULT_SNAPSHOT,
     setSnapshot: useVoiceSessionStore.getState().setSnapshot,

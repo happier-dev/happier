@@ -18,7 +18,7 @@ function createShare(overrides: Partial<PublicSessionShare> = {}): PublicSession
 }
 
 describe("createPublicShareWithClientToken", () => {
-  it("stores the token in the cache before invoking the API", async () => {
+  it("stores and merges the generated token only after the create commits", async () => {
     const calls: string[] = [];
     let cachedToken: string | null = null;
     const tokenCache = {
@@ -29,37 +29,7 @@ describe("createPublicShareWithClientToken", () => {
       },
     };
 
-    await expect(
-      createPublicShareWithClientToken({
-        credentials: { t: "creds" },
-        sessionId: "session-1",
-        sessionEncryptionMode: "plain",
-        isConsentRequired: true,
-        tokenCache,
-        generateTokenHex: () => "tok_test",
-        api: {
-          createPublicShare: async () => {
-            calls.push("create");
-            throw new Error("timeout");
-          },
-          getPublicShare: async () => {
-            calls.push("get");
-            return null;
-          },
-        },
-      }),
-    ).rejects.toThrow("timeout");
-
-    expect(calls.indexOf("set:tok_test")).toBeGreaterThanOrEqual(0);
-    expect(calls.indexOf("create")).toBeGreaterThanOrEqual(0);
-    expect(calls.indexOf("set:tok_test")).toBeLessThan(calls.indexOf("create"));
-  });
-
-  it("recovers the created share when the create request fails after persistence", async () => {
-    let cachedToken: string | null = null;
-    const tokenCache = { get: () => cachedToken, set: (token: string | null) => (cachedToken = token) };
-
-    const share = await createPublicShareWithClientToken({
+    const created = await createPublicShareWithClientToken({
       credentials: { t: "creds" },
       sessionId: "session-1",
       sessionEncryptionMode: "plain",
@@ -68,14 +38,138 @@ describe("createPublicShareWithClientToken", () => {
       generateTokenHex: () => "tok_test",
       api: {
         createPublicShare: async () => {
-          throw new Error("timeout");
+          calls.push(`create:cache=${cachedToken}`);
+          return createShare({ id: "share-committed", token: null });
         },
-        getPublicShare: async () => createShare({ token: null }),
       },
     });
 
-    expect(share.token).toBe("tok_test");
-    expect(tokenCache.get()).toBe("tok_test");
+    expect(calls).toEqual(["create:cache=null", "set:tok_test"]);
+    expect(created).toMatchObject({ id: "share-committed", token: "tok_test" });
+  });
+
+  it("fails closed, clears the attempted token, and does not attach it to an existing share", async () => {
+    let cachedToken: string | null = "tok_existing";
+    const tokenCache = { get: () => cachedToken, set: (token: string | null) => (cachedToken = token) };
+    let getCalls = 0;
+    const apiWithRecoverySentinel = {
+      createPublicShare: async () => {
+        throw new Error("timeout");
+      },
+      getPublicShare: async () => {
+        getCalls += 1;
+        return createShare({ id: "prior-share", token: null });
+      },
+    };
+
+    await expect(createPublicShareWithClientToken({
+      credentials: { t: "creds" },
+      sessionId: "session-1",
+      sessionEncryptionMode: "plain",
+      isConsentRequired: true,
+      tokenCache,
+      generateTokenHex: () => "tok_test",
+      api: apiWithRecoverySentinel,
+    })).rejects.toThrow("timeout");
+
+    expect(tokenCache.get()).toBeNull();
+    expect(getCalls).toBe(0);
+  });
+
+  it("never caches the generated token when E2EE key preflight fails", async () => {
+    let cachedToken: string | null = "tok_existing";
+    const cachedValues: Array<string | null> = [];
+    const tokenCache = {
+      get: () => cachedToken,
+      set: (token: string | null) => {
+        cachedToken = token;
+        cachedValues.push(token);
+      },
+    };
+    let createCalls = 0;
+
+    await expect(createPublicShareWithClientToken({
+      credentials: { t: "creds" },
+      sessionId: "session-1",
+      sessionEncryptionMode: "e2ee",
+      isConsentRequired: true,
+      tokenCache,
+      generateTokenHex: () => "tok_uncommitted",
+      getSessionDataKey: () => null,
+      encryptDataKeyForPublicShare: async () => "unreachable",
+      api: {
+        createPublicShare: async () => {
+          createCalls += 1;
+          return createShare();
+        },
+      },
+    })).rejects.toThrow("Session data key is required");
+
+    expect(createCalls).toBe(0);
+    expect(cachedValues).not.toContain("tok_uncommitted");
+    expect(tokenCache.get()).toBeNull();
+  });
+
+  it("never caches the generated token when E2EE encryption preflight rejects", async () => {
+    let cachedToken: string | null = null;
+    const cachedValues: Array<string | null> = [];
+    const tokenCache = {
+      get: () => cachedToken,
+      set: (token: string | null) => {
+        cachedToken = token;
+        cachedValues.push(token);
+      },
+    };
+
+    await expect(createPublicShareWithClientToken({
+      credentials: { t: "creds" },
+      sessionId: "session-1",
+      sessionEncryptionMode: "e2ee",
+      isConsentRequired: true,
+      tokenCache,
+      generateTokenHex: () => "tok_uncommitted",
+      getSessionDataKey: () => new Uint8Array([1, 2, 3]),
+      encryptDataKeyForPublicShare: async () => {
+        throw new Error("encryption failed");
+      },
+      api: {
+        createPublicShare: async () => createShare(),
+      },
+    })).rejects.toThrow("encryption failed");
+
+    expect(cachedValues).not.toContain("tok_uncommitted");
+    expect(tokenCache.get()).toBeNull();
+  });
+
+  it("clears the cache when token generation fails before create", async () => {
+    let cachedToken: string | null = "tok_existing";
+    const tokenCache = {
+      get: () => cachedToken,
+      set: (token: string | null) => {
+        cachedToken = token;
+      },
+    };
+    let createCalls = 0;
+
+    await expect(createPublicShareWithClientToken({
+      credentials: { t: "creds" },
+      sessionId: "session-1",
+      sessionEncryptionMode: "plain",
+      isConsentRequired: true,
+      tokenCache,
+      generateTokenHex: () => {
+        throw new Error("random source failed");
+      },
+      api: {
+        createPublicShare: async () => {
+          createCalls += 1;
+          return createShare();
+        },
+      },
+    })).rejects.toThrow("random source failed");
+
+    expect(createCalls).toBe(0);
+    expect(tokenCache.get()).toBeNull();
   });
 
   it("encrypts the session DEK for e2ee public shares", async () => {
@@ -96,7 +190,6 @@ describe("createPublicShareWithClientToken", () => {
           receivedEncryptedDataKey = request.encryptedDataKey ?? null;
           return createShare({ token: request.token, isConsentRequired: request.isConsentRequired });
         },
-        getPublicShare: async () => null,
       },
     });
 
@@ -105,4 +198,3 @@ describe("createPublicShareWithClientToken", () => {
     expect(share.isConsentRequired).toBe(false);
   });
 });
-

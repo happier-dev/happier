@@ -5,14 +5,17 @@ import {
     DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
 } from '@happier-dev/protocol';
 import { DEFAULT_AGENT_ID } from '@/agents/registry/registryCore';
-import { buildProviderUniverseBackendTargetKey } from '@/agents/providers/registry/providerUniverse';
+import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { settingsParse, applySettings, settingsDefaults, type Settings } from './settings';
 import { AIBackendProfileSchema } from '../profiles/profileCompatibility';
 import type { AIBackendProfile } from '../profiles/profileCompatibility';
 import type { SavedSecret } from './savedSecretTypes';
 import { getBuiltInProfile } from '../profiles/profileUtils';
-import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from './voiceSettings';
+import {
+    VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS,
+    readLocalConversationVoiceSettings,
+} from './voiceSettings';
 
 describe('settings', () => {
     const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
@@ -68,6 +71,7 @@ describe('settings', () => {
             expect((settings as any).sessionListFolderSortModeV1).toBe('foldersFirst');
             expect((settings as any).sessionListAttentionPromotionModeV1).toBe('off');
             expect((settings as any).sessionListWorkingPlacementModeV1).toBe('off');
+            expect((settings as any).sessionListSeparateBackgroundWorkV1).toBe(false);
             expect((settings as any).compactSessionView).toBe(true);
             expect((settings as any).compactSessionViewMinimal).toBe(true);
             expect((settings as any).sessionListActiveColorModeV1).toBe('activityAndAttention');
@@ -139,12 +143,9 @@ describe('settings', () => {
             });
         });
 
-        it('includes session folder settings by default', () => {
+        it('includes session folder preferences by default without exposing migrated folder definitions', () => {
             const settings = settingsParse({});
-            expect((settings as any).sessionFoldersV1).toEqual({
-                v: 1,
-                folders: [],
-            });
+            expect(settings).not.toHaveProperty('sessionFoldersV1');
             expect((settings as any).sessionFolderViewModeV1).toBe('off');
         });
 
@@ -309,6 +310,28 @@ describe('settings', () => {
             expect((parsed as any).unknownAccountSetting).toBe('preserved');
         });
 
+        it('ignores migrated session organization fields as active account settings while preserving unrelated unknown keys', () => {
+            const parsed = settingsParse({
+                pinnedSessionKeysV1: ['server-a:session-a'],
+                sessionFoldersV1: { v: 1, folders: [] },
+                sessionTagsV1: { 'server-a:session-a': ['tag-a'] },
+                sessionListGroupOrderV1: { 'pinned-v1': ['server-a:session-a'] },
+                sessionWorkspaceOrderV1: { 'server:server-a:workspaces': ['workspace:/repo'] },
+                workspaceLabelsV1: { 'server:server-a:workspace:/repo': 'Repo' },
+                collapsedGroupKeysV1: { 'server-a:group-a': true },
+                futureAccountSetting: 'kept',
+            } as any);
+
+            expect(parsed).not.toHaveProperty('pinnedSessionKeysV1');
+            expect(parsed).not.toHaveProperty('sessionFoldersV1');
+            expect(parsed).not.toHaveProperty('sessionTagsV1');
+            expect(parsed).not.toHaveProperty('sessionListGroupOrderV1');
+            expect(parsed).not.toHaveProperty('sessionWorkspaceOrderV1');
+            expect(parsed).not.toHaveProperty('workspaceLabelsV1');
+            expect(parsed).not.toHaveProperty('collapsedGroupKeysV1');
+            expect((parsed as any).futureAccountSetting).toBe('kept');
+        });
+
         it('preserves explicit featureToggles when present', () => {
             const parsed = settingsParse({
                 experiments: true,
@@ -456,6 +479,7 @@ describe('settings', () => {
         it('defaults source-control backend/diff/remote policies', () => {
             const parsed = settingsParse({} as any);
             expect((parsed as any).scmGitRepoPreferredBackend).toBe('git');
+            expect(parsed.scmGitRepoPreferredBackendQualifiedId).toBeNull();
             expect((parsed as any).scmRemoteConfirmPolicy).toBe('always');
             expect((parsed as any).scmPushRejectPolicy).toBe('prompt_fetch');
             expect((parsed as any).scmDefaultDiffModeByBackend).toEqual({});
@@ -473,6 +497,16 @@ describe('settings', () => {
             expect((parsed as any).scmCommitMessageGeneratorBackendId).toBe(DEFAULT_AGENT_ID);
             expect((parsed as any).scmCommitMessageGeneratorInstructions).toBe('');
             expect((parsed as any).scmIncludeCoAuthoredBy).toBe(false);
+        });
+
+        it('keeps the released source-control backend field strict while accepting a qualified selection separately', () => {
+            const parsed = settingsParse({
+                scmGitRepoPreferredBackend: 'acme.scm/stacked',
+                scmGitRepoPreferredBackendQualifiedId: 'acme.scm/stacked',
+            });
+
+            expect(parsed.scmGitRepoPreferredBackend).toBe('git');
+            expect(parsed.scmGitRepoPreferredBackendQualifiedId).toBe('acme.scm/stacked');
         });
 
         it('accepts pull-only source-control remote confirmation policy', () => {
@@ -517,7 +551,7 @@ describe('settings', () => {
                     actions: {
                         'review.start': {
                             toolExposureModes: {
-                                session_agent: 'direct',
+                                agent: 'direct',
                                 mcp: 'discoverable_only',
                                 cli: 'invalid',
                                 voice: 'direct',
@@ -536,7 +570,7 @@ describe('settings', () => {
                         disabledPlacements: [],
                         approvalRequiredSurfaces: [],
                         toolExposureModes: {
-                            session_agent: 'direct',
+                            agent: 'direct',
                             mcp: 'discoverable_only',
                         },
                     },
@@ -618,11 +652,13 @@ describe('settings', () => {
             const parsed = settingsParse({} as any);
             expect((parsed as any).sessionMessageSendMode).toBe('server_pending');
             expect((parsed as any).sessionPendingQueueDrainMode).toBe('one_at_a_time');
+            expect((parsed as any).sessionPendingQueueDeliveryTiming).toBe('after_foreground_ready');
         });
 
 	        it('defaults voice settings', () => {
 	            const parsed = settingsParse({} as any);
-	            expect((parsed as any).voice.providerId).toBe('realtime_elevenlabs');
+                const localConversation = readLocalConversationVoiceSettings(parsed.voice);
+             expect((parsed as any).voice.providerId).toBe(null);
 
             expect((parsed as any).voice.privacy.shareSessionSummary).toBe(true);
             expect((parsed as any).voice.privacy.shareRecentMessages).toBe(true);
@@ -632,21 +668,21 @@ describe('settings', () => {
             expect((parsed as any).voice.privacy.shareFilePaths).toBe(false);
             expect((parsed as any).voice.privacy.shareToolArgs).toBe(false);
 
-	            expect((parsed as any).voice.adapters.local_conversation.conversationMode).toBe('direct_session');
-	            expect((parsed as any).voice.adapters.local_conversation.agent.backend).toBe('daemon');
-	            expect((parsed as any).voice.adapters.local_conversation.handsFree.enabled).toBe(false);
-	            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.silenceMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs);
-	            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.minSpeechMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs);
-	            expect((parsed as any).voice.adapters.local_conversation.tts.bargeInEnabled).toBe(true);
-	            expect((parsed as any).voice.adapters.local_conversation.agent.permissionPolicy).toBe('read_only');
-	            expect((parsed as any).voice.adapters.local_conversation.agent.idleTtlSeconds).toBe(1800);
-            expect((parsed as any).voice.adapters.local_conversation.agent.chatModelSource).toBe('custom');
-            expect((parsed as any).voice.adapters.local_conversation.agent.chatModelId).toBe('default');
-            expect((parsed as any).voice.adapters.local_conversation.agent.commitModelSource).toBe('chat');
-            expect((parsed as any).voice.adapters.local_conversation.streaming.enabled).toBe(true);
-            expect((parsed as any).voice.adapters.local_conversation.streaming.ttsEnabled).toBe(true);
-            expect((parsed as any).voice.adapters.local_conversation.streaming.ttsChunkChars).toBe(200);
-            expect((parsed as any).voice.adapters.local_conversation.agent.verbosity).toBe('short');
+	            expect(localConversation.conversationMode).toBe('direct_session');
+	            expect(localConversation.agent.backend).toBe('daemon');
+	            expect(localConversation.handsFree.enabled).toBe(false);
+	            expect(localConversation.handsFree.endpointing.silenceMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs);
+	            expect(localConversation.handsFree.endpointing.minSpeechMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs);
+	            expect(localConversation.tts.bargeInEnabled).toBe(true);
+	            expect(localConversation.agent.permissionIntent).toBe('read-only');
+	            expect(localConversation.agent.idleTtlSeconds).toBe(1800);
+            expect(localConversation.agent.chatModelSource).toBe('custom');
+            expect(localConversation.agent.chatModelId).toBe('default');
+            expect(localConversation.agent.commitModelSource).toBe('chat');
+            expect(localConversation.streaming.enabled).toBe(true);
+            expect(localConversation.streaming.ttsEnabled).toBe(true);
+            expect(localConversation.streaming.ttsChunkChars).toBe(200);
+            expect(localConversation.agent.verbosity).toBe('short');
         });
 
         it('does not mutate voice defaults while parsing a partial voice config', () => {
@@ -801,6 +837,15 @@ describe('settings', () => {
             expect((settingsParse({
                 sessionListWorkingPlacementModeV1: 'invalid',
             } as any) as any).sessionListWorkingPlacementModeV1).toBe('off');
+        });
+
+        it('parses the session list separate background work setting', () => {
+            expect((settingsParse({
+                sessionListSeparateBackgroundWorkV1: true,
+            } as any) as any).sessionListSeparateBackgroundWorkV1).toBe(true);
+            expect((settingsParse({
+                sessionListSeparateBackgroundWorkV1: 'true',
+            } as any) as any).sessionListSeparateBackgroundWorkV1).toBe(false);
         });
 
         it('parses new-session persistence defaults', () => {
@@ -992,7 +1037,7 @@ describe('settings', () => {
             expect((parsed as any).transcriptScrollAutoFollowWhenPinned).toBe(true);
             expect((parsed as any).transcriptScrollJumpToBottomEnabled).toBe(true);
             expect((parsed as any).transcriptScrollJumpToBottomMinNewCount).toBe(1);
-            expect((parsed as any).transcriptScrollJumpToBottomRevealViewportRatio).toBe(0.75);
+            expect((parsed as any).transcriptScrollJumpToBottomRevealViewportRatio).toBe(0.4);
             expect((parsed as any).transcriptScrollJumpToBottomAnimateScroll).toBe(true);
         });
 
@@ -1175,10 +1220,11 @@ describe('settings', () => {
             });
             expect((settingsDefaults as any).profileEnabledById).toEqual({});
             expect((settingsDefaults as any).backendCliSourcePreferenceByTargetKey).toEqual({});
-            expect(settingsDefaults.codexBackendMode).toBe('appServer');
+            expect(settingsDefaults).not.toHaveProperty('codexBackendMode');
             expect(settingsDefaults.sessionReplayMaxSeedChars).toBe(120_000);
             expect(settingsDefaults.sessionMessageSendMode).toBe('server_pending');
             expect((settingsDefaults as any).sessionPendingQueueDrainMode).toBe('one_at_a_time');
+            expect((settingsDefaults as any).sessionPendingQueueDeliveryTiming).toBe('after_foreground_ready');
             expect(settingsDefaults.sessionDefaultPermissionModeByTargetKey).toMatchObject({
                 [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]: 'default',
                 [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: 'default',
@@ -1195,9 +1241,11 @@ describe('settings', () => {
             expect((settingsDefaults as any).connectedServicesDefaultProfileByServiceId).toEqual({});
             expect((settingsDefaults as any).connectedServicesProfileLabelByKey).toEqual({});
             expect((settingsDefaults as any).connectedServicesQuotaPinnedMeterIdsByKey).toEqual({});
+            expect((settingsDefaults as any).connectedServicesCollapsedItemKeysV1).toEqual({});
             expect((settingsDefaults as any).connectedServicesQuotaSummaryStrategyByKey).toEqual({});
-            expect((settingsDefaults as any).pinnedSessionKeysV1).toEqual([]);
-            expect((settingsDefaults as any).sessionListGroupOrderV1).toEqual({});
+            expect(settingsDefaults).not.toHaveProperty('pinnedSessionKeysV1');
+            expect(settingsDefaults).not.toHaveProperty('sessionFoldersV1');
+            expect(settingsDefaults).not.toHaveProperty('sessionListGroupOrderV1');
             expect((settingsDefaults as any).sessionListOrderingModeV1).toBe('custom');
             expect((settingsDefaults as any).sessionListFolderSortModeV1).toBe('foldersFirst');
             expect((settingsDefaults as any).notificationsSettingsV1).toEqual({
@@ -1295,10 +1343,10 @@ describe('settings', () => {
             expect(parsed).toEqual(parsedSettingsDefaults);
         });
 
-        it('canonicalizes legacy Codex backend mode when upgrading a pre-v6 payload', () => {
+        it('opaque-preserves legacy plugin settings when upgrading a pre-v6 payload', () => {
             const parsed = settingsParse({ schemaVersion: 5, codexBackendMode: 'mcp' } as any);
             expect(parsed.schemaVersion).toBe(7);
-            expect((parsed as any).codexBackendMode).toBe('appServer');
+            expect((parsed as any).codexBackendMode).toBe('mcp');
         });
 
         it('keeps valid backend CLI source preferences when parsing forward-compatible settings', () => {

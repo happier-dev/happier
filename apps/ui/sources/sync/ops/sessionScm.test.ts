@@ -17,6 +17,24 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
     },
 }));
 
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: (params: {
+        machineId: string;
+        method: string;
+        payload: unknown;
+        serverId?: string | null;
+        timeoutMs?: number;
+    }) => machineRpcMock(
+        params.machineId,
+        params.method,
+        params.payload,
+        {
+            ...(params.serverId ? { serverId: params.serverId } : {}),
+            timeoutMs: params.timeoutMs ?? 30_000,
+        },
+    ),
+}));
+
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
     sessionRpcWithServerScope: (params: unknown) => sessionRpcMock(params),
 }));
@@ -114,9 +132,11 @@ describe('sessionScm', () => {
                 cwd: '~/repo',
             },
             {
+                serverId: 'server-owned',
                 timeoutMs: expect.any(Number),
             },
         );
+        expect(resolvePreferredServerIdForSessionIdMock).toHaveBeenCalledWith('session-1');
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });
 
@@ -156,6 +176,7 @@ describe('sessionScm', () => {
                 cwd: '/workspace/direct-repo',
             },
             {
+                serverId: 'server-owned',
                 timeoutMs: expect.any(Number),
             },
         );
@@ -200,6 +221,7 @@ describe('sessionScm', () => {
                 cwd: '/workspace/repo/.dev/worktree/gentle-meadow',
             },
             {
+                serverId: 'server-owned',
                 timeoutMs: expect.any(Number),
             },
         );
@@ -240,6 +262,7 @@ describe('sessionScm', () => {
                 },
             },
             {
+                serverId: 'server-owned',
                 timeoutMs: expect.any(Number),
             },
         );
@@ -438,7 +461,7 @@ describe('sessionScm', () => {
                 name: 'origin',
                 fetchUrl: 'git@example.com:repo.git',
             },
-            { timeoutMs: expect.any(Number) },
+            { serverId: 'server-owned', timeoutMs: expect.any(Number) },
         );
         expect(machineRpcMock).toHaveBeenNthCalledWith(
             2,
@@ -450,7 +473,7 @@ describe('sessionScm', () => {
                 fetchUrl: 'git@example.com:next.git',
                 pushUrl: null,
             },
-            { timeoutMs: expect.any(Number) },
+            { serverId: 'server-owned', timeoutMs: expect.any(Number) },
         );
         expect(machineRpcMock).toHaveBeenNthCalledWith(
             3,
@@ -460,7 +483,7 @@ describe('sessionScm', () => {
                 cwd: '~/repo',
                 name: 'origin',
             },
-            { timeoutMs: expect.any(Number) },
+            { serverId: 'server-owned', timeoutMs: expect.any(Number) },
         );
         expect(machineRpcMock).toHaveBeenNthCalledWith(
             4,
@@ -470,7 +493,7 @@ describe('sessionScm', () => {
                 cwd: '~/repo',
                 sourceRef: 'origin/main',
             },
-            { timeoutMs: expect.any(Number) },
+            { serverId: 'server-owned', timeoutMs: expect.any(Number) },
         );
         expect(machineRpcMock).toHaveBeenNthCalledWith(
             5,
@@ -480,7 +503,7 @@ describe('sessionScm', () => {
                 cwd: '~/repo',
                 sourceRef: 'origin/main',
             },
-            { timeoutMs: expect.any(Number) },
+            { serverId: 'server-owned', timeoutMs: expect.any(Number) },
         );
         expect(machineRpcMock).toHaveBeenNthCalledWith(
             6,
@@ -490,7 +513,7 @@ describe('sessionScm', () => {
                 cwd: '~/repo',
                 operation: 'merge',
             },
-            { timeoutMs: expect.any(Number) },
+            { serverId: 'server-owned', timeoutMs: expect.any(Number) },
         );
         expect(machineRpcMock).toHaveBeenNthCalledWith(
             7,
@@ -500,7 +523,7 @@ describe('sessionScm', () => {
                 cwd: '~/repo',
                 operation: 'rebase',
             },
-            { timeoutMs: expect.any(Number) },
+            { serverId: 'server-owned', timeoutMs: expect.any(Number) },
         );
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });
@@ -565,7 +588,7 @@ describe('sessionScm', () => {
                 cwd: '~/repo',
                 initialBranch: 'main',
             },
-            { timeoutMs: expect.any(Number) },
+            { serverId: 'server-owned', timeoutMs: expect.any(Number) },
         );
         expect(machineRpcMock).toHaveBeenNthCalledWith(
             2,
@@ -575,7 +598,7 @@ describe('sessionScm', () => {
                 cwd: '~/repo',
                 providerKind: 'github',
             },
-            { timeoutMs: expect.any(Number) },
+            { serverId: 'server-owned', timeoutMs: expect.any(Number) },
         );
         expect(machineRpcMock).toHaveBeenNthCalledWith(
             3,
@@ -593,7 +616,7 @@ describe('sessionScm', () => {
                 remoteConflictStrategy: 'fail',
                 pushCurrentBranch: true,
             },
-            { timeoutMs: expect.any(Number) },
+            { serverId: 'server-owned', timeoutMs: expect.any(Number) },
         );
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });
@@ -654,7 +677,7 @@ describe('sessionScm', () => {
                 cwd: '~/repo',
                 head: 'feature/prs',
             },
-            { timeoutMs: expect.any(Number) },
+            { serverId: 'server-owned', timeoutMs: expect.any(Number) },
         );
         expect(machineRpcMock).toHaveBeenNthCalledWith(
             2,
@@ -664,7 +687,7 @@ describe('sessionScm', () => {
                 cwd: '~/repo',
                 prReference: { number: 42 },
             },
-            { timeoutMs: expect.any(Number) },
+            { serverId: 'server-owned', timeoutMs: expect.any(Number) },
         );
         expect(machineRpcMock).toHaveBeenNthCalledWith(
             3,
@@ -675,7 +698,7 @@ describe('sessionScm', () => {
                 base: 'main',
                 head: 'feature/prs',
             },
-            { timeoutMs: expect.any(Number) },
+            { serverId: 'server-owned', timeoutMs: expect.any(Number) },
         );
         expect(machineRpcMock).toHaveBeenNthCalledWith(
             5,
@@ -684,7 +707,7 @@ describe('sessionScm', () => {
             {
                 cwd: '~/repo',
             },
-            { timeoutMs: expect.any(Number) },
+            { serverId: 'server-owned', timeoutMs: expect.any(Number) },
         );
         expect(machineRpcMock).toHaveBeenNthCalledWith(
             4,
@@ -697,7 +720,7 @@ describe('sessionScm', () => {
                 title: 'Feature PR',
                 body: '',
             },
-            { timeoutMs: expect.any(Number) },
+            { serverId: 'server-owned', timeoutMs: expect.any(Number) },
         );
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });

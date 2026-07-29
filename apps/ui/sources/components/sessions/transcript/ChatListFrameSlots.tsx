@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { ComposerKeyboardScrollInset } from '@/components/sessions/keyboardAvoidance';
-import { ChatFooter, type ChatFooterDirectControlState } from './ChatFooter';
+import { ChatFooter, type ChatFooterExternalControlState } from './ChatFooter';
 import type { ChatListBottomNotice } from '@/components/sessions/transcript/chatListTypes';
 import { TRANSCRIPT_TOP_GUTTER_PX } from '@/components/sessions/transcript/_constants';
 import { useSessionChatFooterState } from '@/sync/domains/state/storage';
@@ -20,7 +20,7 @@ export const ListFooter = React.memo((props: {
     controlledByUserOverride?: boolean;
     controlSwitchTo?: 'remote' | null;
     onRequestSwitchToRemote?: () => void;
-    directControl?: ChatFooterDirectControlState;
+    externalControl?: ChatFooterExternalControlState;
 }) => {
     const footerState = useSessionChatFooterState(props.sessionId);
     if (!footerState) {
@@ -34,7 +34,7 @@ export const ListFooter = React.memo((props: {
             notice={props.bottomNotice ?? null}
             controlSwitchTo={props.controlSwitchTo ?? null}
             onRequestSwitchToRemote={props.onRequestSwitchToRemote}
-            directControl={props.directControl ?? null}
+            externalControl={props.externalControl ?? null}
         />
     )
 });
@@ -45,7 +45,7 @@ export const ChatListFooterWithKeyboardInset = React.memo((props: {
     controlledByUserOverride?: boolean;
     controlSwitchTo?: 'remote' | null;
     onRequestSwitchToRemote?: () => void;
-    directControl?: ChatFooterDirectControlState;
+    externalControl?: ChatFooterExternalControlState;
     onComposerInsetHeightChange?: (height: number) => void;
 }) => {
     return (
@@ -56,7 +56,7 @@ export const ChatListFooterWithKeyboardInset = React.memo((props: {
                 controlledByUserOverride={props.controlledByUserOverride}
                 controlSwitchTo={props.controlSwitchTo ?? null}
                 onRequestSwitchToRemote={props.onRequestSwitchToRemote}
-                directControl={props.directControl ?? null}
+                externalControl={props.externalControl ?? null}
             />
             <ComposerKeyboardScrollInset
                 testID="transcript-composer-keyboard-inset"

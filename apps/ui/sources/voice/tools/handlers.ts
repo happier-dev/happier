@@ -1,5 +1,9 @@
 import type { ActionId } from '@happier-dev/protocol';
-import { getActionSpec, listActionSpecs } from '@happier-dev/protocol';
+import {
+  getActionSpec,
+  listActionSpecs,
+  normalizeSpawnSessionErrorDetail,
+} from '@happier-dev/protocol';
 
 import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
@@ -12,7 +16,6 @@ import {
 import {
   resolveSessionListLookupSessionServerScopeFromState,
 } from '@/sync/domains/session/listing/sessionListLookupState';
-import { trackPermissionResponse } from '@/track';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -25,6 +28,8 @@ type PendingVoiceRequest = Readonly<{
   toolName: string;
   requestKind: AgentRequestKind;
 }>;
+
+export type VoiceToolEffectClass = 'read_only' | 'mutation' | 'external';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -126,6 +131,15 @@ const VOICE_TOOL_ACTION_ID_BY_TOOL_NAME: Readonly<Record<string, ActionId>> = ((
   }
   return Object.freeze(Object.fromEntries(entries));
 })();
+
+export function resolveVoiceToolEffectClass(toolName: string): VoiceToolEffectClass {
+  const actionId = VOICE_TOOL_ACTION_ID_BY_TOOL_NAME[toolName];
+  if (!actionId) return 'external';
+  const sideEffectClass = getActionSpec(actionId).sideEffectClass;
+  if (sideEffectClass === 'none' || sideEffectClass === 'read') return 'read_only';
+  if (sideEffectClass === 'external') return 'external';
+  return 'mutation';
+}
 
 export function createVoiceToolHandlers(
   deps: Readonly<{ resolveSessionId: (explicitSessionId?: string | null) => string | null }>,
@@ -277,7 +291,14 @@ export function createVoiceToolHandlers(
       defaultSessionId: deps.resolveSessionId(null),
       ...(ctx?.serverId ? { serverId: ctx.serverId } : {}),
     });
-    if (!res.ok) return jsonError(res.errorCode, res.error, { actionId });
+    if (!res.ok) {
+      const details = asPlainObject(res.details);
+      const errorDetail = normalizeSpawnSessionErrorDetail(details?.errorDetail);
+      return jsonError(res.errorCode, res.error, {
+        actionId,
+        ...(errorDetail ? { errorDetail } : {}),
+      });
+    }
     return jsonOkFromUnknown(res.result);
   };
 
@@ -329,56 +350,6 @@ export function createVoiceToolHandlers(
     return jsonOk({ status: 'sent', sessionId });
   };
 
-  const processPermissionRequest = async (parameters: unknown): Promise<string> => {
-    const rawParameters = asPlainObject(parameters ?? {});
-    const spec = getActionSpec('session.permission.respond');
-    const parsed = spec.inputSchema.safeParse(parameters ?? {});
-    if (!parsed.success) return jsonError('invalid_parameters', 'invalid_parameters');
-
-    const data = asPlainObject(parsed.data);
-    if (!data) return jsonError('invalid_parameters', 'invalid_parameters');
-    const allowCrossSessionFallback = rawParameters?.currentSessionOnly === true ? false : true;
-
-    const sessionIdParam = typeof data.sessionId === 'string' ? data.sessionId : null;
-    const explicitSessionIdProvided = Boolean(normalizeId(sessionIdParam));
-    const resolved = resolveSessionIdOrError(sessionIdParam);
-    if (!resolved.ok) return jsonError('session_not_selected', resolved.error);
-    const selected = await resolvePendingRequestSession(resolved.sessionId, 'permission', data.requestId, {
-      explicitSessionIdProvided,
-      allowCrossSessionFallback,
-    });
-    if (!selected.ok) {
-      return jsonError(selected.errorCode, selected.errorCode, { sessionId: resolved.sessionId, ...(selected.payload ?? {}) });
-    }
-    const sessionId = selected.sessionId;
-    const requestId = selected.requestId;
-
-    const decision = data.decision === 'allow' || data.decision === 'deny' ? data.decision : null;
-    if (!decision) return jsonError('invalid_parameters', 'invalid_parameters');
-
-    const targetServerId = resolvePreferredServerIdForSessionId(sessionId);
-    const res = await executor.execute(
-      'session.permission.respond',
-      { sessionId, decision, requestId },
-      { surface: 'voice', serverId: targetServerId, defaultSessionId: deps.resolveSessionId(null) },
-    );
-
-    if (!res.ok) {
-      return jsonError(
-        res.errorCode ?? 'permission_update_failed',
-        res.error ?? res.errorCode ?? 'permission_update_failed',
-        { sessionId, requestId },
-      );
-    }
-    const nestedFailure = getNestedActionFailure((res as any).result);
-    if (nestedFailure) {
-      return jsonError(nestedFailure.errorCode, nestedFailure.errorMessage, { sessionId, requestId });
-    }
-
-    trackPermissionResponse(decision === 'allow');
-    return jsonOk({ status: 'done', sessionId, requestId });
-  };
-
   const answerUserActionRequest = async (parameters: unknown): Promise<string> => {
     const rawParameters = asPlainObject(parameters ?? {});
     const spec = getActionSpec('session.user_action.answer');
@@ -407,9 +378,15 @@ export function createVoiceToolHandlers(
           .filter(Boolean)
           .map((entry) => ({
             question: typeof entry!.question === 'string' ? entry!.question.trim() : '',
-            answer: typeof entry!.answer === 'string' ? entry!.answer.trim() : '',
+            values: Array.isArray(entry!.values)
+              ? entry!.values.filter((value): value is string => typeof value === 'string')
+              // Released 0.2.2 preview ActionSpec compatibility. Remove with the
+              // protocol `answer` reader after that mixed-version window closes.
+              : typeof entry!.answer === 'string'
+                ? [entry!.answer]
+                : [],
           }))
-          .filter((entry) => entry.question.length > 0 && entry.answer.length > 0)
+          .filter((entry) => entry.question.length > 0 && entry.values.length > 0)
       : [];
     const decision = typeof data.decision === 'string' ? data.decision : null;
     const reason = typeof data.reason === 'string' ? data.reason.trim() : '';
@@ -465,7 +442,6 @@ export function createVoiceToolHandlers(
 
   // Voice surface overrides (extra UX behavior).
   handlers.sendSessionMessage = sendSessionMessage;
-  handlers.processPermissionRequest = processPermissionRequest;
   handlers.answerUserActionRequest = answerUserActionRequest;
 
   return Object.freeze(handlers);

@@ -74,6 +74,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
       const INITIAL_READY_FIT_DELAY_MS = 20;
       const READY_FIT_RETRY_INTERVAL_MS = 50;
       const READY_FIT_RETRY_LIMIT = 30;
+      const RESIZE_FIT_DEBOUNCE_MS = 120;
 
       function postRaw(value) {
         try {
@@ -246,33 +247,83 @@ export function buildXtermWebViewHtml(params: Readonly<{
       let didSendReady = false;
       let lastCols = 0;
       let lastRows = 0;
-      let pendingWrite = '';
+      let pendingWrites = [];
       let isWriting = false;
       let readyFitAttemptCount = 0;
+      let pendingFitTimer = 0;
+      let pendingFitFrame = 0;
+      let pendingFitKind = null;
 
       function scheduleWriteFlush() {
         if (!term) return;
-        if (!pendingWrite) return;
+        if (pendingWrites.length === 0) return;
         if (isWriting) return;
 
-        const chunk = pendingWrite;
-        pendingWrite = '';
+        const chunk = pendingWrites.shift();
+        if (!chunk) return;
         isWriting = true;
-        term.write(chunk, () => {
+
+        const onWritten = () => {
           isWriting = false;
-          if (pendingWrite) {
+          if (chunk.kind === 'bytes') {
+            sendEnvelope({
+              v: 1,
+              type: 'writeComplete',
+              payload: {
+                terminalId: chunk.terminalId,
+                seq: chunk.seq,
+                byteOffset: chunk.byteOffset,
+                byteLength: chunk.byteLength,
+                ackedByteOffset: chunk.byteOffset + chunk.byteLength,
+              }
+            });
+          }
+          if (pendingWrites.length > 0) {
             if (typeof requestAnimationFrame === 'function') {
               requestAnimationFrame(() => scheduleWriteFlush());
             } else {
               setTimeout(() => scheduleWriteFlush(), 0);
             }
           }
-        });
+        };
+
+        if (chunk.kind === 'bytes') {
+          term.write(chunk.bytes, onWritten);
+        } else {
+          term.write(chunk.data, onWritten);
+        }
       }
 
       function enqueueWrite(data) {
         if (!data || !term) return;
-        pendingWrite += data;
+        pendingWrites.push({ kind: 'text', data });
+        scheduleWriteFlush();
+      }
+
+      function enqueueWriteBytes(payload) {
+        if (!payload || !term) return;
+        if (typeof payload.dataBase64 !== 'string') return;
+        if (typeof payload.terminalId !== 'string' || !payload.terminalId) return;
+        if (typeof payload.seq !== 'number' || !Number.isFinite(payload.seq)) return;
+        if (typeof payload.byteOffset !== 'number' || !Number.isFinite(payload.byteOffset)) return;
+        if (typeof payload.byteLength !== 'number' || !Number.isFinite(payload.byteLength) || payload.byteLength < 0) return;
+
+        let bytes;
+        try {
+          bytes = base64ToBytes(payload.dataBase64);
+        } catch (e) {
+          return;
+        }
+        if (bytes.byteLength !== payload.byteLength) return;
+
+        pendingWrites.push({
+          kind: 'bytes',
+          bytes,
+          terminalId: payload.terminalId,
+          seq: payload.seq,
+          byteOffset: payload.byteOffset,
+          byteLength: payload.byteLength,
+        });
         scheduleWriteFlush();
       }
 
@@ -334,11 +385,43 @@ export function buildXtermWebViewHtml(params: Readonly<{
         }
       }
 
+      function runScheduledFit() {
+        pendingFitTimer = 0;
+        pendingFitFrame = 0;
+        const kind = pendingFitKind || (didSendReady ? 'resize' : 'ready');
+        pendingFitKind = null;
+        fitAndReport(kind);
+      }
+
+      function scheduleFitAndReport(kind) {
+        pendingFitKind = pendingFitKind === 'ready' || kind === 'ready' ? 'ready' : 'resize';
+        if (pendingFitTimer) {
+          clearTimeout(pendingFitTimer);
+        }
+        if (pendingFitFrame && typeof cancelAnimationFrame === 'function') {
+          cancelAnimationFrame(pendingFitFrame);
+          pendingFitFrame = 0;
+        }
+
+        const delay = kind === 'resize' ? RESIZE_FIT_DEBOUNCE_MS : 0;
+        pendingFitTimer = setTimeout(() => {
+          if (typeof requestAnimationFrame === 'function') {
+            pendingFitFrame = requestAnimationFrame(runScheduledFit);
+            return;
+          }
+          runScheduledFit();
+        }, delay);
+      }
+
+      function focusTerminal() {
+        try { term && term.focus(); } catch (e) {}
+      }
+
       function scheduleReadyFitAttempt(delayMs) {
         setTimeout(() => {
           readyFitAttemptCount += 1;
           fitAndReport('ready');
-          try { term && term.focus(); } catch {}
+          focusTerminal();
           scheduleWriteFlush();
           if (!didSendReady && readyFitAttemptCount < READY_FIT_RETRY_LIMIT) {
             scheduleReadyFitAttempt(READY_FIT_RETRY_INTERVAL_MS);
@@ -348,7 +431,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
 
       function clearTerminal() {
         if (!term) return;
-        pendingWrite = '';
+        pendingWrites = [];
         isWriting = false;
         try {
           term.clear();
@@ -367,12 +450,16 @@ export function buildXtermWebViewHtml(params: Readonly<{
           if (typeof payload.data === 'string') enqueueWrite(payload.data);
           return;
         }
+        if (message.type === 'writeBytes') {
+          enqueueWriteBytes(payload);
+          return;
+        }
         if (message.type === 'clear') {
           clearTerminal();
           return;
         }
         if (message.type === 'focus') {
-          try { term && term.focus(); } catch {}
+          focusTerminal();
           return;
         }
         if (message.type === 'setTheme') {
@@ -404,7 +491,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
           fontSize: DEFAULT_CONFIG.fontSizePx,
           lineHeight: DEFAULT_CONFIG.lineHeight,
           scrollback: 5000,
-          screenReaderMode: false,
+          screenReaderMode: true,
           theme: {
             background: DEFAULT_CONFIG.theme.backgroundColor,
             foreground: DEFAULT_CONFIG.theme.textColor,
@@ -417,11 +504,22 @@ export function buildXtermWebViewHtml(params: Readonly<{
         term.loadAddon(fitAddon);
         try {
           if (mod.WebLinksAddon) {
-            term.loadAddon(new mod.WebLinksAddon());
+            term.loadAddon(new mod.WebLinksAddon((event, uri) => {
+              try {
+                if (event && typeof event.preventDefault === 'function') event.preventDefault();
+                if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+              } catch (e) {}
+              if (typeof uri === 'string' && uri) {
+                sendEnvelope({ v: 1, type: 'link', payload: { url: uri } });
+              }
+            }));
           }
         } catch {}
 
         term.open(root);
+        root.addEventListener('pointerdown', focusTerminal, { capture: true, passive: true });
+        root.addEventListener('touchstart', focusTerminal, { capture: true, passive: true });
+        root.addEventListener('mousedown', focusTerminal, { capture: true, passive: true });
         term.onData((data) => {
           if (typeof data === 'string' && data) {
             sendEnvelope({ v: 1, type: 'input', payload: { data } });
@@ -431,11 +529,11 @@ export function buildXtermWebViewHtml(params: Readonly<{
         scheduleReadyFitAttempt(INITIAL_READY_FIT_DELAY_MS);
 
         const resizeObserver = typeof ResizeObserver !== 'undefined'
-          ? new ResizeObserver(() => fitAndReport(didSendReady ? 'resize' : 'ready'))
+          ? new ResizeObserver(() => scheduleFitAndReport(didSendReady ? 'resize' : 'ready'))
           : null;
         if (resizeObserver) resizeObserver.observe(root);
 
-        const onResize = () => fitAndReport(didSendReady ? 'resize' : 'ready');
+        const onResize = () => scheduleFitAndReport(didSendReady ? 'resize' : 'ready');
         window.addEventListener('resize', onResize);
         if (window.visualViewport && typeof window.visualViewport.addEventListener === 'function') {
           window.visualViewport.addEventListener('resize', onResize);

@@ -4,88 +4,52 @@ import { VOICE_RUNTIME_STT_PCM_FORMAT } from '@happier-dev/protocol';
 import type { MicSession } from '@/voice/runtime/mic/MicSession';
 import type { SttSink } from '@/voice/input/sttController';
 
-const requestMicrophonePermission = vi.fn(async () => ({ granted: true, canAskAgain: true }));
-const showMicrophonePermissionDeniedAlert = vi.fn();
-
-vi.mock('@/utils/platform/microphonePermissions', () => ({
-  requestMicrophonePermission,
-  showMicrophonePermissionDeniedAlert,
-}));
-
 const ensureModelPackInstalled = vi.fn(async () => ({
   packDirUri: 'file:///packs/stt-pack',
   manifest: { packId: 'dummy', kind: 'stt_sherpa', model: 'zipformer_transducer', version: 'v1', files: [] },
 }));
+vi.mock('@/voice/modelPacks/installer.native', () => ({ ensureModelPackInstalled }));
+vi.mock('@/voice/modelPacks/manifests', () => ({ resolveModelPackManifestUrl: () => 'https://example.com/manifest.json' }));
 
-vi.mock('@/voice/modelPacks/installer.native', () => ({
-  ensureModelPackInstalled,
-}));
+type CaptureRequest = Readonly<{
+  ownerId: string;
+  format: Readonly<{ sampleRate: number; channels: number; frameMs: number }>;
+  audioSession: unknown;
+  maxQueuedFrames: number;
+  shouldDeliver?: () => boolean;
+  onFrame: (event: any) => void | Promise<void>;
+  onDroppedFrames?: (count: number) => void;
+  onError?: (error: unknown) => void;
+}>;
 
-vi.mock('@/voice/modelPacks/manifests', () => ({
-  resolveModelPackManifestUrl: () => 'https://example.com/manifest.json',
-}));
-
-type AudioFrameListener = (event: any) => void;
-const runtimeAvailability = vi.hoisted(() => ({
-  audioStreamAvailable: true,
+const runtime = vi.hoisted(() => ({
+  captureAvailable: true,
   sherpaAvailable: true,
+  captureRequest: null as CaptureRequest | null,
+  acquire: vi.fn(),
+  release: vi.fn(async () => {}),
+  waitForDrain: vi.fn(async () => {}),
 }));
-
-let audioFrameListener: AudioFrameListener | null = null;
-const audioStreamStart = vi.fn(async () => ({ streamId: 'stream-1' }));
-const audioStreamStop = vi.fn(async () => {});
 
 vi.mock('@happier-dev/audio-stream-native', () => ({
-  getOptionalHappierAudioStreamNativeModule: () =>
-    runtimeAvailability.audioStreamAvailable
-      ? {
-          start: audioStreamStart,
-          stop: audioStreamStop,
-          addListener: (eventName: string, cb: AudioFrameListener) => {
-            if (eventName === 'audioFrame') audioFrameListener = cb;
-            return { remove: () => {} };
-          },
-        }
-      : null,
+  getSharedVoicePcmCapture: () => runtime.captureAvailable ? {
+    acquire: runtime.acquire,
+  } : null,
 }));
 
 const sherpaStreamingCreate = vi.fn(async () => {});
+const sherpaStreamingPushFrame = vi.fn(async () => ({ text: '', isEndpoint: false }));
 const sherpaStreamingFinish = vi.fn(async () => ({ text: '' }));
-
-type Resolver = (value: any) => void;
-const pushResolvers: Resolver[] = [];
-const sherpaStreamingPushFrame = vi.fn((_params: any) => {
-  return new Promise((resolve) => {
-    pushResolvers.push(resolve);
-  });
-});
+const sherpaCancel = vi.fn(async () => {});
 
 vi.mock('@happier-dev/sherpa-native', () => ({
-  getOptionalHappierSherpaNativeModule: () =>
-    runtimeAvailability.sherpaAvailable
-      ? {
-          createStreamingRecognizer: sherpaStreamingCreate,
-          pushAudioFrame: sherpaStreamingPushFrame,
-          finishStreaming: sherpaStreamingFinish,
-          cancel: async () => {},
-        }
-      : null,
+  getOptionalHappierSherpaNativeModule: () => runtime.sherpaAvailable ? {
+    createStreamingRecognizer: sherpaStreamingCreate,
+    pushAudioFrame: sherpaStreamingPushFrame,
+    finishStreaming: sherpaStreamingFinish,
+    cancel: sherpaCancel,
+  } : null,
 }));
-
-function emitAudioFrame(pcm16leBase64: string) {
-  if (!audioFrameListener) throw new Error('audioFrameListener_missing');
-  audioFrameListener({
-    streamId: 'stream-1',
-    pcm16leBase64,
-    sampleRate: 16000,
-    channels: 1,
-  });
-}
-
-async function flushMicrotasks() {
-  await Promise.resolve();
-  await Promise.resolve();
-}
 
 function createMicSession(): MicSession {
   return {
@@ -98,13 +62,7 @@ function createMicSession(): MicSession {
   };
 }
 
-function createSink(): SttSink & {
-  onAudioStarted: ReturnType<typeof vi.fn>;
-  onPartial: ReturnType<typeof vi.fn>;
-  onFinal: ReturnType<typeof vi.fn>;
-  onEndpoint: ReturnType<typeof vi.fn>;
-  onError: ReturnType<typeof vi.fn>;
-} {
+function createSink(): SttSink & Record<'onAudioStarted' | 'onPartial' | 'onFinal' | 'onEndpoint' | 'onError', ReturnType<typeof vi.fn>> {
   return {
     onAudioStarted: vi.fn(),
     onPartial: vi.fn(),
@@ -118,205 +76,330 @@ function localNeuralSettings() {
   return {
     voice: {
       providerId: 'local_direct',
-      adapters: {
-        local_direct: {
+      providers: {
+        local_direct: { schemaVersion: 1, config: {
           stt: { provider: 'local_neural', localNeural: { assetId: 'dummy-pack', language: 'en' } },
-        },
+        } },
       },
     },
   };
 }
 
-describe('SherpaStreamingSttController (native)', () => {
-  beforeEach(() => {
-    runtimeAvailability.audioStreamAvailable = true;
-    runtimeAvailability.sherpaAvailable = true;
-    pushResolvers.length = 0;
-    audioFrameListener = null;
-    sherpaStreamingPushFrame.mockClear();
-  });
-
-  it('serializes pushAudioFrame, marks audio started, and drops old frames when queue is full', async () => {
-    const sink = createSink();
-    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
-
-    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
-
-    await controller.start({ micSession: createMicSession(), sink });
-    expect(audioStreamStart).toHaveBeenCalled();
-    expect(sherpaStreamingCreate).toHaveBeenCalled();
-
-    emitAudioFrame('frame-1');
-    await flushMicrotasks();
-    expect(sink.onAudioStarted).toHaveBeenCalledTimes(1);
-    expect(sherpaStreamingPushFrame).toHaveBeenCalledTimes(1);
-
-    for (let i = 2; i <= 20; i++) emitAudioFrame(`frame-${i}`);
-    await flushMicrotasks();
-
-    // The first push is still unresolved, so pushes must not run concurrently.
-    expect(sherpaStreamingPushFrame).toHaveBeenCalledTimes(1);
-
-    // Resolve the first, then allow the controller to drain a bounded queue.
-    pushResolvers.shift()?.({ text: 'frame-1', isEndpoint: false });
-    await flushMicrotasks();
-
-    let safety = 0;
-    while (pushResolvers.length > 0 && safety++ < 50) {
-      pushResolvers.shift()?.({ text: '', isEndpoint: false });
-      await flushMicrotasks();
-    }
-
-    const seen = sherpaStreamingPushFrame.mock.calls.map((c) => String(c[0]?.pcm16leBase64 ?? ''));
-    expect(seen[0]).toBe('frame-1');
-    expect(seen).toContain('frame-20');
-    expect(seen).not.toContain('frame-2');
-    expect(seen).not.toContain('frame-3');
-  });
-
-  it('emits interim partials, a committed final, and a runtime-owned endpoint when Sherpa reports an endpoint', async () => {
-    const onEndpointSignal = vi.fn();
-    const sink = createSink();
-    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
-
-    const controller = createSherpaStreamingSttController({
-      getSettings: () => localNeuralSettings(),
-      onEndpointSignal,
+async function emitAudioFrame(pcm16leBase64 = 'AAE='): Promise<void> {
+  const request = runtime.captureRequest;
+  if (!request) throw new Error('capture_request_missing');
+  if (request.shouldDeliver?.() === false) return;
+  try {
+    await request.onFrame({
+      streamId: 'shared-stream',
+      pcm16leBase64,
+      sampleRate: VOICE_RUNTIME_STT_PCM_FORMAT.sampleRateHz,
+      channels: VOICE_RUNTIME_STT_PCM_FORMAT.channelCount,
     });
+  } catch (error) {
+    request.onError?.(error);
+  }
+}
 
-    await controller.start({ micSession: createMicSession(), sink });
-    emitAudioFrame('frame-endpoint');
-    await flushMicrotasks();
-
-    pushResolvers.shift()?.({ text: 'hello sherpa', isEndpoint: true });
-    await flushMicrotasks();
-
-    expect(sink.onPartial).toHaveBeenCalledWith('hello sherpa');
-    expect(sink.onFinal).toHaveBeenCalledWith('hello sherpa');
-    expect(sink.onEndpoint).toHaveBeenCalledWith('vad');
-    expect(onEndpointSignal).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'native_stream',
-      transcript: 'hello sherpa',
-      sessionId: expect.any(String),
-    }));
+describe('SherpaStreamingSttController (native shared capture)', () => {
+  beforeEach(() => {
+    runtime.captureAvailable = true;
+    runtime.sherpaAvailable = true;
+    runtime.captureRequest = null;
+    runtime.release.mockReset();
+    runtime.release.mockResolvedValue(undefined);
+    runtime.waitForDrain.mockReset();
+    runtime.waitForDrain.mockResolvedValue(undefined);
+    runtime.acquire.mockReset();
+    runtime.acquire.mockImplementation(async (request: CaptureRequest) => {
+      runtime.captureRequest = request;
+      return {
+        id: 'lease',
+        streamId: 'shared-stream',
+        release: runtime.release,
+        waitForDrain: runtime.waitForDrain,
+      };
+    });
+    sherpaStreamingCreate.mockReset();
+    sherpaStreamingCreate.mockResolvedValue(undefined);
+    sherpaStreamingPushFrame.mockReset();
+    sherpaStreamingPushFrame.mockResolvedValue({ text: '', isEndpoint: false });
+    sherpaStreamingFinish.mockReset();
+    sherpaStreamingFinish.mockResolvedValue({ text: '' });
+    sherpaCancel.mockReset();
+    sherpaCancel.mockResolvedValue(undefined);
+    ensureModelPackInstalled.mockReset();
+    ensureModelPackInstalled.mockResolvedValue({
+      packDirUri: 'file:///packs/stt-pack',
+      manifest: { packId: 'dummy', kind: 'stt_sherpa', model: 'zipformer_transducer', version: 'v1', files: [] },
+    });
   });
 
-  it('ensures the injected mic session is active before starting local-neural streaming STT', async () => {
+  it('acquires the sole shared conversation/AEC capture with a bounded async subscriber', async () => {
     const micSession = createMicSession();
     const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
-
     const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
-
     await controller.start({ micSession, sink: createSink() });
 
     expect(micSession.ensureActive).toHaveBeenCalledTimes(1);
-    expect(audioStreamStart).toHaveBeenCalled();
-    expect(sherpaStreamingCreate).toHaveBeenCalled();
-  });
-
-  it('captures audio at the canonical STT PCM sample rate and channel count', async () => {
-    audioStreamStart.mockClear();
-    sherpaStreamingCreate.mockClear();
-    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
-
-    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
-    await controller.start({ micSession: createMicSession(), sink: createSink() });
-
-    expect(audioStreamStart).toHaveBeenCalledWith(
-      expect.objectContaining({
+    expect(sherpaStreamingCreate).toHaveBeenCalledWith(expect.objectContaining({
+      sampleRate: VOICE_RUNTIME_STT_PCM_FORMAT.sampleRateHz,
+      channels: VOICE_RUNTIME_STT_PCM_FORMAT.channelCount,
+    }));
+    expect(runtime.acquire).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: expect.stringContaining('sherpa-streaming-stt:'),
+      format: {
         sampleRate: VOICE_RUNTIME_STT_PCM_FORMAT.sampleRateHz,
         channels: VOICE_RUNTIME_STT_PCM_FORMAT.channelCount,
         frameMs: 20,
-      }),
-    );
-    expect(sherpaStreamingCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sampleRate: VOICE_RUNTIME_STT_PCM_FORMAT.sampleRateHz,
-        channels: VOICE_RUNTIME_STT_PCM_FORMAT.channelCount,
-      }),
-    );
+      },
+      audioSession: { mode: 'conversation', input: true, output: true, aec: 'preferred' },
+      maxQueuedFrames: 8,
+    }));
   });
 
-  it('requires a mic session before starting local-neural streaming capture', async () => {
-    requestMicrophonePermission.mockClear();
-    audioStreamStart.mockClear();
+  it('emits audio start, partial/final transcript, and runtime-owned endpoint from shared frames', async () => {
+    sherpaStreamingPushFrame.mockResolvedValueOnce({ text: 'hello sherpa', isEndpoint: true });
+    const sink = createSink();
+    const onEndpointSignal = vi.fn();
     const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings(), onEndpointSignal });
+    await controller.start({ micSession: createMicSession(), sink });
+    await emitAudioFrame();
 
-    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
-
-    await expect(controller.start({ sink: createSink() } as never)).rejects.toThrow('mic_session_required');
-    expect(requestMicrophonePermission).not.toHaveBeenCalled();
-    expect(audioStreamStart).not.toHaveBeenCalled();
+    expect(sink.onAudioStarted).toHaveBeenCalledTimes(1);
+    expect(sink.onPartial).toHaveBeenCalledWith('hello sherpa');
+    expect(sink.onFinal).toHaveBeenCalledWith('hello sherpa');
+    expect(sink.onEndpoint).toHaveBeenCalledWith('vad');
+    expect(onEndpointSignal).toHaveBeenCalledWith(expect.objectContaining({ source: 'native_stream', transcript: 'hello sherpa' }));
   });
 
-  it('releases the audio stream and mic when the recognizer fails to start (no leaked capture)', async () => {
-    audioStreamStart.mockClear();
-    audioStreamStop.mockClear();
-    sherpaStreamingCreate.mockClear();
-    // Recognizer creation throws AFTER the audio stream has been started — the
-    // classic half-open startup. The controller must transactionally release the
-    // started stream and the injected mic so no capture leaks.
+  it('drops muted frames through the subscriber delivery predicate', async () => {
+    const micSession = createMicSession();
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    await controller.start({ micSession, sink: createSink() });
+    vi.mocked(micSession.isMuted).mockReturnValue(true);
+    await emitAudioFrame();
+    expect(sherpaStreamingPushFrame).not.toHaveBeenCalled();
+  });
+
+  it('requires a mic session before any native work', async () => {
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    await expect(controller.start({ sink: createSink() } as never)).rejects.toThrow('mic_session_required');
+    expect(runtime.acquire).not.toHaveBeenCalled();
+  });
+
+  it('does not start capture when recognizer creation fails and rolls back the mic facade', async () => {
     sherpaStreamingCreate.mockRejectedValueOnce(new Error('recognizer_init_failed'));
     const micSession = createMicSession();
-    const sink = createSink();
     const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
     const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
-
-    await expect(controller.start({ micSession, sink })).rejects.toThrow('recognizer_init_failed');
-
-    expect(audioStreamStart).toHaveBeenCalledTimes(1);
-    expect(audioStreamStop).toHaveBeenCalledWith({ streamId: 'stream-1' });
+    await expect(controller.start({ micSession, sink: createSink() })).rejects.toThrow('recognizer_init_failed');
+    expect(runtime.acquire).not.toHaveBeenCalled();
     expect(micSession.teardown).toHaveBeenCalledTimes(1);
   });
 
-  it('releases the mic when the model pack is not installed (early sink error, no leaked capture)', async () => {
-    audioStreamStart.mockClear();
+  it('does not create a recognizer or capture after model setup resolves for an aborted start, and permits retry', async () => {
+    let resolveInstall!: (value: {
+      packDirUri: string;
+      manifest: {
+        packId: string;
+        kind: 'stt_sherpa';
+        model: 'zipformer_transducer';
+        version: string;
+        files: never[];
+      };
+    }) => void;
+    ensureModelPackInstalled.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveInstall = resolve;
+    }));
+    const abortController = new AbortController();
+    const micSession = createMicSession();
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+
+    const starting = controller.start({
+      micSession,
+      sink: createSink(),
+      signal: abortController.signal,
+    });
+    await vi.waitFor(() => {
+      expect(ensureModelPackInstalled).toHaveBeenCalledTimes(1);
+    });
+    abortController.abort();
+    resolveInstall({
+      packDirUri: 'file:///packs/stt-pack',
+      manifest: {
+        packId: 'dummy',
+        kind: 'stt_sherpa',
+        model: 'zipformer_transducer',
+        version: 'v1',
+        files: [],
+      },
+    });
+    await starting;
+
+    expect(sherpaStreamingCreate).not.toHaveBeenCalled();
+    expect(runtime.acquire).not.toHaveBeenCalled();
+    expect(micSession.teardown).toHaveBeenCalledTimes(1);
+
+    await controller.start({ micSession: createMicSession(), sink: createSink() });
+    expect(sherpaStreamingCreate).toHaveBeenCalledTimes(1);
+    expect(runtime.acquire).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back recognizer, capture lease, and mic when capture acquisition fails', async () => {
+    runtime.acquire.mockRejectedValueOnce(new Error('audio_session_failed'));
+    const micSession = createMicSession();
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    await expect(controller.start({ micSession, sink: createSink() })).rejects.toThrow('audio_session_failed');
+    expect(sherpaCancel).toHaveBeenCalledTimes(1);
+    expect(micSession.teardown).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces pack/runtime/backpressure failures without leaking capture', async () => {
     ensureModelPackInstalled.mockRejectedValueOnce(new Error('not_installed'));
     const micSession = createMicSession();
     const sink = createSink();
     const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
     const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
-
     await controller.start({ micSession, sink });
+    expect(sink.onError).toHaveBeenCalledWith(expect.objectContaining({ reason: 'local_neural_pack_not_installed' }));
+    expect(runtime.acquire).not.toHaveBeenCalled();
 
-    expect(sink.onError).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'provider_error',
-      reason: 'local_neural_pack_not_installed',
-    }));
-    // The mic was activated before the pack check failed; it must be released and
-    // the audio stream must never have been started.
-    expect(micSession.teardown).toHaveBeenCalledTimes(1);
-    expect(audioStreamStart).not.toHaveBeenCalled();
+    runtime.captureAvailable = false;
+    runtime.sherpaAvailable = false;
+    const unavailableSink = createSink();
+    const unavailableController = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    await unavailableController.start({ micSession: createMicSession(), sink: unavailableSink });
+    expect(unavailableSink.onError).toHaveBeenCalledWith(expect.objectContaining({ reason: 'local_neural_stt_unavailable' }));
   });
 
-  it('detaches the external abort listener when stopped', async () => {
+  it('releases and drains exactly its lease before finalizing, and detaches abort ownership', async () => {
     const abortController = new AbortController();
-    const addAbortListener = vi.spyOn(abortController.signal, 'addEventListener');
     const removeAbortListener = vi.spyOn(abortController.signal, 'removeEventListener');
+    sherpaStreamingFinish.mockResolvedValueOnce({ text: 'final words' });
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    await controller.start({ micSession: createMicSession(), sink: createSink(), signal: abortController.signal });
+    const result = await controller.stop();
+
+    expect(runtime.release).toHaveBeenCalledTimes(1);
+    expect(runtime.waitForDrain).toHaveBeenCalledTimes(1);
+    expect(sherpaStreamingFinish).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ finalText: 'final words' });
+    expect(removeAbortListener).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
+
+  it('does not promote a provisional partial when recognizer finalization fails, and cancels exactly once', async () => {
+    sherpaStreamingPushFrame.mockResolvedValueOnce({ text: 'provisional words', isEndpoint: false });
+    sherpaStreamingFinish.mockRejectedValueOnce(new Error('recognizer_finalization_failed'));
+    const sink = createSink();
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    await controller.start({ micSession: createMicSession(), sink });
+    await emitAudioFrame();
+
+    const firstStop = controller.stop();
+    const concurrentStop = controller.stop();
+    await expect(firstStop).resolves.toEqual({
+      error: expect.objectContaining({
+        kind: 'provider_error',
+        reason: 'local_neural_stt_finalization_failed',
+      }),
+    });
+    await expect(concurrentStop).resolves.toEqual({
+      error: expect.objectContaining({
+        kind: 'provider_error',
+        reason: 'local_neural_stt_finalization_failed',
+      }),
+    });
+
+    expect(sink.onPartial).toHaveBeenCalledWith('provisional words');
+    expect(sherpaStreamingFinish).toHaveBeenCalledTimes(1);
+    expect(sherpaCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps dropped or failed subscriber frames to typed errors and cleanup', async () => {
+    const sink = createSink();
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    await controller.start({ micSession: createMicSession(), sink });
+    runtime.captureRequest?.onDroppedFrames?.(1);
+    expect(sink.onError).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(runtime.release).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => {
+      expect(sink.onError).toHaveBeenCalledWith(expect.objectContaining({ reason: 'local_neural_stt_pcm_backpressure' }));
+    });
+
+    const secondSink = createSink();
+    const second = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    await second.start({ micSession: createMicSession(), sink: secondSink });
+    runtime.captureRequest?.onError?.(new Error('push_failed'));
+    expect(secondSink.onError).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(runtime.release).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => {
+      expect(secondSink.onError).toHaveBeenCalledWith(expect.objectContaining({ reason: 'local_neural_stt_pcm_frame_failed' }));
+    });
+  });
+
+  it('publishes a runtime capture error only after its lease drains, including concurrent stop', async () => {
+    let resolveRelease!: () => void;
+    runtime.release.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveRelease = resolve;
+    }));
+    const sink = createSink();
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    await controller.start({ micSession: createMicSession(), sink });
+
+    const request = runtime.captureRequest;
+    if (!request?.onError) throw new Error('capture_error_callback_missing');
+    request.onError(new Error('push_failed'));
+    expect(runtime.release).toHaveBeenCalledTimes(1);
+    let stopFinished = false;
+    const stopping = controller.stop().then((result) => {
+      stopFinished = true;
+      return result;
+    });
+    await Promise.resolve();
+
+    expect(sink.onError).not.toHaveBeenCalled();
+    expect(stopFinished).toBe(false);
+
+    resolveRelease();
+    await expect(stopping).resolves.toEqual({ finalText: '' });
+    expect(runtime.waitForDrain).toHaveBeenCalledTimes(1);
+    expect(sherpaCancel).toHaveBeenCalledTimes(1);
+    expect(sink.onError).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'local_neural_stt_pcm_frame_failed',
+    }));
+  });
+
+  it('ignores a stale capture failure after a rapid stop and restart', async () => {
+    const firstSink = createSink();
+    const secondSink = createSink();
     const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
     const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
 
-    await controller.start({ micSession: createMicSession(), sink: createSink(), signal: abortController.signal });
-    const abortListener = addAbortListener.mock.calls.find((call) => call[0] === 'abort')?.[1];
-    expect(abortListener).toEqual(expect.any(Function));
-
+    await controller.start({ micSession: createMicSession(), sink: firstSink });
+    const firstCaptureRequest = runtime.captureRequest;
+    if (!firstCaptureRequest?.onError) throw new Error('capture_error_callback_missing');
     await controller.stop();
 
-    expect(removeAbortListener).toHaveBeenCalledWith('abort', abortListener);
-  });
+    await controller.start({ micSession: createMicSession(), sink: secondSink });
+    firstCaptureRequest.onError(new Error('late_failure_from_first_capture'));
+    await Promise.resolve();
+    await Promise.resolve();
 
-  it('surfaces missing native runtime through a typed sink error', async () => {
-    runtimeAvailability.audioStreamAvailable = false;
-    runtimeAvailability.sherpaAvailable = false;
-    const sink = createSink();
+    expect(runtime.release).toHaveBeenCalledTimes(1);
+    expect(firstSink.onError).not.toHaveBeenCalled();
+    expect(secondSink.onError).not.toHaveBeenCalled();
 
-    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
-    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
-
-    await controller.start({ micSession: createMicSession(), sink });
-    expect(sink.onError).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'provider_error',
-      reason: 'local_neural_stt_unavailable',
-    }));
+    await controller.stop();
+    expect(runtime.release).toHaveBeenCalledTimes(2);
   });
 });

@@ -13,6 +13,7 @@ import type { OptionPickerProbeState } from '@/components/sessions/pickers/Optio
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
+import type { SessionModelPickerExperimentalConfirmationController } from '@/components/sessions/modelPicker/SessionModelPicker';
 import { t } from '@/text';
 
 import type { NewSessionAgentPickerSelection } from './buildNewSessionAgentPickerDetailContent';
@@ -40,6 +41,7 @@ type BuildNewSessionAgentPickerResolvedOptionsParams = Readonly<{
     onToggleFavoriteModel?: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
     onToggleFavoriteBackendTarget?: (targetKey: string) => void;
     onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
+    experimentalConfirmation?: SessionModelPickerExperimentalConfirmationController;
 }>;
 
 function EngineFavoritePickerIcon(props: Readonly<{ favorite: boolean }>) {
@@ -71,7 +73,7 @@ export function buildNewSessionAgentPickerResolvedOptions(
             selectable,
             unavailabilityReason,
         });
-        const displayAgentId = entry.iconAgentId ?? entry.providerAgentId ?? entry.builtInAgentId;
+        const displayAgentId = entry.iconAgentId ?? entry.catalogAgentId ?? entry.builtInAgentId;
 
         return {
             id: entry.backendTargetKey,
@@ -111,6 +113,7 @@ export function buildNewSessionAgentPickerResolvedOptions(
                         params.onToggleFavoriteBackendTarget?.(entry.backendTargetKey);
                     },
                 } : undefined,
+                experimentalConfirmation: params.experimentalConfirmation,
                 onRememberAgentPickerView: params.onRememberAgentPickerView,
                 getEngineSelectionForTargetKey: params.getEngineSelectionForTargetKey,
                 selectEngineSelection: params.selectEngineSelection,

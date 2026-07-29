@@ -3,6 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import type { Settings } from '@/sync/domains/settings/settings';
 import { installRootLayoutRouteCommonModuleMocks } from './rootLayoutRouteTestHelpers';
 
 
@@ -11,8 +12,9 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-const { applySettings, happierVoiceSupportState, mockLocalSettings } = await vi.hoisted(async () => {
+const { applySettings, happierVoiceSupportState, mockLocalSettings, mockSettings } = await vi.hoisted(async () => {
     const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
+    const { settingsDefaults } = await import('@/sync/domains/settings/settings');
     return {
         applySettings: vi.fn(),
         happierVoiceSupportState: { current: false as boolean | null },
@@ -20,19 +22,20 @@ const { applySettings, happierVoiceSupportState, mockLocalSettings } = await vi.
             ...localSettingsDefaults,
             activityBadgesEnabled: false,
         } satisfies LocalSettings,
+        mockSettings: {
+            ...settingsDefaults,
+            voice: {
+                ...settingsDefaults.voice,
+                providerId: 'realtime_elevenlabs',
+                providers: {
+                    ...settingsDefaults.voice.providers,
+                    realtime_elevenlabs: { schemaVersion: 2, config: { billingMode: 'happier' } },
+                },
+            },
+        } satisfies Settings,
     };
 });
 
-const mockSettings = {
-    voice: {
-        providerId: 'realtime_elevenlabs',
-        adapters: {
-            realtime_elevenlabs: { billingMode: 'happier' },
-        },
-    },
-};
-
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -63,14 +66,12 @@ installRootLayoutRouteCommonModuleMocks({
         return createTextModuleMock({ translate: (key: string) => key });
     },
     storage: async (importOriginal) => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             importOriginal,
-            storage: {
-                getState: () => ({
-                    settings: mockSettings,
-                }),
-            },
+            storage: createStorageStoreMock({
+                settings: mockSettings,
+            }),
             useProfile: () => ({ linkedProviders: [], username: null }),
             useAllSessions: () => [],
             useFriendRequests: () => [],
@@ -137,7 +138,7 @@ describe('RootLayout voice gating', () => {
         expect(screen.findByTestId('pet-app-shell-companion-mount')).not.toBeNull();
     });
 
-    it('disables Happier voice mode when server reports voice unsupported', async () => {
+    it('keeps a configured hosted voice selection inert when server reports voice unsupported', async () => {
         happierVoiceSupportState.current = false;
         applySettings.mockClear();
 
@@ -145,14 +146,7 @@ describe('RootLayout voice gating', () => {
 
         await renderScreen(React.createElement(RootLayout));
 
-        expect(applySettings).toHaveBeenCalledWith({
-            voice: {
-                providerId: 'off',
-                adapters: {
-                    realtime_elevenlabs: { billingMode: 'happier' },
-                },
-            },
-        });
+        expect(applySettings).not.toHaveBeenCalled();
     });
 
     it('does not permanently disable Happier voice while support is still unknown', async () => {
@@ -182,13 +176,6 @@ describe('RootLayout voice gating', () => {
             tree!.update(React.createElement(RootLayout));
         });
 
-        expect(applySettings).toHaveBeenCalledWith({
-            voice: {
-                providerId: 'off',
-                adapters: {
-                    realtime_elevenlabs: { billingMode: 'happier' },
-                },
-            },
-        });
+        expect(applySettings).not.toHaveBeenCalled();
     });
 });

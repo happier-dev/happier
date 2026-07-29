@@ -17,6 +17,7 @@ function buildPlanned(partial: {
     changes?: ApiChangeEntry[];
     sessionIdsToCatchUp?: string[];
     sessionFolderAssignmentSessionIds?: string[];
+    sessionOrganization?: PlannedChangeActions['sessionOrganization'];
     unsupportedChanges?: PlannedChangeActions['unsupportedChanges'];
     invalidate?: Partial<ExtendedPlannedChangeActions['invalidate']>;
     kv?: PlannedChangeActions['kv'];
@@ -25,6 +26,7 @@ function buildPlanned(partial: {
         changes: partial.changes ?? [],
         sessionIdsToCatchUp: partial.sessionIdsToCatchUp ?? [],
         sessionFolderAssignmentSessionIds: partial.sessionFolderAssignmentSessionIds ?? [],
+        sessionOrganization: partial.sessionOrganization ?? { mode: 'none' },
         unsupportedChanges: partial.unsupportedChanges ?? [],
         invalidate: {
             sessions: false,
@@ -154,7 +156,7 @@ describe('changesApplier', () => {
         expect(invalidateScmStatusForSession).toHaveBeenCalledWith('s1');
     });
 
-    it('requires session-list hydration only for loaded catch-up sessions', async () => {
+    it('requires shell hydration for every changed session while limiting transcript catch-up to loaded sessions', async () => {
         const invalidateSessions = vi.fn(async (_context: {
             requiredHydrationSessionIds: readonly string[];
             prioritizeSessionIds: readonly string[];
@@ -177,8 +179,8 @@ describe('changesApplier', () => {
         });
 
         expect(invalidateSessions).toHaveBeenCalledWith({
-            requiredHydrationSessionIds: ['loaded'],
-            prioritizeSessionIds: ['loaded'],
+            requiredHydrationSessionIds: ['loaded', 'unloaded'],
+            prioritizeSessionIds: ['loaded', 'unloaded'],
         });
     });
 
@@ -259,6 +261,53 @@ describe('changesApplier', () => {
             safeAdvanceCursor: null,
             blockedCursor: '1',
             blockedReason: 'partial-materialization',
+        });
+    });
+
+    it('refreshes session organization snapshots and advances organization change cursors', async () => {
+        const refreshSessionOrganization = vi.fn(async () => {});
+
+        const result = await applyPlannedChangeActions({
+            planned: buildPlanned({
+                changes: [
+                    buildChange({
+                        cursor: 1,
+                        kind: 'account',
+                        entityId: 'session-organization',
+                        hint: { sessionOrganization: true, scope: 'folders', folderIds: ['folder-a'] },
+                    }),
+                ],
+                sessionOrganization: {
+                    mode: 'snapshot',
+                    assignmentSessionIds: [],
+                    folderIds: ['folder-a'],
+                    tagIds: [],
+                    orderScopes: [],
+                    includeFolders: true,
+                    includeTags: false,
+                    includeLabels: false,
+                },
+            }),
+            credentials,
+            isSessionMessagesLoaded: () => false,
+            invalidate: {},
+            refreshSessionOrganization,
+            invalidateMessagesForSession: async () => {},
+            invalidateScmStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {},
+            kvBulkGet: async () => ({ values: [] }),
+        });
+
+        expect(refreshSessionOrganization).toHaveBeenCalledWith(expect.objectContaining({
+            mode: 'snapshot',
+            folderIds: ['folder-a'],
+            includeFolders: true,
+        }));
+        expect(result).toEqual({
+            status: 'complete',
+            safeAdvanceCursor: '1',
+            processedChanges: 1,
+            blockedChanges: 0,
         });
     });
 

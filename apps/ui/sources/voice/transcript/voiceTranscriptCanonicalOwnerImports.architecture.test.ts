@@ -30,7 +30,7 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
         ],
     },
     {
-        filePath: 'sources/voice/adapters/realtimeElevenLabs/realtimeElevenLabsTransportProvider.ts',
+        filePath: 'sources/voice/registry/bundledConversationRuntimeHost.ts',
         requiredImports: [
             '@/voice/transcript/voiceConversationTranscript',
         ],
@@ -39,32 +39,10 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
         ],
     },
     {
-        filePath: 'sources/voice/runtime/realtime/RealtimeTransport.ts',
-        requiredImports: [
-            './realtimeTransportProvider',
-        ],
+        filePath: 'sources/voice/runtime/controller/VoiceConversationController.ts',
+        requiredImports: [],
         forbiddenImports: [
             // Realtime transport owns lifecycle and delegates transcript projection to provider + transcript owners.
-            '@/voice/transcript/VoiceTranscriptProjector',
-        ],
-    },
-    {
-        filePath: 'sources/realtime/RealtimeVoiceSession.tsx',
-        requiredImports: [
-            '@/voice/runtime/realtime/RealtimeTransport',
-        ],
-        forbiddenImports: [
-            '@/voice/transcript/voiceConversationTranscript',
-            '@/voice/transcript/VoiceTranscriptProjector',
-        ],
-    },
-    {
-        filePath: 'sources/realtime/RealtimeVoiceSession.web.tsx',
-        requiredImports: [
-            '@/voice/runtime/realtime/RealtimeTransport',
-        ],
-        forbiddenImports: [
-            '@/voice/transcript/voiceConversationTranscript',
             '@/voice/transcript/VoiceTranscriptProjector',
         ],
     },

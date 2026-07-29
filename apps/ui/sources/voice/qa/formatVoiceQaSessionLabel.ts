@@ -1,5 +1,5 @@
 import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs';
-import type { VoiceContextFormatterPrefs } from '@/voice/context/contextFormatters';
+import type { ResolvedVoiceContextFormatterPrefs } from '@/voice/context/contextFormatters';
 import { resolveVoiceSessionLabel } from '@/voice/context/resolveVoiceSessionLabel';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 
@@ -9,13 +9,13 @@ function normalizeSessionId(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
-export function createVoiceQaFormatterPrefs(settings: unknown): VoiceContextFormatterPrefs {
+export function createVoiceQaFormatterPrefs(settings: unknown): ResolvedVoiceContextFormatterPrefs {
     return getVoiceContextFormatterPrefs({ settings });
 }
 
 export function formatVoiceQaSessionLabel(
     sessionId: string | null | undefined,
-    prefs: VoiceContextFormatterPrefs,
+    prefs: ResolvedVoiceContextFormatterPrefs,
     options: Readonly<{
         emptyLabel: string;
         globalLabel: string;

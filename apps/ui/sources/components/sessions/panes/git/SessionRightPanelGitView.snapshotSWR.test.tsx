@@ -136,15 +136,19 @@ vi.mock('@/utils/sessions/machineUtils', () => ({
     isMachineOnline: () => true,
 }));
 
-vi.mock('@/scm/registry/scmUiBackendRegistry', () => ({
-    scmUiBackendRegistry: {
+vi.mock('@/scm/registry/scmUiBackendRegistry', () => {
+    const scmUiBackendRegistry = {
         getPluginForSnapshot: () => ({
             displayName: 'Git',
             commitActionConfig: () => ({ label: 'Commit' }),
             mapCapabilitiesToUiPolicy: () => ({ supportedDiffAreas: ['pending'] }),
         }),
-    },
-}));
+    };
+    return {
+        scmUiBackendRegistry,
+        createScmUiBackendRegistry: () => scmUiBackendRegistry,
+    };
+});
 
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: {

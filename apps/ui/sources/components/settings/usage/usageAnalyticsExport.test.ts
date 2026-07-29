@@ -6,6 +6,7 @@ import { buildUsageAnalyticsViewModel } from '@/sync/api/account/usageAnalytics'
 
 import {
     buildUsageAnalyticsExportPayload,
+    buildUsagePivotCsv,
     buildUsageRecapCardSummaryText,
 } from './usageAnalyticsExport';
 
@@ -24,7 +25,7 @@ const response: UsageAnalyticsQueryResponse = {
         cost: { reportedUsd: 12, estimatedUsd: 8, invoiceUsd: 0, currency: 'USD', costSource: 'provider_reported', billingContext: 'api_usage' },
     }],
     breakdowns: {
-        provider: [{ key: 'anthropic', label: 'Anthropic', eventCount: 3, tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 }, cost: { reportedUsd: 12, estimatedUsd: 8, invoiceUsd: 0, currency: 'USD' } }],
+        agent: [{ key: 'anthropic', label: 'Anthropic', eventCount: 3, tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 }, cost: { reportedUsd: 12, estimatedUsd: 8, invoiceUsd: 0, currency: 'USD' } }],
         model: [{ key: 'claude-3.7-sonnet', label: 'Claude 3.7 Sonnet', eventCount: 2, tokens: { input: 80, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 125 }, cost: { reportedUsd: 11, estimatedUsd: 7, invoiceUsd: 0, currency: 'USD' } }],
         session: [{ key: 'session-a', label: 'Session A', eventCount: 2, tokens: { input: 40, output: 20, reasoning: 5, cacheRead: 0, cacheWrite: 0, total: 65 }, cost: { reportedUsd: 6, estimatedUsd: 4, invoiceUsd: 0, currency: 'USD' } }],
         project: [{ key: 'project-a', label: 'Project A', eventCount: 2, tokens: { input: 40, output: 20, reasoning: 5, cacheRead: 0, cacheWrite: 0, total: 65 }, cost: { reportedUsd: 6, estimatedUsd: 4, invoiceUsd: 0, currency: 'USD' } }],
@@ -55,7 +56,7 @@ const response: UsageAnalyticsQueryResponse = {
         ],
     },
     leaders: {
-        providers: [{ key: 'anthropic', label: 'Anthropic', eventCount: 3 }],
+        agents: [{ key: 'anthropic', label: 'Anthropic', eventCount: 3 }],
         models: [{ key: 'claude-3.7-sonnet', label: 'Claude 3.7 Sonnet', eventCount: 2 }],
         sessions: [{ key: 'session-a', label: 'Session A', eventCount: 2 }],
         projects: [{ key: 'project-a', label: 'Project A', eventCount: 2 }],
@@ -130,6 +131,38 @@ describe('usageAnalyticsExport', () => {
         }));
     });
 
+    it('carries the active pivot dimension table in the JSON payload and as CSV (E-5)', () => {
+        const viewModel = buildUsageAnalyticsViewModel(response, {
+            period: '30days',
+            metric: 'tokens',
+            focus: null,
+            costMode: 'auto',
+        });
+        const input = {
+            viewModel,
+            filters: { period: '30days', metric: 'tokens', focus: null, costMode: 'auto' } as const,
+            sessionId: 'session-a',
+            pivotDimension: 'session' as const,
+        };
+
+        const payload = buildUsageAnalyticsExportPayload(input);
+        expect(payload.pivotTable?.dimension).toBe('session');
+        expect(payload.pivotTable?.rows[0]).toEqual(expect.objectContaining({
+            rank: 1,
+            key: 'session-a',
+            tokens: 65,
+            events: 2,
+        }));
+
+        const csv = buildUsagePivotCsv(input);
+        const [header, firstRow] = csv.trim().split('\n');
+        expect(header).toBe('rank,key,name,tokens,cost,events,share_pct');
+        expect(firstRow).toContain('session-a');
+        expect(firstRow).toContain('65');
+        // Default dimension when none is passed is models.
+        expect(buildUsageAnalyticsExportPayload({ ...input, pivotDimension: undefined }).pivotTable?.dimension).toBe('model');
+    });
+
     it('uses the provider leader label in exported recap text when engine labels are unknown', () => {
         const viewModel = buildUsageAnalyticsViewModel({
             ...response,
@@ -146,7 +179,7 @@ describe('usageAnalyticsExport', () => {
             leaders: {
                 ...response.leaders,
                 engines: [{ key: 'unknown', label: 'unknown', eventCount: 3 }],
-                providers: [{ key: 'opencode', label: 'opencode', eventCount: 3 }],
+                agents: [{ key: 'opencode', label: 'opencode', eventCount: 3 }],
             },
         }, {
             period: '30days',

@@ -89,10 +89,13 @@ function modelStatus(
     const entry = listModelPackCatalogEntries(kind).find((candidate) => candidate.packId === packId);
     return {
         packId,
+        pluginIdentity: null,
         kind,
         model: entry?.model ?? packId,
         version: null,
         executionSupport: ['daemon'],
+        runtimeFamily: entry?.runtimeFamily ?? null,
+        runtimeSupported: true,
         installState: 'installed',
         runtimeState: 'ready',
         progress: null,
@@ -402,6 +405,48 @@ describe('resolveVoiceProviderLocalAvailability', () => {
             selectedTtsPackId: null,
         })).toEqual({
             modelState: 'unknown',
+            runtimeState: 'unavailable',
+        });
+    });
+
+    it('treats an unsupported selected runtime family as daemon runtime-unavailable', () => {
+        expect(resolveVoiceDaemonModelAvailabilityFromCatalogState({
+            loading: false,
+            errorCode: 'unsupported_runtime_family',
+            statuses: [],
+            selectedSttPackId: null,
+            selectedTtsPackId: null,
+        })).toEqual({
+            modelState: 'unknown',
+            runtimeState: 'unavailable',
+        });
+    });
+
+    it.each([
+        {
+            label: 'daemon explicitly rejects the selected family',
+            statusOverrides: { runtimeSupported: false },
+        },
+        {
+            label: 'older daemon omits support projection fields',
+            statusOverrides: { runtimeFamily: undefined, runtimeSupported: undefined },
+        },
+        {
+            label: 'daemon projects a family that does not match the selected pack',
+            statusOverrides: { runtimeFamily: 'sherpa_parakeet_offline' as const, runtimeSupported: true },
+        },
+    ])('fails selected installed model readiness closed when $label', ({ statusOverrides }) => {
+        expect(resolveVoiceDaemonModelAvailabilityFromCatalogState({
+            loading: false,
+            errorCode: null,
+            statuses: [
+                modelStatus('stt_sherpa', statusOverrides),
+                modelStatus('tts_sherpa'),
+            ],
+            selectedSttPackId: null,
+            selectedTtsPackId: null,
+        })).toEqual({
+            modelState: 'ready',
             runtimeState: 'unavailable',
         });
     });

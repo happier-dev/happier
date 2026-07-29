@@ -92,6 +92,88 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     expect(fakeSink.sendTextMessage).not.toHaveBeenCalled();
   });
 
+  it('does not leak an already-pending permission request through repeated full-session reports', () => {
+    storage.setState((s: any) => ({
+      ...s,
+      settings: {
+        ...s.settings,
+        voice: {
+          ...s.settings.voice,
+          privacy: {
+            ...s.settings.voice.privacy,
+            sharePermissionRequests: false,
+          },
+        },
+      },
+      sessions: {
+        ...s.sessions,
+        s1: {
+          ...s.sessions.s1,
+          seq: 0,
+          createdAt: 0,
+          updatedAt: 0,
+          active: true,
+          activeAt: 0,
+          metadataVersion: 1,
+          agentStateVersion: 1,
+          thinking: false,
+          thinkingAt: 0,
+          presence: 'online',
+          agentState: {
+            requests: {
+              req_report_secret: {
+                tool: 'write',
+                kind: 'permission',
+                arguments: { content: 'REPORTED_PERMISSION_SECRET' },
+                createdAt: 1,
+              },
+            },
+            completedRequests: {},
+          },
+        },
+      },
+    }));
+
+    voiceHooks.onSessionFocus('s1');
+
+    const providerBoundPayloads = fakeSink.sendContextualUpdate.mock.calls
+      .map((call) => String(call[1] ?? ''))
+      .join('\n');
+    expect(providerBoundPayloads).toContain('# Session:');
+    expect(providerBoundPayloads).not.toContain('req_report_secret');
+    expect(providerBoundPayloads).not.toContain('REPORTED_PERMISSION_SECRET');
+  });
+
+  it.each(['onSessionOnline', 'onSessionOffline', 'onSessionFocus'] as const)(
+    'does not leak summary or path labels through %s status updates',
+    (hookName) => {
+      storage.setState((s: any) => ({
+        ...s,
+        settings: {
+          ...s.settings,
+          voice: {
+            ...s.settings.voice,
+            privacy: {
+              ...s.settings.voice.privacy,
+              shareSessionSummary: false,
+              shareFilePaths: false,
+            },
+          },
+        },
+      }));
+
+      voiceHooks[hookName]('s1', {
+        summary: { text: 'PRIVATE HOOK SUMMARY' },
+        path: '/Users/alice/Company/PrivateHookRepo',
+      });
+
+      const payloads = fakeSink.sendContextualUpdate.mock.calls.map((call) => String(call[1] ?? '')).join('\n');
+      expect(payloads).not.toContain('PRIVATE HOOK SUMMARY');
+      expect(payloads).not.toContain('PrivateHookRepo');
+      expect(payloads).not.toContain('/Users/alice/Company/PrivateHookRepo');
+    },
+  );
+
   it('redacts tool args in permission requests by default', () => {
     (voiceHooks as any).onAgentRequest('s1', 'r1', 'permission', 'execute', { secret: 'do_not_leak' });
 

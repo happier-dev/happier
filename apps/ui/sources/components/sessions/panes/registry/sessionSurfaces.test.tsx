@@ -496,56 +496,6 @@ describe('plugin session surface registry', () => {
         expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
     });
 
-    it('routes embedded-web renderer references to a fail-closed host component without executing bundle code', async () => {
-        const { renderPluginSessionSurfaceTab } = await import('./sessionSurfaces');
-        const node = renderPluginSessionSurfaceTab({
-            tab,
-            pluginUiProjection: {
-                ...EMPTY_PLUGIN_UI_PROJECTION,
-                embeddedWebBundlesById: {
-                    'embeddedWebBundle:acme.preview:embedded-preview': {
-                        id: 'embeddedWebBundle:acme.preview:embedded-preview',
-                        pluginId: 'acme.preview',
-                        contributionKind: 'embeddedWebBundle',
-                        contributionId: 'embedded-preview',
-                        bundle: {
-                            platform: 'web',
-                            channel: 'internal',
-                            assetPath: 'embedded-web/embedded-preview/entry.mjs',
-                            integrity: { digest: 'sha256:embedded' },
-                        },
-                        entry: { mechanism: 'hostRuntimeFactoryV1' },
-                        runtime: {
-                            decision: {
-                                state: 'fallback',
-                                reason: 'feature_disabled',
-                                diagnostics: ['embedded_web_loader_unavailable'],
-                                fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
-                            },
-                        },
-                    },
-                },
-                surfacePlacementsByPlacement: {
-                    'session.preview': [{
-                        id: 'sessionSurface:acme.preview:preview-pane',
-                        pluginId: 'acme.preview',
-                        contributionKind: 'surfacePlacement',
-                        descriptorId: 'preview-pane',
-                        placement: 'session.preview',
-                        target: { kind: 'session', sessionIdPath: '/session/id' },
-                        renderer: { kind: 'embeddedWeb', contributionId: 'embedded-preview' },
-                        display: { titleKey: 'title' },
-                        availability: { state: 'available', reason: 'available', diagnostics: [] },
-                    }],
-                },
-            },
-        });
-
-        const screen = await renderScreen(<>{node}</>);
-
-        expect(await screen.findByTestId('plugin-embedded-web-unavailable')).toBeTruthy();
-    });
-
     it('does not render plugin session surfaces with deferred policy until the host can evaluate it', async () => {
         const { renderPluginSessionSurfaceTab } = await import('./sessionSurfaces');
         const node = renderPluginSessionSurfaceTab({

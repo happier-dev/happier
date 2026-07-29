@@ -1,5 +1,6 @@
 import {
     readServerEnabledBit,
+    createEphemeralPeerRouteProofHandleV2,
     type FeaturesResponse,
     type MachineLiveStreamCapsV1,
     type MachineLiveStreamRelayAuthorizationV1,
@@ -11,6 +12,9 @@ import { createPeerRouteViabilityCache } from '@happier-dev/peer-mediation';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
+import { getRandomBytes } from '@/platform/cryptoRandom';
+import { resolvePeerRouteCallerProofNegotiation } from '../identity/proofNegotiation';
+import { resolvePeerRouteSigningReadiness } from '../identity/signingReadiness';
 
 import { resolvePeerLoopbackRouteAvailability } from '../loopback/resolvePeerLoopbackRouteAvailability';
 import {
@@ -19,10 +23,12 @@ import {
     createLiveStreamStartRequest,
     createLiveStreamNonceProof,
     postLiveStreamDirectStart,
+    postLiveStreamDirectStartV2,
     postLiveStreamLoopbackProbe,
     readEndpointFromMachineState,
     requestLiveStreamRelayAuthorization,
     requestLiveStreamRouteGrant,
+    requestLiveStreamRouteGrantV2,
     resolveTargetServer,
     type MachineLiveStreamDirectStartResponse,
     type MachineLiveStreamUnsignedStartRequest,
@@ -46,6 +52,7 @@ export type ProductionMachineLiveStreamStartResult =
     | Readonly<{
         ok: false;
         reasonCode: string;
+        requiredCapability?: string;
     }>;
 
 const liveStreamRouteAvailabilityCache = createPeerRouteViabilityCache({
@@ -172,6 +179,10 @@ export async function startProductionMachineLiveStream(input: Readonly<{
     routeKind: 'loopback_direct' | 'server_relay';
     streamId: string;
     streamFamily: string;
+    // Per-tab viewer socket id (W1-C-2). Threaded into the base start request so it reaches both
+    // the server mint body and the signed start request; the protocol superRefine then asserts the
+    // start request and the minted grant agree on it.
+    viewerSocketId?: string | null;
     caps: MachineLiveStreamCapsV1;
     timeoutMs?: number;
 }>): Promise<ProductionMachineLiveStreamStartResult> {
@@ -204,6 +215,66 @@ export async function startProductionMachineLiveStream(input: Readonly<{
 
     if (readServerEnabledBit(serverFeatures, 'machines.liveStream.directPeer') !== true) {
         return { ok: false, reasonCode: 'server_direct_disabled' };
+    }
+    const signingReadiness = resolvePeerRouteSigningReadiness(credentials);
+    if (signingReadiness.status === 'unavailable') {
+        const preflight = resolvePeerRouteCallerProofNegotiation({ credentials, serverFeatures });
+        if (preflight.kind === 'unavailable') {
+            return {
+                ok: false,
+                reasonCode: preflight.reasonCode,
+                ...(preflight.requiredCapability ? { requiredCapability: preflight.requiredCapability } : {}),
+            };
+        }
+        if (preflight.kind !== 'ephemeral_v2_endpoint_required') {
+            return { ok: false, reasonCode: 'grant_invalid' };
+        }
+        const endpoint = readEndpointFromMachineState({
+            serverId: server.serverId,
+            machineId: input.sourceMachineId,
+        });
+        const negotiation = resolvePeerRouteCallerProofNegotiation({ credentials, serverFeatures, endpoint });
+        if (negotiation.kind === 'unavailable') {
+            return {
+                ok: false,
+                reasonCode: negotiation.reasonCode,
+                ...(negotiation.requiredCapability ? { requiredCapability: negotiation.requiredCapability } : {}),
+            };
+        }
+        if (negotiation.kind !== 'ephemeral_v2' || !endpoint) {
+            return { ok: false, reasonCode: 'grant_invalid' };
+        }
+        const proofHandle = createEphemeralPeerRouteProofHandleV2({ randomBytes: getRandomBytes });
+        try {
+            const grant = await requestLiveStreamRouteGrantV2({
+                server,
+                credentials,
+                sourceMachineId: input.sourceMachineId,
+                endpointFingerprint: endpoint.endpointFingerprint,
+                streamId: input.streamId,
+                streamFamily: input.streamFamily,
+                caps: input.caps,
+                ephemeralPublicKeyBase64Url: proofHandle.publicKeyBase64Url,
+                timeoutMs: input.timeoutMs,
+            });
+            if (!grant.ok) return { ok: false, reasonCode: grant.reasonCode };
+            const proof = proofHandle.sign(grant.value);
+            const startRequest = createLiveStreamStartRequest({ baseRequest: baseStartRequest });
+            const response = await postLiveStreamDirectStartV2({
+                endpoint,
+                grant: grant.value,
+                proof,
+                startRequest,
+                timeoutMs: input.timeoutMs,
+            });
+            return response.ok
+                ? { ok: true, routeKind: 'loopback_direct', response: response.value }
+                : { ok: false, reasonCode: response.reasonCode };
+        } catch {
+            return { ok: false, reasonCode: 'grant_invalid' };
+        } finally {
+            proofHandle.dispose();
+        }
     }
     const authorization = await resolveDirectAuthorization({
         server,

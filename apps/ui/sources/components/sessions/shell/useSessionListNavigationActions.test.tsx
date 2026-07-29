@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
 import { clearTempData, peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const rememberLastProjectSessionSelections = vi.hoisted(() => ({ value: true }));
@@ -35,12 +36,12 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                     destroy: () => undefined,
                 },
             ),
-            useSetting: (name: string) => {
+            useSetting: createUseSettingMock({ fallback: (name) => {
                 if (name === 'rememberLastProjectSessionSelections') {
                     return rememberLastProjectSessionSelections.value;
                 }
                 return undefined;
-            },
+            } }),
         },
     });
 });
@@ -150,7 +151,15 @@ describe('useSessionListNavigationActions', () => {
             selectedProfileId: 'profile-1',
             transcriptStorage: 'direct',
             permissionMode: 'safe-yolo',
-            modelMode: 'gpt-5',
+            modelSelection: {
+                v: 1,
+                ref: {
+                    agentTargetKey: 'backend:codex',
+                    modelId: 'gpt-5',
+                    providerConnectionId: null,
+                },
+                updatedAt: 102,
+            },
             codexBackendMode: 'appServer',
             acpSessionModeId: 'plan',
         }));

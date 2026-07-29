@@ -13,13 +13,14 @@ import { ApprovalPromptCard } from '../approvals/ApprovalPromptCard';
 import { parseToolUseError } from '@/utils/errors/toolErrorParser';
 import { t } from '@/text';
 import { useSetting } from '@/sync/domains/state/storage';
-import { resolveToolViewDetailLevel } from '@/components/tools/normalization/policy/resolveToolViewDetailLevel';
+import { resolveToolViewDetailLevel, type ToolViewDetailLevel } from '@/components/tools/normalization/policy/resolveToolViewDetailLevel';
 import { Text } from '@/components/ui/text/Text';
 import { ToolInlineBody } from './ToolInlineBody';
 import { TranscriptCollapsible } from '@/components/sessions/transcript/motion/TranscriptCollapsible';
 import { buildToolHeaderModel } from '@/components/tools/shell/presentation/buildToolHeaderModel';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 import { resolveToolErrorSummary } from '@/components/tools/shell/presentation/resolveToolErrorSummary';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import {
     resolveToolViewDetailLevelDefaultForChromeMode,
     resolveToolViewExpandedDetailLevelDefaultForChromeMode,
@@ -39,9 +40,14 @@ import { Typography } from '@/constants/Typography';
 import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { buildApprovalToolCallLocation, doesApprovalMatchToolCall } from './toolApprovalPromptMatching';
+import { TranscriptJumpAttention } from '@/components/sessions/transcript/navigation/TranscriptJumpHighlightOverlay';
+import { RowActionRevealSlot } from '@/components/sessions/transcript/messageActions/RowActionRevealSlot';
+import { readCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
+import { shouldShowTranscriptRowPinAction } from '@/components/sessions/transcript/transcriptRowActionVisibility';
+import type { ToolRowPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
 
+const TOOL_VIEW_HIGHLIGHT_RADIUS = 12;
 
 interface ToolViewProps {
     metadata: Metadata | null;
@@ -50,8 +56,19 @@ interface ToolViewProps {
     onPress?: () => void;
     sessionId?: string;
     messageId?: string;
+    /** Row seq, so a seq-targeted transcript jump can land its highlight here. */
+    jumpHighlightSeq?: number | null;
+    headerAction?: ToolRowPinAction | null;
     approvalRequests?: readonly OpenApprovalArtifactForSession[];
     forcePermissionPromptsInTranscript?: boolean;
+    /**
+     * True when the card is rendered inside a tool-calls group, where the group's
+     * unit card already supplies a continuous `surface.inset` background and the
+     * rows must stack flush. In that context the card drops its own outer vertical
+     * margin so no page background shows between consecutive grouped tools.
+     * Standalone tool cards (default) keep the intrinsic margin.
+     */
+    embedded?: boolean;
     interaction?: {
         canSendMessages: boolean;
         canApprovePermissions: boolean;
@@ -62,6 +79,7 @@ interface ToolViewProps {
 
 export const ToolView = React.memo<ToolViewProps>((props) => {
     const { tool, onPress, sessionId, messageId } = props;
+    const headerActionHost = useRowActionHoverHost();
     const router = useRouter();
     const { theme } = useUnistyles();
     const [isExpanded, setIsExpanded] = React.useState(false);
@@ -170,43 +188,41 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
               toolInput: toolForRendering.input,
               detailLevelDefault: resolvedDetailLevelDefault,
               detailLevelDefaultLocalControl: toolViewDetailLevelDefaultLocalControl,
-              detailLevelByToolName: toolViewDetailLevelByToolName as any,
+              detailLevelByToolName: toolViewDetailLevelByToolName as Record<string, ToolViewDetailLevel> | null | undefined,
           });
 
     const expandedDetailLevel: 'summary' | 'full' =
-        (toolViewExpandedDetailLevelByToolName as any)?.[normalizedToolName] ?? resolvedExpandedDetailLevelDefault;
+        (toolViewExpandedDetailLevelByToolName as Record<string, 'summary' | 'full'> | null | undefined)?.[normalizedToolName] ?? resolvedExpandedDetailLevelDefault;
 
     const effectiveDetailLevel = isExpanded ? expandedDetailLevel : collapsedDetailLevel;
 
     const transcriptSidechainId = React.useMemo(() => {
         return resolveToolTranscriptSidechainId({ tool: toolForRendering, normalizedToolName });
     }, [normalizedToolName, toolForRendering]);
-    const isSubAgentTranscriptTool = isSubAgentTranscriptToolName(normalizedToolName);
 
     const sidechainHydration = useEnsureSidechainsLoaded({
         enabled:
             isExpanded &&
-            isSubAgentTranscriptTool,
+            props.interaction?.disableToolNavigation !== true &&
+            isSubAgentTranscriptToolName(normalizedToolName),
         sessionId,
         sidechainIds: [transcriptSidechainId],
     });
-    const toolMessages = props.messages ?? [];
-    const sidechainHydrationStatus = transcriptSidechainId
-        ? sidechainHydration.bySidechainId[transcriptSidechainId]?.status ?? sidechainHydration.status
-        : sidechainHydration.status;
-    const showSidechainHydrationStatus =
-        isExpanded &&
-        isSubAgentTranscriptTool &&
-        shouldShowSidechainHydrationInlineStatus({
-            messageCount: toolMessages.length,
-            sidechainId: transcriptSidechainId,
-            status: sidechainHydrationStatus,
-        });
 
     const inlineDetailLevel =
         isGenericSubAgentToolName(normalizedToolName) && effectiveDetailLevel === 'full'
             ? 'summary'
             : effectiveDetailLevel;
+    const sidechainHydrationStatus = transcriptSidechainId
+        ? sidechainHydration.bySidechainId[transcriptSidechainId]?.status ?? sidechainHydration.status
+        : sidechainHydration.status;
+    const showSidechainHydrationStatus = isExpanded
+        && isSubAgentTranscriptToolName(normalizedToolName)
+        && shouldShowSidechainHydrationInlineStatus({
+            messageCount: props.messages?.length ?? 0,
+            sidechainId: transcriptSidechainId,
+            status: sidechainHydrationStatus,
+        });
 
     const { density: timelineDensity, iconSize } = deriveToolTimelineDensity(effectiveDetailLevel);
     const icon = React.useMemo(() => {
@@ -304,43 +320,21 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         ? 'transcript'
         : resolvePermissionPromptSurface(permissionPromptSurface);
     const showPermissionPromptsInTranscript = resolvedPermissionPromptSurface === 'transcript';
-    const approvalCards = React.useMemo(() => {
-        const approvalRequests = props.approvalRequests ?? [];
-        if (approvalRequests.length === 0) return null;
-        const location = buildApprovalToolCallLocation({ messageId });
-        const matchingRequests = approvalRequests.filter((request) =>
-            doesApprovalMatchToolCall({
-                request,
-                sessionId,
-                messageId,
-                tool: toolForRendering,
-                normalizedToolName,
-            }),
-        );
-        if (matchingRequests.length === 0 || !sessionId) return null;
-        return matchingRequests.map((request) => (
-            <ApprovalPromptCard
-                key={request.artifact.id}
-                chrome="inline"
-                artifact={request.artifact}
-                approval={request.approval}
-                location={location}
-                sessionId={sessionId}
-                metadata={props.metadata}
-                canApprovePermissions={props.interaction?.canApprovePermissions ?? true}
-                disabledReason={props.interaction?.permissionDisabledReason}
-            />
-        ));
-    }, [
-        messageId,
-        normalizedToolName,
-        props.approvalRequests,
-        props.interaction?.canApprovePermissions,
-        props.interaction?.permissionDisabledReason,
-        props.metadata,
-        sessionId,
-        toolForRendering,
-    ]);
+    const matchingApprovalRequests = React.useMemo(() => {
+        const requests = props.approvalRequests ?? [];
+        if (requests.length === 0) return [];
+        return requests.filter((request) => doesApprovalMatchToolCall({
+            request,
+            sessionId,
+            messageId,
+            tool: toolForRendering,
+            normalizedToolName,
+        }));
+    }, [messageId, normalizedToolName, props.approvalRequests, sessionId, toolForRendering]);
+    const approvalLocation = React.useMemo(
+        () => buildApprovalToolCallLocation({ messageId }),
+        [messageId],
+    );
 
     const headerDescription = effectiveDetailLevel === 'title' ? null : description;
     const headerStatusText = effectiveDetailLevel === 'title' ? null : status;
@@ -349,7 +343,14 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         statusKind === 'error' ? (resolveToolErrorSummary(toolForRendering) ?? t('common.error')) : null;
 
     return (
-        <View style={styles.container}>
+        <TranscriptJumpAttention
+            sessionId={sessionId ?? ''}
+            routeMessageId={messageId ?? null}
+            seq={props.jumpHighlightSeq ?? null}
+            radius={TOOL_VIEW_HIGHLIGHT_RADIUS}
+            viewProps={{ testID: 'tool-view-container', ...headerActionHost.hoverProps }}
+            style={[styles.container, props.embedded ? styles.containerEmbedded : null]}
+        >
             <View style={[styles.header, timelineDensity === 'compact' ? styles.headerCompact : null]}>
                 <TouchableOpacity
                     testID="tool-view-header-primary"
@@ -393,6 +394,21 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                             </Text>
                         </View>
                     ) : null}
+                    {props.headerAction ? (
+                        <RowActionRevealSlot
+                            revealed={shouldShowTranscriptRowPinAction({
+                                platformOS: Platform.OS,
+                                isRowHovered: headerActionHost.isHovered,
+                                isActionHovered: false,
+                                coarsePrimaryPointer: readCoarsePrimaryPointer(),
+                                pinned: props.headerAction.pinned,
+                            })}
+                            style={styles.headerActionsContainer}
+                            testID="tool-view-header-reveal-slot"
+                        >
+                            {props.headerAction.node}
+                        </RowActionRevealSlot>
+                    ) : null}
                     {headerActions ? (
                         <View style={styles.headerActionsContainer}>
                             {headerActions}
@@ -428,7 +444,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                 <View style={styles.content}>
                     {showSidechainHydrationStatus ? (
                         <SidechainHydrationInlineStatus
-                            testID="tool-sidechain-loading"
+                            testID="tool-view-sidechain-hydration-status"
                             status={sidechainHydrationStatus}
                         />
                     ) : null}
@@ -437,7 +453,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                         tool={toolForRendering}
                         normalizedToolName={normalizedToolName}
                         metadata={props.metadata}
-                        messages={toolMessages}
+                        messages={props.messages ?? []}
                         sessionId={sessionId}
                         messageId={messageId}
                         interaction={props.interaction}
@@ -460,8 +476,20 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                     disabledReason={props.interaction?.permissionDisabledReason}
                 />
             )}
-            {approvalCards}
-        </View>
+            {matchingApprovalRequests.map((request) => (
+                <ApprovalPromptCard
+                    key={request.artifact.id}
+                    chrome="inline"
+                    artifact={request.artifact}
+                    approval={request.approval}
+                    location={approvalLocation}
+                    sessionId={sessionId ?? request.approval.origin?.sessionId ?? ''}
+                    metadata={props.metadata}
+                    canApprovePermissions={props.interaction?.canApprovePermissions ?? true}
+                    disabledReason={props.interaction?.permissionDisabledReason}
+                />
+            ))}
+        </TranscriptJumpAttention>
     );
 });
 
@@ -477,6 +505,12 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 8,
         marginVertical: 4,
         overflow: 'hidden'
+    },
+    containerEmbedded: {
+        // Inside a tool-calls group card the unit card already paints a continuous
+        // inset background; dropping the outer margin keeps grouped tools flush so no
+        // page background shows between them.
+        marginVertical: 0,
     },
     header: {
         flexDirection: 'row',

@@ -45,6 +45,8 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
     let muted = false;
     let activeTrack: MediaStreamTrack | null = null;
     let ensureActiveInFlight: Promise<void> | null = null;
+    let teardownInFlight: Promise<void> | null = null;
+    let lifecycleVersion = 0;
     let trackEndedListener: EventListener | null = null;
     let trackMuteListener: EventListener | null = null;
     let trackUnmuteListener: EventListener | null = null;
@@ -307,8 +309,11 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
         }
     };
 
-    return {
-        ensureActive: async () => {
+    const ensureActive = async (): Promise<void> => {
+            const pendingTeardown = teardownInFlight;
+            if (pendingTeardown) {
+                await pendingTeardown;
+            }
             if (stream) {
                 ensureAudioContext();
                 resumeAudioContext();
@@ -317,10 +322,15 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
             }
             if (ensureActiveInFlight) {
                 await ensureActiveInFlight;
+                if (!stream) {
+                    await ensureActive();
+                    return;
+                }
                 syncTrackMute();
                 return;
             }
 
+            const acquisitionVersion = lifecycleVersion;
             const acquire = (async () => {
                 try {
                     const acquired = await getUserMedia({
@@ -329,6 +339,12 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
                             noiseSuppression: true,
                         },
                     });
+                    if (acquisitionVersion !== lifecycleVersion) {
+                        for (const track of acquired.getAudioTracks()) {
+                            track.stop();
+                        }
+                        return;
+                    }
                     stream = acquired;
                     const [track] = acquired.getAudioTracks();
                     if (track) {
@@ -355,24 +371,45 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
                 }
             }
             syncTrackMute();
-        },
+    };
+
+    return {
+        ensureActive,
         setMuted: (nextMuted) => {
             muted = nextMuted;
             syncTrackMute();
         },
         isMuted: () => muted,
         teardown: async () => {
-            const activeStream = stream;
-            const activeContext = audioContext;
-            clearActiveStream();
-            detachEnvironmentListeners();
-            audioContext = null;
-            if (activeContext && activeContext.state !== 'closed') {
-                await activeContext.close().catch(() => {});
+            if (teardownInFlight) {
+                await teardownInFlight;
+                return;
             }
-            if (!activeStream) return;
-            for (const track of activeStream.getAudioTracks()) {
-                track.stop();
+
+            lifecycleVersion += 1;
+            const pendingAcquisition = ensureActiveInFlight;
+            const teardown = (async () => {
+                await pendingAcquisition?.catch(() => {});
+                const activeStream = stream;
+                const activeContext = audioContext;
+                clearActiveStream();
+                detachEnvironmentListeners();
+                audioContext = null;
+                if (activeContext && activeContext.state !== 'closed') {
+                    await activeContext.close().catch(() => {});
+                }
+                if (!activeStream) return;
+                for (const track of activeStream.getAudioTracks()) {
+                    track.stop();
+                }
+            })();
+            teardownInFlight = teardown;
+            try {
+                await teardown;
+            } finally {
+                if (teardownInFlight === teardown) {
+                    teardownInFlight = null;
+                }
             }
         },
         getStream: () => stream,

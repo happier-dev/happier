@@ -120,6 +120,36 @@ describe('resolveNewSessionCheckoutChipModel', () => {
         });
     });
 
+    it('recognizes the canonical qualified first-party Git backend identity', () => {
+        const model = resolveNewSessionCheckoutChipModel({
+            selectedPath: '/repo/payments',
+            checkoutCreationDraft: null,
+            repoSnapshot: makeRepoSnapshot({
+                repo: {
+                    ...makeRepoSnapshot().repo,
+                    backendId: 'happier.scm.backend.git/git',
+                },
+            }),
+        });
+
+        expect(model.options.map((option) => option.id)).toContain('create_git_worktree');
+    });
+
+    it('does not offer Git worktrees for another plugin that reuses the git local id', () => {
+        const model = resolveNewSessionCheckoutChipModel({
+            selectedPath: '/repo/payments',
+            checkoutCreationDraft: null,
+            repoSnapshot: makeRepoSnapshot({
+                repo: {
+                    ...makeRepoSnapshot().repo,
+                    backendId: 'acme.scm/git',
+                },
+            }),
+        });
+
+        expect(model.options.map((option) => option.id)).toEqual(['current_path']);
+    });
+
     it('selects the existing repo worktree when the selected path is already inside it', () => {
         expect(
             resolveNewSessionCheckoutChipModel({

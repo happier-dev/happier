@@ -19,6 +19,8 @@ type ActiveWebVadSession = Readonly<{
 type WebVadControllerDeps = Readonly<{
     now?: () => number;
     onEndpointSignal: (signal: TurnEndpointSignal) => void;
+    onSpeechCandidateStart?: (input: Readonly<{ sessionId: string; source: 'web_vad' }>) => void;
+    onSpeechCandidateFalseAlarm?: (input: Readonly<{ sessionId: string; source: 'web_vad' }>) => void;
     /**
      * Two-stage hysteresis policy layered above the acoustic VAD. The web VAD
      * surfaces both speech-start and speech-end edges, so the `confirmMs`
@@ -123,6 +125,7 @@ export function createWebVadController(deps: WebVadControllerDeps): WebVadContro
         const previousSession = activeSession;
         activeSession = null;
         turnPolicyEndpointGate.reset();
+        deps.onSpeechCandidateFalseAlarm?.({ sessionId: previousSession.sessionId, source: 'web_vad' });
         try {
             await previousSession.vad.pause();
         } catch {
@@ -158,6 +161,7 @@ export function createWebVadController(deps: WebVadControllerDeps): WebVadContro
                             return;
                         }
                         turnPolicyEndpointGate.noteSpeechDetected();
+                        deps.onSpeechCandidateStart?.({ sessionId: normalizedSessionId, source: 'web_vad' });
                     },
                     onSpeechEnd: () => {
                         if (!activeSession || activeSession.sessionId !== normalizedSessionId || activeSession.token !== token) {
@@ -165,6 +169,7 @@ export function createWebVadController(deps: WebVadControllerDeps): WebVadContro
                         }
                         // False-start debounce: drop a segment shorter than confirmMs.
                         if (!turnPolicyEndpointGate.shouldEmitEndpoint()) {
+                            deps.onSpeechCandidateFalseAlarm?.({ sessionId: normalizedSessionId, source: 'web_vad' });
                             return;
                         }
 
@@ -178,6 +183,7 @@ export function createWebVadController(deps: WebVadControllerDeps): WebVadContro
                             // can demote a short acknowledgement instead of treating
                             // every endpoint as duration-unknown.
                             durationMs: turnPolicyEndpointGate.getLastSegmentDurationMs(),
+                            endpoint: { reason: 'acoustic_endpoint', confidence: null },
                         });
                     },
                 });

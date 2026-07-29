@@ -1,5 +1,7 @@
 import {
   KOKORO_DEFAULT_TTS_PACK_ID,
+  getModelPackCatalogEntry,
+  isPublishedModelPackCatalogEntry,
   listModelPackCatalogEntries,
   resolveCanonicalModelPackId,
 } from '@happier-dev/protocol';
@@ -19,8 +21,8 @@ const KokoroAssetSetOptionSchema = z.object({
   subtitle: z.string().optional(),
 });
 
-// Display copy is host-local; resolvable ids are sourced from the protocol
-// model-pack catalog so settings never persist legacy browser `-wasm` ids.
+// Display copy is host-local; resolvable ids, including the published q8
+// `-wasm` pack identity, are sourced from the protocol model-pack catalog.
 const BUILT_IN_ASSET_SET_COPY: Readonly<Record<string, Pick<KokoroAssetSetOption, 'title' | 'subtitle'>>> = {
   [KOKORO_DEFAULT_TTS_PACK_ID]: {
     title: 'Kokoro 82M',
@@ -42,6 +44,7 @@ function deriveDisplayTitle(model: string): string {
 
 function getBuiltInAssetSets(): KokoroAssetSetOption[] {
   return listModelPackCatalogEntries('tts_sherpa')
+    .filter(isPublishedModelPackCatalogEntry)
     .filter((entry) => entry.model.toLowerCase().includes('kokoro') || entry.packId.toLowerCase().includes('kokoro'))
     .map((entry) => ({
       id: entry.packId,
@@ -66,7 +69,12 @@ function normalizeConcreteOptions(options: readonly KokoroAssetSetOption[]): Kok
   const normalized = new Map<string, KokoroAssetSetOption>();
   for (const option of options) {
     const id = resolveCanonicalModelPackId(option.id);
-    if (!id || normalized.has(id)) {
+    const catalogEntry = getModelPackCatalogEntry(id);
+    if (
+      !id
+      || normalized.has(id)
+      || (catalogEntry !== null && !isPublishedModelPackCatalogEntry(catalogEntry))
+    ) {
       continue;
     }
     normalized.set(id, { ...option, id });

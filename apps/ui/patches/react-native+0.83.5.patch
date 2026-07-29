@@ -1,0 +1,81 @@
+diff --git a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/ScrollView/RCTScrollViewComponentView.mm b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/ScrollView/RCTScrollViewComponentView.mm
+index 15a5ab7..41cecfb 100644
+--- a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/ScrollView/RCTScrollViewComponentView.mm
++++ b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/ScrollView/RCTScrollViewComponentView.mm
+@@ -1043,7 +1043,17 @@ - (void)removeScrollListener:(NSObject<UIScrollViewDelegate> *)scrollListener
+ - (void)_prepareForMaintainVisibleScrollPosition
+ {
+   const auto &props = static_cast<const ScrollViewProps &>(*_props);
+-  if (!props.maintainVisibleContentPosition || _avoidAdjustmentForMaintainVisibleContentPosition) {
++  if (!props.maintainVisibleContentPosition) {
++    // HAPPIER PATCH(react-native-mvcp-null-prop-clear): React Native stores the previous
++    // first-visible view/frame between prepare and adjust. If MVCP is later disabled and
++    // re-enabled on the same recycled native view, leaving these fields populated can make
++    // the next adjust compute a huge offset against stale FlashList ScrollAnchor geometry.
++    _prevFirstVisibleFrame = CGRectZero;
++    _firstVisibleView = nil;
++    _firstVisibleViewTag = 0;
++    return;
++  }
++  if (_avoidAdjustmentForMaintainVisibleContentPosition) {
+     return;
+   }
+ 
+diff --git a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm
+index d02e003..f18ba8d 100644
+--- a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm
++++ b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm
+@@ -491,6 +491,28 @@ - (void)textInputDidChange
+ 
+   [self _updateState];
+ 
++  // HAPPIER PATCH(composer-jiggle): UITextView does not scroll the caret into view when a typed
++  // character wraps onto a new line while the input height is clamped (Yoga maxHeight). Without
++  // this, the caret line stays clipped until the JS value round-trip re-applies the attributed
++  // string ~150-200ms later, whose scrollRangeToVisible then slides the text a full line late —
++  // the visible typing "jiggle". Scroll at insertion time instead, like every native editor.
++  // The reveal must be NON-animated: an animated scrollRangeToVisible is re-triggered by every
++  // subsequent keystroke while the caret is still clipped, restarting the ease curve each time,
++  // which degrades the one-line scroll into a ~1s crawl during fast typing.
++  if (_backedTextInputView.isFirstResponder && [_backedTextInputView isKindOfClass:[UIScrollView class]]) {
++    UITextRange *typingSelectedRange = _backedTextInputView.selectedTextRange;
++    if (typingSelectedRange != nil && typingSelectedRange.empty) {
++      CGRect caretRect = [_backedTextInputView caretRectForPosition:typingSelectedRange.start];
++      if (!CGRectIsNull(caretRect) && !CGRectIsInfinite(caretRect) && !isnan(caretRect.origin.y) &&
++          !isnan(caretRect.size.height)) {
++        // Reveal the caret line including the bottom text inset so the line is not half-clipped.
++        CGRect revealRect = caretRect;
++        revealRect.size.height += _backedTextInputView.textContainerInset.bottom;
++        [(UIScrollView *)_backedTextInputView scrollRectToVisible:revealRect animated:NO];
++      }
++    }
++  }
++
+   if (_eventEmitter) {
+     const auto &textInputEventEmitter = static_cast<const TextInputEventEmitter &>(*_eventEmitter);
+     textInputEventEmitter.onChange([self _textInputMetrics]);
+@@ -765,6 +787,12 @@ - (void)_setAttributedString:(NSAttributedString *)attributedString
+   }
+   UITextRange *selectedRange = _backedTextInputView.selectedTextRange;
+   NSInteger oldTextLength = _backedTextInputView.attributedText.string.length;
++  // HAPPIER PATCH(composer-jiggle): when only attributes differ (the string content is identical),
++  // this is a re-apply of text the user already sees — typically the per-keystroke echo commit
++  // after the keyboard added language/autocorrect attribute runs. Moving the scroll position for
++  // such a refresh causes late one-line jumps while typing (the composer "jiggle"), so only
++  // restore the scroll when the string content actually changed.
++  BOOL contentStringChanged = ![attributedString.string isEqualToString:_backedTextInputView.attributedText.string];
+   _backedTextInputView.attributedText = attributedString;
+   // Updating the UITextView attributedText, for example changing the lineHeight, the color or adding
+   // a new paragraph with \n, causes the cursor to move to the end of the Text and scroll.
+@@ -778,7 +806,10 @@ - (void)_setAttributedString:(NSAttributedString *)attributedString
+                                                                  offset:newOffset];
+   [_backedTextInputView setSelectedTextRange:[_backedTextInputView textRangeFromPosition:position toPosition:position]
+                               notifyDelegate:YES];
+-  [_backedTextInputView scrollRangeToVisible:NSMakeRange(offsetStart, 0)];
++  // HAPPIER PATCH(composer-jiggle): see contentStringChanged above.
++  if (contentStringChanged) {
++    [_backedTextInputView scrollRangeToVisible:NSMakeRange(offsetStart, 0)];
++  }
+ 
+   // A zero-length selection range can cause the caret position to change on iOS,
+   // and we have already updated the caret position, so we can safely ignore caret changing in this place.

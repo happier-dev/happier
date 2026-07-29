@@ -12,24 +12,40 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { DetailsSplitWorkspace } from '@/components/appShell/panes/details/workspace/DetailsSplitWorkspace';
+import {
+    BrowserSurfaceOpenButton,
+    createBrowserLaunchpadDetailsTab,
+    type BrowserSurfaceProductModels,
+} from '@/components/browser/surfaces';
+import { useBrowserSurfaceHostProps } from '@/components/browser/surfaces/useBrowserSurfaceHostProps';
+import {
+    DetailsSurfaceHost,
+    createDetailsSurfacePaneCallbacks,
+    type DetailsSurfaceScopeV1,
+} from '@/components/appShell/panes/details/surfaces';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { usePaneFocusMode } from '@/components/appShell/panes/focusMode/usePaneFocusMode';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useAllMachines, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
+import { useLocalServicePreviewState } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
+import {
+    type LocalServiceLauncherState,
+    useLocalServiceLauncherState,
+} from '@/sync/domains/local/services/launch';
+import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/targets';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
-import { WorkspaceFileDetailsView, type WorkspaceFileDeepLinkAnchor } from '@/components/workspaces/files/details/WorkspaceFileDetailsView';
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
-import { WorkspaceCommitDetailsView } from '@/components/projects/panes/details/views/WorkspaceCommitDetailsView';
-import { WorkspaceScmReviewDetailsView } from '@/components/projects/panes/details/views/WorkspaceScmReviewDetailsView';
-import { WorkspaceScmStashDetailsView } from '@/components/projects/panes/details/views/WorkspaceScmStashDetailsView';
-import type { DetailsTabState } from '@/components/appShell/panes/model/appPaneReducer';
+import type { DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
-import { ProjectTerminalSurface } from '@/components/projects/detail/surfaces/ProjectTerminalSurface';
-import { readTerminalDetailsCwd, readTerminalDetailsInstanceId } from '@/components/terminal/terminalDetailsTabModel';
 import { openProjectTerminalDetailsTab } from '@/components/projects/detail/openProjectTerminalDetailsTab';
+import { PluginSurfacePlacementStack } from '@/components/plugins/surfaces';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
+import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
+import { createWorkspaceDetailsSurfaceRenderers } from './details/surfaces/workspaceDetailsSurfaceRegistry';
 
 export type WorkspaceDetailsPanelHeaderActionRenderParams = Readonly<{
     iconButtonStyle: Readonly<Record<string, unknown>>;
@@ -50,42 +66,16 @@ export type WorkspaceDetailsPanelProps = Readonly<{
      * surface as the desktop details pane but need to navigate back in the router stack.
      */
     onRequestClose?: () => void;
+    browserProductModels?: BrowserSurfaceProductModels | null;
+    pluginUiProjection?: PluginUiProjectionModel | null;
+    pluginBrowserProjection?: PluginBrowserProjectionModel | null;
+    localServiceLauncherState?: LocalServiceLauncherState | null;
+    pluginSurfacePlacementScope?: 'workspace' | 'project';
+    platform?: LocalServicePreviewPlatform;
+    nowMs?: () => number;
     renderHeaderActionsPrefix?: (params: WorkspaceDetailsPanelHeaderActionRenderParams) => React.ReactNode;
     renderEmptyStateSupplementaryContent?: () => React.ReactNode;
 }>;
-
-function asResource(value: unknown): { kind: string } | null {
-    if (!value || typeof value !== 'object') return null;
-    if (!('kind' in value)) return null;
-    const kind = (value as { kind?: unknown }).kind;
-    if (typeof kind !== 'string') return null;
-    return { kind };
-}
-
-function isFileResource(value: unknown): value is Readonly<{ kind: 'file'; path: string }> {
-    if (!value || typeof value !== 'object') return false;
-    const maybe = value as { kind?: unknown; path?: unknown };
-    return maybe.kind === 'file' && typeof maybe.path === 'string';
-}
-
-function isCommitResource(value: unknown): value is Readonly<{ kind: 'commit'; sha: string }> {
-    if (!value || typeof value !== 'object') return false;
-    const maybe = value as { kind?: unknown; sha?: unknown; commitHash?: unknown };
-    const sha = typeof maybe.sha === 'string' ? maybe.sha : typeof maybe.commitHash === 'string' ? maybe.commitHash : null;
-    return maybe.kind === 'commit' && typeof sha === 'string';
-}
-
-function isScmReviewResource(value: unknown): value is Readonly<{ kind: 'scmReview' }> {
-    if (!value || typeof value !== 'object') return false;
-    const maybe = value as { kind?: unknown };
-    return maybe.kind === 'scmReview';
-}
-
-function isScmStashResource(value: unknown): value is Readonly<{ kind: 'scmStash' }> {
-    if (!value || typeof value !== 'object') return false;
-    const maybe = value as { kind?: unknown };
-    return maybe.kind === 'scmStash';
-}
 
 export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelProps) => {
     const { theme } = useUnistyles();
@@ -113,6 +103,42 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         const machine = allMachines.find((m) => m.id === props.workspaceRef.machineId) ?? null;
         return getMachineDisplayName(machine) ?? props.workspaceRef.machineId;
     }, [allMachines, props.workspaceRef.machineId]);
+    const localServicePreviewState = useLocalServicePreviewState({
+        machineId: props.workspaceRef.machineId,
+        serverId: props.workspaceRef.serverId,
+    });
+    const liveLocalServiceLauncherState = useLocalServiceLauncherState({
+        machineId: props.workspaceRef.machineId,
+        serverId: props.workspaceRef.serverId,
+        enabled: props.localServiceLauncherState === undefined,
+    });
+    const localServiceLauncherState =
+        props.localServiceLauncherState !== undefined
+            ? props.localServiceLauncherState
+            : liveLocalServiceLauncherState;
+    // Route the launchpad feed through the shared browser-host bootstrap so the workspace and
+    // session details panels assemble the identical feed (BRW-13). This converges the prior drift
+    // where the workspace panel omitted pluginBrowserProjection + nowMs and therefore could never
+    // surface hosted-plugin browser targets. Launcher/preview states are injected from the values
+    // already resolved above, so the helper does not spin up duplicate live controllers.
+    const browserLaunchpad = useBrowserSurfaceHostProps({
+        scope: 'workspaceDetails',
+        workspaceRefId: props.workspaceRef.id,
+        machineId: props.workspaceRef.machineId,
+        serverId: props.workspaceRef.serverId,
+        platform: props.platform,
+        launcherState: localServiceLauncherState,
+        localServicePreviewState,
+        pluginBrowserProjection: props.pluginBrowserProjection,
+        nowMs: props.nowMs,
+    }).feed;
+    const pluginSurfacePlacementScope = props.pluginSurfacePlacementScope ?? 'workspace';
+    const pluginSurfacePlacement = `${pluginSurfacePlacementScope}.details`;
+    const pluginMainSurfacePlacement = `${pluginSurfacePlacementScope}.main`;
+    // Resolve through the canonical preview-platform owner so the desktop host resolves to `desktop`
+    // (finding #13 / Phase 5.5) instead of collapsing to `web`, and so this panel cannot drift from
+    // the session-details panel's resolution.
+    const pluginSurfacePlatform = resolveLocalServicePreviewPlatform(props.platform);
 
     const displayName = React.useMemo(() => resolveWorkspaceRefDisplayName(props.workspaceRef), [props.workspaceRef]);
 
@@ -142,6 +168,10 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         });
     }, [pane]);
 
+    const openBrowserLaunchpadTab = React.useCallback(() => {
+        pane.openDetailsTab(createBrowserLaunchpadDetailsTab(), { intent: 'pinned' });
+    }, [pane]);
+
     const renderEmptyState = React.useCallback(() => (
         <ItemList testID="project-details-info" containerStyle={{ paddingTop: 12 }}>
             <ItemGroup title={t('projects.detail.groupTitle')}>
@@ -150,13 +180,45 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                 <Item title={t('projects.detail.fields.path')} detail={displayPath} mode="info" copy={displayPath} />
             </ItemGroup>
             {props.renderEmptyStateSupplementaryContent ? props.renderEmptyStateSupplementaryContent() : null}
+            <PluginSurfacePlacementStack
+                placement={pluginMainSurfacePlacement}
+                pluginUiProjection={props.pluginUiProjection}
+                localServicePreviewState={localServicePreviewState}
+                machineId={props.workspaceRef.machineId}
+                serverId={props.workspaceRef.serverId}
+                platform={pluginSurfacePlatform}
+                targetKind={pluginSurfacePlacementScope}
+                testID={`${pluginSurfacePlacementScope}-main-plugin-surface-placements`}
+            />
+            <PluginSurfacePlacementStack
+                placement={pluginSurfacePlacement}
+                pluginUiProjection={props.pluginUiProjection}
+                localServicePreviewState={localServicePreviewState}
+                machineId={props.workspaceRef.machineId}
+                serverId={props.workspaceRef.serverId}
+                platform={pluginSurfacePlatform}
+                targetKind={pluginSurfacePlacementScope}
+                testID={`${pluginSurfacePlacementScope}-details-plugin-surface-placements`}
+            />
             <View style={{ alignItems: 'center', paddingHorizontal: 24, paddingTop: 6 }}>
                 <Text style={{ color: theme.colors.text.secondary, fontSize: 13, ...Typography.default(), textAlign: 'center', maxWidth: 680 }}>
                     {t('projects.details.emptyBody')}
                 </Text>
             </View>
         </ItemList>
-    ), [displayName, displayPath, machineName, props, theme.colors.text.secondary]);
+    ), [
+        displayName,
+        displayPath,
+        localServiceLauncherState,
+        localServicePreviewState,
+        machineName,
+        pluginMainSurfacePlacement,
+        pluginSurfacePlacement,
+        pluginSurfacePlacementScope,
+        pluginSurfacePlatform,
+        props,
+        theme.colors.text.secondary,
+    ]);
 
     const renderWorkspaceInfo = React.useCallback(() => (
         <ItemList testID="project-details-workspace-info" containerStyle={{ paddingTop: 12 }}>
@@ -168,152 +230,94 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         </ItemList>
     ), [displayName, displayPath, machineName]);
 
-    function readOptionalString(value: unknown): string | null {
-        if (typeof value !== 'string') return null;
-        const trimmed = value.trim();
-        return trimmed.length > 0 ? trimmed : null;
-    }
+    const detailsSurfaceScope = React.useMemo<DetailsSurfaceScopeV1>(() => ({
+        kind: 'project',
+        workspaceRefId: props.workspaceRef.id,
+        serverId: props.workspaceRef.serverId,
+        machineId: props.workspaceRef.machineId,
+        rootPath: props.workspaceRef.rootPath,
+        activeRootPath: effectiveRootPath,
+    }), [
+        effectiveRootPath,
+        props.workspaceRef.id,
+        props.workspaceRef.machineId,
+        props.workspaceRef.rootPath,
+        props.workspaceRef.serverId,
+    ]);
 
-    function readDeepLinkAnchor(resource: unknown): WorkspaceFileDeepLinkAnchor | null {
-        if (resource == null || typeof resource !== 'object') return null;
-        if (!('deepLinkAnchor' in resource)) return null;
-        const value = (resource as { deepLinkAnchor?: unknown }).deepLinkAnchor;
-        if (value == null || typeof value !== 'object') return null;
-        if (!('source' in value) || !('anchor' in value)) return null;
-        return value as WorkspaceFileDeepLinkAnchor;
-    }
+    const detailsSurfaceCallbacks = React.useMemo(() => createDetailsSurfacePaneCallbacks({
+        openTab: pane.openDetailsTab,
+        closeTab: pane.closeDetailsTab,
+        pinTab: pane.pinDetailsTab,
+        unpinTab: pane.unpinDetailsTab,
+        replaceTab: pane.replaceDetailsTab,
+    }), [
+        pane.closeDetailsTab,
+        pane.openDetailsTab,
+        pane.pinDetailsTab,
+        pane.replaceDetailsTab,
+        pane.unpinDetailsTab,
+    ]);
 
-    function readCommitSha(resource: unknown): string {
-        if (resource == null || typeof resource !== 'object') return '';
-        const r = resource as { sha?: unknown; commitHash?: unknown };
-        return readOptionalString(r.sha) ?? readOptionalString(r.commitHash) ?? '';
-    }
-
-    const renderTabContent = React.useCallback((tab: DetailsTabState) => {
-        const resource = asResource(tab?.resource);
-
-        if (tab?.kind === 'workspaceInfo' || resource?.kind === 'workspaceInfo') {
-            return renderWorkspaceInfo();
-        }
-
-        if (resource?.kind === 'file') {
-            if (isFileResource(tab.resource)) {
-                const anchor = readDeepLinkAnchor(tab.resource);
-                return (
-                    <WorkspaceFileDetailsView
-                        scopeId={props.scopeId}
-                        scope={workspaceScope}
-                        filePath={tab.resource.path}
-                        deepLinkAnchor={anchor}
-                        presentation={deviceType === 'phone' ? 'screen' : 'panel'}
-                        sessionIdForAugmentation={props.sessionIdForAugmentation ?? null}
-                        onStartEditingFile={() => {
-                            if (tab.isPreview) {
-                                pane.pinDetailsTab(tab.key);
-                            }
-                        }}
-                    />
-                );
-            }
-        }
-
-        if (resource?.kind === 'commit') {
-            if (isCommitResource(tab.resource)) {
-                const sha = readCommitSha(tab.resource);
-                return (
-                    <WorkspaceCommitDetailsView
-                        scopeId={props.scopeId}
-                        workspaceRefId={props.workspaceRef.id}
-                        workspaceCacheKey={workspaceCacheKey}
-                        machineId={props.workspaceRef.machineId}
-                        rootPath={effectiveRootPath}
-                        serverId={props.workspaceRef.serverId}
-                        sha={sha}
-                        presentation={deviceType === 'phone' ? 'screen' : 'panel'}
-                        onOpenFile={(path) => openFileTab(path, 'default')}
-                        onOpenFilePinned={(path) => openFileTab(path, 'pinned')}
-                    />
-                );
-            }
-        }
-
-        if (resource?.kind === 'scmReview') {
-            if (isScmReviewResource(tab.resource)) {
-                return (
-                    <WorkspaceScmReviewDetailsView
-                        scopeId={props.scopeId}
-                        workspaceRefId={props.workspaceRef.id}
-                        workspaceCacheKey={workspaceCacheKey}
-                        machineId={props.workspaceRef.machineId}
-                        rootPath={effectiveRootPath}
-                        serverId={props.workspaceRef.serverId}
-                        onOpenFile={(path) => openFileTab(path, 'default')}
-                        onOpenFilePinned={(path) => openFileTab(path, 'pinned')}
-                    />
-                );
-            }
-        }
-
-        if (resource?.kind === 'scmStash') {
-            if (isScmStashResource(tab.resource)) {
-                return (
-                    <WorkspaceScmStashDetailsView
-                        scopeId={props.scopeId}
-                        workspaceRefId={props.workspaceRef.id}
-                        workspaceCacheKey={workspaceCacheKey}
-                        machineId={props.workspaceRef.machineId}
-                        rootPath={effectiveRootPath}
-                        serverId={props.workspaceRef.serverId}
-                        onOpenFile={(path) => openFileTab(path, 'default')}
-                        onOpenFilePinned={(path) => openFileTab(path, 'pinned')}
-                    />
-                );
-            }
-        }
-
-        if (resource?.kind === 'terminal') {
-            const fallbackTerminalInstanceId =
-                typeof tab?.key === 'string' && tab.key.startsWith('terminal:')
-                    ? tab.key.slice('terminal:'.length)
-                    : 'main';
-            const terminalInstanceId = readTerminalDetailsInstanceId(tab.resource, fallbackTerminalInstanceId);
-            if (terminalInstanceId) {
-                return (
-                    <ProjectTerminalSurface
-                        scopeId={props.scopeId}
-                        workspaceRefId={props.workspaceRef.id}
-                        machineId={props.workspaceRef.machineId}
-                        rootPath={readTerminalDetailsCwd(tab.resource) ?? effectiveRootPath}
-                        serverId={props.workspaceRef.serverId}
-                        terminalInstanceId={terminalInstanceId}
-                        closeOnUnmount={true}
-                    />
-                );
-            }
-        }
-
-        return (
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-                <Octicons name="info" size={18} color={theme.colors.text.secondary} />
-                <Text style={{ marginTop: 10, color: theme.colors.text.secondary, fontSize: 13, ...Typography.default(), textAlign: 'center', maxWidth: 520 }}>
-                    {t('projects.details.placeholderUnsupportedBody')}
-                </Text>
-            </View>
-        );
-    }, [
-        deviceType,
+    const detailsSurfaceRenderers = React.useMemo(() => createWorkspaceDetailsSurfaceRenderers({
+        scopeId: props.scopeId,
+        workspaceRefId: props.workspaceRef.id,
+        workspaceCacheKey,
+        workspaceScope,
+        serverId: props.workspaceRef.serverId,
+        machineId: props.workspaceRef.machineId,
+        rootPath: props.workspaceRef.rootPath,
+        activeRootPath: effectiveRootPath,
+        presentation: deviceType === 'phone' ? 'screen' : 'panel',
+        sessionIdForAugmentation: props.sessionIdForAugmentation ?? null,
+        pinDetailsTab: pane.pinDetailsTab,
+        openDetailsTab: pane.openDetailsTab,
         openFileTab,
-        pane,
+        renderWorkspaceInfo,
+        launchpadRows: browserLaunchpad.rows,
+        launchpadRefreshStatus: browserLaunchpad.refreshStatus,
+        launchpadRefreshError: browserLaunchpad.refreshError,
+        pluginUiProjection: props.pluginUiProjection,
+        pluginBrowserProjection: props.pluginBrowserProjection,
+        pluginBrowserActionSessionId: props.sessionIdForAugmentation ?? null,
+        platform: pluginSurfacePlatform,
+        productModels: props.browserProductModels ?? undefined,
+    }), [
+        browserLaunchpad,
+        deviceType,
+        effectiveRootPath,
+        openFileTab,
+        pane.openDetailsTab,
+        pane.pinDetailsTab,
+        props.browserProductModels,
+        props.pluginUiProjection,
+        props.pluginBrowserProjection,
         props.scopeId,
         props.sessionIdForAugmentation,
         props.workspaceRef.id,
         props.workspaceRef.machineId,
+        props.workspaceRef.rootPath,
         props.workspaceRef.serverId,
+        pluginSurfacePlatform,
         renderWorkspaceInfo,
-        theme.colors.text.secondary,
         workspaceCacheKey,
         workspaceScope,
-        effectiveRootPath,
+    ]);
+
+    const renderTabContent = React.useCallback((tab: DetailsTabState) => {
+        return (
+            <DetailsSurfaceHost
+                tab={tab}
+                scope={detailsSurfaceScope}
+                region="details"
+                renderers={detailsSurfaceRenderers}
+                callbacks={detailsSurfaceCallbacks}
+            />
+        );
+    }, [
+        detailsSurfaceCallbacks,
+        detailsSurfaceRenderers,
+        detailsSurfaceScope,
     ]);
 
     const renderHeaderActions = React.useCallback(() => {
@@ -330,6 +334,13 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         return (
             <>
                 {props.renderHeaderActionsPrefix ? props.renderHeaderActionsPrefix({ iconButtonStyle, iconColor: theme.colors.text.secondary }) : null}
+                <BrowserSurfaceOpenButton
+                    onPress={openBrowserLaunchpadTab}
+                    testID="workspace-details-open-browser"
+                    style={iconButtonStyle}
+                    disabledStyle={{ opacity: 0.45 }}
+                    iconColor={theme.colors.text.secondary}
+                />
                 {hasWorkspaceReviewCommentDrafts ? (
                     <Pressable
                         onPress={openNewSessionWithReviewComments}
@@ -391,6 +402,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
     }, [
         iconButtonStyle,
         hasWorkspaceReviewCommentDrafts,
+        openBrowserLaunchpadTab,
         pane,
         paneFocusMode.active,
         paneFocusMode.canEnter,

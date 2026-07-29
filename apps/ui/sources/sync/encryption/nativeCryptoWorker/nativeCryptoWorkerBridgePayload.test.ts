@@ -48,6 +48,9 @@ describe('native crypto worker bridge payload helpers', () => {
     it('estimates large canonical padded base64 payloads without scanning every character', () => {
         const value = `${'A'.repeat(3998)}==`;
         const charCodeAtSpy = vi.spyOn(String.prototype, 'charCodeAt');
+        // Regex engines scan without charCodeAt; the no-full-scan contract must also
+        // exclude whole-string regex evaluation on the fast path.
+        const regExpTestSpy = vi.spyOn(RegExp.prototype, 'test');
 
         try {
             const estimate = estimateCryptoWorkerBase64BridgeBytes(value);
@@ -55,10 +58,28 @@ describe('native crypto worker bridge payload helpers', () => {
             expect(estimate.decodedBytes).toBe(2998);
             expect(estimate.base64Utf16Bytes).toBe(8000);
             expect(estimate.totalBridgeBytes).toBe(10998);
-            expect(charCodeAtSpy.mock.calls.length).toBeLessThan(16);
+            expect(charCodeAtSpy.mock.calls.length).toBeLessThan(24);
+            const fullStringRegexScans = regExpTestSpy.mock.calls.filter(
+                (call) => typeof call[0] === 'string' && call[0].length >= value.length,
+            );
+            expect(fullStringRegexScans).toHaveLength(0);
         } finally {
             charCodeAtSpy.mockRestore();
+            regExpTestSpy.mockRestore();
         }
+    });
+
+    it('conservatively overestimates large length-aligned payloads with interior noise', () => {
+        // Interior noise on a 4-aligned large string takes the fast path; counting the
+        // noise as data only overestimates, which is the safe direction for bridge
+        // byte budgeting (smaller batches).
+        const canonical = 'AAEC'.repeat(300);
+        const value = `${canonical.slice(0, 600)}\n\n\n\n${canonical.slice(600)}`;
+        expect(value.length % 4).toBe(0);
+
+        const estimate = estimateCryptoWorkerBase64BridgeBytes(value);
+        expect(estimate.decodedBytes).toBeGreaterThanOrEqual(900);
+        expect(estimate.base64Utf16Bytes).toBe(value.length * 2);
     });
 
     it('falls back to lenient normalization for large non-canonical base64 estimates', () => {

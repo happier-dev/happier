@@ -5,6 +5,7 @@ import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
 import { maybeParseJson } from '../../normalization/parse/parseJson';
+import { extractStdStreams } from '../../normalization/parse/stdStreams';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
@@ -44,6 +45,11 @@ function getResultText(result: unknown): string | null {
     const parsed = maybeParseJson(result);
     const obj = asRecord(parsed);
     if (!obj) return typeof parsed === 'string' ? parsed : null;
+    const streams = extractStdStreams(parsed);
+    const streamOutput = [streams?.stdout, streams?.stderr].find((value) =>
+        typeof value === 'string' && value.trim().length > 0
+    );
+    if (streamOutput) return streamOutput;
     const candidates = [obj.text, obj.message, obj.result, obj.output];
     for (const c of candidates) {
         if (typeof c === 'string' && c.trim()) return c;
@@ -56,6 +62,7 @@ export const UnknownToolView = React.memo<ToolViewProps>(({ tool, detailLevel })
 
     const subtitle = formatSubtitle(tool.input);
     const resultText = getResultText(tool.result);
+    const resultCode = resultText ?? JSON.stringify(maybeParseJson(tool.result), null, 2);
 
     if (detailLevel === 'summary') {
         return (
@@ -90,7 +97,7 @@ export const UnknownToolView = React.memo<ToolViewProps>(({ tool, detailLevel })
                 {tool.state === 'completed' && tool.result != null ? (
                     <View style={styles.section}>
                         <Text style={styles.sectionTitle}>{t('toolView.output')}</Text>
-                        <CodeView code={JSON.stringify(maybeParseJson(tool.result), null, 2)} />
+                        <CodeView code={resultCode} />
                     </View>
                 ) : null}
             </View>

@@ -5,6 +5,7 @@ export type ConnectionSocketStatus = 'connected' | 'connecting' | 'disconnected'
 export type ConnectionHealthKind =
     | 'healthy'
     | 'connecting'
+    | 'server_restarting'
     | 'server_unreachable'
     | 'auth_required'
     | 'server_error'

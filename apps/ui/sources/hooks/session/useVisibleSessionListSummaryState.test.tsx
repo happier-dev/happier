@@ -39,7 +39,16 @@ const summaryState = vi.hoisted(() => ({
                 pendingCount: undefined,
                 metadataVersion: 0,
                 agentStateVersion: 0,
-                metadata: { path: '', externalSessionV1: { v: 1 } },
+                metadata: {
+                    path: '',
+                    externalSessionV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        machineId: 'machine-1',
+                        remoteSessionId: 'remote-1',
+                        source: { kind: 'codexHome', home: 'user' },
+                    },
+                },
                 thinking: false,
                 thinkingAt: 0,
                 presence: 0,

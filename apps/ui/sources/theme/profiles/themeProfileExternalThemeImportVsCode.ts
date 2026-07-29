@@ -142,17 +142,20 @@ const assignSemanticTokenColors = (semanticTokenColors: unknown, overrides: Reco
 
 const buildExternalThemeOverlays = (mode: ThemeProfileMode): Readonly<{
     pressedOverlay: string;
+    sectionTint: string;
     ripple: string;
     highlight: string;
 }> => (
     mode === 'dark'
         ? {
             pressedOverlay: 'rgba(255,255,255,0.06)',
+            sectionTint: 'rgba(255,255,255,0.014)',
             ripple: 'rgba(255,255,255,0.10)',
             highlight: 'transparent',
         }
         : {
             pressedOverlay: 'rgba(0,0,0,0.06)',
+            sectionTint: 'rgba(0,0,0,0.012)',
             ripple: 'rgba(0,0,0,0.10)',
             highlight: 'transparent',
         }
@@ -194,6 +197,7 @@ const buildThemeProfileOverridesFromVsCodeTheme = (theme: Record<string, unknown
     setOverride(overrides, 'surface.selected', surfaceSelected);
     setOverride(overrides, 'surface.pressed', surfacePressed);
     setOverride(overrides, 'surface.pressedOverlay', overlay.pressedOverlay);
+    setOverride(overrides, 'surface.sectionTint', overlay.sectionTint);
     setOverride(overrides, 'surface.ripple', overlay.ripple);
     setOverride(overrides, 'border.default', borderSurface);
     setOverride(overrides, 'border.surface', borderSurface);

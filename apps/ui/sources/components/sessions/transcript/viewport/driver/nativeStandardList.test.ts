@@ -7,17 +7,18 @@ function buildDeps(): Readonly<{
     deps: TranscriptViewportDriverDeps;
     offsetCalls: Array<{ animated?: boolean; offset: number }>;
     endCalls: Array<{ animated?: boolean } | undefined>;
+    scrollToIndex: ReturnType<typeof vi.fn>;
 }> {
     const offsetCalls: Array<{ animated?: boolean; offset: number }> = [];
     const endCalls: Array<{ animated?: boolean } | undefined> = [];
+    const scrollToIndex = vi.fn();
     const deps: TranscriptViewportDriverDeps = {
         listRef: {
             current: {
-                transcriptViewportCommandSpace: 'standard',
                 scrollToEnd: (params?: { animated?: boolean }) => {
                     endCalls.push(params);
                 },
-                scrollToIndex: vi.fn(),
+                scrollToIndex,
                 scrollToOffset: (params: { animated?: boolean; offset: number }) => {
                     offsetCalls.push(params);
                 },
@@ -26,11 +27,7 @@ function buildDeps(): Readonly<{
         listContentHeightRef: { current: 1_200 },
         listLayoutHeightRef: { current: 500 },
         listDataRef: { current: { length: 5 } },
-        itemsRef: { current: { length: 5 } },
-        composerInsetHeightRef: { current: 0 },
-        nativeHotTailHeightRef: { current: 0 },
         lastPinOffsetForIntentRef: { current: null },
-        lastNativePinOffsetRef: { current: 140 },
         webDomObservation: {
             getState: () => ({
                 observedClientHeight: null,
@@ -38,7 +35,11 @@ function buildDeps(): Readonly<{
                 observedScrollTop: null,
                 streak: null,
             }),
-            observeGenuineScrollMovement: vi.fn(() => ({
+            invalidateUserMovementAuthority: vi.fn(),
+            observeGenuineScrollMovement: vi.fn<
+                TranscriptViewportDriverDeps['webDomObservation']['observeGenuineScrollMovement']
+            >(() => ({
+                atEndPublicationCause: 'layout',
                 direction: null,
                 downwardIntent: false,
                 isGenuineUserMovement: false,
@@ -51,27 +52,23 @@ function buildDeps(): Readonly<{
                 landedScrollTop: 0,
                 ok: true,
             })),
+            recordUserScrollInput: vi.fn(),
             reset: vi.fn(),
         },
         lastNativeRestoreIndexCommandRef: { current: null },
         nativeMountSettleStable: true,
         telemetryPlatform: 'ios',
-        shouldUseNativeHotColdSplit: false,
-        webHotColdCountsRef: { current: { coldCount: 0, hotCount: 0 } },
-        clearWebPrependRangeReserve: vi.fn(),
-        resolveRestoreAnchorIndex: () => null,
-        resolveJumpToSeqIndex: () => null,
+        resolveRendererDataTarget: () => null,
         resolveWebScrollMetrics: () => null,
         recordViewportTelemetryEvent: vi.fn(),
         recordRestoreDecisionTelemetry: vi.fn(),
         resolveWebViewportTelemetryDiagnostics: () => ({}),
-        resolveInvertedBottomPinCarveTelemetryFields: () => ({}),
     };
-    return { deps, endCalls, offsetCalls };
+    return { deps, endCalls, offsetCalls, scrollToIndex };
 }
 
 describe('native standard list viewport driver', () => {
-    it('pins to the shell-measured end offset instead of delegating to renderer scrollToEnd', () => {
+    it('routes bottom intent through the renderer-owned semantic end command', () => {
         const { deps, endCalls, offsetCalls } = buildDeps();
 
         const accepted = performNativeStandardListViewportCommand({
@@ -85,7 +82,51 @@ describe('native standard list viewport driver', () => {
         }, deps);
 
         expect(accepted).toBe(true);
-        expect(endCalls).toEqual([]);
-        expect(offsetCalls).toEqual([{ offset: 4_100, animated: true }]);
+        expect(endCalls).toEqual([{ animated: true }]);
+        expect(offsetCalls).toEqual([]);
+    });
+
+    it('tags a native entry anchor command for the renderer placement lifecycle', () => {
+        const { deps, scrollToIndex } = buildDeps();
+        const anchor = {
+            itemId: 'row-2',
+            itemOffsetPx: 40,
+            kind: 'item' as const,
+            messageId: null,
+        };
+        const depsWithTarget = {
+            ...deps,
+            resolveRendererDataTarget: vi.fn(() => ({
+                kind: 'data' as const,
+                index: 2,
+                itemId: 'row-42',
+            })),
+        };
+
+        const accepted = performNativeStandardListViewportCommand({
+            animated: false,
+            kind: 'restore-anchor',
+            mode: 'restore-anchor',
+            reason: 'entry-restore',
+            sessionId: 'session-a',
+            target: {
+                anchor,
+                itemOffsetPx: 40,
+            },
+        }, depsWithTarget);
+
+        expect(accepted).toBe(true);
+        expect(scrollToIndex).toHaveBeenCalledWith({
+            animated: false,
+            context: {
+                anchor: {
+                    ...anchor,
+                    reason: 'entry-restore',
+                },
+                kind: 'entry-placement',
+            },
+            index: 2,
+            viewOffset: 40,
+        });
     });
 });

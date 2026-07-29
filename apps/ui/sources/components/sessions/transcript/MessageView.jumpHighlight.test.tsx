@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 import type { AgentTextMessage, UserTextMessage } from '@/sync/domains/messages/messageTypes';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,14 +23,14 @@ installMessageViewCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'transcriptMessageTimestampDisplayMode') return 'never';
                     if (key === 'sessionThinkingDisplayMode') return 'inline';
                     if (key === 'sessionThinkingInlinePresentation') return 'summary';
                     if (key === 'sessionThinkingInlineChrome') return 'plain';
                     if (key === 'toolViewTimelineChromeMode') return 'cards';
                     return null;
-                },
+                } }),
                 useSessionForkSupportSource: () => null,
                 useSessionWorkspacePath: () => null,
                 useSessionMessagesById: () => ({}),
@@ -48,9 +49,9 @@ vi.mock('@/components/markdown/MarkdownView', () => ({
         React.createElement('MarkdownView', props, props.children),
 }));
 
-vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
-    shouldShowMessageCopyButton: () => false,
-    shouldShowMessageSelectButton: () => false,
+vi.mock('@/components/sessions/transcript/transcriptRowActionVisibility', () => ({
+    shouldShowTranscriptRowActions: () => false,
+    shouldShowTranscriptRowPinAction: () => false,
 }));
 
 vi.mock('@/components/sessions/transcript/structured/StructuredMessageBlock', () => ({
@@ -116,6 +117,32 @@ function findOverlaysWithin(row: ReactTestInstance | null, overlayTestId: string
     return row.findAll((node) => node.props?.testID === overlayTestId && typeof node.type === 'string');
 }
 
+function hostParentOf(node: ReactTestInstance): ReactTestInstance | null {
+    let current = node.parent;
+    while (current && typeof current.type !== 'string') {
+        current = current.parent;
+    }
+    return current ?? null;
+}
+
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
+    }
+    if (style && typeof style === 'object') {
+        return style as Record<string, unknown>;
+    }
+    return {};
+}
+
+/** Highlight fades are the only delayed opacity animation; reveal slots have no delay. */
+function jumpFadeCalls(calls: readonly unknown[][]): unknown[][] {
+    return calls.filter(([, config]) => {
+        const typed = config as { toValue?: number; delay?: number };
+        return typed.toValue === 0 && typeof typed.delay === 'number';
+    });
+}
+
 async function renderTwoRows() {
     const { View } = await import('react-native');
     const { MessageView } = await import('./MessageView');
@@ -171,6 +198,49 @@ describe('MessageView jump landing highlight', () => {
         expect(screen.findAllByTestId(TRANSCRIPT_JUMP_HIGHLIGHT_TEST_ID)).toHaveLength(0);
     });
 
+    it('paints the highlight on the message element itself, not the full-width centring row', async () => {
+        const { applyTranscriptJumpHighlightForJumpResult } =
+            await import('./navigation/transcriptJumpHighlightStore');
+        const { TRANSCRIPT_JUMP_HIGHLIGHT_TEST_ID } = await import('./navigation/TranscriptJumpHighlightOverlay');
+        const screen = await renderTwoRows();
+
+        await act(async () => {
+            applyTranscriptJumpHighlightForJumpResult('s1', {
+                status: 'scrolled',
+                target: { kind: 'route-message-id', routeMessageId: 'local:local-u1', seqHint: 7 },
+            });
+        });
+
+        const ring = findOverlaysWithin(screen.findByTestId('row-u1'), TRANSCRIPT_JUMP_HIGHLIGHT_TEST_ID)[0];
+        expect(ring).toBeTruthy();
+        expect(flattenStyle(ring.props.style).borderRadius).toBe(12);
+
+        // The user bubble owns the highlight; the full-width wrapper that centres it
+        // (no padding, no radius) must not be the painted surface.
+        const bubbleStyle = flattenStyle(hostParentOf(ring)?.props.style);
+        expect(bubbleStyle.borderRadius).toBe(12);
+        expect(bubbleStyle.paddingHorizontal).toBe(14);
+    });
+
+    it('paints the agent block highlight on the agent message element', async () => {
+        const { applyTranscriptJumpHighlightForJumpResult } =
+            await import('./navigation/transcriptJumpHighlightStore');
+        const { TRANSCRIPT_JUMP_HIGHLIGHT_TEST_ID } = await import('./navigation/TranscriptJumpHighlightOverlay');
+        const screen = await renderTwoRows();
+
+        await act(async () => {
+            applyTranscriptJumpHighlightForJumpResult('s1', {
+                status: 'scrolled',
+                target: { kind: 'route-message-id', routeMessageId: 'local:local-a1', seqHint: 8 },
+            });
+        });
+
+        const ring = findOverlaysWithin(screen.findByTestId('row-a1'), TRANSCRIPT_JUMP_HIGHLIGHT_TEST_ID)[0];
+        expect(ring).toBeTruthy();
+        expect(flattenStyle(ring.props.style).borderRadius).toBe(16);
+        expect(flattenStyle(hostParentOf(ring)?.props.style).marginHorizontal).toBe(16);
+    });
+
     it('highlights via seq fallback identity for seq-kind jump targets', async () => {
         const { applyTranscriptJumpHighlightForJumpResult } =
             await import('./navigation/transcriptJumpHighlightStore');
@@ -206,7 +276,7 @@ describe('MessageView jump landing highlight', () => {
             });
         });
 
-        const fadeCalls = timingSpy.mock.calls.filter(([, config]) => (config as { toValue?: number }).toValue === 0);
+        const fadeCalls = jumpFadeCalls(timingSpy.mock.calls);
         expect(fadeCalls).toHaveLength(1);
         expect((fadeCalls[0][1] as { duration?: number }).duration).toBe(TRANSCRIPT_JUMP_HIGHLIGHT_FADE_MS);
         expect((fadeCalls[0][1] as { delay?: number }).delay).toBe(
@@ -233,7 +303,7 @@ describe('MessageView jump landing highlight', () => {
         });
 
         expect(findOverlaysWithin(screen.findByTestId('row-u1'), TRANSCRIPT_JUMP_HIGHLIGHT_TEST_ID)).toHaveLength(1);
-        expect(timingSpy.mock.calls.filter(([, config]) => (config as { toValue?: number }).toValue === 0)).toHaveLength(0);
+        expect(jumpFadeCalls(timingSpy.mock.calls)).toHaveLength(0);
 
         await act(async () => {
             vi.advanceTimersByTime(TRANSCRIPT_JUMP_HIGHLIGHT_DURATION_MS);

@@ -193,6 +193,83 @@ function appendToolGroupUnits(params: Readonly<{
     });
 }
 
+function normalizeSyntheticItemCreatedAt(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+// Persisted messages are already sequence-ordered before decomposition. Synthetic
+// agent-state requests have no transcript sequence, so their creation time only
+// determines where they join that established order.
+function findSyntheticUserActionInsertionIndex(
+    items: readonly TranscriptTurnUnitListItem[],
+    createdAt: number,
+): number | null {
+    let latestChronologicalIndex = -1;
+
+    for (let index = 0; index < items.length; index += 1) {
+        const item = items[index]!;
+        if (item.kind === 'pending-user-action') {
+            const itemCreatedAt = normalizeSyntheticItemCreatedAt(item.createdAt);
+            if (itemCreatedAt !== null && itemCreatedAt > createdAt) return index;
+            if (itemCreatedAt !== null) latestChronologicalIndex = index;
+            continue;
+        }
+
+        if (item.kind === 'tool-group-header') {
+            const groupCreatedAt = normalizeSyntheticItemCreatedAt(item.createdAt);
+            if (groupCreatedAt !== null && groupCreatedAt > createdAt) return index;
+            if (groupCreatedAt !== null) latestChronologicalIndex = index;
+            continue;
+        }
+
+        if (item.kind === 'tool-group-footer') {
+            latestChronologicalIndex = index;
+            continue;
+        }
+
+        const itemCreatedAt = item.kind === 'message' || item.kind === 'tool-group-tool'
+            ? normalizeSyntheticItemCreatedAt(item.createdAt)
+            : null;
+        if (itemCreatedAt === null) continue;
+        if (itemCreatedAt > createdAt) return index;
+        latestChronologicalIndex = index;
+    }
+
+    return latestChronologicalIndex < 0 ? null : latestChronologicalIndex + 1;
+}
+
+function placeSyntheticUserActionItemsInChronologicalOrder(
+    output: TranscriptTurnUnitListItem[],
+): TranscriptTurnUnitListItem[] {
+    const syntheticItems = output
+        .map((item, sourceIndex) => ({ item, sourceIndex }))
+        .filter((entry): entry is Readonly<{
+            item: Extract<TranscriptTurnUnitListItem, { kind: 'pending-user-action' }>;
+            sourceIndex: number;
+        }> => (
+            entry.item.kind === 'pending-user-action' &&
+            normalizeSyntheticItemCreatedAt(entry.item.createdAt) !== null
+        ));
+    if (syntheticItems.length === 0) return output;
+
+    const orderedSyntheticItems = syntheticItems.slice().sort((left, right) => (
+        left.item.createdAt - right.item.createdAt || left.sourceIndex - right.sourceIndex
+    ));
+    const syntheticItemIds = new Set(orderedSyntheticItems.map((entry) => entry.item.id));
+    const items = output.filter((item) => !syntheticItemIds.has(item.id));
+
+    for (const { item } of orderedSyntheticItems) {
+        const insertionIndex = findSyntheticUserActionInsertionIndex(items, item.createdAt);
+        if (insertionIndex === null) {
+            items.push(item);
+        } else {
+            items.splice(insertionIndex, 0, item);
+        }
+    }
+
+    return items;
+}
+
 export function buildTranscriptTurnUnits(params: Readonly<{
     items: readonly TranscriptTurnUnitSourceItem[];
     getMessageById: (messageId: string) => Message | null;
@@ -256,5 +333,5 @@ export function buildTranscriptTurnUnits(params: Readonly<{
         output.push(item);
     }
 
-    return output;
+    return placeSyntheticUserActionItemsInChronologicalOrder(output);
 }

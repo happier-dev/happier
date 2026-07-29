@@ -21,6 +21,7 @@ import { deriveExecutionRunPollingRefreshKey } from '@/sync/domains/session/part
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import { shouldEnableExecutionRunPolling } from '@/sync/domains/session/participants/shouldEnableExecutionRunPolling';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { useSessionMessages } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
@@ -146,6 +147,7 @@ function ToolCallDetailsView(props: Readonly<{
 }>) {
     const { theme } = useUnistyles();
     const styles = React.useMemo(() => createSessionMessageDetailsStyles(theme), [theme]);
+    const ownerMetadata = readSessionOwnerMetadataView(props.session);
     const { messages: committedMessages } = useSessionMessages(props.sessionId);
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const executionRunPollingEnabled = React.useMemo(() => {
@@ -164,7 +166,7 @@ function ToolCallDetailsView(props: Readonly<{
     });
     const externalSessionRuntime = useSessionExternalSessionRuntime({
         sessionId: props.sessionId,
-        metadata: props.session.metadata,
+        metadata: ownerMetadata,
     });
     const canControlExecutionRuns = externalSessionRuntime.externalSessionLink === null || externalSessionRuntime.status?.runnerActive === true;
 
@@ -232,9 +234,10 @@ function ToolCallDetailsView(props: Readonly<{
         <View style={styles.toolCallFullViewContainer}>
             <ToolFullView
                 tool={props.message.tool}
+                owningMessageId={props.message.id}
                 messages={[...visibleFocusedMessages]}
                 sessionId={props.sessionId}
-                metadata={props.session.metadata ?? null}
+                metadata={ownerMetadata}
                 interaction={interaction}
                 jumpChildId={props.jumpChildId}
                 forcePermissionFooterInTranscript={forcePermissionFooterInTranscript}

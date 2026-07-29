@@ -8,7 +8,7 @@ describe('typesRaw.normalizeRawMessage (permission-request)', () => {
       role: 'agent',
       content: {
         type: 'acp',
-        provider: 'codex',
+        agentId: 'codex',
         data: {
           type: 'permission-request',
           permissionId: 'perm_1',

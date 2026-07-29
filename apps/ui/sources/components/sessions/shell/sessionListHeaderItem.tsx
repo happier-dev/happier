@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 
@@ -28,6 +29,10 @@ import {
     type UseSessionInlineDragResolveDropResultEvent,
 } from './useSessionInlineDrag';
 import { resolveWorkspaceRootTreeRowId, treeRowId } from './drop-resolution/treeRowId';
+import { STAGE_SPOTLIGHT_TARGET_IDS } from '@/components/onboarding/tour/stage/stageSpotlightTargetIds';
+import {
+    useSpotlightTarget,
+} from '@/components/onboarding/tour/stage/useSpotlightTarget';
 
 type SessionListHeaderItemProps = Readonly<{
     item: Extract<SessionListIndexItem, { type: 'header' }>;
@@ -72,6 +77,14 @@ type SessionListHeaderItemProps = Readonly<{
 }>;
 
 export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemProps) => {
+    const stageSpotlightRef = React.useRef<View>(null);
+    const stageSpotlightProps = useSpotlightTarget(
+        stageSpotlightRef,
+        props.item.headerKind === 'attention'
+            ? STAGE_SPOTLIGHT_TARGET_IDS.attentionGroup
+            : null,
+    );
+
     if (props.item.headerKind === 'folder') {
         const collapseKey = props.item.groupKey ?? `folder:${props.item.folderId ?? props.item.title}`;
         const rowId = props.item.folderId ? treeRowId.folder(props.item.folderId) : null;
@@ -197,7 +210,7 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
         ? (props.item.groupKey ?? props.item.headerKind)
         : props.item.headerKind;
 
-    return (
+    const header = (
         <CollapsibleSectionHeader
             title={headerViewState.title}
             collapsed={headerViewState.collapsed}
@@ -205,8 +218,15 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
             showOrderingMenu={isPrimaryHeader}
             testID={headerTestIdKey ? `session-list-header:${headerTestIdKey}` : undefined}
             headerControls={props.headerControls}
+            rootMeasurement={props.item.headerKind === 'attention' ? {
+                active: stageSpotlightProps.active,
+                ref: stageSpotlightRef,
+                onLayout: stageSpotlightProps.onLayout,
+                style: stageSpotlightProps.style,
+            } : undefined}
         />
     );
+    return header;
 });
 
 const DraggableFolderHeaderFrame = React.memo(function DraggableFolderHeaderFrame(props: Readonly<{

@@ -1,6 +1,7 @@
 import {
     createSessionStateSyncEngine,
     type SessionStateFieldWriteValue,
+    type SessionStateMetadataWriteResult,
 } from '@happier-dev/agents';
 import type { SessionMetadata, SessionStateCapabilitiesV1, SessionStateFieldId } from '@happier-dev/protocol';
 
@@ -22,9 +23,7 @@ const UI_SESSION_STATE_CAPABILITIES: SessionStateCapabilitiesV1 = {
 export type UiSessionStateMetadataUpdater = (metadata: Metadata) => Metadata;
 export type UiSessionStateMetadataPreprocess = (metadata: Metadata) => Metadata;
 export type UiSessionStateMetadataPostprocess = (metadata: Metadata) => Metadata;
-export type UiSessionStateWriteResult =
-    | Readonly<{ ok: true; version: number }>
-    | Readonly<{ ok: false; reason: 'unsupported' | 'conflict' | 'forbidden' | 'unknown_error' }>;
+export type UiSessionStateWriteResult = SessionStateMetadataWriteResult;
 
 export function createUiSessionStateEngine(params: Readonly<{
 	    updateSessionMetadataWithRetry: (

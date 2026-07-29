@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { FlatList, Platform, View, type ScrollViewProps } from 'react-native';
+import { Platform, View, type ScrollViewProps } from 'react-native';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 
 import { Text } from '@/components/ui/text/Text';
@@ -11,7 +11,7 @@ import { t } from '@/text';
 import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
 import { InlineRepoPathLabel } from '@/components/ui/path/InlineRepoPathLabel';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
+import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 
 type SearchResultsListProps = {
     theme: any;
@@ -227,18 +227,12 @@ export const SearchResultsList = React.memo(({
         );
     }
 
-    if (Platform.OS !== 'web') {
-        return (
-            <FlashList
-                {...sharedListProps}
-                estimatedItemSize={SEARCH_RESULTS_ESTIMATED_ITEM_SIZE}
-            />
-        );
-    }
-
+    // The virtualized abstraction owns the backend choice; `auto` resolves to
+    // the canonical Legend backend on every platform.
     return (
-        <FlatList
+        <VirtualizedList<FileItem>
             {...sharedListProps}
+            estimatedItemSize={SEARCH_RESULTS_ESTIMATED_ITEM_SIZE}
         />
     );
 });

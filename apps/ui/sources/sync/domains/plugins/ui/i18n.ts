@@ -13,9 +13,27 @@ export function resolvePluginUiText(params: Readonly<{
     locale?: string | null;
     fallback?: string | null;
 }>): string {
+    const resolved = resolvePluginUiTranslationText(params);
+    if (resolved) {
+        return resolved;
+    }
     const key = params.key?.trim();
     if (!key) {
         return params.fallback?.trim() || '';
+    }
+
+    return params.fallback?.trim() || key;
+}
+
+export function resolvePluginUiTranslationText(params: Readonly<{
+    projection: PluginUiProjectionModel | null | undefined;
+    pluginId: string;
+    key: string | null | undefined;
+    locale?: string | null;
+}>): string | null {
+    const key = params.key?.trim();
+    if (!key) {
+        return null;
     }
 
     const translations = params.projection?.translationsByPluginId[params.pluginId];
@@ -28,5 +46,5 @@ export function resolvePluginUiText(params: Readonly<{
         return value;
     }
 
-    return params.fallback?.trim() || key;
+    return null;
 }

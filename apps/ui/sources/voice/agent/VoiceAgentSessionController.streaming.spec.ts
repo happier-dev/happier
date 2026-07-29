@@ -5,6 +5,7 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import { installVoiceAgentCommonModuleMocks } from '@/voice/agent/voiceAgentTestHelpers';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
+import { getRetainedLocalVoiceEffectOutcomes } from '@/voice/tools/localVoiceEffectOutcomeCustody';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -96,16 +97,19 @@ function createVoiceControllerState(options: Readonly<{
   settings: {
     voice: {
       providerId: string;
-      adapters: {
+      providers: {
         local_conversation: {
-          streaming: {
-            enabled: boolean;
-            turnReadPollIntervalMs: number;
-            turnReadMaxEvents: number;
-            turnStreamTimeoutMs: number | null;
+          schemaVersion: 1;
+          config: {
+            streaming: {
+              enabled: boolean;
+              turnReadPollIntervalMs: number;
+              turnReadMaxEvents: number;
+              turnStreamTimeoutMs: number | null;
+            };
+            agent: Record<string, unknown>;
+            networkTimeoutMs: number;
           };
-          agent: Record<string, unknown>;
-          networkTimeoutMs: number;
         };
       };
     } & Record<string, unknown>;
@@ -116,8 +120,8 @@ function createVoiceControllerState(options: Readonly<{
 } {
   const voice = {
     providerId: options.voice?.providerId ?? 'local_conversation',
-    adapters: {
-      local_conversation: {
+    providers: {
+      local_conversation: { schemaVersion: 1 as const, config: {
         streaming: {
           enabled: true,
           turnReadPollIntervalMs: 50,
@@ -131,7 +135,7 @@ function createVoiceControllerState(options: Readonly<{
           ...(options.voice?.agent ?? {}),
         },
         networkTimeoutMs: options.voice?.networkTimeoutMs ?? 15_000,
-      },
+      } },
     },
   };
 
@@ -217,8 +221,8 @@ const getState = vi.fn((): any => ({
   settings: {
     voice: {
       providerId: 'local_conversation',
-      adapters: {
-        local_conversation: {
+      providers: {
+        local_conversation: { schemaVersion: 1, config: {
           streaming: {
             enabled: true,
             // new config knobs (expected to be respected by VoiceAgentSessionController)
@@ -228,7 +232,7 @@ const getState = vi.fn((): any => ({
           },
           agent: { backend: 'daemon', transcript: { persistenceMode: 'ephemeral', epoch: 0 } },
           networkTimeoutMs: 15_000,
-        },
+        } },
       },
     },
   },
@@ -328,6 +332,15 @@ describe('VoiceAgentSessionController (streaming)', () => {
   });
 
   it('hydrates the bound target session before starting global local voice', async () => {
+    const state = createVoiceControllerState();
+    state.sessions['voice-hidden-s1'] = {
+      id: 'voice-hidden-s1',
+      active: true,
+      presence: 'online',
+      modelMode: 'default',
+      metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
+    };
+    getState.mockImplementation(() => state);
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
@@ -352,8 +365,8 @@ describe('VoiceAgentSessionController (streaming)', () => {
       settings: {
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: true,
                 turnReadPollIntervalMs: 50,
@@ -362,7 +375,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
               },
               agent: { backend: 'daemon', transcript: { persistenceMode: 'ephemeral', epoch: 0 } },
               networkTimeoutMs: 15_000,
-            },
+            } },
           },
         },
       },
@@ -370,6 +383,13 @@ describe('VoiceAgentSessionController (streaming)', () => {
         sys_voice: {
           id: 'sys_voice',
           active: true,
+          modelMode: 'default',
+          metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
+        },
+        'voice-hidden-s1': {
+          id: 'voice-hidden-s1',
+          active: true,
+          presence: 'online',
           modelMode: 'default',
           metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
         },
@@ -407,30 +427,133 @@ describe('VoiceAgentSessionController (streaming)', () => {
     expect(start).not.toHaveBeenCalled();
   });
 
-  it('restarts the daemon voice agent and retries once when the run reports execution_run_busy', async () => {
+  it('restarts the daemon voice agent after execution_run_busy without admitting a concurrent turn during recovery', async () => {
+    const retryStarted = createDeferred<void>();
+    const releaseRetry = createDeferred<void>();
     start
       .mockResolvedValueOnce({ voiceAgentId: 'busy-run' })
       .mockResolvedValueOnce({ voiceAgentId: 'fresh-run' });
     startTurnStream
       .mockRejectedValueOnce(Object.assign(new Error('Voice agent busy'), { rpcErrorCode: 'execution_run_busy' }))
-      .mockResolvedValueOnce({ streamId: 'stream-2' });
-    readTurnStream.mockResolvedValueOnce({
-      streamId: 'stream-2',
-      events: [{ t: 'done', assistantText: 'recovered', actions: [] }],
-      nextCursor: 1,
-      done: true,
-    } satisfies TurnStreamReadResult);
+      .mockImplementationOnce(async () => {
+        retryStarted.resolve();
+        await releaseRetry.promise;
+        return { streamId: 'stream-2' };
+      })
+      .mockResolvedValueOnce({ streamId: 'stream-3' });
+    readTurnStream
+      .mockResolvedValueOnce({
+        streamId: 'stream-2',
+        events: [{ t: 'done', assistantText: 'recovered', actions: [] }],
+        nextCursor: 1,
+        done: true,
+      } satisfies TurnStreamReadResult)
+      .mockResolvedValueOnce({
+        streamId: 'stream-3',
+        events: [{ t: 'done', assistantText: 'second', actions: [] }],
+        nextCursor: 1,
+        done: true,
+      } satisfies TurnStreamReadResult);
 
     const controller = createVoiceAgentSessionController();
+    const firstTurn = controller.sendTurn('s1', 'hello');
+    await retryStarted.promise;
+    const secondTurn = controller.sendTurn('s1', 'second');
+    await Promise.resolve();
+    await Promise.resolve();
 
-    await expect(controller.sendTurn('s1', 'hello')).resolves.toMatchObject({
+    expect(startTurnStream).toHaveBeenCalledTimes(2);
+    releaseRetry.resolve();
+
+    await expect(firstTurn).resolves.toMatchObject({
       assistantText: 'recovered',
+      actions: [],
+    });
+    await expect(secondTurn).resolves.toMatchObject({
+      assistantText: 'second',
       actions: [],
     });
 
     expect(stop).toHaveBeenCalledWith({ sessionId: 's1', voiceAgentId: 'busy-run' });
     expect(start).toHaveBeenCalledTimes(2);
-    expect(startTurnStream).toHaveBeenCalledTimes(2);
+    expect(startTurnStream).toHaveBeenCalledTimes(3);
+  });
+
+  it('aborts and settles the active turn before clearing its retained effect outcomes on stop', async () => {
+    const blockedRead = createDeferred<TurnStreamReadResult>();
+    startTurnStream.mockResolvedValueOnce({ streamId: 'stream-stop' });
+    readTurnStream.mockImplementationOnce(async () => await blockedRead.promise);
+    const outcomes = getRetainedLocalVoiceEffectOutcomes('s1');
+    outcomes.set('effect-stop', {
+      fingerprint: 'fingerprint-stop',
+      outcome: Promise.resolve({ t: 'sendSessionMessage', args: {}, result: { ok: true } }),
+    });
+
+    const controller = createVoiceAgentSessionController();
+    const activeTurn = trackPromise(controller.sendTurn('s1', 'hello'));
+    await vi.waitFor(() => expect(readTurnStream).toHaveBeenCalledTimes(1));
+
+    const stopping = trackPromise(controller.stop('s1'));
+    await Promise.resolve();
+    expect(stopping.isSettled()).toBe(false);
+    expect(getRetainedLocalVoiceEffectOutcomes('s1').has('effect-stop')).toBe(true);
+
+    const turnResult = await activeTurn.settled;
+    expect(turnResult.status).toBe('rejected');
+    await expect(stopping.settled).resolves.toMatchObject({ status: 'resolved' });
+    expect(getRetainedLocalVoiceEffectOutcomes('s1').size).toBe(0);
+    expect(cancelTurnStream).toHaveBeenCalledWith(expect.objectContaining({ streamId: 'stream-stop' }));
+  });
+
+  it('serializes stop admission before a send admitted later for the same session', async () => {
+    const stopStarted = createDeferred<void>();
+    const releaseStop = createDeferred<void>();
+    const operationOrder: string[] = [];
+    start
+      .mockResolvedValueOnce({ voiceAgentId: 'run-before-stop' })
+      .mockImplementationOnce(async () => {
+        operationOrder.push('later-handle-started');
+        return { voiceAgentId: 'run-after-stop' };
+      });
+    startTurnStream.mockImplementationOnce(async () => {
+      operationOrder.push('later-turn-started');
+      return { streamId: 'stream-after-stop' };
+    });
+    readTurnStream.mockResolvedValueOnce({
+      streamId: 'stream-after-stop',
+      events: [{ t: 'done', assistantText: 'after stop', actions: [] }],
+      nextCursor: 1,
+      done: true,
+    } satisfies TurnStreamReadResult);
+    stop.mockImplementationOnce(async () => {
+      operationOrder.push('stop-started');
+      stopStarted.resolve();
+      await releaseStop.promise;
+      operationOrder.push('stop-finished');
+      return { ok: true };
+    });
+
+    const controller = createVoiceAgentSessionController();
+    await controller.ensureRunning('s1');
+
+    const stopping = trackPromise(controller.stop('s1'));
+    const laterTurn = controller.sendTurn('s1', 'after stop');
+    await stopStarted.promise;
+    await flushHookEffects({ cycles: 4, turns: 4 });
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(startTurnStream).not.toHaveBeenCalled();
+    expect(operationOrder).toEqual(['stop-started']);
+
+    releaseStop.resolve();
+    await expect(stopping.settled).resolves.toMatchObject({ status: 'resolved' });
+    await expect(laterTurn).resolves.toMatchObject({ assistantText: 'after stop' });
+    expect(operationOrder).toEqual([
+      'stop-started',
+      'stop-finished',
+      'later-handle-started',
+      'later-turn-started',
+    ]);
   });
 
   it('surfaces a clear error when starting local voice on an inactive target session', async () => {
@@ -536,8 +659,9 @@ describe('VoiceAgentSessionController (streaming)', () => {
       settings: {
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          welcome: { enabled: true, mode: 'on_first_turn', templateId: null },
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: true,
                 turnReadPollIntervalMs: 50,
@@ -546,11 +670,11 @@ describe('VoiceAgentSessionController (streaming)', () => {
               },
               agent: {
                 backend: 'daemon',
-                welcome: { enabled: true, mode: 'on_first_turn', templateId: null },
+
                 transcript: { persistenceMode: 'ephemeral', epoch: 0 },
               },
               networkTimeoutMs: 15_000,
-            },
+            } },
           },
         },
       },
@@ -665,8 +789,9 @@ describe('VoiceAgentSessionController (streaming)', () => {
       settings: {
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          welcome: { enabled: true, mode: 'immediate', templateId: null },
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: true,
                 turnReadPollIntervalMs: 50,
@@ -675,11 +800,11 @@ describe('VoiceAgentSessionController (streaming)', () => {
               },
               agent: {
                 backend: 'daemon',
-                welcome: { enabled: true, mode: 'immediate', templateId: null },
+
                 transcript: { persistenceMode: 'ephemeral', epoch: 0 },
               },
               networkTimeoutMs: 15_000,
-            },
+            } },
           },
         },
       },
@@ -709,8 +834,9 @@ describe('VoiceAgentSessionController (streaming)', () => {
       settings: {
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          welcome: { enabled: true, mode: 'immediate', templateId: null },
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: true,
                 turnReadPollIntervalMs: 50,
@@ -719,7 +845,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
               },
               agent: {
                 backend: 'openai_compat',
-                welcome: { enabled: true, mode: 'immediate', templateId: null },
+
                 transcript: { persistenceMode: 'ephemeral', epoch: 0 },
                 openaiCompat: {
                   chatBaseUrl: 'http://localhost:9999',
@@ -729,7 +855,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
                 },
               },
               networkTimeoutMs: 15_000,
-            },
+            } },
           },
         },
       },
@@ -755,8 +881,9 @@ describe('VoiceAgentSessionController (streaming)', () => {
       settings: {
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          welcome: { enabled: true, mode: 'immediate', templateId: null },
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: true,
                 turnReadPollIntervalMs: 50,
@@ -767,11 +894,11 @@ describe('VoiceAgentSessionController (streaming)', () => {
               agent: {
                 backend: 'daemon',
                 prewarmOnConnect: true,
-                welcome: { enabled: true, mode: 'immediate', templateId: null },
+
                 transcript: { persistenceMode: 'ephemeral', epoch: 0 },
               },
               networkTimeoutMs: 15_000,
-            },
+            } },
           },
         },
       },
@@ -798,8 +925,9 @@ describe('VoiceAgentSessionController (streaming)', () => {
       settings: {
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          welcome: { enabled: true, mode: 'immediate', templateId: null },
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: true,
                 turnReadPollIntervalMs: 50,
@@ -810,11 +938,11 @@ describe('VoiceAgentSessionController (streaming)', () => {
               agent: {
                 backend: 'daemon',
                 prewarmOnConnect: true,
-                welcome: { enabled: true, mode: 'immediate', templateId: null },
+
                 transcript: { persistenceMode: 'ephemeral', epoch: 0 },
               },
               networkTimeoutMs: 15_000,
-            },
+            } },
           },
         },
       },
@@ -840,8 +968,8 @@ describe('VoiceAgentSessionController (streaming)', () => {
         codexBackendMode: 'acp',
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: true,
                 turnReadPollIntervalMs: 50,
@@ -855,7 +983,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
                 transcript: { persistenceMode: 'ephemeral', epoch: 0 },
               },
               networkTimeoutMs: 15_000,
-            },
+            } },
           },
         },
       },
@@ -900,8 +1028,8 @@ describe('VoiceAgentSessionController (streaming)', () => {
             shareDeviceInventory: false,
           },
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: true,
                 turnReadPollIntervalMs: 50,
@@ -913,7 +1041,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
                 transcript: { persistenceMode: 'ephemeral', epoch: 0 },
               },
               networkTimeoutMs: 15_000,
-            },
+            } },
           },
         },
       },
@@ -1132,7 +1260,11 @@ describe('VoiceAgentSessionController (streaming)', () => {
   });
 
   it('ignores non-finite or invalid streaming config values (does not short-circuit the stream loop)', async () => {
-    const { voiceSettingsDefaults } = await import('@/sync/domains/settings/voiceSettings');
+    const {
+      readLocalConversationVoiceSettings,
+      voiceSettingsDefaults,
+    } = await import('@/sync/domains/settings/voiceSettings');
+    const localConversationDefaults = readLocalConversationVoiceSettings(voiceSettingsDefaults);
 
     getState.mockImplementation(() =>
       createVoiceControllerState({
@@ -1159,7 +1291,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
     await expect(controller.sendTurn('s1', 'hello')).resolves.toMatchObject({ assistantText: 'ok' });
     expect(readTurnStream).toHaveBeenCalledWith(
       expect.objectContaining({
-        maxEvents: voiceSettingsDefaults.adapters.local_conversation.streaming.turnReadMaxEvents,
+        maxEvents: localConversationDefaults.streaming.turnReadMaxEvents,
       }),
     );
       expect(cancelTurnStream).toHaveBeenCalledTimes(0);
@@ -1228,8 +1360,8 @@ describe('VoiceAgentSessionController (streaming)', () => {
       settings: {
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: true,
                 turnReadPollIntervalMs: 50,
@@ -1238,7 +1370,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
               },
               agent: { backend: 'daemon', transcript: { persistenceMode: 'persistent', epoch: 0 } },
               networkTimeoutMs: 15_000,
-            },
+            } },
           },
         },
       },
@@ -1292,8 +1424,8 @@ describe('VoiceAgentSessionController (streaming)', () => {
       settings: {
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: true,
                 turnReadPollIntervalMs: 50,
@@ -1302,7 +1434,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
               },
               agent: { backend: 'daemon', transcript: { persistenceMode: 'ephemeral', epoch: 0 } },
               networkTimeoutMs: 15_000,
-            },
+            } },
           },
         },
       },
@@ -1346,8 +1478,8 @@ describe('VoiceAgentSessionController (streaming)', () => {
       settings: {
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: true,
                 turnReadPollIntervalMs: 50,
@@ -1356,7 +1488,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
               },
               agent: { backend: 'daemon', transcript: { persistenceMode: 'ephemeral', epoch: 0 } },
               networkTimeoutMs: 15_000,
-            },
+            } },
           },
         },
       },
@@ -1401,8 +1533,8 @@ describe('VoiceAgentSessionController (streaming)', () => {
       settings: {
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: true,
                 turnReadPollIntervalMs: 50,
@@ -1415,7 +1547,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
                 replay: { strategy: 'summary_plus_recent', recentMessagesCount: 16 },
               },
               networkTimeoutMs: 15_000,
-            },
+            } },
           },
         },
         sessionReplaySummaryRunnerV1: {
@@ -1511,8 +1643,8 @@ describe('VoiceAgentSessionController (streaming)', () => {
       settings: {
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: true,
                 turnReadPollIntervalMs: 50,
@@ -1526,7 +1658,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
                 transcript: { persistenceMode: 'persistent', epoch: 0 },
               },
               networkTimeoutMs: 15_000,
-            },
+            } },
           },
         },
       },
@@ -1566,8 +1698,8 @@ describe('VoiceAgentSessionController (streaming)', () => {
       settings: {
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: true,
                 turnReadPollIntervalMs: 50,
@@ -1581,7 +1713,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
                 transcript: { persistenceMode: 'persistent', epoch: 0 },
               },
               networkTimeoutMs: 15_000,
-            },
+            } },
           },
         },
       },
@@ -1605,8 +1737,8 @@ describe('VoiceAgentSessionController (streaming)', () => {
       settings: {
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               streaming: {
                 enabled: true,
                 turnReadPollIntervalMs: 50,
@@ -1620,7 +1752,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
                 transcript: { persistenceMode: 'persistent', epoch: 0 },
               },
               networkTimeoutMs: 15_000,
-            },
+            } },
           },
         },
       },

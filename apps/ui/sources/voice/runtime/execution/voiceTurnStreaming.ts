@@ -1,6 +1,6 @@
 import { storage } from '@/sync/domains/state/storage';
 import type { VoiceAssistantAction } from '@happier-dev/protocol';
-import type { VoiceAgentHandle } from '@/voice/agent/types';
+import type { VoiceAgentHandle, VoiceAgentSendTurnOptions } from '@/voice/agent/types';
 import {
     captureAssistantTextMessageBaseline,
     collectAssistantTextMessagesSinceBaseline,
@@ -10,8 +10,7 @@ import { clearStaleDaemonRunState } from '@/voice/agent/voiceAgentRunState';
 import { streamVoiceAgentTurn } from '@/voice/agent/streamVoiceAgentTurn';
 import { buildVoiceAgentTurnPayload } from '@/voice/agent/buildVoiceAgentTurnPayload';
 import { readPersistedVoiceConversationRuntimePublication } from '@/voice/binding/voiceConversationBindingPersistence';
-
-type SendTurnOptions = Readonly<{ onTextDelta?: (textDelta: string) => void | Promise<void>; signal?: AbortSignal }>;
+import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
 
 export function createVoiceTurnStreaming(args: Readonly<{
     getVoiceAgentHandle: (sessionId: string) => Promise<VoiceAgentHandle>;
@@ -25,7 +24,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
     sendInterruptingTextUpdate: (
         sessionId: string,
         update: string,
-        options?: SendTurnOptions,
+        options?: VoiceAgentSendTurnOptions,
     ) => Promise<Readonly<{ assistantText: string; actions: VoiceAssistantAction[] }>>;
     sendTextUpdate: (
         sessionId: string,
@@ -34,7 +33,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
     sendTurn: (
         sessionId: string,
         userText: string,
-        options?: SendTurnOptions,
+        options?: VoiceAgentSendTurnOptions,
     ) => Promise<Readonly<{ assistantText: string; actions: VoiceAssistantAction[] }>>;
 }> {
     const readDaemonRuntimePublication = (managedSessionId: string) =>
@@ -43,7 +42,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
     const sendTurnImpl = async (
         sessionId: string,
         userText: string,
-        options?: SendTurnOptions,
+        options?: VoiceAgentSendTurnOptions,
     ): Promise<Readonly<{ assistantText: string; actions: VoiceAssistantAction[] }>> => {
         let lastHandle: VoiceAgentHandle | null = null;
         let preparedPayloadText: string | null = null;
@@ -70,7 +69,8 @@ export function createVoiceTurnStreaming(args: Readonly<{
             const nextUserText = preparePayloadText();
             const transcriptBaseline = captureAssistantTextMessageBaseline(handle.rpcSessionId);
             const settings: any = storage.getState().settings;
-            const streamingEnabled = settings?.voice?.adapters?.local_conversation?.streaming?.enabled === true;
+            const localConversation = readLocalConversationSettingsFromAccountSettings(settings);
+            const streamingEnabled = localConversation.streaming.enabled === true;
             const daemonRuntimePublication =
                 handle.backend === 'daemon'
                     ? readDaemonRuntimePublication(sessionId)
@@ -78,8 +78,8 @@ export function createVoiceTurnStreaming(args: Readonly<{
             const shouldResumeStreamStart =
                 handle.backend === 'daemon'
                 && daemonRuntimePublication?.facets?.transcriptSource?.supported === true
-                && (settings?.voice?.adapters?.local_conversation?.agent?.transcript?.persistenceMode ?? 'ephemeral') === 'persistent'
-                && (settings?.voice?.adapters?.local_conversation?.agent?.resumabilityMode ?? 'replay') === 'provider_resume';
+                && localConversation.agent.transcript.persistenceMode === 'persistent'
+                && localConversation.agent.resumabilityMode === 'provider_resume';
 
             const response = streamingEnabled
                 ? await streamVoiceAgentTurn({
@@ -96,6 +96,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
                     userText: nextUserText,
                     displayUserText,
                     ...(options?.signal ? { signal: options.signal } : {}),
+                    ...(options?.userTranscript ? { userTranscript: options.userTranscript } : {}),
                 });
             const normalizedResponse = {
                 assistantText: response.assistantText,
@@ -103,7 +104,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
             };
             if (
                 normalizedResponse.assistantText.trim().length === 0
-                && ((storage.getState() as any).settings?.voice?.adapters?.local_conversation?.agent?.backend ?? 'daemon') === 'daemon'
+                && readLocalConversationSettingsFromAccountSettings((storage.getState() as any).settings).agent.backend === 'daemon'
             ) {
                 const recoveredAssistantTexts = collectAssistantTextMessagesSinceBaseline(
                     handle.rpcSessionId,
@@ -142,7 +143,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
     const sendTurn = async (
         sessionId: string,
         userText: string,
-        options?: SendTurnOptions,
+        options?: VoiceAgentSendTurnOptions,
     ): Promise<Readonly<{ assistantText: string; actions: VoiceAssistantAction[] }>> =>
         await args.runSerializedTurn(sessionId, async () => {
             const internalAbortController = new AbortController();
@@ -183,7 +184,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
     const sendInterruptingTextUpdate = async (
         sessionId: string,
         update: string,
-        options?: SendTurnOptions,
+        options?: VoiceAgentSendTurnOptions,
     ): Promise<Readonly<{ assistantText: string; actions: VoiceAssistantAction[] }>> => {
         const text = update.trim();
         if (!text) {

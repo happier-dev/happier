@@ -8,6 +8,8 @@ import type { OptionPickerProbeState } from '@/components/sessions/pickers/Optio
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { SessionModelPickerExperimentalConfirmationController } from '@/components/sessions/modelPicker/SessionModelPicker';
 import { sortItemsByFavoriteTargetKey } from '@/sync/domains/session/authoring/favoriteBackendTargets';
 import type { NewSessionAgentPickerSelection } from './buildNewSessionAgentPickerDetailContent';
 import { buildNewSessionAgentPickerResolvedOptions } from './buildNewSessionAgentPickerResolvedOptions';
@@ -33,6 +35,7 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
     selectedPath: string | null;
     selectedBackendTargetKey: string;
     selectedModelId: string;
+    selectedModelSelection?: SessionModelSelectionV1 | null;
     selectedConfigOverrides?: Readonly<Record<string, string>>;
     settings: Settings;
     refreshProbe?: OptionPickerProbeState | null;
@@ -40,12 +43,12 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
     favoriteBackendTargetKeys?: ReadonlyArray<string>;
     onSelectFavoriteModel?: (
         entry: ResolvedBackendCatalogEntry,
-        modelId: string,
+        modelSelection: SessionModelSelectionV1,
         configOverrides?: Readonly<Record<string, string>>,
     ) => void;
     onSelectFavoriteModelOptionValue?: (
         entry: ResolvedBackendCatalogEntry,
-        modelId: string,
+        modelSelection: SessionModelSelectionV1,
         configId: string,
         valueId: string,
     ) => void;
@@ -53,6 +56,7 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
     onToggleFavoriteBackendTarget?: (targetKey: string) => void;
     onRemoveFavoriteModelSelection?: (favorite: FavoriteModelSelectionV1) => void;
     onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
+    experimentalConfirmation?: SessionModelPickerExperimentalConfirmationController;
 }>;
 
 export type NewSessionAgentPickerOptionsState = Readonly<{
@@ -108,6 +112,7 @@ export function buildNewSessionAgentPickerOptions(
         onToggleFavoriteModel: params.onToggleFavoriteModel,
         onToggleFavoriteBackendTarget: params.onToggleFavoriteBackendTarget,
         onRememberAgentPickerView: params.onRememberAgentPickerView,
+        experimentalConfirmation: params.experimentalConfirmation,
     });
 
     const { available, muted, disabled } = partitionNewSessionAgentPickerOptions(resolved);
@@ -118,6 +123,7 @@ export function buildNewSessionAgentPickerOptions(
             compatibleBackendTargetKeys,
             selectedBackendTargetKey: params.selectedBackendTargetKey,
             selectedModelId: params.selectedModelId,
+            selectedModelSelection: params.selectedModelSelection,
             selectedConfigOverrides: params.selectedConfigOverrides,
             selectedMachineId: params.selectedMachineId,
             capabilityServerId: params.capabilityServerId,

@@ -101,7 +101,7 @@ describe('SessionSubagentGroup', () => {
                     }),
                 },
             }),
-            { callerSurface: 'subagent_command' },
+            { callerSurface: 'subagent_command', forceImmediate: true },
         );
     });
 

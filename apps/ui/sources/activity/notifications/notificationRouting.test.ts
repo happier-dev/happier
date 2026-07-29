@@ -62,13 +62,12 @@ describe('parseNotificationTap', () => {
 
         expect(parsed?.command).toMatchObject({
             kind: 'executeAction',
-            actionId: 'approval.request.decide',
+            actionId: 'session.permission.respond',
             defaultSessionId: 'session-1',
             payload: {
-                action: 'allow',
+                decision: 'allow',
                 sessionId: 'session-1',
                 requestId: 'request-1',
-                serverId: 'server-a',
             },
             target: {
                 serverUrl: 'https://stack.example.test',

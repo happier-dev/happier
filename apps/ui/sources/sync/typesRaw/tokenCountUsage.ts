@@ -42,14 +42,27 @@ function pickUsageNumberFromRecords(records: readonly (Record<string, unknown> |
     return null;
 }
 
+function pickContextSnapshotFromRecords(
+    records: readonly (Record<string, unknown> | null)[],
+): unknown | undefined {
+    for (const record of records) {
+        if (!record) continue;
+        if ('contextSnapshot' in record) return record.contextSnapshot;
+        if ('context_snapshot' in record) return record.context_snapshot;
+    }
+    return undefined;
+}
+
 function withContextTelemetry(usage: UsageData, records: readonly (Record<string, unknown> | null)[]): UsageData {
     const contextUsedTokens = pickUsageNumberFromRecords(records, 'context_used_tokens', 'contextUsedTokens', 'used');
     const contextWindowTokens = pickUsageNumberFromRecords(records, 'context_window_tokens', 'contextWindowTokens', 'contextWindow', 'size');
+    const contextSnapshot = pickContextSnapshotFromRecords(records);
 
     return {
         ...usage,
         ...(contextUsedTokens != null ? { context_used_tokens: contextUsedTokens } : {}),
         ...(contextWindowTokens != null ? { context_window_tokens: contextWindowTokens } : {}),
+        ...(contextSnapshot !== undefined ? { contextSnapshot } : {}),
     };
 }
 
@@ -104,6 +117,20 @@ export function extractUsageDataFromTokenCountRecord(raw: unknown): UsageData | 
         cacheCreation: pickUsageNumber(record, 'cache_creation_input_tokens', 'cache_creation'),
         cacheRead: pickUsageNumber(record, 'cache_read_input_tokens', 'cache_read', 'cached_input_tokens'),
     });
+    if (usage) return withContextTelemetry(usage, contextTelemetryRecords);
 
-    return usage ? withContextTelemetry(usage, contextTelemetryRecords) : null;
+    // Context-only token_count records (e.g. Claude's on-demand/live
+    // `getContextUsage()` snapshot) carry NO token counts — only context
+    // telemetry. Dropping them would silently lose the provider context truth
+    // (observed live 2026-07-10). Emit a zero-token usage flagged
+    // `context_only` so the reducer can merge the context fields without
+    // clobbering the previous turn's token totals.
+    const contextOnly = withContextTelemetry(
+        { input_tokens: 0, output_tokens: 0, context_only: true },
+        contextTelemetryRecords,
+    );
+    const hasContextTelemetry = 'contextSnapshot' in contextOnly
+        || 'context_used_tokens' in contextOnly
+        || 'context_window_tokens' in contextOnly;
+    return hasContextTelemetry ? contextOnly : null;
 }

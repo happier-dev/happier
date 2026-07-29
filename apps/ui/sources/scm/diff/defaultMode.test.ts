@@ -22,6 +22,20 @@ describe('resolveDefaultDiffModeForFile', () => {
         expect(mode).toBe('included');
     });
 
+    it('keeps a legacy built-in override after snapshots adopt the qualified backend id', () => {
+        const mode = resolveDefaultDiffModeForFile({
+            snapshot: {
+                ...gitSnapshot,
+                repo: { backendId: 'happier.scm.backend.git/git' },
+            },
+            backendOverrides: { git: 'included' },
+            hasIncludedDelta: true,
+            hasPendingDelta: true,
+        });
+
+        expect(mode).toBe('included');
+    });
+
     it('falls back to pending when only pending delta exists', () => {
         const mode = resolveDefaultDiffModeForFile({
             snapshot: gitSnapshot,

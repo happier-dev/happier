@@ -8,16 +8,17 @@ import type { ChatTranscriptListItem } from '@/components/sessions/transcript/ch
 import { buildTranscriptTurnUnits } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurnUnits';
 import { resolveTranscriptToolCallsCollapsedPreviewCount } from '@/sync/domains/settings/transcriptToolCallsCollapsedPreviewCount';
 import { shouldAutoExpandToolCallsGroupForShortTranscript } from '@/components/sessions/transcript/toolCalls/resolveToolCallsGroupAutoExpandPolicy';
-import { resolveTranscriptInitialFillTuning } from '@/components/sessions/transcript/scroll/resolveTranscriptInitialFillTuning';
 import {
     useTranscriptJumpTargetWindowActiveBridge,
     useTranscriptJumpWindowFacts,
 } from '@/components/sessions/transcript/viewport/jump/host/useTranscriptJumpHost';
 import {
     resolveTranscriptRenderWindowProjection,
+    type TranscriptRendererDataTarget,
     type TranscriptRenderWindowProjection,
 } from '@/components/sessions/transcript/viewport/window/resolveTranscriptRenderWindowProjection';
 import type { TranscriptTargetWindowState } from '@/components/sessions/transcript/viewport/window/transcriptTargetWindowTypes';
+import { createTranscriptWindowGapItem } from '@/components/sessions/transcript/viewport/window/transcriptWindowGapItem';
 import {
     resolveTranscriptLiveTailAnchor,
 } from '@/components/sessions/transcript/viewport/lifecycle/transcriptRowClassification';
@@ -42,14 +43,20 @@ import type {
 import {
     recordStreamingVisibleUpdateForSessionUiTelemetry,
 } from '@/sync/runtime/performance/sessionUiTelemetry';
-import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
-    isEnrichedMarkdownRuntimePreloaded,
-    preloadEnrichedMarkdownRuntime,
+    useEnrichedMarkdownRuntimeStatus,
 } from '@/components/markdown/enriched/preloadEnrichedMarkdownRuntime';
 import type { SessionOpenLatch } from '@/components/sessions/transcript/viewport/sessionOpen/sessionOpenLatch';
 import type { SessionOpenLatchEffect } from '@/components/sessions/transcript/viewport/sessionOpen/types';
 import type { EntryRestoreOwner } from '@/components/sessions/transcript/viewport/entryRestore/entryRestoreOwner';
+import type { TranscriptRendererEntryPlacementEvent } from '@/components/sessions/transcript/viewport/shell/renderer/types';
+import {
+    createEntryPresentationKey,
+    createEntryPresentationState,
+    reduceEntryPresentationState,
+    type EntryPresentationPlatform,
+} from '@/components/sessions/transcript/viewport/entryRestore/entryPresentation';
+import { useCommittedTranscriptProjectionSnapshot } from '@/components/sessions/transcript/items/useCommittedTranscriptProjectionSnapshot';
 
 type Ref<T> = { current: T };
 
@@ -58,9 +65,6 @@ export type TranscriptItemsPipelineDeps = Readonly<{
     activeThinkingMessageId: string | null;
     canonicalWindowedItemsRef: Ref<readonly ChatTranscriptListItem[]>;
     committedMessagesCount: number;
-    entrySliceWindow: Readonly<{ sessionId: string; anchorRowId: string }> | null;
-    entrySliceWindowRef: Ref<{ sessionId: string; anchorRowId: string } | null>;
-    entrySliceWithheldCountRef: Ref<number>;
     expandedToolCallsAnchorMessageIds: ReadonlySet<string>;
     forkMessageMetadataById: Readonly<Record<string, { originSessionId: string; isReadOnlyContext: boolean }>> | null;
     getMessageById?: (messageId: string) => Message | null;
@@ -69,18 +73,10 @@ export type TranscriptItemsPipelineDeps = Readonly<{
     isLoaded: boolean;
     items: ChatTranscriptListItem[];
     itemsRef: Ref<readonly ChatTranscriptListItem[]>;
-    jumpToSeq: number | null | undefined;
     latestCommittedActivityKey: string | null;
     listDataRef: Ref<readonly ChatTranscriptListItem[]>;
     listOrientation: TranscriptListOrientation;
     messagesById: Readonly<Record<string, Message>>;
-    nativeHotEdgeVisibleRowsRef: Ref<{
-        firstItemId: string | null;
-        firstSourceIndex: number | null;
-        lastItemId: string | null;
-        lastSourceIndex: number | null;
-    } | null>;
-    platformOS: string;
     preDecompositionItemsRef: Ref<ChatTranscriptListItem[]>;
     renderWindowIndexMapRef: Ref<TranscriptRenderWindowProjection<ChatTranscriptListItem>['indexMap'] | null>;
     resolveThinkingExpanded: (messageId: string) => boolean;
@@ -89,13 +85,10 @@ export type TranscriptItemsPipelineDeps = Readonly<{
     sessionActive: boolean;
     sessionId: string;
     sessionThinking: boolean;
-    setEntrySliceWindow: React.Dispatch<React.SetStateAction<{ sessionId: string; anchorRowId: string } | null>>;
+    tailContiguousFloorSeq?: number | null;
     targetWindowActiveRef: Ref<boolean>;
     targetWindowState?: TranscriptTargetWindowState;
-    transcriptNativeHotTailItemCount: number;
     transcriptToolCallsCollapsedPreviewCountSetting: unknown;
-    transcriptWebHotTailItemCount: number;
-    webHotColdCountsRef: Ref<{ coldCount: number; hotCount: number }>;
 }>;
 
 export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
@@ -104,9 +97,6 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         activeThinkingMessageId,
         canonicalWindowedItemsRef,
         committedMessagesCount,
-        entrySliceWindow,
-        entrySliceWindowRef,
-        entrySliceWithheldCountRef,
         expandedToolCallsAnchorMessageIds,
         forkMessageMetadataById,
         getMessageById: getMessageByIdOverride,
@@ -115,13 +105,10 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         isLoaded,
         items,
         itemsRef,
-        jumpToSeq,
         latestCommittedActivityKey,
         listDataRef,
         listOrientation,
         messagesById,
-        nativeHotEdgeVisibleRowsRef,
-        platformOS,
         preDecompositionItemsRef,
         renderWindowIndexMapRef,
         resolveThinkingExpanded,
@@ -130,13 +117,10 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         sessionActive,
         sessionId,
         sessionThinking,
-        setEntrySliceWindow,
+        tailContiguousFloorSeq,
         targetWindowActiveRef,
         targetWindowState,
-        transcriptNativeHotTailItemCount,
         transcriptToolCallsCollapsedPreviewCountSetting,
-        transcriptWebHotTailItemCount,
-        webHotColdCountsRef,
     } = deps;
 
     const getTurnMessageById = React.useCallback((messageId: string): Message | null => {
@@ -167,7 +151,8 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
 
     const decomposedItems = React.useMemo<ChatTranscriptListItem[]>(() => {
         return buildTranscriptTurnUnits({
-            items,
+            // Window gaps are projection output, never turn-decomposition input.
+            items: items.filter((item) => item.kind !== 'transcript-window-gap'),
             getMessageById: getTurnMessageById,
             metadataByMessageId: forkMessageMetadataById ?? undefined,
             isGroupExpanded: (toolMessageIds) => toolMessageIds.some((id) => expandedToolCallsAnchorMessageIds.has(id)),
@@ -186,55 +171,27 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         messagesById,
         sessionId,
     });
-    const projectionLiveTailAnchor = React.useMemo(() => resolveTranscriptLiveTailAnchor({
-        items: decomposedItems,
-        getMessageById: getTurnMessageById,
-        thinkingFallbackMessageId: activeThinkingMessageId,
-        turnActive: sessionThinking,
-        sessionActive,
-        latestCommittedActivityKey,
-    }), [
-        activeThinkingMessageId,
-        decomposedItems,
-        getTurnMessageById,
-        latestCommittedActivityKey,
-        sessionActive,
-        sessionThinking,
-    ]);
-    const projectionLiveTailAnchorMessageId = projectionLiveTailAnchor?.messageId ?? null;
     const renderWindowProjection = React.useMemo(() => {
         return resolveTranscriptRenderWindowProjection({
-            activeThinkingMessageId,
-            entrySliceWindow,
-            expandedToolCallsAnchorMessageIds,
+            createWindowGapItem: createTranscriptWindowGapItem,
             isSeqLoaded: jumpWindowFacts.isSeqLoaded,
+            isSeqRangeLoaded: jumpWindowFacts.isSeqRangeLoaded,
             items: decomposedItems,
-            liveTailAnchorMessageId: projectionLiveTailAnchorMessageId,
             listOrientation,
-            platformOS,
             resolveSeq: jumpWindowFacts.resolveTargetWindowItemSeq,
             sessionId,
+            tailContiguousFloorSeq: tailContiguousFloorSeq ?? null,
             targetWindowState: targetWindowState ?? jumpWindowFacts.sessionTargetWindowState,
-            transcriptNativeHotTailItemCount,
-            transcriptWebHotTailItemCount,
         });
     }, [
-        activeThinkingMessageId,
         decomposedItems,
-        entrySliceWindow,
-        expandedToolCallsAnchorMessageIds,
         jumpWindowFacts,
         listOrientation,
-        platformOS,
-        projectionLiveTailAnchorMessageId,
         sessionId,
+        tailContiguousFloorSeq,
         targetWindowState,
-        transcriptNativeHotTailItemCount,
-        transcriptWebHotTailItemCount,
     ]);
 
-    const entrySliceSourceBounds = renderWindowProjection.entrySlice.bounds;
-    entrySliceWithheldCountRef.current = renderWindowProjection.entrySlice.withheldCount;
     const targetWindowHostFacts = renderWindowProjection.targetWindow;
     const targetWindowActive = targetWindowHostFacts.targetWindowActive;
     useTranscriptJumpTargetWindowActiveBridge({
@@ -259,45 +216,18 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         sessionActive,
         sessionThinking,
     ]);
-    const transcriptHotColdSegments = renderWindowProjection.hotCold;
-    const transcriptHotColdSplitActive = transcriptHotColdSegments.active;
-    const shouldUseWebHotColdSplit = platformOS === 'web' && transcriptHotColdSplitActive;
-    const shouldUseNativeHotColdSplit = platformOS !== 'web' && transcriptHotColdSplitActive;
     const listData = renderWindowProjection.listData;
-    webHotColdCountsRef.current = {
-        coldCount: transcriptHotColdSplitActive
-            ? transcriptHotColdSegments.coldItems.length
-            : listData.length,
-        hotCount: transcriptHotColdSplitActive
-            ? transcriptHotColdSegments.hotItems.length
-            : 0,
-    };
 
-    React.useEffect(() => {
-        if (entrySliceWindow && entrySliceWindow.sessionId !== sessionId) {
-            entrySliceWindowRef.current = null;
-            setEntrySliceWindow(null);
-        }
-    }, [entrySliceWindow, entrySliceWindowRef, sessionId, setEntrySliceWindow]);
-    React.useEffect(() => {
-        if (jumpToSeq == null) return;
-        if (entrySliceWindowRef.current?.sessionId !== sessionId) return;
-        entrySliceWindowRef.current = null;
-        setEntrySliceWindow(null);
-    }, [entrySliceWindowRef, jumpToSeq, sessionId, setEntrySliceWindow]);
-
-    canonicalWindowedItemsRef.current = canonicalWindowedItems;
-    renderWindowIndexMapRef.current = renderWindowProjection.indexMap;
-    nativeHotEdgeVisibleRowsRef.current = renderWindowProjection.hotCold.nativeEdgeSlotItems.length > 0
-        ? {
-            firstItemId: renderWindowProjection.hotCold.nativeEdgeSlotItems[0]?.id ?? null,
-            firstSourceIndex: renderWindowProjection.indexMap.hotEdgeSourceIndices[0] ?? null,
-            lastItemId: renderWindowProjection.hotCold.nativeEdgeSlotItems[renderWindowProjection.hotCold.nativeEdgeSlotItems.length - 1]?.id ?? null,
-            lastSourceIndex: renderWindowProjection.indexMap.hotEdgeSourceIndices[renderWindowProjection.indexMap.hotEdgeSourceIndices.length - 1] ?? null,
-        }
-        : null;
-    itemsRef.current = displayItems;
-    listDataRef.current = listData;
+    useCommittedTranscriptProjectionSnapshot({
+        canonicalWindowedItems,
+        canonicalWindowedItemsRef,
+        displayItems,
+        itemsRef,
+        listData,
+        listDataRef,
+        renderWindowIndexMap: renderWindowProjection.indexMap,
+        renderWindowIndexMapRef,
+    });
     preDecompositionItemsRef.current = items;
     React.useEffect(() => {
         recordStreamingVisibleUpdateForSessionUiTelemetry({
@@ -337,12 +267,17 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         return item ? resolveTranscriptViewportAnchorDescriptor(item) : null;
     }, [itemsRef]);
 
-    const resolveRestoreAnchorSourceIndexFromLoadedItems = React.useCallback((anchor: TranscriptViewportAnchorIdentity): number | null => {
-        return resolveTranscriptViewportAnchorIndex({
+    const resolveRestoreAnchorRendererTargetFromLoadedItems = React.useCallback((
+        anchor: TranscriptViewportAnchorIdentity,
+    ): TranscriptRendererDataTarget | null => {
+        const displayIndex = resolveTranscriptViewportAnchorIndex({
             anchor,
             items: itemsRef.current,
         });
-    }, [itemsRef]);
+        return displayIndex == null
+            ? null
+            : renderWindowIndexMapRef.current?.resolveRendererTargetForDisplayIndex(displayIndex) ?? null;
+    }, [itemsRef, renderWindowIndexMapRef]);
 
     const resolveKindForMessageId = React.useCallback((messageId: string): string | null => {
         const state = getStorage().getState();
@@ -502,7 +437,6 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         canonicalWindowedItems,
         decomposedItems,
         displayItems,
-        entrySliceSourceBounds,
         getItemType,
         getTurnMessageById,
         getTurnMessageRevisionById,
@@ -517,22 +451,18 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         resolveNearestSurvivingViewportAnchorIndex,
         resolveNearestSurvivingViewportAnchorIndexFromItems,
         resolveRestoreAnchorIdentityFromSourceIndex,
-        resolveRestoreAnchorSourceIndexFromLoadedItems,
+        resolveRestoreAnchorRendererTargetFromLoadedItems,
         resolveSeqForMessageId,
         resolveSeqForViewportAnchor,
         resolveTargetWindowItemSeq: jumpWindowFacts.resolveTargetWindowItemSeq,
         resolveToolCallMessagesForIds,
-        shouldUseNativeHotColdSplit,
-        shouldUseWebHotColdSplit,
         targetWindowActive,
         targetWindowHostFacts,
-        transcriptHotColdSegments,
     }), [
         buildRowShellSignature,
         canonicalWindowedItems,
         decomposedItems,
         displayItems,
-        entrySliceSourceBounds,
         getItemType,
         getTurnMessageById,
         getTurnMessageRevisionById,
@@ -547,15 +477,12 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         resolveNearestSurvivingViewportAnchorIndex,
         resolveNearestSurvivingViewportAnchorIndexFromItems,
         resolveRestoreAnchorIdentityFromSourceIndex,
-        resolveRestoreAnchorSourceIndexFromLoadedItems,
+        resolveRestoreAnchorRendererTargetFromLoadedItems,
         resolveSeqForMessageId,
         resolveSeqForViewportAnchor,
         resolveToolCallMessagesForIds,
-        shouldUseNativeHotColdSplit,
-        shouldUseWebHotColdSplit,
         targetWindowActive,
         targetWindowHostFacts,
-        transcriptHotColdSegments,
         jumpWindowFacts.resolveTargetWindowItemSeq,
     ]);
 }
@@ -574,9 +501,7 @@ export type TranscriptToolAutoExpandEffectDeps = Readonly<{
     jumpToSeq: number | null | undefined;
     markAutoExpandedToolCallsGroups: (sessionId: string) => void;
     maxTurnEntriesPerListItem: number;
-    pinToBottom: (reason: 'content-size-change') => unknown;
     preDecompositionItemsRef: Ref<readonly ChatTranscriptListItem[]>;
-    sessionEntryViewportRef: Ref<{ shouldFollowBottom?: boolean | null } | null>;
     sessionId: string;
     transcriptToolCallsCollapsedPreviewCountSetting: unknown;
 }>;
@@ -590,9 +515,7 @@ export function useTranscriptToolAutoExpandEffect(deps: TranscriptToolAutoExpand
         jumpToSeq,
         markAutoExpandedToolCallsGroups,
         maxTurnEntriesPerListItem,
-        pinToBottom,
         preDecompositionItemsRef,
-        sessionEntryViewportRef,
         sessionId,
         transcriptToolCallsCollapsedPreviewCountSetting,
     } = deps;
@@ -653,73 +576,16 @@ export function useTranscriptToolAutoExpandEffect(deps: TranscriptToolAutoExpand
         const expanded = tryAutoExpandNewestToolCallsGroup();
         if (!expanded) return;
         markAutoExpandedToolCallsGroups(sessionId);
-        fireAndForget((async () => {
-            await Promise.resolve();
-            await Promise.resolve();
-            if (sessionEntryViewportRef.current?.shouldFollowBottom === false) return;
-            pinToBottom('content-size-change');
-        })(), { tag: 'ChatList.autoExpandToolCallsGroup' });
     });
-}
-
-export type TranscriptEntrySliceRevealDeps = Readonly<{
-    armNativeCommit: (budgetMs: number) => void;
-    beginNativeTransaction: () => boolean;
-    entrySliceWindowRef: Ref<{ sessionId: string; anchorRowId: string } | null>;
-    entrySliceWithheldCountRef: Ref<number>;
-    sessionId: string;
-    setEntrySliceWindow: React.Dispatch<React.SetStateAction<{ sessionId: string; anchorRowId: string } | null>>;
-    transcriptInitialFillBudgetMs: number | undefined;
-    transcriptInitialFillMaxNoProgressLoads: number | undefined;
-}>;
-
-export function useTranscriptEntrySliceReveal(deps: TranscriptEntrySliceRevealDeps): () => number {
-    const {
-        armNativeCommit,
-        beginNativeTransaction,
-        entrySliceWindowRef,
-        entrySliceWithheldCountRef,
-        sessionId,
-        setEntrySliceWindow,
-        transcriptInitialFillBudgetMs,
-        transcriptInitialFillMaxNoProgressLoads,
-    } = deps;
-    return React.useCallback((): number => {
-        const sliceWindow = entrySliceWindowRef.current;
-        if (!sliceWindow || sliceWindow.sessionId !== sessionId) return 0;
-        const withheldCount = entrySliceWithheldCountRef.current;
-        if (withheldCount <= 0) {
-            entrySliceWindowRef.current = null;
-            setEntrySliceWindow(null);
-            return 0;
-        }
-        entrySliceWindowRef.current = null;
-        setEntrySliceWindow(null);
-        if (beginNativeTransaction()) {
-            const { budgetMs } = resolveTranscriptInitialFillTuning({
-                transcriptInitialFillBudgetMs,
-                transcriptInitialFillMaxNoProgressLoads,
-            });
-            armNativeCommit(budgetMs);
-        }
-        return withheldCount;
-    }, [
-        armNativeCommit,
-        beginNativeTransaction,
-        entrySliceWindowRef,
-        entrySliceWithheldCountRef,
-        sessionId,
-        setEntrySliceWindow,
-        transcriptInitialFillBudgetMs,
-        transcriptInitialFillMaxNoProgressLoads,
-    ]);
 }
 
 export type TranscriptFirstPaintStateDeps = Readonly<{
     applySessionOpenLatchEffectsRef: Ref<(effects: readonly SessionOpenLatchEffect[]) => void>;
     currentSessionIdRef: Ref<string>;
+    entryAnchorForRender: SessionViewportAnchorSnapshot | null;
     entryRestoreOwner: EntryRestoreOwner;
     firstListPaintObserved: boolean;
+    initialRichContentPresentationReady?: boolean;
     isLoaded: boolean;
     isWarmKeepAliveInstance: boolean;
     itemCount: number;
@@ -739,15 +605,16 @@ export type TranscriptFirstPaintStateDeps = Readonly<{
     sessionOpenLatch: SessionOpenLatch;
     transcriptInitialFillBudgetMs: number;
     transcriptMountSettleQuiescentWindowMs: number;
-    usesNativeFlashListBottomMaintenance: boolean;
 }>;
 
 export function useTranscriptFirstPaintState(deps: TranscriptFirstPaintStateDeps) {
     const {
         applySessionOpenLatchEffectsRef,
         currentSessionIdRef,
+        entryAnchorForRender,
         entryRestoreOwner,
         firstListPaintObserved,
+        initialRichContentPresentationReady = true,
         isLoaded,
         isWarmKeepAliveInstance,
         itemCount,
@@ -767,31 +634,85 @@ export function useTranscriptFirstPaintState(deps: TranscriptFirstPaintStateDeps
         sessionOpenLatch,
         transcriptInitialFillBudgetMs,
         transcriptMountSettleQuiescentWindowMs,
-        usesNativeFlashListBottomMaintenance,
     } = deps;
-    const [webMarkdownRuntimeReady, setWebMarkdownRuntimeReady] = React.useState(isEnrichedMarkdownRuntimePreloaded);
-    React.useEffect(() => {
-        if (platformOS !== 'web') return undefined;
-        if (isEnrichedMarkdownRuntimePreloaded()) {
-            setWebMarkdownRuntimeReady(true);
-            return undefined;
+    const entryPresentationPlatform: EntryPresentationPlatform | null =
+        platformOS === 'web'
+            ? 'web'
+            : platformOS === 'ios' || platformOS === 'android'
+                ? 'native'
+                : null;
+    const entryPresentationKey =
+        entryPresentationPlatform != null &&
+        !jumpToSeqActive &&
+        entryAnchorForRender != null
+            ? createEntryPresentationKey({
+                platform: entryPresentationPlatform,
+                sessionId,
+            })
+            : null;
+    const currentEntryPresentationKeyRef = React.useRef(entryPresentationKey);
+    currentEntryPresentationKeyRef.current = entryPresentationKey;
+    const [entryPresentationState, setEntryPresentationState] = React.useState(
+        () => createEntryPresentationState(entryPresentationKey),
+    );
+    const transitionEntryPresentation = React.useCallback((
+        event: Parameters<typeof reduceEntryPresentationState>[1],
+    ) => {
+        setEntryPresentationState((previous) => {
+            const currentKey = currentEntryPresentationKeyRef.current;
+            const current = previous.key === currentKey
+                ? previous
+                : createEntryPresentationState(currentKey);
+            return reduceEntryPresentationState(current, event);
+        });
+    }, []);
+    const onEntryPlacementEvent = React.useCallback((
+        event: TranscriptRendererEntryPlacementEvent,
+    ) => {
+        const currentKey = currentEntryPresentationKeyRef.current;
+        if (currentKey !== createEntryPresentationKey({
+            platform: event.platform,
+            sessionId: event.dataKey,
+        })) return;
+        if (event.type === 'started') {
+            transitionEntryPresentation({ type: 'renderer-started' });
+            return;
         }
-        let cancelled = false;
-        const preload = preloadEnrichedMarkdownRuntime();
-        fireAndForget(preload, { tag: 'ChatList.webMarkdownRuntimeFirstPaint' });
-        preload.then(
-            () => {
-                if (!cancelled) setWebMarkdownRuntimeReady(true);
-            },
-            () => {
-                if (!cancelled) setWebMarkdownRuntimeReady(true);
-            },
-        );
-        return () => {
-            cancelled = true;
-        };
-    }, [platformOS]);
+        transitionEntryPresentation({
+            type: event.outcome === 'settled'
+                ? 'renderer-settled'
+                : 'renderer-fallback',
+        });
+    }, [transitionEntryPresentation]);
+    const recordEntryOwnerOutcome = React.useCallback((params: Readonly<{
+        outcome: 'confirmed' | 'fallback';
+        sessionId: string;
+    }>) => {
+        const currentKey = currentEntryPresentationKeyRef.current;
+        if (
+            currentKey == null
+            || entryPresentationPlatform == null
+            || currentKey !== createEntryPresentationKey({
+                platform: entryPresentationPlatform,
+                sessionId: params.sessionId,
+            })
+        ) return;
+        transitionEntryPresentation({
+            type: params.outcome === 'confirmed'
+                ? 'entry-confirmed'
+                : 'entry-fallback',
+        });
+    }, [entryPresentationPlatform, transitionEntryPresentation]);
+    const effectiveEntryPresentationState =
+        entryPresentationState.key === entryPresentationKey
+            ? entryPresentationState
+            : createEntryPresentationState(entryPresentationKey);
+    const showEntryPlacementPlaceholder =
+        entryPresentationKey != null &&
+        !effectiveEntryPresentationState.released;
+    const webMarkdownRuntimeStatus = useEnrichedMarkdownRuntimeStatus();
     const showNativeFirstPaintPlaceholder =
+        entryPresentationKey == null &&
         platformOS !== 'web' &&
         sessionOpenLatch.shouldShowNativeFirstPaintPlaceholder({
             firstListPaintObserved,
@@ -808,29 +729,103 @@ export function useTranscriptFirstPaintState(deps: TranscriptFirstPaintStateDeps
             nativeViewportPaintObserved,
             pinThresholdPx,
             sessionId,
-            usesNativeFlashListBottomMaintenance,
         });
     const showWebMarkdownRuntimeFirstPaintPlaceholder =
         platformOS === 'web' &&
         isLoaded &&
         itemCount > 0 &&
-        !firstListPaintObserved &&
-        !webMarkdownRuntimeReady;
-    const showRouteHydrationFirstPaintPlaceholder =
+        webMarkdownRuntimeStatus === 'pending';
+    const showWebLegendFirstPaintPlaceholder =
+        entryPresentationKey == null &&
+        platformOS === 'web' &&
+        (!isLoaded || itemCount > 0) &&
+        !firstListPaintObserved;
+    const showInitialRichContentPresentationPlaceholder =
+        platformOS === 'web' &&
+        isLoaded &&
+        itemCount > 0 &&
+        !initialRichContentPresentationReady;
+    const routeHydrationCoverPending =
         routeHydrationPending &&
         isLoaded &&
         itemCount > 0;
+    // Whether this entry has already had painted rows revealed on screen. Every remaining cover
+    // fact above needs `isLoaded`, so on a warm/SWR open they all arm one or more renders AFTER
+    // the cached rows painted and this hook uncovered them; without this record they would put
+    // the placeholder back over content the reader is looking at. Covering a first paint is a
+    // loading state; covering rows the reader is already looking at is a blink, which is the
+    // defect the placeholder exists to prevent.
+    //
+    // The record is written only from a COMMITTED render, so a superseded intermediate render
+    // cannot claim a reveal the reader never saw; that is what keeps a native cold open covered
+    // while its rows paint at A and the entry placement moves them to B.
+    //
+    // It is scoped to the session ENTRY, exactly like every other entry fact here: the session id
+    // changing drops it, and so does an entry re-arm on an unchanged session id — jump -> return,
+    // bottom <-> anchored — through `resetFirstPaintRevealRecordForSessionEntry`, the member this
+    // record contributes to the entry-reset family that also clears the native reveal facts. Each
+    // drop bumps a generation, so a commit that observed the PREVIOUS entry's reveal cannot write
+    // it back after the reset (the entry re-arm runs in a layout effect, ahead of this record's
+    // own passive write for that same commit).
+    const revealedPaintedContentRef = React.useRef<Readonly<{
+        generation: number;
+        revealed: boolean;
+        sessionId: string;
+    }>>({ generation: 0, revealed: false, sessionId });
+    if (revealedPaintedContentRef.current.sessionId !== sessionId) {
+        revealedPaintedContentRef.current = {
+            generation: revealedPaintedContentRef.current.generation + 1,
+            revealed: false,
+            sessionId,
+        };
+    }
+    const resetFirstPaintRevealRecordForSessionEntry = React.useCallback(() => {
+        revealedPaintedContentRef.current = {
+            generation: revealedPaintedContentRef.current.generation + 1,
+            revealed: false,
+            sessionId: revealedPaintedContentRef.current.sessionId,
+        };
+    }, []);
+    const renderedRevealRecordGeneration = revealedPaintedContentRef.current.generation;
+    const paintedContentRevealed = revealedPaintedContentRef.current.revealed;
+    const showRouteHydrationFirstPaintPlaceholder =
+        !paintedContentRevealed && routeHydrationCoverPending;
     const showFirstPaintPlaceholder =
-        showNativeFirstPaintPlaceholder ||
-        showWebMarkdownRuntimeFirstPaintPlaceholder ||
-        showRouteHydrationFirstPaintPlaceholder;
+        !paintedContentRevealed &&
+        (showNativeFirstPaintPlaceholder ||
+            showWebMarkdownRuntimeFirstPaintPlaceholder ||
+            showWebLegendFirstPaintPlaceholder ||
+            showInitialRichContentPresentationPlaceholder ||
+            routeHydrationCoverPending ||
+            showEntryPlacementPlaceholder);
+    // A reveal only counts once the list has reported its paint and rows exist: that is the
+    // evidence the reader can actually see transcript content rather than an empty viewport.
+    const revealedPaintedContent =
+        !showFirstPaintPlaceholder && firstListPaintObserved && itemCount > 0;
+    // Deliberately unconditioned: an entry reset can drop the record while `revealedPaintedContent`
+    // and the session id both stay unchanged, and a dependency-gated effect would then never write
+    // the new entry's own reveal back. The generation check makes the write belong to the entry the
+    // render observed, so a commit superseded by a reset cannot restore a stale reveal.
+    React.useEffect(() => {
+        if (!revealedPaintedContent) return;
+        const record = revealedPaintedContentRef.current;
+        if (record.revealed || record.generation !== renderedRevealRecordGeneration) return;
+        revealedPaintedContentRef.current = { ...record, revealed: true };
+    });
+    const canCloseInitialRichContentDiscovery =
+        platformOS === 'web' &&
+        isLoaded &&
+        itemCount > 0 &&
+        firstListPaintObserved &&
+        webMarkdownRuntimeStatus !== 'pending' &&
+        !routeHydrationPending &&
+        !showEntryPlacementPlaceholder;
     const nativeFirstPaintReleasedWithoutListLoad =
         platformOS !== 'web' &&
         (nativeMountSettleStable || nativeMountSettleDeadlineReached);
 
     React.useEffect(() => {
         if (platformOS === 'web') return;
-        if (!usesNativeFlashListBottomMaintenance) return;
         if (!isLoaded) return;
         if (itemCount <= 0) return;
         if (nativeViewportPaintObservedRef.current) return;
@@ -868,11 +863,14 @@ export function useTranscriptFirstPaintState(deps: TranscriptFirstPaintStateDeps
         sessionOpenLatch,
         transcriptInitialFillBudgetMs,
         transcriptMountSettleQuiescentWindowMs,
-        usesNativeFlashListBottomMaintenance,
     ]);
 
     return {
+        canCloseInitialRichContentDiscovery,
         nativeFirstPaintReleasedWithoutListLoad,
+        onEntryPlacementEvent,
+        recordEntryOwnerOutcome,
+        resetFirstPaintRevealRecordForSessionEntry,
         showFirstPaintPlaceholder,
         showRouteHydrationFirstPaintPlaceholder,
     };

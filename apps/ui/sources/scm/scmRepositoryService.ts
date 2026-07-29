@@ -504,6 +504,7 @@ export class ScmRepositoryService {
     }
 
     async fetchSnapshotForMachinePath(input: Readonly<{
+        serverId?: string | null;
         machineId: string;
         path: string;
         includeWorktreeStatus?: boolean;
@@ -516,10 +517,13 @@ export class ScmRepositoryService {
         const cacheNamespaceKey = this.applyStatusCacheNamespace(request.repoIdentityKey, includeWorktreeStatus);
         return await this.fetchSnapshotForRepoIdentity(cacheNamespaceKey, async () => {
             const fetchedAt = Date.now();
-            const response = await machineScmStatusSnapshot(request.machineId, {
+            const snapshotRequest = {
                 cwd: request.resolvedPath,
                 ...(includeWorktreeStatus ? { includeWorktreeStatus: true } : {}),
-            });
+            };
+            const response = input.serverId
+                ? await machineScmStatusSnapshot(request.machineId, snapshotRequest, { serverId: input.serverId })
+                : await machineScmStatusSnapshot(request.machineId, snapshotRequest);
             const projectKey = resolveCanonicalScmProjectKey({
                 fallbackProjectKey: request.repoIdentityKey,
                 machineId: request.machineId,

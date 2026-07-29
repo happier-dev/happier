@@ -37,7 +37,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
     });
 });
 
-const fetchSnapshotForMachinePathSpy = vi.fn<(input: { machineId: string; path: string }) => Promise<any>>(async () => ({
+const fetchSnapshotForMachinePathSpy = vi.fn<(input: { machineId: string; path: string; serverId?: string }) => Promise<any>>(async () => ({
     fetchedAt: Date.now(),
     projectKey: 'm1:/repo',
     repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: null },
@@ -85,7 +85,7 @@ describe('useWorkspaceScmSnapshotController', () => {
         }));
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        expect(fetchSnapshotForMachinePathSpy).toHaveBeenCalledWith({ machineId: 'm1', path: '/repo' });
+        expect(fetchSnapshotForMachinePathSpy).toHaveBeenCalledWith({ serverId: 'srv1', machineId: 'm1', path: '/repo' });
         expect(updateWorkspaceScmSnapshotSpy).toHaveBeenCalledTimes(1);
         expect(updateWorkspaceScmSnapshotSpy.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
             serverId: 'srv1',

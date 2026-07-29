@@ -13,7 +13,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -79,7 +79,7 @@ export type ValueRefEditorModalProps = CustomModalInjectedProps & Readonly<{
 export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const [liveSecrets] = useSettingMutable('secrets');
+    const liveSecrets = useSetting('secrets');
 
     const initialSource: ValueRefSource = props.initialValueRef.t === 'savedSecret' ? 'savedSecret' : 'literal';
 

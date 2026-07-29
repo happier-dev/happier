@@ -1,8 +1,21 @@
 import {
     ExternalSessionTakeoverInputV1Schema,
+    ExternalSessionOperationActionResponseV1Schema,
+    ExternalSessionOperationCancelInputV1Schema,
+    ExternalSessionOperationDiscardInputV1Schema,
+    ExternalSessionOperationResumeInputV1Schema,
+    ExternalSessionOperationRetryInputV1Schema,
+    ExternalSessionOperationStatusInputV1Schema,
+    ExternalSessionMaterializeStartInputV1Schema,
+    ExternalSessionTakeoverStartInputV1Schema,
+    type ExternalSessionOperationActionResponseV1,
+    type ExternalSessionOperationReferenceV1,
+    type ExternalSessionMaterializeStartInputV1,
+    type ExternalSessionTakeoverStartInputV1,
     type ExternalSessionTakeoverInputV1,
 } from '@happier-dev/protocol/sessions';
 import {
+    decodeBase64,
     ExternalSessionAttachRequestSchema,
     ExternalSessionAttachResponseSchema,
     ExternalSessionDetachRequestSchema,
@@ -13,7 +26,6 @@ import {
     ExternalSessionLinkEnsureResponseSchema,
     ExternalSessionStatusGetRequestSchema,
     ExternalSessionStatusGetResponseSchema,
-    ExternalSessionTakeoverPersistResponseSchema,
     ExternalSessionTakeoverResponseSchema,
     ExternalSessionsCandidatesListRequestSchema,
     ExternalSessionsCandidatesListResponseSchema,
@@ -21,6 +33,8 @@ import {
     ExternalSessionTranscriptPageResponseSchema,
     ExternalSessionTranscriptReadAfterRequestSchema,
     ExternalSessionTranscriptReadAfterResponseSchema,
+    ExternalSessionTranscriptRefreshReadAfterRequestV1Schema,
+    ExternalSessionTranscriptRefreshReadAfterResponseV1Schema,
     type ExternalSessionAttachRequest,
     type ExternalSessionAttachResponse,
     type ExternalSessionDetachRequest,
@@ -31,9 +45,6 @@ import {
     type ExternalSessionLinkEnsureResponse,
     type ExternalSessionStatusGetRequest,
     type ExternalSessionStatusGetResponse,
-    type ExternalSessionTakeoverPersistRequest,
-    type ExternalSessionTakeoverPersistResponse,
-    type ExternalSessionTakeoverRequest,
     type ExternalSessionTakeoverResponse,
     type ExternalSessionsCandidatesListRequest,
     type ExternalSessionsCandidatesListResponse,
@@ -41,8 +52,11 @@ import {
     type ExternalSessionTranscriptPageResponse,
     type ExternalSessionTranscriptReadAfterRequest,
     type ExternalSessionTranscriptReadAfterResponse,
+    type ExternalSessionTranscriptRefreshReadAfterRequestV1,
+    type ExternalSessionTranscriptRefreshReadAfterResponseV1,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 import type { ZodType } from 'zod';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -51,10 +65,36 @@ import { readReplacementAwareMachineRpcTarget } from './machineRpcTarget';
 type MachineExternalSessionsOpts = Readonly<{
     serverId?: string | null;
     timeoutMs?: number | null;
+    signal?: AbortSignal;
 }>;
+
+type ExternalSessionTakeoverRequestWithoutForceStop = Readonly<{
+    machineId: string;
+    sessionId: string;
+}>;
+type ExternalSessionTakeoverOperationRequest = Readonly<{
+    machineId: string;
+}> & ExternalSessionTakeoverStartInputV1;
+type ExternalSessionMaterializeOperationRequest = Readonly<{
+    machineId: string;
+}> & ExternalSessionMaterializeStartInputV1;
+type MachineExternalSessionOperationRequest = Readonly<{
+    machineId: string;
+}> & ExternalSessionOperationReferenceV1;
 
 function throwUnsupportedResponse(method: string): never {
     throw new Error(`Unsupported response from machine RPC (${method})`);
+}
+
+function mapReleasedExternalSessionResponseToCanonical(response: unknown): unknown {
+    if (!response || typeof response !== 'object' || Array.isArray(response)) return response;
+    const record = response as Record<string, unknown>;
+    if (record.ok !== false || record.errorCode !== 'provider_unavailable') return response;
+    // cli-v0.2.1, cli-v0.2.2-preview.1775586717.26498, and the inspected
+    // remote-dev predecessor use the provider-named literal. Keep that spelling
+    // at the action-specific fallback boundary until those daemon targets and
+    // rollback/coexistence directions are unsupported.
+    return { ...record, errorCode: 'agent_unavailable' };
 }
 
 async function callExternalSessionMachineRpc<Request, Response>(params: Readonly<{
@@ -63,6 +103,11 @@ async function callExternalSessionMachineRpc<Request, Response>(params: Readonly
     input: Request;
     requestSchema: ZodType<Request>;
     responseSchema: ZodType<Response>;
+    legacy?: Readonly<{
+        method: string;
+        input: unknown;
+        beforeCall?: () => void;
+    }>;
     opts?: MachineExternalSessionsOpts;
 }>): Promise<Response> {
     const payload = params.requestSchema.parse(params.input);
@@ -70,18 +115,137 @@ async function callExternalSessionMachineRpc<Request, Response>(params: Readonly
     if (!routeTarget) {
         throw new Error(`Machine RPC target is unavailable (${params.method})`);
     }
-    const response = await machineRpcWithServerScope<unknown, Request>({
-        machineId: routeTarget.machineId,
-        serverId: params.opts?.serverId,
-        timeoutMs: params.opts?.timeoutMs ?? undefined,
-        method: params.method,
-        payload,
-    });
+    let response: unknown;
+    try {
+        response = await machineRpcWithServerScope<unknown, Request>({
+            machineId: routeTarget.machineId,
+            serverId: params.opts?.serverId,
+            timeoutMs: params.opts?.timeoutMs ?? undefined,
+            ...(params.opts?.signal ? { signal: params.opts.signal } : {}),
+            method: params.method,
+            payload,
+        });
+    } catch (error) {
+        // cli-v0.2.1 and cli-v0.2.2-preview.1775586717.26498 expose only
+        // daemon.directSessions.*. METHOD_NOT_FOUND proves the canonical handler
+        // was not invoked, so retrying the action-specific legacy method cannot
+        // duplicate an effect. Timeouts and ambiguous/domain failures never retry.
+        if (!params.legacy || !isRpcMethodNotFoundError(error)) {
+            throw error;
+        }
+        params.legacy.beforeCall?.();
+        response = await machineRpcWithServerScope<unknown, unknown>({
+            machineId: routeTarget.machineId,
+            serverId: params.opts?.serverId,
+            timeoutMs: params.opts?.timeoutMs ?? undefined,
+            ...(params.opts?.signal ? { signal: params.opts.signal } : {}),
+            method: params.legacy.method,
+            payload: params.legacy.input,
+        });
+        response = mapReleasedExternalSessionResponseToCanonical(response);
+    }
     const parsed = params.responseSchema.safeParse(response);
     if (!parsed.success) {
         throwUnsupportedResponse(params.method);
     }
     return parsed.data;
+}
+
+function mapCanonicalAgentIdentityToReleasedProviderIdentity<
+    Input extends Readonly<{ agentId: string }>,
+>(input: Input): Omit<Input, 'agentId'> & Readonly<{ providerId: string }> {
+    const { agentId, ...rest } = input;
+    return { ...rest, providerId: agentId };
+}
+
+function mapRuntimeDescriptorToReleasedShape(value: unknown): unknown {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const record = value as Record<string, unknown>;
+    if (typeof record.agentId !== 'string' || !record.agent || typeof record.agent !== 'object' || Array.isArray(record.agent)) {
+        return value;
+    }
+    const { agentId, agent, ...descriptorRest } = record;
+    const { agentExtra, ...agentRest } = agent as Record<string, unknown>;
+    return {
+        ...descriptorRest,
+        providerId: agentId,
+        provider: {
+            ...agentRest,
+            ...(agentExtra === undefined ? {} : { providerExtra: agentExtra }),
+        },
+    };
+}
+
+function mapLinkEnsureToReleasedShape(input: ExternalSessionLinkEnsureRequest): unknown {
+    const { runtimeDescriptorV1, ...rest } = mapCanonicalAgentIdentityToReleasedProviderIdentity(input);
+    return {
+        ...rest,
+        ...(runtimeDescriptorV1 === undefined
+            ? {}
+            : { runtimeDescriptor: mapRuntimeDescriptorToReleasedShape(runtimeDescriptorV1) }),
+    };
+}
+
+const EXTERNAL_SESSION_CURSOR_PREFIX = 'happier_external_cursor_v1:';
+
+class ExternalSessionCursorResetRequiredError extends Error {
+    readonly code = 'external_session_cursor_reset_required' as const;
+
+    constructor() {
+        super('Codex transcript cursor reset required before released-daemon fallback');
+        this.name = 'ExternalSessionCursorResetRequiredError';
+    }
+}
+
+function isCurrentRawCodexTranscriptCursor(cursor: string): boolean {
+    try {
+        const decoded = JSON.parse(new TextDecoder().decode(decodeBase64(cursor, 'base64url'))) as unknown;
+        if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return false;
+        const record = decoded as Record<string, unknown>;
+        return (
+            (
+                (record.v === 4 || record.v === 6 || record.v === 7)
+                && (
+                    record.kind === 'codexForwardStreamVector'
+                    || record.kind === 'codexBackwardStreamVector'
+                )
+            )
+            || (
+                record.v === 5
+                && (
+                    record.kind === 'codexForwardStreamVector'
+                    || record.kind === 'codexBackwardStreamVector'
+                )
+            )
+            || (
+                record.v === 3
+                && record.kind === 'codexBackwardStreamVector'
+            )
+        );
+    } catch {
+        return false;
+    }
+}
+
+function assertReleasedDaemonAcceptsCodexTranscriptCursor(
+    input: Readonly<{ agentId: string; cursor?: string | null }>,
+): void {
+    if (input.agentId !== 'codex' || !input.cursor) return;
+
+    // Current daemons wrap newly written leaf cursors in a host-owned envelope.
+    // cli-v0.2.1 and the matching preview cannot decode that envelope; paging
+    // silently restarts from newest, while read-after returns only its legacy
+    // truncated shape rather than the current typed outcome. Raw v4/v6 and
+    // anchored v5/v7 leaf cursors cover persisted cursors written before host
+    // qualification. The inspected remote-dev predecessor's backward v3 also
+    // cannot be sent to a released daemon because method fallback cannot
+    // identify the daemon revision.
+    if (
+        input.cursor.startsWith(EXTERNAL_SESSION_CURSOR_PREFIX)
+        || isCurrentRawCodexTranscriptCursor(input.cursor)
+    ) {
+        throw new ExternalSessionCursorResetRequiredError();
+    }
 }
 
 export async function machineExternalSessionsCandidatesList(
@@ -94,6 +258,10 @@ export async function machineExternalSessionsCandidatesList(
         input,
         requestSchema: ExternalSessionsCandidatesListRequestSchema,
         responseSchema: ExternalSessionsCandidatesListResponseSchema,
+        legacy: {
+            method: RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST_LEGACY,
+            input: mapCanonicalAgentIdentityToReleasedProviderIdentity(input),
+        },
         opts,
     });
 }
@@ -108,6 +276,10 @@ export async function machineExternalSessionLinkEnsure(
         input,
         requestSchema: ExternalSessionLinkEnsureRequestSchema,
         responseSchema: ExternalSessionLinkEnsureResponseSchema,
+        legacy: {
+            method: RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE_LEGACY,
+            input: mapLinkEnsureToReleasedShape(input),
+        },
         opts,
     });
 }
@@ -122,6 +294,10 @@ export async function machineExternalSessionAttach(
         input,
         requestSchema: ExternalSessionAttachRequestSchema,
         responseSchema: ExternalSessionAttachResponseSchema,
+        legacy: {
+            method: RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH_LEGACY,
+            input: mapCanonicalAgentIdentityToReleasedProviderIdentity(input),
+        },
         opts,
     });
 }
@@ -136,6 +312,10 @@ export async function machineExternalSessionDetach(
         input,
         requestSchema: ExternalSessionDetachRequestSchema,
         responseSchema: ExternalSessionDetachResponseSchema,
+        legacy: {
+            method: RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH_LEGACY,
+            input,
+        },
         opts,
     });
 }
@@ -144,12 +324,40 @@ export async function machineExternalSessionFollowPolicySet(
     input: ExternalSessionFollowPolicySetRequest,
     opts?: MachineExternalSessionsOpts,
 ): Promise<ExternalSessionFollowPolicySetResponse> {
+    if (input.enabled) {
+        try {
+            return await callExternalSessionMachineRpc({
+                machineId: input.machineId,
+                method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET,
+                input,
+                requestSchema: ExternalSessionFollowPolicySetRequestSchema,
+                responseSchema: ExternalSessionFollowPolicySetResponseSchema,
+                opts,
+            });
+        } catch (error) {
+            if (!isRpcMethodNotFoundError(error)) throw error;
+            // The inspected predecessor emits transcript-bearing raw deltas,
+            // which this client intentionally cannot consume. A legacy method
+            // name is not a compatible follow data plane, so fail before the
+            // predecessor can persist a policy that would never deliver.
+            return {
+                ok: false,
+                errorCode: 'agent_unavailable',
+                error: 'background_follow_not_supported',
+            };
+        }
+    }
+
     return callExternalSessionMachineRpc({
         machineId: input.machineId,
-        method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_FOLLOW_POLICY_SET,
+        method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET,
         input,
         requestSchema: ExternalSessionFollowPolicySetRequestSchema,
         responseSchema: ExternalSessionFollowPolicySetResponseSchema,
+        legacy: {
+            method: RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET_LEGACY,
+            input: mapCanonicalAgentIdentityToReleasedProviderIdentity(input),
+        },
         opts,
     });
 }
@@ -164,6 +372,10 @@ export async function machineExternalSessionStatusGet(
         input,
         requestSchema: ExternalSessionStatusGetRequestSchema,
         responseSchema: ExternalSessionStatusGetResponseSchema,
+        legacy: {
+            method: RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET_LEGACY,
+            input: mapCanonicalAgentIdentityToReleasedProviderIdentity(input),
+        },
         opts,
     });
 }
@@ -178,6 +390,11 @@ export async function machineExternalSessionTranscriptPage(
         input,
         requestSchema: ExternalSessionTranscriptPageRequestSchema,
         responseSchema: ExternalSessionTranscriptPageResponseSchema,
+        legacy: {
+            method: RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE_LEGACY,
+            input: mapCanonicalAgentIdentityToReleasedProviderIdentity(input),
+            beforeCall: () => assertReleasedDaemonAcceptsCodexTranscriptCursor(input),
+        },
         opts,
     });
 }
@@ -192,12 +409,33 @@ export async function machineExternalSessionTranscriptReadAfter(
         input,
         requestSchema: ExternalSessionTranscriptReadAfterRequestSchema,
         responseSchema: ExternalSessionTranscriptReadAfterResponseSchema,
+        legacy: {
+            method: RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER_LEGACY,
+            input: mapCanonicalAgentIdentityToReleasedProviderIdentity(input),
+            beforeCall: () => assertReleasedDaemonAcceptsCodexTranscriptCursor(input),
+        },
+        opts,
+    });
+}
+
+export async function machineExternalSessionTranscriptRefreshReadAfter(
+    input: ExternalSessionTranscriptRefreshReadAfterRequestV1,
+    opts?: MachineExternalSessionsOpts,
+): Promise<ExternalSessionTranscriptRefreshReadAfterResponseV1> {
+    return callExternalSessionMachineRpc({
+        machineId: input.binding.machineId,
+        method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER,
+        input,
+        requestSchema: ExternalSessionTranscriptRefreshReadAfterRequestV1Schema,
+        responseSchema: ExternalSessionTranscriptRefreshReadAfterResponseV1Schema,
+        // The secure refresh contract never downgrades to transcript-bearing
+        // released/predecessor RPC shapes.
         opts,
     });
 }
 
 export async function machineExternalSessionTakeover(
-    input: ExternalSessionTakeoverRequest,
+    input: ExternalSessionTakeoverRequestWithoutForceStop,
     opts?: MachineExternalSessionsOpts,
 ): Promise<ExternalSessionTakeoverResponse> {
     const actionInput = {
@@ -205,7 +443,6 @@ export async function machineExternalSessionTakeover(
         linkedSessionId: input.sessionId,
         targetRuntimeMode: 'terminal',
         storageMode: 'external-linked',
-        ...(input.forceStop === undefined ? {} : { forceStop: input.forceStop }),
     } satisfies ExternalSessionTakeoverInputV1;
 
     return callExternalSessionMachineRpc({
@@ -214,28 +451,147 @@ export async function machineExternalSessionTakeover(
         input: actionInput,
         requestSchema: ExternalSessionTakeoverInputV1Schema,
         responseSchema: ExternalSessionTakeoverResponseSchema,
+        legacy: {
+            method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY,
+            input,
+        },
         opts,
     });
 }
 
-export async function machineExternalSessionTakeoverPersist(
-    input: ExternalSessionTakeoverPersistRequest,
+export async function machineExternalSessionTakeoverStart(
+    input: ExternalSessionTakeoverOperationRequest,
     opts?: MachineExternalSessionsOpts,
-): Promise<ExternalSessionTakeoverPersistResponse> {
-    const actionInput = {
-        machineId: input.machineId,
-        linkedSessionId: input.sessionId,
-        targetRuntimeMode: 'terminal',
-        storageMode: 'persisted',
-        ...(input.forceStop === undefined ? {} : { forceStop: input.forceStop }),
-    } satisfies ExternalSessionTakeoverInputV1;
+): Promise<ExternalSessionOperationActionResponseV1> {
+    try {
+        return await callExternalSessionMachineRpc({
+            machineId: input.machineId,
+            method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER_START,
+            input: { request: input.request },
+            requestSchema: ExternalSessionTakeoverStartInputV1Schema,
+            responseSchema: ExternalSessionOperationActionResponseV1Schema,
+            opts,
+        });
+    } catch (error) {
+        if (!isRpcMethodNotFoundError(error)) throw error;
+        return {
+            ok: false,
+            error: {
+                code: 'upgrade_required',
+                message: 'Durable takeover requires a newer daemon.',
+            },
+        };
+    }
+}
 
-    return callExternalSessionMachineRpc({
-        machineId: input.machineId,
-        method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER,
-        input: actionInput,
-        requestSchema: ExternalSessionTakeoverInputV1Schema,
-        responseSchema: ExternalSessionTakeoverPersistResponseSchema,
-        opts,
-    });
+export async function machineExternalSessionTakeoverPersist(
+    input: ExternalSessionTakeoverOperationRequest,
+    opts?: MachineExternalSessionsOpts,
+): Promise<ExternalSessionOperationActionResponseV1> {
+    return await machineExternalSessionTakeoverStart(input, opts);
+}
+
+export async function machineExternalSessionMaterializeStart(
+    input: ExternalSessionMaterializeOperationRequest,
+    opts?: MachineExternalSessionsOpts,
+): Promise<ExternalSessionOperationActionResponseV1> {
+    try {
+        return await callExternalSessionMachineRpc({
+            machineId: input.machineId,
+            method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START,
+            input: { request: input.request },
+            requestSchema: ExternalSessionMaterializeStartInputV1Schema,
+            responseSchema: ExternalSessionOperationActionResponseV1Schema,
+            opts,
+        });
+    } catch (error) {
+        if (!isRpcMethodNotFoundError(error)) throw error;
+        return {
+            ok: false,
+            error: {
+                code: 'upgrade_required',
+                message: 'Materialization requires a newer daemon.',
+            },
+        };
+    }
+}
+
+async function machineExternalSessionOperationAction(
+    input: MachineExternalSessionOperationRequest,
+    params: Readonly<{
+        method: string;
+        requestSchema: ZodType<ExternalSessionOperationReferenceV1>;
+    }>,
+    opts?: MachineExternalSessionsOpts,
+): Promise<ExternalSessionOperationActionResponseV1> {
+    const { machineId, ...reference } = input;
+    try {
+        return await callExternalSessionMachineRpc({
+            machineId,
+            method: params.method,
+            input: reference,
+            requestSchema: params.requestSchema,
+            responseSchema: ExternalSessionOperationActionResponseV1Schema,
+            opts,
+        });
+    } catch (error) {
+        if (!isRpcMethodNotFoundError(error)) throw error;
+        return {
+            ok: false,
+            error: {
+                code: 'upgrade_required',
+                message: 'External session operation controls require a newer daemon.',
+            },
+        };
+    }
+}
+
+export async function machineExternalSessionOperationStatus(
+    input: MachineExternalSessionOperationRequest,
+    opts?: MachineExternalSessionsOpts,
+): Promise<ExternalSessionOperationActionResponseV1> {
+    return await machineExternalSessionOperationAction(input, {
+        method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_STATUS_GET,
+        requestSchema: ExternalSessionOperationStatusInputV1Schema,
+    }, opts);
+}
+
+export async function machineExternalSessionOperationResume(
+    input: MachineExternalSessionOperationRequest,
+    opts?: MachineExternalSessionsOpts,
+): Promise<ExternalSessionOperationActionResponseV1> {
+    return await machineExternalSessionOperationAction(input, {
+        method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RESUME,
+        requestSchema: ExternalSessionOperationResumeInputV1Schema,
+    }, opts);
+}
+
+export async function machineExternalSessionOperationRetry(
+    input: MachineExternalSessionOperationRequest,
+    opts?: MachineExternalSessionsOpts,
+): Promise<ExternalSessionOperationActionResponseV1> {
+    return await machineExternalSessionOperationAction(input, {
+        method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RETRY,
+        requestSchema: ExternalSessionOperationRetryInputV1Schema,
+    }, opts);
+}
+
+export async function machineExternalSessionOperationCancel(
+    input: MachineExternalSessionOperationRequest,
+    opts?: MachineExternalSessionsOpts,
+): Promise<ExternalSessionOperationActionResponseV1> {
+    return await machineExternalSessionOperationAction(input, {
+        method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_CANCEL,
+        requestSchema: ExternalSessionOperationCancelInputV1Schema,
+    }, opts);
+}
+
+export async function machineExternalSessionOperationDiscard(
+    input: MachineExternalSessionOperationRequest,
+    opts?: MachineExternalSessionsOpts,
+): Promise<ExternalSessionOperationActionResponseV1> {
+    return await machineExternalSessionOperationAction(input, {
+        method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_DISCARD,
+        requestSchema: ExternalSessionOperationDiscardInputV1Schema,
+    }, opts);
 }

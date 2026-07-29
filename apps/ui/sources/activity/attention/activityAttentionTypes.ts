@@ -32,6 +32,7 @@ export type SessionActivityAttention = Readonly<{
         hasUnread: boolean;
         hasPendingPermissionRequests: boolean;
         hasPendingUserActionRequests: boolean;
+        hasBlockedPendingDelivery: boolean;
         hasQueuedUserInput: boolean;
         isThinking: boolean;
     }>;

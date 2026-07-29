@@ -136,32 +136,11 @@ export function useTranscriptRowEvidenceTelemetry(params: Readonly<{
         resolveViewportTelemetryMode,
     ]);
 
-    const recordOffsetCorrectionTelemetry = React.useCallback((event: Readonly<{
-        diffPx?: number;
-        source?: string;
-        type: string;
-    }>) => {
-        if (!isViewportEvidenceTelemetryEnabled()) return;
-        recordViewportTelemetryEvent({
-            type: 'offset-correction',
-            mode: resolveViewportTelemetryMode(),
-            correctionAction: event.type,
-            correctionSource: event.source,
-            correctionDiffPx: event.diffPx,
-        });
-    }, [
-        isViewportEvidenceTelemetryEnabled,
-        recordViewportTelemetryEvent,
-        resolveViewportTelemetryMode,
-    ]);
-
     return React.useMemo(() => ({
         handleRowShellMeasured,
         recordRowContentMutations,
-        recordOffsetCorrectionTelemetry,
     }), [
         handleRowShellMeasured,
         recordRowContentMutations,
-        recordOffsetCorrectionTelemetry,
     ]);
 }

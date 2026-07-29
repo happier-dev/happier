@@ -1,6 +1,7 @@
 import {
     buildExternalSessionFollowPolicyV1,
     readExternalSessionFollowPolicyV1,
+    updateLinkedExternalSessionFollowMetadataV1,
     type ExternalSessionFollowPolicy,
 } from '@happier-dev/protocol';
 
@@ -31,14 +32,10 @@ export function updateMetadataWithExternalSessionFollowPolicy(
         : undefined;
     if (current?.policy === params.policy && current?.updatedAtMs === nextUpdatedAtMs) return metadata;
 
-    return {
-        ...metadata,
-        externalSessionV1: {
-            ...externalSession,
-            followPolicyV1: buildExternalSessionFollowPolicyV1({
-                policy: params.policy,
-                ...(nextUpdatedAtMs !== undefined ? { updatedAtMs: nextUpdatedAtMs } : {}),
-            }),
-        },
-    };
+    return updateLinkedExternalSessionFollowMetadataV1(metadata, {
+        followPolicyV1: buildExternalSessionFollowPolicyV1({
+            policy: params.policy,
+            ...(nextUpdatedAtMs !== undefined ? { updatedAtMs: nextUpdatedAtMs } : {}),
+        }),
+    }) as Metadata;
 }

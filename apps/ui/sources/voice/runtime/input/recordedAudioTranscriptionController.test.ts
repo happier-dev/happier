@@ -37,12 +37,6 @@ vi.mock('@/voice/input/prepareDaemonVoiceInferenceSttSource', () => ({
         prepareDaemonVoiceInferenceSttSourceSpy(params),
 }));
 
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        decryptSecretValue: () => null,
-    },
-}));
-
 describe('recordedAudioTranscriptionController', () => {
     it('delegates provider routing through the configured recorded-audio STT controller map', async () => {
         const deviceTranscribeSpy = vi.fn(async (_params: unknown) => 'device');
@@ -68,8 +62,8 @@ describe('recordedAudioTranscriptionController', () => {
                     voice: {
                         providerId: 'local_direct',
                         assistantLanguage: 'en',
-                        adapters: {
-                            local_direct: {
+                        providers: {
+                            local_direct: { schemaVersion: 1, config: {
                                 stt: {
                                     provider: 'local_neural',
                                     openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
@@ -81,7 +75,7 @@ describe('recordedAudioTranscriptionController', () => {
                                     },
                                 },
                                 networkTimeoutMs: 15_000,
-                            },
+                            } },
                         },
                     },
                 },
@@ -118,8 +112,8 @@ describe('recordedAudioTranscriptionController', () => {
                         voice: {
                             providerId: 'local_direct',
                             assistantLanguage: 'en',
-                            adapters: {
-                                local_direct: {
+                            providers: {
+                                local_direct: { schemaVersion: 1, config: {
                                     stt: {
                                         provider: 'local_neural',
                                         openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
@@ -131,7 +125,7 @@ describe('recordedAudioTranscriptionController', () => {
                                         },
                                     },
                                     networkTimeoutMs: 15_000,
-                                },
+                                } },
                             },
                         },
                     },

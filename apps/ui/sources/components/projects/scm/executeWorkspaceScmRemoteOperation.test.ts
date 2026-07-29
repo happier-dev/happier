@@ -103,8 +103,18 @@ describe('executeWorkspaceScmRemoteOperation', () => {
             cwd: '/repo',
             confirmed: true,
             confirmationToken: REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
-        });
+        }, { serverId: 'server-1' });
         expect(machineScmRemotePush).toHaveBeenCalledTimes(2);
+        expect(machineScmRemotePush).toHaveBeenNthCalledWith(
+            1,
+            'machine-1',
+            expect.objectContaining({
+                cwd: '/repo',
+                remote: 'origin',
+                branch: 'main',
+            }),
+            { serverId: 'server-1' },
+        );
         expect(refreshScmData).toHaveBeenCalledTimes(1);
     });
 });

@@ -50,7 +50,7 @@ describe('forkUiSupport', () => {
       codexSessionId: 'thread_123',
       sessionConfigOptionsV1: {
         v: 1,
-        provider: 'codex',
+        agentId: 'codex',
         updatedAt: 1,
         options: [],
       },

@@ -46,7 +46,7 @@ vi.mock('./sync/domains/state/persistence', () => ({
         themePreference: loadThemePreferenceMock(),
         themeProfiles: {
             profiles: [],
-            activeProfileId: null,
+            activeProfileIds: { light: null, dark: null },
         },
     }),
 }));

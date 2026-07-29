@@ -132,6 +132,39 @@ function buildConfiguredInactiveDaemonTransferState(): unknown {
     };
 }
 
+function buildPredecessorLanOnlyDaemonTransferState(): unknown {
+    return {
+        transfer: {
+            supported: {
+                import: true,
+                export: true,
+            },
+            listenerClasses: {
+                loopback_http: {
+                    enabled: false,
+                    configured: false,
+                    active: false,
+                },
+                lan_http: {
+                    enabled: true,
+                    configured: true,
+                    active: true,
+                },
+                tailscale_serve_https: {
+                    enabled: false,
+                    configured: false,
+                    active: false,
+                    available: false,
+                },
+            },
+            lifecycle: {
+                mode: 'lazy_idle_shutdown',
+                version: 1,
+            },
+        },
+    };
+}
+
 describe('resolveSessionHandoffUiAvailability', () => {
     it('reads source-machine daemon transfer state from an explicit server scope when callers pass one', () => {
         state.preferredServerId = 'server-preferred-ignored';
@@ -277,6 +310,22 @@ describe('resolveSessionHandoffUiAvailability', () => {
                 directPeerEnabled: false,
                 serverRoutedEnabled: true,
             }),
+        })).toEqual({
+            available: false,
+            reason: 'runtime_direct_peer_unavailable',
+        });
+    });
+
+    it('does not invent a server-routed handoff carrier for predecessor lan_http-only daemon state', () => {
+        expect(resolveSessionHandoffUiAvailability({
+            session: HANDOFF_ELIGIBLE_SESSION,
+            sessionHandoffFeatureEnabled: true,
+            serverSnapshot: buildReadyServerSnapshot({
+                directPeerEnabled: true,
+                serverRoutedEnabled: true,
+            }),
+            runtimeAvailability: 'reachable',
+            machineDaemonState: buildPredecessorLanOnlyDaemonTransferState(),
         })).toEqual({
             available: false,
             reason: 'runtime_direct_peer_unavailable',

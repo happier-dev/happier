@@ -18,11 +18,13 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 
 type Props = CustomModalInjectedProps & Readonly<{
     title?: string;
     message?: string;
     status?: SessionHandoffStatus;
+    onResume?: () => Promise<void> | void;
 }>;
 
 type ProgressStatCounts = Readonly<{
@@ -155,6 +157,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         flex: 1,
         textAlign: 'right',
+    },
+    actionRow: {
+        alignItems: 'flex-end',
     },
 }));
 
@@ -317,7 +322,7 @@ function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): stri
     }
 }
 
-export function SessionHandoffProgressModal({ setChrome, title, message, status }: Props) {
+export function SessionHandoffProgressModal({ setChrome, title, message, status, onResume }: Props) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
@@ -411,6 +416,7 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status 
         : canonicalTimelineForCheckpoint;
     const currentCheckpointIndex = currentCheckpoint ? timeline.indexOf(currentCheckpoint) : -1;
     const isAwaitingRecovery = effectiveStatus?.status === 'awaiting_recovery';
+    const isAwaitingUserResume = effectiveStatus?.status === 'awaiting_user_resume';
     const currentDetailLabel =
         effectiveStatus?.progress?.current?.relativePath
         ?? (isFailureState || isReadyForCutover ? effectiveStatus?.progress?.current?.phaseDetail : undefined)
@@ -426,10 +432,28 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status 
         message
         ?? (isAwaitingRecovery
             ? t('sessionHandoff.recovery.messageAfterSourceStop')
-            : isFailureState
-                ? t('sessionHandoff.failure.message')
-                : t('sessionHandoff.progress.message'));
-    const showSpinner = !isFailureState && !isCompleted && !isReadyForCutover;
+            : isAwaitingUserResume
+                ? t('externalSessions.operationStatusNeedsResume')
+                : isFailureState
+                    ? t('sessionHandoff.failure.message')
+                    : t('sessionHandoff.progress.message'));
+    const progressAnnouncement = [
+        resolvedMessage,
+        currentCheckpoint ? translateCheckpoint(currentCheckpoint) : null,
+        progressLabel,
+    ].filter((part): part is string => Boolean(part)).join('. ');
+    const showSpinner = !isFailureState && !isCompleted && !isReadyForCutover && !isAwaitingUserResume;
+    const resumeInFlightRef = React.useRef(false);
+    const [resumeInFlight, setResumeInFlight] = React.useState(false);
+    const handleResume = React.useCallback(() => {
+        if (!onResume || resumeInFlightRef.current) return;
+        resumeInFlightRef.current = true;
+        setResumeInFlight(true);
+        void Promise.resolve(onResume()).finally(() => {
+            resumeInFlightRef.current = false;
+            setResumeInFlight(false);
+        });
+    }, [onResume]);
 
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,
@@ -448,13 +472,32 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status 
                     <ActivitySpinner size="small" color={theme.colors.accent.blue} />
                 ) : (
                     <Octicons
-                        name={isFailureState ? 'alert' : 'check'}
+                        name={isFailureState ? 'alert' : isAwaitingUserResume ? 'play' : 'check'}
                         size={18}
                         color={isFailureState ? theme.colors.state.danger.foreground : theme.colors.accent.blue}
                     />
                 )}
-                <Text style={styles.message}>{resolvedMessage}</Text>
+                <Text
+                    testID="session-handoff-progress-status"
+                    style={styles.message}
+                    accessibilityLabel={progressAnnouncement}
+                    accessibilityLiveRegion="polite"
+                    role="status"
+                    aria-live="polite"
+                >
+                    {resolvedMessage}
+                </Text>
             </View>
+            {isAwaitingUserResume && onResume ? (
+                <View style={styles.actionRow}>
+                    <RoundButton
+                        testID="session-handoff-progress-resume"
+                        title={t('externalSessions.operationActionResume')}
+                        onPress={handleResume}
+                        disabled={resumeInFlight}
+                    />
+                </View>
+            ) : null}
             {effectiveStatus ? (
                 <View style={styles.progressSection}>
                     {currentCheckpoint && currentCheckpointIndex >= 0 ? (
@@ -506,7 +549,17 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status 
                         </View>
                     ) : null}
                     {progressFraction !== null ? (
-                        <View testID="session-handoff-progress-bar" style={styles.progressTrack}>
+                        <View
+                            testID="session-handoff-progress-bar"
+                            style={styles.progressTrack}
+                            accessibilityRole="progressbar"
+                            accessibilityLabel={resolvedTitle}
+                            accessibilityValue={{
+                                min: 0,
+                                max: 100,
+                                now: Math.round(progressFraction * 100),
+                            }}
+                        >
                             <View style={[styles.progressFill, { width: `${Math.max(progressFraction * 100, 4)}%` }]} />
                         </View>
                     ) : null}

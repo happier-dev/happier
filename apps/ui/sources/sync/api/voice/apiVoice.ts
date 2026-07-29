@@ -6,6 +6,7 @@ export type VoiceTokenResponse =
         allowed: true;
         token: string;
         leaseId: string;
+        bindingNonce: string;
         expiresAtMs: number;
     }
     | {
@@ -20,6 +21,7 @@ function isVoiceTokenResponse(value: unknown): value is VoiceTokenResponse {
         return (
             typeof (value as any).token === 'string' &&
             typeof (value as any).leaseId === 'string' &&
+            typeof (value as any).bindingNonce === 'string' &&
             typeof (value as any).expiresAtMs === 'number'
         );
     }
@@ -60,7 +62,7 @@ export async function fetchHappierVoiceToken(
             },
             body: JSON.stringify(body),
             signal: controller.signal,
-        }, { includeAuth: false });
+        }, { includeAuth: false, retry: 'none' });
     } finally {
         clearTimeout(timeout);
         if (upstreamSignal) {
@@ -84,9 +86,11 @@ export async function fetchHappierVoiceToken(
     throw new Error(`Voice token request failed: ${response.status}`);
 }
 
-export async function completeHappierVoiceSession(
+async function postHappierVoiceSessionLifecycle(
     credentials: AuthCredentials,
+    path: '/v1/voice/session/complete',
     params: { leaseId: string; providerConversationId: string },
+    errorPrefix: string,
     options?: { timeoutMs?: number },
 ): Promise<void> {
     const timeoutMs = options?.timeoutMs ?? 5000;
@@ -95,7 +99,7 @@ export async function completeHappierVoiceSession(
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-        const response = await serverFetch('/v1/voice/session/complete', {
+        const response = await serverFetch(path, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
@@ -103,14 +107,28 @@ export async function completeHappierVoiceSession(
             },
             body: JSON.stringify(params),
             signal: controller.signal,
-        }, { includeAuth: false });
+        }, { includeAuth: false, retry: 'none' });
 
         if (!response.ok) {
             // Avoid including raw response bodies in error messages: these errors are often shipped to
             // telemetry/log sinks, and response bodies can contain PII or internal details.
-            throw new Error(`Voice session complete failed (${response.status})`);
+            throw new Error(`${errorPrefix} (${response.status})`);
         }
     } finally {
         clearTimeout(timer);
     }
+}
+
+export async function completeHappierVoiceSession(
+    credentials: AuthCredentials,
+    params: { leaseId: string; providerConversationId: string },
+    options?: { timeoutMs?: number },
+): Promise<void> {
+    return postHappierVoiceSessionLifecycle(
+        credentials,
+        '/v1/voice/session/complete',
+        params,
+        'Voice session complete failed',
+        options,
+    );
 }

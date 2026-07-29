@@ -217,7 +217,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
 
 export const MainView = React.memo(({ variant }: MainViewProps) => {
     const { theme } = useUnistyles();
-    const { externalSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
+    const { externalSessionsEnabled, storageKind } = useSessionListStorageKind();
     const isTablet = useIsTablet();
     const router = useRouter();
     const pathname = usePathname();
@@ -237,7 +237,6 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
             <SessionsListStorageChrome
                 externalSessionsEnabled={externalSessionsEnabled}
                 storageKind={storageKind}
-                onSelectStorageKind={setStorageKind}
             />
         );
 
@@ -270,7 +269,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
 
 const PhoneMainView = React.memo((props: Readonly<{
     externalSessionsEnabled: boolean;
-    storageKind: 'persisted' | 'direct';
+    storageKind: 'all' | 'persisted' | 'direct';
     isTablet: boolean;
     themeGroupedBackground: string;
 }>) => {

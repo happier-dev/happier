@@ -21,6 +21,16 @@ export type ScmCommitComposerCardProps = Readonly<{
     selectionCount?: number;
     onClearSelection?: () => void;
     onSelectAllSelection?: () => void;
+    /**
+     * When true, the composer surfaces a "Select files to commit" affordance instead of
+     * showing a per-row "+" on every changed file. Tapping it enters selection mode
+     * (which reveals the row toggles and this selection summary). Defaults off so the
+     * changed-files rows stay uncluttered and legible at narrow widths.
+     */
+    commitSelectionAvailable?: boolean;
+    selectionModeActive?: boolean;
+    onEnterSelectionMode?: () => void;
+    onExitSelectionMode?: () => void;
     variant?: 'card' | 'railFooter';
     commitMessageGeneratorEnabled?: boolean;
     onGenerateCommitMessageSuggestion?: () => Promise<
@@ -64,6 +74,18 @@ export function normalizeGeneratedCommitMessageSuggestion(value: string): string
     } catch {
         return unwrapped;
     }
+}
+
+function selectionPillStyle(theme: any) {
+    return ({ pressed }: { pressed: boolean }) => ({
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset ?? theme.colors.surface.base,
+        opacity: pressed ? 0.75 : 1,
+    });
 }
 
 export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardProps) => {
@@ -115,30 +137,22 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
                 backgroundColor: variant === 'card' ? props.theme.colors.surface.base : 'transparent',
             }}
         >
-            {typeof props.selectionCount === 'number' ? (
-                <View
-                    testID="scm-commit-selection-summary"
-                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}
-                >
-                    <Text style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default('semiBold') }}>
-                        {t('files.sourceControlOperations.selection', { count: props.selectionCount })}
-                    </Text>
-                    {(props.onSelectAllSelection || (props.selectionCount > 0 && props.onClearSelection)) ? (
+            {props.commitSelectionAvailable ? (
+                props.selectionModeActive ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
+                        <Text
+                            testID="scm-commit-selection-summary"
+                            style={{ flex: 1, fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default('semiBold') }}
+                        >
+                            {t('files.sourceControlOperations.selection', { count: props.selectionCount ?? 0 })}
+                        </Text>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                             {props.onSelectAllSelection ? (
                                 <Pressable
                                     accessibilityRole="button"
                                     accessibilityLabel={t('common.all')}
                                     onPress={props.onSelectAllSelection}
-                                    style={({ pressed }) => ({
-                                        paddingHorizontal: 8,
-                                        paddingVertical: 4,
-                                        borderRadius: 999,
-                                        borderWidth: 1,
-                                        borderColor: props.theme.colors.border.default,
-                                        backgroundColor: props.theme.colors.surface.inset ?? props.theme.colors.surface.base,
-                                        opacity: pressed ? 0.75 : 1,
-                                    })}
+                                    style={selectionPillStyle(props.theme)}
                                 >
                                     <Text style={{ fontSize: 11, color: props.theme.colors.text.secondary, ...Typography.default('semiBold') }}>
                                         {t('common.all')}
@@ -146,29 +160,61 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
                                 </Pressable>
                             ) : null}
 
-                            {(props.selectionCount > 0 && props.onClearSelection) ? (
+                            {((props.selectionCount ?? 0) > 0 && props.onClearSelection) ? (
                                 <Pressable
                                     accessibilityRole="button"
                                     accessibilityLabel={t('files.fileActions.clearSelection')}
                                     onPress={props.onClearSelection}
-                                    style={({ pressed }) => ({
-                                        paddingHorizontal: 8,
-                                        paddingVertical: 4,
-                                        borderRadius: 999,
-                                        borderWidth: 1,
-                                        borderColor: props.theme.colors.border.default,
-                                        backgroundColor: props.theme.colors.surface.inset ?? props.theme.colors.surface.base,
-                                        opacity: pressed ? 0.75 : 1,
-                                    })}
+                                    style={selectionPillStyle(props.theme)}
                                 >
                                     <Text style={{ fontSize: 11, color: props.theme.colors.text.secondary, ...Typography.default('semiBold') }}>
                                         {t('files.sourceControlOperations.clear')}
                                     </Text>
                                 </Pressable>
                             ) : null}
+
+                            {((props.selectionCount ?? 0) === 0 && props.onExitSelectionMode) ? (
+                                <Pressable
+                                    testID="scm-commit-exit-selection"
+                                    accessibilityRole="button"
+                                    accessibilityLabel={t('common.done')}
+                                    onPress={props.onExitSelectionMode}
+                                    style={selectionPillStyle(props.theme)}
+                                >
+                                    <Text style={{ fontSize: 11, color: props.theme.colors.text.secondary, ...Typography.default('semiBold') }}>
+                                        {t('common.done')}
+                                    </Text>
+                                </Pressable>
+                            ) : null}
                         </View>
-                    ) : null}
-                </View>
+                    </View>
+                ) : (
+                    <Pressable
+                        testID="scm-commit-enter-selection"
+                        accessibilityRole="button"
+                        accessibilityLabel={t('files.fileActions.selectFilesToCommit')}
+                        onPress={props.onEnterSelectionMode}
+                        style={({ pressed }) => ({
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            alignSelf: 'flex-start',
+                            gap: 6,
+                            marginBottom: 10,
+                            paddingHorizontal: 10,
+                            paddingVertical: 6,
+                            borderRadius: 999,
+                            borderWidth: 1,
+                            borderColor: props.theme.colors.border.default,
+                            backgroundColor: props.theme.colors.surface.inset ?? props.theme.colors.surface.base,
+                            opacity: pressed ? 0.78 : 1,
+                        })}
+                    >
+                        <Ionicons name="checkmark-circle-outline" size={14} color={props.theme.colors.text.secondary} />
+                        <Text style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default('semiBold') }}>
+                            {t('files.fileActions.selectFilesToCommit')}
+                        </Text>
+                    </Pressable>
+                )
             ) : null}
             {props.status && !props.busy ? (
                 <Text style={{ marginBottom: 8, fontSize: 11, color: props.theme.colors.text.secondary, ...Typography.default() }}>

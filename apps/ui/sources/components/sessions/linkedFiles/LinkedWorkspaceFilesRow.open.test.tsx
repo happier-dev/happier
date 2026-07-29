@@ -10,7 +10,7 @@ import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-const routerPushSpy = vi.fn();
+const routerPushSpy = vi.hoisted(() => vi.fn());
 vi.mock('@/utils/platform/responsive', () => ({
   useDeviceType: () => 'tablet',
 }));
@@ -64,7 +64,7 @@ describe('LinkedWorkspaceFilesRow', () => {
 
         const screen = await renderScreen(
             <AppPaneProvider>
-                <LinkedWorkspaceFilesRow sessionId="s1" paths={['src/api.ts']} />
+                <LinkedWorkspaceFilesRow sessionId="s1" paths={['src/api.ts']} fileOpenEnabled />
                 <Probe />
             </AppPaneProvider>,
         );
@@ -94,7 +94,7 @@ describe('LinkedWorkspaceFilesRow', () => {
                     scopeId="session:s1"
                     main={
                         <>
-                            <LinkedWorkspaceFilesRow sessionId="s1" paths={['src/api.ts']} />
+                            <LinkedWorkspaceFilesRow sessionId="s1" paths={['src/api.ts']} fileOpenEnabled />
                             <Probe />
                         </>
                     }
@@ -122,7 +122,7 @@ describe('LinkedWorkspaceFilesRow', () => {
 
         const screen = await renderScreen(
             <AppPaneProvider>
-                <LinkedWorkspaceFilesRow sessionId="s1" paths={['deep/nested/AGENTS.md']} />
+                <LinkedWorkspaceFilesRow sessionId="s1" paths={['deep/nested/AGENTS.md']} fileOpenEnabled />
             </AppPaneProvider>,
         );
 
@@ -143,5 +143,23 @@ describe('LinkedWorkspaceFilesRow', () => {
             }),
             null,
         ]);
+    });
+
+    it('renders public linked files as inert metadata', async () => {
+        const { LinkedWorkspaceFilesRow } = await import('./LinkedWorkspaceFilesRow');
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <LinkedWorkspaceFilesRow
+                    sessionId="public"
+                    paths={['src/private.ts']}
+                    fileOpenEnabled={false}
+                />
+            </AppPaneProvider>,
+        );
+
+        const fileChip = screen.findByTestId('linked-workspace-file:src/private.ts');
+        expect(fileChip?.type).toBe('View');
+        expect(fileChip?.props.accessibilityRole).toBe('text');
+        expect(fileChip?.props.onPress).toBeUndefined();
     });
 });

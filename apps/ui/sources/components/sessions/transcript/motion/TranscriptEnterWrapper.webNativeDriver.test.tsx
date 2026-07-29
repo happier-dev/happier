@@ -34,7 +34,10 @@ installTranscriptMotionCommonModuleMocks({
 vi.mock('./TranscriptMotionContext', () => ({
   useTranscriptMotion: () => ({
     config: { preset: 'full', animateNewItemsEnabled: true },
-    gate: { consumeFreshness: () => true },
+    gate: {
+      isFresh: () => true,
+      consumeFreshness: () => true,
+    },
   }),
 }));
 

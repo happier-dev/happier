@@ -12,8 +12,8 @@ const state: any = {
   settings: {
     voice: {
       providerId: 'local_conversation',
-      adapters: {
-        local_conversation: { conversationMode: 'agent', agent: { backend: 'openai_compat' } },
+      providers: {
+        local_conversation: { schemaVersion: 1, config: { conversationMode: 'agent', agent: { backend: 'openai_compat' } } },
       },
     },
   },
@@ -21,7 +21,7 @@ const state: any = {
 
 function resetMockVoiceSettings(): void {
   state.settings.voice.providerId = 'local_conversation';
-  state.settings.voice.adapters.local_conversation = {
+  state.settings.voice.providers.local_conversation.config = {
     conversationMode: 'agent',
     agent: { backend: 'openai_compat' },
   };
@@ -64,6 +64,23 @@ describe('local conversation voice adapter', () => {
 
     await adapter.toggle({ sessionId: 's1' });
     expect(toggleLocalVoiceTurn).toHaveBeenCalledWith('s1');
+  });
+
+  it('owns global surface semantics for configured agent mode and fails closed when unselected', async () => {
+    const { createLocalConversationVoiceAdapter } = await import('./localConversationAdapter');
+    const adapter = createLocalConversationVoiceAdapter();
+
+    expect(adapter.resolveSurfaceCapabilities?.(state.settings.voice)).toEqual({
+      allowsGlobalStart: true,
+      controlSessionScope: 'global',
+      requiresVoiceAgentFeature: false,
+      bargeInEnabled: true,
+      cancelResponse: 'immediate',
+    });
+    expect(adapter.resolveSurfaceCapabilities?.({
+      ...state.settings.voice,
+      providerId: 'local_direct',
+    })).toBeNull();
   });
 
   it('keeps adapter toggle translation-only when another local session is already active', async () => {
@@ -141,7 +158,7 @@ describe('local conversation voice adapter', () => {
 
   it('routes typed sends through the local voice text turn path without adapter-level mode gating', async () => {
     sendLocalVoiceAgentTextTurn.mockClear();
-    state.settings.voice.adapters.local_conversation.conversationMode = 'direct_session';
+    state.settings.voice.providers.local_conversation.config.conversationMode = 'direct_session';
     const { createLocalConversationVoiceAdapter } = await import('./localConversationAdapter');
     const adapter = createLocalConversationVoiceAdapter();
 
@@ -149,11 +166,17 @@ describe('local conversation voice adapter', () => {
       controlSessionId: 's1',
       conversationSessionId: 'voice-home',
       text: 'hello from composer',
+      localId: 'voice-local-1',
+      deliveryCommand: 'interrupt_and_send',
     });
 
     expect(sendLocalVoiceAgentTextTurn).toHaveBeenCalledWith({
       controlSessionId: 's1',
       text: 'hello from composer',
+      durableDispatch: {
+        localId: 'voice-local-1',
+        deliveryCommand: 'interrupt_and_send',
+      },
     });
   });
 

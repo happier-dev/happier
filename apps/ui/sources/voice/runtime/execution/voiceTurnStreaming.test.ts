@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { installVoiceAgentCommonModuleMocks } from '@/voice/agent/voiceAgentTestHelpers';
 
-import type { VoiceAgentClient, VoiceAgentHandle, VoiceAgentTurnStreamEvent } from '@/voice/agent/types';
+import {
+    readVoiceAgentActionEffectId,
+    type VoiceAgentClient,
+    type VoiceAgentHandle,
+    type VoiceAgentTurnStreamEvent,
+} from '@/voice/agent/types';
 
 const patchSessionMetadataWithRetry = vi.hoisted(() => vi.fn(async (sessionId: string, updater: (metadata: any) => any) => {
     const session = stateRef.current.sessions[sessionId];
@@ -43,8 +48,8 @@ function createState(): any {
         settings: {
             voice: {
                 providerId: 'local_conversation',
-                adapters: {
-                    local_conversation: {
+                providers: {
+                    local_conversation: { schemaVersion: 1, config: {
                         streaming: {
                             enabled: true,
                             turnReadPollIntervalMs: 50,
@@ -60,7 +65,7 @@ function createState(): any {
                             },
                         },
                         networkTimeoutMs: 15_000,
-                    },
+                    } },
                 },
             },
         },
@@ -172,5 +177,98 @@ describe('createVoiceTurnStreaming', () => {
             sessionId: 'stale_rpc',
             resume: true,
         }));
+    });
+
+    it('preserves process-local effect identity while normalizing the streamed turn response', async () => {
+        const events: VoiceAgentTurnStreamEvent[] = [
+            {
+                t: 'voice_output',
+                output: {
+                    v: 1,
+                    kind: 'side_effect',
+                    turnId: 'stream_effect',
+                    seq: 0,
+                    effectId: 'effect-normalized',
+                    action: { t: 'sendSessionMessage', args: { message: 'Do it' } },
+                },
+            },
+            {
+                t: 'voice_output',
+                output: {
+                    v: 1,
+                    kind: 'turn_final',
+                    turnId: 'stream_effect',
+                    seq: 1,
+                    text: 'Working on it.',
+                },
+            },
+        ];
+        const client: VoiceAgentClient = {
+            start: vi.fn(async () => ({ voiceAgentId: 'run_1' })),
+            sendTurn: vi.fn(async () => ({ assistantText: 'unused', actions: [] })),
+            welcome: vi.fn(async () => ({ assistantText: 'unused' })),
+            startTurnStream: vi.fn(async () => ({ streamId: 'stream_effect' })),
+            readTurnStream: vi.fn(async () => ({
+                streamId: 'stream_effect', events, nextCursor: 2, done: true,
+            })),
+            cancelTurnStream: vi.fn(async () => ({ ok: true as const })),
+            commit: vi.fn(async () => ({ commitText: 'unused' })),
+            stop: vi.fn(async () => ({ ok: true as const })),
+        };
+
+        const { createVoiceTurnStreaming } = await import('./voiceTurnStreaming');
+        const turnStreaming = createVoiceTurnStreaming({
+            getVoiceAgentHandle: async () => createHandle(client),
+            interruptActiveTurn: () => undefined,
+            resetCachedHandle: () => undefined,
+            runSerializedTurn: async (_sessionId, task) => await task(),
+            stop: async () => undefined,
+            voiceAgentPendingContextBySessionId: new Map(),
+            voiceAgentTurnAbortControllerBySessionId: new Map(),
+        });
+
+        const result = await turnStreaming.sendTurn('__voice_agent__', 'hello');
+
+        expect(result.actions).toEqual([{ t: 'sendSessionMessage', args: { message: 'Do it' } }]);
+        expect(readVoiceAgentActionEffectId(result.actions[0])).toBe('effect-normalized');
+    });
+
+    it('uses the non-eager client turn when speech streaming is disabled', async () => {
+        stateRef.current.settings.voice.providers.local_conversation.config.streaming.enabled = false;
+        const sendTurn = vi.fn(async () => ({
+            assistantText: 'legacy reply',
+            actions: [{ t: 'sendSessionMessage' as const, args: { message: 'Legacy action' } }],
+        }));
+        const startTurnStream = vi.fn(async () => ({ streamId: 'stream_1' }));
+        const client: VoiceAgentClient = {
+            start: vi.fn(async () => ({ voiceAgentId: 'run_1' })),
+            sendTurn,
+            welcome: vi.fn(async () => ({ assistantText: 'unused' })),
+            startTurnStream,
+            readTurnStream: vi.fn(async () => ({ streamId: 'stream_1', events: [], nextCursor: 0, done: true })),
+            cancelTurnStream: vi.fn(async () => ({ ok: true as const })),
+            commit: vi.fn(async () => ({ commitText: 'unused' })),
+            stop: vi.fn(async () => ({ ok: true as const })),
+        };
+
+        const { createVoiceTurnStreaming } = await import('./voiceTurnStreaming');
+        const turnStreaming = createVoiceTurnStreaming({
+            getVoiceAgentHandle: async () => createHandle(client),
+            interruptActiveTurn: () => undefined,
+            resetCachedHandle: () => undefined,
+            runSerializedTurn: async (_sessionId, task) => await task(),
+            stop: async () => undefined,
+            voiceAgentPendingContextBySessionId: new Map(),
+            voiceAgentTurnAbortControllerBySessionId: new Map(),
+        });
+
+        const result = await turnStreaming.sendTurn('__voice_agent__', 'hello');
+        expect(result).toEqual({
+            assistantText: 'legacy reply',
+            actions: [{ t: 'sendSessionMessage', args: { message: 'Legacy action' } }],
+        });
+        expect(readVoiceAgentActionEffectId(result.actions[0])).toBeNull();
+        expect(sendTurn).toHaveBeenCalledTimes(1);
+        expect(startTurnStream).not.toHaveBeenCalled();
     });
 });

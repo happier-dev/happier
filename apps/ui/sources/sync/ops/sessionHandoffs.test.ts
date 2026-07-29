@@ -14,6 +14,111 @@ const stabilizeSessionHandoffTargetBindingMock = vi.hoisted(() => vi.fn());
 const storageGetStateMock = vi.hoisted(() => vi.fn());
 const storageApplySessionsMock = vi.hoisted(() => vi.fn());
 
+function createCommittedCleanupRecoveryFixture() {
+    return {
+        handoffId: 'handoff_committed_cleanup',
+        actions: ['retry_source_cleanup'] as const,
+        committedTarget: {
+            sessionId: 'sess_committed',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            serverId: 'server_a',
+            sourceMetadataForHandoff: {
+                flavor: 'claude',
+                path: '/repo/source',
+                host: 'source.local',
+                machineId: 'machine_source',
+                claudeSessionId: 'claude_source',
+            },
+            agentId: 'claude' as const,
+            sessionStorageBefore: 'persisted' as const,
+            sessionStorageAfter: 'persisted' as const,
+            targetPath: '/repo/target',
+            transportStrategy: 'server_routed_stream' as const,
+            completedAtMs: 123,
+            targetRemoteSessionId: 'claude_target',
+            targetDirectSource: {
+                kind: 'claudeConfig',
+                configDir: null,
+                projectId: null,
+            },
+        },
+        sourceCleanup: {
+            machineId: 'machine_source',
+            serverId: 'server_a',
+            workspaceReplicationReverseSourceRootPath: '/repo/target',
+            workspaceReplicationReverseTargetRootPath: '/repo/source',
+        },
+    };
+}
+
+function arrangeCommittedServerRoutedHandoff(handoffId: string): void {
+    machineRpcWithServerScopeMock
+        .mockResolvedValueOnce({
+            handoffId,
+            status: { handoffId, status: 'pending', phase: 'preparing', recoveryActions: [] },
+            endpointCandidates: [],
+            handoffMetadataV2: { workspaceReplicationSourceRootPath: '/repo/source' },
+            targetPath: '/repo/target',
+        })
+        .mockResolvedValueOnce({
+            handoffId,
+            status: {
+                handoffId,
+                status: 'ready_for_cutover',
+                phase: 'staging_target',
+                transportStrategy: 'server_routed_stream',
+                recoveryActions: [],
+            },
+            remoteSessionId: 'claude_target',
+            directSource: {
+                kind: 'claudeConfig',
+                configDir: null,
+                projectId: null,
+            },
+            resume: {
+                directory: '/repo/target',
+                agent: 'claude',
+                resume: 'claude_target',
+                transcriptStorage: 'persisted',
+                approvedNewDirectoryCreation: true,
+            },
+        })
+        .mockResolvedValueOnce({
+            handoffId,
+            status: { handoffId, status: 'completed', phase: 'finalizing', recoveryActions: [] },
+        })
+        .mockResolvedValueOnce({
+            handoffId,
+            status: { handoffId, status: 'completed', phase: 'finalizing', recoveryActions: [] },
+        });
+    getServerFeaturesSnapshotMock.mockResolvedValueOnce({
+        status: 'ready',
+        features: {
+            features: {
+                sessions: {
+                    enabled: true,
+                    handoff: {
+                        enabled: true,
+                        serverRoutedTransfer: { enabled: true },
+                    },
+                },
+                machines: {
+                    enabled: true,
+                    transfer: {
+                        enabled: true,
+                        directPeer: { enabled: true },
+                        serverRouted: { enabled: true },
+                    },
+                },
+            },
+            capabilities: {},
+        },
+    });
+    resumeSessionMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_committed' });
+    stabilizeSessionHandoffTargetBindingMock.mockResolvedValue({ ok: true });
+}
+
 vi.mock('../runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
@@ -662,7 +767,7 @@ describe('sessionHandoffs ops', () => {
                     v: 1,
                     sourceMachineId: 'machine_source',
                     targetMachineId: 'machine_target',
-                    providerId: 'claude',
+                    agentId: 'claude',
                     sessionStorageBefore: 'persisted',
                     sessionStorageAfter: 'persisted',
                     transportStrategy: 'server_routed_stream',
@@ -884,7 +989,7 @@ describe('sessionHandoffs ops', () => {
                     sourceMachineId: 'machine_source',
                     // Simulate drift/mismatch: targetMachineId is no longer the current source machine.
                     targetMachineId: 'some_other_machine',
-                    providerId: 'claude',
+                    agentId: 'claude',
                     sessionStorageBefore: 'persisted',
                     sessionStorageAfter: 'persisted',
                     transportStrategy: 'server_routed_stream',
@@ -1448,7 +1553,7 @@ describe('sessionHandoffs ops', () => {
                 handoffV1: {
                     sourceMachineId: 'machine_source',
                     targetMachineId: 'machine_target',
-                    providerId: 'claude',
+                    agentId: 'claude',
                     sessionStorageBefore: 'persisted',
                     sessionStorageAfter: 'persisted',
                     transportStrategy: 'server_routed_stream',
@@ -1528,7 +1633,10 @@ describe('sessionHandoffs ops', () => {
             readTargetMachineId: expect.any(Function),
             targetMachineId: 'machine_target',
         });
-        expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenCalledWith('sess_1', { forceRefresh: true });
+        expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenCalledWith('sess_1', {
+            forceRefresh: true,
+            serverId: 'server_b',
+        });
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
             machineId: 'machine_target',
             method: 'daemon.sessionHandoff.commit',
@@ -1888,7 +1996,7 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_prepare_failure_after_stop', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 handoffMetadataV2: {
-                    providerBundleTransferPublication: {
+                    agentBundleTransferPublication: {
                         transferId: 'session-handoff:handoff_prepare_failure_after_stop:provider-bundle-file',
                         sizeBytes: 1,
                         manifestHash: 'sha256:provider-bundle',
@@ -2008,7 +2116,7 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_scoped_refresh', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 handoffMetadataV2: {
-                    providerBundleTransferPublication: {
+                    agentBundleTransferPublication: {
                         transferId: 'session-handoff:handoff_scoped_refresh:provider-bundle-file',
                         sizeBytes: 1,
                         manifestHash: 'sha256:provider-bundle',
@@ -2695,12 +2803,12 @@ describe('sessionHandoffs ops', () => {
         expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenNthCalledWith(
             1,
             'sess_server_routed_post_commit_force_refresh_rebind',
-            { forceRefresh: true },
+            { forceRefresh: true, serverId: 'server_b' },
         );
         expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenNthCalledWith(
             2,
             'sess_server_routed_post_commit_force_refresh_rebind',
-            { forceRefresh: true },
+            { forceRefresh: true, serverId: 'server_b' },
         );
         expect(currentMachineId).toBe('machine_target');
         expect(currentPath).toBe('/repo-target');
@@ -3328,12 +3436,12 @@ describe('sessionHandoffs ops', () => {
         expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenNthCalledWith(
             1,
             'sess_server_routed_post_commit_presence_refresh',
-            { forceRefresh: true },
+            { forceRefresh: true, serverId: 'server_b' },
         );
         expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenNthCalledWith(
             2,
             'sess_server_routed_post_commit_presence_refresh',
-            { forceRefresh: true },
+            { forceRefresh: true, serverId: 'server_b' },
         );
         expect(currentMachineId).toBe('machine_target');
         expect(currentPath).toBe('/repo-target');
@@ -3507,7 +3615,7 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_codex', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 handoffMetadataV2: {
-                    providerBundleTransferPublication: {
+                    agentBundleTransferPublication: {
                         transferId: 'session-handoff:handoff_codex:provider-bundle-file',
                         sizeBytes: 1,
                         manifestHash: 'sha256:provider-bundle',
@@ -3615,7 +3723,7 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_codex_runtime_descriptor', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 handoffMetadataV2: {
-                    providerBundleTransferPublication: {
+                    agentBundleTransferPublication: {
                         transferId: 'session-handoff:handoff_codex_runtime_descriptor:provider-bundle-file',
                         sizeBytes: 1,
                         manifestHash: 'sha256:provider-bundle',
@@ -3647,8 +3755,8 @@ describe('sessionHandoffs ops', () => {
                 },
                 runtimeDescriptorV1: {
                     v: 1,
-                    providerId: 'codex',
-                    provider: {
+                    agentId: 'codex',
+                    agent: {
                         backendMode: 'appServer',
                         providerSessionId: 'codex_session_runtime_descriptor',
                     },
@@ -3714,8 +3822,8 @@ describe('sessionHandoffs ops', () => {
             },
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
-                provider: {
+                agentId: 'codex',
+                agent: {
                     backendMode: 'appServer',
                     providerSessionId: 'codex_session_runtime_descriptor',
                 },
@@ -3998,6 +4106,104 @@ describe('sessionHandoffs ops', () => {
                 machineId: 'machine_target',
                 method: 'daemon.sessionHandoff.prepareTargetResult.get',
                 timeoutMs: 10_000,
+            }));
+        } finally {
+            delete process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS;
+        }
+    });
+
+    it('keeps interrupted prepare polling passive and exposes the exact durable Resume revision from status', async () => {
+        process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS = '10000';
+        const onStatus = vi.fn();
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_interrupted_prepare',
+                status: {
+                    handoffId: 'handoff_interrupted_prepare',
+                    jobId: 'job_interrupted_prepare',
+                    status: 'pending',
+                    phase: 'staging_target',
+                    recoveryActions: [],
+                },
+            })
+            .mockResolvedValueOnce({
+                ok: false,
+                errorCode: 'awaiting_user_resume',
+                error: 'Prepare-target job is awaiting_user_resume',
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_interrupted_prepare',
+                transitionRevision: 7,
+                status: {
+                    handoffId: 'handoff_interrupted_prepare',
+                    jobId: 'job_interrupted_prepare',
+                    status: 'awaiting_user_resume',
+                    phase: 'staging_target',
+                    recoveryActions: [],
+                },
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_interrupted_prepare',
+                status: {
+                    handoffId: 'handoff_interrupted_prepare',
+                    jobId: 'job_interrupted_prepare',
+                    status: 'ready_for_cutover',
+                    phase: 'staging_target',
+                    recoveryActions: [],
+                },
+                remoteSessionId: 'claude_session_interrupted_prepare',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                resume: {
+                    directory: '/repo',
+                    agent: 'claude',
+                    resume: 'claude_session_interrupted_prepare',
+                    transcriptStorage: 'persisted',
+                    approvedNewDirectoryCreation: true,
+                },
+            });
+
+        let nowMs = 0;
+        try {
+            const { prepareTargetSessionHandoffWithRetry } = await import('./sessionHandoffs');
+            const result = await prepareTargetSessionHandoffWithRetry({
+                handoffId: 'handoff_interrupted_prepare',
+                sourceMachineId: 'machine_source',
+                targetMachineId: 'machine_target',
+                targetPath: '/repo',
+                negotiatedTransportStrategy: 'direct_peer',
+                sourceSessionStorageMode: 'persisted',
+                allowServerRoutedFallback: true,
+                handoffMetadataV2: {},
+                onStatus,
+            }, {
+                timeoutMs: 10,
+                intervalMs: 1,
+                now: () => nowMs,
+                sleep: async (delayMs) => {
+                    nowMs += delayMs;
+                },
+            });
+
+            expect(result.ok).toBe(true);
+            expect(onStatus).toHaveBeenCalledWith(
+                {
+                    handoffId: 'handoff_interrupted_prepare',
+                    jobId: 'job_interrupted_prepare',
+                    status: 'awaiting_user_resume',
+                    phase: 'staging_target',
+                    recoveryActions: [],
+                },
+                7,
+            );
+            expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+                method: 'daemon.sessionHandoff.prepareTargetResult.get',
+            }));
+            expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
+                method: 'daemon.sessionHandoff.status.get',
             }));
         } finally {
             delete process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS;
@@ -4720,7 +4926,7 @@ describe('sessionHandoffs ops', () => {
 
     it('keeps canonical workspace artifacts across direct-peer prepare retries', async () => {
         const handoffMetadataV2 = {
-            providerBundleTransferPublication: {
+            agentBundleTransferPublication: {
                 transferId: 'transfer_provider_bundle_retry_prepare_artifacts',
                 sizeBytes: 3,
                 manifestHash: 'sha256:provider_bundle_retry_prepare_artifacts',
@@ -4845,7 +5051,7 @@ describe('sessionHandoffs ops', () => {
             handoffId: 'handoff_retry_prepare_artifacts',
             negotiatedTransportStrategy: 'direct_peer',
             handoffMetadataV2: {
-                providerBundleTransferPublication: {
+                agentBundleTransferPublication: {
                     endpointCandidates: [
                         expect.objectContaining({
                             kind: 'http',
@@ -5000,7 +5206,7 @@ describe('sessionHandoffs ops', () => {
             },
             agentRuntimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
+                agentId: 'codex',
                 provider: {
                     backendMode: 'appServer',
                     providerSessionId: 'codex_session_prepare_legacy_runtime_descriptor',
@@ -5064,7 +5270,7 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_2', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 handoffMetadataV2: {
-                    providerBundleTransferPublication: {
+                    agentBundleTransferPublication: {
                         transferId: 'session-handoff:handoff_2:provider-bundle-file',
                         sizeBytes: 1,
                         manifestHash: 'sha256:provider-bundle',
@@ -5188,7 +5394,7 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_2b', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 handoffMetadataV2: {
-                    providerBundleTransferPublication: {
+                    agentBundleTransferPublication: {
                         transferId: 'session-handoff:handoff_2b:provider-bundle-file',
                         sizeBytes: 1,
                         manifestHash: 'sha256:provider-bundle',
@@ -5311,7 +5517,7 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_3', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 handoffMetadataV2: {
-                    providerBundleTransferPublication: {
+                    agentBundleTransferPublication: {
                         transferId: 'session-handoff:handoff_3:provider-bundle-file',
                         sizeBytes: 1,
                         manifestHash: 'sha256:provider-bundle',
@@ -5385,7 +5591,7 @@ describe('sessionHandoffs ops', () => {
                 claudeSessionId: 'claude_session_3',
                 externalSessionV1: {
                     v: 1,
-                    providerId: 'claude',
+                    agentId: 'claude',
                     machineId: 'machine_source',
                     remoteSessionId: 'claude_session_3',
                     source: { kind: 'claudeConfig', configDir: null, projectId: 'proj_source' },
@@ -5395,7 +5601,7 @@ describe('sessionHandoffs ops', () => {
             expect(updated.externalSessionV1).toBeUndefined();
             expect(updated.externalHistoryImportV1).toMatchObject({
                 v: 1,
-                providerId: 'claude',
+                agentId: 'claude',
                 remoteSessionId: 'claude_session_3',
                 source: {
                     kind: 'claudeConfig',
@@ -5545,7 +5751,7 @@ describe('sessionHandoffs ops', () => {
                 negotiatedTransportStrategy: 'server_routed_stream',
             }),
         }));
-        expect(machineRpcWithServerScopeMock.mock.calls[1]?.[0]?.payload).not.toHaveProperty('providerBundle');
+        expect(machineRpcWithServerScopeMock.mock.calls[1]?.[0]?.payload).not.toHaveProperty('agentBundle');
         expect(machineRpcWithServerScopeMock.mock.calls[1]?.[0]?.payload).not.toHaveProperty('workspaceBundle');
     });
 
@@ -5556,7 +5762,7 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_4', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 handoffMetadataV2: {
-                    providerBundleTransferPublication: {
+                    agentBundleTransferPublication: {
                         transferId: 'session-handoff:handoff_4:provider-bundle-file',
                         sizeBytes: 1,
                         manifestHash: 'sha256:provider-bundle',
@@ -5668,7 +5874,7 @@ describe('sessionHandoffs ops', () => {
             },
         ] as const;
         const handoffMetadataV2 = {
-            providerBundleTransferPublication: {
+            agentBundleTransferPublication: {
                 transferId: 'transfer_provider_bundle_rns',
                 sizeBytes: 3,
                 manifestHash: 'sha256:provider_bundle_rns',
@@ -5776,7 +5982,7 @@ describe('sessionHandoffs ops', () => {
                 negotiatedTransportStrategy: 'direct_peer',
                 allowServerRoutedFallback: true,
                 handoffMetadataV2: expect.objectContaining({
-                    providerBundleTransferPublication: expect.objectContaining({
+                    agentBundleTransferPublication: expect.objectContaining({
                         endpointCandidates,
                     }),
                 }),
@@ -5824,7 +6030,7 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_cached_a', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 handoffMetadataV2: {
-                    providerBundleTransferPublication: {
+                    agentBundleTransferPublication: {
                         transferId: 'session-handoff:handoff_cached_a:provider-bundle-file',
                         sizeBytes: 1,
                         manifestHash: 'sha256:provider-bundle',
@@ -5845,7 +6051,7 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_cached_b', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 handoffMetadataV2: {
-                    providerBundleTransferPublication: {
+                    agentBundleTransferPublication: {
                         transferId: 'session-handoff:handoff_cached_b:provider-bundle-file',
                         sizeBytes: 1,
                         manifestHash: 'sha256:provider-bundle',
@@ -6018,8 +6224,8 @@ describe('sessionHandoffs ops', () => {
                     codexBackendMode: 'appServer',
                     runtimeDescriptorV1: {
                         v: 1,
-                        providerId: 'codex',
-                        provider: {
+                        agentId: 'codex',
+                        agent: {
                             backendMode: 'appServer',
                             providerSessionId: 'codex_session_recover',
                         },
@@ -6044,8 +6250,8 @@ describe('sessionHandoffs ops', () => {
             },
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
-                provider: {
+                agentId: 'codex',
+                agent: {
                     backendMode: 'appServer',
                     providerSessionId: 'codex_session_recover',
                 },
@@ -6057,5 +6263,142 @@ describe('sessionHandoffs ops', () => {
             transcriptStorage: 'direct',
             serverId: 'server_a',
         }));
+    });
+
+    it('retries only exact source cleanup between target finalization passes for a committed handoff', async () => {
+        patchSessionMetadataWithRetryMock.mockResolvedValue(undefined);
+        const recovery = createCommittedCleanupRecoveryFixture();
+
+        const { performSessionHandoffRecoveryAction } = await import('./sessionHandoffs');
+        await expect(performSessionHandoffRecoveryAction({
+            recovery,
+            action: 'retry_source_cleanup',
+        })).resolves.toEqual({ ok: true });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine_source',
+            method: 'daemon.sessionHandoff.commit',
+            serverId: 'server_a',
+            payload: {
+                handoffId: 'handoff_committed_cleanup',
+                mode: 'source_cleanup',
+                workspaceReplicationReverseSourceRootPath: '/repo/target',
+                workspaceReplicationReverseTargetRootPath: '/repo/source',
+            },
+        }));
+        expect(patchSessionMetadataWithRetryMock).toHaveBeenCalledTimes(2);
+        expect(resumeSessionMock).not.toHaveBeenCalled();
+    });
+
+    it('preserves committed cleanup identity when normal post-cleanup target finalization rejects', async () => {
+        arrangeCommittedServerRoutedHandoff('handoff_normal_finalizer_rejection');
+        patchSessionMetadataWithRetryMock
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(new Error('post-cleanup target finalizer rejected'));
+
+        const { completeSessionHandoff } = await import('./sessionHandoffs');
+        const result = await completeSessionHandoff({
+            sessionId: 'sess_committed',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            sessionStorageMode: 'persisted',
+            preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+            sourceMetadata: {
+                flavor: 'claude',
+                path: '/repo/source',
+                host: 'source.local',
+                machineId: 'machine_source',
+                claudeSessionId: 'claude_source',
+            },
+            serverId: 'server_a',
+        });
+
+        expect(result).toMatchObject({
+            ok: false,
+            errorCode: 'target_finalization_failed',
+            errorMessage: 'post-cleanup target finalizer rejected',
+            handoffId: 'handoff_normal_finalizer_rejection',
+            recovery: {
+                handoffId: 'handoff_normal_finalizer_rejection',
+                actions: ['retry_source_cleanup'],
+                committedTarget: {
+                    sessionId: 'sess_committed',
+                    sourceMachineId: 'machine_source',
+                    targetMachineId: 'machine_target',
+                    serverId: 'server_a',
+                    targetPath: '/repo/target',
+                    targetRemoteSessionId: 'claude_target',
+                },
+                sourceCleanup: {
+                    machineId: 'machine_source',
+                    serverId: 'server_a',
+                    workspaceReplicationReverseSourceRootPath: '/repo/target',
+                    workspaceReplicationReverseTargetRootPath: '/repo/source',
+                },
+            },
+        });
+        expect(machineRpcWithServerScopeMock.mock.calls.map(([input]) => input.method)).toEqual([
+            'daemon.sessionHandoff.start',
+            'daemon.sessionHandoff.prepareTarget',
+            'daemon.sessionHandoff.commit',
+            'daemon.sessionHandoff.commit',
+        ]);
+        expect(machineRpcWithServerScopeMock.mock.calls[3]?.[0]).toMatchObject({
+            machineId: 'machine_source',
+            payload: {
+                handoffId: 'handoff_normal_finalizer_rejection',
+                mode: 'source_cleanup',
+            },
+        });
+    });
+
+    it('does not start cleanup or another handoff when recovery pre-finalization rejects', async () => {
+        const recovery = createCommittedCleanupRecoveryFixture();
+        patchSessionMetadataWithRetryMock.mockRejectedValueOnce(new Error('pre-cleanup target finalizer rejected'));
+
+        const { performSessionHandoffRecoveryAction } = await import('./sessionHandoffs');
+        await expect(performSessionHandoffRecoveryAction({
+            recovery,
+            action: 'retry_source_cleanup',
+        })).resolves.toEqual({
+            ok: false,
+            error: 'pre-cleanup target finalizer rejected',
+        });
+
+        expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
+        expect(resumeSessionMock).not.toHaveBeenCalled();
+        expect(recovery).toEqual(createCommittedCleanupRecoveryFixture());
+    });
+
+    it('returns failure after exact cleanup when recovery post-finalization rejects without starting another handoff', async () => {
+        const recovery = createCommittedCleanupRecoveryFixture();
+        patchSessionMetadataWithRetryMock
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(new Error('post-cleanup target finalizer rejected'));
+
+        const { performSessionHandoffRecoveryAction } = await import('./sessionHandoffs');
+        await expect(performSessionHandoffRecoveryAction({
+            recovery,
+            action: 'retry_source_cleanup',
+        })).resolves.toEqual({
+            ok: false,
+            error: 'post-cleanup target finalizer rejected',
+        });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine_source',
+            method: 'daemon.sessionHandoff.commit',
+            serverId: 'server_a',
+            payload: {
+                handoffId: 'handoff_committed_cleanup',
+                mode: 'source_cleanup',
+                workspaceReplicationReverseSourceRootPath: '/repo/target',
+                workspaceReplicationReverseTargetRootPath: '/repo/source',
+            },
+        }));
+        expect(resumeSessionMock).not.toHaveBeenCalled();
+        expect(recovery).toEqual(createCommittedCleanupRecoveryFixture());
     });
 });

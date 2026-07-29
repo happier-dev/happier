@@ -5,12 +5,12 @@ import { useNavigation } from '@react-navigation/native';
 import { DEFAULT_AGENT_ID, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
-import { getResolvedBackendCatalogEntries, resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { getResolvedBackendCatalogEntries, resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { NewSessionResumeSelectionContent } from '@/components/sessions/new/components/NewSessionResumeSelectionContent';
 import { openExternalSessionsResumeIdPickerModal } from '@/components/sessions/external/browse/openExternalSessionsResumeIdPickerModal';
-import { NewSessionScreenPortalScope, createNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
+import { NewSessionScreenPortalScope, useNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { resolveResumePickerBackendTarget } from '@/components/sessions/new/navigation/resolveResumePickerBackendTarget';
 import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { canBrowseExternalSessions, resolveExternalSessionBrowseLockedSource } from '@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption';
@@ -127,8 +127,8 @@ export default function ResumePickerScreen() {
         return resolveExplicitSelectedBuiltInAgentId(params.agentType, settings.lastUsedAgent);
     }, [params.agentType, settings.lastUsedAgent]);
     const runtimeCarrierAgentId = React.useMemo<AgentId | null>(() => {
-        if (selectedBackendEntry?.providerAgentId) {
-            return selectedBackendEntry.providerAgentId;
+        if (selectedBackendEntry?.catalogAgentId) {
+            return selectedBackendEntry.catalogAgentId;
         }
         if (explicitSelectedBuiltInAgentId) {
             return resolvePersistedAgentIdForBackendTarget({
@@ -137,8 +137,8 @@ export default function ResumePickerScreen() {
                 selectedBuiltInAgentId: explicitSelectedBuiltInAgentId,
             });
         }
-        return resolveProviderAgentIdForBackendTarget(effectiveBackendTarget);
-    }, [effectiveBackendTarget, explicitSelectedBuiltInAgentId, params.agentType, selectedBackendEntry?.providerAgentId, settings.lastUsedAgent]);
+        return resolveCatalogAgentIdForBackendTarget(effectiveBackendTarget);
+    }, [effectiveBackendTarget, explicitSelectedBuiltInAgentId, params.agentType, selectedBackendEntry?.catalogAgentId, settings.lastUsedAgent]);
     const agentType = React.useMemo<AgentId>(() => {
         return runtimeCarrierAgentId ?? explicitSelectedBuiltInAgentId ?? DEFAULT_AGENT_ID;
     }, [explicitSelectedBuiltInAgentId, runtimeCarrierAgentId]);
@@ -153,7 +153,10 @@ export default function ResumePickerScreen() {
     const resumeBrowseEnabled = externalSessionsFeatureEnabled
         && Boolean(effectiveMachineId)
         && externalSessionBrowseCarrierAgentId !== null
-        && canBrowseExternalSessions(externalSessionBrowseCarrierAgentId);
+        && canBrowseExternalSessions({
+            agentId: externalSessionBrowseCarrierAgentId,
+            projection: daemonMergedProjectionInputs?.pluginProjectionV2,
+        });
     const roundTripBackendParams = React.useMemo(() => {
         return buildBackendTargetRouteParams({
             backendTarget: params.backendTarget,
@@ -217,12 +220,10 @@ export default function ResumePickerScreen() {
 
     const headerTitle = t('newSession.resume.pickerTitle');
     const headerBackTitle = t('common.cancel');
-    const screenOptions = React.useMemo(() => {
-        return createNewSessionContainedModalScreenOptions({
-            title: headerTitle,
-            headerBackTitle,
-        });
-    }, [headerBackTitle, headerTitle]);
+    const screenOptions = useNewSessionContainedModalScreenOptions({
+        title: headerTitle,
+        headerBackTitle,
+    });
 
     return (
         <NewSessionScreenPortalScope>
@@ -240,10 +241,11 @@ export default function ResumePickerScreen() {
                     onBrowse: async () => {
                         if (!effectiveMachineId || !externalSessionBrowseCarrierAgentId) return null;
                         const source = resolveExternalSessionBrowseLockedSource({
-                            providerId: externalSessionBrowseCarrierAgentId as any,
+                            providerId: externalSessionBrowseCarrierAgentId,
                             agentOptionState,
                             profile: accountProfile,
                             settings,
+                            projection: daemonMergedProjectionInputs?.pluginProjectionV2,
                         });
                         if (!source) return null;
                         return await openExternalSessionsResumeIdPickerModal({
@@ -252,7 +254,7 @@ export default function ResumePickerScreen() {
                             lockScope: {
                                 machineId: effectiveMachineId,
                                 serverId: effectiveServerId,
-                                providerId: externalSessionBrowseCarrierAgentId as any,
+                                providerId: externalSessionBrowseCarrierAgentId,
                                 source,
                             },
                         });

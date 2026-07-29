@@ -10,6 +10,7 @@ import {
 } from './modelOptions';
 import { findModelOptionForEffectiveModelId } from './modelOptions';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol';
 
 function withMetadata(overrides: Partial<Metadata>): Metadata {
     return {
@@ -50,10 +51,8 @@ describe('modelOptions', () => {
         expect(getModelOptionsForAgentType('kimi').map((o) => o.value)).toEqual(['default']);
     });
 
-    it('returns basic options for codex (preflight can extend the list)', () => {
-        const out = getModelOptionsForAgentType('codex');
-        expect(out[0]?.value).toBe('default');
-        expect(out.length).toBeGreaterThan(1);
+    it('returns default-only static options for codex so preflight can provide account-specific models', () => {
+        expect(getModelOptionsForAgentType('codex').map((o) => o.value)).toEqual(['default']);
     });
 
     it('includes a curated static list for Claude while still allowing freeform models', () => {
@@ -97,7 +96,7 @@ describe('modelOptions', () => {
             withMetadata({
                 sessionModelsV1: {
                     v: 1,
-                    provider: 'opencode',
+                    agentId: 'opencode',
                     updatedAt: 1,
                     currentModelId: 'model-a',
                     availableModels: [
@@ -119,7 +118,7 @@ describe('modelOptions', () => {
             withMetadata({
                 sessionModelsV1: {
                     v: 1,
-                    provider: 'codex',
+                    agentId: 'codex',
                     updatedAt: 1,
                     currentModelId: 'gpt-5.4',
                     availableModels: [
@@ -147,7 +146,7 @@ describe('modelOptions', () => {
             withMetadata({
                 sessionModelsV1: {
                     v: 1,
-                    provider: 'claude',
+                    agentId: 'claude',
                     updatedAt: 1,
                     currentModelId: 'claude-opus-4-6',
                     availableModels: [
@@ -174,7 +173,7 @@ describe('modelOptions', () => {
         const metadata = withMetadata({
             sessionModelsV1: {
                 v: 1,
-                provider: 'opencode',
+                agentId: 'opencode',
                 updatedAt: 1,
                 currentModelId: 'model-a',
                 availableModels: [{ id: 'model-a', name: 'Model A' }],
@@ -187,10 +186,13 @@ describe('modelOptions', () => {
         expect(isModelSelectableForSession('opencode', metadata, 'not-a-model')).toBe(true);
     });
 
-    it('treats static Gemini models as selectable', () => {
+    it('treats static and Gemini-prefixed Gemini models as selectable', () => {
         expect(isModelSelectableForSession('gemini', null, 'gemini-2.5-pro')).toBe(true);
+        expect(isModelSelectableForSession('gemini', null, 'models/gemini-3.5-flash')).toBe(true);
+        expect(isModelSelectableForSession('gemini', null, 'publishers/google/models/gemini-3.5-flash')).toBe(true);
         expect(isModelSelectableForSession('gemini', null, 'default')).toBe(true);
-        expect(isModelSelectableForSession('gemini', null, 'model-a')).toBe(true);
+        expect(isModelSelectableForSession('gemini', null, 'model-a')).toBe(false);
+        expect(isModelSelectableForSession('gemini', null, 'gpt-5.5')).toBe(false);
         expect(isModelSelectableForSession('gemini', null, '   ')).toBe(false);
     });
 
@@ -211,6 +213,25 @@ describe('modelOptions', () => {
         expect(out.some((option) => option.value === 'claude-custom-model')).toBe(true);
     });
 
+    it('adds a canonical provider-bound selection into options without reading the legacy override field', () => {
+        const out = getModelOptionsForSession(
+            'claude',
+            withMetadata({
+                modelSelectionIntentV1: SessionModelSelectionIntentV1Schema.parse({
+                    v: 1,
+                    updatedAt: 101,
+                    selection: {
+                        agentTargetKey: 'backend:claude',
+                        providerConnectionId: 'pc_01J00000000000000000000000',
+                        modelId: 'provider-custom-model',
+                    },
+                }),
+            }),
+        );
+
+        expect(out.some((option) => option.value === 'provider-custom-model')).toBe(true);
+    });
+
     it('appends custom metadata override models after the static catalog for static-only providers', () => {
         const staticClaudeValues = getModelOptionsForAgentType('claude').map((option) => option.value);
         const out = getModelOptionsForSession(
@@ -218,7 +239,7 @@ describe('modelOptions', () => {
             withMetadata({
                 sessionModelsV1: {
                     v: 1,
-                    provider: 'claude',
+                    agentId: 'claude',
                     updatedAt: 1,
                     currentModelId: 'claude-sonnet-4-6',
                     availableModels: [
@@ -240,7 +261,7 @@ describe('modelOptions', () => {
         const metadata = withMetadata({
             sessionModelsV1: {
                 v: 1,
-                provider: 'claude',
+                agentId: 'claude',
                 updatedAt: 1,
                 currentModelId: 'claude-sonnet-4-6',
                 availableModels: [
@@ -267,13 +288,24 @@ describe('modelOptions', () => {
         expect(out.some((option) => option.value === 'gemini-custom-model')).toBe(true);
     });
 
+    it('does not add stale cross-provider metadata override models for constrained freeform providers', () => {
+        const out = getModelOptionsForSession(
+            'gemini',
+            withMetadata({
+                modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'gpt-5.5' },
+            }),
+        );
+
+        expect(out.some((option) => option.value === 'gpt-5.5')).toBe(false);
+    });
+
     it('falls back to static options when dynamic list provider does not match agent', () => {
         const out = getModelOptionsForSession(
             'opencode',
             withMetadata({
                 sessionModelsV1: {
                     v: 1,
-                    provider: 'claude',
+                    agentId: 'claude',
                     updatedAt: 1,
                     currentModelId: 'model-a',
                     availableModels: [{ id: 'model-a', name: 'Model A' }],
@@ -291,7 +323,7 @@ describe('modelOptions', () => {
                 withMetadata({
                     sessionModelsV1: {
                         v: 1,
-                        provider: 'opencode',
+                        agentId: 'opencode',
                         updatedAt: 1,
                         currentModelId: 'model-a',
                         availableModels: [{ id: 'model-a', name: 'Model A' }],
@@ -306,7 +338,7 @@ describe('modelOptions', () => {
                 withMetadata({
                     sessionModelsV1: {
                         v: 1,
-                        provider: 'gemini',
+                        agentId: 'gemini',
                         updatedAt: 1,
                         currentModelId: 'model-a',
                         availableModels: [{ id: 'model-a', name: 'Model A' }],
@@ -323,7 +355,7 @@ describe('modelOptions', () => {
                 withMetadata({
                     sessionModelsV1: {
                         v: 1,
-                        provider: 'claude',
+                        agentId: 'claude',
                         updatedAt: 1,
                         currentModelId: 'claude-haiku-4-5',
                         availableModels: [{ id: 'haiku', name: 'Haiku' }],
@@ -339,7 +371,7 @@ describe('modelOptions', () => {
             withMetadata({
                 acpSessionModelsV1: {
                     v: 1,
-                    provider: 'opencode',
+                    agentId: 'opencode',
                     updatedAt: 1,
                     currentModelId: 'model-a',
                     availableModels: [{ id: 'model-a', name: 'Model A' }],

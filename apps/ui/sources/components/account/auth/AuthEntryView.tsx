@@ -13,6 +13,11 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 export type AuthEntryViewProps = Readonly<{
     layout: 'portrait' | 'landscape';
     isDesktopShell: boolean;
+    /**
+     * Keeps authenticated desktop callers able to expose the setup shim while
+     * the current pre-auth wizard consumer explicitly hides it.
+     */
+    showOpenSetupAction?: boolean;
     options: AuthEntryOptions;
     onOpenSetup: () => void;
     onChangeRelay: () => void;
@@ -47,6 +52,7 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
     const providerId = props.options.providerId;
     const keylessProviderId = props.options.keylessProviderId;
     const showSecondaryKeylessProviderLogin = props.options.showKeylessProviderLogin && !keylessPrimary && !!keylessProviderId;
+    const showOpenSetupAction = props.isDesktopShell && props.showOpenSetupAction !== false;
 
     const isLandscape = props.layout === 'landscape';
     const actionStackStyle = isLandscape ? styles.landscapeActionStack : styles.actionStack;
@@ -97,7 +103,7 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
     const renderReadyActions = () => (
         <>
             <View style={actionStackStyle}>
-                {props.isDesktopShell && (
+                {showOpenSetupAction && (
                     <View style={styles.actionRow}>
                         <RoundButton
                             testID="welcome-open-setup"
@@ -189,7 +195,7 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
     const renderMobileActions = () => (
         <>
             <View style={actionStackStyle}>
-                {props.isDesktopShell && (
+                {showOpenSetupAction && (
                     <View style={styles.actionRow}>
                         <RoundButton
                             testID="welcome-open-setup"

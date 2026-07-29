@@ -50,6 +50,9 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('@expo/vector-icons/Ionicons', () => ({
+    get Ionicons() {
+        return vectorIconsState.ionicons;
+    },
     get default() {
         return vectorIconsState.ioniconsFallback;
     },

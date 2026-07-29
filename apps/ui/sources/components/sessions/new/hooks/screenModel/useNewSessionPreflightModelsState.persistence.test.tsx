@@ -71,6 +71,33 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
 });
 
 describe('useNewSessionPreflightModelsState (persistence)', () => {
+  it('does not reuse a native probe cache entry for a provider connection on the same target', async () => {
+    vi.resetModules();
+    machineCapabilitiesInvokeMock.mockClear();
+    resetDynamicModelProbeCacheForTests();
+    const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+
+    function Harness(props: { providerConnectionId: string | null }) {
+      useNewSessionPreflightModelsState({
+        backendTarget: { kind: 'backend', backendId: 'codex' },
+        providerConnectionId: props.providerConnectionId,
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo',
+      } as any).preflightModels;
+      return null;
+    }
+
+    const first = await renderScreen(React.createElement(Harness, { providerConnectionId: null }));
+    await act(async () => first.tree.unmount());
+    const second = await renderScreen(React.createElement(Harness, {
+      providerConnectionId: 'pc_01J00000000000000000000000',
+    }));
+    await act(async () => second.tree.unmount());
+
+    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
+  });
+
   it('hydrates cached results across module reloads (app restarts)', async () => {
     vi.resetModules();
     machineCapabilitiesInvokeMock.mockClear();
@@ -205,6 +232,7 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
     const cacheKey = buildDynamicModelProbeCacheKey({
       machineId: 'machine-1',
       targetKey: 'backend:codex',
+      providerConnectionId: null,
       serverId: 'server-1',
       cwd: '/repo',
     });
@@ -334,6 +362,7 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
     const cacheKey = buildDynamicModelProbeCacheKey({
       machineId: 'machine-1',
       targetKey: 'backend:codex',
+      providerConnectionId: null,
       serverId: 'server-1',
       cwd: '/repo',
     });
@@ -457,6 +486,7 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
     const cacheKey = buildDynamicModelProbeCacheKey({
       machineId: 'machine-1',
       targetKey: 'backend:codex',
+      providerConnectionId: null,
       serverId: 'server-1',
       cwd: '/repo',
     });

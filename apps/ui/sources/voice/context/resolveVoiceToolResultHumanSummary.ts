@@ -159,16 +159,14 @@ export function resolveVoiceToolResultHumanSummary(params: Readonly<{
     toolInput: unknown;
     toolResult: unknown;
     shareFilePaths: boolean;
-    /**
-     * Session titles surfaced by the session tools are the session summary text. When sharing of
-     * session summaries is disabled, those summary-derived labels must not be spoken back to the
-     * provider. Defaults to true so existing callers that only gate file paths keep working.
-     */
-    shareSessionSummary?: boolean;
+    /** Session titles and explicit summaries may cross the provider boundary only with consent. */
+    shareSessionSummary: boolean;
 }>): string | null {
     const result = asObject(params.toolResult);
     if (!result) return null;
-    const shareSessionSummary = params.shareSessionSummary !== false;
+    // Keep the runtime boundary fail-closed for untyped, legacy, or malformed callers too.
+    const shareFilePaths = params.shareFilePaths === true;
+    const shareSessionSummary = params.shareSessionSummary === true;
 
     // An explicit `result.summary` (or `error.message`) is summary text, so it must honor the
     // `shareSessionSummary` toggle, not only `shareFilePaths` (X-L1). When summary sharing is
@@ -177,7 +175,7 @@ export function resolveVoiceToolResultHumanSummary(params: Readonly<{
         ?? normalizeText(asObject(result.error)?.message);
     if (explicitSummary) {
         if (!shareSessionSummary) return null;
-        return maybeRedact(explicitSummary, params.shareFilePaths);
+        return maybeRedact(explicitSummary, shareFilePaths);
     }
 
     switch (params.toolName) {
@@ -185,29 +183,29 @@ export function resolveVoiceToolResultHumanSummary(params: Readonly<{
             if (!shareSessionSummary) return null;
             return summarizeLabelList(
                 'Available sessions',
-                collectSessionLabels(result.sessions, params.shareFilePaths),
+                collectSessionLabels(result.sessions, shareFilePaths),
                 { hasMore: normalizeText(result.nextCursor) !== null },
             );
         }
         case 'openSession': {
             if (!shareSessionSummary) return null;
-            const sessionSummary = summarizeSessionReference(result.session, params.shareFilePaths);
+            const sessionSummary = summarizeSessionReference(result.session, shareFilePaths);
             return sessionSummary ? `Opened ${sessionSummary}.` : null;
         }
         case 'listRecentPaths': {
-            return summarizeLabelList('Recent paths', collectLabels(result.items, params.shareFilePaths));
+            return summarizeLabelList('Recent paths', collectLabels(result.items, shareFilePaths));
         }
         case 'listMachines': {
-            return summarizeLabelList('Available machines', collectLabels(result.items, params.shareFilePaths));
+            return summarizeLabelList('Available machines', collectLabels(result.items, shareFilePaths));
         }
         case 'listServers': {
-            return summarizeLabelList('Available servers', collectLabels(result.items, params.shareFilePaths));
+            return summarizeLabelList('Available servers', collectLabels(result.items, shareFilePaths));
         }
         case 'listAgentBackends': {
-            return summarizeLabelList('Available backends', collectLabels(result.items, params.shareFilePaths));
+            return summarizeLabelList('Available backends', collectLabels(result.items, shareFilePaths));
         }
         case 'listAgentModels': {
-            const labels = collectLabels(result.items, params.shareFilePaths);
+            const labels = collectLabels(result.items, shareFilePaths);
             const input = asObject(params.toolInput);
             const agentLabel = resolveAgentModelsSummaryLabel(input, result);
             const prefix = agentLabel ? `Available ${agentLabel} models` : 'Available models';
@@ -215,21 +213,21 @@ export function resolveVoiceToolResultHumanSummary(params: Readonly<{
         }
         case 'setPrimaryActionSession': {
             if (!shareSessionSummary) return null;
-            const sessionSummary = summarizeSessionReference(result.session, params.shareFilePaths);
+            const sessionSummary = summarizeSessionReference(result.session, shareFilePaths);
             return sessionSummary ? `Using ${sessionSummary}.` : null;
         }
         case 'setTrackedSessions': {
             if (!shareSessionSummary) return null;
-            return summarizeLabelList('Tracking sessions', collectSessionLabels(result.sessions, params.shareFilePaths));
+            return summarizeLabelList('Tracking sessions', collectSessionLabels(result.sessions, shareFilePaths));
         }
         case 'spawnSession': {
             if (shareSessionSummary) {
-                const sessionSummary = summarizeSessionReference(result.session, params.shareFilePaths);
+                const sessionSummary = summarizeSessionReference(result.session, shareFilePaths);
                 if (sessionSummary) {
                     return `Created ${sessionSummary}.`;
                 }
             }
-            const targetLabels = collectLabels(result.target ? [result.target] : [], params.shareFilePaths);
+            const targetLabels = collectLabels(result.target ? [result.target] : [], shareFilePaths);
             return summarizeLabelList('Created a session in', targetLabels);
         }
         default:

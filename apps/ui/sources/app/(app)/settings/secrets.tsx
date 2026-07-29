@@ -1,10 +1,10 @@
 import React from 'react';
 
-import { useSettingMutable } from '@/sync/domains/state/storage';
 import { SecretsList } from '@/components/secrets/SecretsList';
+import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 
 export default React.memo(function SecretsSettingsScreen() {
-    const [secrets, setSecrets] = useSettingMutable('secrets');
+    const [secrets, setSecrets] = useSavedSecretsMutable();
 
     return (
         <SecretsList

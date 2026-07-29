@@ -3,7 +3,12 @@ import { act } from 'react-test-renderer';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { useOpenApprovalSessionIds } from '@/sync/domains/state/storage';
+import type { Automation } from '@/sync/domains/automations/automationTypes';
+import {
+    useEnabledAutomationsCountForSession,
+    useOpenApprovalArtifactsForSession,
+    useOpenApprovalSessionIds,
+} from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
 
 function artifact(
@@ -24,6 +29,24 @@ function artifact(
         createdAt: 1,
         updatedAt: 1,
         isDecrypted: true,
+    };
+}
+
+function automation(params: Partial<Automation> & Pick<Automation, 'id' | 'targetType' | 'templateCiphertext'>): Automation {
+    return {
+        id: params.id,
+        name: params.name ?? params.id,
+        description: params.description ?? null,
+        enabled: params.enabled ?? true,
+        schedule: params.schedule ?? { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null },
+        targetType: params.targetType,
+        templateCiphertext: params.templateCiphertext,
+        templateVersion: params.templateVersion ?? 1,
+        nextRunAt: params.nextRunAt ?? null,
+        lastRunAt: params.lastRunAt ?? null,
+        createdAt: params.createdAt ?? 1,
+        updatedAt: params.updatedAt ?? 1,
+        assignments: params.assignments ?? [],
     };
 }
 
@@ -120,6 +143,150 @@ describe('useOpenApprovalSessionIds', () => {
             });
 
             expect(hook.getCurrent()).toEqual(['server-a:session-a']);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+});
+
+describe('session detail scoped projections', () => {
+    it('returns only non-draft open approvals for one session without the global artifacts hook', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                artifacts: {
+                    open: artifact('open', {
+                        v: 1,
+                        kind: 'approval_request.v1',
+                        title: 'Approve',
+                        approvalStatus: 'open',
+                        sessionId: 'session-a',
+                        actionId: 'session.list',
+                    }),
+                    draft: artifact('draft', {
+                        v: 1,
+                        kind: 'approval_request.v1',
+                        title: 'Draft approve',
+                        approvalStatus: 'open',
+                        sessionId: 'session-a',
+                        actionId: 'session.status.get',
+                        draft: true,
+                    }),
+                    other: artifact('other', {
+                        v: 1,
+                        kind: 'approval_request.v1',
+                        title: 'Other approve',
+                        approvalStatus: 'open',
+                        sessionId: 'session-b',
+                        actionId: 'session.status.get',
+                    }),
+                },
+            }));
+
+            let renderCount = 0;
+            const hook = await renderHook(() => {
+                renderCount += 1;
+                return useOpenApprovalArtifactsForSession('session-a');
+            }, {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const first = hook.getCurrent();
+
+            expect(first.map((entry) => entry.artifact.id)).toEqual(['open']);
+            expect(renderCount).toBe(1);
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    artifacts: {
+                        ...state.artifacts,
+                        other: {
+                            ...state.artifacts.other,
+                            updatedAt: 2,
+                        },
+                    },
+                }));
+            });
+
+            expect(hook.getCurrent()).toBe(first);
+            expect(renderCount).toBe(1);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('counts enabled automations for one session without subscribing to the global sorted automation list', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                automations: {
+                    enabled: automation({
+                        id: 'enabled',
+                        enabled: true,
+                        targetType: 'existing_session',
+                        templateCiphertext: JSON.stringify({
+                            kind: 'happier_automation_template_encrypted_v1',
+                            payloadCiphertext: 'cipher',
+                            existingSessionId: 'session-a',
+                        }),
+                    }),
+                    disabled: automation({
+                        id: 'disabled',
+                        enabled: false,
+                        targetType: 'existing_session',
+                        templateCiphertext: JSON.stringify({
+                            kind: 'happier_automation_template_encrypted_v1',
+                            payloadCiphertext: 'cipher',
+                            existingSessionId: 'session-a',
+                        }),
+                    }),
+                    other: automation({
+                        id: 'other',
+                        enabled: true,
+                        targetType: 'existing_session',
+                        templateCiphertext: JSON.stringify({
+                            kind: 'happier_automation_template_encrypted_v1',
+                            payloadCiphertext: 'cipher',
+                            existingSessionId: 'session-b',
+                        }),
+                    }),
+                },
+            }));
+
+            let renderCount = 0;
+            const hook = await renderHook(() => {
+                renderCount += 1;
+                return useEnabledAutomationsCountForSession('session-a');
+            }, {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent()).toBe(1);
+            expect(renderCount).toBe(1);
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    automations: {
+                        ...state.automations,
+                        other: {
+                            ...state.automations.other,
+                            updatedAt: 2,
+                        },
+                    },
+                }));
+            });
+
+            expect(hook.getCurrent()).toBe(1);
+            expect(renderCount).toBe(1);
 
             await hook.unmount();
         } finally {

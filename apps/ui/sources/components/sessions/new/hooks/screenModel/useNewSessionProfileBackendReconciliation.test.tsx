@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import { SessionModelSelectionV1Schema, type BackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
@@ -87,6 +87,11 @@ type HarnessProps = Readonly<{
     applyPermissionModeSpy: ReturnType<typeof vi.fn<(mode: PermissionMode, source: 'user' | 'auto') => void>>;
     prepareSecretPromptForProfileSelectionSpy: ReturnType<typeof vi.fn<(prevProfileId: string | null) => void>>;
     resolveDefaultPermissionMode: (profile: AIBackendProfile | null) => PermissionMode;
+    resolveProfileAuthoringIntent?: (profileId: string) => Readonly<{
+        preferredAgentTargetKey: string | null;
+        modelSelection: SessionModelSelectionV1 | null;
+    }>;
+    setModelSelectionForBackendTargetSpy?: ReturnType<typeof vi.fn<(backendTargetKey: string, selection: SessionModelSelectionV1 | null) => void>>;
 }>;
 
 function useHarness(props: HarnessProps) {
@@ -119,6 +124,8 @@ function useHarness(props: HarnessProps) {
         prepareSecretPromptForProfileSelection: props.prepareSecretPromptForProfileSelectionSpy,
         hasUserTouchedProfileSelectionRef,
         agentType: 'codex',
+        resolveProfileAuthoringIntent: props.resolveProfileAuthoringIntent,
+        setModelSelectionForBackendTarget: props.setModelSelectionForBackendTargetSpy,
     });
 
     return {
@@ -134,9 +141,11 @@ describe('useNewSessionProfileBackendReconciliation', () => {
         standardCleanup();
         interactionTasks.length = 0;
         vi.clearAllMocks();
+        vi.useRealTimers();
     });
 
     it('ignores stale interaction callbacks after a newer profile selection', async () => {
+        vi.useFakeTimers();
         const applyPermissionModeSpy = vi.fn<(mode: PermissionMode, source: 'user' | 'auto') => void>();
         const prepareSecretPromptForProfileSelectionSpy = vi.fn<(prevProfileId: string | null) => void>();
         const profileA = createProfile('profile-a');
@@ -180,13 +189,66 @@ describe('useNewSessionProfileBackendReconciliation', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 2 });
 
-        expect(interactionTasks).toHaveLength(2);
-
-        await flushNextInteractionTask();
+        await act(async () => {
+            await vi.runAllTimersAsync();
+        });
+        await flushHookEffects({ cycles: 1, turns: 2 });
 
         expect(hook.getCurrent().selectedProfileId).toBe('profile-b');
         expect(hook.getCurrent().backendTarget).toEqual({ kind: 'backend', backendId: 'codex' });
-        expect(applyPermissionModeSpy).not.toHaveBeenCalled();
+        expect(applyPermissionModeSpy).not.toHaveBeenCalledWith('read-only', 'auto');
+    });
+
+    it('applies the selected slim profile preferred target and exact provider model intent', async () => {
+        const applyPermissionModeSpy = vi.fn<(mode: PermissionMode, source: 'user' | 'auto') => void>();
+        const prepareSecretPromptForProfileSelectionSpy = vi.fn<(prevProfileId: string | null) => void>();
+        const setModelSelectionForBackendTargetSpy = vi.fn<(backendTargetKey: string, selection: SessionModelSelectionV1 | null) => void>();
+        const profile = createProfile('profile-a');
+        const claudeTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' });
+        const selection = SessionModelSelectionV1Schema.parse({
+            v: 1,
+            updatedAt: 200,
+            ref: {
+                agentTargetKey: claudeTargetKey,
+                providerConnectionId: 'pc_profile',
+                modelId: 'profile-model',
+            },
+        });
+        const hook = await renderHook(useHarness, {
+            initialProps: {
+                initialSelectedProfileId: null,
+                initialBackendTarget: { kind: 'backend', backendId: 'codex' },
+                compatibleEntriesByProfileId: {
+                    [profile.id]: [{
+                        backendTarget: { kind: 'backend', backendId: 'claude' },
+                        backendTargetKey: claudeTargetKey,
+                        builtInAgentId: 'claude',
+                        kind: 'builtInAgent',
+                    }],
+                },
+                profileMap: new Map([[profile.id, profile]]),
+                cliAvailabilityTimestamp: 1,
+                cliAvailabilityByAgentId: { claude: true },
+                installableDepKeyCountByAgentId: { claude: 0 },
+                applyPermissionModeSpy,
+                prepareSecretPromptForProfileSelectionSpy,
+                resolveDefaultPermissionMode: () => 'default',
+                resolveProfileAuthoringIntent: () => ({
+                    preferredAgentTargetKey: claudeTargetKey,
+                    modelSelection: selection,
+                }),
+                setModelSelectionForBackendTargetSpy,
+            },
+        });
+
+        await act(async () => {
+            hook.getCurrent().selectProfile(profile.id);
+        });
+        await flushHookEffects({ cycles: 1, turns: 2 });
+        await flushNextInteractionTask();
+
+        expect(hook.getCurrent().backendTarget).toEqual({ kind: 'backend', backendId: 'claude' });
+        expect(setModelSelectionForBackendTargetSpy).toHaveBeenCalledWith(claudeTargetKey, selection);
     });
 
     it('uses the next selectable compatible backend when reconciling an incompatible profile backend', async () => {

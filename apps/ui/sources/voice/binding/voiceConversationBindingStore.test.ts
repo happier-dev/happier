@@ -172,4 +172,44 @@ describe('createVoiceSessionBindingStore', () => {
       }),
     );
   });
+
+  it('syncs a layout-v1 binding only from the owner metadata view', async () => {
+    const store = createVoiceSessionBindingStore();
+    const { syncPersistedVoiceConversationBindings } = await import('./voiceConversationBindingStore');
+    const { writeVoiceConversationBindingMetadata } = await import('./voiceConversationBindingMetadata');
+    const binding = {
+      adapterId: 'local_conversation',
+      controlSessionId: '__voice_agent__',
+      conversationSessionId: 'carrier-owner',
+      transcriptMode: 'native_session' as const,
+      targetSessionId: 'owner-target',
+      updatedAt: 20,
+    };
+
+    const state = {
+      sessions: {
+        'carrier-owner': {
+          metadataLayoutVersion: 1,
+          metadata: writeVoiceConversationBindingMetadata(
+            { v: 1, systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
+            { ...binding, targetSessionId: 'shared-private-lookalike' },
+          ),
+          ownerMetadataView: writeVoiceConversationBindingMetadata(
+            { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
+            binding,
+          ),
+        },
+      },
+    };
+    syncPersistedVoiceConversationBindings({
+      store,
+      state: state as any,
+    });
+
+    expect(store.getState().getByControlSessionId('__voice_agent__')?.targetSessionId).toBe('owner-target');
+
+    state.sessions['carrier-owner'].ownerMetadataView = null as any;
+    syncPersistedVoiceConversationBindings({ store, state: state as any });
+    expect(store.getState().getByControlSessionId('__voice_agent__')).toBeNull();
+  });
 });

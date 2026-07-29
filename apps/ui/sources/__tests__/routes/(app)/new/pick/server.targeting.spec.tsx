@@ -153,7 +153,6 @@ installPickerCommonModuleMocks({
     },
 });
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('@expo/vector-icons', async () => {
     const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
@@ -199,9 +198,10 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
+vi.mock('@/components/ui/lists/ItemList', async () => {
+    const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
+    return createPassThroughModule(['ItemList']);
+});
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: ({ children }: any) => React.createElement(React.Fragment, null, children),

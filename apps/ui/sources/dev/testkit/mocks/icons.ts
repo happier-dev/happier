@@ -4,5 +4,8 @@ export function createExpoVectorIconsMock() {
         Octicons: 'Octicons',
         AntDesign: 'AntDesign',
         MaterialIcons: 'MaterialIcons',
+        FontAwesome: 'FontAwesome',
+        FontAwesome5: 'FontAwesome5',
+        Feather: 'Feather',
     };
 }

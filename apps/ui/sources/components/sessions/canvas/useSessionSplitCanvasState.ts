@@ -5,6 +5,7 @@ import type { SplitCanvasAction } from '@/components/appShell/splitCanvas/model/
 import { useIsDataReady, useSettingMutable } from '@/sync/domains/state/storage';
 import {
     readPersistedSessionSplitCanvasSnapshot,
+    shouldPersistSessionSplitCanvasSnapshot,
     writePersistedSessionSplitCanvasSnapshot,
     type SessionSplitCanvasLeafPayload,
 } from '@/sync/domains/session/sessionSplitCanvasPersistence';
@@ -117,7 +118,11 @@ export function useSessionSplitCanvasState(input: Readonly<{
                 return;
             }
             const persisted = sessionSplitCanvasLayoutsV1?.[scopeKey] ?? null;
-            if (areJsonEqual(persisted, snapshot)) {
+            if (!shouldPersistSessionSplitCanvasSnapshot({
+                persisted,
+                snapshot,
+                routeSessionId: input.routeSessionId,
+            })) {
                 return;
             }
             setSessionSplitCanvasLayoutsV1(writePersistedSessionSplitCanvasSnapshot({

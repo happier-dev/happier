@@ -15,12 +15,27 @@ function supportsReviewIntent(entry: ExecutionRunsBackendSnapshotEntry | null | 
   return intents.includes('review');
 }
 
+function resolveReviewEngineLabel(
+  id: string,
+  entry: ExecutionRunsBackendSnapshotEntry | null | undefined,
+  resolveAgentLabel: (agentId: string) => string,
+): string {
+  const label = entry?.title ?? entry?.label ?? entry?.displayName;
+  if (label) return label;
+
+  try {
+    return resolveAgentLabel(id);
+  } catch {
+    return id;
+  }
+}
+
 function buildReviewEngineOption(
   id: string,
   entry: ExecutionRunsBackendSnapshotEntry | null | undefined,
   resolveAgentLabel: (agentId: string) => string,
 ): ReviewEngineOption {
-  const label = entry?.title ?? entry?.label ?? entry?.displayName ?? resolveAgentLabel(id);
+  const label = resolveReviewEngineLabel(id, entry, resolveAgentLabel);
   const disabled = entry ? !(entry.available === true && supportsReviewIntent(entry)) : false;
   return { id, label, ...(disabled ? { disabled: true as const } : {}) };
 }

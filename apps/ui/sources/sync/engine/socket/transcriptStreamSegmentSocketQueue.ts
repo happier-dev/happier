@@ -1,11 +1,11 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type {
-    TranscriptStreamSegmentEphemeralUpdate,
+    AnyTranscriptStreamSegmentEphemeralUpdate,
     TranscriptStreamSegmentSessionMessageEncryption,
 } from '@/sync/engine/sessions/handleTranscriptStreamSegmentEphemeralUpdate';
 import { handleTranscriptStreamSegmentEphemeralUpdate } from '@/sync/engine/sessions/handleTranscriptStreamSegmentEphemeralUpdate';
 import type { SessionMessageApplyCoalescerConfig } from '@/sync/engine/sessions/sessionMessageApplyCoalescer';
-import type { NormalizedMessage } from '@/sync/typesRaw';
+import type { NormalizedMessage, RawMessageNormalizationSequenceState } from '@/sync/typesRaw';
 
 type TranscriptStreamSegmentHandler = typeof handleTranscriptStreamSegmentEphemeralUpdate;
 type TimerHandle = ReturnType<typeof setTimeout>;
@@ -25,12 +25,13 @@ export type TranscriptStreamSegmentMessageCoalescer = Readonly<{
 }>;
 
 export type TranscriptStreamSegmentSocketQueueEntry = Readonly<{
-    update: TranscriptStreamSegmentEphemeralUpdate;
+    update: AnyTranscriptStreamSegmentEphemeralUpdate;
     sourceServerId?: string | null;
     shouldContinue: () => boolean;
     getSessionEncryption: (sessionId: string) => TranscriptStreamSegmentSessionMessageEncryption | null;
     getSession: (sessionId: string) => Session | undefined;
     applyMessages?: (sessionId: string, messages: NormalizedMessage[]) => void;
+    rawMessageNormalizationState?: RawMessageNormalizationSequenceState;
 }>;
 
 export function createTranscriptStreamSegmentSocketQueueController(params: Readonly<{
@@ -81,6 +82,7 @@ export function createTranscriptStreamSegmentSocketQueueController(params: Reado
             applyMessages: (sessionId, messages) => params.messageCoalescer.enqueue(sessionId, messages, {
                 shouldContinue: entry.shouldContinue,
             }),
+            rawMessageNormalizationState: entry.rawMessageNormalizationState,
             isSessionActivelyViewed: (sessionId) => params.isSessionVisible(sessionId, entry.sourceServerId),
             skipWhenHidden: true,
         });
@@ -155,12 +157,23 @@ export function createTranscriptStreamSegmentSocketQueueController(params: Reado
 
     async function handle(entry: TranscriptStreamSegmentSocketQueueEntry): Promise<void> {
         const sessionId = entry.update.sessionId;
+        const isDelta = entry.update.type === 'transcript-stream-segment-delta';
         const config = params.getConfig();
         const windowMs = Math.max(0, Math.trunc(config.windowMs));
         const hiddenQueueEnabled = config.enabled && windowMs > 0;
-        if (hiddenQueueEnabled && !params.isSessionVisible(sessionId, entry.sourceServerId)) {
-            enqueue(entry, config);
-            return;
+        if (!params.isSessionVisible(sessionId, entry.sourceServerId)) {
+            // Deltas are never deferred: the hidden queue dedupes by localId keeping the latest
+            // entry, which would collapse distinct deltas and corrupt reconstruction. Hidden
+            // sessions stay fresh via the ~1Hz full-snapshot checkpoints; assembly resyncs from
+            // the next checkpoint when the session becomes visible.
+            if (isDelta) {
+                params.onDeferredRawDroppedHidden?.({ messages: 1 });
+                return;
+            }
+            if (hiddenQueueEnabled) {
+                enqueue(entry, config);
+                return;
+            }
         }
         if (params.isSessionVisible(sessionId, entry.sourceServerId)) {
             await flush(sessionId);

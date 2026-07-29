@@ -14,6 +14,11 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
+vi.mock('@/components/ui/text/Text', async () => {
+    const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
+    return createUiTextModuleMock();
+});
+
 describe('SelectableRow (disabled children)', () => {
     it('does not disable the root pressable so nested actions remain usable', async () => {
         const { SelectableRow } = await import('./SelectableRow');

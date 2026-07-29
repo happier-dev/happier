@@ -41,9 +41,6 @@ export type TranscriptLifecycleScrollObservationPlanApplierEffects = Readonly<{
     applyWebUserScrollIntentTimestampLifecycleEffects(
         effects: TranscriptLifecycleHostScrollObservationPlan['lifecycleEffects'],
     ): void;
-    applyWebPassiveLiveTailCorrectionEffect(
-        effect: NonNullable<TranscriptLifecycleHostScrollObservationPlan['webPassiveLiveTailCorrectionEffect']>,
-    ): boolean;
     applyWebUserScrollTakeoverLifecycleEffects(
         effects: TranscriptLifecycleHostScrollObservationPlan['lifecycleEffects'],
     ): void;
@@ -96,12 +93,6 @@ export function applyTranscriptLifecycleScrollObservationPlan(
     effects.applyWebUserScrollIntentTimestampLifecycleEffects(plan.lifecycleEffects);
 
     let consumed = plan.disposition === 'consumed';
-    if (
-        plan.webPassiveLiveTailCorrectionEffect &&
-        effects.applyWebPassiveLiveTailCorrectionEffect(plan.webPassiveLiveTailCorrectionEffect)
-    ) {
-        consumed = true;
-    }
     const settledReturnEffects = plan.nativeSettledReturnEffects;
     if (settledReturnEffects && settledReturnEffects.returnEffects.length > 0) {
         effects.applyNativeAcceptedViewportPaintEffects(plan.acceptedViewportPaintEffects);

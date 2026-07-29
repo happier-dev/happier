@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-    createTtsPlaybackClock,
-    estimateSpokenDurationMs,
-    TTS_ESTIMATED_MS_PER_CHAR,
-} from './ttsPlaybackTiming';
+import { createTtsPlaybackClock } from './ttsPlaybackTiming';
 
 describe('createTtsPlaybackClock', () => {
     it('reports unknown (MAX_SAFE_INTEGER) played-ms before speaking starts', () => {
@@ -39,21 +35,5 @@ describe('createTtsPlaybackClock', () => {
         clock.reset();
         expect(clock.isStarted()).toBe(false);
         expect(clock.playedMs()).toBe(Number.MAX_SAFE_INTEGER);
-    });
-});
-
-describe('estimateSpokenDurationMs', () => {
-    it('scales with trimmed text length at the average speaking rate', () => {
-        expect(estimateSpokenDurationMs('abcd')).toBe(4 * TTS_ESTIMATED_MS_PER_CHAR);
-        expect(estimateSpokenDurationMs('  abcd  ')).toBe(4 * TTS_ESTIMATED_MS_PER_CHAR);
-    });
-
-    it('returns 0 for empty/whitespace text', () => {
-        expect(estimateSpokenDurationMs('')).toBe(0);
-        expect(estimateSpokenDurationMs('   ')).toBe(0);
-    });
-
-    it('honors a custom ms-per-char rate', () => {
-        expect(estimateSpokenDurationMs('abcde', 100)).toBe(500);
     });
 });

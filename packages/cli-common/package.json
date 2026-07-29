@@ -127,6 +127,11 @@
       "import": "./dist/relayAccess/catalog.js",
       "default": "./dist/relayAccess/catalog.js"
     },
+    "./sessionMetadata": {
+      "types": "./dist/sessionMetadata/index.d.ts",
+      "import": "./dist/sessionMetadata/index.js",
+      "default": "./dist/sessionMetadata/index.js"
+    },
     "./ssh": {
       "types": "./dist/ssh/index.d.ts",
       "import": "./dist/ssh/index.js",

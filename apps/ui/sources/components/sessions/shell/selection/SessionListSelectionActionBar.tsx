@@ -31,6 +31,7 @@ import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockp
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import type { SessionFolderWorkspaceRefV1 } from '@/sync/domains/session/folders';
 import {
     useOptionalSessionListSelectionActions,
     useOptionalSessionListSelectionState,
@@ -39,6 +40,7 @@ import { resolveSelectionActionBarBottomInset } from './selectionActionBarBottom
 
 type MoveFolderSelection = Readonly<{
     folderId: string | null;
+    destinationWorkspace: SessionFolderWorkspaceRefV1;
 }>;
 
 export type SessionListSelectionActionBarHostProps = Readonly<{
@@ -393,7 +395,13 @@ export function SessionListSelectionActionBarHost(props: SessionListSelectionAct
             }
             case SESSION_BULK_ACTION_IDS.moveToFolder: {
                 const selectedTarget = await props.onRequestMoveToFolder?.(selectedTargets);
-                return selectedTarget ? { id: SESSION_BULK_ACTION_IDS.moveToFolder, folderId: selectedTarget.folderId } : null;
+                return selectedTarget
+                    ? {
+                        id: SESSION_BULK_ACTION_IDS.moveToFolder,
+                        folderId: selectedTarget.folderId,
+                        destinationWorkspace: selectedTarget.destinationWorkspace,
+                    }
+                    : null;
             }
             default:
                 return simpleBulkActionRequest(actionId);

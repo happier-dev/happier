@@ -2,7 +2,6 @@ import React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
 
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -11,6 +10,9 @@ import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { formatSecretKeyForBackup } from '@/auth/recovery/secretKeyBackup';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -82,18 +84,19 @@ export function SecretKeyBackupModal(props: Props) {
     const styles = stylesheet;
 
     const [revealed, setRevealed] = React.useState(false);
+    const copyFeedback = useTemporaryCopyFeedback();
 
     const formattedSecret = React.useMemo(() => formatSecretKeyForBackup(props.secret), [props.secret]);
     const maskedSecret = React.useMemo(() => formattedSecret.replace(/[A-Za-z0-9]/g, '•'), [formattedSecret]);
 
     const handleCopy = React.useCallback(async () => {
-        try {
-            await Clipboard.setStringAsync(formattedSecret);
-            Modal.alert(t('common.success'), t('settingsAccount.secretKeyCopied'));
-        } catch {
+        const copied = await setClipboardStringSafe(formattedSecret);
+        if (!copied) {
             Modal.alert(t('common.error'), t('settingsAccount.secretKeyCopyFailed'));
+            return;
         }
-    }, [formattedSecret]);
+        copyFeedback.markCopied();
+    }, [copyFeedback, formattedSecret]);
 
     const footer = React.useMemo(() => (
         <View style={styles.footerContent}>
@@ -136,7 +139,11 @@ export function SecretKeyBackupModal(props: Props) {
                             {revealed ? t('settingsAccount.tapToHide') : t('settingsAccount.tapToReveal')}
                         </Text>
                     </Pressable>
-                    <RoundButton title={t('common.copy')} onPress={handleCopy} size="normal" />
+                    {copyFeedback.isCopied() ? (
+                        <CopiedPill visible testID="secret-key-backup-copy-feedback" />
+                    ) : (
+                        <RoundButton title={t('common.copy')} onPress={handleCopy} size="normal" />
+                    )}
                 </View>
             </View>
         </View>

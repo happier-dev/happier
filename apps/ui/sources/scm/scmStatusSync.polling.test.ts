@@ -3,6 +3,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
 const getStateMock = vi.hoisted(() => vi.fn());
+// The sync publishes through the batched store action; forward it to the per-action
+// spies so tests keep asserting the observable publish behavior per session.
+const withBatchedScmPublish = vi.hoisted(() => (state: any) => {
+    if (!state || state.publishSessionProjectScmSnapshots) return state;
+    state.publishSessionProjectScmSnapshots = (publishes: ReadonlyArray<{ sessionId: string; snapshot: any; status: unknown }>) => {
+        for (const { sessionId, snapshot, status } of publishes) {
+            state.updateSessionProjectScmSnapshot(sessionId, snapshot);
+            if (state.getSessionProjectScmSnapshotError(sessionId)) {
+                state.updateSessionProjectScmSnapshotError(sessionId, null);
+            }
+            state.applyScmStatus(sessionId, status);
+            const activePaths = new Set((snapshot.entries ?? []).map((entry: any) => entry.path));
+            state.pruneSessionProjectScmTouchedPaths(sessionId, activePaths);
+            state.pruneSessionProjectScmCommitSelectionPaths(sessionId, activePaths);
+            state.pruneSessionProjectScmCommitSelectionPatches(sessionId, activePaths);
+        }
+    };
+    return state;
+});
 const applyScmStatusMock = vi.hoisted(() => vi.fn());
 const updateSnapshotMock = vi.hoisted(() => vi.fn());
 const updateSnapshotErrorMock = vi.hoisted(() => vi.fn());
@@ -28,7 +47,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
         storage: {
-            getState: (...args: unknown[]) => (getStateMock as any)(...args),
+            getState: (...args: unknown[]) => withBatchedScmPublish((getStateMock as any)(...args)),
         } as any,
     });
 });

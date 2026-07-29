@@ -43,6 +43,21 @@ function isTouchOrCoarsePointer(nav: NavigatorLike | null): boolean {
     return typeof nav?.maxTouchPoints === 'number' && nav.maxTouchPoints > 0;
 }
 
+/**
+ * True when the host's PRIMARY pointer cannot hover (phone/tablet touch).
+ *
+ * Deliberately narrower than `isTouchOrCoarsePointer` above: `any-pointer` /
+ * `any-hover` also match a hover-capable laptop that merely has a touchscreen,
+ * which must keep its hover-reveal affordances. Only `pointer:` / `hover:`
+ * describe the primary pointer, so only those decide here.
+ */
+export function isCoarsePrimaryPointerEnvironment(): boolean {
+    if (matchMedia('(pointer: fine)') || matchMedia('(hover: hover)')) return false;
+    if (matchMedia('(pointer: coarse)') || matchMedia('(hover: none)')) return true;
+    const nav = readNavigator();
+    return typeof nav?.maxTouchPoints === 'number' && nav.maxTouchPoints > 0;
+}
+
 export function isWebMobileLikeViewport(params: Readonly<{ width: number; height: number }>): boolean {
     const width = Number(params.width);
     const height = Number(params.height);

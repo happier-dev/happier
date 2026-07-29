@@ -18,25 +18,32 @@ const stylesheet = StyleSheet.create((theme) => ({
     root: {
         width: '100%',
         gap: 10,
-        alignItems: 'center',
+        alignItems: 'flex-start',
+        borderWidth: 1,
+        borderColor: theme.colors.border.modal,
+        backgroundColor: theme.colors.surface.base,
+        borderRadius: 12,
+        // Tightened (F-W13-2): the setup columns must fit their content at
+        // 1440×900 without scrolling for the primary action.
+        padding: 16,
     },
     heading: {
         width: '100%',
         gap: 4,
-        alignItems: 'center',
+        alignItems: 'flex-start',
     },
     button: {
         width: '100%',
         maxWidth: HANDOFF_TEXT_MAX_WIDTH,
     },
     title: {
-        textAlign: 'center',
+        textAlign: 'left',
         color: theme.colors.text.primary,
         fontSize: 16,
         lineHeight: 22,
     },
     subtitle: {
-        textAlign: 'center',
+        textAlign: 'left',
         color: theme.colors.text.secondary,
         fontSize: 13,
         lineHeight: 18,

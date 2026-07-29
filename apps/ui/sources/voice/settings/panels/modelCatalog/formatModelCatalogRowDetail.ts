@@ -21,6 +21,8 @@ export function modelCatalogStateLabel(state: ModelCatalogRowState): string {
             return t('settingsVoice.local.models.state.error');
         case 'unknown':
             return t('settingsVoice.local.models.state.unknown');
+        case 'unsupported':
+            return t('settingsVoice.local.daemonInference.states.runtimeUnavailable');
         default:
             return t('settingsVoice.local.models.state.notInstalled');
     }

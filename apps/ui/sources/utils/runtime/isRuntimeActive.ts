@@ -34,3 +34,51 @@ export function isRuntimeActive(): boolean {
 
     return true;
 }
+
+export function startRuntimeActiveGatedInterval(callback: () => void, intervalMs: number): () => void {
+    const delayMs = Math.max(1, Math.trunc(intervalMs));
+    let stopped = false;
+    let lastRunAt = Date.now();
+    const runIfActive = () => {
+        if (stopped || !isRuntimeActive()) return;
+        lastRunAt = Date.now();
+        callback();
+    };
+
+    const interval = setInterval(runIfActive, delayMs);
+    const onPotentiallyActive = () => {
+        if (stopped || !isRuntimeActive()) return;
+        if (Date.now() - lastRunAt >= delayMs) {
+            runIfActive();
+        }
+    };
+
+    const subscriptions: Array<() => void> = [];
+    try {
+        const subscription = AppState.addEventListener?.('change', onPotentiallyActive);
+        if (subscription && typeof subscription.remove === 'function') {
+            subscriptions.push(() => subscription.remove());
+        }
+    } catch {
+        // ignore
+    }
+
+    try {
+        const doc = (globalThis as unknown as { document?: Document }).document;
+        if (doc && typeof doc.addEventListener === 'function' && typeof doc.removeEventListener === 'function') {
+            doc.addEventListener('visibilitychange', onPotentiallyActive);
+            subscriptions.push(() => doc.removeEventListener('visibilitychange', onPotentiallyActive));
+        }
+    } catch {
+        // ignore
+    }
+
+    return () => {
+        if (stopped) return;
+        stopped = true;
+        clearInterval(interval);
+        for (const unsubscribe of subscriptions.splice(0)) {
+            unsubscribe();
+        }
+    };
+}

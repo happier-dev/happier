@@ -27,4 +27,28 @@ describe('wizardStepRegistry', () => {
         const step = getWizardStepDefinition('background_service_handoff');
         expect(step.visibleWhen(context)).toBe(true);
     });
+
+    it('keeps provider setup visible for the local relay hosting setup branch', () => {
+        const context: WizardContext = {
+            mode: 'setup',
+            platform: 'desktop',
+            canScanQr: false,
+            scanStepEnabled: false,
+            canRunSystemTasks: true,
+            relaySelection: {
+                choiceId: 'customUrl',
+                serverUrl: 'https://relay.local.test',
+                relayProfileId: 'relay-local',
+                locked: true,
+            },
+            relayAccessProviderId: null,
+            relayLockConfirmationPending: false,
+            relaySwitchConfirmationPending: false,
+            authIntent: 'standard',
+            setupAction: 'relayLocal',
+        };
+
+        const step = getWizardStepDefinition('providers_optional');
+        expect(step.visibleWhen(context)).toBe(true);
+    });
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,8 +41,21 @@ async function createGeneratedIosFixture({
     join(xcodeprojDir, 'project.pbxproj'),
     [
       `name = ${appScheme};`,
-      `name = ${DEFAULT_GENERATED_TARGET_NAME};`,
-      `"${DEFAULT_GENERATED_TARGET_NAME}.appex"`,
+      '/* Begin PBXBuildFile section */',
+      `    111111111111111111111111 /* ${DEFAULT_GENERATED_TARGET_NAME}.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 222222222222222222222222 /* ${DEFAULT_GENERATED_TARGET_NAME}.appex */; };`,
+      '/* End PBXBuildFile section */',
+      '/* Begin PBXFileReference section */',
+      `    222222222222222222222222 /* ${DEFAULT_GENERATED_TARGET_NAME}.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ${DEFAULT_GENERATED_TARGET_NAME}.appex; sourceTree = BUILT_PRODUCTS_DIR; };`,
+      '/* End PBXFileReference section */',
+      '/* Begin PBXNativeTarget section */',
+      `    333333333333333333333333 /* ${DEFAULT_GENERATED_TARGET_NAME} */ = {`,
+      '      isa = PBXNativeTarget;',
+      `      name = ${DEFAULT_GENERATED_TARGET_NAME};`,
+      `      productName = ${DEFAULT_GENERATED_TARGET_NAME};`,
+      `      productReference = 222222222222222222222222 /* ${DEFAULT_GENERATED_TARGET_NAME}.appex */;`,
+      '      productType = "com.apple.product-type.app-extension";',
+      '    };',
+      '/* End PBXNativeTarget section */',
       `PRODUCT_BUNDLE_IDENTIFIER = "${appBundleIdentifier}";`,
       `PRODUCT_BUNDLE_IDENTIFIER = "${widgetBundleIdentifier}";`,
       ...DEFAULT_GENERATED_WIDGET_NAMES.map((name) => `${name}.swift`),
@@ -74,6 +87,22 @@ async function createGeneratedIosFixture({
   );
 
   return { iosDir, rootDir, xcodeprojDir };
+}
+
+async function appendPbxprojEntry({ iosDir, sectionName, entry }) {
+  const entries = await readdir(iosDir, { withFileTypes: true });
+  const projectEntry = entries.find((candidate) => candidate.isDirectory() && candidate.name.endsWith('.xcodeproj'));
+  const pbxprojPath = join(iosDir, projectEntry.name, 'project.pbxproj');
+  const rawPbxproj = await readFile(pbxprojPath, 'utf8');
+
+  await writeFile(
+    pbxprojPath,
+    rawPbxproj.replace(
+      `/* End ${sectionName} section */`,
+      `${entry}\n/* End ${sectionName} section */`,
+    ),
+    'utf8',
+  );
 }
 
 test('assertExpoWidgetsGeneratedProject discovers the generated app project name dynamically', async () => {
@@ -159,4 +188,81 @@ test('assertExpoWidgetsGeneratedProject tolerates missing xcodebuild when filesy
   });
 
   assert.equal(summary.usedXcodebuildValidation, false);
+});
+
+test('assertExpoWidgetsGeneratedProject rejects duplicate widget native targets', async () => {
+  const { iosDir } = await createGeneratedIosFixture();
+  await appendPbxprojEntry({
+    iosDir,
+    sectionName: 'PBXNativeTarget',
+    entry: [
+      `    444444444444444444444444 /* ${DEFAULT_GENERATED_TARGET_NAME} */ = {`,
+      '      isa = PBXNativeTarget;',
+      `      name = ${DEFAULT_GENERATED_TARGET_NAME};`,
+      `      productName = ${DEFAULT_GENERATED_TARGET_NAME};`,
+      `      productReference = 222222222222222222222222 /* ${DEFAULT_GENERATED_TARGET_NAME}.appex */;`,
+      '      productType = "com.apple.product-type.app-extension";',
+      '    };',
+    ].join('\n'),
+  });
+
+  await assert.rejects(
+    () =>
+      assertExpoWidgetsGeneratedProject({
+        iosDir,
+        spawnSyncImpl: () => ({
+          status: 0,
+          stdout: `Targets:\n    Happierdev\n    ${DEFAULT_GENERATED_TARGET_NAME}\nSchemes:\n    Happierdev\n    ${DEFAULT_GENERATED_TARGET_NAME}\n`,
+          stderr: '',
+          error: undefined,
+        }),
+      }),
+    /exactly one PBXNativeTarget/i,
+  );
+});
+
+test('assertExpoWidgetsGeneratedProject rejects duplicate widget appex product references', async () => {
+  const { iosDir } = await createGeneratedIosFixture();
+  await appendPbxprojEntry({
+    iosDir,
+    sectionName: 'PBXFileReference',
+    entry: `    555555555555555555555555 /* ${DEFAULT_GENERATED_TARGET_NAME}.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ${DEFAULT_GENERATED_TARGET_NAME}.appex; sourceTree = BUILT_PRODUCTS_DIR; };`,
+  });
+
+  await assert.rejects(
+    () =>
+      assertExpoWidgetsGeneratedProject({
+        iosDir,
+        spawnSyncImpl: () => ({
+          status: 0,
+          stdout: `Targets:\n    Happierdev\n    ${DEFAULT_GENERATED_TARGET_NAME}\nSchemes:\n    Happierdev\n    ${DEFAULT_GENERATED_TARGET_NAME}\n`,
+          stderr: '',
+          error: undefined,
+        }),
+      }),
+    /exactly one PBXFileReference/i,
+  );
+});
+
+test('assertExpoWidgetsGeneratedProject rejects duplicate widget appex embed build files', async () => {
+  const { iosDir } = await createGeneratedIosFixture();
+  await appendPbxprojEntry({
+    iosDir,
+    sectionName: 'PBXBuildFile',
+    entry: `    666666666666666666666666 /* ${DEFAULT_GENERATED_TARGET_NAME}.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 222222222222222222222222 /* ${DEFAULT_GENERATED_TARGET_NAME}.appex */; };`,
+  });
+
+  await assert.rejects(
+    () =>
+      assertExpoWidgetsGeneratedProject({
+        iosDir,
+        spawnSyncImpl: () => ({
+          status: 0,
+          stdout: `Targets:\n    Happierdev\n    ${DEFAULT_GENERATED_TARGET_NAME}\nSchemes:\n    Happierdev\n    ${DEFAULT_GENERATED_TARGET_NAME}\n`,
+          stderr: '',
+          error: undefined,
+        }),
+      }),
+    /exactly one PBXBuildFile/i,
+  );
 });

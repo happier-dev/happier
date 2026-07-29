@@ -1,5 +1,7 @@
 import type { MutableRefObject } from 'react';
 
+import { recordTranscriptViewportWrite } from './transcriptViewportWriteDiagnostics';
+
 /** Minimal structural view of the web scroller element (satisfied by `HTMLElement`; plain objects in tests). */
 export type WebScrollTopWriteTarget = { scrollTop: number; scrollHeight: number };
 
@@ -26,6 +28,7 @@ export function writeWebScrollTopAndObserve(params: Readonly<{
     observedScrollTopRef: MutableRefObject<number | null>;
     observedScrollHeightRef: MutableRefObject<number | null>;
 }>): WebScrollTopWriteResult {
+    const preWriteScrollTop = Number.isFinite(params.element.scrollTop) ? params.element.scrollTop : null;
     if (
         !tryWriteScrollTop(params.element, params.targetScrollTop) &&
         !tryWriteScrollTop(params.element, params.targetScrollTop)
@@ -36,6 +39,12 @@ export function writeWebScrollTopAndObserve(params: Readonly<{
     const landedScrollHeight = params.element.scrollHeight;
     params.observedScrollTopRef.current = landedScrollTop;
     params.observedScrollHeightRef.current = landedScrollHeight;
+    recordTranscriptViewportWrite({
+        landedScrollHeight,
+        landedScrollTop,
+        preWriteScrollTop,
+        targetScrollTop: params.targetScrollTop,
+    });
     return { ok: true, landedScrollTop, landedScrollHeight };
 }
 

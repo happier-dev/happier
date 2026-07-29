@@ -19,6 +19,7 @@ import {
 import { resolveToolErrorSummary } from '@/components/tools/shell/presentation/resolveToolErrorSummary';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { resolveToolPermissionTerminalErrorMessage } from '@/components/tools/shell/permissions/resolveToolPermissionTerminalErrorMessage';
 
 export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow(props: {
     toolMessage: ToolCallMessage;
@@ -91,14 +92,34 @@ export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow
     }, [iconSize, model.icon, props.metadata, props.toolMessage.tool, theme.colors.text.primary, theme.colors.text.secondary]);
 
     const statusKind = resolveToolStatusIndicatorKind(model.toolForRendering);
-    const errorSummary =
-        statusKind === 'error' ? (resolveToolErrorSummary(model.toolForRendering) ?? t('common.error')) : null;
+    const terminalStatusSummary =
+        statusKind === 'error'
+            ? (resolveToolErrorSummary(model.toolForRendering) ?? t('common.error'))
+            : statusKind === 'permission_blocked'
+                ? (
+                    resolveToolPermissionTerminalErrorMessage({
+                        tool: model.toolForRendering,
+                        metadata: props.metadata,
+                    }) ?? t('errors.permissionDenied')
+                )
+                : null;
     const rightElement =
-        statusKind === 'error' ? (
-            <View style={styles.errorContainer}>
-                <Ionicons name="alert-circle" size={16} color={theme.colors.state.danger.foreground} />
-                <Text style={styles.errorText} numberOfLines={1}>
-                    {errorSummary}
+        terminalStatusSummary ? (
+            <View
+                testID={statusKind === 'permission_blocked'
+                    ? 'tool-timeline-preview-row-permission-blocked'
+                    : 'tool-timeline-preview-row-error'}
+                accessible={true}
+                accessibilityLabel={terminalStatusSummary}
+                style={styles.terminalStatusContainer}
+            >
+                <Ionicons
+                    name={statusKind === 'permission_blocked' ? 'remove-circle-outline' : 'alert-circle'}
+                    size={16}
+                    color={theme.colors.state.danger.foreground}
+                />
+                <Text style={styles.terminalStatusText} numberOfLines={1}>
+                    {terminalStatusSummary}
                 </Text>
             </View>
         ) : null;
@@ -119,13 +140,13 @@ export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow
 });
 
 const styles = StyleSheet.create((theme) => ({
-    errorContainer: {
+    terminalStatusContainer: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
         maxWidth: 220,
     },
-    errorText: {
+    terminalStatusText: {
         fontSize: 12,
         color: theme.colors.state.danger.foreground,
         fontWeight: '600',

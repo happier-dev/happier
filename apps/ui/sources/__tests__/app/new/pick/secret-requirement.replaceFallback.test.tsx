@@ -12,6 +12,7 @@ import {
     installPickerCommonModuleMocks,
     parseJsonRouteParam,
 } from './testHarness';
+import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 enableReactActEnvironment();
 
@@ -53,6 +54,7 @@ installPickerCommonModuleMocks({
             Platform: { OS: 'ios' },
         }),
     reactNavigationNative: async () => ({
+        ...(await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock(),
         CommonActions: {
             setParams: (params: Record<string, unknown>) => ({ type: 'SET_PARAMS', payload: { params } }),
         },
@@ -78,13 +80,13 @@ installPickerCommonModuleMocks({
         (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'profiles') {
                         return [{ id: 'deepseek', name: 'DeepSeek', compatibility: { codex: true }, isBuiltIn: false }];
                     }
                     return [];
-                },
-                useSettingMutable: () => [[], vi.fn()],
+                } }),
+                useSettingMutable: createUseSettingMutableMockFromReader(() => [[], vi.fn()]),
                 useSettings: () => ({
                     ...settingsDefaults,
                     lastUsedAgent: settingsState.current.lastUsedAgent,
@@ -113,6 +115,8 @@ vi.mock('@/utils/sessions/tempDataStore', () => ({
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     machineContributionRegistryProjectionDescribe: (...args: Parameters<MachineContributionRegistryProjectionDescribeFn>) =>
         machineContributionRegistryProjectionDescribe(...args),
+    getMachineContributionRegistryProjectionRevision: () => 0,
+    subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
 }));
 
 describe('SecretRequirementPickerScreen replace fallback', () => {
@@ -163,10 +167,9 @@ describe('SecretRequirementPickerScreen replace fallback', () => {
             supported: true,
             projection: {
                 v: 1,
-                providersById: {
+                agentsById: {
                     'acme.review.provider': {
                         id: 'acme.review.provider',
-                        providerId: 'acme.review.provider',
                         title: 'Acme Review Provider',
                         channel: 'plugin',
                         isBuiltIn: false,
@@ -177,7 +180,7 @@ describe('SecretRequirementPickerScreen replace fallback', () => {
                     'acme.review.backend': {
                         id: 'acme.review.backend',
                         backendId: 'acme.review.backend',
-                        providerId: 'acme.review.provider',
+                        agentId: 'acme.review.provider',
                         title: 'Acme Review Backend',
                     },
                 },

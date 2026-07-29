@@ -19,6 +19,7 @@ import {
 } from './embeddedTerminalDocking';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { useSessionEmbeddedTerminalPty } from './useSessionEmbeddedTerminalPty';
+import { useSessionTerminalMode } from './sessionTerminalMode';
 
 import type { SessionEmbeddedTerminalPaneProps } from './SessionEmbeddedTerminalPane.web';
 
@@ -39,19 +40,24 @@ export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTe
     );
 
     const terminalRendererRef = React.useRef<EmbeddedTerminalRendererHandle | null>(null);
+    const storedTerminalMode = useSessionTerminalMode(props.sessionId);
+    const terminalMode = props.terminalMode ?? storedTerminalMode;
     const resolvedTerminalInstanceId = props.currentDockLocation === 'details'
         ? (props.terminalInstanceId ?? SESSION_PRIMARY_TERMINAL_INSTANCE_ID)
         : props.terminalInstanceId;
     const terminalKey = React.useMemo(
-        () => resolvedTerminalInstanceId
+        () => terminalMode === 'session_attach'
+            ? `session-attach:${props.sessionId}`
+            : resolvedTerminalInstanceId
             ? `session:${props.sessionId}:terminal:${resolvedTerminalInstanceId}`
             : `session:${props.sessionId}:terminal`,
-        [props.sessionId, resolvedTerminalInstanceId],
+        [props.sessionId, resolvedTerminalInstanceId, terminalMode],
     );
 
     const controller = useSessionEmbeddedTerminalPty({
         sessionId: props.sessionId,
         terminalKey,
+        terminalMode,
         terminalRef: terminalRendererRef,
     });
 
@@ -148,7 +154,7 @@ export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTe
     return (
         <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
             <EmbeddedTerminalPane
-                title={t('settings.terminal')}
+                title={terminalMode === 'session_attach' ? t('tools.askUserQuestion.claudeDialogNotice.openTerminal') : t('settings.terminal')}
                 controller={controller}
                 terminalRef={terminalRendererRef}
                 onRequestClose={props.onRequestClose}

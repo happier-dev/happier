@@ -16,6 +16,7 @@ describe('resolveVoiceToolResultHumanSummary', () => {
                 nextCursor: 'cursor:next',
             },
             shareFilePaths: true,
+            shareSessionSummary: true,
         });
 
         expect(summary).toContain('Voice Target Alpha');
@@ -38,6 +39,7 @@ describe('resolveVoiceToolResultHumanSummary', () => {
                 nextCursor: null,
             },
             shareFilePaths: true,
+            shareSessionSummary: true,
         });
 
         expect(summary).toContain('leeroy on Leeroys-MBP');
@@ -58,6 +60,7 @@ describe('resolveVoiceToolResultHumanSummary', () => {
                 ],
             },
             shareFilePaths: true,
+            shareSessionSummary: true,
         });
 
         expect(summary).toContain('Payments workspace');
@@ -76,6 +79,7 @@ describe('resolveVoiceToolResultHumanSummary', () => {
                 ],
             },
             shareFilePaths: true,
+            shareSessionSummary: true,
         });
 
         expect(summary).toContain('apps/leeroy — A host');
@@ -94,6 +98,7 @@ describe('resolveVoiceToolResultHumanSummary', () => {
                 ],
             },
             shareFilePaths: true,
+            shareSessionSummary: true,
         });
 
         const modelSummary = resolveVoiceToolResultHumanSummary({
@@ -107,6 +112,7 @@ describe('resolveVoiceToolResultHumanSummary', () => {
                 ],
             },
             shareFilePaths: true,
+            shareSessionSummary: true,
         });
 
         expect(backendSummary).toContain('Claude Sonnet');
@@ -133,6 +139,7 @@ describe('resolveVoiceToolResultHumanSummary', () => {
                 ],
             },
             shareFilePaths: true,
+            shareSessionSummary: true,
         });
 
         expect(modelSummary).toContain('Available Review bot models');
@@ -152,6 +159,7 @@ describe('resolveVoiceToolResultHumanSummary', () => {
                 ],
             },
             shareFilePaths: true,
+            shareSessionSummary: true,
         });
 
         expect(modelSummary).toContain('Available Review bot models');
@@ -170,6 +178,7 @@ describe('resolveVoiceToolResultHumanSummary', () => {
                 ],
             },
             shareFilePaths: true,
+            shareSessionSummary: true,
         });
 
         expect(summary).toContain('Primary Server');
@@ -191,6 +200,7 @@ describe('resolveVoiceToolResultHumanSummary', () => {
                 ],
             },
             shareFilePaths: true,
+            shareSessionSummary: true,
         });
 
         expect(summary).toContain('Current server');
@@ -215,6 +225,7 @@ describe('resolveVoiceToolResultHumanSummary', () => {
                 },
             },
             shareFilePaths: true,
+            shareSessionSummary: true,
         });
 
         const trackedSummary = resolveVoiceToolResultHumanSummary({
@@ -229,6 +240,7 @@ describe('resolveVoiceToolResultHumanSummary', () => {
                 ],
             },
             shareFilePaths: true,
+            shareSessionSummary: true,
         });
 
         expect(openedSummary).toContain('Payments bugfix');
@@ -253,6 +265,7 @@ describe('resolveVoiceToolResultHumanSummary', () => {
                 ],
             },
             shareFilePaths: false,
+            shareSessionSummary: true,
         });
 
         expect(summary).toContain('Payments bugfix');
@@ -271,11 +284,33 @@ describe('resolveVoiceToolResultHumanSummary', () => {
                 ],
             },
             shareFilePaths: false,
+            shareSessionSummary: true,
         });
 
         expect(summary).toContain('<path_redacted>');
         expect(summary).not.toContain('runVoiceAgentTurnWithTools.ts');
     });
+
+    it.each([undefined, null, 'true', 1, {}, []])(
+        'fails closed for omitted or malformed shareFilePaths=%p',
+        (shareFilePaths) => {
+            const params: Record<string, unknown> = {
+                toolName: 'listRecentPaths',
+                toolInput: {},
+                toolResult: {
+                    items: [{ label: '/Users/alice/Company/PrivateProject/README.md' }],
+                },
+                shareSessionSummary: true,
+            };
+            if (shareFilePaths !== undefined) {
+                params.shareFilePaths = shareFilePaths;
+            }
+
+            const summary = Reflect.apply(resolveVoiceToolResultHumanSummary, undefined, [params]);
+            expect(summary).toContain('<path_redacted>');
+            expect(summary).not.toContain('/Users/alice/Company/PrivateProject/README.md');
+        },
+    );
 
     it('suppresses session summary titles in listSessions when shareSessionSummary is false', () => {
         const summary = resolveVoiceToolResultHumanSummary({
@@ -317,8 +352,55 @@ describe('resolveVoiceToolResultHumanSummary', () => {
         expect(summary ?? '').not.toContain('Secret roadmap planning');
     });
 
-    it('still surfaces session titles when shareSessionSummary defaults to enabled', () => {
-        const summary = resolveVoiceToolResultHumanSummary({
+    it.each([undefined, null, false, 'true', 1, {}, []])(
+        'fails closed for disabled, omitted, or malformed shareSessionSummary=%p across every session-summary path',
+        (shareSessionSummary) => {
+            const invokeFromUntypedBoundary = (params: unknown): string | null => (
+                Reflect.apply(resolveVoiceToolResultHumanSummary, undefined, [params])
+            );
+            const cases = [
+                {
+                    toolName: 'listSessions',
+                    toolResult: { sessions: [{ title: 'Private list title' }] },
+                },
+                {
+                    toolName: 'openSession',
+                    toolResult: { session: { title: 'Private open title' } },
+                },
+                {
+                    toolName: 'setPrimaryActionSession',
+                    toolResult: { session: { title: 'Private reference title' } },
+                },
+                {
+                    toolName: 'spawnSession',
+                    toolResult: {
+                        session: { title: 'Private spawned title' },
+                        target: { label: 'Allowed target label' },
+                    },
+                },
+                {
+                    toolName: 'listSessions',
+                    toolResult: { summary: 'Private explicit summary' },
+                },
+            ] as const;
+
+            for (const testCase of cases) {
+                const params: Record<string, unknown> = {
+                    ...testCase,
+                    toolInput: {},
+                    shareFilePaths: true,
+                };
+                if (shareSessionSummary !== undefined) {
+                    params.shareSessionSummary = shareSessionSummary;
+                }
+                const summary = invokeFromUntypedBoundary(params);
+                expect(summary ?? '').not.toContain('Private');
+            }
+        },
+    );
+
+    it('surfaces session titles and explicit summaries only when shareSessionSummary is literally true', () => {
+        const sessionSummary = resolveVoiceToolResultHumanSummary({
             toolName: 'listSessions',
             toolInput: {},
             toolResult: {
@@ -327,9 +409,18 @@ describe('resolveVoiceToolResultHumanSummary', () => {
                 nextCursor: null,
             },
             shareFilePaths: true,
+            shareSessionSummary: true,
+        });
+        const explicitSummary = resolveVoiceToolResultHumanSummary({
+            toolName: 'listSessions',
+            toolInput: {},
+            toolResult: { summary: 'Done working on the payments session' },
+            shareFilePaths: true,
+            shareSessionSummary: true,
         });
 
-        expect(summary).toContain('Payments bugfix');
+        expect(sessionSummary).toContain('Payments bugfix');
+        expect(explicitSummary).toBe('Done working on the payments session');
     });
 
     it('gates an explicit result.summary on shareSessionSummary, not just shareFilePaths (X-L1)', () => {

@@ -5,7 +5,7 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import { createNativeCacheFileSink, type NativeCacheFileSink } from '@/sync/runtime/files/nativeCacheFileSink';
 
 const PREVIEW_CACHE_DIRECTORY_NAME = 'happier-session-file-previews';
-const PREVIEW_TOO_LARGE_ERROR = 'File exceeds the image preview size limit';
+const PREVIEW_TOO_LARGE_ERROR = 'File exceeds the preview size limit';
 
 export type SessionFilePreviewSource =
     | Readonly<{
@@ -27,12 +27,13 @@ export type CreateSessionFilePreviewSourceResult =
     | Readonly<{ ok: true; source: SessionFilePreviewSource }>
     | Readonly<{ ok: false; error: string }>;
 
-function isSupportedImageMimeType(mimeType: string): boolean {
+function isSupportedPreviewMimeType(mimeType: string): boolean {
     const normalized = mimeType.trim().toLowerCase();
     return normalized === 'image/png'
         || normalized === 'image/jpeg'
         || normalized === 'image/webp'
-        || normalized === 'image/gif';
+        || normalized === 'image/gif'
+        || normalized === 'video/webm';
 }
 
 function toPreviewCacheFileName(input: Readonly<{ filePath: string; cacheIdentity?: string | null }>): string {
@@ -52,8 +53,8 @@ export async function createSessionFilePreviewSource(input: Readonly<{
     signal?: AbortSignal | null;
 }>): Promise<CreateSessionFilePreviewSourceResult> {
     const mimeType = input.mimeType.trim();
-    if (!isSupportedImageMimeType(mimeType)) {
-        return { ok: false, error: 'Unsupported image preview type' };
+    if (!isSupportedPreviewMimeType(mimeType)) {
+        return { ok: false, error: 'Unsupported preview type' };
     }
 
     const maxBytes = Number.isFinite(input.maxBytes) ? Math.max(0, Math.floor(input.maxBytes)) : 0;

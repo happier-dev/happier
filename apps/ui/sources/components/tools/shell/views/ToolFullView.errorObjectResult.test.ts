@@ -5,6 +5,7 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { collectHostText, installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -35,10 +36,10 @@ installToolShellCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'toolViewShowDebugByDefault') return false;
                     return null;
-                },
+                } }),
             },
         });
     },
@@ -85,7 +86,13 @@ describe('ToolFullView (error message formatting)', () => {
         });
 
         const screen = await renderScreen(
-            React.createElement(ToolFullView, { tool, sessionId: 's1', metadata: null, messages: [] }),
+            React.createElement(ToolFullView, {
+                tool,
+                owningMessageId: 'tool-message-1',
+                sessionId: 's1',
+                metadata: null,
+                messages: [],
+            }),
         );
 
         const flattened = collectHostText(screen.tree);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parseVoiceToolResultsFollowUp } from '@happier-dev/protocol';
 
 import {
   buildToolResultsFollowUpPrompt,
@@ -6,13 +7,44 @@ import {
 } from './runVoiceAgentTurnWithTools';
 
 function parseFollowUpJson(prompt: string): { toolResults: LocalVoiceAgentToolResultEntry[] } {
-  const marker = 'VOICE_TOOL_RESULTS_JSON:\n';
-  const start = prompt.indexOf(marker) + marker.length;
-  const end = prompt.indexOf('\nVOICE_TOOL_RESULT_INSTRUCTIONS', start);
-  return JSON.parse(prompt.slice(start, end === -1 ? undefined : end));
+  const parsed = parseVoiceToolResultsFollowUp(prompt);
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { toolResults?: unknown }).toolResults)) {
+    throw new Error('Expected canonical voice tool-results follow-up payload');
+  }
+  return parsed as { toolResults: LocalVoiceAgentToolResultEntry[] };
 }
 
 describe('runVoiceAgentTurnWithTools follow-up prompt privacy', () => {
+  it('preserves exact Provider connection identity in compact model-list follow-up results', () => {
+    const prompt = buildToolResultsFollowUpPrompt([{
+      t: 'listAgentModels',
+      args: { agentId: 'claude', machineId: 'm1' },
+      result: {
+        source: 'preflight',
+        supportsFreeform: true,
+        items: [{
+          modelId: 'provider-model',
+          label: 'Provider model',
+          providerConnectionId: 'pc_work',
+          providerName: 'Gateway · Work',
+        }],
+      },
+    }], {
+      shareFilePaths: false,
+      shareSessionSummary: false,
+      sharePermissionRequests: false,
+      shareDeviceInventory: true,
+    });
+
+    const parsed = parseFollowUpJson(prompt);
+    expect((parsed.toolResults[0] as any).result.items).toEqual([{
+      modelId: 'provider-model',
+      label: 'Provider model',
+      providerConnectionId: 'pc_work',
+      providerName: 'Gateway · Work',
+    }]);
+  });
+
   it('redacts file-path-like data in raw tool results when shareFilePaths is false', () => {
     const toolResults: LocalVoiceAgentToolResultEntry[] = [
       {
@@ -29,6 +61,7 @@ describe('runVoiceAgentTurnWithTools follow-up prompt privacy', () => {
       shareFilePaths: false,
       shareSessionSummary: true,
       sharePermissionRequests: true,
+      shareDeviceInventory: true,
     });
 
     expect(prompt).not.toContain('/Users/leeroy');
@@ -49,6 +82,7 @@ describe('runVoiceAgentTurnWithTools follow-up prompt privacy', () => {
       shareFilePaths: true,
       shareSessionSummary: true,
       sharePermissionRequests: true,
+      shareDeviceInventory: true,
     });
 
     expect(prompt).toContain('apps/ui/sources/voice/file.ts');
@@ -71,6 +105,7 @@ describe('runVoiceAgentTurnWithTools follow-up prompt privacy', () => {
       shareFilePaths: true,
       shareSessionSummary: false,
       sharePermissionRequests: true,
+      shareDeviceInventory: true,
     });
 
     const parsed = parseFollowUpJson(prompt);
@@ -115,6 +150,7 @@ describe('runVoiceAgentTurnWithTools follow-up prompt privacy', () => {
       shareFilePaths: true,
       shareSessionSummary: false,
       sharePermissionRequests: true,
+      shareDeviceInventory: true,
     });
 
     expect(prompt).not.toContain('Stored Summary Alpha');
@@ -150,6 +186,7 @@ describe('runVoiceAgentTurnWithTools follow-up prompt privacy', () => {
       shareFilePaths: true,
       shareSessionSummary: true,
       sharePermissionRequests: true,
+      shareDeviceInventory: true,
     });
 
     expect(prompt).toContain('Stored Summary Alpha');
@@ -175,6 +212,7 @@ describe('runVoiceAgentTurnWithTools follow-up prompt privacy', () => {
       shareFilePaths: true,
       shareSessionSummary: true,
       sharePermissionRequests: false,
+      shareDeviceInventory: true,
     });
     expect(promptOff).not.toContain('req_secret_1');
     expect(promptOff).not.toContain('req_secret_2');
@@ -186,7 +224,75 @@ describe('runVoiceAgentTurnWithTools follow-up prompt privacy', () => {
       shareFilePaths: true,
       shareSessionSummary: true,
       sharePermissionRequests: true,
+      shareDeviceInventory: true,
     });
     expect(promptOn).toContain('req_secret_1');
+  });
+
+  it('drops every completed inventory-family result when inventory sharing is disabled before the provider follow-up', () => {
+    const inventoryToolNames = [
+      'listRecentPaths',
+      'listMachines',
+      'listServers',
+      'listReviewEngines',
+      'listAgentBackends',
+      'listAgentModels',
+    ] as const;
+    const prompt = buildToolResultsFollowUpPrompt(inventoryToolNames.map((toolName) => ({
+      t: toolName,
+      args: { lookup: `${toolName}_args_secret` },
+      result: {
+        ok: true,
+        items: [{ id: `${toolName}_result_secret`, label: `${toolName} private inventory` }],
+      },
+    })), {
+      shareFilePaths: true,
+      shareSessionSummary: true,
+      sharePermissionRequests: true,
+      shareDeviceInventory: false,
+    });
+
+    expect(prompt).not.toContain('_args_secret');
+    expect(prompt).not.toContain('_result_secret');
+    expect(prompt).not.toContain('private inventory');
+    const parsed = parseFollowUpJson(prompt);
+    expect(parsed.toolResults).toEqual(inventoryToolNames.map((toolName) => ({
+      t: toolName,
+      args: null,
+      result: {
+        ok: false,
+        errorCode: 'privacy_disabled',
+        errorMessage: 'privacy_disabled',
+      },
+    })));
+  });
+
+  it('drops a completed transcript result when recent-message sharing is disabled before the provider follow-up', () => {
+    const prompt = buildToolResultsFollowUpPrompt([{
+      t: 'getSessionTranscript',
+      args: { sessionId: 's1' },
+      result: {
+        ok: true,
+        items: [{ role: 'user', text: 'private transcript message' }],
+      },
+    }], {
+      shareFilePaths: true,
+      shareSessionSummary: true,
+      sharePermissionRequests: true,
+      shareDeviceInventory: true,
+      shareRecentMessages: false,
+    });
+
+    expect(prompt).not.toContain('private transcript message');
+    const parsed = parseFollowUpJson(prompt);
+    expect(parsed.toolResults[0]).toEqual({
+      t: 'getSessionTranscript',
+      args: null,
+      result: {
+        ok: false,
+        errorCode: 'privacy_disabled',
+        errorMessage: 'privacy_disabled',
+      },
+    });
   });
 });

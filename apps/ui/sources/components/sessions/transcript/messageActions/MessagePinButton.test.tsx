@@ -12,19 +12,25 @@ const platformState = vi.hoisted(() => ({
 
 const iconCalls = vi.hoisted(() => [] as Array<{ name: string; color: string; size: number }>);
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.filter(Boolean).map(flattenStyle));
+    }
+    return style && typeof style === 'object' ? style as Record<string, unknown> : {};
+}
+
 function available(overrides: Partial<Extract<MessagePinAvailability, { status: 'available' }>> = {}): Extract<MessagePinAvailability, { status: 'available' }> {
     return {
         status: 'available',
         pinned: false,
         identityKey: 'fallback|s1|5|block:0|assistant',
-        pin: {
+        pinTarget: {
             version: 1,
             sessionId: 's1',
             seq: 5,
             transcriptBlockIndex: 0,
             routeMessageId: null,
             role: 'assistant',
-            pinnedAtMs: 1_000,
             label: null,
         },
         ...overrides,
@@ -115,10 +121,11 @@ describe('MessagePinButton', () => {
         expect(iconCalls).toEqual([expect.objectContaining({ name: 'pin-slash', color: '#0a7a4b' })]);
     });
 
-    it('passes the canonical pin record to the toggle callback', async () => {
+    it('stamps the pin at press time rather than at render time', async () => {
         const { MessagePinButton } = await import('./MessagePinButton');
         const target = available();
         const onToggle = vi.fn();
+        const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000);
 
         const screen = await renderScreen(
             <MessagePinButton
@@ -128,10 +135,12 @@ describe('MessagePinButton', () => {
             />,
         );
 
+        nowSpy.mockReturnValue(9_000);
         screen.pressByTestId('message-pin');
 
         expect(onToggle).toHaveBeenCalledTimes(1);
-        expect(onToggle).toHaveBeenCalledWith(target.pin);
+        expect(onToggle).toHaveBeenCalledWith({ ...target.pinTarget, pinnedAtMs: 9_000 });
+        nowSpy.mockRestore();
     });
 
     it('omits unavailable actions and actions without a host callback', async () => {
@@ -156,8 +165,11 @@ describe('MessagePinButton', () => {
         expect(noCallbackScreen.findAllByType('Pressable')).toHaveLength(0);
     });
 
-    it('uses native action hit slop off web', async () => {
-        platformState.os = 'ios';
+    it.each([
+        ['ios', 44],
+        ['android', 48],
+    ] as const)('uses a physical target without hit slop on %s (%d-point minimum)', async (platform, minimumSize) => {
+        platformState.os = platform;
         const { MessagePinButton } = await import('./MessagePinButton');
 
         const screen = await renderScreen(
@@ -168,6 +180,12 @@ describe('MessagePinButton', () => {
             />,
         );
 
-        expect(screen.findByTestId('message-pin')?.props.hitSlop).toBe(15);
+        const button = screen.findByTestId('message-pin');
+        const style = typeof button?.props.style === 'function'
+            ? button.props.style({ pressed: false })
+            : button?.props.style;
+        expect(flattenStyle(style).minWidth).toBeGreaterThanOrEqual(minimumSize);
+        expect(flattenStyle(style).minHeight).toBeGreaterThanOrEqual(minimumSize);
+        expect(button?.props.hitSlop).toBeUndefined();
     });
 });

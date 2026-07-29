@@ -11,6 +11,7 @@ import {
     enableReactActEnvironment,
     installPickerCommonModuleMocks,
 } from './testHarness';
+import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 enableReactActEnvironment();
 
@@ -45,8 +46,8 @@ installPickerCommonModuleMocks({
             overrides: {
                 useAllMachines: () => [],
                 useAllSessionListRenderables: () => [],
-                useSetting: () => false,
-                useSettingMutable: () => [[], vi.fn()],
+                useSetting: createUseSettingMock({ fallback: () => false }),
+                useSettingMutable: createUseSettingMutableMockFromReader(() => [[], vi.fn()]),
             },
         }),
 });

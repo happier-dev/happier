@@ -1,6 +1,8 @@
 // Vitest/node stub for `react-native`.
 // This avoids Vite trying to parse the real React Native entrypoint (Flow syntax).
 
+import * as React from 'react';
+
 // Provide basic host components so tests that rely on `react-test-renderer` can render trees
 // without having to mock `react-native` in every file.
 export const View = 'View' as any;
@@ -101,6 +103,10 @@ class AnimatedValue {
     }
 }
 
+export function useAnimatedValue(initialValue: number): AnimatedValue {
+    return React.useRef(new AnimatedValue(initialValue)).current;
+}
+
 export const Animated = {
     Value: AnimatedValue as any,
     createAnimatedComponent: (component: any) => component,
@@ -108,6 +114,7 @@ export const Animated = {
         start: (cb?: any) => {
             cb?.({ finished: true });
         },
+        stop: () => {},
     }),
     sequence: (steps: Array<{ start?: (cb?: (result: { finished: boolean }) => void) => void }>) => ({
         start: (cb?: (result: { finished: boolean }) => void) => {

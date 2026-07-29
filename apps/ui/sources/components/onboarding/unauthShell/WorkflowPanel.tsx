@@ -69,7 +69,7 @@ export type WorkflowPanelProps = Readonly<{
 }>;
 
 /**
- * The right pane of the desktop split (or the full-screen content area on
+ * The workflow pane of the desktop split (or the full-screen content area on
  * mobile-workflow). Wraps the current step body in a StepTransitionFrame so
  * step swaps fade/slide; renders a slim BackChevron when the wizard/route
  * supports back navigation; renders the welcome footer links only when the
@@ -121,7 +121,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     // launch already shows the same planet imagery; carrying it into the
     // welcome step keeps the cosmic identity present rather than dropping
     // back to flat canvas. Scoped to mobile + welcome so other steps stay
-    // clean and desktop still uses the BrandPanel for the planet.
+    // clean and desktop uses StagePane for the planet.
     const showMobileWelcomeBackdrop = isMobile && props.isWelcomeStep;
     // When the planet backdrop renders, the underlying canvas color must
     // match the planet's top-edge color so any area not covered by the

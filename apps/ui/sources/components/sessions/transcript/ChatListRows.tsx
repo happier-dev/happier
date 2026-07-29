@@ -35,6 +35,7 @@ import {
     TRANSCRIPT_WEB_PREPEND_ANCHOR_TEST_ID_PREFIX,
 } from '@/components/sessions/transcript/webTranscriptPrependAnchor';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import type { TranscriptEventEmphasisByMessageId } from '@/components/sessions/transcript/events/transcriptEventEmphasis';
 
 export const ChatListMessageRow = React.memo(function ChatListMessageRow(props: {
     sessionId: string;
@@ -52,6 +53,7 @@ export const ChatListMessageRow = React.memo(function ChatListMessageRow(props: 
     resolveThinkingExpanded: (messageId: string) => boolean;
     setThinkingExpanded: (messageId: string, expanded: boolean) => void;
     interaction: TranscriptInteraction;
+    eventEmphasisByMessageId?: TranscriptEventEmphasisByMessageId;
     rollbackAction?: TranscriptRollbackAction | null;
     rollbackRanges: readonly SessionRollbackRangeV1[];
     approvalRequests?: readonly OpenApprovalArtifactForSession[];
@@ -80,6 +82,7 @@ export const ChatListMessageRow = React.memo(function ChatListMessageRow(props: 
             interaction={readOnlyInteraction}
             rollbackAction={props.rollbackAction ?? null}
             historical={historical}
+            eventEmphasis={props.eventEmphasisByMessageId?.[message.id]}
             approvalRequests={props.approvalRequests}
             messagePins={props.messagePins}
             onToggleMessagePin={props.onToggleMessagePin}
@@ -101,6 +104,7 @@ export const ChatListMessageRow = React.memo(function ChatListMessageRow(props: 
             interaction={readOnlyInteraction}
             rollbackAction={props.rollbackAction ?? null}
             historical={historical}
+            eventEmphasis={props.eventEmphasisByMessageId?.[message.id]}
             approvalRequests={props.approvalRequests}
             messagePins={props.messagePins}
             onToggleMessagePin={props.onToggleMessagePin}

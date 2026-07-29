@@ -16,6 +16,7 @@ import {
     installPickerCommonModuleMocks,
     type PickerNavigationState,
 } from './testHarness';
+import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 type PathSelectionListProps = {
     favorites: ReadonlyArray<{ path: string }>;
@@ -89,15 +90,15 @@ installPickerCommonModuleMocks({
             overrides: {
                 useAllMachines: () => [pickerMachine],
                 useAllSessionListRenderables: () => [],
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'recentMachinePaths') return [];
                     if (key === 'usePathPickerSearch') return false;
                     return null;
-                },
-                useSettingMutable: (key: string) => {
+                } }),
+                useSettingMutable: createUseSettingMutableMockFromReader((key) => {
                     if (key === 'favoriteDirectories') return [undefined, vi.fn()];
                     return [null, vi.fn()];
-                },
+                }),
             },
         }),
 });

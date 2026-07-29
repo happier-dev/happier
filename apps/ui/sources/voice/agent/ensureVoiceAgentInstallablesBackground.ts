@@ -1,11 +1,11 @@
 import type { AgentId } from '@/agents/catalog/catalog';
 import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentInstallablesBackground';
 import { isAgentId } from '@/agents/registry/registryCore';
-import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
 export async function ensureVoiceAgentInstallablesBackground(params: Readonly<{
   agentId: string | null;
@@ -15,10 +15,9 @@ export async function ensureVoiceAgentInstallablesBackground(params: Readonly<{
   if (!normalizedAgentId || !isAgentId(normalizedAgentId)) return;
 
   const state: any = storage.getState();
-  const lookupSession = findSessionListLookupSession(state, params.sessionId)?.session ?? null;
-  const session = lookupSession ?? state?.sessions?.[params.sessionId] ?? null;
+  const metadata = readVoiceSessionOwnerMetadataFromState(state, params.sessionId);
   const machineId = normalizeNonEmptyString(readMachineTargetForSession(params.sessionId)?.machineId)
-    ?? normalizeNonEmptyString(session?.metadata?.machineId);
+    ?? normalizeNonEmptyString(metadata?.machineId);
   if (!machineId) return;
 
   await ensureAgentInstallablesBackground({

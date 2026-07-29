@@ -21,19 +21,24 @@ import { AgentInputSessionConfigOptionsSection } from "./AgentInputSessionConfig
 type AgentInputEngineModelOption = Readonly<{
   value: string;
   label: string;
+  icon?: React.ReactNode;
+  trailingStatusIcon?: React.ReactNode;
   description: string;
+  accessibilityLabel?: string;
   modelOptions?: ReadonlyArray<SessionConfigOption>;
 }>;
 
 type AgentInputEngineDetailProps = Readonly<{
   modelOptions?: ReadonlyArray<AgentInputEngineModelOption>;
   selectedModelId?: string;
-  effectiveModelLabel?: string;
+  modelSummary?: React.ReactNode;
   modelNotes?: ReadonlyArray<string>;
   modelEmptyText?: string;
   canEnterCustomModel?: boolean;
   modelProbe?: OptionPickerProbeState;
   modelHeaderAccessory?: React.ReactNode;
+  /** Optional canonical model surface used when the caller carries typed model identities. */
+  modelContentOverride?: React.ReactNode;
   favoriteModelValues?: ReadonlySet<string>;
   isModelFavoritable?: (option: AgentInputEngineModelOption) => boolean;
   onToggleFavoriteModel?: (option: AgentInputEngineModelOption) => void;
@@ -55,19 +60,24 @@ type AgentInputEngineDetailProps = Readonly<{
 
   sectionOrder?: ReadonlyArray<"model" | "config">;
   surfaceVariant?: "carded" | "plain";
+  fillAvailableSpace?: boolean;
 }>;
 
 function wrapSection(
   variant: AgentInputEngineDetailProps["surfaceVariant"],
   key: string,
   content: React.ReactNode,
+  fillAvailableSpace = false,
 ) {
   if (!content) return null;
   if (variant === "plain") {
     return <React.Fragment key={key}>{content}</React.Fragment>;
   }
   return (
-    <View key={key} style={styles.sectionCard}>
+    <View
+      key={key}
+      style={[styles.sectionCard, fillAvailableSpace ? styles.sectionCardFill : null]}
+    >
       {content}
     </View>
   );
@@ -97,7 +107,9 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
   const sectionOrder = props.sectionOrder ?? ["model", "config"];
   const surfaceVariant = props.surfaceVariant ?? "carded";
   const hasModelSection =
-    (props.modelOptions?.length ?? 0) > 0
+    props.modelContentOverride !== undefined
+    || (props.modelOptions?.length ?? 0) > 0
+    || props.modelSummary !== undefined
     || props.canEnterCustomModel === true
     || (props.modelNotes?.length ?? 0) > 0
     || (props.modelProbe !== undefined && props.modelProbe.phase !== "idle");
@@ -155,13 +167,9 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
         ? wrapSection(
             surfaceVariant,
             "model",
-            <OptionPickerOverlay
+            props.modelContentOverride ?? <OptionPickerOverlay
               title={t("agentInput.model.title")}
-              effectiveLabel={
-                props.effectiveModelLabel ??
-                props.selectedModelId ??
-                t("agentInput.model.useCliSettings")
-              }
+              summary={props.modelSummary}
               notes={props.modelNotes ?? []}
               options={resolvedModelOptions}
               selectedValue={props.selectedModelId ?? "default"}
@@ -178,7 +186,9 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
               onSelectOptionControlValue={props.onSelectModelOptionValue}
               onSelect={props.onSelectModel ?? (() => {})}
               onSubmitCustomValue={props.onSubmitCustomValue}
+              fillAvailableSpace={props.fillAvailableSpace}
             />,
+            props.fillAvailableSpace,
           )
         : null,
       config: hasConfigSection
@@ -205,7 +215,7 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
     };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, props.fillAvailableSpace ? styles.containerFill : null]}>
       {sectionOrder.map((sectionId) => sections[sectionId])}
     </View>
   );
@@ -215,8 +225,16 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     gap: 10,
   },
+  containerFill: {
+    flex: 1,
+    minHeight: 0,
+  },
   sectionCard: {
     overflow: "hidden",
+  },
+  sectionCardFill: {
+    flex: 1,
+    minHeight: 0,
   },
   configSection: {
     gap: 8,

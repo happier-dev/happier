@@ -20,13 +20,13 @@ const stylesheet = StyleSheet.create(() => ({
 export function SessionsListWrapper(props: Readonly<{
     pathname?: string;
 }> = {}) {
-    const { externalSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
+    const { externalSessionsEnabled, storageKind } = useSessionListStorageKind();
     const isFocused = useIsFocused();
     const routePathname = usePathname();
     const surfaceOwnership = resolveSessionListSurfaceOwnership({
         ownerKey: SESSION_LIST_SURFACE_OWNER_PHONE_ROOT,
         interactiveOwnerKey: SESSION_LIST_SURFACE_OWNER_PHONE_ROOT,
-        visible: true,
+        visible: isFocused,
         dataActive: isFocused && resolvePhoneRootSessionListSurfaceDataActive(routePathname),
     });
     const styles = stylesheet;
@@ -36,7 +36,6 @@ export function SessionsListWrapper(props: Readonly<{
             <SessionsListStorageChrome
                 externalSessionsEnabled={externalSessionsEnabled}
                 storageKind={storageKind}
-                onSelectStorageKind={setStorageKind}
             />
             <SessionsListPaneContent
                 storageKind={storageKind}

@@ -30,6 +30,8 @@ describe('modelOptions preflight', () => {
             'claude-opus-4-6',
             'claude-sonnet-4-6',
             'claude-haiku-4-5',
+            'claude-opus-5',
+            'claude-fable-5',
             'claude-opus-4-5',
             'claude-sonnet-4-5',
         ]);
@@ -89,6 +91,73 @@ describe('modelOptions preflight', () => {
         expect(out.filter((o) => o.value === 'default')).toHaveLength(1);
     });
 
+    it('does not append missing catalog models for non-freeform dynamic preflight lists', () => {
+        const out = getModelOptionsForAgentTypeOrPreflight({
+            agentType: 'codex',
+            preflight: {
+                availableModels: [
+                    { id: 'default', name: 'Default' },
+                    { id: 'gpt-5.5', name: 'GPT 5.5' },
+                    { id: 'gpt-5.4-mini', name: 'GPT 5.4 Mini' },
+                ],
+                supportsFreeform: false,
+            },
+        });
+
+        expect(out.map((option) => option.value)).toEqual([
+            'default',
+            'gpt-5.5',
+            'gpt-5.4-mini',
+        ]);
+        expect(out.some((option) => option.value === 'gpt-5.2-codex')).toBe(false);
+        expect(out.some((option) => option.value === 'gpt-5.1-codex-max')).toBe(false);
+    });
+
+    it('ignores a dynamic preflight list from a different backend target', () => {
+        const out = getModelOptionsForAgentTypeOrPreflight({
+            agentType: 'gemini',
+            currentTargetKey: 'backend:gemini',
+            preflightTargetKey: 'backend:opencode',
+            preflight: {
+                availableModels: [
+                    { id: 'gpt-5.5', name: 'GPT 5.5' },
+                    { id: 'opencode/big-pickle', name: 'Big Pickle' },
+                ],
+                supportsFreeform: true,
+            },
+        });
+
+        expect(out.map((option) => option.value)).toEqual([
+            'default',
+            'gemini-2.5-pro',
+            'gemini-2.5-flash',
+            'gemini-2.5-flash-lite',
+            'gemini-3-flash-preview',
+            'gemini-3-pro-preview',
+            'gemini-3.1-pro-preview',
+        ]);
+        expect(out.some((option) => option.value === 'gpt-5.5')).toBe(false);
+        expect(out.some((option) => option.value === 'opencode/big-pickle')).toBe(false);
+    });
+
+    it('ignores an unscoped dynamic preflight list when the current backend target is known', () => {
+        const out = getModelOptionsForAgentTypeOrPreflight({
+            agentType: 'gemini',
+            currentTargetKey: 'backend:gemini',
+            preflight: {
+                availableModels: [
+                    { id: 'gpt-5.5', name: 'GPT 5.5' },
+                    { id: 'opencode/big-pickle', name: 'Big Pickle' },
+                ],
+                supportsFreeform: true,
+            },
+        });
+
+        expect(out.some((option) => option.value === 'gpt-5.5')).toBe(false);
+        expect(out.some((option) => option.value === 'opencode/big-pickle')).toBe(false);
+        expect(out.some((option) => option.value === 'gemini-2.5-pro')).toBe(true);
+    });
+
     it('drops malformed preflight entries and still keeps Default first', () => {
         const out = getModelOptionsForAgentTypeOrPreflight({
             agentType: 'opencode',
@@ -111,7 +180,7 @@ describe('modelOptions preflight', () => {
         expect(String(out[0]?.label).trim().length).toBeGreaterThan(0);
         expect(out.some((opt) => opt.value === 'valid-1')).toBe(true);
         expect(out.some((opt) => opt.value === 'valid-2' && opt.description === 'desc-2')).toBe(true);
-        expect(out.some((opt) => opt.value === '' && opt.label === 'Invalid empty id')).toBe(true);
+        expect(out.some((opt) => opt.value === '')).toBe(false);
         expect(out.some((opt) => opt.value === 'missing-name')).toBe(false);
     });
 });

@@ -24,6 +24,17 @@ function visitSegments(value: unknown, segments: readonly string[], index: numbe
 }
 
 export function getApprovalFieldValues(input: unknown, path: string): readonly unknown[] {
+    if (path === 'answers.[].values' && isRecord(input) && Array.isArray(input.answers)) {
+        // Approval artifacts written by the supported 0.2.2 preview used a scalar
+        // `answer`. Present that released shape through the current `values` field
+        // until the matching protocol compatibility window closes.
+        return input.answers.flatMap((entry) => {
+            if (!isRecord(entry)) return [];
+            if (Array.isArray(entry.values)) return entry.values;
+            return typeof entry.answer === 'string' ? [entry.answer] : [];
+        });
+    }
+
     const segments = path.split('.').map((segment) => segment.trim()).filter(Boolean);
     if (segments.length === 0) return [];
 

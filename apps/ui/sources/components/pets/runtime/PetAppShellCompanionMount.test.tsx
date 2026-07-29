@@ -161,23 +161,34 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         ...localSettingsDefaults,
         ...settingsState.local,
     });
+    const createStorageSnapshot = (): StorageState => ({
+        sessionMessages: {},
+        sessionPending: {},
+        sessionListRenderables: Object.fromEntries(
+            activityState.sessions.map((session) => [
+                session.id,
+                buildSessionListRenderableFromSession(session),
+            ]),
+        ),
+    }) as StorageState;
+    const storage = Object.assign(
+        (selector?: (state: StorageState) => unknown) => {
+            const snapshot = createStorageSnapshot();
+            return typeof selector === 'function' ? selector(snapshot) : snapshot;
+        },
+        {
+            getState: createStorageSnapshot,
+            getInitialState: createStorageSnapshot,
+            setState: () => undefined,
+            subscribe: () => () => undefined,
+            destroy: () => undefined,
+        },
+    ) as typeof actual.storage;
     return createStorageModuleMock({
         importOriginal,
         overrides: {
             ...actual,
-            storage: ((selector?: (state: StorageState) => unknown) => {
-                const snapshot = {
-                    sessionMessages: {},
-                    sessionPending: {},
-                    sessionListRenderables: Object.fromEntries(
-                        activityState.sessions.map((session) => [
-                            session.id,
-                            buildSessionListRenderableFromSession(session),
-                        ]),
-                    ),
-                } as StorageState;
-                return typeof selector === 'function' ? selector(snapshot) : snapshot;
-            }) as typeof actual.storage,
+            storage,
             useSettings: readAccountSettings,
             useSetting: ((name) => readAccountSettings()[name]) as typeof actual.useSetting,
             useLocalSettings: readLocalSettings,

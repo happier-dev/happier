@@ -128,6 +128,73 @@ function applyMonacoEditorTheme(monaco: MonacoType, editorTheme: CodeEditorTheme
     editorApi.setTheme(editorTheme.monacoThemeName);
 }
 
+type MonacoEditorViewLike = Readonly<{
+    executeEdits?: (
+        source: string,
+        edits: Array<Readonly<{ range: unknown; text: string; forceMoveMarkers: boolean }>>,
+        endCursorState?: unknown,
+    ) => void;
+    getSelections?: () => unknown;
+    setSelections?: (selections: unknown) => void;
+    getScrollTop?: () => number;
+    getScrollLeft?: () => number;
+    setScrollTop?: (value: number) => void;
+    setScrollLeft?: (value: number) => void;
+}>;
+
+type MonacoModelLike = Readonly<{
+    getFullModelRange?: () => unknown;
+    setValue: (value: string) => void;
+}>;
+
+function applyMonacoModelValuePreservingViewState(editor: MonacoEditorViewLike | null | undefined, model: MonacoModelLike, nextValue: string): void {
+    const activeEditor = editor ?? null;
+    const fullRange = typeof model.getFullModelRange === 'function' ? model.getFullModelRange() : null;
+    const executeEdits = typeof activeEditor?.executeEdits === 'function' ? activeEditor.executeEdits.bind(activeEditor) : null;
+    if (!activeEditor || !fullRange || !executeEdits) {
+        model.setValue(nextValue);
+        return;
+    }
+
+    const selections = typeof activeEditor.getSelections === 'function' ? activeEditor.getSelections() : null;
+    const scrollTop = typeof activeEditor.getScrollTop === 'function' ? activeEditor.getScrollTop() : null;
+    const scrollLeft = typeof activeEditor.getScrollLeft === 'function' ? activeEditor.getScrollLeft() : null;
+
+    try {
+        executeEdits(
+            'happier.external-value',
+            [{ range: fullRange, text: nextValue, forceMoveMarkers: true }],
+            selections ?? undefined,
+        );
+    } catch {
+        model.setValue(nextValue);
+        return;
+    }
+
+    if (selections && typeof activeEditor.setSelections === 'function') {
+        try {
+            activeEditor.setSelections(selections);
+        } catch {
+            // Selection may be invalid for a shorter external document.
+        }
+    }
+
+    if (typeof scrollTop === 'number' && Number.isFinite(scrollTop) && typeof activeEditor.setScrollTop === 'function') {
+        try {
+            activeEditor.setScrollTop(scrollTop);
+        } catch {
+            // ignore
+        }
+    }
+    if (typeof scrollLeft === 'number' && Number.isFinite(scrollLeft) && typeof activeEditor.setScrollLeft === 'function') {
+        try {
+            activeEditor.setScrollLeft(scrollLeft);
+        } catch {
+            // ignore
+        }
+    }
+}
+
 export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditorProps>(function MonacoEditorSurface(
     props,
     ref,
@@ -231,6 +298,14 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
         const next = pendingChangeRef.current;
         pendingChangeRef.current = null;
         onChangeRef.current(next);
+    }, []);
+
+    const cancelPendingChange = React.useCallback(() => {
+        if (changeTimerRef.current != null) {
+            clearTimeout(changeTimerRef.current);
+            changeTimerRef.current = null;
+        }
+        pendingChangeRef.current = null;
     }, []);
 
     const scheduleChange = React.useCallback((next: string) => {
@@ -384,14 +459,26 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
         const model = modelRef.current;
         if (!model) return;
         const current = model.getValue();
-        if (current === props.value) return;
+        if (current === props.value) {
+            // Editor and parent agree; any still-pending change is a settled echo.
+            cancelPendingChange();
+            return;
+        }
+        if (pendingChangeRef.current != null || changeTimerRef.current != null) {
+            // The user has unflushed local edits: the incoming value is stale relative
+            // to the editor (a debounce-window echo or a racing async write-back).
+            // Replacing the document here would reset the cursor and lose keystrokes.
+            // Local text wins; flush it upward so the parent state converges instead.
+            flushPendingChange();
+            return;
+        }
         ignoreChangeRef.current = true;
         try {
-            model.setValue(props.value);
+            applyMonacoModelValuePreservingViewState(editorRef.current, model, props.value);
         } finally {
             ignoreChangeRef.current = false;
         }
-    }, [props.value]);
+    }, [cancelPendingChange, flushPendingChange, props.value]);
 
     const borderStyle = {
         flex: 1,

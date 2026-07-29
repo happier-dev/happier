@@ -17,14 +17,13 @@ function available(overrides: Partial<Extract<MessagePinAvailability, { status: 
         status: 'available',
         pinned: false,
         identityKey: 'route-message-id|s1|tool:call-1|block:2|tool',
-        pin: {
+        pinTarget: {
             version: 1,
             sessionId: 's1',
             seq: 5,
             transcriptBlockIndex: 2,
             routeMessageId: 'tool:call-1',
             role: 'tool',
-            pinnedAtMs: 1_000,
             label: null,
         },
         ...overrides,
@@ -137,7 +136,7 @@ describe('ToolCallPinAction', () => {
 
         expect(stopPropagation).toHaveBeenCalledTimes(1);
         expect(onToggle).toHaveBeenCalledTimes(1);
-        expect(onToggle).toHaveBeenCalledWith(target.pin);
+        expect(onToggle).toHaveBeenCalledWith(expect.objectContaining({ ...target.pinTarget }));
         expect(callOrder).toEqual(['stopPropagation', 'onToggle']);
     });
 
@@ -176,5 +175,57 @@ describe('ToolCallPinAction', () => {
         );
 
         expect(screen.findByTestId('tool-pin')?.props.hitSlop).toBe(15);
+    });
+});
+
+describe('resolveToolRowPinAction', () => {
+    afterEach(() => {
+        iconCalls.length = 0;
+        platformState.os = 'web';
+        standardCleanup();
+    });
+
+    const rowIdentity = {
+        sessionId: 's1',
+        seq: 5,
+        transcriptBlockIndex: 2,
+        routeMessageId: 'tool:call-1',
+        testID: 'tool-pin',
+    } as const;
+
+    it('resolves the row pin and its sticky flag once, so reveal containers do not recompute it', async () => {
+        const { resolveToolRowPinAction } = await import('./ToolCallPinAction');
+
+        const unpinned = resolveToolRowPinAction({ ...rowIdentity, pins: [], onTogglePin: () => {} });
+        expect(unpinned?.pinned).toBe(false);
+
+        const pinned = resolveToolRowPinAction({
+            ...rowIdentity,
+            pins: [{
+                version: 1,
+                sessionId: 's1',
+                seq: 5,
+                transcriptBlockIndex: 2,
+                routeMessageId: 'tool:call-1',
+                role: 'tool',
+                pinnedAtMs: 1_000,
+                label: null,
+            }],
+            onTogglePin: () => {},
+        });
+        expect(pinned?.pinned).toBe(true);
+        expect(pinned?.node).toBeTruthy();
+    });
+
+    it('has no action without a toggle handler or for a read-only transcript', async () => {
+        const { resolveToolRowPinAction } = await import('./ToolCallPinAction');
+
+        expect(resolveToolRowPinAction({ ...rowIdentity, pins: [] })).toBeNull();
+        expect(resolveToolRowPinAction({
+            ...rowIdentity,
+            pins: [],
+            readOnlyContext: true,
+            onTogglePin: () => {},
+        })).toBeNull();
     });
 });

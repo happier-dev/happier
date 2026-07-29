@@ -58,6 +58,7 @@ export const BUILT_IN_THEME_PROFILES: readonly BuiltInThemeProfileDefinition[] =
                 'surface.selected': '#141620',
                 'surface.pressed': '#191C28',
                 'surface.pressedOverlay': 'rgba(255,255,255,0.045)',
+                'surface.sectionTint': 'rgba(255,255,255,0.014)',
                 'surface.ripple': 'rgba(255,255,255,0.075)',
                 'border.default': 'rgba(255,255,255,0.048)',
                 'border.surface': 'rgba(255,255,255,0.055)',

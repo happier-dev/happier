@@ -8,11 +8,14 @@ import type { OptionPickerProbeState } from '@/components/sessions/pickers/Optio
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
+import { deferAgentInputPopoverClose } from '@/components/sessions/agentInput/selection/deferAgentInputPopoverClose';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol';
 import {
     favoriteModelSelectionMatchesBackend,
-    type FavoriteModelBackendIdentity,
+    type FavoriteProviderDisplaySnapshot,
     type FavoriteModelSelectionV1,
 } from '@/sync/domains/models/favoriteModelSelections';
+import { buildFavoriteBackendIdentity } from '@/sync/domains/models/favoriteModelBackendIdentity';
 import { t } from '@/text';
 
 export const FAVORITE_MODELS_AGENT_PICKER_OPTION_ID = 'favorite-models';
@@ -20,16 +23,9 @@ export const FAVORITE_MODELS_AGENT_PICKER_OPTION_ID = 'favorite-models';
 export type FavoriteModelTogglePayload = Readonly<{
     modelId: string;
     modelLabel: string;
+    modelSelection?: SessionModelSelectionV1;
+    providerDisplaySnapshot?: FavoriteProviderDisplaySnapshot;
 }>;
-
-export function buildFavoriteBackendIdentity(entry: ResolvedBackendCatalogEntry): FavoriteModelBackendIdentity {
-    return {
-        backendTargetKey: entry.backendTargetKey,
-        providerAgentId: entry.providerAgentId,
-        builtInAgentId: entry.builtInAgentId,
-        configuredBackendId: entry.backendTarget.configuredBackendId ?? null,
-    };
-}
 
 function FavoriteModelsPickerIcon(props: Readonly<{ size?: number }>) {
     const { theme } = useUnistyles();
@@ -48,6 +44,7 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
     compatibleBackendTargetKeys: ReadonlySet<string>;
     selectedBackendTargetKey: string;
     selectedModelId: string;
+    selectedModelSelection?: SessionModelSelectionV1 | null;
     selectedConfigOverrides?: Readonly<Record<string, string>>;
     selectedMachineId: string | null;
     capabilityServerId: string;
@@ -56,12 +53,12 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
     refreshProbe?: OptionPickerProbeState | null;
     onSelectFavoriteModel: (
         entry: ResolvedBackendCatalogEntry,
-        modelId: string,
+        modelSelection: SessionModelSelectionV1,
         configOverrides?: Readonly<Record<string, string>>,
     ) => void;
     onSelectFavoriteModelOptionValue?: (
         entry: ResolvedBackendCatalogEntry,
-        modelId: string,
+        modelSelection: SessionModelSelectionV1,
         configId: string,
         valueId: string,
     ) => void;
@@ -102,19 +99,23 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
         onSelectImmediate: () => {
             params.onRememberAgentPickerView?.({ kind: 'favoriteModels' });
         },
-        renderDetailContent: () => (
+        renderDetailContent: ({ onRequestClose }) => (
             <NewSessionFavoriteModelsDetail
                 favoriteModelSelections={params.favoriteModelSelections}
                 resolvedBackendEntries={compatibleResolvedBackendEntries}
                 selectedBackendTargetKey={params.selectedBackendTargetKey}
                 selectedModelId={params.selectedModelId}
+                selectedModelSelection={params.selectedModelSelection}
                 selectedConfigOverrides={params.selectedConfigOverrides}
                 selectedMachineId={params.selectedMachineId}
                 capabilityServerId={params.capabilityServerId}
                 cwd={params.selectedPath}
                 settings={params.settings}
                 refreshProbe={params.refreshProbe ?? null}
-                onSelectFavoriteModel={params.onSelectFavoriteModel}
+                onSelectFavoriteModel={(entry, modelSelection, configOverrides) => {
+                    params.onSelectFavoriteModel(entry, modelSelection, configOverrides);
+                    deferAgentInputPopoverClose(onRequestClose);
+                }}
                 onSelectFavoriteModelOptionValue={params.onSelectFavoriteModelOptionValue}
                 onToggleFavoriteModel={params.onToggleFavoriteModel}
                 onRemoveFavoriteModelSelection={params.onRemoveFavoriteModelSelection}

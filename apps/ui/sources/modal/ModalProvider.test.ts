@@ -299,6 +299,138 @@ describe('ModalProvider', () => {
         expect(screen.findAllByType(DummyModalA)).toHaveLength(1);
     });
 
+    it('synchronously settles custom modal host ownership after restoring the outer provider', async () => {
+        const { ModalProvider } = await import('./ModalProvider');
+        const { Modal } = await import('./ModalManager');
+        const onHostUnmount = vi.fn();
+        let setShowInnerProvider: React.Dispatch<React.SetStateAction<boolean>> | null = null;
+
+        function NestedProviders() {
+            const [showInnerProvider, setShowInnerProviderState] = React.useState(false);
+            setShowInnerProvider = setShowInnerProviderState;
+            return React.createElement(
+                ModalProvider,
+                null,
+                showInnerProvider
+                    ? React.createElement(
+                        ModalProvider,
+                        null,
+                        React.createElement('InnerProviderMarker'),
+                    )
+                    : null,
+                React.createElement('OuterProviderMarker'),
+            );
+        }
+
+        const screen = await renderScreen(React.createElement(NestedProviders));
+        act(() => {
+            setShowInnerProvider?.(true);
+        });
+        act(() => {
+            Modal.show({
+                component: DummyModalA,
+                onHostUnmount,
+            });
+        });
+
+        act(() => {
+            setShowInnerProvider?.(false);
+        });
+
+        expect(onHostUnmount).toHaveBeenCalledTimes(1);
+        act(() => {
+            Modal.show({ component: DummyModalB });
+        });
+        expect(screen.findAllByType(DummyModalB)).toHaveLength(1);
+    });
+
+    it('settles a custom modal shown in the same React batch that removes its provider', async () => {
+        const { ModalProvider } = await import('./ModalProvider');
+        const { Modal } = await import('./ModalManager');
+        const onHostUnmount = vi.fn();
+        let setShowInnerProvider: React.Dispatch<React.SetStateAction<boolean>> | null = null;
+
+        function NestedProviders() {
+            const [showInnerProvider, setShowInnerProviderState] = React.useState(false);
+            setShowInnerProvider = setShowInnerProviderState;
+            return React.createElement(
+                ModalProvider,
+                null,
+                showInnerProvider
+                    ? React.createElement(
+                        ModalProvider,
+                        null,
+                        React.createElement('InnerProviderMarker'),
+                    )
+                    : null,
+            );
+        }
+
+        await renderScreen(React.createElement(NestedProviders));
+        act(() => {
+            setShowInnerProvider?.(true);
+        });
+
+        act(() => {
+            Modal.show({
+                component: DummyModalA,
+                onHostUnmount,
+            });
+            setShowInnerProvider?.(false);
+        });
+
+        expect(onHostUnmount).toHaveBeenCalledTimes(1);
+    });
+
+    it('settles every owned modal when an earlier custom host-unmount callback throws', async () => {
+        const { ModalProvider } = await import('./ModalProvider');
+        const { Modal } = await import('./ModalManager');
+        const laterOwnerSettled = vi.fn();
+        let confirmPromise!: Promise<boolean>;
+        let setShowInnerProvider: React.Dispatch<React.SetStateAction<boolean>> | null = null;
+
+        function NestedProviders() {
+            const [showInnerProvider, setShowInnerProviderState] = React.useState(false);
+            setShowInnerProvider = setShowInnerProviderState;
+            return React.createElement(
+                ModalProvider,
+                null,
+                showInnerProvider
+                    ? React.createElement(
+                        ModalProvider,
+                        null,
+                        React.createElement('InnerProviderMarker'),
+                    )
+                    : null,
+            );
+        }
+
+        await renderScreen(React.createElement(NestedProviders));
+        act(() => {
+            setShowInnerProvider?.(true);
+        });
+        act(() => {
+            Modal.show({
+                component: DummyModalA,
+                onHostUnmount: () => {
+                    throw new Error('owner settlement failed');
+                },
+            });
+            confirmPromise = Modal.confirm('Confirm title', 'Confirm body');
+            Modal.show({
+                component: DummyModalB,
+                onHostUnmount: laterOwnerSettled,
+            });
+        });
+
+        act(() => {
+            setShowInnerProvider?.(false);
+        });
+
+        expect(laterOwnerSettled).toHaveBeenCalledTimes(1);
+        await expect(confirmPromise).resolves.toBe(false);
+    });
+
     it('keeps inactive nested providers from receiving global modal calls while they stay mounted', async () => {
         const { ModalProvider } = await import('./ModalProvider');
         const { Modal } = await import('./ModalManager');

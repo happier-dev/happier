@@ -26,6 +26,7 @@ import { buildMarkdownProseCss } from '../markdownEditorProseStyle';
 import type { MarkdownEditorSurfaceRef } from './TiptapWebViewSurface.native';
 import { createMarkdownEditorExtensions } from '../core/tiptap/createMarkdownEditorExtensions';
 import { markdownToDoc } from '../core/tiptap/markdownSerialization';
+import { runWithPreservedTiptapViewState } from '../core/tiptap/preserveTiptapViewState';
 import {
     readActiveLinkHref,
     readSelectionState,
@@ -131,6 +132,14 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
             const next = pendingChangeRef.current;
             pendingChangeRef.current = null;
             onChangeRef.current(next);
+        }, []);
+
+        const cancelPendingChange = React.useCallback(() => {
+            if (changeTimerRef.current != null) {
+                clearTimeout(changeTimerRef.current);
+                changeTimerRef.current = null;
+            }
+            pendingChangeRef.current = null;
         }, []);
 
         const scheduleChange = React.useCallback(
@@ -268,9 +277,8 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
         React.useEffect(() => {
             seedRef.current = latestValueRef.current;
             ignoreChangeRef.current = true;
-            pendingChangeRef.current = null;
-            // eslint-disable-next-line react-hooks/exhaustive-deps
-        }, [props.resetKey]);
+            cancelPendingChange();
+        }, [cancelPendingChange, props.resetKey]);
 
         // Stable platform-agnostic controller. The methods read the live editor
         // through `editorRef`, so the controller object identity never changes —
@@ -393,15 +401,29 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
         React.useEffect(() => {
             if (!editor) return;
             const current = editor.getMarkdown();
-            if (current === props.value) return;
+            if (current === props.value) {
+                // Editor and parent agree; any still-pending change is a settled echo.
+                cancelPendingChange();
+                return;
+            }
+            if (pendingChangeRef.current != null || changeTimerRef.current != null) {
+                // The user has unflushed local edits: the incoming value is stale relative
+                // to the editor (a debounce-window echo or a racing async write-back).
+                // Replacing the document would reset the cursor and lose keystrokes.
+                // Local text wins; flush it upward so the parent state converges instead.
+                flushPendingChange();
+                return;
+            }
             seedRef.current = props.value;
             ignoreChangeRef.current = true;
             try {
-                editor.commands.setContent(markdownToDoc(props.value));
+                runWithPreservedTiptapViewState(editor, () => {
+                    editor.commands.setContent(markdownToDoc(props.value));
+                });
             } catch {
                 // ignore
             }
-        }, [editor, props.value]);
+        }, [cancelPendingChange, editor, flushPendingChange, props.value]);
 
         React.useImperativeHandle(
             ref,

@@ -68,6 +68,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         machineId: props.machineId,
         rootPath: props.rootPath,
     }), [props.machineId, props.rootPath, props.serverId]);
+    const scmCallOptions = React.useMemo(() => ({ serverId: scope.serverId }), [scope.serverId]);
     const { snapshot, loading, error, refresh } = useWorkspaceScmSnapshotController(scope);
     const scmCommitStrategySetting = useSetting('scmCommitStrategy');
     const scmRemoteConfirmPolicy = useSetting('scmRemoteConfirmPolicy');
@@ -96,11 +97,12 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
     );
 
     const { historyEntries, historyLoading, historyHasMore, loadCommitHistory } = useWorkspaceScmCommitHistory({
+        serverId: props.serverId,
         machineId: props.machineId,
         rootPath: props.rootPath,
         readLogEnabled: snapshot?.repo.isRepo === true && (snapshot.capabilities?.readLog ?? true),
     });
-    const commitHistoryInitKey = `${props.machineId}:${props.rootPath}`;
+    const commitHistoryInitKey = `${props.serverId}:${props.machineId}:${props.rootPath}`;
     const didInitCommitHistoryKeyRef = React.useRef<string | null>(null);
 
     React.useEffect(() => {
@@ -307,9 +309,9 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
             run: () => machineScmRemoteAdd(scope.machineId, {
                 cwd: scope.rootPath,
                 ...request,
-            }),
+            }, scmCallOptions),
         }),
-        [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath],
+        [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath, scmCallOptions],
     );
     const setRemoteUrl = React.useCallback(
         (request: { name: string; fetchUrl: string; pushUrl: string | null }) => runWorkspaceUpdateMutation({
@@ -318,89 +320,89 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
             run: () => machineScmRemoteSetUrl(scope.machineId, {
                 cwd: scope.rootPath,
                 ...request,
-            }),
+            }, scmCallOptions),
         }),
-        [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath],
+        [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath, scmCallOptions],
     );
     const removeRemote = React.useCallback(
         (name: string) => runWorkspaceUpdateMutation({
             operation: 'remote_remove',
             fallbackError: t('files.sourceControlOperations.update.remotes.errors.removeFailed'),
-            run: () => machineScmRemoteRemove(scope.machineId, { cwd: scope.rootPath, name }),
+            run: () => machineScmRemoteRemove(scope.machineId, { cwd: scope.rootPath, name }, scmCallOptions),
         }),
-        [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath],
+        [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath, scmCallOptions],
     );
     const mergeBranch = React.useCallback(
         (sourceRef: string) => runWorkspaceUpdateMutation({
             operation: 'branch_merge',
             fallbackError: t('files.sourceControlOperations.update.branchIntegration.errors.mergeFailed'),
-            run: () => machineScmBranchMerge(scope.machineId, { cwd: scope.rootPath, sourceRef }),
+            run: () => machineScmBranchMerge(scope.machineId, { cwd: scope.rootPath, sourceRef }, scmCallOptions),
         }),
-        [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath],
+        [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath, scmCallOptions],
     );
     const rebaseBranch = React.useCallback(
         (sourceRef: string) => runWorkspaceUpdateMutation({
             operation: 'branch_rebase',
             fallbackError: t('files.sourceControlOperations.update.branchIntegration.errors.rebaseFailed'),
-            run: () => machineScmBranchRebase(scope.machineId, { cwd: scope.rootPath, sourceRef }),
+            run: () => machineScmBranchRebase(scope.machineId, { cwd: scope.rootPath, sourceRef }, scmCallOptions),
         }),
-        [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath],
+        [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath, scmCallOptions],
     );
     const continueBranchOperation = React.useCallback(
         (operation: 'merge' | 'rebase') => runWorkspaceUpdateMutation({
             operation: 'branch_operation_continue',
             fallbackError: t('files.sourceControlOperations.update.branchIntegration.errors.continueFailed'),
-            run: () => machineScmBranchOperationContinue(scope.machineId, { cwd: scope.rootPath, operation }),
+            run: () => machineScmBranchOperationContinue(scope.machineId, { cwd: scope.rootPath, operation }, scmCallOptions),
         }),
-        [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath],
+        [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath, scmCallOptions],
     );
     const abortBranchOperation = React.useCallback(
         (operation: 'merge' | 'rebase') => runWorkspaceUpdateMutation({
             operation: 'branch_operation_abort',
             fallbackError: t('files.sourceControlOperations.update.branchIntegration.errors.abortFailed'),
-            run: () => machineScmBranchOperationAbort(scope.machineId, { cwd: scope.rootPath, operation }),
+            run: () => machineScmBranchOperationAbort(scope.machineId, { cwd: scope.rootPath, operation }, scmCallOptions),
         }),
-        [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath],
+        [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath, scmCallOptions],
     );
     const initializeRepository = React.useCallback(
-        () => machineScmRepositoryInit(scope.machineId, { cwd: scope.rootPath }),
-        [scope.machineId, scope.rootPath],
+        () => machineScmRepositoryInit(scope.machineId, { cwd: scope.rootPath }, scmCallOptions),
+        [scope.machineId, scope.rootPath, scmCallOptions],
     );
     const openOrReusePullRequest = React.useCallback(
         (request: { base: string; head: string }) => machineScmPullRequestOpenOrReuse(scope.machineId, {
             cwd: scope.rootPath,
             ...request,
-        }),
-        [scope.machineId, scope.rootPath],
+        }, scmCallOptions),
+        [scope.machineId, scope.rootPath, scmCallOptions],
     );
     const openComposePullRequest = React.useCallback(
         (request: { base: string; head: string }) => machineScmPullRequestOpenCompose(scope.machineId, {
             cwd: scope.rootPath,
             ...request,
-        }),
-        [scope.machineId, scope.rootPath],
+        }, scmCallOptions),
+        [scope.machineId, scope.rootPath, scmCallOptions],
     );
     const createFeatureBranch = React.useCallback(
         (request: { name: string; checkout: true; startPoint?: string }) => machineScmBranchCreate(scope.machineId, {
             cwd: scope.rootPath,
             ...request,
-        }),
-        [scope.machineId, scope.rootPath],
+        }, scmCallOptions),
+        [scope.machineId, scope.rootPath, scmCallOptions],
     );
     const publishProviderKind = snapshot?.hostingProvider?.kind ?? null;
     const describePublishTargets = React.useCallback(
         () => machineScmHostingRepositoryDescribePublishTargets(scope.machineId, {
             cwd: scope.rootPath,
             ...(publishProviderKind ? { providerKind: publishProviderKind } : {}),
-        }),
-        [publishProviderKind, scope.machineId, scope.rootPath],
+        }, scmCallOptions),
+        [publishProviderKind, scope.machineId, scope.rootPath, scmCallOptions],
     );
     const publishRepository = React.useCallback(
         (request: Parameters<typeof machineScmHostingRepositoryPublish>[1]) => machineScmHostingRepositoryPublish(scope.machineId, {
             cwd: scope.rootPath,
             ...request,
-        }),
-        [scope.machineId, scope.rootPath],
+        }, scmCallOptions),
+        [scope.machineId, scope.rootPath, scmCallOptions],
     );
     const openGitHubConnectedService = React.useCallback(() => {
         router.push({ pathname: '/(app)/settings/connected-services/[serviceId]', params: { serviceId: 'github' } });
@@ -466,6 +468,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
                     scmStatusFiles={scmStatusFiles}
                     branchTrigger={(
                         <WorkspaceSourceControlBranchMenu
+                            serverId={props.serverId}
                             machineId={props.machineId}
                             rootPath={props.rootPath}
                             currentBranch={scmStatusFiles?.branch ?? null}

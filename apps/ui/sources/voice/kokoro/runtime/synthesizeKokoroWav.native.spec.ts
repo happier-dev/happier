@@ -1,9 +1,86 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { synthesizeKokoroWav } from '@/voice/kokoro/runtime/synthesizeKokoroWav.native';
-import { prepareKokoroTts } from '@/voice/kokoro/runtime/synthesizeKokoroWav.native';
+import {
+  prepareKokoroTts,
+  prewarmKokoroRuntime,
+  streamKokoroWavSentences,
+  synthesizeKokoroWav,
+} from '@/voice/kokoro/runtime/synthesizeKokoroWav.native';
 
 describe('synthesizeKokoroWav (native)', () => {
+  it('rejects preparation of an unavailable built-in publication before install or network work', async () => {
+    const ensureInstalled = vi.fn();
+    const kokoroNativeModule = {
+      initialize: vi.fn(),
+      listVoices: vi.fn(),
+      synthesizeToWavFile: vi.fn(),
+      cancel: vi.fn(),
+    };
+
+    await expect(prepareKokoroTts(
+      {
+        assetSetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+        timeoutMs: 5000,
+        signal: new AbortController().signal,
+      },
+      {
+        kokoroNativeModule,
+        ensureInstalled,
+        resolveManifestUrl: () => 'https://example.com/broken-manifest.json',
+        fs: { File: class {}, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
+      },
+    )).rejects.toThrow('model_pack_publication_unavailable');
+
+    expect(ensureInstalled).not.toHaveBeenCalled();
+    expect(kokoroNativeModule.initialize).not.toHaveBeenCalled();
+  });
+
+  it('rejects direct synthesis, streaming, and prewarm for an installed unavailable publication', async () => {
+    const ensureInstalled = vi.fn(async () => ({
+      packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-unavailable',
+      manifest: {
+        packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+        kind: 'tts_sherpa',
+        model: 'kokoro',
+        version: 'installed-before-publication-was-disabled',
+        files: [],
+      } as any,
+    }));
+    const kokoroNativeModule = {
+      initialize: vi.fn(async () => {
+        throw new Error('unavailable_pack_reached_native_runtime');
+      }),
+      listVoices: vi.fn(),
+      synthesizeToWavFile: vi.fn(),
+      cancel: vi.fn(),
+    };
+    const opts = {
+      text: 'hello',
+      assetSetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+      voiceId: 'af_bella',
+      speed: 1,
+      timeoutMs: 5000,
+      signal: new AbortController().signal,
+    };
+    const overrides = {
+      kokoroNativeModule,
+      ensureInstalled,
+      resolveManifestUrl: () => 'https://example.com/previously-installed-manifest.json',
+      fs: { File: class {}, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
+    };
+
+    await expect(synthesizeKokoroWav(opts, overrides))
+      .rejects.toThrow('model_pack_publication_unavailable');
+    await expect(streamKokoroWavSentences(opts, overrides)[Symbol.asyncIterator]().next())
+      .rejects.toThrow('model_pack_publication_unavailable');
+    await expect(prewarmKokoroRuntime(opts, overrides))
+      .rejects.toThrow('model_pack_publication_unavailable');
+
+    expect(ensureInstalled).not.toHaveBeenCalled();
+    expect(kokoroNativeModule.initialize).not.toHaveBeenCalled();
+    expect(kokoroNativeModule.synthesizeToWavFile).not.toHaveBeenCalled();
+  });
+
   it('throws when the model pack is not installed', async () => {
     const fileDelete = vi.fn().mockResolvedValue(undefined);
     class Directory {
@@ -132,44 +209,16 @@ describe('synthesizeKokoroWav (native)', () => {
     expect(new Uint8Array(bytes)).toEqual(new Uint8Array([1, 2, 3, 4]));
   });
 
-  it('uses the canonical Kokoro pack id when assetSetId is missing', async () => {
-    const fileDelete = vi.fn().mockResolvedValue(undefined);
-    class File {
-      uri: string;
-      constructor(...uris: any[]) {
-        if (uris.length === 1 && typeof uris[0] === 'string') {
-          this.uri = uris[0];
-          return;
-        }
-        const [_base, name] = uris;
-        this.uri = `file:///tmp/${String(name ?? '')}`;
-      }
-      async arrayBuffer() {
-        return new Uint8Array([1, 2, 3, 4]).buffer;
-      }
-      delete = fileDelete;
-    }
-
+  it('fails closed to the unavailable canonical Kokoro pack when assetSetId is missing', async () => {
     const kokoroNativeModule = {
       initialize: vi.fn().mockResolvedValue(undefined),
       listVoices: vi.fn().mockResolvedValue([]),
       synthesizeToWavFile: vi.fn().mockResolvedValue({ wavPath: 'file:///tmp/out.wav', sampleRate: 24000 }),
       cancel: vi.fn().mockResolvedValue(undefined),
     };
+    const ensureInstalled = vi.fn();
 
-    const ensureInstalled = vi.fn().mockResolvedValue({
-      packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-test',
-      manifest: {
-        packId: 'kokoro-tts-en-v1',
-        kind: 'tts_sherpa',
-        model: 'kokoro',
-        version: '1.0.0',
-        voices: [{ id: 'af_bella', title: 'Bella', sid: 0 }],
-        files: [],
-      } as any,
-    });
-
-    await synthesizeKokoroWav(
+    await expect(synthesizeKokoroWav(
       {
         text: 'hello',
         assetSetId: null,
@@ -180,16 +229,15 @@ describe('synthesizeKokoroWav (native)', () => {
       },
       {
         kokoroNativeModule,
-        fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
-        resolveOutWavPath: () => 'file:///tmp/out.wav',
+        fs: { File: class {}, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
         ensureInstalled,
       },
-    );
+    )).rejects.toThrow('model_pack_publication_unavailable');
 
-    expect(ensureInstalled).toHaveBeenCalledWith(expect.objectContaining({ packId: 'kokoro-tts-en-v1' }), expect.anything());
+    expect(ensureInstalled).not.toHaveBeenCalled();
   });
 
-  it('normalizes a legacy Kokoro asset id to the canonical native installer pack id', async () => {
+  it('preserves an explicit unknown experiment id for custom Kokoro development', async () => {
     class File {
       uri: string;
       constructor(...uris: any[]) {
@@ -208,21 +256,21 @@ describe('synthesizeKokoroWav (native)', () => {
       cancel: vi.fn().mockResolvedValue(undefined),
     };
     const ensureInstalled = vi.fn().mockResolvedValue({
-      packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-tts-en-v1',
+      packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-82m-v1.0-onnx-fp32-wasm',
       manifest: {
-        packId: 'kokoro-tts-en-v1',
+        packId: 'kokoro-82m-v1.0-onnx-fp32-wasm',
         kind: 'tts_sherpa',
         model: 'kokoro',
         version: '1.0.0',
         files: [],
       } as any,
     });
-    const resolveManifestUrl = vi.fn(() => 'https://example.com/kokoro-tts-en-v1__manifest.json');
+    const resolveManifestUrl = vi.fn(() => 'https://example.com/kokoro-82m-v1.0-onnx-fp32-wasm__manifest.json');
 
     await synthesizeKokoroWav(
       {
         text: 'hello',
-        assetSetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+        assetSetId: 'kokoro-82m-v1.0-onnx-fp32-wasm',
         voiceId: 'af_bella',
         speed: 1,
         timeoutMs: 5000,
@@ -237,8 +285,11 @@ describe('synthesizeKokoroWav (native)', () => {
       },
     );
 
-    expect(resolveManifestUrl).toHaveBeenCalledWith('kokoro-tts-en-v1');
-    expect(ensureInstalled).toHaveBeenCalledWith(expect.objectContaining({ packId: 'kokoro-tts-en-v1' }), expect.anything());
+    expect(resolveManifestUrl).toHaveBeenCalledWith('kokoro-82m-v1.0-onnx-fp32-wasm');
+    expect(ensureInstalled).toHaveBeenCalledWith(
+      expect.objectContaining({ packId: 'kokoro-82m-v1.0-onnx-fp32-wasm' }),
+      expect.anything(),
+    );
   });
 
   it('cancels in-flight synthesis when aborted', async () => {

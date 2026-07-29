@@ -229,6 +229,43 @@ describe('uploadSessionAttachment', () => {
         expect(nativeCloseSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('preserves the opaque finalize recovery continuation after closing the source', async () => {
+        const { sessionAttachmentsUploadFile } = await import('./uploadSessionAttachment');
+        const recovery = {
+            kind: 'transfer_finalize_recovery' as const,
+            expiresAt: Date.now() + 60_000,
+            actions: ['retry_finalize', 'discard_staged'] as const,
+            invoke: vi.fn(),
+        };
+        uploadDaemonSessionAttachmentFromReaderSpy.mockResolvedValueOnce({
+            success: false,
+            error: 'Finalize recovery is required',
+            errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED',
+            recovery,
+        });
+
+        const result = await sessionAttachmentsUploadFile({
+            sessionId: 's1',
+            file: { kind: 'native', uri: 'file:///tmp/hello.txt', name: 'hello.txt', sizeBytes: 5, mimeType: 'text/plain' },
+            messageLocalId: 'm1',
+            config: {
+                uploadLocation: 'workspace',
+                workspaceRelativeDir: '.happier/uploads',
+                vcsIgnoreStrategy: 'git_info_exclude',
+                vcsIgnoreWritesEnabled: true,
+                maxFileBytes: 25 * 1024 * 1024,
+            },
+        });
+
+        expect(result).toMatchObject({
+            success: false,
+            errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED',
+            recovery,
+        });
+        expect(nativeOpenSpy).toHaveBeenCalledTimes(1);
+        expect(nativeCloseSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('fails when the attachment size cannot be resolved', async () => {
         const { sessionAttachmentsUploadFile } = await import('./uploadSessionAttachment');
 

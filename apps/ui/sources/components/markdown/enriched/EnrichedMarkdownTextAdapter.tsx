@@ -3,8 +3,12 @@ import { Platform, type StyleProp, type TextStyle } from 'react-native';
 import { EnrichedMarkdownText, type EnrichedMarkdownTextProps } from 'react-native-enriched-markdown';
 
 import { ENRICHED_MARKDOWN_MD4C_FLAGS } from './enrichedMarkdownConstants';
-import { openMarkdownLinkUrl } from './enrichedMarkdownLinkHandling';
-import { preloadEnrichedMarkdownRuntime } from './preloadEnrichedMarkdownRuntime';
+import {
+    normalizeMarkdownLinkUrl,
+    openMarkdownLinkUrl,
+    sanitizeEnrichedMarkdownLinkTargets,
+} from './enrichedMarkdownLinkHandling';
+import { useEnrichedMarkdownRuntimeStatus } from './preloadEnrichedMarkdownRuntime';
 import { resolveEnrichedMarkdownFlavor } from './resolveEnrichedMarkdownFlavor';
 import { useEnrichedMarkdownStyle } from './useEnrichedMarkdownStyle';
 import type { MarkdownRenderingProfile } from '../rendering/MarkdownRenderingProfile';
@@ -85,25 +89,30 @@ type EnrichedMarkdownTextAdapterProps = Readonly<{
 }>;
 
 export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTextAdapterProps) => {
+    const runtimeStatus = useEnrichedMarkdownRuntimeStatus();
     const styleBundle = useEnrichedMarkdownStyle({
         profile: props.profile,
         textStyle: props.textStyle,
     });
 
     const handleLinkPress = React.useCallback((event: { url: string }) => {
-        if (props.onLinkPress?.(event.url) === true) return;
-        void openMarkdownLinkUrl(event.url);
+        const normalizedUrl = normalizeMarkdownLinkUrl(event.url);
+        if (!normalizedUrl) return;
+        if (props.onLinkPress?.(normalizedUrl) === true) return;
+        void openMarkdownLinkUrl(normalizedUrl);
     }, [props.onLinkPress]);
     const revealConfig = resolveStreamingTextRevealConfig({
         animated: props.streamingAnimated,
         preset: props.streamingRevealPreset,
     });
-    const flavor = React.useMemo(() => resolveEnrichedMarkdownFlavor(props.markdown), [props.markdown]);
-
-    React.useEffect(() => {
-        if (Platform.OS !== 'web') return;
-        void preloadEnrichedMarkdownRuntime();
-    }, []);
+    const sanitizedMarkdown = React.useMemo(
+        () => sanitizeEnrichedMarkdownLinkTargets(props.markdown),
+        [props.markdown],
+    );
+    const flavor = React.useMemo(
+        () => resolveEnrichedMarkdownFlavor(sanitizedMarkdown),
+        [sanitizedMarkdown],
+    );
 
     useWebRevealStyleInsertion({
         enabled: revealConfig != null,
@@ -119,10 +128,9 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
         if (Platform.OS === 'web') {
             const webProps: Record<string, unknown> = {
                 'data-testid': props.testID,
-                renderRawFallback: 'hidden',
             };
             if (props.streamingAnimated) {
-                webProps.streamingAnimation = true;
+                webProps['data-happier-enriched-markdown-reveal'] = 'text';
             }
             if (props.suppressLeadingTopMargin === true) {
                 webProps['data-happier-enriched-markdown-trim-leading-margin'] = 'true';
@@ -153,8 +161,9 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
 
     return (
         <EnrichedMarkdownText
+            key={runtimeStatus === 'ready' ? 'runtime-ready' : 'runtime-cold'}
             {...platformProps}
-            markdown={props.markdown}
+            markdown={sanitizedMarkdown}
             markdownStyle={styleBundle.markdownStyle}
             containerStyle={containerStyle}
             md4cFlags={ENRICHED_MARKDOWN_MD4C_FLAGS}

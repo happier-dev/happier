@@ -35,6 +35,8 @@ import { resolveExistingSessionAutomationAvailability } from '@/sync/domains/aut
 import { isAutomationSettingsDraftValid } from '@/sync/domains/automations/isAutomationSettingsDraftValid';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol';
+import { readUiAiLaunchProfiles } from '@/sync/domains/profiles/aiLaunchProfileCollection';
 
 function isExistingSessionAutomationEditDraftValid(params: Readonly<{
     draft: SessionAuthoringDraft | null;
@@ -60,6 +62,12 @@ export default React.memo(function AutomationEditScreen() {
     const automationId = typeof params.id === 'string' ? params.id : '';
     const automation = useAutomation(automationId);
     const settings = useSettings();
+    const launchProfileContext = React.useMemo(() => ({
+        profiles: readUiAiLaunchProfiles(settings.profiles),
+        migration: readProviderSettingsFromAccountSettingsV1({
+            providerSettingsV1: settings.providerSettingsV1,
+        }).settings.migration,
+    }), [settings.profiles, settings.providerSettingsV1]);
     const existingSessionId = React.useMemo(() => {
         if (automation?.targetType !== 'existing_session') return null;
         return tryReadAutomationTemplateEnvelopeExistingSessionId(automation.templateCiphertext);
@@ -98,6 +106,7 @@ export default React.memo(function AutomationEditScreen() {
                     automation,
                     decryptAutomationTemplateRaw: (payloadCiphertext) =>
                         sync.encryption.decryptAutomationTemplateRaw(payloadCiphertext),
+                    launchProfileContext,
                 });
                 const assignments = Array.isArray((automation as any).assignments) ? (automation as any).assignments : [];
                 const enabledAssignment = assignments.find((assignment: any) => assignment?.enabled !== false) ?? assignments[0] ?? null;
@@ -121,7 +130,7 @@ export default React.memo(function AutomationEditScreen() {
                 setMessageLoading(false);
             }
         })(), { tag: 'AutomationEditScreen.redirectNewSessionAutomationToSharedComposer' });
-    }, [automation, automationId, router]);
+    }, [automation, automationId, launchProfileContext, router]);
 
     React.useEffect(() => {
         if (!automation || automation.targetType !== 'existing_session') return;
@@ -133,6 +142,7 @@ export default React.memo(function AutomationEditScreen() {
                     automation,
                     decryptAutomationTemplateRaw: (payloadCiphertext) =>
                         sync.encryption.decryptAutomationTemplateRaw(payloadCiphertext),
+                    launchProfileContext,
                 });
                 if (!alive) return;
                 setDraft((current) => {
@@ -158,7 +168,7 @@ export default React.memo(function AutomationEditScreen() {
         return () => {
             alive = false;
         };
-    }, [automation, sessionDekBase64, targetSession]);
+    }, [automation, launchProfileContext, sessionDekBase64, targetSession]);
 
     const isValid = React.useMemo(() => isExistingSessionAutomationEditDraftValid({
         draft,

@@ -6,7 +6,7 @@ import type { StoreApi, UseBoundStore } from 'zustand';
 
 import {
     createDeferred,
-    createSessionFixture,
+    createSessionFixture as createBaseSessionFixture,
     flushHookEffects,
     invokeTestInstanceHandler,
     renderScreen,
@@ -19,6 +19,20 @@ import type { LocalPetSourceMetadata } from '@/sync/domains/pets/localPetSourceT
 import { createReducer } from '@/sync/reducer/reducer';
 import type { AccountPetLibraryEntryV1 } from '@happier-dev/protocol';
 import { PET_DAEMON_RPC_METHODS } from '@happier-dev/protocol';
+
+function createSessionFixture(
+    overrides: Parameters<typeof createBaseSessionFixture>[0] = {},
+): ReturnType<typeof createBaseSessionFixture> {
+    if ((overrides.pendingCount ?? 0) <= 0) {
+        return createBaseSessionFixture(overrides);
+    }
+
+    return createBaseSessionFixture({
+        ...overrides,
+        pendingPermissionRequestCount: overrides.pendingPermissionRequestCount ?? 1,
+        pendingRequestObservedAt: overrides.pendingRequestObservedAt ?? Date.now(),
+    });
+}
 
 const settingsState = vi.hoisted(() => ({
     current: {
@@ -220,6 +234,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                     ? {
                         ...session,
                         seq: Math.max(1, session.seq ?? 0),
+                        latestReadyEventSeq: Math.max(1, session.seq ?? 0),
                         lastViewedSessionSeq: 0,
                     }
                     : session];
@@ -832,6 +847,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
                 active: true,
                 pendingCount: 0,
                 seq: 2,
+                latestReadyEventSeq: 2,
                 lastViewedSessionSeq: 1,
             }),
         ];
@@ -1350,6 +1366,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
                 createdAt: 1_000,
                 activeAt: 1_000,
                 thinkingAt: 1_000,
+                meaningfulActivityAt: 1_000,
             }),
         ];
         const { DesktopPetOverlayRoute } = await import('./DesktopPetOverlayRoute');
@@ -1365,6 +1382,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
                 createdAt: 1_000,
                 activeAt: 2_000,
                 thinkingAt: 2_000,
+                meaningfulActivityAt: 2_000,
             }),
         ];
         await screen.update(<DesktopPetOverlayRoute />);

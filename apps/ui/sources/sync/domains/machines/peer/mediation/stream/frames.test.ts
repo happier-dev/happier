@@ -55,7 +55,7 @@ describe('machine live-stream viewer frame helpers', () => {
         expect(result.droppedBytes).toBe(11);
     });
 
-    it('demuxes length-prefixed AVCC chunks and exposes JPEG seed frames', async () => {
+    it('demuxes length-prefixed AVCC chunks including description, seed, keyframe, and delta payloads', async () => {
         const mod = await import('./frames').catch((error: unknown) => ({ importError: error }));
 
         expect(mod).toHaveProperty('createMachineLiveStreamAvccDemuxer');
@@ -64,16 +64,54 @@ describe('machine live-stream viewer frame helpers', () => {
         const demuxer = mod.createMachineLiveStreamAvccDemuxer({ maxBufferedBytes: 64 });
         const description = avccEnvelope(0x01, [1, 0x64, 0, 0x28]);
         const seed = avccEnvelope(0x04, [...jpegBytes(9)]);
+        const keyframe = avccEnvelope(0x02, [0x65, 1, 2]);
+        const delta = avccEnvelope(0x03, [0x41, 3, 4]);
         const first = demuxer.push(description.slice(0, 3));
         expect(first).toMatchObject({ chunks: [] });
 
-        const second = demuxer.push(new Uint8Array([...description.slice(3), ...seed]));
+        const second = demuxer.push(new Uint8Array([...description.slice(3), ...seed, ...keyframe.slice(0, 2)]));
         expect(second.chunks.map((chunk: { type: string; payload: Uint8Array }) => ({
             type: chunk.type,
             payload: [...chunk.payload],
         }))).toEqual([
             { type: 'description', payload: [1, 0x64, 0, 0x28] },
             { type: 'seed', payload: [0xff, 0xd8, 9, 0xff, 0xd9] },
+        ]);
+        expect(second.bufferedBytes).toBe(2);
+
+        const third = demuxer.push(new Uint8Array([...keyframe.slice(2), ...delta]));
+        expect(third.chunks.map((chunk: { type: string; payload: Uint8Array }) => ({
+            type: chunk.type,
+            payload: [...chunk.payload],
+        }))).toEqual([
+            { type: 'keyframe', payload: [0x65, 1, 2] },
+            { type: 'delta', payload: [0x41, 3, 4] },
+        ]);
+        expect(third.bufferedBytes).toBe(0);
+    });
+
+    it('keeps mid-stream AVCC description changes in sequence for decoder reconfiguration', async () => {
+        const mod = await import('./frames').catch((error: unknown) => ({ importError: error }));
+
+        expect(mod).toHaveProperty('createMachineLiveStreamAvccDemuxer');
+        if (!('createMachineLiveStreamAvccDemuxer' in mod)) return;
+
+        const demuxer = mod.createMachineLiveStreamAvccDemuxer({ maxBufferedBytes: 128 });
+        const result = demuxer.push(new Uint8Array([
+            ...avccEnvelope(0x01, [1, 0x64, 0, 0x28]),
+            ...avccEnvelope(0x02, [0x65, 1]),
+            ...avccEnvelope(0x01, [1, 0x64, 0, 0x2a]),
+            ...avccEnvelope(0x02, [0x65, 2]),
+        ]));
+
+        expect(result.chunks.map((chunk: { type: string; payload: Uint8Array }) => ({
+            type: chunk.type,
+            payload: [...chunk.payload],
+        }))).toEqual([
+            { type: 'description', payload: [1, 0x64, 0, 0x28] },
+            { type: 'keyframe', payload: [0x65, 1] },
+            { type: 'description', payload: [1, 0x64, 0, 0x2a] },
+            { type: 'keyframe', payload: [0x65, 2] },
         ]);
     });
 

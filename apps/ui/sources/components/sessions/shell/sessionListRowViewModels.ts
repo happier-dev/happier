@@ -17,6 +17,16 @@ import { t } from '@/text';
 
 import { getTagsForSession, sessionTagKey } from './sessionTagUtils';
 import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
+import {
+    readExternalAgentObservationPresentationInput,
+    resolveExternalSessionRuntimePresentation,
+    type ExternalSessionRuntimePresentation,
+} from '../presentation/externalSessionRuntimePresentation';
+import {
+    resolveExternalSessionIdentityPresentation,
+    type ExternalSessionIdentityPresentation,
+} from '../presentation/externalSessionIdentityPresentation';
+import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 
 export type SessionReachableDisplay = Readonly<{
     machineId: string | null;
@@ -30,6 +40,8 @@ export type SessionListRowViewModel = Readonly<{
     sessionKey: string | null;
     session: SessionListRenderableSession | null;
     sessionStatus: SessionStatus | null;
+    externalSessionRuntime: ExternalSessionRuntimePresentation | null;
+    externalSessionIdentity: ExternalSessionIdentityPresentation | null;
     isIdentityLoading: boolean;
     nextRuntimeFreshnessAtMs: number | null;
     hasUnreadMessages: boolean;
@@ -125,6 +137,23 @@ export function buildSessionListRowViewModel(input: BuildSessionListRowViewModel
             workingTextMode: input.workingTextMode ?? 'animated',
         })
         : null;
+    const sessionMetadata = session?.metadata;
+    const externalSessionLink = readExternalSessionLink(sessionMetadata);
+    const externalSessionIdentity = externalSessionLink
+        ? resolveExternalSessionIdentityPresentation(sessionMetadata)
+        : null;
+    const externalSessionRuntime = externalSessionLink && sessionStatus
+        ? resolveExternalSessionRuntimePresentation({
+            controlConnectivity: sessionStatus.isConnected ? 'connected' : 'offline',
+            detachedActivity: sessionStatus.state === 'background_active'
+                ? 'active'
+                : sessionStatus.isConnected
+                    ? 'idle'
+                    : 'unknown',
+            externalAgent: readExternalAgentObservationPresentationInput(sessionMetadata),
+            nowMs: runtimeNowMs,
+        })
+        : null;
     const sessionName = session ? getSessionName(session) : '';
 
     const rowViewModel: SessionListRowViewModel = {
@@ -132,11 +161,16 @@ export function buildSessionListRowViewModel(input: BuildSessionListRowViewModel
         sessionKey,
         session,
         sessionStatus,
+        externalSessionRuntime,
+        externalSessionIdentity,
         isIdentityLoading: session ? resolveRowIdentityLoading({
             session,
             title: sessionName,
         }) : false,
-        nextRuntimeFreshnessAtMs: session ? resolveNextRuntimeFreshnessAtMs(session, runtimeNowMs) : null,
+        nextRuntimeFreshnessAtMs: resolveEarliestFreshnessAtMs(
+            session ? resolveNextRuntimeFreshnessAtMs(session, runtimeNowMs) : null,
+            externalSessionRuntime?.externalAgent.nextExpiryAtMs ?? null,
+        ),
         hasUnreadMessages: session?.hasUnreadMessages === true,
         activityTimeLabel,
         workingIndicatorMode: input.workingIndicatorMode === 'pulse' ? 'pulse' : 'spinner',
@@ -220,6 +254,13 @@ function buildRowViewModelSignature(viewModel: SessionListRowViewModel): string 
         viewModel.sessionStatus?.state ?? '',
         viewModel.sessionStatus?.statusText ?? '',
         viewModel.sessionStatus?.shouldShowStatus === true ? '1' : '0',
+        viewModel.externalSessionRuntime?.controlConnectivity ?? '',
+        viewModel.externalSessionRuntime?.detachedActivity ?? '',
+        viewModel.externalSessionRuntime?.externalAgent.state ?? '',
+        viewModel.externalSessionRuntime?.externalAgent.nextExpiryAtMs ?? '',
+        viewModel.externalSessionIdentity?.agentId ?? '',
+        viewModel.externalSessionIdentity?.machineLabel ?? '',
+        viewModel.externalSessionIdentity?.storageLabel ?? '',
         viewModel.isIdentityLoading ? '1' : '0',
         viewModel.nextRuntimeFreshnessAtMs ?? '',
         viewModel.hasUnreadMessages ? '1' : '0',
@@ -244,6 +285,15 @@ function buildRowViewModelSignature(viewModel: SessionListRowViewModel): string 
 
 function normalizeClockNow(value: number | null | undefined): number {
     return typeof value === 'number' && Number.isFinite(value) ? value : Date.now();
+}
+
+function resolveEarliestFreshnessAtMs(
+    first: number | null,
+    second: number | null,
+): number | null {
+    if (first === null) return second;
+    if (second === null) return first;
+    return Math.min(first, second);
 }
 
 function normalizeActiveColorMode(
@@ -283,10 +333,10 @@ function resolveNextRuntimeFreshnessAtMs(session: SessionListRenderableSession, 
         hasPendingUserMessages: typeof session.pendingCount === 'number' && session.pendingCount > 0,
         latestTurnStatus: session.latestTurnStatus,
         latestTurnStatusObservedAt: session.latestTurnStatusObservedAt,
+        runtimeActivityState: session.runtimeActivityState ?? 'unknown',
         runtimeActivityActiveCount: session.runtimeActivityActiveCount ?? null,
         runtimeActivityObservedAt: session.runtimeActivityObservedAt ?? null,
-        runtimeActivityExpiresAt: session.runtimeActivityExpiresAt ?? null,
-        runtimeActivitySourceClass: session.runtimeActivitySourceClass ?? null,
+        runtimeActivityRevision: session.runtimeActivityRevision ?? null,
         hasPendingPermissionRequests: session.hasPendingPermissionRequests === true,
         hasPendingUserActionRequests: session.hasPendingUserActionRequests === true,
         pendingRequestObservedAt: session.pendingRequestObservedAt ?? null,

@@ -2,52 +2,38 @@ import * as React from 'react';
 import { sync } from '@/sync/sync';
 import type { TranscriptLifecycleHost } from '@/components/sessions/transcript/viewport/lifecycle/lifecycleHost';
 import type { SessionOpenLatch } from '@/components/sessions/transcript/viewport/sessionOpen/sessionOpenLatch';
-import {
-    resolveNativeMountSettleIntervalDecision,
-    type NativeMountSettleIntervalDecision,
-} from '@/components/sessions/transcript/viewport/nativeBottomFollowObservationPolicy';
 
 type MutableRef<T> = { current: T };
 
 export function useTranscriptNativeMountSettleLifecycle(params: Readonly<{
-    closeEntryViewportOwnership: (outcome: 'deadline') => void;
     composerInsetHeightRef: MutableRef<number>;
-    flushPendingNativeMountSettleBottomPin: () => void;
     jumpToSeqActive: boolean;
     lastPinOffsetForIntentRef: MutableRef<number | null>;
     lifecycleHost: TranscriptLifecycleHost;
     listContentHeightRef: MutableRef<number>;
     listLayoutHeightRef: MutableRef<number>;
-    nativeMountSettleAutoPinSuppressedRef: MutableRef<boolean>;
     nativeMountSettleDeadlineReachedRef: MutableRef<boolean>;
-    pendingNativeMountSettleBottomPinHostRef: MutableRef<MutableRef<boolean> | null>;
     platformOS: string;
     scheduleNativePaintReleaseForEntryRestore: () => void;
     sessionId: string;
     sessionOpenLatch: SessionOpenLatch;
     setNativeMountSettleDeadlineReached: (value: boolean) => void;
     setNativeMountSettleStable: (value: boolean) => void;
-    usesNativeFlashListBottomMaintenance: boolean;
 }>) {
     const {
-        closeEntryViewportOwnership,
         composerInsetHeightRef,
-        flushPendingNativeMountSettleBottomPin,
         jumpToSeqActive,
         lastPinOffsetForIntentRef,
         lifecycleHost,
         listContentHeightRef,
         listLayoutHeightRef,
-        nativeMountSettleAutoPinSuppressedRef,
         nativeMountSettleDeadlineReachedRef,
-        pendingNativeMountSettleBottomPinHostRef,
         platformOS,
         scheduleNativePaintReleaseForEntryRestore,
         sessionId,
         sessionOpenLatch,
         setNativeMountSettleDeadlineReached,
         setNativeMountSettleStable,
-        usesNativeFlashListBottomMaintenance,
     } = params;
 
     const observeMountSettleMetrics = React.useCallback((options: Readonly<{
@@ -73,62 +59,44 @@ export function useTranscriptNativeMountSettleLifecycle(params: Readonly<{
         sessionOpenLatch,
     ]);
 
-    const applyNativeMountSettleIntervalDecision = React.useCallback((decisionParams: Readonly<{
-        clearIntervalCallback: () => void;
-        decision: NativeMountSettleIntervalDecision;
-    }>): void => {
-        const { clearIntervalCallback, decision } = decisionParams;
-        if (decision.type === 'continue') return;
-        closeEntryViewportOwnership('deadline');
-        if (decision.type === 'stable') {
-            setNativeMountSettleStable(true);
-            nativeMountSettleDeadlineReachedRef.current = false;
-            flushPendingNativeMountSettleBottomPin();
-            clearIntervalCallback();
-            return;
-        }
-        nativeMountSettleDeadlineReachedRef.current = true;
-        setNativeMountSettleDeadlineReached(true);
-        if (decision.requestPendingFlush && pendingNativeMountSettleBottomPinHostRef.current) {
-            pendingNativeMountSettleBottomPinHostRef.current.current = true;
-            flushPendingNativeMountSettleBottomPin();
-        }
-        clearIntervalCallback();
-    }, [
-        closeEntryViewportOwnership,
-        flushPendingNativeMountSettleBottomPin,
-        nativeMountSettleDeadlineReachedRef,
-        pendingNativeMountSettleBottomPinHostRef,
-        setNativeMountSettleDeadlineReached,
-        setNativeMountSettleStable,
-    ]);
-
+    // Mount settle is a native placement fact: its inputs are the list layout commit and composer
+    // inset observations this host produces, whichever list renderer is mounted. Nothing else in
+    // the package publishes `nativeMountSettleStable`, and the native reveal gate
+    // (`resolveNativeFollowBottomObservationCanReleasePaint`) plus
+    // `sessionOpenLatch.shouldShowNativeFirstPaintPlaceholder` both read it, so without this
+    // producer the gate has no positive fact at all.
+    //
+    // The deadline below is the sole bound on that gate and must remain unconditional on native: it
+    // fires as soon as `nowMs` passes `transcriptInitialFillBudgetMs +
+    // transcriptMountSettleQuiescentWindowMs`, whatever the settle state, so a transcript can never
+    // be withheld waiting for a signal that will not arrive.
     React.useEffect(() => {
-        if (!usesNativeFlashListBottomMaintenance) return undefined;
+        if (platformOS === 'web') return undefined;
         const tuning = sync.getSyncTuning();
         const intervalMs = tuning.transcriptMountSettleQuiescentWindowMs;
         const deadlineMs = Date.now() + tuning.transcriptInitialFillBudgetMs + intervalMs;
         const intervalId = setInterval(() => {
             const nowMs = Date.now();
             lifecycleHost.sampleMountSettle({ sessionId, nowMs });
-            const mountSettleIntervalDecision = resolveNativeMountSettleIntervalDecision({
-                autoPinSuppressed: nativeMountSettleAutoPinSuppressedRef.current,
-                deadlineMs,
-                nowMs,
-                stableSettle: lifecycleHost.getMountSettleSnapshot().stableSettle,
-            });
-            applyNativeMountSettleIntervalDecision({
-                clearIntervalCallback: () => clearInterval(intervalId),
-                decision: mountSettleIntervalDecision,
-            });
+            if (lifecycleHost.getMountSettleSnapshot().stableSettle) {
+                setNativeMountSettleStable(true);
+                nativeMountSettleDeadlineReachedRef.current = false;
+                clearInterval(intervalId);
+                return;
+            }
+            if (nowMs < deadlineMs) return;
+            nativeMountSettleDeadlineReachedRef.current = true;
+            setNativeMountSettleDeadlineReached(true);
+            clearInterval(intervalId);
         }, intervalMs);
         return () => clearInterval(intervalId);
     }, [
-        applyNativeMountSettleIntervalDecision,
         lifecycleHost,
-        nativeMountSettleAutoPinSuppressedRef,
+        nativeMountSettleDeadlineReachedRef,
+        platformOS,
         sessionId,
-        usesNativeFlashListBottomMaintenance,
+        setNativeMountSettleDeadlineReached,
+        setNativeMountSettleStable,
     ]);
 
     const recordLayoutCommitObserved = React.useCallback(() => {

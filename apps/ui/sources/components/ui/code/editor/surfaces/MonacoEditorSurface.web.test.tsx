@@ -340,6 +340,82 @@ describe('MonacoEditorSurface (web)', () => {
         expect(onChange).toHaveBeenLastCalledWith('blur-me');
     });
 
+    it('keeps unflushed local edits when an external value arrives mid-typing (flushes instead of replacing the doc)', async () => {
+        let currentValue = 'seed';
+        let changeHandler: null | ((..._args: any[]) => void) = null;
+        const setValueSpy = vi.fn((next: string) => {
+            currentValue = next;
+        });
+        const executeEditsSpy = vi.fn((_source: string, edits: Array<{ text: string }>) => {
+            currentValue = edits[0]?.text ?? currentValue;
+        });
+
+        (globalThis as any).window = (globalThis as any).window ?? {};
+        (globalThis as any).document = (globalThis as any).document ?? {};
+
+        (globalThis as any).window.require = (deps: any, onOk?: any, _onErr?: any) => {
+            if (typeof onOk === 'function') onOk();
+        };
+        (globalThis as any).window.monaco = {
+            editor: {
+                createModel: () => ({
+                    getValue: () => currentValue,
+                    getFullModelRange: () => ({ startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: currentValue.length + 1 }),
+                    setValue: setValueSpy,
+                    dispose: () => {},
+                }),
+                create: () => ({
+                    onDidChangeModelContent: (handler: (..._args: any[]) => void) => {
+                        changeHandler = handler;
+                        return { dispose: () => {} };
+                    },
+                    onDidBlurEditorText: () => ({ dispose: () => {} }),
+                    updateOptions: () => {},
+                    executeEdits: executeEditsSpy,
+                    getSelections: () => null,
+                    dispose: () => {},
+                }),
+            },
+        };
+
+        const onChange = vi.fn();
+        const screen = await renderScreen(React.createElement(MonacoEditorSurface, {
+            resetKey: '1',
+            value: currentValue,
+            language: 'markdown',
+            onChange,
+            changeDebounceMs: 100,
+        }));
+
+        const triggerChange = assertCallable(changeHandler, 'change handler');
+
+        currentValue = 'local draft';
+        triggerChange({});
+
+        await act(async () => {
+            screen.tree.update(React.createElement(MonacoEditorSurface, {
+                resetKey: '1',
+                value: 'external seed',
+                language: 'markdown',
+                onChange,
+                changeDebounceMs: 100,
+            }));
+        });
+        await flushHookEffects();
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 125));
+        });
+
+        // The user's unflushed local edit is the source of truth: the stale/racing
+        // external value must not replace the document (that resets the cursor and
+        // loses keystrokes). The pending change is flushed upward so the parent
+        // state converges to the editor instead.
+        expect(executeEditsSpy).not.toHaveBeenCalled();
+        expect(setValueSpy).not.toHaveBeenCalled();
+        expect(currentValue).toBe('local draft');
+        expect(onChange).toHaveBeenCalledWith('local draft');
+    });
+
     it('exposes a stable imperative handle for flush/getValue', async () => {
         const ref = React.createRef<any>();
 
@@ -395,6 +471,80 @@ describe('MonacoEditorSurface (web)', () => {
             await ref.current.flushPendingChange();
         });
         expect(blurHandler).not.toBeNull();
+    });
+
+    it('applies external value changes through editor edits so selection and scroll position are preserved', async () => {
+        let currentValue = 'first line\nsecond line';
+        const setValueSpy = vi.fn((next: string) => {
+            currentValue = next;
+        });
+        const executeEditsSpy = vi.fn((_source: string, edits: Array<{ text: string }>) => {
+            currentValue = edits[0]?.text ?? currentValue;
+        });
+        const getSelectionsSpy = vi.fn(() => [{ startLineNumber: 2, startColumn: 4, endLineNumber: 2, endColumn: 4 }]);
+        const setSelectionsSpy = vi.fn();
+        const getScrollTopSpy = vi.fn(() => 42);
+        const getScrollLeftSpy = vi.fn(() => 7);
+        const setScrollTopSpy = vi.fn();
+        const setScrollLeftSpy = vi.fn();
+
+        (globalThis as any).window = (globalThis as any).window ?? {};
+        (globalThis as any).document = (globalThis as any).document ?? {};
+
+        (globalThis as any).window.require = (deps: any, onOk?: any, _onErr?: any) => {
+            if (typeof onOk === 'function') onOk();
+        };
+        (globalThis as any).window.monaco = {
+            editor: {
+                createModel: () => ({
+                    getValue: () => currentValue,
+                    getFullModelRange: () => ({ startLineNumber: 1, startColumn: 1, endLineNumber: 2, endColumn: 12 }),
+                    setValue: setValueSpy,
+                    dispose: () => {},
+                }),
+                create: () => ({
+                    onDidChangeModelContent: () => ({ dispose: () => {} }),
+                    onDidBlurEditorText: () => ({ dispose: () => {} }),
+                    updateOptions: () => {},
+                    executeEdits: executeEditsSpy,
+                    getSelections: getSelectionsSpy,
+                    setSelections: setSelectionsSpy,
+                    getScrollTop: getScrollTopSpy,
+                    getScrollLeft: getScrollLeftSpy,
+                    setScrollTop: setScrollTopSpy,
+                    setScrollLeft: setScrollLeftSpy,
+                    dispose: () => {},
+                }),
+            },
+        };
+
+        const onChange = vi.fn();
+        const screen = await renderScreen(React.createElement(MonacoEditorSurface, {
+            resetKey: '1',
+            value: currentValue,
+            language: 'markdown',
+            onChange,
+        }));
+
+        await act(async () => {
+            screen.tree.update(React.createElement(MonacoEditorSurface, {
+                resetKey: '1',
+                value: 'first line\nchanged second line',
+                language: 'markdown',
+                onChange,
+            }));
+            await flushHookEffects();
+        });
+
+        expect(executeEditsSpy).toHaveBeenCalledWith(
+            'happier.external-value',
+            [expect.objectContaining({ text: 'first line\nchanged second line' })],
+            expect.anything(),
+        );
+        expect(setValueSpy).not.toHaveBeenCalled();
+        expect(setSelectionsSpy).toHaveBeenCalledWith([{ startLineNumber: 2, startColumn: 4, endLineNumber: 2, endColumn: 4 }]);
+        expect(setScrollTopSpy).toHaveBeenCalledWith(42);
+        expect(setScrollLeftSpy).toHaveBeenCalledWith(7);
     });
 
     it('updates editor readOnly mode when the prop changes after mount', async () => {

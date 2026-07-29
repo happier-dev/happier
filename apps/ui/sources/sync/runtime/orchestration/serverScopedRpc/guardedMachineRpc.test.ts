@@ -19,6 +19,7 @@ type MachineRpcWithServerScopeInput = Readonly<{
     method: string;
     payload: unknown;
     timeoutMs?: number;
+    signal?: AbortSignal;
     preferScoped?: boolean;
     skipTransferPolicyEvaluation?: boolean;
 }>;
@@ -38,9 +39,11 @@ describe('guardedMachineRpc', () => {
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT)).toBe(true);
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT)).toBe(true);
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE)).toBe(true);
+        expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT)).toBe(true);
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE)).toBe(true);
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT)).toBe(true);
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT)).toBe(true);
+        expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ)).toBe(true);
         expect(isGuardedMachineRpcMethod(RPC_METHODS.LIST_DIRECTORY)).toBe(false);
         expect(isGuardedMachineRpcMethod('ripgrep')).toBe(false);
         expect(isGuardedMachineRpcMethod('daemon.bulkTransfer.start')).toBe(false);
@@ -150,5 +153,39 @@ describe('guardedMachineRpc', () => {
         const call = machineRpcWithServerScopeMock.mock.calls.at(-1)?.[0];
         expect(call?.method).toBe('daemon.ping');
         expect(call?.preferScoped).not.toBe(true);
+    });
+
+    it('forwards caller cancellation without changing guarded route policy', async () => {
+        getReadyServerFeaturesMock.mockResolvedValueOnce(createRootLayoutFeaturesResponse({
+            features: {
+                machines: {
+                    transfer: {
+                        enabled: true,
+                        directPeer: { enabled: true },
+                        serverRouted: { enabled: true },
+                    },
+                },
+            },
+        }));
+        const controller = new AbortController();
+
+        await callGuardedMachineRpcWithPolicy({
+            machineId: 'm1',
+            serverId: 'server-a',
+            method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE,
+            payload: { t: 'session_file_upload_v1' },
+            timeoutMs: 37,
+            signal: controller.signal,
+        });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'm1',
+            serverId: 'server-a',
+            method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE,
+            timeoutMs: 37,
+            signal: controller.signal,
+        }));
+        const call = machineRpcWithServerScopeMock.mock.calls.at(-1)?.[0];
+        expect(call?.preferScoped).toBe(true);
     });
 });

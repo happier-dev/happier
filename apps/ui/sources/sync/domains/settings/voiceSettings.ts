@@ -1,18 +1,60 @@
-import { DEFAULT_AGENT_ID } from '@happier-dev/agents';
+import {
+  VoiceProviderIdSchema,
+  VoiceCredentialBindingV1Schema,
+  VoiceProviderSettingsEnvelopeV1Schema,
+  VoiceProviderSettingsRecordV1Schema,
+  VoiceSpeechDiagnosticsSettingsV1Schema,
+  SecretStringV1Schema,
+  type VoiceProviderId,
+  type VoiceCredentialBindingV1,
+  type VoiceProviderSettingsEnvelopeV1,
+  type VoiceProviderSettingsJsonValueV1,
+  type VoiceSpeechDiagnosticsSettingsV1,
+} from '@happier-dev/protocol';
 import { z } from 'zod';
-import { SecretStringSchema } from '../../encryption/secretSettings';
-import { DEFAULT_ELEVENLABS_VOICE_ID } from '@/realtime/elevenlabs/defaults';
-import { VoiceLocalSttSchema } from './voiceLocalSttSettings';
-import { VoiceLocalTtsSchema } from './voiceLocalTtsSettings';
+import {
+  LEGACY_BUILT_IN_VOICE_ADAPTER_IDS,
+  readLegacyVoiceSettingsMigrationSource,
+} from '@/voice/settings/migrations/legacyAdapters';
+import { VoiceWelcomeSchema } from '@/voice/settings/welcome';
+import { BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES } from '@/voice/registry/generatedBundledVoiceEntries';
+import {
+  createVoiceProviderSettingsCatalog,
+  resolveExternalVoiceProviderSettingsOwner,
+  type VoiceProviderLegacyRootMigration,
+} from '@/voice/settings/providerSettings';
+import {
+  VoiceLocalDirectSchema,
+  type VoiceLocalDirectSettings,
+} from '@/voice/adapters/localDirect/settings';
+import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/voice/adapters/local/settings';
+import {
+  normalizeLegacyLocalConversationInput,
+  stripLegacyLocalConversationOwnership,
+  VoiceLocalConversationSchema,
+  type VoiceLocalConversationSettings,
+} from '@/voice/adapters/localConversation/settings';
+import {
+  VoiceDictationSettingsSchema,
+  type VoiceDictationSettings,
+} from '@/voice/dictation/voiceDictationSettings';
 
-export const VoiceProviderIdSchema = z.enum([
-  'off',
-  'realtime_elevenlabs',
-  'local_direct',
-  'local_conversation',
-]);
+export { VoiceProviderIdSchema, type VoiceProviderId };
 
-export type VoiceProviderId = z.infer<typeof VoiceProviderIdSchema>;
+export const VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER = 'happierLegacyCredentialRecoveryV1' as const;
+
+const VoiceCredentialBindingsSchema = z.array(VoiceCredentialBindingV1Schema).max(64)
+  .superRefine((bindings, ctx) => {
+    const providers = new Set<string>();
+    bindings.forEach((binding, index) => {
+      if (providers.has(binding.providerId)) {
+        ctx.addIssue({ code: 'custom', path: [index, 'providerId'], message: 'Duplicate Voice credential binding' });
+      }
+      providers.add(binding.providerId);
+    });
+  });
+
+export type { VoiceCredentialBindingV1 };
 
 const VoicePrivacySchema = z.object({
   shareSessionSummary: z.boolean().default(true),
@@ -44,251 +86,465 @@ const VoiceUiSchema = z.object({
   updates: VoiceUiUpdatesSchema.prefault({}),
 });
 
-const VoiceRealtimeElevenLabsSchema = z.object({
-  assistantLanguage: z.string().nullable().default(null),
-  billingMode: z.enum(['happier', 'byo']).default('happier'),
-  welcome: z
-    .object({
-      enabled: z.boolean().default(false),
-      mode: z.enum(['immediate', 'on_first_turn']).default('immediate'),
-      templateId: z.string().nullable().default(null),
-    })
-    .default({ enabled: false, mode: 'immediate', templateId: null }),
-  tts: z
-    .object({
-      voiceId: z.string().default(DEFAULT_ELEVENLABS_VOICE_ID),
-      modelId: z.string().nullable().default(null),
-      voiceSettings: z
-        .object({
-          stability: z.number().min(0).max(1).nullable().default(null),
-          similarityBoost: z.number().min(0).max(1).nullable().default(null),
-          style: z.number().min(0).max(1).nullable().default(null),
-          useSpeakerBoost: z.boolean().nullable().default(null),
-          speed: z.number().min(0.5).max(2).nullable().default(null),
-        })
-        .prefault({}),
-    })
-    .prefault({}),
-  byo: z
-    .object({
-      agentId: z.string().nullable().default(null),
-      apiKey: SecretStringSchema.nullable().default(null),
-    })
-    .default({ agentId: null, apiKey: null }),
+export const VoiceExecutionMachineSettingsSchema = z.preprocess((input) => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+  const raw = input as Record<string, unknown>;
+  const normalizeId = (value: unknown): unknown => {
+    if (value === null || value === undefined) return null;
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+  return {
+    ...raw,
+    mode: typeof raw.mode === 'string' ? raw.mode.trim() : raw.mode,
+    machineId: normalizeId(raw.machineId),
+    autoMachineId: normalizeId(raw.autoMachineId),
+  };
+}, z.object({
+  mode: z.enum(['auto', 'fixed']).default('auto'),
+  machineId: z.string().nullable().default(null),
+  autoMachineId: z.string().nullable().default(null),
+}));
+
+export { type VoiceProviderSettingsEnvelopeV1 };
+
+export {
+  VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS,
+  VoiceWelcomeSchema,
+  VoiceLocalDirectSchema,
+  type VoiceLocalDirectSettings,
+  VoiceLocalConversationSchema,
+  type VoiceLocalConversationSettings,
+  VoiceDictationSettingsSchema,
+  type VoiceDictationSettings,
+};
+
+const providerSettingsCatalog = createVoiceProviderSettingsCatalog({
+  bundledEntries: BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES,
 });
 
-const LEGACY_HANDS_FREE_ENDPOINTING_DEFAULTS = {
-  silenceMs: 450,
-  minSpeechMs: 120,
-} as const;
+export function getCanonicalVoiceProviderSettingsOwner(providerId: string) {
+  return providerSettingsCatalog.get(providerId);
+}
 
-export const VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS = {
-  silenceMs: 5000,
-  minSpeechMs: 1000,
-} as const;
+function createDefaultProviderEnvelopes(): Record<string, VoiceProviderSettingsEnvelopeV1> {
+  return providerSettingsCatalog.defaultEnvelopes();
+}
 
-function migrateLegacyHandsFreeDefaults(raw: unknown): unknown {
-  if (!raw || typeof raw !== 'object') return raw;
-  const obj = raw as Record<string, unknown>;
-  const endpointing = obj.endpointing;
-  if (!endpointing || typeof endpointing !== 'object') return raw;
+const CanonicalVoiceSettingsSchema = z.object({
+  providerId: VoiceProviderIdSchema.nullable().default(null),
+  assistantLanguage: z.string().nullable().default(null),
+  dictation: VoiceDictationSettingsSchema.prefault({}),
+  welcome: VoiceWelcomeSchema.prefault({}),
+  executionMachine: VoiceExecutionMachineSettingsSchema.prefault({}),
+  ui: VoiceUiSchema.prefault({}),
+  privacy: VoicePrivacySchema.prefault({}),
+  diagnostics: VoiceSpeechDiagnosticsSettingsV1Schema.prefault({}),
+  credentialBindings: VoiceCredentialBindingsSchema.default([]),
+  providers: VoiceProviderSettingsRecordV1Schema.default(createDefaultProviderEnvelopes),
+});
 
-  const endpointingRecord = endpointing as Record<string, unknown>;
-  const silenceMs = endpointingRecord.silenceMs;
-  const minSpeechMs = endpointingRecord.minSpeechMs;
-  const nextSilenceMs =
-    silenceMs === LEGACY_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs
-      ? VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs
-      : silenceMs;
-  const nextMinSpeechMs =
-    minSpeechMs === LEGACY_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs
-      ? VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs
-      : minSpeechMs;
+type CanonicalVoiceSettings = z.infer<typeof CanonicalVoiceSettingsSchema>;
+export type VoiceSettings = CanonicalVoiceSettings;
 
-  if (nextSilenceMs === silenceMs && nextMinSpeechMs === minSpeechMs) {
-    return raw;
+function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index += 1;
+      } else bytes += 3;
+    } else bytes += 3;
   }
+  return bytes;
+}
 
+function isBoundedJsonValue(value: unknown): boolean {
+  const seen = new Set<object>();
+  let entries = 0;
+  const visit = (candidate: unknown, depth: number): boolean => {
+    if (candidate === null || typeof candidate === 'string' || typeof candidate === 'boolean') return true;
+    if (typeof candidate === 'number') return Number.isFinite(candidate);
+    if (typeof candidate !== 'object' || depth > 32 || seen.has(candidate)) return false;
+    seen.add(candidate);
+    if (Array.isArray(candidate)) {
+      entries += candidate.length;
+      return entries <= 4096 && candidate.every((entry) => visit(entry, depth + 1));
+    }
+    const record = candidate as Record<string, unknown>;
+    const keys = Object.keys(record);
+    entries += keys.length;
+    return entries <= 4096 && keys.every((key) => visit(record[key], depth + 1));
+  };
+  if (!visit(value, 0)) return false;
+  try {
+    return utf8ByteLength(JSON.stringify(value)) <= 65_536;
+  } catch {
+    return false;
+  }
+}
+
+const OBJECT_PROTOTYPE_KEYS = new Set(Object.getOwnPropertyNames(Object.prototype));
+
+export function isReservedVoiceSettingsRootKey(key: string): boolean {
+  return OBJECT_PROTOTYPE_KEYS.has(key)
+    || key === 'prototype'
+    // Bounded migration input, never a forward-compatible output namespace.
+    || key === 'adapters';
+}
+
+function preserveBoundedUnknownVoiceFields(
+  target: VoiceSettings,
+  raw: Readonly<Record<string, unknown>>,
+): VoiceSettings {
+  const known = CanonicalVoiceSettingsSchema.shape;
+  const preserved: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (isReservedVoiceSettingsRootKey(key) || Object.prototype.hasOwnProperty.call(known, key)) continue;
+    if (!isBoundedJsonValue(value)) continue;
+    const candidate = { ...preserved, [key]: value };
+    if (!isBoundedJsonValue(candidate)) continue;
+    preserved[key] = JSON.parse(JSON.stringify(value)) as unknown;
+  }
+  return Object.assign(target, preserved);
+}
+
+function preserveMalformedLegacyCredentialFields(
+  rawAdapters: unknown,
+  options?: Readonly<{ preserveValidSecrets?: boolean }>,
+): Record<string, unknown> | null {
+  if (!rawAdapters || typeof rawAdapters !== 'object' || Array.isArray(rawAdapters)) return null;
+  const paths = [
+    ['realtime_elevenlabs', 'byo', 'apiKey'],
+    ['local_direct', 'stt', 'googleGemini', 'apiKey'],
+    ['local_direct', 'tts', 'googleCloud', 'apiKey'],
+    ['local_direct', 'stt', 'openaiCompat', 'apiKey'],
+    ['local_direct', 'tts', 'openaiCompat', 'apiKey'],
+    ['local_conversation', 'agent', 'openaiCompat', 'chatApiKey'],
+  ] as const;
+  let preserved: Record<string, unknown> = {};
+  for (const path of paths) {
+    let current: unknown = rawAdapters;
+    for (const segment of path) {
+      if (!current || typeof current !== 'object' || Array.isArray(current)) {
+        current = undefined;
+        break;
+      }
+      current = (current as Record<string, unknown>)[segment];
+    }
+    if (current == null
+      || (!options?.preserveValidSecrets && SecretStringV1Schema.safeParse(current).success)
+      || !isBoundedJsonValue(current)) continue;
+    const preservedCredential = JSON.parse(JSON.stringify(current)) as unknown;
+    const candidate = JSON.parse(JSON.stringify(preserved)) as Record<string, unknown>;
+    let target = candidate;
+    path.forEach((segment, index) => {
+      if (index === path.length - 1) target[segment] = preservedCredential;
+      else {
+        const child = target[segment];
+        target[segment] = child && typeof child === 'object' && !Array.isArray(child) ? child : {};
+        target = target[segment] as Record<string, unknown>;
+      }
+    });
+    if (isBoundedJsonValue(candidate)) preserved = candidate;
+  }
+  return Object.keys(preserved).length > 0 ? preserved : null;
+}
+
+function parseKnownProviderConfig(providerId: string, config: unknown): unknown | null {
+  return (providerSettingsCatalog.get(providerId)
+    ?? resolveExternalVoiceProviderSettingsOwner(providerId))?.parseConfig(config) ?? config;
+}
+
+function parseProviderEnvelopes(raw: unknown): Record<string, VoiceProviderSettingsEnvelopeV1> {
+  const result = createDefaultProviderEnvelopes();
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return result;
+  for (const [rawProviderId, candidate] of Object.entries(raw as Record<string, unknown>)) {
+    const providerId = VoiceProviderIdSchema.safeParse(rawProviderId);
+    if (!providerId.success) continue;
+    const envelope = VoiceProviderSettingsEnvelopeV1Schema.safeParse(candidate);
+    if (!envelope.success || !isBoundedJsonValue(envelope.data.config)) {
+      delete result[providerId.data];
+      continue;
+    }
+    const configCopy = JSON.parse(JSON.stringify(envelope.data.config)) as VoiceProviderSettingsJsonValueV1;
+    if (envelope.data.schemaVersion !== 1) {
+      result[providerId.data] = { schemaVersion: envelope.data.schemaVersion, config: configCopy };
+      continue;
+    }
+    const config = parseKnownProviderConfig(providerId.data, configCopy);
+    // The generic envelope owner must preserve valid JSON even when a bundled
+    // provider rejects its config. Runtime/readiness then fail closed instead
+    // of silently substituting a runnable default for corrupted future data.
+    result[providerId.data] = {
+      schemaVersion: 1,
+      config: (config ?? configCopy) as VoiceProviderSettingsJsonValueV1,
+    };
+  }
+  return result;
+}
+
+function readLegacyAdapters(raw: Record<string, unknown>): Record<string, unknown> | null {
+  return readLegacyVoiceSettingsMigrationSource(raw).adapters;
+}
+
+function migrateLegacyProviderEnvelopes(
+  raw: Record<string, unknown>,
+  providers: Record<string, VoiceProviderSettingsEnvelopeV1>,
+  recoveryCarrier: boolean,
+): ReadonlyMap<string, VoiceProviderLegacyRootMigration> {
+  const rootMigrations = new Map<string, VoiceProviderLegacyRootMigration>();
+  const adapters = readLegacyAdapters(raw);
+  if (!adapters || recoveryCarrier) return rootMigrations;
+  const rawProviders = raw.providers && typeof raw.providers === 'object' && !Array.isArray(raw.providers)
+    ? raw.providers as Record<string, unknown>
+    : null;
+  const ownsCanonical = (providerId: string) => Boolean(
+    rawProviders && Object.prototype.hasOwnProperty.call(rawProviders, providerId),
+  );
+
+  for (const owner of providerSettingsCatalog.list()) {
+    const migrated = owner.migrateLegacy(adapters[owner.providerId] ?? {});
+    if (!migrated) continue;
+    if (!ownsCanonical(owner.providerId)) {
+      rootMigrations.set(owner.providerId, migrated.root);
+      const preserved = owner.preserveLegacyEnvelope?.(adapters[owner.providerId] ?? {}) ?? null;
+      providers[owner.providerId] = preserved && isBoundedJsonValue(preserved.config)
+        ? {
+            schemaVersion: preserved.schemaVersion,
+            config: preserved.config as VoiceProviderSettingsJsonValueV1,
+          }
+        : {
+            schemaVersion: owner.currentSchemaVersion,
+            config: migrated.config as VoiceProviderSettingsJsonValueV1,
+          };
+    }
+  }
+  for (const [rawProviderId, config] of Object.entries(adapters)) {
+    if (ownsCanonical(rawProviderId) || providerSettingsCatalog.get(rawProviderId)) continue;
+    const providerId = VoiceProviderIdSchema.safeParse(rawProviderId);
+    if (!providerId.success || !isBoundedJsonValue(config)) continue;
+    providers[providerId.data] = {
+      schemaVersion: 1,
+      config: JSON.parse(JSON.stringify(config)) as VoiceProviderSettingsJsonValueV1,
+    };
+  }
+  return rootMigrations;
+}
+
+function reclaimLegacyProviderEnvelopes(
+  providers: Record<string, VoiceProviderSettingsEnvelopeV1>,
+): ReadonlyMap<string, VoiceProviderLegacyRootMigration> {
+  const rootMigrations = new Map<string, VoiceProviderLegacyRootMigration>();
+  for (const owner of providerSettingsCatalog.list()) {
+    const envelope = providers[owner.providerId];
+    // Current invalid envelopes remain inert and future envelopes remain opaque.
+    // Only an older schema is a migration input owned by the restored provider.
+    if (!envelope || envelope.schemaVersion >= owner.currentSchemaVersion) continue;
+    const migrated = owner.migrateLegacy(envelope.config);
+    if (!migrated || !isBoundedJsonValue(migrated.config)) continue;
+    const preserved = owner.preserveLegacyEnvelope?.(envelope.config) ?? null;
+    providers[owner.providerId] = preserved && isBoundedJsonValue(preserved.config)
+      ? {
+          schemaVersion: preserved.schemaVersion,
+          config: preserved.config as VoiceProviderSettingsJsonValueV1,
+        }
+      : {
+          schemaVersion: owner.currentSchemaVersion,
+          config: migrated.config as VoiceProviderSettingsJsonValueV1,
+        };
+    rootMigrations.set(owner.providerId, migrated.root);
+  }
+  return rootMigrations;
+}
+
+function hasOnlyKnownDefaultKeys(raw: unknown, defaultValue: unknown): boolean {
+  if (!raw || typeof raw !== 'object') return true;
+  if (Array.isArray(raw)) {
+    if (!Array.isArray(defaultValue)) return true;
+    return raw.every((entry, index) => hasOnlyKnownDefaultKeys(entry, defaultValue[index]));
+  }
+  if (!defaultValue || typeof defaultValue !== 'object' || Array.isArray(defaultValue)) return true;
+  const rawRecord = raw as Record<string, unknown>;
+  const defaultRecord = defaultValue as Record<string, unknown>;
+  return Object.keys(rawRecord).every((key) =>
+    Object.prototype.hasOwnProperty.call(defaultRecord, key)
+    && hasOnlyKnownDefaultKeys(rawRecord[key], defaultRecord[key]));
+}
+
+function isCompleteUntouchedHostedDefault(raw: Record<string, unknown>): boolean {
+  if (typeof raw.providerId !== 'string') return false;
+  const selectedOwner = providerSettingsCatalog.get(raw.providerId);
+  if (!selectedOwner?.legacyDefaultSelection) return false;
+  const adapters = readLegacyAdapters(raw);
+  if (!adapters || !raw.ui || !raw.privacy) return false;
+  if (!readLegacyVoiceSettingsMigrationSource(raw).hasCompleteBuiltInAdapterBlock) return false;
+  if (Object.keys(adapters).some((providerId) => !LEGACY_BUILT_IN_VOICE_ADAPTER_IDS.includes(
+    providerId as (typeof LEGACY_BUILT_IN_VOICE_ADAPTER_IDS)[number],
+  ))) return false;
+  return LEGACY_BUILT_IN_VOICE_ADAPTER_IDS.every((providerId) => {
+    const owner = providerSettingsCatalog.get(providerId);
+    if (!owner) return false;
+    const candidate = adapters[owner.providerId];
+    const migrated = owner.migrateLegacy(candidate ?? {});
+    const defaultMigrated = owner.migrateLegacy(owner.defaultLegacyConfig);
+    return migrated !== null
+      && defaultMigrated !== null
+      && hasOnlyKnownDefaultKeys(candidate, owner.defaultLegacyConfig)
+      && JSON.stringify(migrated.config) === JSON.stringify(defaultMigrated.config);
+  });
+}
+
+export const VoiceSettingsSchema = CanonicalVoiceSettingsSchema;
+
+export function readVoiceProviderSettingsConfig(
+  settings: Pick<CanonicalVoiceSettings, 'providers'>,
+  providerId: string,
+): unknown | null {
+  const owner = providerSettingsCatalog.get(providerId)
+    ?? resolveExternalVoiceProviderSettingsOwner(providerId);
+  const envelope = settings.providers?.[providerId];
+  if (!owner || envelope?.schemaVersion !== owner.currentSchemaVersion) return null;
+  return owner.parseConfig(envelope.config);
+}
+
+export function readLocalDirectVoiceSettings(settings: Pick<CanonicalVoiceSettings, 'providers'>): VoiceLocalDirectSettings {
+  const envelope = settings.providers?.local_direct;
+  if (envelope?.schemaVersion === 1) {
+    const parsed = VoiceLocalDirectSchema.safeParse(envelope.config);
+    if (parsed.success) return parsed.data;
+  }
+  return VoiceLocalDirectSchema.parse({});
+}
+
+export function readLocalConversationVoiceSettings(settings: Pick<CanonicalVoiceSettings, 'providers'>): VoiceLocalConversationSettings {
+  const envelope = settings.providers?.local_conversation;
+  if (envelope?.schemaVersion === 1) {
+    const parsed = VoiceLocalConversationSchema.safeParse(envelope.config);
+    if (parsed.success) return stripLegacyLocalConversationOwnership(parsed.data);
+  }
+  return stripLegacyLocalConversationOwnership(VoiceLocalConversationSchema.parse({}));
+}
+
+export function writeVoiceProviderSettingsConfig(settings: VoiceSettings, providerId: string, config: unknown): VoiceSettings {
+  const owner = providerSettingsCatalog.get(providerId)
+    ?? resolveExternalVoiceProviderSettingsOwner(providerId);
+  if (!owner) throw new Error(`voice_provider_settings_owner_unavailable:${providerId}`);
+  const parsed = owner.parseConfig(config);
+  if (parsed === null) throw new Error(`invalid_voice_provider_settings:${providerId}`);
   return {
-    ...obj,
-    endpointing: {
-      ...endpointingRecord,
-      silenceMs: nextSilenceMs,
-      minSpeechMs: nextMinSpeechMs,
+    ...settings,
+    providers: {
+      ...(settings.providers ?? createDefaultProviderEnvelopes()),
+      [providerId]: { schemaVersion: owner.currentSchemaVersion, config: parsed as VoiceProviderSettingsJsonValueV1 },
     },
   };
 }
 
-const VoiceHandsFreeSchema = z.preprocess(
-  migrateLegacyHandsFreeDefaults,
-  z
-    .object({
-      enabled: z.boolean().default(false),
-      endpointing: z
-        .object({
-          silenceMs: z.number().int().min(0).max(5000).default(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs),
-          minSpeechMs: z.number().int().min(0).max(5000).default(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs),
-        })
-        .prefault({}),
-    })
-    .default({
-      enabled: false,
-      endpointing: {
-        silenceMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs,
-        minSpeechMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs,
-      },
-    }),
-);
+export function writeLocalDirectVoiceSettings(settings: VoiceSettings, config: VoiceLocalDirectSettings): VoiceSettings {
+  return writeVoiceProviderSettingsConfig(settings, 'local_direct', VoiceLocalDirectSchema.parse(config));
+}
 
-const VoiceLocalConversationSchema = z.object({
-  conversationMode: z.enum(['direct_session', 'agent']).default('direct_session'),
-  stt: VoiceLocalSttSchema.prefault({}),
-  tts: VoiceLocalTtsSchema.prefault({}),
-  networkTimeoutMs: z.number().int().min(1000).max(60000).default(15000),
-  handsFree: VoiceHandsFreeSchema.prefault({}),
-		  agent: z
-		    .object({
-		      backend: z.enum(['daemon', 'openai_compat']).default('daemon'),
-		      agentSource: z.enum(['session', 'agent']).default('session'),
-		      agentId: z.string().default(DEFAULT_AGENT_ID),
-		      /**
-		       * Where the local voice agent daemon run should be hosted.
-		       *
-		       * - auto: resolves a stable machine from recent/active sessions (does not roam automatically)
-		       * - fixed: always use the configured machine id
-		       */
-		      machineTargetMode: z.enum(['auto', 'fixed']).default('auto'),
-		      machineTargetId: z.string().nullable().default(null),
-		      autoTargetMachineId: z.string().nullable().default(null),
-		      /**
-		       * Directory policy:
-		       * - false: starting voice from a session uses the session root; sidebar uses voice home
-		       * - true: always use voice home (disables session-root starts and teleport)
-		       */
-		      stayInVoiceHome: z.boolean().default(false),
-		      /**
-		       * Allow switching the voice agent's working directory to a session root (via UI/tool).
-		       * When disabled, teleport actions should fail closed.
-		       */
-		      teleportEnabled: z.boolean().default(true),
-		      /**
-		       * Whether to keep per-root voice carriers warm for faster switching / resumability.
-		       */
-		      rootSessionPolicy: z.enum(['single', 'keep_warm']).default('single'),
-		      maxWarmRoots: z.number().int().min(1).max(10).default(3),
-		      /**
-		       * Voice home is a stable, non-project directory for voice agent runs. This subdir name is
-		       * appended under the target machine's `happyHomeDir`.
-		       */
-		      voiceHomeSubdirName: z.string().default('voice-agent'),
-			      permissionPolicy: z.enum(['no_tools', 'read_only']).default('read_only'),
-			      idleTtlSeconds: z.number().int().min(60).max(21600).default(1800),
-			      bootstrapTimeoutMs: z.number().int().min(1000).max(300000).default(60000),
-			      prewarmOnConnect: z.boolean().default(true),
-			      resumabilityMode: z.enum(['replay', 'provider_resume']).default('replay'),
-	      providerResume: z
-	        .object({
-	          fallbackToReplay: z.boolean().default(true),
-	        })
-	        .default({ fallbackToReplay: true }),
-	      replay: z
-	        .object({
-	          strategy: z.enum(['recent_messages', 'summary_plus_recent']).default('recent_messages'),
-	          recentMessagesCount: z.number().int().min(1).max(100).default(16),
-	        })
-	        .default({ strategy: 'recent_messages', recentMessagesCount: 16 }),
-	      welcome: z
-	        .object({
-	          enabled: z.boolean().default(false),
-	          mode: z.enum(['immediate', 'on_first_turn']).default('immediate'),
-	          templateId: z.string().nullable().default(null),
-	        })
-	        .default({ enabled: false, mode: 'immediate', templateId: null }),
-	      commitIsolation: z.boolean().default(false),
-	      // Persist global voice agent conversation state for resumability across app reloads and daemon restarts.
-	      transcript: z
-        .object({
-          persistenceMode: z.enum(['ephemeral', 'persistent']).default('ephemeral'),
-          epoch: z.number().int().min(0).default(0),
-        })
-        .prefault({}),
-	      chatModelSource: z.enum(['session', 'custom']).default('custom'),
-	      chatModelId: z.string().default('default'),
-	      commitModelSource: z.enum(['chat', 'session', 'custom']).default('chat'),
-	      commitModelId: z.string().default('default'),
-	      openaiCompat: z
-        .object({
-          chatBaseUrl: z.string().nullable().default(null),
-          chatApiKey: SecretStringSchema.nullable().default(null),
-          chatModel: z.string().default('default'),
-          commitModel: z.string().default('default'),
-          temperature: z.number().min(0).max(2).default(0.4),
-          maxTokens: z.number().int().nullable().default(null),
-        })
-        .prefault({}),
-      verbosity: z.enum(['short', 'balanced']).default('short'),
-    })
-    .prefault({}),
-	  streaming: z
-	    .object({
-      enabled: z.boolean().default(true),
-      ttsEnabled: z.boolean().default(true),
-      ttsChunkChars: z.number().int().min(32).max(2000).default(200),
-	      // Turn streaming (daemon voice agent) read loop tuning. Defaults preserve current behavior.
-	      turnReadPollIntervalMs: z.number().int().min(10).max(500).default(25),
-	      turnReadMaxEvents: z.number().int().min(1).max(256).default(64),
-	      // Total budget for a single streamed turn. Keep large enough to allow long tool runs.
-	      turnStreamTimeoutMs: z.number().int().min(1000).max(3600000).nullable().default(1800000),
-	    })
-	    .default({
-	      enabled: true,
-	      ttsEnabled: true,
-	      ttsChunkChars: 200,
-	      turnReadPollIntervalMs: 25,
-	      turnReadMaxEvents: 64,
-	      turnStreamTimeoutMs: 1800000,
-	    }),
-});
+export function writeLocalConversationVoiceSettings(settings: VoiceSettings, config: VoiceLocalConversationSettings): VoiceSettings {
+  return writeVoiceProviderSettingsConfig(settings, 'local_conversation', stripLegacyLocalConversationOwnership(VoiceLocalConversationSchema.parse(config)));
+}
 
-const VoiceLocalDirectSchema = z.object({
-  stt: VoiceLocalSttSchema.prefault({}),
-  tts: VoiceLocalTtsSchema.prefault({}),
-  networkTimeoutMs: z.number().int().min(1000).max(60000).default(15000),
-  handsFree: VoiceHandsFreeSchema.prefault({}),
-});
+export function readVoiceDiagnosticsSettings(
+  settings: Pick<CanonicalVoiceSettings, 'diagnostics'>,
+): VoiceSpeechDiagnosticsSettingsV1 {
+  return VoiceSpeechDiagnosticsSettingsV1Schema.parse(settings.diagnostics ?? {});
+}
 
-export const VoiceSettingsSchema = z.object({
-  providerId: VoiceProviderIdSchema.default('realtime_elevenlabs'),
-  assistantLanguage: z.string().nullable().default(null),
-  ui: VoiceUiSchema.prefault({}),
-  privacy: VoicePrivacySchema.prefault({}),
-  adapters: z
-    .object({
-      realtime_elevenlabs: VoiceRealtimeElevenLabsSchema.prefault({}),
-      local_direct: VoiceLocalDirectSchema.prefault({}),
-      local_conversation: VoiceLocalConversationSchema.prefault({}),
-    })
-    .prefault({}),
-});
-
-export type VoiceSettings = z.infer<typeof VoiceSettingsSchema>;
+export function writeVoiceDiagnosticsSettings(
+  settings: VoiceSettings,
+  diagnostics: VoiceSpeechDiagnosticsSettingsV1,
+): VoiceSettings {
+  return {
+    ...settings,
+    diagnostics: VoiceSpeechDiagnosticsSettingsV1Schema.parse(diagnostics),
+  };
+}
 
 export const voiceSettingsDefaults: VoiceSettings = VoiceSettingsSchema.parse({});
 
+export function readVoiceSettingsInput(settings: unknown): unknown {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return settings;
+  return Object.hasOwn(settings, 'voice')
+    ? (settings as Readonly<{ voice?: unknown }>).voice
+    : settings;
+}
+
 // Tolerant parsing: keep valid sub-fields, drop invalid ones to defaults.
-export function voiceSettingsParse(input: unknown): VoiceSettings {
+export function voiceSettingsParse(
+  input: unknown,
+  options?: Readonly<{ allowLegacyCredentialRecoveryCarrier?: boolean }>,
+): VoiceSettings {
   // Important: `voiceSettingsDefaults` contains nested objects. We must not shallow-clone and then
   // mutate nested fields, otherwise parsing can accidentally mutate global defaults.
-  const base = VoiceSettingsSchema.parse({});
+  const base = CanonicalVoiceSettingsSchema.parse({});
   if (!input || typeof input !== 'object') return base;
 
   const raw = input as Record<string, unknown>;
+  const recoveryCarrier = options?.allowLegacyCredentialRecoveryCarrier === true
+    && raw[VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER] === true;
 
-  const providerId = VoiceProviderIdSchema.safeParse(raw.providerId);
-  if (providerId.success) base.providerId = providerId.data;
+  if (raw.providerId === 'off') base.providerId = null;
+  else {
+    const legacyProviderId = typeof raw.providerId === 'string' ? raw.providerId.trim() : raw.providerId;
+    const providerId = VoiceProviderIdSchema.safeParse(legacyProviderId);
+    if (providerId.success) base.providerId = providerId.data;
+  }
 
-  const assistantLanguage = z.string().nullable().safeParse(raw.assistantLanguage);
-  if (assistantLanguage.success) base.assistantLanguage = assistantLanguage.data;
+  const canonicalAssistantLanguage = z.string().nullable().safeParse(raw.assistantLanguage);
+  if (canonicalAssistantLanguage.success) base.assistantLanguage = canonicalAssistantLanguage.data;
+
+  const canonicalDictation = VoiceDictationSettingsSchema.safeParse(raw.dictation);
+  if (canonicalDictation.success) base.dictation = canonicalDictation.data;
+
+  const canonicalWelcome = VoiceWelcomeSchema.safeParse(raw.welcome);
+  if (canonicalWelcome.success) base.welcome = canonicalWelcome.data;
+
+  const canonicalExecutionMachine = VoiceExecutionMachineSettingsSchema.safeParse(raw.executionMachine);
+  if (canonicalExecutionMachine.success) base.executionMachine = canonicalExecutionMachine.data;
+
+  const canonicalDiagnostics = VoiceSpeechDiagnosticsSettingsV1Schema.safeParse(raw.diagnostics);
+  if (canonicalDiagnostics.success) base.diagnostics = canonicalDiagnostics.data;
+
+  const canonicalCredentialBindings = VoiceCredentialBindingsSchema.safeParse(raw.credentialBindings);
+  if (canonicalCredentialBindings.success) base.credentialBindings = canonicalCredentialBindings.data;
+
+  base.providers = parseProviderEnvelopes(raw.providers);
+  const legacyRootMigrations = new Map(reclaimLegacyProviderEnvelopes(base.providers));
+  for (const [providerId, migration] of migrateLegacyProviderEnvelopes(raw, base.providers, recoveryCarrier)) {
+    if (!legacyRootMigrations.has(providerId)) legacyRootMigrations.set(providerId, migration);
+  }
+
+  if (!canonicalWelcome.success) {
+    const selectedWelcome = base.providerId === null
+      ? null
+      : legacyRootMigrations.get(base.providerId)?.welcome ?? null;
+    if (selectedWelcome) base.welcome = VoiceWelcomeSchema.parse(selectedWelcome);
+  }
+  if (!canonicalAssistantLanguage.success) {
+    const migratedLanguage = [...legacyRootMigrations.values()]
+      .map((migration) => migration.assistantLanguage)
+      .find((value): value is string => typeof value === 'string');
+    if (migratedLanguage) base.assistantLanguage = migratedLanguage;
+  }
+  if (!canonicalExecutionMachine.success) {
+    const migratedMachine = [...legacyRootMigrations.values()]
+      .map((migration) => migration.executionMachine)
+      .find((value) => value !== undefined);
+    if (migratedMachine) base.executionMachine = VoiceExecutionMachineSettingsSchema.parse(migratedMachine);
+  }
+
+  if (isCompleteUntouchedHostedDefault(raw)) base.providerId = null;
 
   if (raw.ui && typeof raw.ui === 'object') {
     const u = raw.ui as Record<string, unknown>;
@@ -362,16 +618,17 @@ export function voiceSettingsParse(input: unknown): VoiceSettings {
   base.privacy.shareFilePaths = false;
   base.privacy.shareToolArgs = false;
 
-  // Adapters: parse with zod so per-adapter invalid fields don't blow away everything.
-  if (raw.adapters && typeof raw.adapters === 'object') {
-    const a = raw.adapters as Record<string, unknown>;
-    const rt = VoiceRealtimeElevenLabsSchema.safeParse(a.realtime_elevenlabs);
-    if (rt.success) base.adapters.realtime_elevenlabs = rt.data;
-    const ld = VoiceLocalDirectSchema.safeParse(a.local_direct);
-    if (ld.success) base.adapters.local_direct = ld.data;
-    const lc = VoiceLocalConversationSchema.safeParse(a.local_conversation);
-    if (lc.success) base.adapters.local_conversation = lc.data;
+  const result = preserveBoundedUnknownVoiceFields(base, raw);
+  const malformedLegacyCredentials = preserveMalformedLegacyCredentialFields(raw.adapters, {
+    preserveValidSecrets: recoveryCarrier,
+  });
+  if (malformedLegacyCredentials) {
+    Object.assign(result as VoiceSettings & { adapters?: unknown }, { adapters: malformedLegacyCredentials });
+  } else {
+    delete (result as VoiceSettings & Record<string, unknown>)[VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER];
   }
-
-  return base;
+  if (!recoveryCarrier) {
+    delete (result as VoiceSettings & Record<string, unknown>)[VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER];
+  }
+  return result;
 }

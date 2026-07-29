@@ -12,6 +12,7 @@ import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestrati
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { readMachineControlTargetForSession } from './sessionMachineTarget';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export type SessionSuggestionCatalogRequest = Readonly<{
     vendorPlugins?: boolean;
@@ -23,7 +24,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function readSessionCwd(sessionId: string): string | undefined {
-    const path = storage.getState().sessions[sessionId]?.metadata?.path;
+    const session = storage.getState().sessions[sessionId];
+    const path = session ? readSessionOwnerMetadataView(session)?.path : null;
     return typeof path === 'string' && path.trim().length > 0 ? path.trim() : undefined;
 }
 
@@ -118,7 +120,7 @@ function applyCatalogSnapshots(
     const session = storage.getState().sessions[sessionId];
     if (!session) return;
     const metadata = MetadataSchema.parse({
-        ...(session.metadata ?? {}),
+        ...(readSessionOwnerMetadataView(session) ?? {}),
         ...(snapshots.vendorPluginCatalog
             ? { sessionVendorPluginCatalogV1: snapshots.vendorPluginCatalog }
             : {}),
@@ -129,7 +131,9 @@ function applyCatalogSnapshots(
     storage.getState().applySessions([
         {
             ...session,
-            metadata,
+            ...((session.metadataLayoutVersion ?? 0) === 1
+                ? { ownerMetadataView: metadata }
+                : { metadata }),
         },
     ]);
 }
@@ -138,7 +142,8 @@ export async function ensureSessionSuggestionCatalogs(
     sessionId: string,
     request: SessionSuggestionCatalogRequest,
 ): Promise<void> {
-    const metadata = storage.getState().sessions[sessionId]?.metadata;
+    const session = storage.getState().sessions[sessionId];
+    const metadata = session ? readSessionOwnerMetadataView(session) : null;
     const shouldLoadVendorPlugins = request.vendorPlugins === true
         && !hasCatalogSnapshot(metadata, 'sessionVendorPluginCatalogV1');
     const shouldLoadSkills = request.skills === true

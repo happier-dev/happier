@@ -38,4 +38,20 @@ describe('saved secret architecture', () => {
 
         expect(violations).toEqual([]);
     });
+
+    it('routes production whole-array SavedSecret writers through the reference-aware owner', () => {
+        const violations = walkSourceFiles(UI_SOURCES_ROOT)
+            .map((fullPath) => ({
+                relativePath: relative(UI_SOURCES_ROOT, fullPath).replaceAll('\\', '/'),
+                contents: readFileSync(fullPath, 'utf8'),
+            }))
+            .filter(({ relativePath, contents }) => (
+                relativePath !== 'components/secrets/useSavedSecretsMutable.ts'
+                && /useSettingMutable\(\s*['"]secrets['"]\s*\)/u.test(contents)
+            ))
+            .map(({ relativePath }) => relativePath)
+            .sort();
+
+        expect(violations).toEqual([]);
+    });
 });

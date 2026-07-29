@@ -150,100 +150,6 @@ describe('transcriptMeasurementReconciler', () => {
         });
     });
 
-    describe('global layout invalidation is transaction-gated and coalesced per commit (R3)', () => {
-        it('refuses to clear while a viewport transaction is open', () => {
-            const reconciler = createTestTranscriptMeasurementReconciler();
-            const decision = reconciler.requestGlobalLayoutInvalidation({
-                previous: stableSignature({ expansionKey: 'tools:collapsed|thinking:none' }),
-                next: stableSignature({ expansionKey: 'tools:expanded|thinking:none' }),
-                viewportTransactionOpen: true,
-                commitToken: 1,
-            });
-            expect(decision.clear).toBe(false);
-            expect(decision.reason).toBe('viewport-transaction-open');
-        });
-
-        it('clears on a structural delta when no transaction is open', () => {
-            const reconciler = createTestTranscriptMeasurementReconciler();
-            const decision = reconciler.requestGlobalLayoutInvalidation({
-                previous: stableSignature({ expansionKey: 'tools:collapsed|thinking:none' }),
-                next: stableSignature({ expansionKey: 'tools:expanded|thinking:none' }),
-                viewportTransactionOpen: false,
-                commitToken: 1,
-            });
-            expect(decision.clear).toBe(true);
-        });
-
-        it('clears at most once per commit token', () => {
-            const reconciler = createTestTranscriptMeasurementReconciler();
-            const input = {
-                previous: stableSignature({ expansionKey: 'tools:collapsed|thinking:none' }),
-                next: stableSignature({ expansionKey: 'tools:expanded|thinking:none' }),
-                viewportTransactionOpen: false,
-                commitToken: 7,
-            } as const;
-            expect(reconciler.requestGlobalLayoutInvalidation(input).clear).toBe(true);
-            const second = reconciler.requestGlobalLayoutInvalidation(input);
-            expect(second.clear).toBe(false);
-            expect(second.reason).toBe('already-cleared-this-commit');
-        });
-
-        it('clears for an explicit structural request when no signature pair is available', () => {
-            const reconciler = createTestTranscriptMeasurementReconciler();
-            expect(reconciler.requestGlobalLayoutInvalidation({
-                structural: true,
-                viewportTransactionOpen: false,
-                commitToken: 1,
-            }).clear).toBe(true);
-        });
-
-        it('does not clear for a non-structural explicit request', () => {
-            const reconciler = createTestTranscriptMeasurementReconciler();
-            const decision = reconciler.requestGlobalLayoutInvalidation({
-                structural: false,
-                viewportTransactionOpen: false,
-                commitToken: 1,
-            });
-            expect(decision.clear).toBe(false);
-            expect(decision.reason).toBe('append-no-structural-delta');
-        });
-
-        it('gates an explicit structural request while a transaction is open', () => {
-            const reconciler = createTestTranscriptMeasurementReconciler();
-            const decision = reconciler.requestGlobalLayoutInvalidation({
-                structural: true,
-                viewportTransactionOpen: true,
-                commitToken: 1,
-            });
-            expect(decision.clear).toBe(false);
-            expect(decision.reason).toBe('viewport-transaction-open');
-        });
-
-        it('never clears for a pure streaming append delta', () => {
-            const reconciler = createTestTranscriptMeasurementReconciler();
-            const decision = reconciler.requestGlobalLayoutInvalidation({
-                previous: streamingSignature({ structuralKey: 'v1' }),
-                next: streamingSignature({ structuralKey: 'v2' }),
-                viewportTransactionOpen: false,
-                commitToken: 1,
-            });
-            expect(decision.clear).toBe(false);
-            expect(decision.reason).toBe('append-no-structural-delta');
-        });
-
-        it('never clears on a stream-finalize so the bottom pin is not dropped', () => {
-            const reconciler = createTestTranscriptMeasurementReconciler();
-            const decision = reconciler.requestGlobalLayoutInvalidation({
-                previous: streamingSignature(),
-                next: stableSignature(),
-                viewportTransactionOpen: false,
-                commitToken: 1,
-            });
-            expect(decision.clear).toBe(false);
-            expect(decision.reason).toBe('append-no-structural-delta');
-        });
-    });
-
     describe('session lifecycle reset', () => {
         it('drops floors on resetForSession', () => {
             const reconciler = createTestTranscriptMeasurementReconciler();
@@ -293,10 +199,40 @@ describe('isStructuralSignatureDelta (per-item floor reset trigger)', () => {
         expect(isStructuralSignatureDelta(a, b)).toBe(false);
     });
 
-    it('does NOT re-seed a growing tool-progress row on content change (excluded like streaming)', () => {
+    it('DOES re-seed a tool-progress row on content change — REFUTES the earlier "excluded like streaming" premise', () => {
+        // Re-authored 2026-07-27 (E-3 / RC-P). This case previously asserted `false`, on the premise
+        // that a growing `tool-progress` row needs its monotonic floor the way a streaming row does.
+        // That premise is refuted: a `minHeight` is INERT for a growing row — it binds only BELOW
+        // natural height, so the floor never protected growth at all. What the exclusion actually did
+        // was strand the tallest historical height on every row family whose rowState stays constant
+        // at a non-growing value while its content SHRINKS (`tool-progress`, `pending-action`), where
+        // the `minHeight` then self-fulfils: the row stays physically tall and the next row's `top` is
+        // derived from the inflated height. Only `streaming` and `thinking` are genuinely growing.
+        // Do not re-introduce the exclusion.
         const a = stableSignature({ rowState: 'tool-progress', structuralKey: 'tool-1:out-10' });
         const b = stableSignature({ rowState: 'tool-progress', structuralKey: 'tool-1:out-20' });
+        expect(isStructuralSignatureDelta(a, b)).toBe(true);
+    });
+
+    it('re-seeds a pending-action row on a content change (a draining queue is shrink-capable)', () => {
+        const a = stableSignature({ rowState: 'pending-action', structuralKey: 'pending-queue|count:3' });
+        const b = stableSignature({ rowState: 'pending-action', structuralKey: 'pending-queue|count:1' });
+        expect(isStructuralSignatureDelta(a, b)).toBe(true);
+    });
+
+    it('does NOT re-seed a growing thinking row on a content change (thinking is a GROWING state)', () => {
+        // `resolveMessageRowState` returns 'thinking' BEFORE any streaming branch, so a genuinely
+        // growing thinking block reports 'thinking', never 'streaming'. It must stay in the growing set.
+        const a = stableSignature({ rowState: 'thinking', structuralKey: 'thinking-1:r9' });
+        const b = stableSignature({ rowState: 'thinking', structuralKey: 'thinking-1:r10' });
         expect(isStructuralSignatureDelta(a, b)).toBe(false);
+    });
+
+    it('re-seeds when only ONE side is growing and the structural shape changed', () => {
+        expect(isStructuralSignatureDelta(
+            stableSignature({ rowState: 'thinking', structuralKey: 'thinking-1:r9' }),
+            stableSignature({ rowState: 'stable', structuralKey: 'thinking-1:r10' }),
+        )).toBe(true);
     });
 
     it('re-seeds on a streaming→stable finalize (rowState change)', () => {
@@ -326,10 +262,11 @@ describe('per-item floor re-seeds after a settled shrink (tool-group header gap 
         // Running header measured tall (e.g. 36px with the running indicator).
         reconciler.recordMeasuredHeight({ signature: running, heightPx: 36 });
 
-        // Pre-reset: the completed header (a different structuralKey) misses the exact cache and
-        // inherits the running floor (keyed without structuralKey) — the stale 36 over-reservation
-        // whose self-fulfilling minHeight produced the persistent gap.
-        expect(reconciler.resolveReservation(completed)).toEqual({ kind: 'floor', minHeight: 36 });
+        // The completed header (a different structuralKey) misses the exact cache. It used to
+        // inherit the running floor here — the stale 36 over-reservation whose self-fulfilling
+        // minHeight produced the persistent gap. E-3 M2 gates SERVING on the shape the floor was
+        // recorded from, so a shrink-capable row never inherits it, even before any reset can fire.
+        expect(reconciler.resolveReservation(completed)).toBeUndefined();
 
         // The shell fires the reset because the settled header's structuralKey changed.
         expect(isStructuralSignatureDelta(running, completed)).toBe(true);
@@ -341,5 +278,233 @@ describe('per-item floor re-seeds after a settled shrink (tool-group header gap 
         // The natural completed height re-seeds the reservation — no more 36px over-reservation.
         reconciler.recordMeasuredHeight({ signature: completed, heightPx: 33 });
         expect(reconciler.resolveReservation(completed)).toEqual({ kind: 'exact', minHeight: 33 });
+    });
+});
+
+/**
+ * E-3 (RC-C + RC-P). A stale height floor stranded EVERY shrink-capable row family, not just the
+ * pending queue: the reset predicate only fired between two `stable` rows, and the floor was served
+ * on mount before any delta check could run. Shrink-capable = every rowState except the genuinely
+ * growing `{ 'streaming', 'thinking' }`.
+ */
+describe('E-3 · every shrink-capable row releases its stale floor (RC-C + RC-P)', () => {
+    function pendingQueueSignature(
+        count: number,
+        overrides: Partial<TranscriptItemHeightValiditySignature> = {},
+    ): TranscriptItemHeightValiditySignature {
+        // `chatListItems.ts` gives the queue row the FIXED id 'pending-queue', so its floor key is
+        // constant for the whole session at a given width/font — across drains AND across sends.
+        return stableSignature({
+            itemId: 'pending-queue',
+            kind: 'pending-action',
+            structuralKey: `pending-queue|count:${count}`,
+            rowState: 'pending-action',
+            ...overrides,
+        });
+    }
+
+    function toolProgressSignature(
+        structuralKey: string,
+        overrides: Partial<TranscriptItemHeightValiditySignature> = {},
+    ): TranscriptItemHeightValiditySignature {
+        return stableSignature({
+            itemId: 'group-1#tool:tool-1',
+            kind: 'tool-group-tool',
+            structuralKey,
+            expansionKey: 'tools:collapsed|thinking:none',
+            rowState: 'tool-progress',
+            ...overrides,
+        });
+    }
+
+    /** Mirrors `TranscriptRowShell`: the layout effect resets on a delta, then onLayout records. */
+    function commitRowFrame(
+        reconciler: ReturnType<typeof createTestTranscriptMeasurementReconciler>,
+        params: Readonly<{
+            previous?: TranscriptItemHeightValiditySignature;
+            next: TranscriptItemHeightValiditySignature;
+            measuredHeightPx: number;
+        }>,
+    ): void {
+        if (params.previous !== undefined && isStructuralSignatureDelta(params.previous, params.next)) {
+            reconciler.resetReservationForStructuralChange({ itemId: params.next.itemId, signature: params.next });
+        }
+        reconciler.recordMeasuredHeight({ signature: params.next, heightPx: params.measuredHeightPx });
+    }
+
+    it('(a) DECREASES the pending-queue reservation when the queue drains 3 -> 1', () => {
+        const reconciler = createTestTranscriptMeasurementReconciler();
+        commitRowFrame(reconciler, { next: pendingQueueSignature(3), measuredHeightPx: 120 });
+        expect(reconciler.resolveReservation(pendingQueueSignature(3))).toEqual({ kind: 'floor', minHeight: 120 });
+
+        commitRowFrame(reconciler, {
+            previous: pendingQueueSignature(3),
+            next: pendingQueueSignature(1),
+            measuredHeightPx: 44,
+        });
+
+        expect(reconciler.resolveReservation(pendingQueueSignature(1))).toEqual({ kind: 'floor', minHeight: 44 });
+    });
+
+    it('(b) does not inherit the tall queue floor across a 3 -> 0 -> 1 remount', () => {
+        const reconciler = createTestTranscriptMeasurementReconciler();
+        commitRowFrame(reconciler, { next: pendingQueueSignature(3), measuredHeightPx: 120 });
+
+        // The row unmounts at count 0 and remounts at count 1. `TranscriptRowShell` initialises both
+        // signature refs to the CURRENT signature, so `previousSignature` is `undefined` by
+        // construction on the first render and NO delta check can run — only serve-gating reaches this.
+        const remounted = pendingQueueSignature(1);
+        expect(reconciler.resolveReservation(remounted)).toBeUndefined();
+
+        reconciler.recordMeasuredHeight({ signature: remounted, heightPx: 44 });
+        expect(reconciler.resolveReservation(remounted)).toEqual({ kind: 'floor', minHeight: 44 });
+    });
+
+    it('(c) does not let a second send inherit the first send\'s tallest queue floor', () => {
+        const reconciler = createTestTranscriptMeasurementReconciler();
+        commitRowFrame(reconciler, { next: pendingQueueSignature(3), measuredHeightPx: 132 });
+
+        const secondSend = pendingQueueSignature(1, { structuralKey: 'pending-queue|send:2|count:1' });
+        expect(reconciler.resolveReservation(secondSend)).toBeUndefined();
+
+        reconciler.recordMeasuredHeight({ signature: secondSend, heightPx: 48 });
+        expect(reconciler.resolveReservation(secondSend)).toEqual({ kind: 'floor', minHeight: 48 });
+    });
+
+    it('(d) releases a still-running tool row floor when its preview shrinks', () => {
+        const reconciler = createTestTranscriptMeasurementReconciler();
+        commitRowFrame(reconciler, { next: toolProgressSignature('tool-1:r10'), measuredHeightPx: 220 });
+
+        commitRowFrame(reconciler, {
+            previous: toolProgressSignature('tool-1:r10'),
+            next: toolProgressSignature('tool-1:r11'),
+            measuredHeightPx: 64,
+        });
+
+        expect(reconciler.resolveReservation(toolProgressSignature('tool-1:r11'))).toEqual({ kind: 'floor', minHeight: 64 });
+    });
+
+    it('(e) releases the floor on a permission_pending -> running collapse (rowState does NOT change)', () => {
+        // `resolveToolStatusIndicatorKind` maps BOTH 'running' and 'permission_pending' to
+        // 'tool-progress', so granting a permission collapses a tall prompt row into a short running
+        // row with NO rowState change — only `structuralKey` moves. Every rowState/expansion/geometry
+        // check misses it.
+        const reconciler = createTestTranscriptMeasurementReconciler();
+        const prompting = toolProgressSignature('tool-1:r7');
+        const running = toolProgressSignature('tool-1:r8');
+        expect(prompting.rowState).toBe(running.rowState);
+
+        commitRowFrame(reconciler, { next: prompting, measuredHeightPx: 260 });
+        commitRowFrame(reconciler, { previous: prompting, next: running, measuredHeightPx: 52 });
+
+        expect(reconciler.resolveReservation(running)).toEqual({ kind: 'floor', minHeight: 52 });
+    });
+
+    it('(f) releases the floor when a running tool completes (tool-progress -> stable)', () => {
+        const reconciler = createTestTranscriptMeasurementReconciler();
+        const running = toolProgressSignature('tool-1:r4');
+        const completed = toolProgressSignature('tool-1:r5', { rowState: 'stable' });
+
+        commitRowFrame(reconciler, { next: running, measuredHeightPx: 180 });
+        commitRowFrame(reconciler, { previous: running, next: completed, measuredHeightPx: 56 });
+
+        expect(reconciler.resolveReservation(completed)).toEqual({ kind: 'exact', minHeight: 56 });
+    });
+
+    it('(g) releases the floor when a running tool row collapses from expanded to collapsed', () => {
+        const reconciler = createTestTranscriptMeasurementReconciler();
+        const expanded = toolProgressSignature('tool-1:r4', { expansionKey: 'tools:expanded|thinking:none' });
+        const collapsed = toolProgressSignature('tool-1:r4', { expansionKey: 'tools:collapsed|thinking:none' });
+
+        commitRowFrame(reconciler, { next: expanded, measuredHeightPx: 420 });
+        commitRowFrame(reconciler, { previous: expanded, next: collapsed, measuredHeightPx: 40 });
+
+        expect(reconciler.resolveReservation(collapsed)).toEqual({ kind: 'floor', minHeight: 40 });
+    });
+
+    it('(h) releases a thinking block floor once the block settles', () => {
+        // The rowState ASSIGNMENT half of this contract lives in `transcriptRowShellSignature`
+        // (a settled thinking block must stop reporting 'thinking'); this pins the reconciler half.
+        const reconciler = createTestTranscriptMeasurementReconciler();
+        const growing = stableSignature({
+            itemId: 'thinking-1', kind: 'message:thinking',
+            structuralKey: 'thinking-1:r9', rowState: 'thinking',
+        });
+        const settled = stableSignature({
+            itemId: 'thinking-1', kind: 'message:thinking',
+            structuralKey: 'thinking-1:r10', rowState: 'stable',
+        });
+
+        commitRowFrame(reconciler, { next: growing, measuredHeightPx: 640 });
+        commitRowFrame(reconciler, { previous: growing, next: settled, measuredHeightPx: 96 });
+
+        expect(reconciler.resolveReservation(settled)).toEqual({ kind: 'exact', minHeight: 96 });
+    });
+
+    it('(i) WIDTH-BUCKET CYCLE: returning to the original width does not re-serve the stale floor', () => {
+        // The floor key is `itemId|widthBucket|fontScaleKey`, so a viewport resize moves every row to
+        // a fresh key where nothing stale exists — which is exactly why docking DevTools "fixes" the
+        // symptom, and why returning to the original width brings it back. A virtualized row that is
+        // not mounted during the resize never gets a delta check at all.
+        const reconciler = createTestTranscriptMeasurementReconciler();
+        const wideTall = toolProgressSignature('tool-1:r1', { widthBucket: 'width:1200' });
+        reconciler.recordMeasuredHeight({ signature: wideTall, heightPx: 300 });
+
+        // Content shrinks; the viewport then narrows before this row renders again.
+        const narrowShort = toolProgressSignature('tool-1:r2', { widthBucket: 'width:600' });
+        expect(reconciler.resolveReservation(narrowShort)).toBeUndefined();
+        reconciler.recordMeasuredHeight({ signature: narrowShort, heightPx: 88 });
+
+        // Back to width A with the shrunken content: the stale 300 floor must NOT be re-served.
+        const wideShort = toolProgressSignature('tool-1:r2', { widthBucket: 'width:1200' });
+        expect(reconciler.resolveReservation(wideShort)).toBeUndefined();
+    });
+
+    it('(j) MOUNT INHERITANCE: a fresh mount at a warm width never serves the previous visit\'s floor', () => {
+        const reconciler = createTestTranscriptMeasurementReconciler();
+        const firstVisit = toolProgressSignature('tool-1:r1');
+        reconciler.recordMeasuredHeight({ signature: firstVisit, heightPx: 512 });
+
+        // Reopening the session remounts the row with settled, shorter content at the same width.
+        const secondVisit = toolProgressSignature('tool-1:r6', { rowState: 'stable' });
+        expect(reconciler.resolveReservation(secondVisit)).toBeUndefined();
+
+        reconciler.recordMeasuredHeight({ signature: secondVisit, heightPx: 72 });
+        expect(reconciler.resolveReservation(secondVisit)).toEqual({ kind: 'exact', minHeight: 72 });
+    });
+
+    it('NEGATIVE: a growing streaming row keeps its monotonic floor across structuralKey churn', () => {
+        const reconciler = createTestTranscriptMeasurementReconciler();
+        const early = streamingSignature({ structuralKey: 'message-1:tok-10' });
+        const later = streamingSignature({ structuralKey: 'message-1:tok-20' });
+
+        commitRowFrame(reconciler, { next: early, measuredHeightPx: 240 });
+        expect(isStructuralSignatureDelta(early, later)).toBe(false);
+        expect(reconciler.resolveReservation(later)).toEqual({ kind: 'floor', minHeight: 240 });
+    });
+
+    it('NEGATIVE: a growing thinking row keeps its monotonic floor across structuralKey churn', () => {
+        const reconciler = createTestTranscriptMeasurementReconciler();
+        const early = streamingSignature({
+            itemId: 'thinking-1', kind: 'message:thinking',
+            structuralKey: 'thinking-1:r9', rowState: 'thinking',
+        });
+        const later = streamingSignature({
+            itemId: 'thinking-1', kind: 'message:thinking',
+            structuralKey: 'thinking-1:r10', rowState: 'thinking',
+        });
+
+        commitRowFrame(reconciler, { next: early, measuredHeightPx: 512 });
+        expect(isStructuralSignatureDelta(early, later)).toBe(false);
+        expect(reconciler.resolveReservation(later)).toEqual({ kind: 'floor', minHeight: 512 });
+    });
+
+    it('NEGATIVE: an unchanged shrink-capable row keeps serving its own floor', () => {
+        const reconciler = createTestTranscriptMeasurementReconciler();
+        const signature = toolProgressSignature('tool-1:r3');
+        reconciler.recordMeasuredHeight({ signature, heightPx: 210 });
+        reconciler.recordMeasuredHeight({ signature, heightPx: 190 });
+
+        expect(reconciler.resolveReservation(signature)).toEqual({ kind: 'floor', minHeight: 210 });
     });
 });

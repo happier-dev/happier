@@ -7,45 +7,17 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 
 import type { InstalledPluginEntry } from '../model/pluginMarketplaceModel';
-import type { InstalledPluginUpdateState } from '../model/usePluginSettingsScreenState';
 
 export function PluginDetailActionsSection(props: Readonly<{
     installed: InstalledPluginEntry;
-    updateState: InstalledPluginUpdateState;
     actionInFlight: boolean;
     canRunActions: boolean;
-    onAction: (action: 'reload' | 'update' | 'enable' | 'disable', pluginId: string) => void;
+    onAction: (action: 'enable' | 'disable' | 'rollback' | 'uninstall' | 'forgetTrust', pluginId: string) => void;
 }>) {
     const { theme } = useUnistyles();
 
     return (
         <ItemGroup title={t('common.actions')}>
-            <Item
-                testID={`settings.plugins.detail.${props.installed.pluginId}.action.reload`}
-                title={t('settingsPlugins.reloadAction')}
-                subtitle={t('settingsPlugins.reloadSubtitle')}
-                icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.text.secondary} />}
-                onPress={() => props.onAction('reload', props.installed.pluginId)}
-                disabled={!props.canRunActions || props.actionInFlight}
-                loading={props.actionInFlight}
-                showChevron={false}
-            />
-            {props.updateState.canUpdate ? (
-                <Item
-                    testID={`settings.plugins.detail.${props.installed.pluginId}.action.update`}
-                    title={t('common.update')}
-                    subtitle={props.updateState.updateAvailable
-                        ? t('deps.ui.installedUpdateAvailable', {
-                            installedVersion: props.installed.version,
-                            latestVersion: props.updateState.catalogVersion ?? props.installed.version,
-                        })
-                        : (props.updateState.sourceUrl ?? props.installed.version)}
-                    icon={<Ionicons name="cloud-download-outline" size={29} color={theme.colors.text.secondary} />}
-                    onPress={() => props.onAction('update', props.installed.pluginId)}
-                    disabled={!props.canRunActions || props.actionInFlight}
-                    showChevron={false}
-                />
-            ) : null}
             <Item
                 testID={`settings.plugins.detail.${props.installed.pluginId}.action.${props.installed.enabled ? 'disable' : 'enable'}`}
                 title={props.installed.enabled ? t('common.disable') : t('common.enable')}
@@ -58,6 +30,32 @@ export function PluginDetailActionsSection(props: Readonly<{
                     />
                 )}
                 onPress={() => props.onAction(props.installed.enabled ? 'disable' : 'enable', props.installed.pluginId)}
+                disabled={!props.canRunActions || props.actionInFlight}
+                showChevron={false}
+            />
+            {props.installed.rollbackAvailability === 'available' ? (
+                <Item
+                    testID={`settings.plugins.detail.${props.installed.pluginId}.action.rollback`}
+                    title={t('settingsPlugins.rollback')}
+                    icon={<Ionicons name="return-down-back-outline" size={29} color={theme.colors.text.secondary} />}
+                    onPress={() => props.onAction('rollback', props.installed.pluginId)}
+                    disabled={!props.canRunActions || props.actionInFlight}
+                    showChevron={false}
+                />
+            ) : null}
+            <Item
+                testID={`settings.plugins.detail.${props.installed.pluginId}.action.uninstall`}
+                title={t('settingsPlugins.uninstall')}
+                icon={<Ionicons name="trash-outline" size={29} color={theme.colors.text.secondary} />}
+                onPress={() => props.onAction('uninstall', props.installed.pluginId)}
+                disabled={!props.canRunActions || props.actionInFlight}
+                showChevron={false}
+            />
+            <Item
+                testID={`settings.plugins.detail.${props.installed.pluginId}.action.forgetTrust`}
+                title={t('settingsPlugins.forgetTrust')}
+                icon={<Ionicons name="shield-outline" size={29} color={theme.colors.text.secondary} />}
+                onPress={() => props.onAction('forgetTrust', props.installed.pluginId)}
                 disabled={!props.canRunActions || props.actionInFlight}
                 showChevron={false}
             />

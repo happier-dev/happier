@@ -21,6 +21,10 @@ function formatValue(valueId: SessionConfigOptionValueId): string {
     return valueId;
 }
 
+function choiceIdentity(parts: readonly string[]): string {
+    return JSON.stringify(parts);
+}
+
 export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionConfigOptionsSectionProps) {
     const { theme } = useUnistyles();
     const transientStyles = React.useMemo(() => ({
@@ -102,16 +106,17 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
                     );
                 }
 
+                const choices = option.options ?? option.groups?.flatMap((group) => group.options) ?? [];
                 const currentLabel =
-                    option.options?.find((entry) => entry.value === option.currentValue)?.name ??
+                    choices.find((entry) => entry.value === option.currentValue)?.name ??
                     formatValue(option.currentValue);
                 const requestedLabel =
                     control.requestedValue !== undefined
-                        ? option.options?.find((entry) => entry.value === control.requestedValue)?.name ??
+                        ? choices.find((entry) => entry.value === control.requestedValue)?.name ??
                             formatValue(control.requestedValue)
                         : null;
 
-                const isSelect = option.type === 'select' && (option.options?.length ?? 0) > 0;
+                const isSelect = option.type === 'select' && choices.length > 0;
 
                 return (
                     <View
@@ -146,12 +151,35 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
 
                         {isSelect ? (
                             <View style={styles.choiceRow}>
+                                {option.groups?.map((group) => (
+                                    <View key={group.id} style={styles.group}>
+                                        <Text accessibilityRole="header" style={styles.groupLabel}>{group.name}</Text>
+                                        <View style={styles.choiceRow}>
+                                            {group.options.map((choice) => {
+                                                const isSelected = choice.value === effectiveValue;
+                                                const identity = choiceIdentity([option.id, group.id, choice.value]);
+                                                return (
+                                                    <Pressable
+                                                        testID={`agent-input-config-option-option:${identity}`}
+                                                        key={identity}
+                                                        disabled={isDisabled}
+                                                        onPress={() => props.onSelectValue?.(option.id, choice.value)}
+                                                        style={({ pressed }) => [styles.choicePill, isSelected ? transientStyles.choicePillSelected : null, pressed && !isDisabled ? transientStyles.optionRowPressed : null]}
+                                                    >
+                                                        <Text style={[styles.choiceLabel, isSelected ? styles.choiceLabelSelected : null]}>{choice.name}</Text>
+                                                    </Pressable>
+                                                );
+                                            })}
+                                        </View>
+                                    </View>
+                                ))}
                                 {option.options?.map((choice) => {
                                     const isSelected = choice.value === effectiveValue;
+                                    const identity = choiceIdentity([option.id, choice.value]);
                                     return (
                                         <Pressable
-                                            testID={`agent-input-config-option-option:${option.id}:${String(choice.value)}`}
-                                            key={`${option.id}:${String(choice.value)}`}
+                                            testID={`agent-input-config-option-option:${identity}`}
+                                            key={identity}
                                             disabled={isDisabled}
                                             onPress={() => props.onSelectValue?.(option.id, choice.value)}
                                             style={({ pressed }) => [
@@ -232,6 +260,15 @@ const styles = StyleSheet.create((theme) => ({
         flexWrap: 'wrap',
         gap: 6,
         paddingTop: 2,
+    },
+    group: {
+        gap: 4,
+        width: '100%',
+    },
+    groupLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: theme.colors.text.secondary,
     },
     choicePill: {
         minHeight: 30,

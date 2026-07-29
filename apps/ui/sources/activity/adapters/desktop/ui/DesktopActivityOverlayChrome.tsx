@@ -11,6 +11,8 @@ type Theme = UnistylesThemes[keyof UnistylesThemes];
 type ChromeTone = 'collapsed' | 'expanded' | 'row';
 type InteriorSurfaceKind = 'action' | 'badge' | 'card';
 
+export const DESKTOP_ACTIVITY_OVERLAY_CHROME_BASE_COLOR = 'rgb(5, 5, 5)';
+
 const notchIntegratedChromeRadii = {
     collapsed: {
         borderTopLeftRadius: interpolateDesktopOverlayCorners(0).topRadius,
@@ -127,14 +129,14 @@ function resolveInteriorSurfaceAlpha(
 }
 
 function resolveChromeBackgroundColor(
-    theme: Theme,
+    _theme: Theme,
     params: Readonly<{
         visualMode: DesktopActivityOverlayVisualMode;
         tone: ChromeTone;
     }>,
 ): string {
     return formatOpaqueColorWithAlpha(
-        theme.colors.overlay.scrimStrong,
+        DESKTOP_ACTIVITY_OVERLAY_CHROME_BASE_COLOR,
         resolveChromeSurfaceAlpha(params.visualMode, params.tone),
     );
 }
@@ -247,7 +249,7 @@ export function DesktopActivityOverlayChromeBackdrop(props: Readonly<{
 }
 
 export function createDesktopActivityOverlayInteriorSurfaceStyle(
-    theme: Theme,
+    _theme: Theme,
     params: Readonly<{
         visualMode: DesktopActivityOverlayVisualMode;
         kind: InteriorSurfaceKind;
@@ -257,7 +259,7 @@ export function createDesktopActivityOverlayInteriorSurfaceStyle(
         borderWidth: 0,
         borderColor: 'transparent',
         backgroundColor: formatOpaqueColorWithAlpha(
-            theme.colors.overlay.scrimStrong,
+            DESKTOP_ACTIVITY_OVERLAY_CHROME_BASE_COLOR,
             resolveInteriorSurfaceAlpha(params.visualMode, params.kind),
         ),
         borderRadius: params.kind === 'badge' ? 999 : (params.kind === 'card' ? 18 : 10),
@@ -281,7 +283,7 @@ export function DesktopActivityOverlayChromeHighlights(props: Readonly<{
                 style={[
                     styles.topSeam,
                     toneStyle.topSeam,
-                    { backgroundColor: props.theme.colors.overlay.scrimStrong },
+                    { backgroundColor: DESKTOP_ACTIVITY_OVERLAY_CHROME_BASE_COLOR },
                 ]}
             />
             <View
@@ -295,7 +297,7 @@ export function DesktopActivityOverlayChromeHighlights(props: Readonly<{
                 style={[
                     styles.bottomShade,
                     toneStyle.bottomShade,
-                    { backgroundColor: props.theme.colors.overlay.scrimStrong },
+                    { backgroundColor: DESKTOP_ACTIVITY_OVERLAY_CHROME_BASE_COLOR },
                 ]}
             />
             <View

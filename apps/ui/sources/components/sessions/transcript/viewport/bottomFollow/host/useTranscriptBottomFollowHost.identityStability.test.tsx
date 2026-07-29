@@ -22,8 +22,7 @@ function createStableMembers() {
     return {
         applyFollowBottomIntentTakeoverApplyEffects: vi.fn(),
         applyNativeExplicitJumpConfirmationEffects: vi.fn(),
-        authorizeImmediateBottomFollowWriteRef: createRef(() => false),
-        canAutoFollowForReason: vi.fn(() => true),
+        authorizeImmediateBottomFollowWriteRef: createRef(vi.fn(() => false)),
         commitBottomFollowModeState: vi.fn(),
         commitExplicitReturnToLiveTailState: vi.fn(),
         commitScrollPinState: vi.fn(),
@@ -34,30 +33,19 @@ function createStableMembers() {
         hasRearmedNativeBottomFollow: vi.fn(() => false),
         invalidateViewportAnchorCapture: vi.fn(),
         isPinnedRef: createRef(true),
-        lastNativePinOffsetRef: createRef<number | null>(null),
         lastUserScrollIntentAtMsRef: createRef(Number.NEGATIVE_INFINITY),
         lifecycleHost: {
             clearNativeExplicitJumpConfirmation: vi.fn(),
             getMountSettleSnapshot: vi.fn(() => ({ isMountSettleActive: false })),
-            observeNativeScrollConfirmation: vi.fn(() => ({
+            observeNativeScrollConfirmation: vi.fn<BottomFollowHostDeps['lifecycleHost']['observeNativeScrollConfirmation']>(() => ({
                 consumed: false,
                 entrySettleEffects: [],
                 explicitJumpEffects: [],
-            })),
-            planContentGrowthLiveTailCommand: vi.fn(() => ({
-                contentGrowthLiveTailCommandEffect: {
-                    reason: 'content-size-change' as const,
-                    sessionId: 's1',
-                    type: 'request-content-growth-live-tail-command' as const,
-                },
-                state: { bottomFollowState: { dragSession: null, mode: 'following' as const } },
             })),
             planFollowBottomIntentTakeover: vi.fn(() => ({
                 followBottomIntentTakeoverEffects: [],
                 state: { bottomFollowState: { dragSession: null, mode: 'following' as const } },
             })),
-            planMeasuredNativeLiveTailPin: vi.fn(() => ({ type: 'not-ready' as const })),
-            planNativeMountSettlePendingPinFlush: vi.fn(() => ({ effects: [] })),
         },
         liveTailCarveTelemetry: {
             active: false,
@@ -70,15 +58,12 @@ function createStableMembers() {
         listLayoutHeightRef: createRef(0),
         listRef: createRef(null),
         markNativeInitialViewportAppliedForCurrentSession: vi.fn(),
-        nativeMountSettleAutoPinSuppressedRef: createRef(false),
         nativeMountSettleDeadlineReachedRef: createRef(false),
         nativeHotTailHeightRef: createRef(0),
-        observeNativeStreamAppendOffsetEscape: vi.fn(() => false),
         pinThresholdPxRef: createRef(72),
         readCurrentNativeDistanceFromBottom: vi.fn(() => 0),
         readViewportContentMetrics: vi.fn(() => ({ contentHeight: 1000, layoutHeight: 500 })),
         recordViewportTelemetryEvent: vi.fn(),
-        requestBottomFollowScheduledWriteRef: createRef(() => {}),
         resolveViewportCommand: vi.fn((input: unknown) => input),
         resolveViewportTelemetryMode: vi.fn(() => 'follow-bottom'),
         resolveWebScrollMetrics: vi.fn(() => null),
@@ -101,11 +86,69 @@ function buildDeps(members: ReturnType<typeof createStableMembers>): BottomFollo
         pinEnabled: true,
         pinThresholdPx: 72,
         sessionId: 's1',
-        usesNativeFlashListBottomMaintenance: true,
     } as unknown as BottomFollowHostDeps;
 }
 
 describe('useTranscriptBottomFollowHost identity stability', () => {
+    it('installs the renderer tail before publishing accepted own-send follow state', async () => {
+        const members = createStableMembers();
+        const order: string[] = [];
+        members.tryPinToBottomDom.mockImplementation(() => {
+            order.push('renderer-held-end');
+            return true;
+        });
+        members.executeViewportCommand.mockImplementation(() => {
+            order.push('renderer-held-end');
+            return true;
+        });
+        members.commitExplicitReturnToLiveTailState.mockImplementation(() => {
+            order.push('semantic-following');
+        });
+        const deps = buildDeps(members);
+        const hook = await renderHook(
+            (nextDeps: BottomFollowHostDeps) => useTranscriptBottomFollowHost(nextDeps),
+            { initialProps: deps },
+        );
+
+        await hook.rerender({
+            ...deps,
+            followBottomIntentKey: 1,
+        });
+
+        expect(order).toEqual([
+            'renderer-held-end',
+            'semantic-following',
+        ]);
+        await hook.unmount();
+    });
+
+    it('consumes native entry-settle confirmation without issuing an app follow writer', async () => {
+        const members = createStableMembers();
+        members.lifecycleHost.observeNativeScrollConfirmation.mockReturnValue({
+            consumed: true,
+            entrySettleEffects: [{
+                sessionId: 's1',
+                type: 'issue-entry-settle-reconfirm-pin',
+            }],
+            explicitJumpEffects: [],
+        });
+        const deps = buildDeps(members);
+        const hook = await renderHook(
+            (nextDeps: BottomFollowHostDeps) => useTranscriptBottomFollowHost(nextDeps),
+            { initialProps: deps },
+        );
+
+        hook.getCurrent().observeNativeConfirmation({
+            contentHeight: 1000,
+            distanceFromBottom: 0,
+            isTrusted: false,
+            mountSettleStable: true,
+        });
+
+        expect(members.executeViewportCommand).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
     it('keeps host callbacks referentially stable across re-renders with fresh deps object identities', async () => {
         const members = createStableMembers();
         const hook = await renderHook(
@@ -114,23 +157,16 @@ describe('useTranscriptBottomFollowHost identity stability', () => {
         );
 
         const first = hook.getCurrent();
-        const firstRequestScheduled = members.requestBottomFollowScheduledWriteRef.current;
 
         await hook.rerender(buildDeps(members));
         await hook.rerender(buildDeps(members));
 
         const second = hook.getCurrent();
-        expect(second.captureNativeBottomFollowPreviousFollow).toBe(first.captureNativeBottomFollowPreviousFollow);
-        expect(second.captureWebBottomFollowPreviousMetrics).toBe(first.captureWebBottomFollowPreviousMetrics);
-        expect(second.pinNativeInitialFollowBottomViewportIfReady).toBe(first.pinNativeInitialFollowBottomViewportIfReady);
         expect(second.pinToBottom).toBe(first.pinToBottom);
-        expect(second.pinToBottomRespectingNativeMountSettle).toBe(first.pinToBottomRespectingNativeMountSettle);
-        expect(second.requestAutomaticLiveTailPin).toBe(first.requestAutomaticLiveTailPin);
-        expect(second.requestMeasuredNativeAutomaticLiveTailPin).toBe(first.requestMeasuredNativeAutomaticLiveTailPin);
-        expect(second.deferPinToBottomAfterScroll).toBe(first.deferPinToBottomAfterScroll);
-        expect(second.cancelScheduledPinToBottom).toBe(first.cancelScheduledPinToBottom);
+        expect(second.observeNativeConfirmation).toBe(first.observeNativeConfirmation);
+        expect(second.beginExplicitJumpWriteBarrier).toBe(first.beginExplicitJumpWriteBarrier);
+        expect(second.endExplicitJumpWriteBarrier).toBe(first.endExplicitJumpWriteBarrier);
         expect(second.applyNativeDragActiveMirrorEffects).toBe(first.applyNativeDragActiveMirrorEffects);
-        expect(members.requestBottomFollowScheduledWriteRef.current).toBe(firstRequestScheduled);
 
         await hook.unmount();
     });

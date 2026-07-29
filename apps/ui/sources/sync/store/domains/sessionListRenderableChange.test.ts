@@ -27,6 +27,14 @@ function makeRenderable(partial: Partial<SessionListRenderableSession> & Pick<Se
         canApprovePermissions: partial.canApprovePermissions,
         hasPendingPermissionRequests: partial.hasPendingPermissionRequests,
         hasPendingUserActionRequests: partial.hasPendingUserActionRequests,
+        latestTurnStatus: partial.latestTurnStatus,
+        latestTurnStatusObservedAt: partial.latestTurnStatusObservedAt,
+        runtimeActivityActiveCount: partial.runtimeActivityActiveCount,
+        runtimeActivityObservedAt: partial.runtimeActivityObservedAt,
+        runtimeActivityRevision: partial.runtimeActivityRevision,
+        latestReadyEventSeq: partial.latestReadyEventSeq,
+        latestReadyEventAt: partial.latestReadyEventAt,
+        hasUnreadMessages: partial.hasUnreadMessages,
         keepVisibleWhenInactive: partial.keepVisibleWhenInactive,
     };
 }
@@ -115,6 +123,77 @@ describe('resolveSessionListRenderableChangeImpact', () => {
         expect(resolveSessionListRenderableChangeImpact(previous, next)).toEqual({
             didWarmCacheRelevantRenderableChange: true,
             isWarmCacheProgressOnlyChange: true,
+            needsSessionListIndexRebuild: false,
+            needsProjectManagerUpdate: false,
+            needsReachablePeerReevaluation: false,
+        });
+    });
+
+    it('treats ready and unread row-overlay changes as warm-cache relevant without rebuilding the list index', () => {
+        const previous = makeRenderable({
+            id: 's1',
+            seq: 10,
+            createdAt: 1,
+            updatedAt: 2,
+            meaningfulActivityAt: 2,
+            active: true,
+            activeAt: 2,
+            metadata: { path: '/repo', machineId: 'm1' } as any,
+            metadataVersion: 3,
+            agentStateVersion: 4,
+            latestReadyEventSeq: 4,
+            latestReadyEventAt: 400,
+            hasUnreadMessages: false,
+        });
+        const next = makeRenderable({
+            ...previous,
+            seq: 11,
+            updatedAt: 3,
+            meaningfulActivityAt: 3,
+            latestReadyEventSeq: 5,
+            latestReadyEventAt: 500,
+            hasUnreadMessages: true,
+        });
+
+        expect(resolveSessionListRenderableChangeImpact(previous, next)).toEqual({
+            didWarmCacheRelevantRenderableChange: true,
+            isWarmCacheProgressOnlyChange: false,
+            needsSessionListIndexRebuild: false,
+            needsProjectManagerUpdate: false,
+            needsReachablePeerReevaluation: false,
+        });
+    });
+
+    it('classifies runtime activity revision changes as warm-cache relevant without rebuilding', () => {
+        const previous = makeRenderable({
+            id: 's1',
+            seq: 10,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            presence: 'online',
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: 1_000,
+            metadata: { path: '/repo', machineId: 'm1' } as any,
+            metadataVersion: 3,
+            agentStateVersion: 4,
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: 2_000,
+            runtimeActivityRevision: 1,
+        });
+        const next = makeRenderable({
+            ...previous,
+            runtimeActivityObservedAt: 3_000,
+            runtimeActivityRevision: 2,
+        });
+
+        expect(resolveSessionListRenderableChangeImpact(previous, next, {
+            sessionListIndexSettings: { groupInactiveSessionsByProject: false },
+        })).toEqual({
+            didWarmCacheRelevantRenderableChange: true,
+            isWarmCacheProgressOnlyChange: false,
             needsSessionListIndexRebuild: false,
             needsProjectManagerUpdate: false,
             needsReachablePeerReevaluation: false,

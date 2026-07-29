@@ -8,8 +8,9 @@ import { SetupWizardSurface } from '@/components/onboarding/surfaces/SetupWizard
 import { shouldUseWizardFullscreenPresentation } from '@/components/onboarding/ui/wizardPresentation';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { clearPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
-import type { WizardContext, WizardStepId } from '@/components/onboarding';
+import type { WizardContext, WizardStepId } from '@/components/onboarding/state/wizardTypes';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
+import { t } from '@/text';
 
 export default function SetupWizardRoute() {
     const auth = useAuth();
@@ -105,6 +106,7 @@ export default function SetupWizardRoute() {
         <BaseModal
             visible={true}
             showBackdrop={true}
+            accessibilityLabel={t('setupOnboarding.screenTitle')}
             webPlacement={shouldTopAlignWebModal ? 'top' : undefined}
             onClose={() => {
                 applyLocalSettings({ sessionGettingStartedGuidanceDismissed: true });

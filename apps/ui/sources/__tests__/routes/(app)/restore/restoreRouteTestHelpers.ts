@@ -3,6 +3,7 @@ import { vi } from 'vitest';
 type ModuleFactory = () => unknown | Promise<unknown>;
 
 type InstallRestoreRouteModuleMocksOptions = Readonly<{
+    icons?: ModuleFactory;
     reactNative?: ModuleFactory;
     router?: ModuleFactory;
     modal?: ModuleFactory;
@@ -12,6 +13,7 @@ type InstallRestoreRouteModuleMocksOptions = Readonly<{
 
 const restoreRouteTestState = vi.hoisted(() => ({
     options: {
+        icons: undefined as ModuleFactory | undefined,
         reactNative: undefined as ModuleFactory | undefined,
         router: undefined as ModuleFactory | undefined,
         modal: undefined as ModuleFactory | undefined,
@@ -22,6 +24,7 @@ const restoreRouteTestState = vi.hoisted(() => ({
 
 export function resetRestoreRouteTestState() {
     restoreRouteTestState.options = {
+        icons: undefined,
         reactNative: undefined,
         router: undefined,
         modal: undefined,
@@ -34,6 +37,7 @@ export function installRestoreRouteCommonModuleMocks(
     options: InstallRestoreRouteModuleMocksOptions = {},
 ) {
     restoreRouteTestState.options = {
+        icons: options.icons,
         reactNative: options.reactNative,
         router: options.router,
         modal: options.modal,
@@ -41,7 +45,42 @@ export function installRestoreRouteCommonModuleMocks(
         unistyles: options.unistyles,
     };
 
-    vi.mock('react-native-reanimated', () => ({}));
+    vi.mock('react-native-reanimated', async () => {
+        const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+        return createReanimatedModuleMock();
+    });
+
+    vi.mock('@react-navigation/native', async () => {
+        const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+        return createReactNavigationNativeMock();
+    });
+
+    vi.mock('@expo/vector-icons', async () => {
+        if (restoreRouteTestState.options.icons) {
+            return await restoreRouteTestState.options.icons();
+        }
+
+        const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+        return createExpoVectorIconsMock();
+    });
+
+    vi.mock('@expo/vector-icons/Ionicons', async () => {
+        const icons = restoreRouteTestState.options.icons
+            ? await restoreRouteTestState.options.icons()
+            : await (async () => {
+                const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+                return createExpoVectorIconsMock();
+            })();
+        const Ionicons =
+            icons && typeof icons === 'object' && 'Ionicons' in icons
+                ? (icons as { Ionicons?: unknown }).Ionicons
+                : undefined;
+
+        return {
+            ...(icons && typeof icons === 'object' ? icons : {}),
+            default: Ionicons ?? 'Ionicons',
+        };
+    });
 
     vi.mock('react-native', async () => {
         if (restoreRouteTestState.options.reactNative) {

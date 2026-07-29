@@ -1,5 +1,6 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
+import { normalizeKnownProjectMachineId } from '@/sync/runtime/orchestration/projectManager';
 import { normalizeMachineIdentityString, type MachineTargetResolution } from './machineIdentityTypes';
 import { resolveCanonicalMachineId } from './resolveCanonicalMachineId';
 
@@ -38,7 +39,7 @@ function resolveStableOriginMachineId(input: Readonly<{
 }>): string | null {
     const sessionMachineId = normalizeMachineIdentityString(input.sessionMachineId);
     if (sessionMachineId) return sessionMachineId;
-    return normalizeMachineIdentityString(input.projectMachineId);
+    return normalizeKnownProjectMachineId(input.projectMachineId);
 }
 
 export function resolveSessionDisplayTarget(input: Readonly<{
@@ -50,7 +51,7 @@ export function resolveSessionDisplayTarget(input: Readonly<{
     machines: ReadonlyArray<Machine>;
 }>): MachineTargetResolution | null {
     const originMachineId = resolveStableOriginMachineId(input);
-    if (!originMachineId || originMachineId.startsWith('host:')) return null;
+    if (!originMachineId) return null;
 
     const canonical = resolveCanonicalMachineId(originMachineId, input.machines);
     const machineId = canonical?.reason === 'missingReplacementTarget'

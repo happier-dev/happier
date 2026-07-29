@@ -15,7 +15,6 @@ const show = vi.fn();
 
 const push = vi.fn();
 
-vi.mock('react-native-reanimated', () => ({}));
 
 installAccountCommonModuleMocks({
     icons: () => ({

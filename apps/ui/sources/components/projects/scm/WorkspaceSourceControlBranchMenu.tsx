@@ -21,6 +21,7 @@ import { useSetting } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 export type WorkspaceSourceControlBranchMenuProps = Readonly<{
+    serverId?: string | null;
     machineId: string;
     rootPath: string;
     currentBranch: string | null;
@@ -39,6 +40,10 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
     const writeEnabled = props.writeEnabled !== false;
     const snapshot = props.snapshot;
     const currentBranch = props.currentBranch;
+    const serverId = typeof props.serverId === 'string' ? props.serverId.trim() : '';
+    const machineScmOptions = React.useMemo(() => (
+        serverId ? { serverId } : undefined
+    ), [serverId]);
 
     const branchSwitchSettingRaw = useSetting('scmUncommittedChangesStrategy');
     const branchSwitchSetting = normalizeBranchSwitchSetting(branchSwitchSettingRaw);
@@ -73,11 +78,12 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
 
     const fetchBranches = React.useCallback(async () => {
         return await repoScmBranchService.fetchBranchesForMachinePath({
+            ...(serverId ? { serverId } : {}),
             machineId: props.machineId,
             path: props.rootPath,
             includeRemotes,
         });
-    }, [includeRemotes, props.machineId, props.rootPath]);
+    }, [includeRemotes, props.machineId, props.rootPath, serverId]);
 
     const handleBranchLoadError = React.useCallback((error: unknown) => {
         const message = error instanceof Error ? error.message : t('files.branchMenu.failedToLoad');
@@ -149,7 +155,7 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
             cwd: props.rootPath,
             name: trimmed,
             checkout: true,
-        });
+        }, machineScmOptions);
         if (!response.success) {
             Modal.alert(t('common.error'), response.error || t('files.branchMenu.create.failed'));
             return;
@@ -157,7 +163,7 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
         await refreshWorkspaceState();
         setOpen(true);
         void refresh('loading');
-    }, [canCreate, props.machineId, props.rootPath, refresh, refreshWorkspaceState]);
+    }, [canCreate, machineScmOptions, props.machineId, props.rootPath, refresh, refreshWorkspaceState]);
 
     const switchBranch = React.useCallback(async (targetBranch: string) => {
         if (!canCheckout) return;
@@ -193,7 +199,7 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
                 name: target,
                 strategy,
                 ...(overwriteCurrentBranchStash ? { overwriteCurrentBranchStash: true } : null),
-            });
+            }, machineScmOptions);
         };
 
         let response = await attemptCheckout(false);
@@ -226,6 +232,7 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
         canCheckout,
         closeMenu,
         currentBranch,
+        machineScmOptions,
         props.machineId,
         props.rootPath,
         refreshWorkspaceState,
@@ -236,6 +243,7 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
         if (!canCreateWorktrees) return;
 
         const response = await repoScmWorktreeService.createWorktreeForMachinePath({
+            ...(serverId ? { serverId } : {}),
             machineId: props.machineId,
             path: props.rootPath,
             baseRef: null,
@@ -249,11 +257,12 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
         if (response.worktreePath) {
             selectWorkspacePath(response.worktreePath);
         }
-    }, [canCreateWorktrees, props.machineId, props.rootPath, refreshWorkspaceState, selectWorkspacePath]);
+    }, [canCreateWorktrees, props.machineId, props.rootPath, refreshWorkspaceState, selectWorkspacePath, serverId]);
 
     const pruneWorktrees = React.useCallback(async () => {
         if (!canCreateWorktrees) return;
         const response = await repoScmWorktreeService.pruneWorktreesForMachinePath({
+            ...(serverId ? { serverId } : {}),
             machineId: props.machineId,
             path: props.rootPath,
         });
@@ -262,7 +271,7 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
             return;
         }
         await refreshWorkspaceState();
-    }, [canCreateWorktrees, props.machineId, props.rootPath, refreshWorkspaceState]);
+    }, [canCreateWorktrees, props.machineId, props.rootPath, refreshWorkspaceState, serverId]);
 
     const removeWorktree = React.useCallback(async (worktreePath: string) => {
         if (!canCreateWorktrees) return;
@@ -279,6 +288,7 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
         if (!confirmed) return;
 
         const response = await repoScmWorktreeService.removeWorktreeForMachinePath({
+            ...(serverId ? { serverId } : {}),
             machineId: props.machineId,
             path: props.rootPath,
             worktreePath,
@@ -288,7 +298,7 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
             return;
         }
         await refreshWorkspaceState();
-    }, [canCreateWorktrees, props.machineId, props.rootPath, refreshWorkspaceState]);
+    }, [canCreateWorktrees, props.machineId, props.rootPath, refreshWorkspaceState, serverId]);
 
     const onSelect = React.useCallback(async (itemId: string) => {
         if (itemId === 'worktree:create-current-branch') {

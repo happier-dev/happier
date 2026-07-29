@@ -13,6 +13,7 @@ export type SessionAuthoringSnapshot = Readonly<{
     profileId: SessionAuthoringValueV1['profileId'];
     permissionMode: SessionAuthoringValueV1['permissionMode'];
     permissionModeUpdatedAt: SessionAuthoringValueV1['permissionModeUpdatedAt'];
+    modelSelection: SessionAuthoringValueV1['modelSelection'];
     modelId: SessionAuthoringValueV1['modelId'];
     modelUpdatedAt: SessionAuthoringValueV1['modelUpdatedAt'];
     mcpSelection: SessionAuthoringValueV1['mcpSelection'];

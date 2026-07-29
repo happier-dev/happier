@@ -1,7 +1,9 @@
 import { AGENT_IDS, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { t } from '@/text';
 import {
     readBackendTargetRefV2,
     readLegacyConfiguredAcpBackendId,
+    readProviderSettingsFromAccountSettingsV1,
     type BackendTargetRefV1,
 } from '@happier-dev/protocol';
 import {
@@ -35,6 +37,12 @@ import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicMod
 import { parsePreflightModelListFromProbeModelsResult } from '@/sync/domains/models/parsePreflightModelListFromProbeModelsResult';
 import { createUnavailablePreflightModelList, type PreflightModelList } from '@/sync/domains/models/modelOptions';
 import { buildProviderCliCapabilityId } from '@/capabilities/cliCapabilityId';
+import { describeProviderModels } from '@/providers/rpc/client';
+import {
+  buildSessionModelPickerSections,
+  hiddenModelVisibilityKeys,
+} from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
+import { isVoiceProvidersFeatureEnabledForSpawn } from './spawnSessionModelSelection';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -42,8 +50,8 @@ function normalizeId(raw: unknown): string {
 
 const CONFIGURED_ACP_CLI_CAPABILITY_ID = 'configuredAcp';
 
-function resolvePluginRuntimeCarrierAgentId(providerAgentId: string | null | undefined): AgentId | null {
-  return providerAgentId && isAgentId(providerAgentId) ? providerAgentId : null;
+function resolvePluginRuntimeCarrierAgentId(catalogAgentId: string | null | undefined): AgentId | null {
+  return catalogAgentId && isAgentId(catalogAgentId) ? catalogAgentId : null;
 }
 
 function resolveConfiguredAcpCompatProbeAgentId(params: Readonly<{
@@ -125,7 +133,110 @@ function buildVoiceToolPreflightModelResult(params: Readonly<{
   };
 }
 
-type VoiceToolConnectedService = ReturnType<typeof getAgentCore>['uiConnectedService'];
+type VoiceToolModelListResult = Readonly<{
+  agentId?: AgentId;
+  machineId?: string;
+  items: ReadonlyArray<Readonly<{
+    modelId: string;
+    label: string;
+    description?: string;
+    providerConnectionId?: string | null;
+    providerName?: string;
+  }>>;
+  supportsFreeform: boolean;
+  source: 'preflight' | 'static' | 'unavailable';
+  unavailable?: true;
+}>;
+
+async function projectVoiceToolProviderModels(params: Readonly<{
+  base: VoiceToolModelListResult;
+  agentTargetKey: string;
+  machineId: string;
+  serverId: string | null;
+  limit: number | null;
+}>): Promise<VoiceToolModelListResult> {
+  const providersEnabled = await isVoiceProvidersFeatureEnabledForSpawn({ serverId: params.serverId });
+  if (!providersEnabled) {
+    return params.base;
+  }
+
+  let projection: Awaited<ReturnType<typeof describeProviderModels>>;
+  try {
+    projection = await describeProviderModels({
+      machineId: params.machineId,
+      serverId: params.serverId,
+      agentTargetKey: params.agentTargetKey,
+      mode: 'picker',
+    });
+  } catch {
+    return params.base;
+  }
+  if (projection.status !== 'success') return params.base;
+
+  const settings = readProviderSettingsFromAccountSettingsV1(storage.getState().settings).settings;
+  const sections = buildSessionModelPickerSections({
+    agentTargetKey: params.agentTargetKey,
+    nativeModels: params.base.items.map((item) => ({
+      value: item.modelId,
+      label: item.label,
+      ...(item.description ? { description: item.description } : {}),
+    })),
+    providerGroups: projection.groups,
+    providerProjectionAuthoritative: true,
+    hiddenNativeModelKeys: hiddenModelVisibilityKeys(settings, { providersFeatureEnabled: true }),
+    canConfirmExperimental: false,
+  });
+  const connectionNameBySectionId = new Map(
+    sections
+      .filter((section) => section.id.startsWith('connection:'))
+      .map((section) => [section.id, section.title ?? ''] as const),
+  );
+  const items = sections.flatMap((section) => section.options.flatMap((option) => {
+    if (option.disabled === true) return [];
+    const ref = option.value;
+    const modelId = ref?.modelId ?? 'default';
+    return [{
+      modelId,
+      label: option.label,
+      ...(option.description ? { description: option.description } : {}),
+      providerConnectionId: ref?.providerConnectionId ?? null,
+      ...(ref?.providerConnectionId
+        ? { providerName: connectionNameBySectionId.get(section.id) ?? '' }
+        : {}),
+    }];
+  }));
+  const limitedItems = params.limit ? items.slice(0, params.limit) : items;
+  const hasProviderModels = items.some((item) => item.providerConnectionId !== null);
+  const supportsProviderFreeform = projection.groups.some((group) => (
+    group.authorization.authorized
+    && group.supportsFreeformModelIds
+    && group.manualModelPolicy === 'allowed'
+  ));
+
+  return {
+    ...(params.base.agentId ? { agentId: params.base.agentId } : {}),
+    machineId: params.machineId,
+    items: limitedItems,
+    supportsFreeform: params.base.supportsFreeform || supportsProviderFreeform,
+    source: params.base.source,
+    ...(!hasProviderModels && params.base.unavailable === true ? { unavailable: true as const } : {}),
+  };
+}
+
+type AgentUiConnectedService = ReturnType<typeof getAgentCore>['uiConnectedService'];
+type VoiceToolConnectedService = Readonly<{
+  serviceId: AgentUiConnectedService['serviceId'];
+  label: string;
+  connectRoute: AgentUiConnectedService['connectRoute'];
+}>;
+
+function resolveVoiceToolConnectedService(service: AgentUiConnectedService): VoiceToolConnectedService {
+  return {
+    serviceId: service.serviceId,
+    label: t(service.labelKey),
+    connectRoute: service.connectRoute,
+  };
+}
 
 type VoiceToolBackendCatalogItem = Readonly<{
   targetKey: string;
@@ -177,7 +288,7 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
         enabled,
         agentId: entry.builtInAgentId,
         experimental: core.availability.experimental === true,
-        uiConnectedService: core.uiConnectedService,
+        uiConnectedService: resolveVoiceToolConnectedService(core.uiConnectedService),
         flavorAliases: core.flavorAliases,
         supportsModelSelection: core.model.supportsSelection === true,
         supportsFreeformModels: core.model.supportsFreeform === true,
@@ -186,7 +297,7 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
     }
 
     if (entry.kind === 'pluginBackend') {
-      const carrierAgentId = resolvePluginRuntimeCarrierAgentId(entry.providerAgentId);
+      const carrierAgentId = resolvePluginRuntimeCarrierAgentId(entry.catalogAgentId);
       items.push({
         targetKey: effectiveTargetKey,
         label: entry.title,
@@ -321,14 +432,26 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
   }
 
   const machineId = normalizeId(params.machineId);
+  const serverId = normalizeId(getActiveServerSnapshot()?.serverId) || null;
+  const canonicalTargetKey = backendTarget
+    ? resolveBackendTargetKeyV2(backendTarget)
+    : resolveBackendTargetKeyV2({ kind: 'backend', backendId: agentId });
+  const withProviderProjection = async (base: VoiceToolModelListResult): Promise<VoiceToolModelListResult> => (
+    machineId
+      ? projectVoiceToolProviderModels({
+        base,
+        agentTargetKey: canonicalTargetKey,
+        machineId,
+        serverId,
+        limit,
+      })
+      : base
+  );
   if (machineId) {
-    const serverId = normalizeId(getActiveServerSnapshot()?.serverId) || null;
-    const canonicalTargetKeyForCache = backendTarget
-      ? resolveBackendTargetKeyV2(backendTarget)
-      : resolveBackendTargetKeyV2({ kind: 'backend', backendId: agentId });
     const cacheKey = buildDynamicModelProbeCacheKey({
       machineId,
-      targetKey: canonicalTargetKeyForCache,
+      targetKey: canonicalTargetKey,
+      providerConnectionId: null,
       serverId,
       cwd: null,
     });
@@ -338,13 +461,13 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
     const cached = cacheEntry?.kind === 'success' ? cacheEntry.value : null;
     const cachedCanPersist = cacheEntry?.kind === 'success' && cacheEntry.cacheable !== false;
     if (cached && nowMs >= 0 && nowMs < cacheEntry!.expiresAt) {
-      return buildVoiceToolPreflightModelResult({
+      return await withProviderProjection(buildVoiceToolPreflightModelResult({
         shouldExposeAgentId,
         agentId,
         machineId,
         list: cached,
         limit,
-      });
+      }));
     }
 
     if (cacheKey) {
@@ -393,38 +516,38 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
       const list = attempt?.list ?? null;
       if (list && attempt?.cacheable !== false) {
         writeDynamicModelProbeCacheSuccess(cacheKey, list, commitNowMs);
-        return buildVoiceToolPreflightModelResult({
+        return await withProviderProjection(buildVoiceToolPreflightModelResult({
           shouldExposeAgentId,
           agentId,
           machineId,
           list,
           limit,
-        });
+        }));
       }
 
       if (list && attempt?.cacheable === false && !cached) {
         writeDynamicModelProbeCacheTransientSuccess(cacheKey, list, commitNowMs);
         writeDynamicModelProbeCacheError(cacheKey, commitNowMs);
-        return buildVoiceToolPreflightModelResult({
+        return await withProviderProjection(buildVoiceToolPreflightModelResult({
           shouldExposeAgentId,
           agentId,
           machineId,
           list,
           limit,
-        });
+        }));
       }
 
       if (cached) {
         if (cachedCanPersist) {
           writeDynamicModelProbeCacheSuccess(cacheKey, cached, commitNowMs);
         }
-        return buildVoiceToolPreflightModelResult({
+        return await withProviderProjection(buildVoiceToolPreflightModelResult({
           shouldExposeAgentId,
           agentId,
           machineId,
           list: cached,
           limit,
-        });
+        }));
       }
 
       writeDynamicModelProbeCacheError(cacheKey, commitNowMs);
@@ -432,12 +555,12 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
   }
 
   if (isLegacyCompatProbe) {
-    return {
+    return await withProviderProjection({
       ...(shouldExposeAgentId ? { agentId } : {}),
       items: [{ modelId: 'default', label: 'Default' }].slice(0, limit ?? 1),
       supportsFreeform: supportsFreeformFallback,
       source: 'static' as const,
-    };
+    });
   }
 
   const seen = new Set<string>();
@@ -456,10 +579,10 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
     return true;
   });
 
-  return {
+  return await withProviderProjection({
     ...(shouldExposeAgentId ? { agentId } : {}),
     items: limit ? items.slice(0, limit) : items,
     supportsFreeform: supportsFreeformFallback,
     source: 'static' as const,
-  };
+  });
 }

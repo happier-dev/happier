@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { readStoredSessionRawRecord } from './readStoredSessionContent';
+import { readStoredSessionMessage, readStoredSessionRawRecord } from './readStoredSessionContent';
 
 describe('readStoredSessionRawRecord', () => {
     it('parses a plain content envelope', async () => {
@@ -85,5 +85,38 @@ describe('readStoredSessionRawRecord', () => {
         const parsed = await readStoredSessionRawRecord({ content: JSON.stringify(rawRecord) });
         expect(parsed?.role).toBe('agent');
         expect(parsed?.content.type).toBe('output');
+    });
+
+    it('preserves stored message role metadata when reading plain messages', async () => {
+        const rawRecord = {
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'assistant',
+                    message: {
+                        role: 'assistant',
+                        content: [{ type: 'text', text: 'No response requested.' }],
+                        model: '<synthetic>',
+                        stop_reason: 'stop_sequence',
+                        stop_sequence: '',
+                    },
+                    uuid: 'synthetic-uuid',
+                },
+            },
+        } as const;
+
+        const parsed = await readStoredSessionMessage({
+            message: {
+                id: 'msg-synthetic',
+                seq: 12,
+                localId: 'claude-jsonl:main:assistant:synthetic-uuid',
+                messageRole: 'event',
+                content: { t: 'plain', v: rawRecord },
+                createdAt: 1_700,
+            },
+        });
+
+        expect(parsed?.messageRole).toBe('event');
     });
 });

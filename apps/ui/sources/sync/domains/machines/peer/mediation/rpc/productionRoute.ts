@@ -4,7 +4,10 @@ import {
     PeerLoopbackEndpointCandidateV1Schema,
     PeerLoopbackProbeResponseV1Schema,
     PeerMachineRpcDirectResponseV1Schema,
+    PeerMachineRpcDirectResponseV2Schema,
     SignedDirectRouteGrantV1Schema,
+    SignedDirectRouteGrantV2Schema,
+    createEphemeralPeerRouteProofHandleV2,
     createPeerRouteNonceSigningInputV1,
     type DirectPeerRouteKindV1,
     type PeerFlowKindV1,
@@ -13,9 +16,12 @@ import {
     type PeerLoopbackProbeResponseV1,
     type PeerMachineRpcDirectFallbackReasonCodeV1,
     type PeerMachineRpcDirectRequestV1,
+    type PeerMachineRpcDirectRequestV2,
     type PeerMachineRpcDirectResponseV1,
+    type PeerMachineRpcDirectResponseV2,
     type PeerRouteNonceProofV1,
     type SignedDirectRouteGrantV1,
+    type SignedDirectRouteGrantV2,
 } from '@happier-dev/protocol';
 import { createPeerRouteViabilityCache } from '@happier-dev/peer-mediation';
 
@@ -33,6 +39,11 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
 
 import { resolvePeerLoopbackRouteAvailability } from '../loopback/resolvePeerLoopbackRouteAvailability';
+import type { PeerLoopbackRouteAvailabilityResult } from '../loopback/resolvePeerLoopbackRouteAvailability';
+import {
+    resolvePeerRouteSigningReadiness,
+} from '../identity/signingReadiness';
+import { resolvePeerRouteCallerProofNegotiation } from '../identity/proofNegotiation';
 import type { MachineRpcDirectRouteResolution } from './client';
 import { resolveMachineRpcPeerRouteDecision } from './routeDecision';
 
@@ -58,15 +69,22 @@ type OperationResult<T> =
     | Readonly<{ ok: true; value: T }>
     | Readonly<{ ok: false; reasonCode: string }>;
 
+export { resolvePeerRouteSigningReadiness } from '../identity/signingReadiness';
+export type { PeerRouteSigningReadiness } from '../identity/signingReadiness';
+
 function normalizeId(raw: unknown): string {
     return String(raw ?? '').trim();
 }
 
-function fallback(reasonCode: string): MachineRpcDirectRouteResolution {
+function fallback(
+    reasonCode: string,
+    details?: Readonly<{ requiredCapability: string }>,
+): MachineRpcDirectRouteResolution {
     return {
         kind: 'fallback',
         receipt: PEER_MEDIATION_RECEIPTS.routeFallback,
         reasonCode,
+        ...details,
     };
 }
 
@@ -111,12 +129,22 @@ async function fetchJson(params: Readonly<{
     url: string;
     init: RequestInit;
     timeoutMs?: number;
+    signal?: AbortSignal;
 }>): Promise<Readonly<{ ok: boolean; status: number; body: unknown }>> {
     const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0
         ? params.timeoutMs
         : MACHINE_RPC_DIRECT_FETCH_TIMEOUT_MS;
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    const externalSignal = params.signal;
+    const forwardExternalAbort = controller && externalSignal ? () => controller.abort() : null;
+    if (controller && externalSignal && forwardExternalAbort) {
+        if (externalSignal.aborted) {
+            controller.abort();
+        } else {
+            externalSignal.addEventListener('abort', forwardExternalAbort, { once: true });
+        }
+    }
     try {
         const response = await fetch(params.url, {
             ...params.init,
@@ -129,6 +157,9 @@ async function fetchJson(params: Readonly<{
         };
     } finally {
         if (timeoutId) clearTimeout(timeoutId);
+        if (externalSignal && forwardExternalAbort) {
+            externalSignal.removeEventListener('abort', forwardExternalAbort);
+        }
     }
 }
 
@@ -179,6 +210,61 @@ async function requestMachineRpcRouteGrant(input: Readonly<{
             };
         }
         const parsed = SignedDirectRouteGrantV1Schema.safeParse(body.grant);
+        return parsed.success
+            ? { ok: true, value: parsed.data }
+            : { ok: false, reasonCode: 'grant_invalid' };
+    } catch {
+        return { ok: false, reasonCode: 'grant_missing' };
+    }
+}
+
+async function requestMachineRpcRouteGrantV2(input: Readonly<{
+    server: TargetServer;
+    credentials: AuthCredentials;
+    machineId: string;
+    method: string;
+    endpointFingerprint: string;
+    ephemeralPublicKeyBase64Url: string;
+    timeoutMs?: number;
+}>): Promise<OperationResult<SignedDirectRouteGrantV2>> {
+    try {
+        const response = await fetchJson({
+            url: joinBaseAndPath(input.server.serverUrl, '/v1/machines/peer/mediation/route-grants'),
+            timeoutMs: input.timeoutMs,
+            init: {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${input.credentials.token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    v: 2,
+                    kind: 'ephemeral_ed25519',
+                    ephemeralPublicKeyBase64Url: input.ephemeralPublicKeyBase64Url,
+                    machineId: input.machineId,
+                    flowKind: 'machine_rpc',
+                    routeKind: 'loopback_direct',
+                    endpointFingerprint: input.endpointFingerprint,
+                    ttlMs: DIRECT_ROUTE_GRANT_TTL_MS.loopbackMachineRpcDefault,
+                    scope: {
+                        kind: 'machine_rpc',
+                        rpcScopeId: `${input.machineId}:${input.method}`,
+                        allowedMethods: [input.method],
+                        maxCalls: 1,
+                        maxIdleMs: MACHINE_RPC_DIRECT_GRANT_MAX_IDLE_MS,
+                    },
+                }),
+            },
+        });
+        if (!response.ok) return { ok: false, reasonCode: 'grant_missing' };
+        const body = response.body as { ok?: unknown; reasonCode?: unknown; grant?: unknown } | null;
+        if (body?.ok !== true) {
+            return {
+                ok: false,
+                reasonCode: typeof body?.reasonCode === 'string' ? body.reasonCode : 'grant_missing',
+            };
+        }
+        const parsed = SignedDirectRouteGrantV2Schema.safeParse(body.grant);
         return parsed.success
             ? { ok: true, value: parsed.data }
             : { ok: false, reasonCode: 'grant_invalid' };
@@ -261,11 +347,11 @@ async function postLoopbackProbe(input: Readonly<{
 }
 
 function fallbackDirectResponse(
-    request: PeerMachineRpcDirectRequestV1,
+    request: PeerMachineRpcDirectRequestV1 | PeerMachineRpcDirectRequestV2,
     reasonCode: PeerMachineRpcDirectFallbackReasonCodeV1,
-): PeerMachineRpcDirectResponseV1 {
+): PeerMachineRpcDirectResponseV1 | PeerMachineRpcDirectResponseV2 {
     return {
-        v: 1,
+        v: request.v,
         ok: false,
         receipt: PEER_MEDIATION_RECEIPTS.rpcFellBackToServer,
         requestId: request.requestId,
@@ -287,29 +373,80 @@ export async function resolveProductionMachineRpcDirectRoute(input: Readonly<{
         serverId: server.serverId,
         timeoutMs: input.timeoutMs ?? MACHINE_RPC_DIRECT_FETCH_TIMEOUT_MS,
     }).catch(() => null);
-    const endpoint = readEndpointFromMachineState({
-        serverId: server.serverId,
-        machineId: input.machineId,
-    });
-    const decision = resolveMachineRpcPeerRouteDecision({
+    const policyDecision = resolveMachineRpcPeerRouteDecision({
         method: input.method,
         serverFeatures,
-        topologyAvailable: Boolean(endpoint),
+        topologyAvailable: true,
         grantStatus: 'valid',
     });
-    if (decision.kind !== 'direct_allowed') {
+    if (policyDecision.kind !== 'direct_allowed') {
         return {
             kind: 'fallback',
             receipt: PEER_MEDIATION_RECEIPTS.routeFallback,
-            reasonCode: decision.reasonCode,
+            reasonCode: policyDecision.reasonCode,
         };
     }
-    if (!endpoint) return fallback('topology_unavailable');
 
     const credentials = await TokenStorage.getCredentialsForServerUrl(server.serverUrl, {
         serverId: server.serverId,
     });
     if (!credentials) return fallback('grant_missing');
+    const signingReadiness = resolvePeerRouteSigningReadiness(credentials);
+    if (signingReadiness.status === 'unavailable') {
+        const preflight = resolvePeerRouteCallerProofNegotiation({ credentials, serverFeatures });
+        if (preflight.kind === 'unavailable') {
+            return fallback(preflight.reasonCode, preflight.requiredCapability
+                ? { requiredCapability: preflight.requiredCapability }
+                : undefined);
+        }
+        if (preflight.kind !== 'ephemeral_v2_endpoint_required') return fallback('grant_invalid');
+        const endpoint = readEndpointFromMachineState({
+            serverId: server.serverId,
+            machineId: input.machineId,
+        });
+        const negotiation = resolvePeerRouteCallerProofNegotiation({ credentials, serverFeatures, endpoint });
+        if (negotiation.kind === 'unavailable') {
+            return fallback(negotiation.reasonCode, negotiation.requiredCapability
+                ? { requiredCapability: negotiation.requiredCapability }
+                : undefined);
+        }
+        if (negotiation.kind !== 'ephemeral_v2' || !endpoint) return fallback('grant_invalid');
+
+        const proofHandle = createEphemeralPeerRouteProofHandleV2({ randomBytes: getRandomBytes });
+        try {
+            const grant = await requestMachineRpcRouteGrantV2({
+                server,
+                credentials,
+                machineId: input.machineId,
+                method: input.method,
+                endpointFingerprint: endpoint.endpointFingerprint,
+                ephemeralPublicKeyBase64Url: proofHandle.publicKeyBase64Url,
+                timeoutMs: input.timeoutMs,
+            });
+            if (!grant.ok) return fallback(grant.reasonCode);
+            const proof = proofHandle.sign(grant.value);
+            return {
+                kind: 'selected',
+                receipt: PEER_MEDIATION_RECEIPTS.routeSelected,
+                endpoint: {
+                    url: endpoint.url,
+                    endpointFingerprint: endpoint.endpointFingerprint,
+                },
+                grant: grant.value,
+                proof,
+            };
+        } catch {
+            return fallback('grant_invalid');
+        } finally {
+            proofHandle.dispose();
+        }
+    }
+
+    const endpoint = readEndpointFromMachineState({
+        serverId: server.serverId,
+        machineId: input.machineId,
+    });
+    if (!endpoint) return fallback('topology_unavailable');
 
     const requestGrant = async () => await requestMachineRpcRouteGrant({
         server,
@@ -349,7 +486,11 @@ export async function resolveProductionMachineRpcDirectRoute(input: Readonly<{
             request,
             timeoutMs: input.timeoutMs,
         }),
-    }).catch(() => fallback('topology_unavailable'));
+    }).catch((): PeerLoopbackRouteAvailabilityResult => ({
+        kind: 'fallback',
+        receipt: PEER_MEDIATION_RECEIPTS.routeFallback,
+        reasonCode: 'topology_unavailable',
+    }));
     if (availability.kind === 'fallback') {
         return availability;
     }
@@ -377,13 +518,15 @@ export async function resolveProductionMachineRpcDirectRoute(input: Readonly<{
 
 export async function postProductionMachineRpcDirect(input: Readonly<{
     url: string;
-    request: PeerMachineRpcDirectRequestV1;
+    request: PeerMachineRpcDirectRequestV1 | PeerMachineRpcDirectRequestV2;
     timeoutMs?: number;
-}>): Promise<PeerMachineRpcDirectResponseV1> {
+    signal?: AbortSignal;
+}>): Promise<PeerMachineRpcDirectResponseV1 | PeerMachineRpcDirectResponseV2> {
     try {
         const response = await fetchJson({
             url: input.url,
             timeoutMs: input.timeoutMs,
+            signal: input.signal,
             init: {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -393,7 +536,9 @@ export async function postProductionMachineRpcDirect(input: Readonly<{
         if (!response.ok) {
             return fallbackDirectResponse(input.request, 'topology_unavailable');
         }
-        const parsed = PeerMachineRpcDirectResponseV1Schema.safeParse(response.body);
+        const parsed = input.request.v === 2
+            ? PeerMachineRpcDirectResponseV2Schema.safeParse(response.body)
+            : PeerMachineRpcDirectResponseV1Schema.safeParse(response.body);
         return parsed.success ? parsed.data : fallbackDirectResponse(input.request, 'invalid_request');
     } catch {
         return fallbackDirectResponse(input.request, 'topology_unavailable');

@@ -17,11 +17,11 @@ export type WorkspaceScmStashDetailsViewProps = Readonly<{
 
 export const WorkspaceScmStashDetailsView = React.memo((props: WorkspaceScmStashDetailsViewProps) => {
     const adapter = React.useMemo<ScmStashDetailsAdapter>(() => ({
-        list: () => machineScmStashList(props.machineId, { cwd: props.rootPath }),
-        show: (stashRef) => machineScmStashShow(props.machineId, { cwd: props.rootPath, stashRef }),
-        pop: (stashRef) => machineScmStashPop(props.machineId, { cwd: props.rootPath, stashRef }),
-        drop: (stashRef) => machineScmStashDrop(props.machineId, { cwd: props.rootPath, stashRef }),
-    }), [props.machineId, props.rootPath]);
+        list: () => machineScmStashList(props.machineId, { cwd: props.rootPath }, { serverId: props.serverId }),
+        show: (stashRef) => machineScmStashShow(props.machineId, { cwd: props.rootPath, stashRef }, { serverId: props.serverId }),
+        pop: (stashRef) => machineScmStashPop(props.machineId, { cwd: props.rootPath, stashRef }, { serverId: props.serverId }),
+        drop: (stashRef) => machineScmStashDrop(props.machineId, { cwd: props.rootPath, stashRef }, { serverId: props.serverId }),
+    }), [props.machineId, props.rootPath, props.serverId]);
 
     return (
         <ScmStashDetailsCore

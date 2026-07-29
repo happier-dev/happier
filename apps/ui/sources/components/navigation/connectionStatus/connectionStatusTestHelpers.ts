@@ -59,20 +59,27 @@ export function installConnectionStatusCommonModuleMocks(
         };
     });
 
-    vi.mock('@/sync/domains/server/serverProfiles', async () => {
+    vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+        const { createPartialServerProfilesModuleMock } = await import('@/dev/testkit/mocks/serverProfiles');
         const activeOptions = connectionStatusModuleState.options;
         if (activeOptions.serverProfiles) {
-            return await activeOptions.serverProfiles();
+            return createPartialServerProfilesModuleMock(importOriginal, {
+                overrides: await activeOptions.serverProfiles() as Partial<typeof import('@/sync/domains/server/serverProfiles')>,
+            });
         }
 
-        return {
-            areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
-            getActiveServerId: () => '',
-            getActiveServerSnapshot: () => null,
-            listServerProfiles: () => [],
-            resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => profile.serverIdentityId ?? profile.id,
-            subscribeActiveServer: () => () => {},
-        };
+        return createPartialServerProfilesModuleMock(importOriginal, {
+            overrides: {
+                getActiveServerId: () => '',
+                getActiveServerSnapshot: () => ({
+                    serverId: '',
+                    serverUrl: '',
+                    generation: 0,
+                }),
+                listServerProfiles: () => [],
+                subscribeActiveServer: () => () => {},
+            },
+        });
     });
 
     vi.mock('@/sync/domains/state/storage', async (importOriginal) => {

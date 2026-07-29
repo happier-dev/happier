@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
@@ -24,6 +23,9 @@ import { serverFetch } from '@/sync/http/client';
 import { t } from '@/text';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 import { useMachineDoctorSnapshot } from '@/components/machines/doctorSnapshot/useMachineDoctorSnapshot';
 import { buildDiagnosisReport, type DiagnosisFinding, type DiagnosisReport, type ServerDiagnosticsStatus } from './engine/diagnosisEngine';
@@ -168,6 +170,7 @@ async function probeServerDiagnostics(timeoutMs: number): Promise<ServerDiagnost
 export const DiagnosisView = React.memo(function DiagnosisView() {
     const router = useRouter();
     const { theme } = useUnistyles();
+    const copyFeedback = useTemporaryCopyFeedback();
     const styles = diagnosisStyles;
     const { fetchMachineDoctorSnapshot, readMachineDoctorSnapshot } = useMachineDoctorSnapshot();
 
@@ -265,8 +268,12 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
 
     const [copying, copyReportJson] = useHappyAction(async () => {
         if (!report) return;
-        await Clipboard.setStringAsync(JSON.stringify(report, null, 2));
-        Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: t('diagnosis.actions.copyReport') }));
+        const copied = await setClipboardStringSafe(JSON.stringify(report, null, 2));
+        if (!copied) {
+            Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
+            return;
+        }
+        copyFeedback.markCopied('report');
     });
 
     const [parsing, parsePasted] = useHappyAction(async () => {
@@ -337,6 +344,7 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                         subtitle={t('diagnosis.actions.copyReportSubtitle')}
                         icon={<Ionicons name="copy-outline" size={24} color={theme.colors.accent.indigo} />}
                         onPress={copyReportJson}
+                        rightElement={<CopiedPill visible={copyFeedback.isCopied('report')} testID="diagnosis-copy-feedback" />}
                         disabled={!report}
                         loading={copying}
                         showChevron={false}

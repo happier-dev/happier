@@ -275,6 +275,38 @@ describe('SessionAutomationsScreen', () => {
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/automations/new');
     });
 
+    it('uses the machine-control target when explaining why a scoped session cannot add automations', async () => {
+        sessionState.value = {
+            id: 's1',
+            active: true,
+            encryptionMode: 'plain',
+            metadata: {
+                machineId: 'm1',
+                path: '/tmp/project',
+                flavor: 'claude',
+            },
+        };
+        setStorageStateForSession({
+            session: sessionState.value,
+            machines: {},
+            getProjectForSession: () => null,
+        });
+
+        const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+
+        const add = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Add automation');
+        if (!add) {
+            throw new Error('Add automation pressable was not found');
+        }
+
+        const json = JSON.stringify(screen.tree.toJSON());
+        expect(add.props.accessibilityState?.disabled ?? add.props.disabled).toBe(true);
+        expect(json).toContain('This session can’t be resumed');
+        expect(json).not.toContain('automations.create.missingMachineId');
+    });
+
     it('disables adding an automation when the session is not eligible for existing-session automations', async () => {
         sessionState.value = {
             id: 's1',

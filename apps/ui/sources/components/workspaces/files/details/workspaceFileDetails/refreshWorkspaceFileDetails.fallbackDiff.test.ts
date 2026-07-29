@@ -63,6 +63,15 @@ describe('refreshWorkspaceFileDetails (fallback diff)', () => {
         expect(result.diffContent).toContain('diff --git a/src/new.txt b/src/new.txt');
         expect(result.diffContent).toContain('+hello');
         expect(result.diffContent).toContain('+world');
+        expect(machineScmDiffFileSpy).toHaveBeenCalledWith(
+            'm1',
+            {
+                cwd: '/repo',
+                path: 'src/new.txt',
+                area: 'pending',
+            },
+            { serverId: 'srv1' },
+        );
     });
 
     it('returns the sha256 hash for editable text content', async () => {

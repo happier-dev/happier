@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import * as Clipboard from 'expo-clipboard';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { authAccountApprove } from '@/auth/flows/accountApprove';
@@ -21,6 +20,9 @@ import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { isLoopbackServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -127,6 +129,7 @@ export const AddPhoneSettingsView = React.memo(function AddPhoneSettingsView() {
     });
 
     const [approving, setApproving] = React.useState(false);
+    const copyFeedback = useTemporaryCopyFeedback();
 
     const startPairingWithAlert = React.useCallback(async () => {
         const res = await startPairing();
@@ -226,14 +229,19 @@ export const AddPhoneSettingsView = React.memo(function AddPhoneSettingsView() {
                                     testID="add-phone-pairing-link"
                                     accessibilityRole="button"
                                     onPress={async () => {
-                                        await Clipboard.setStringAsync(deepLink);
-                                        await Modal.alertAsync(t('common.success'), t('common.copied'));
+                                        const copied = await setClipboardStringSafe(deepLink);
+                                        if (!copied) {
+                                            await Modal.alertAsync(t('common.error'), t('items.failedToCopyToClipboard'));
+                                            return;
+                                        }
+                                        copyFeedback.markCopied();
                                     }}
                                     style={styles.linkRow}
                                 >
                                     <Text style={styles.linkText} numberOfLines={3}>
                                         {deepLink}
                                     </Text>
+                                    <CopiedPill visible={copyFeedback.isCopied()} testID="add-phone-pairing-link-copy-feedback" />
                                 </Pressable>
                             ) : null}
 

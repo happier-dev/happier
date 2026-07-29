@@ -9,9 +9,6 @@ describe('native viewability observation', () => {
             info: { viewableItems: [] },
             itemCount: 4,
             layoutHeight: 812,
-            listOrientation: 'standard',
-            runtimeAnchors: [],
-            sessionId: 'session-a',
             syncTuning: {
                 ...loadSyncTuning(),
                 transcriptViewportTelemetryEnabled: false,

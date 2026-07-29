@@ -16,6 +16,7 @@ import {
     listDaemonPromptAssetTypes,
     uploadDaemonPromptAsset,
 } from '@/sync/domains/transfers/runtime/transferRuntime';
+import type { TransferFinalizeRecoveryFailure } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/directTransferFinalizeRecovery';
 
 type MachinePromptAssetsOpts = Readonly<{
     serverId?: string | null;
@@ -61,7 +62,7 @@ export async function machinePromptAssetsWrite(
     machineId: string,
     input: PromptAssetWriteRequest,
     opts?: MachinePromptAssetsOpts,
-): Promise<PromptAssetMutationResponseV1> {
+): Promise<PromptAssetMutationResponseV1 | TransferFinalizeRecoveryFailure<PromptAssetMutationResponseV1>> {
     return await uploadDaemonPromptAsset(machineId, input, opts);
 }
 

@@ -13,6 +13,38 @@ vi.mock('../../shell/presentation/ToolSectionView', () => ({
 }));
 
 describe('CodeSearchView', () => {
+    it('renders aggregate-only positive search results as unavailable details instead of an empty result', async () => {
+        const { CodeSearchView } = await import('./CodeSearchView');
+        const tool = makeToolCall({
+            name: 'CodeSearch',
+            state: 'completed',
+            input: { query: 'test' },
+            result: { totalMatches: 4, matchDetailsUnavailable: true, truncated: true },
+        });
+
+        const tree = (await renderScreen(React.createElement(CodeSearchView, makeToolViewProps(tool)))).tree;
+        const renderedText = collectHostText(tree).join(' ').replace(/\s+/g, ' ');
+
+        expect(renderedText).toContain('Details unavailable');
+        expect(renderedText).not.toContain('No matches');
+    });
+
+    it('renders a true zero-match result distinctly from unavailable details', async () => {
+        const { CodeSearchView } = await import('./CodeSearchView');
+        const tool = makeToolCall({
+            name: 'CodeSearch',
+            state: 'completed',
+            input: { query: 'test' },
+            result: { totalMatches: 0, matches: [] },
+        });
+
+        const tree = (await renderScreen(React.createElement(CodeSearchView, makeToolViewProps(tool)))).tree;
+        const renderedText = collectHostText(tree).join(' ').replace(/\s+/g, ' ');
+
+        expect(renderedText).toContain('No matches');
+        expect(renderedText).not.toContain('Details unavailable');
+    });
+
     it('shows a compact subset of matches by default', async () => {
         const { CodeSearchView } = await import('./CodeSearchView');
 

@@ -9,6 +9,7 @@ export function PopoverBackdrop(props: Readonly<{
     backdrop: boolean | Readonly<{ enabled?: boolean }> | undefined;
     backdropBlocksOutsidePointerEvents: boolean;
     backdropOutsidePointerEventsMode: PopoverOutsidePointerEventsMode;
+    backdropPointerEventsEnabled: boolean;
     backdropEffect: PopoverBackdropEffect;
     backdropBlurOnWeb: Readonly<{ px?: number; tintColor?: string }> | undefined;
     backdropSpotlight: boolean | Readonly<{ padding?: number }>;
@@ -62,7 +63,7 @@ export function PopoverBackdrop(props: Readonly<{
             {props.backdropBlocksOutsidePointerEvents ? (
                 <Pressable
                     onPress={props.onRequestClose}
-                    pointerEvents={props.portalOpacity === 0 ? 'none' : 'auto'}
+                    pointerEvents={props.backdropPointerEventsEnabled ? 'auto' : 'none'}
                     onMoveShouldSetResponderCapture={() => {
                         if (!props.closeOnBackdropPan || !props.onRequestClose) return false;
                         props.onRequestClose();

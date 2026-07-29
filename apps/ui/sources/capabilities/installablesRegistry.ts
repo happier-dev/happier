@@ -201,7 +201,7 @@ function readString(value: unknown): string | null {
 function readPluginProjectionInstallables(
     pluginProjection: Pick<PluginProjectionV2, 'familiesById'> | undefined,
 ): readonly InstallableProjectionEntry[] | null {
-    const entries = pluginProjection?.familiesById.installables?.entriesById;
+    const entries = pluginProjection?.familiesById.managedDependencies?.entriesById;
     if (!entries) return null;
     return Object.values(entries).flatMap((value) => {
         const entry = readRecord(value);

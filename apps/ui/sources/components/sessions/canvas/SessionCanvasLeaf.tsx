@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { SessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
@@ -54,7 +54,7 @@ export function SessionCanvasLeaf(props: SessionCanvasLeafProps) {
                 initialAttachmentDrafts={props.initialAttachmentDrafts}
                 surfaceFocusedOverride={props.surfaceFocused}
                 surfaceVisibleOverride={props.surfaceVisible ?? true}
-                routeAnchorOverride={props.routeAnchor}
+                routeAnchorOverride={Platform.OS === 'web' ? undefined : props.routeAnchor}
             />
         </View>
     );

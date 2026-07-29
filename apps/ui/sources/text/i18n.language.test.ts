@@ -15,4 +15,11 @@ describe('text/i18n language state', () => {
 
         expect(i18n.getPreferredLanguage()).toBe('es');
     });
+
+    it('falls back to canonical English for bundled keys missing from the active locale', () => {
+        i18n.setPreferredLanguageFromSettings('es');
+
+        expect(i18n.t('plugins.inspector.title')).toBe('Plugin Inspector');
+        expect(i18n.t('agentInput.connectedServiceLabel.gemini')).toBe('Google Gemini');
+    });
 });

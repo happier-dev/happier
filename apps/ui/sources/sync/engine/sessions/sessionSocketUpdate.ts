@@ -1,5 +1,5 @@
-import type { NormalizedMessage } from '@/sync/typesRaw';
-import { normalizeRawMessage } from '@/sync/typesRaw';
+import type { NormalizedMessage, RawMessageNormalizationSequenceState } from '@/sync/typesRaw';
+import { normalizeRawMessage, normalizeRawMessageInSequence } from '@/sync/typesRaw';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { ApiMessage } from '@/sync/api/types/apiTypes';
@@ -7,6 +7,10 @@ import { readStoredSessionMessage } from '@/sync/runtime/readStoredSessionConten
 import { markStreamingMessagesAppliedForSessionUiTelemetry } from '@/sync/runtime/performance/sessionUiTelemetry';
 import { recordRealtimeFanoutSocketMessageRoute } from '@/sync/runtime/performance/realtimeFanoutTelemetry';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import {
+    storedSessionMessageAttentionImpact,
+    storedSessionMessageAttentionImpactOrNull,
+} from '@/sync/domains/messages/messageUserAttention';
 import type {
     SessionRealtimeProjectionCandidate,
     SessionRealtimeProjectionMode,
@@ -14,6 +18,10 @@ import type {
 import { decideDurableSessionRealtimeRoute } from '@/sync/domains/session/realtime/sessionRealtimeRouting';
 import { getTaskLifecycleEventFromRawContent, type TaskLifecycleEvent } from './taskLifecycle';
 import { isLegacyMemoryArtifactTranscriptRow } from './legacyMemoryArtifactTranscriptRows';
+import {
+    applyTranscriptObservationMetadata,
+    isRecoveredHistoryTranscriptObservation,
+} from '@/sync/domains/messages/transcriptObservationProvenance';
 
 type SessionMessageEncryption = {
     decryptMessage: (message: any) => Promise<any>;
@@ -101,6 +109,7 @@ type HandleSessionMessageSocketUpdateParams = {
     getSessionProjection?: (sessionId: string) => SessionRealtimeProjectionCandidate | undefined;
     applySessions: (sessions: Array<Omit<Session, 'presence'> & { presence?: 'online' | number }>) => void;
     fetchSessions: () => void;
+    requestSessionShellRefresh?: (sessionId: string) => void;
     applyCacheOnlySessionProjectionPatch?: (params: Readonly<{
         sessionId: string;
         updateData: any;
@@ -111,6 +120,7 @@ type HandleSessionMessageSocketUpdateParams = {
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     enqueueMessages?: (sessionId: string, messages: NormalizedMessage[]) => void;
     onNormalizedMessagesApplied?: (sessionId: string, messages: NormalizedMessage[]) => void;
+    rawMessageNormalizationState?: RawMessageNormalizationSequenceState;
     isMutableToolCall: (sessionId: string, toolUseId: string) => boolean;
     invalidateScmStatus: (sessionId: string) => void;
     isSessionMessagesLoaded: (sessionId: string) => boolean;
@@ -132,6 +142,16 @@ type HandleSessionMessageSocketUpdateParams = {
         seq: number | null;
         messageId?: string;
     }) => void;
+    /**
+     * Invoked when a durable message update is routed away from full transcript apply
+     * (projection-only / stale marking) so side channels (e.g. SCM workspace-mutation
+     * detection) can consume the raw envelope without hydrating the transcript.
+     */
+    onTranscriptSkippedDurableMessage?: (params: Readonly<{
+        sessionId: string;
+        rawMessage: ApiMessage | undefined;
+        updateType: 'new-message' | 'message-updated';
+    }>) => void;
 };
 
 function normalizeMessageSeq(value: unknown): number | null {
@@ -185,8 +205,17 @@ function applyProjectionOnlySessionPatch(params: Readonly<{
     updateType: 'new-message' | 'message-updated';
     applySessions: HandleSessionMessageSocketUpdateParams['applySessions'];
     fetchSessions: () => void;
+    requestSessionShellRefresh?: (sessionId: string) => void;
     applyCacheOnlySessionProjectionPatch?: HandleSessionMessageSocketUpdateParams['applyCacheOnlySessionProjectionPatch'];
 }>): void {
+    if (storedSessionMessageAttentionImpactOrNull(params.rawMessage) === null) {
+        if (params.requestSessionShellRefresh) {
+            params.requestSessionShellRefresh(params.sessionId);
+        } else {
+            params.fetchSessions();
+        }
+        return;
+    }
     if (params.applyCacheOnlySessionProjectionPatch?.({
         sessionId: params.sessionId,
         updateData: params.updateData,
@@ -197,10 +226,15 @@ function applyProjectionOnlySessionPatch(params: Readonly<{
         return;
     }
     if (!params.session) {
-        params.fetchSessions();
+        if (params.requestSessionShellRefresh) {
+            params.requestSessionShellRefresh(params.sessionId);
+        } else {
+            params.fetchSessions();
+        }
         return;
     }
     const currentSeq = params.session.seq ?? 0;
+    const isRecoveredHistory = isRecoveredHistoryTranscriptObservation(params.rawMessage);
     const nextSessionSeq = computeNextSessionSeqFromUpdate({
         currentSessionSeq: currentSeq,
         updateType: 'new-message',
@@ -209,11 +243,11 @@ function applyProjectionOnlySessionPatch(params: Readonly<{
     });
     const updateCreatedAt = finiteNumber(params.updateData?.createdAt);
     const messageCreatedAt = finiteNumber(params.rawMessage?.createdAt);
-    const nextMeaningfulActivityAt = messageCreatedAt ?? updateCreatedAt;
+    const nextMeaningfulActivityAt = isRecoveredHistory ? null : messageCreatedAt ?? updateCreatedAt;
     const currentUpdatedAt = finiteNumber(params.session.updatedAt) ?? 0;
     const currentMeaningfulActivityAt = finiteNumber(params.session.meaningfulActivityAt);
     const advancesSeq = nextSessionSeq > currentSeq;
-    const advancesUpdatedAt = updateCreatedAt !== null && updateCreatedAt > currentUpdatedAt;
+    const advancesUpdatedAt = !isRecoveredHistory && updateCreatedAt !== null && updateCreatedAt > currentUpdatedAt;
     const advancesMeaningfulActivityAt = nextMeaningfulActivityAt !== null
         && (currentMeaningfulActivityAt === null || nextMeaningfulActivityAt > currentMeaningfulActivityAt);
 
@@ -272,6 +306,8 @@ function buildMessageSessionProjectionPatch(params: Readonly<{
     updateType: 'new-message' | 'message-updated';
 }>): SessionProjectionPatch {
     const currentSeq = params.session.seq ?? 0;
+    const isRecoveredHistory = isRecoveredHistoryTranscriptObservation(params.rawMessage);
+    const attentionImpact = storedSessionMessageAttentionImpact(params.rawMessage);
     const nextSessionSeq = computeNextSessionSeqFromUpdate({
         currentSessionSeq: currentSeq,
         updateType: 'new-message',
@@ -280,7 +316,9 @@ function buildMessageSessionProjectionPatch(params: Readonly<{
     });
     const updateCreatedAt = finiteNumber(params.updateData?.createdAt);
     const messageCreatedAt = finiteNumber(params.rawMessage?.createdAt);
-    const nextMeaningfulActivityAt = messageCreatedAt ?? updateCreatedAt;
+    const nextMeaningfulActivityAt = attentionImpact.affectsMeaningfulActivity
+        ? messageCreatedAt ?? updateCreatedAt
+        : null;
     const currentUpdatedAt = finiteNumber(params.session.updatedAt) ?? 0;
     const currentMeaningfulActivityAt = finiteNumber(params.session.meaningfulActivityAt);
 
@@ -290,7 +328,8 @@ function buildMessageSessionProjectionPatch(params: Readonly<{
     // Loaded message edits can arrive for every streaming content update. When they only advance the
     // socket event timestamp, the transcript apply below is sufficient and a session projection update
     // just adds session-list churn.
-    const advancesUpdatedAt = updateCreatedAt !== null
+    const advancesUpdatedAt = !isRecoveredHistory
+        && updateCreatedAt !== null
         && updateCreatedAt > currentUpdatedAt
         && (params.updateType === 'new-message' || advancesSeq || advancesMeaningfulActivityAt);
 
@@ -336,6 +375,7 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
     const rawMessage = 'message' in body
         ? (body as { message?: ApiMessage }).message
         : undefined;
+    const isRecoveredHistory = isRecoveredHistoryTranscriptObservation(rawMessage);
     const updateType = inferLifecycle ? 'new-message' : 'message-updated';
     const prevMaterializedMaxSeq = getSessionMaterializedMaxSeq(sessionId);
     const sessionMessagesLoaded = isSessionMessagesLoaded(sessionId);
@@ -397,6 +437,7 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
             updateType,
             applySessions,
             fetchSessions,
+            requestSessionShellRefresh: params.requestSessionShellRefresh,
             applyCacheOnlySessionProjectionPatch: params.applyCacheOnlySessionProjectionPatch,
         });
         if (normalizedMessageSeq !== null) {
@@ -407,6 +448,7 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
             seq: normalizedMessageSeq,
             messageId: rawMessage?.id,
         });
+        params.onTranscriptSkippedDurableMessage?.({ sessionId, rawMessage, updateType });
         return;
     }
     if (realtimeProjectionMode === 'enabled' && routeDecision.route === 'markTranscriptStale') {
@@ -419,6 +461,7 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
             updateType,
             applySessions,
             fetchSessions,
+            requestSessionShellRefresh: params.requestSessionShellRefresh,
             applyCacheOnlySessionProjectionPatch: params.applyCacheOnlySessionProjectionPatch,
         });
         if (normalizedMessageSeq !== null) {
@@ -429,6 +472,7 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
             seq: normalizedMessageSeq,
             messageId: rawMessage?.id,
         });
+        params.onTranscriptSkippedDurableMessage?.({ sessionId, rawMessage, updateType });
         return;
     }
 
@@ -476,7 +520,19 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
                             ? Math.trunc(decrypted.seq)
                             : undefined
                     );
-            const normalizeMessage = () => normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: normalizedSeq });
+            const normalizeMessage = () => params.rawMessageNormalizationState
+                ? normalizeRawMessageInSequence({
+                    id: decrypted.id,
+                    localId: decrypted.localId,
+                    createdAt: decrypted.createdAt,
+                    raw: decrypted.content,
+                    seq: normalizedSeq,
+                    messageRole: decrypted.messageRole ?? undefined,
+                }, params.rawMessageNormalizationState)
+                : normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, {
+                    seq: normalizedSeq,
+                    messageRole: decrypted.messageRole ?? undefined,
+                });
             lastMessage = telemetryFields
                 ? syncPerformanceTelemetry.measure(
                     'sync.sessions.socket.message.normalize',
@@ -488,7 +544,12 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
                 )
                 : normalizeMessage();
 
-            const { isTaskComplete, isTaskStarted, lifecycleEvent } = inferLifecycle
+            if (lastMessage) {
+                applyTranscriptObservationMetadata(lastMessage, rawMessage);
+            }
+
+            const shouldInferLifecycle = inferLifecycle && !isRecoveredHistory;
+            const { isTaskComplete, isTaskStarted, lifecycleEvent } = shouldInferLifecycle
                 ? inferTaskLifecycleFromMessageContent(decrypted.content, decrypted.createdAt)
                 : { isTaskComplete: false, isTaskStarted: false, lifecycleEvent: null };
             const latestTurnStatus = latestTurnStatusFromLifecycleEvent(lifecycleEvent);
@@ -510,8 +571,8 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
                     updateType,
                 });
                 const lifecyclePatch: Partial<Session> = {
-                    ...(inferLifecycle && isTaskComplete ? { thinking: false } : {}),
-                    ...(inferLifecycle && isTaskStarted && shouldApplyLifecycleStatus ? { thinking: true } : {}),
+                    ...(shouldInferLifecycle && isTaskComplete ? { thinking: false } : {}),
+                    ...(shouldInferLifecycle && isTaskStarted && shouldApplyLifecycleStatus ? { thinking: true } : {}),
                     ...(shouldApplyLifecycleStatus ? {
                         latestTurnStatus,
                         latestTurnStatusObservedAt: lifecycleEvent?.createdAt ?? updateData.createdAt,

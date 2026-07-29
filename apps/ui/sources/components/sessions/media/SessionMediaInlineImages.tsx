@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { Image, Pressable, View, type ImageLoadEvent } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Image, type ImageLoadEventData } from 'expo-image';
 import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -29,6 +30,14 @@ type SessionMediaInlineRenderableSummary =
     | SessionMediaInlineImageSummary
     | SessionMediaInlineMediaSummary;
 
+const inlineImageFillStyle = {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+} as const;
+
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         marginTop: 2,
@@ -43,10 +52,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderWidth: 1,
         borderColor: theme.colors.border.default,
         backgroundColor: theme.colors.surface.elevated,
-    },
-    image: {
-        width: '100%',
-        height: '100%',
     },
     placeholder: {
         flex: 1,
@@ -138,6 +143,7 @@ function SessionMediaInlineVideoTile(props: Readonly<{
     media: SessionMediaInlineVideoAvailableSummary;
     testIdPrefix: string;
     onOpenPath: (path: string) => void;
+    fileOpenEnabled: boolean;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -154,12 +160,12 @@ function SessionMediaInlineVideoTile(props: Readonly<{
     return (
         <Pressable
             testID={`${props.testIdPrefix}-inline-video:${props.media.path}`}
-            accessibilityRole="button"
+            accessibilityRole={props.fileOpenEnabled ? 'button' : 'image'}
             accessibilityLabel={accessibilityLabel}
             accessibilityHint={preview.status === 'error'
                 ? t('files.sessionMedia.previewUnavailableA11y')
                 : undefined}
-            onPress={() => props.onOpenPath(props.media.path)}
+            onPress={props.fileOpenEnabled ? () => props.onOpenPath(props.media.path) : undefined}
             style={[styles.tile, { width: 168, height: 104 }]}
         >
             {preview.status === 'loaded' ? (
@@ -189,6 +195,7 @@ function SessionMediaInlineImageTile(props: Readonly<{
     imageIndex: number;
     testIdPrefix: string;
     onOpenPath: (path: string) => void;
+    fileOpenEnabled: boolean;
     onOpenPreview: (index: number) => void;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
@@ -203,8 +210,8 @@ function SessionMediaInlineImageTile(props: Readonly<{
         setLoadedDimensions(null);
     }, [props.media.path, props.media.sha256]);
 
-    const handleImageLoad = React.useCallback((event: ImageLoadEvent) => {
-        const dimensions = resolveSessionMediaInlineImageDimensions(event.nativeEvent.source);
+    const handleImageLoad = React.useCallback((event: ImageLoadEventData) => {
+        const dimensions = resolveSessionMediaInlineImageDimensions(event.source);
         if (!dimensions) return;
         setLoadedDimensions((current) => (
             current?.width === dimensions.width && current.height === dimensions.height
@@ -221,31 +228,34 @@ function SessionMediaInlineImageTile(props: Readonly<{
         mimeType: props.media.mimeType,
         sizeBytes: props.media.sizeBytes,
     });
+    const actionable = preview.status !== 'error' || props.fileOpenEnabled;
 
     return (
         <Pressable
             testID={`${props.testIdPrefix}-inline-image:${props.media.path}`}
-            accessibilityRole="button"
+            accessibilityRole={actionable ? 'button' : 'image'}
             accessibilityLabel={resolveInlineImageAccessibilityLabel(props.media)}
             accessibilityHint={preview.status === 'error'
                 ? t('files.sessionMedia.previewUnavailableA11y')
                 : undefined}
-            onPress={() => {
-                if (preview.status === 'error') {
-                    props.onOpenPath(props.media.path);
-                    return;
+            onPress={actionable
+                ? () => {
+                    if (preview.status === 'error') {
+                        props.onOpenPath(props.media.path);
+                        return;
+                    }
+                    props.onOpenPreview(props.imageIndex);
                 }
-                props.onOpenPreview(props.imageIndex);
-            }}
+                : undefined}
             style={[styles.tile, thumbnailSize]}
         >
             {preview.status === 'loaded' ? (
                 <Image
                     testID={`${props.testIdPrefix}-inline-image-preview:${props.media.path}`}
                     source={{ uri: preview.uri }}
-                    resizeMode="contain"
+                    contentFit="contain"
                     onLoad={handleImageLoad}
-                    style={styles.image}
+                    style={inlineImageFillStyle}
                 />
             ) : (
                 <View style={styles.placeholder}>
@@ -257,6 +267,45 @@ function SessionMediaInlineImageTile(props: Readonly<{
                 </View>
             )}
         </Pressable>
+    );
+}
+
+function SessionMediaInlineInertTile(props: Readonly<{
+    media: SessionMediaInlineImageAvailableSummary | SessionMediaInlineVideoAvailableSummary;
+    testIdPrefix: string;
+}>): React.ReactElement {
+    const { theme } = useUnistyles();
+    const styles = stylesheet;
+    const video = isInlineVideo(props.media);
+    const size = video
+        ? { width: 168, height: 104 }
+        : resolveSessionMediaInlineImageLayout({
+            persistedDimensions: props.media,
+            loadedDimensions: null,
+        });
+
+    return (
+        <View
+            testID={`${props.testIdPrefix}-inline-${video ? 'video' : 'image'}:${props.media.path}`}
+            accessibilityRole="image"
+            accessibilityLabel={video
+                ? resolveInlineVideoAccessibilityLabel(props.media)
+                : resolveInlineImageAccessibilityLabel(props.media)}
+            style={[styles.tile, size]}
+        >
+            <View style={styles.placeholder}>
+                <Ionicons
+                    name={video ? 'videocam-outline' : 'image-outline'}
+                    size={video ? 24 : 22}
+                    color={theme.colors.text.secondary}
+                />
+                {video ? (
+                    <Text style={styles.videoLabel} numberOfLines={2}>
+                        {props.media.name}
+                    </Text>
+                ) : null}
+            </View>
+        </View>
     );
 }
 
@@ -289,6 +338,8 @@ export const SessionMediaInlineImages = React.memo(function SessionMediaInlineIm
     sessionId: string;
     media: readonly SessionMediaInlineRenderableSummary[];
     onOpenPath: (path: string) => void;
+    fileOpenEnabled: boolean;
+    mediaPreviewEnabled: boolean;
     testIdPrefix?: string;
 }>) {
     const styles = stylesheet;
@@ -338,6 +389,12 @@ export const SessionMediaInlineImages = React.memo(function SessionMediaInlineIm
                         media={entry.media}
                         testIdPrefix={testIdPrefix}
                     />
+                ) : !props.mediaPreviewEnabled ? (
+                    <SessionMediaInlineInertTile
+                        key={`${entry.media.id}:${entry.media.path}`}
+                        media={entry.media}
+                        testIdPrefix={testIdPrefix}
+                    />
                 ) : isInlineVideo(entry.media) ? (
                     <SessionMediaInlineVideoTile
                         key={`${entry.media.id}:${entry.media.path}`}
@@ -345,6 +402,7 @@ export const SessionMediaInlineImages = React.memo(function SessionMediaInlineIm
                         media={entry.media}
                         testIdPrefix={testIdPrefix}
                         onOpenPath={props.onOpenPath}
+                        fileOpenEnabled={props.fileOpenEnabled}
                     />
                 ) : (
                     <SessionMediaInlineImageTile
@@ -354,6 +412,7 @@ export const SessionMediaInlineImages = React.memo(function SessionMediaInlineIm
                         imageIndex={entry.modalIndex ?? 0}
                         testIdPrefix={testIdPrefix}
                         onOpenPath={props.onOpenPath}
+                        fileOpenEnabled={props.fileOpenEnabled}
                         onOpenPreview={(imageIndex) => {
                             const modalImages = images.flatMap((imageEntry) => (
                                 imageEntry.modalImage ? [imageEntry.modalImage] : []

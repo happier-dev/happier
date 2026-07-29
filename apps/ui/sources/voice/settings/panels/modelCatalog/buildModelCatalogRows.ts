@@ -5,6 +5,8 @@ import type {
 } from '@happier-dev/protocol';
 import {
   getDefaultModelPackId,
+  getModelPackCatalogEntry,
+  isPublishedModelPackCatalogEntry,
   listModelPackCatalogEntries,
   resolveCanonicalModelPackId,
 } from '@happier-dev/protocol';
@@ -24,6 +26,7 @@ export type ModelCatalogRowState =
   | 'ready'
   | 'evicted'
   | 'error'
+  | 'unsupported'
   /**
    * Daemon status could not be fetched, so the pack's true install/readiness is
    * unknown. Distinct from `not_installed` (a daemon that answered and reported
@@ -50,6 +53,9 @@ export type ModelCatalogRow = Readonly<{
   canInstall: boolean;
   /** Whether a remove action is offered for this row. */
   canRemove: boolean;
+  /** Exact daemon-projected consent review for an external plugin pack. */
+  licenseReview: DaemonVoiceInferenceModelStatus['licenseReview'] | null;
+  sourcePluginId: string | null;
 }>;
 
 export type ModelCatalogRowGroups = Readonly<{
@@ -65,6 +71,11 @@ export type BuildModelCatalogRowsParams = Readonly<{
    * uninstallable `unknown` state regardless of `statuses`.
    */
   statusUnavailable?: boolean;
+  /** Last failed mutation, retained independently from status reconciliation. */
+  actionError?: Readonly<{
+    packId: string;
+    operation: 'install' | 'remove';
+  }> | null;
   /** Currently-selected STT default pack id (may be a legacy id), or null. */
   selectedSttPackId: string | null;
   /** Currently-selected TTS default pack id (may be a legacy id), or null. */
@@ -77,7 +88,7 @@ export type BuildModelCatalogRowsParams = Readonly<{
  * readable label from the model id (titleized segments) rather than inventing a
  * parallel name registry. Strings here are identifiers, not user copy.
  */
-function deriveDisplayName(entry: ModelPackCatalogEntry): string {
+function deriveDisplayName(entry: Pick<ModelPackCatalogEntry, 'packId' | 'model'>): string {
   const source = entry.model.trim().length > 0 ? entry.model : entry.packId;
   const cleaned = source
     .replace(/^sherpa-onnx-/i, '')
@@ -105,6 +116,12 @@ function resolveRowState(status: DaemonVoiceInferenceModelStatus | undefined): {
   if (status.installState === 'not_installed') {
     return { state: 'not_installed', progress: null };
   }
+  // Physical presence remains authoritative after a failed reinstall. The
+  // daemon reports `installed` plus the separate attempt error so the row can
+  // offer both retry and remove without inferring disk state from error text.
+  if (status.lastError) {
+    return { state: 'error', progress: null };
+  }
   // installState === 'installed': prefer live readiness when available.
   switch (status.runtimeState) {
     case 'warming':
@@ -123,7 +140,12 @@ function resolveDefaultPackId(kind: ModelPackKind, selected: string | null): str
   if (trimmed.length > 0) {
     return resolveCanonicalModelPackId(trimmed);
   }
-  return getDefaultModelPackId(kind);
+  const defaultPackId = getDefaultModelPackId(kind);
+  return isPublishedModelPackCatalogEntry(
+    defaultPackId ? getModelPackCatalogEntry(defaultPackId) : null,
+  )
+    ? defaultPackId
+    : null;
 }
 
 function buildRowsForKind(
@@ -131,15 +153,60 @@ function buildRowsForKind(
   statusByPackId: ReadonlyMap<string, DaemonVoiceInferenceModelStatus>,
   selectedPackId: string | null,
   statusUnavailable: boolean,
+  actionError: BuildModelCatalogRowsParams['actionError'],
 ): readonly ModelCatalogRow[] {
   const defaultPackId = resolveDefaultPackId(kind, selectedPackId);
-  return listModelPackCatalogEntries(kind).map((entry) => {
+  const explicitSelectedPackId = typeof selectedPackId === 'string' && selectedPackId.trim().length > 0
+    ? resolveCanonicalModelPackId(selectedPackId)
+    : null;
+  const builtIns = listModelPackCatalogEntries(kind).map((entry) => ({
+    ...entry,
+    external: false as const,
+    publicationAvailable: isPublishedModelPackCatalogEntry(entry),
+  }));
+  const external = [...statusByPackId.values()]
+    .filter((status) => status.kind === kind && status.pluginIdentity !== null)
+    .map((status) => ({
+      packId: status.packId,
+      kind: status.kind,
+      model: status.model,
+      runtimeFamily: status.runtimeFamily ?? null,
+      external: true as const,
+      publicationAvailable: true,
+    }));
+  return [...builtIns, ...external].flatMap((entry): readonly ModelCatalogRow[] => {
     const status = statusByPackId.get(entry.packId);
-    const { state, progress } = statusUnavailable
+    const runtimeSupported = entry.publicationAvailable
+      && status?.runtimeSupported === true
+      && (entry.runtimeFamily === null || status.runtimeFamily === entry.runtimeFamily);
+    const installedByDaemon = status?.installState === 'installed';
+    const explicitlySelected = explicitSelectedPackId === entry.packId;
+    if (
+      !statusUnavailable
+      && (!entry.publicationAvailable || status !== undefined)
+      && !runtimeSupported
+      && !installedByDaemon
+      && !explicitlySelected
+    ) {
+      return [];
+    }
+    const resolved = statusUnavailable
       ? { state: 'unknown' as ModelCatalogRowState, progress: null }
-      : resolveRowState(status);
-    const installed = state === 'installed' || state === 'ready' || state === 'warming' || state === 'evicted';
-    return {
+      : !entry.publicationAvailable
+        ? { state: 'unsupported' as ModelCatalogRowState, progress: null }
+      : !status
+        ? { state: 'unknown' as ModelCatalogRowState, progress: null }
+        : !runtimeSupported
+          ? { state: 'unsupported' as ModelCatalogRowState, progress: null }
+          : resolveRowState(status);
+    const actionFailed = !statusUnavailable && actionError?.packId === entry.packId;
+    const state = actionFailed && entry.publicationAvailable ? 'error' : resolved.state;
+    const progress = actionFailed && entry.publicationAvailable ? null : resolved.progress;
+    const installed = resolved.state === 'installed'
+      || resolved.state === 'ready'
+      || resolved.state === 'warming'
+      || resolved.state === 'evicted';
+    const row: ModelCatalogRow = {
       packId: entry.packId,
       kind: entry.kind,
       displayName: deriveDisplayName(entry),
@@ -150,9 +217,17 @@ function buildRowsForKind(
         typeof status?.residentMemoryBytes === 'number' ? status.residentMemoryBytes : null,
       lastError: status?.lastError ?? null,
       isDefault: defaultPackId === entry.packId,
-      canInstall: state === 'not_installed' || state === 'error',
-      canRemove: installed,
+      canInstall: entry.publicationAvailable
+        && (actionFailed
+          ? actionError?.operation === 'install'
+          : state === 'not_installed' || state === 'error'),
+      canRemove: actionFailed
+        ? actionError?.operation === 'remove' && installedByDaemon
+        : installed || installedByDaemon,
+      licenseReview: status?.licenseReview ?? null,
+      sourcePluginId: status?.pluginIdentity?.pluginId ?? null,
     };
+    return [row];
   });
 }
 
@@ -169,7 +244,19 @@ export function buildModelCatalogRows(params: BuildModelCatalogRowsParams): Mode
   }
   const statusUnavailable = params.statusUnavailable === true;
   return {
-    stt: buildRowsForKind('stt_sherpa', statusByPackId, params.selectedSttPackId, statusUnavailable),
-    tts: buildRowsForKind('tts_sherpa', statusByPackId, params.selectedTtsPackId, statusUnavailable),
+    stt: buildRowsForKind(
+      'stt_sherpa',
+      statusByPackId,
+      params.selectedSttPackId,
+      statusUnavailable,
+      params.actionError,
+    ),
+    tts: buildRowsForKind(
+      'tts_sherpa',
+      statusByPackId,
+      params.selectedTtsPackId,
+      statusUnavailable,
+      params.actionError,
+    ),
   };
 }

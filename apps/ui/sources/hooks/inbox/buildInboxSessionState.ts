@@ -2,11 +2,21 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { deriveSessionAttentionState, deriveSessionAttentionFlags } from '@/sync/domains/session/attention/sessionAttention';
 import { deriveSessionRuntimePresentationState } from '@/sync/domains/session/attention/runtimePresentation';
 import { readStoredSessionMessagesFromStateLike } from '@/sync/domains/messages/readStoredSessionMessages';
+import {
+    deriveLatestPendingRequestObservedAtFromSession,
+    derivePendingRequestFlagsFromSession,
+} from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { listPendingPermissionRequests, listPendingUserActionRequests, type PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import {
+    buildSessionFromListRenderable,
+    isSessionListRenderableNewerThanSession,
+} from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import type { SessionListAttentionRow } from '@/sync/domains/state/storage';
 import type { StorageState } from '@/sync/store/types';
+import { isVoiceConversationCustodySessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export type InboxSessionAttentionEntry = Readonly<{
     session: Session;
@@ -81,6 +91,12 @@ function isSessionListAttentionRow(input: InboxUnreadSessionInput): input is Ses
     return 'session' in input && input.session != null && typeof input.session === 'object';
 }
 
+function isInboxSessionListRenderable(
+    session: InboxUnreadSession,
+): session is SessionListRenderableSession {
+    return !('agentState' in session);
+}
+
 function normalizeInboxUnreadSessionRows(
     sessions: readonly InboxUnreadSessionInput[],
 ): InboxUnreadSessionRow[] {
@@ -130,23 +146,13 @@ function readMessagesForInboxSession(
     return readStoredSessionMessagesFromStateLike(sessionMessagesById?.[sessionId]);
 }
 
-function latestPendingRequestObservedAt(requests: readonly PendingPermissionRequest[]): number | null {
-    let latest: number | null = null;
-    for (const request of requests) {
-        const createdAt = request.createdAt;
-        if (typeof createdAt !== 'number' || !Number.isFinite(createdAt) || createdAt <= 0) continue;
-        latest = latest === null ? createdAt : Math.max(latest, createdAt);
-    }
-    return latest;
-}
-
 function hasFreshPendingInboxAttention(params: Readonly<{
     session: Session;
-    pendingPermissions: readonly PendingPermissionRequest[];
-    pendingUserActions: readonly PendingPermissionRequest[];
+    messages: ReturnType<typeof readMessagesForInboxSession>;
     nowMs: number;
 }>): boolean {
-    if (params.pendingPermissions.length === 0 && params.pendingUserActions.length === 0) return false;
+    const pendingFlags = derivePendingRequestFlagsFromSession(params.session, params.messages);
+    if (!pendingFlags.hasPendingPermissionRequests && !pendingFlags.hasPendingUserActionRequests) return false;
     const runtimePresentation = deriveSessionRuntimePresentationState({
         active: params.session.active,
         activeAt: params.session.activeAt,
@@ -157,12 +163,12 @@ function hasFreshPendingInboxAttention(params: Readonly<{
         latestTurnStatusObservedAt: params.session.latestTurnStatusObservedAt ?? null,
         meaningfulActivityAt: params.session.meaningfulActivityAt ?? null,
         lastRuntimeIssue: params.session.lastRuntimeIssue ?? null,
-        hasPendingPermissionRequests: params.pendingPermissions.length > 0,
-        hasPendingUserActionRequests: params.pendingUserActions.length > 0,
-        pendingRequestObservedAt: latestPendingRequestObservedAt([
-            ...params.pendingPermissions,
-            ...params.pendingUserActions,
-        ]),
+        hasPendingPermissionRequests: pendingFlags.hasPendingPermissionRequests,
+        hasPendingUserActionRequests: pendingFlags.hasPendingUserActionRequests,
+        pendingRequestObservedAt: deriveLatestPendingRequestObservedAtFromSession(
+            params.session,
+            params.messages,
+        ),
         nowMs: params.nowMs,
     });
     return runtimePresentation.freshPermissionRequired || runtimePresentation.freshActionRequired;
@@ -170,16 +176,67 @@ function hasFreshPendingInboxAttention(params: Readonly<{
 
 function resolveInboxRowSession(
     row: InboxUnreadSessionRow,
-    sessionsById: ReadonlyMap<string, Session>,
+    sessionsByScope: ReadonlyMap<string, Session>,
 ): InboxUnreadSession {
-    const canonicalSession = sessionsById.get(row.session.id);
+    const canonicalSession = sessionsByScope.get(getInboxRowScopeKey(row));
     if (!canonicalSession) return row.session;
 
-    const rowServerId = normalizeOptionalString(row.serverId);
-    const canonicalServerId = getSessionServerId(canonicalSession);
-    if (rowServerId !== canonicalServerId) return row.session;
+    if (
+        isInboxSessionListRenderable(row.session)
+        && isSessionListRenderableNewerThanSession(row.session, canonicalSession)
+    ) {
+        return buildSessionFromListRenderable(row.session, {
+            baseSession: canonicalSession,
+            serverId: row.serverId,
+        });
+    }
 
     return canonicalSession;
+}
+
+function buildInboxAttentionSessions(
+    sessions: readonly Session[],
+    sessionRows: readonly InboxUnreadSessionRow[],
+    sessionsByScope: ReadonlyMap<string, Session>,
+): readonly Session[] {
+    const attentionSessionsByScope = new Map(sessionsByScope);
+    const seenRowKeys = new Set<string>();
+    for (const row of sessionRows) {
+        const rowKey = getInboxRowScopeKey(row);
+        if (seenRowKeys.has(rowKey)) continue;
+        seenRowKeys.add(rowKey);
+        const session = resolveInboxRowSession(row, sessionsByScope);
+        if (isInboxSessionListRenderable(session)) {
+            if (session.metadataUnavailable === true) continue;
+            attentionSessionsByScope.set(
+                rowKey,
+                buildSessionFromListRenderable(session, { serverId: row.serverId }),
+            );
+            continue;
+        }
+        attentionSessionsByScope.set(rowKey, session);
+    }
+    return Array.from(attentionSessionsByScope.values());
+}
+
+function isInboxCustodySession(session: InboxUnreadSession): boolean {
+    if (isInboxSessionListRenderable(session)) {
+        return (
+            isUserFacingSession(session)
+            || isVoiceConversationCustodySessionMetadata(session.metadata)
+        );
+    }
+    const ownerMetadata = readSessionOwnerMetadataView(session);
+    if (session.metadataLayoutVersion === 1 && ownerMetadata == null) {
+        return false;
+    }
+    const ownerSession = {
+        metadata: ownerMetadata,
+    };
+    return (
+        isUserFacingSession(ownerSession)
+        || isVoiceConversationCustodySessionMetadata(ownerMetadata)
+    );
 }
 
 export function buildInboxSessionState(input: BuildInboxSessionStateInput): InboxSessionState {
@@ -189,19 +246,19 @@ export function buildInboxSessionState(input: BuildInboxSessionStateInput): Inbo
         sessionMessagesById,
         nowMs,
     } = normalizeBuildInboxSessionStateInput(input);
-    const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+    const sessionsByScope = new Map(sessions.map((session) => [getSessionScopeKey(session), session]));
     const sessionsNeedingAttention: InboxSessionAttentionEntry[] = [];
     const attentionSessionKeys = new Set<string>();
+    const attentionSessions = buildInboxAttentionSessions(sessions, sessionRows, sessionsByScope);
 
-    for (const session of sessions) {
-        if (!isUserFacingSession(session)) continue;
+    for (const session of attentionSessions) {
+        if (!isInboxCustodySession(session)) continue;
         const messages = readMessagesForInboxSession(sessionMessagesById, session.id);
         const pendingPermissions = listPendingPermissionRequests(session, messages);
         const pendingUserActions = listPendingUserActionRequests(session, messages);
         if (!hasFreshPendingInboxAttention({
             session,
-            pendingPermissions,
-            pendingUserActions,
+            messages,
             nowMs,
         })) continue;
 
@@ -221,7 +278,7 @@ export function buildInboxSessionState(input: BuildInboxSessionStateInput): Inbo
         candidateSessionKeys.add(key);
         unreadCandidates.push({
             ...row,
-            session: resolveInboxRowSession(row, sessionsById),
+            session: resolveInboxRowSession(row, sessionsByScope),
         });
     }
     for (const session of sessions) {
@@ -239,7 +296,7 @@ export function buildInboxSessionState(input: BuildInboxSessionStateInput): Inbo
     const unreadSessionKeys = new Set<string>();
     for (const row of unreadCandidates) {
         const key = getInboxRowScopeKey(row);
-        if (!isUserFacingSession(row.session)) continue;
+        if (!isInboxCustodySession(row.session)) continue;
         if (attentionSessionKeys.has(key)) continue;
         if (unreadSessionKeys.has(key)) continue;
         if (!hasUnreadSessionAttention(row.session)) continue;

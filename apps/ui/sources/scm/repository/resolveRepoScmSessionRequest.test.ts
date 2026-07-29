@@ -96,7 +96,7 @@ describe('resolveRepoScmSessionRequest', () => {
                         homeDir: '/Users/tester',
                         externalSessionV1: {
                             v: 1,
-                            providerId: 'codex',
+                            agentId: 'codex',
                             machineId: 'machine-direct',
                             remoteSessionId: 'remote-1',
                             source: { kind: 'codexHome', home: 'user' },

@@ -242,7 +242,7 @@ describe('deriveTurnChangeSetsFromMessages', () => {
                 source: 'provider_native',
                 confidence: 'exact',
                 provider: 'codex',
-                providerTurnId: 'turn_1',
+                agentTurnId: 'turn_1',
             }),
         ]);
         expect(result[0]?.repositoryCheckpoint).toBeUndefined();

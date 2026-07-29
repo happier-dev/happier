@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 
 import { clampPreviewLines, normalizeResultPreview } from './resultPreview';
 
@@ -22,6 +23,7 @@ export type WorkflowAgentDetailProps = Readonly<{
  */
 export const WorkflowAgentDetail = React.memo<WorkflowAgentDetailProps>((props) => {
     const [expanded, setExpanded] = React.useState(false);
+    const rowLayoutMutation = useTranscriptRowLayoutMutation();
     const normalized = React.useMemo(() => normalizeResultPreview(props.text), [props.text]);
     const clamped = React.useMemo(() => clampPreviewLines(normalized.display), [normalized.display]);
     const body = expanded ? normalized.display : clamped.text;
@@ -36,7 +38,13 @@ export const WorkflowAgentDetail = React.memo<WorkflowAgentDetailProps>((props) 
             {clamped.clamped ? (
                 <Pressable
                     accessibilityRole="button"
-                    onPress={() => setExpanded((current) => !current)}
+                    onPress={() => {
+                        rowLayoutMutation({
+                            reason: expanded ? 'collapse' : 'expand',
+                            sourceId: `workflow-agent-detail:${props.detailTestID ?? 'detail'}`,
+                        });
+                        setExpanded(!expanded);
+                    }}
                     hitSlop={8}
                     testID={toggleTestID}
                     style={styles.toggle}

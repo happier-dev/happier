@@ -13,8 +13,8 @@ vi.mock('@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDr
     DaemonVoiceInferenceExecutionDropdown: (props: any) => React.createElement('ExecutionDropdown', props),
 }));
 
-vi.mock('@/voice/settings/panels/daemonInference/DaemonVoiceInferenceModelSection', () => ({
-    DaemonVoiceInferenceModelSection: (props: any) => React.createElement('DaemonModelSection', props),
+vi.mock('@/voice/settings/panels/modelCatalog/DaemonModelPackRow', () => ({
+    SelectedDaemonModelPackRow: (props: any) => React.createElement('DaemonModelSection', props),
 }));
 
 describe('LocalNeuralSttSettings (web)', () => {
@@ -26,8 +26,8 @@ describe('LocalNeuralSttSettings (web)', () => {
             <LocalNeuralSttSettings
                 cfg={{
                     provider: 'local_neural',
-                    openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
-                    googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
+                    openaiCompat: { baseUrl: null, insecureLocalOriginConsent: null, insecureLocalConsentMachineId: null, apiKey: null, model: 'whisper-1' },
+                    providers: {},
                     localNeural: {
                         assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
                         language: 'en',
@@ -43,34 +43,10 @@ describe('LocalNeuralSttSettings (web)', () => {
         const daemonModelSection = tree.root.findAllByType('DaemonModelSection');
         expect(daemonModelSection).toHaveLength(1);
         expect(daemonModelSection[0]?.props.packId).toBe('sherpa-onnx-streaming-zipformer-en-20M-2023-02-17');
-        expect(daemonModelSection[0]?.props.kind).toBe('stt');
+        expect(daemonModelSection[0]?.props.kind).toBe('stt_sherpa');
     });
 
-    it('passes daemon relay diagnostics to the daemon model section', async () => {
-        const { LocalNeuralSttSettings } = await import('./LocalNeuralSttSettings.web');
-
-        const { tree } = await renderScreen(
-            <LocalNeuralSttSettings
-                cfg={{
-                    provider: 'local_neural',
-                    openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
-                    googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
-                    localNeural: {
-                        assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
-                        language: 'en',
-                        execution: 'auto',
-                    },
-                }}
-                setCfg={vi.fn()}
-                popoverBoundaryRef={null}
-                daemonRouteDiagnosticReason="daemon_relay_capped"
-            />,
-        );
-
-        expect(tree.root.findByType('DaemonModelSection').props.daemonRouteDiagnosticReason).toBe('daemon_relay_capped');
-    });
-
-    it('clamps stored web device execution to daemon inference controls', async () => {
+    it('preserves stored web device authority while hiding device selection', async () => {
         const { LocalNeuralSttSettings } = await import('./LocalNeuralSttSettings.web');
 
         let tree!: ReactTestRenderer;
@@ -78,8 +54,8 @@ describe('LocalNeuralSttSettings (web)', () => {
             <LocalNeuralSttSettings
                 cfg={{
                     provider: 'local_neural',
-                    openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
-                    googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
+                    openaiCompat: { baseUrl: null, insecureLocalOriginConsent: null, insecureLocalConsentMachineId: null, apiKey: null, model: 'whisper-1' },
+                    providers: {},
                     localNeural: {
                         assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
                         language: 'en',
@@ -92,7 +68,7 @@ describe('LocalNeuralSttSettings (web)', () => {
         )).tree;
 
         const executionDropdown = tree.root.findByType('ExecutionDropdown');
-        expect(executionDropdown.props.execution).toBe('daemon');
+        expect(executionDropdown.props.execution).toBe('device');
         expect(executionDropdown.props.allowDeviceSelection).toBe(false);
         expect(tree.root.findAllByType('DaemonModelSection')).toHaveLength(1);
         expect(tree.root.findAllByType('Item')).toHaveLength(0);

@@ -53,6 +53,24 @@ export function buildSession(params: {
     };
 }
 
+export function currentPendingEnqueueAck(
+    init: RequestInit | undefined,
+    pending: Readonly<Record<string, unknown>> = {},
+): Response {
+    const body = JSON.parse(String(init?.body ?? 'null')) as unknown;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        throw new Error('Expected a current Pending enqueue request body');
+    }
+    const request = body as Readonly<Record<string, unknown>>;
+    return Response.json({
+        requestedAction: request.requestedAction,
+        pending: {
+            localId: request.localId,
+            ...pending,
+        },
+    });
+}
+
 export async function encryptRawRecordForPending(params: {
     encryption: Encryption;
     sessionId: string;

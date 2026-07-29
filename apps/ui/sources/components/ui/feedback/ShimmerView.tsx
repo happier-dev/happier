@@ -9,10 +9,13 @@ import Animated, {
     Easing,
     useAnimatedRef,
     measure,
+    cancelAnimation,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import MaskedView from '@react-native-masked-view/masked-view';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { resolveShimmerAnimationEnabled } from './shimmerMotion';
 
 const AnimatedLinearGradient = Animated.createAnimatedComponent(LinearGradient);
 
@@ -22,6 +25,7 @@ interface ShimmerViewProps {
     shimmerWidthPercent?: number;
     duration?: number;
     style?: ViewStyle;
+    animationEnabled?: boolean;
 }
 
 export const ShimmerView = React.memo<ShimmerViewProps>(({
@@ -30,10 +34,13 @@ export const ShimmerView = React.memo<ShimmerViewProps>(({
     shimmerWidthPercent = 80,
     duration = 1500,
     style,
+    animationEnabled,
 }) => {
     const { theme } = useUnistyles();
     const shimmerTranslate = useSharedValue(0);
     const containerRef = useAnimatedRef<View>();
+    const reducedMotion = useReducedMotionPreference();
+    const animate = resolveShimmerAnimationEnabled({ reducedMotion, animationEnabled });
 
     const resolvedShimmerColors = React.useMemo<readonly [string, string, ...string[]]>(() => {
         if (shimmerColors && shimmerColors.length >= 2) return shimmerColors as readonly [string, string, ...string[]];
@@ -52,6 +59,11 @@ export const ShimmerView = React.memo<ShimmerViewProps>(({
     ]);
 
     React.useEffect(() => {
+        if (!animate) {
+            cancelAnimation(shimmerTranslate);
+            shimmerTranslate.value = 0;
+            return;
+        }
         shimmerTranslate.value = withRepeat(
             withTiming(1, {
                 duration,
@@ -60,7 +72,8 @@ export const ShimmerView = React.memo<ShimmerViewProps>(({
             -1,
             false
         );
-    }, [duration]);
+        return () => cancelAnimation(shimmerTranslate);
+    }, [animate, duration, shimmerTranslate]);
 
     const animatedStyle = useAnimatedStyle(() => {
         const measured = measure(containerRef);
@@ -96,15 +109,17 @@ export const ShimmerView = React.memo<ShimmerViewProps>(({
                 <View style={[StyleSheet.absoluteFillObject, { backgroundColor: resolvedShimmerColors[0] }]} />
 
                 {/* Animated shimmer */}
-                <AnimatedLinearGradient
-                    colors={resolvedShimmerColors}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                    style={[
-                        StyleSheet.absoluteFillObject,
-                        animatedStyle,
-                    ]}
-                />
+                {animate ? (
+                    <AnimatedLinearGradient
+                        colors={resolvedShimmerColors}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={[
+                            StyleSheet.absoluteFillObject,
+                            animatedStyle,
+                        ]}
+                    />
+                ) : null}
             </MaskedView>
         </Animated.View>
     );

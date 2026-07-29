@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Pressable, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRouter } from 'expo-router';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useAllMachines, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { StyleSheet } from 'react-native-unistyles';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -11,7 +11,7 @@ import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert'
 import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { DEFAULT_PROFILES, getBuiltInProfileNameKey, isProfileEnabled, resolveProfileById, setProfileEnabledOverride } from '@/sync/domains/profiles/profileUtils';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
-import { ProfileEditForm } from '@/components/profiles/edit';
+import { LaunchProfileEditForm } from '@/components/profiles/edit';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
@@ -19,9 +19,25 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { convertBuiltInProfileToCustom, createEmptyCustomProfile, duplicateProfileForEdit } from '@/sync/domains/profiles/profileMutations';
 import { ProfilesList } from '@/components/profiles/ProfilesList';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
+import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import { getRequiredSecretEnvVarNames } from '@/sync/domains/profiles/profileSecrets';
-import { fireAndForget } from '@/utils/system/fireAndForget';
+import { isLaunchProfileV2, type AiLaunchProfile } from '@happier-dev/protocol';
+import { LegacyProfileMigrationFlow } from '@/components/profiles/migration/LegacyProfileMigrationFlow';
+import { LegacyProfileMigrationConflictFlow } from '@/components/profiles/migration/LegacyProfileMigrationConflictFlow';
+import { resolveProfileMigrationConflict, resolveProfileMigrationStatus } from '@/components/profiles/migration/status';
+import {
+    type ActiveUnsavedChangesGuard,
+    runUnsavedChangesGuard,
+} from '@/utils/navigation/runGuardedNavigation';
+import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
+import {
+    appendAiLaunchProfile,
+    projectAiLaunchProfileForLegacyUi,
+    readUiAiLaunchProfiles,
+    removeAiLaunchProfile,
+    replaceAiLaunchProfile,
+} from '@/sync/domains/profiles/aiLaunchProfileCollection';
 
 interface ProfileManagerProps {
     onProfileSelect?: (profile: AIBackendProfile | null) => void;
@@ -34,17 +50,32 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
     const router = useRouter();
     const navigation = useNavigation();
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
-    const [profiles, setProfiles] = useSettingMutable('profiles');
+    const [rawProfiles, setRawProfiles] = useSettingMutable('profiles');
+    const launchProfiles = React.useMemo(() => readUiAiLaunchProfiles(rawProfiles), [rawProfiles]);
+    const profiles = React.useMemo(
+        () => launchProfiles.map(projectAiLaunchProfileForLegacyUi),
+        [launchProfiles],
+    );
+    const writeRawProfiles = React.useCallback((next: readonly unknown[]) => {
+        setRawProfiles(next as AIBackendProfile[]);
+    }, [setRawProfiles]);
     const [lastUsedProfile, setLastUsedProfile] = useSettingMutable('lastUsedProfile');
     const [favoriteProfileIds, setFavoriteProfileIds] = useSettingMutable('favoriteProfiles');
     const [profileEnabledById, setProfileEnabledById] = useSettingMutable('profileEnabledById');
-    const [editingProfile, setEditingProfile] = React.useState<AIBackendProfile | null>(null);
+    const [editingProfile, setEditingProfile] = React.useState<AiLaunchProfile | null>(null);
+    const [migrationReviewProfile, setMigrationReviewProfile] = React.useState<AIBackendProfile | null>(null);
+    const [migrationConflictProfile, setMigrationConflictProfile] = React.useState<AIBackendProfile | null>(null);
+    const providerSettingsV1 = useSetting('providerSettingsV1');
     const [showAddForm, setShowAddForm] = React.useState(false);
     const [isEditingDirty, setIsEditingDirty] = React.useState(false);
     const isEditingDirtyRef = React.useRef(false);
     const saveRef = React.useRef<(() => boolean) | null>(null);
-    const [secrets, setSecrets] = useSettingMutable('secrets');
+    const [secrets, setSecrets] = useSavedSecretsMutable();
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
+    const machines = useAllMachines();
+    const profileValidationMachineId = React.useMemo(() => (
+        machines.find((machine) => machine.active)?.id ?? machines[0]?.id ?? null
+    ), [machines]);
 
     const openSecretModal = React.useCallback((profile: AIBackendProfile, envVarName?: string) => {
         const requiredSecretNames = getRequiredSecretEnvVarNames(profile);
@@ -95,11 +126,12 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
     };
 
     const handleEditProfile = (profile: AIBackendProfile) => {
+        const editable = launchProfiles.find((entry) => entry.id === profile.id) ?? profile;
         if (Platform.OS !== 'web') {
             router.push({ pathname: '/new/pick/profile-edit', params: { profileId: profile.id } } as any);
             return;
         }
-        setEditingProfile({ ...profile });
+        setEditingProfile(editable);
         setShowAddForm(true);
     };
 
@@ -108,7 +140,8 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
             router.push({ pathname: '/new/pick/profile-edit', params: { cloneFromProfileId: profile.id } } as any);
             return;
         }
-        setEditingProfile(duplicateProfileForEdit(profile, { copySuffix: t('profiles.copySuffix') }));
+        const source = launchProfiles.find((entry) => entry.id === profile.id) ?? profile;
+        setEditingProfile(duplicateProfileForEdit(source, { copySuffix: t('profiles.copySuffix') }));
         setShowAddForm(true);
     };
 
@@ -118,84 +151,49 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
         setIsEditingDirty(false);
     }, []);
 
+    const requestUnsavedChangesDecision = React.useCallback(() => {
+        const isBuiltIn = !!editingProfile && DEFAULT_PROFILES.some((bp) => bp.id === editingProfile.id);
+        const saveText = isBuiltIn ? t('common.saveAs') : t('common.save');
+        const message = isBuiltIn
+            ? `${t('common.unsavedChangesWarning')}\n\n${t('profiles.builtInSaveAsHint')}`
+            : t('common.unsavedChangesWarning');
+        return promptUnsavedChangesAlert(
+            (title, message, buttons) => Modal.alert(title, message, buttons),
+            {
+                title: t('common.discardChanges'),
+                message,
+                discardText: t('common.discard'),
+                saveText,
+                keepEditingText: t('common.keepEditing'),
+            },
+        );
+    }, [editingProfile]);
+    const saveEditor = React.useCallback(() => saveRef.current?.() ?? false, []);
+    const inlineEditorGuard = React.useMemo<ActiveUnsavedChangesGuard>(() => ({
+        isDirtyRef: isEditingDirtyRef,
+        requestDecision: requestUnsavedChangesDecision,
+        onSave: saveEditor,
+        tag: 'ProfilesScreen.inlineEditorGuard',
+    }), [requestUnsavedChangesDecision, saveEditor]);
     const requestCloseEditor = React.useCallback(() => {
-        fireAndForget((async () => {
-            if (!isEditingDirtyRef.current) {
-                closeEditor();
-                return;
-            }
-            const isBuiltIn = !!editingProfile && DEFAULT_PROFILES.some((bp) => bp.id === editingProfile.id);
-            const saveText = isBuiltIn ? t('common.saveAs') : t('common.save');
-            const message = isBuiltIn
-                ? `${t('common.unsavedChangesWarning')}\n\n${t('profiles.builtInSaveAsHint')}`
-                : t('common.unsavedChangesWarning');
-            const decision = await promptUnsavedChangesAlert(
-                (title, message, buttons) => Modal.alert(title, message, buttons),
-                {
-                    title: t('common.discardChanges'),
-                    message,
-                    discardText: t('common.discard'),
-                    saveText,
-                    keepEditingText: t('common.keepEditing'),
-                },
-            );
-
-            if (decision === 'discard') {
-                isEditingDirtyRef.current = false;
-                closeEditor();
-            } else if (decision === 'save') {
-                // Save the form state (not the initial profile snapshot).
-                saveRef.current?.();
-            }
-        })(), { tag: 'ProfilesScreen.requestCloseEditor' });
-    }, [closeEditor, editingProfile]);
-
-    React.useEffect(() => {
-        const addListener = (navigation as any)?.addListener;
-        if (typeof addListener !== 'function') {
-            return;
+        void runUnsavedChangesGuard(inlineEditorGuard, closeEditor);
+    }, [closeEditor, inlineEditorGuard]);
+    const continueNavigation = React.useCallback((action: unknown) => {
+        closeEditor();
+        if (action) {
+            (navigation as { dispatch?: (value: unknown) => void } | null)?.dispatch?.(action);
         }
+    }, [closeEditor, navigation]);
 
-        const subscription = addListener.call(navigation, 'beforeRemove', (e: any) => {
-            if (!showAddForm || !isEditingDirtyRef.current) return;
-
-            e.preventDefault();
-
-            fireAndForget((async () => {
-                const isBuiltIn = !!editingProfile && DEFAULT_PROFILES.some((bp) => bp.id === editingProfile.id);
-                const saveText = isBuiltIn ? t('common.saveAs') : t('common.save');
-                const message = isBuiltIn
-                    ? `${t('common.unsavedChangesWarning')}\n\n${t('profiles.builtInSaveAsHint')}`
-                    : t('common.unsavedChangesWarning');
-
-                const decision = await promptUnsavedChangesAlert(
-                    (title, message, buttons) => Modal.alert(title, message, buttons),
-                    {
-                        title: t('common.discardChanges'),
-                        message,
-                        discardText: t('common.discard'),
-                        saveText,
-                        keepEditingText: t('common.keepEditing'),
-                    },
-                );
-
-                if (decision === 'discard') {
-                    isEditingDirtyRef.current = false;
-                    closeEditor();
-                    (navigation as any).dispatch(e.data.action);
-                } else if (decision === 'save') {
-                    // Save form state; only continue navigation if save succeeded.
-                    const didSave = saveRef.current?.() ?? false;
-                    if (didSave) {
-                        isEditingDirtyRef.current = false;
-                        (navigation as any).dispatch(e.data.action);
-                    }
-                }
-            })(), { tag: 'ProfilesScreen.beforeRemove' });
-        });
-
-        return () => subscription?.remove?.();
-    }, [closeEditor, editingProfile, navigation, showAddForm]);
+    useUnsavedChangesBeforeRemoveGuard({
+        enabled: Platform.OS === 'web' && showAddForm,
+        isDirty: isEditingDirty,
+        isDirtyRef: isEditingDirtyRef,
+        requestDecision: requestUnsavedChangesDecision,
+        onSave: saveEditor,
+        onContinue: continueNavigation,
+        tag: 'ProfilesScreen.beforeRemove',
+    });
 
     const handleDeleteProfile = async (profile: AIBackendProfile) => {
         const confirmed = await Modal.confirm(
@@ -205,8 +203,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
         );
         if (!confirmed) return;
 
-        const updatedProfiles = profiles.filter((p: AIBackendProfile) => p.id !== profile.id);
-        setProfiles(updatedProfiles);
+        writeRawProfiles(removeAiLaunchProfile(rawProfiles, profile.id));
 
         // Clear last used profile if it was deleted
         if (lastUsedProfile === profile.id) {
@@ -234,7 +231,23 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
 
     const buildProfileEnablementActions = React.useCallback((profile: AIBackendProfile): ItemAction[] => {
         const enabled = isProfileEnabled(profile, profileEnabledById);
+        const actual = launchProfiles.find((entry) => entry.id === profile.id);
+        const migrationStatus = actual
+            ? resolveProfileMigrationStatus({ profile: actual, providerSettings: providerSettingsV1 })
+            : null;
         return [
+            ...(migrationStatus === 'review' && actual && !isLaunchProfileV2(actual) ? [{
+                id: 'reviewProviderMigration',
+                title: t('settingsProviders.migration.reviewAction'),
+                icon: 'git-compare-outline' as const,
+                onPress: () => setMigrationReviewProfile(actual),
+            }] : []),
+            ...(migrationStatus === 'conflict' && actual && !isLaunchProfileV2(actual) ? [{
+                id: 'reviewProviderMigrationConflict',
+                title: t('settingsProviders.migration.conflictReviewAction'),
+                icon: 'git-compare-outline' as const,
+                onPress: () => setMigrationConflictProfile(actual),
+            }] : []),
             {
                 id: 'profileEnabled',
                 title: enabled ? t('common.enabled') : t('common.disabled'),
@@ -244,13 +257,23 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                 },
             },
         ];
-    }, [profileEnabledById, setProfileEnabledById]);
+    }, [launchProfiles, profileEnabledById, providerSettingsV1, setProfileEnabledById]);
 
     const getProfileEnablementSubtitle = React.useCallback((profile: AIBackendProfile) => {
-        return isProfileEnabled(profile, profileEnabledById) ? null : t('common.disabled');
-    }, [profileEnabledById]);
+        const actual = launchProfiles.find((entry) => entry.id === profile.id);
+        const migrationStatus = actual
+            ? resolveProfileMigrationStatus({ profile: actual, providerSettings: providerSettingsV1 })
+            : null;
+        const parts = [
+            ...(isProfileEnabled(profile, profileEnabledById) ? [] : [t('common.disabled')]),
+            ...(migrationStatus === 'review' ? [t('settingsProviders.migration.reviewActionDescription')] : []),
+            ...(migrationStatus === 'conflict' ? [t('settingsProviders.migration.conflictReviewActionDescription')] : []),
+            ...(migrationStatus === 'retained' ? [t('settingsProviders.migration.retainedDescription')] : []),
+        ];
+        return parts.length > 0 ? parts.join(' · ') : null;
+    }, [launchProfiles, profileEnabledById, providerSettingsV1]);
 
-    function handleSaveProfile(profile: AIBackendProfile): boolean {
+    function handleSaveProfile(profile: AiLaunchProfile): boolean {
         // Profile validation - ensure name is not empty
         if (!profile.name || profile.name.trim() === '') {
             Modal.alert(t('common.error'), t('profiles.nameRequired'));
@@ -268,7 +291,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
 
         // For built-in profiles, create a new custom profile instead of modifying the built-in
         if (isBuiltIn) {
-            const newProfile = convertBuiltInProfileToCustom(profile);
+            const newProfile = convertBuiltInProfileToCustom(profile as AIBackendProfile);
             const hasBuiltInNameConflict = builtInNames.includes(newProfile.name.trim());
 
             // Check for duplicate names (excluding the new profile)
@@ -280,7 +303,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                 return false;
             }
 
-            setProfiles([...profiles, newProfile]);
+            writeRawProfiles(appendAiLaunchProfile(rawProfiles, newProfile));
         } else {
             // Handle custom profile updates
             // Check for duplicate names (excluding current profile if editing)
@@ -293,22 +316,11 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                 return false;
             }
 
-            const existingIndex = profiles.findIndex((p: AIBackendProfile) => p.id === profile.id);
-            let updatedProfiles: AIBackendProfile[];
-
-            if (existingIndex >= 0) {
-                // Update existing profile
-                updatedProfiles = [...profiles];
-                updatedProfiles[existingIndex] = {
-                    ...profile,
-                    updatedAt: Date.now(),
-                };
-            } else {
-                // Add new profile
-                updatedProfiles = [...profiles, profile];
-            }
-
-            setProfiles(updatedProfiles);
+            const existing = launchProfiles.some((entry) => entry.id === profile.id);
+            const updated = { ...profile, updatedAt: Date.now() } as AiLaunchProfile;
+            writeRawProfiles(existing
+                ? replaceAiLaunchProfile(rawProfiles, profile.id, updated)
+                : appendAiLaunchProfile(rawProfiles, updated));
         }
 
         closeEditor();
@@ -349,6 +361,8 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                 includeDisabledProfiles
                 selectedProfileId={selectedProfileId ?? null}
                 onPressProfile={(profile) => handleEditProfile(profile)}
+                includeDefaultEnvironmentRow
+                onPressDefaultEnvironment={() => handleSelectProfile(null)}
                 machineId={null}
                 includeAddProfileRow
                 onAddProfilePress={handleAddProfile}
@@ -396,9 +410,9 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                     onPress={requestCloseEditor}
                 >
                     <Pressable style={profileManagerStyles.modalContent} onPress={() => { }}>
-                        <ProfileEditForm
+                        <LaunchProfileEditForm
                             profile={editingProfile}
-                            machineId={null}
+                            machineId={isLaunchProfileV2(editingProfile) ? profileValidationMachineId : null}
                             onSave={handleSaveProfile}
                             onCancel={requestCloseEditor}
                             onDirtyChange={setIsEditingDirty}
@@ -407,6 +421,41 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                     </Pressable>
                 </Pressable>
             )}
+
+            {migrationReviewProfile ? (
+                <Pressable
+                    style={profileManagerStyles.modalOverlay}
+                    onPress={() => setMigrationReviewProfile(null)}
+                >
+                    <Pressable style={profileManagerStyles.modalContent} onPress={() => {}}>
+                        <LegacyProfileMigrationFlow
+                            profile={migrationReviewProfile}
+                            secretBindings={secretBindingsByProfileId[migrationReviewProfile.id] ?? {}}
+                            onClose={() => setMigrationReviewProfile(null)}
+                        />
+                    </Pressable>
+                </Pressable>
+            ) : null}
+
+            {migrationConflictProfile ? (() => {
+                const conflict = resolveProfileMigrationConflict({
+                    profileId: migrationConflictProfile.id,
+                    providerSettings: providerSettingsV1,
+                });
+                if (!conflict) return null;
+                return <Pressable
+                    style={profileManagerStyles.modalOverlay}
+                    onPress={() => setMigrationConflictProfile(null)}
+                >
+                    <Pressable style={profileManagerStyles.modalContent} onPress={() => {}}>
+                        <LegacyProfileMigrationConflictFlow
+                            profileName={migrationConflictProfile.name}
+                            conflict={conflict}
+                            onClose={() => setMigrationConflictProfile(null)}
+                        />
+                    </Pressable>
+                </Pressable>;
+            })() : null}
         </View>
     );
 });

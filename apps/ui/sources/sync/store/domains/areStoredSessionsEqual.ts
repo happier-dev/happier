@@ -16,6 +16,16 @@ function arePlainObjectValuesEqual(
     return true;
 }
 
+/**
+ * Deep value equality over session-shaped plain data (objects/arrays/
+ * primitives). Exported so store writers can guard value-identical writes
+ * (e.g. `latestUsage`/`todos` copies from the mutable reducer state) without
+ * duplicating the compare.
+ */
+export function areSessionValuesDeepEqual(previous: unknown, next: unknown): boolean {
+    return areSessionValueEqual(previous, next);
+}
+
 function areSessionValueEqual(previous: unknown, next: unknown): boolean {
     if (previous === next) return true;
     if (previous == null || next == null) return previous === next;
@@ -67,21 +77,28 @@ export function areStoredSessionsEqual(
         && (previous.archivedAt ?? null) === (next.archivedAt ?? null)
         && (previous.pendingVersion ?? null) === (next.pendingVersion ?? null)
         && (previous.pendingCount ?? null) === (next.pendingCount ?? null)
+        && (previous.pendingBlockedCount ?? null) === (next.pendingBlockedCount ?? null)
         && (previous.lastViewedSessionSeq ?? null) === (next.lastViewedSessionSeq ?? null)
         && (previous.pendingPermissionRequestCount ?? null) === (next.pendingPermissionRequestCount ?? null)
         && (previous.pendingUserActionRequestCount ?? null) === (next.pendingUserActionRequestCount ?? null)
         && (previous.latestTurnStatus ?? null) === (next.latestTurnStatus ?? null)
         && (previous.latestTurnStatusObservedAt ?? null) === (next.latestTurnStatusObservedAt ?? null)
+        && (previous.runtimeActivityState ?? null) === (next.runtimeActivityState ?? null)
+        && (previous.runtimeActivityActiveCount ?? null) === (next.runtimeActivityActiveCount ?? null)
+        && (previous.runtimeActivityObservedAt ?? null) === (next.runtimeActivityObservedAt ?? null)
+        && (previous.runtimeActivityRevision ?? null) === (next.runtimeActivityRevision ?? null)
         && areSessionValueEqual(previous.rollbackEligibleTurnStarts ?? null, next.rollbackEligibleTurnStarts ?? null)
         && (previous.latestReadyEventSeq ?? null) === (next.latestReadyEventSeq ?? null)
         && (previous.latestReadyEventAt ?? null) === (next.latestReadyEventAt ?? null)
         && areSessionValueEqual(previous.lastRuntimeIssue ?? null, next.lastRuntimeIssue ?? null)
+        && (previous.metadataLayoutVersion ?? 0) === (next.metadataLayoutVersion ?? 0)
         && previous.metadataVersion === next.metadataVersion
         && previous.agentStateVersion === next.agentStateVersion
         && previous.thinking === next.thinking
         && previous.thinkingAt === next.thinkingAt
         && previous.presence === next.presence
         && (previous.optimisticThinkingAt ?? null) === (next.optimisticThinkingAt ?? null)
+        && (previous.resumingAt ?? null) === (next.resumingAt ?? null)
         && (previous.thinkingGraceUntil ?? null) === (next.thinkingGraceUntil ?? null)
         && (previous.lastTurnCompletedAt ?? null) === (next.lastTurnCompletedAt ?? null)
         && (previous.draft ?? null) === (next.draft ?? null)
@@ -93,6 +110,7 @@ export function areStoredSessionsEqual(
         && (previous.accessLevel ?? null) === (next.accessLevel ?? null)
         && (previous.canApprovePermissions ?? null) === (next.canApprovePermissions ?? null)
         && areSessionValueEqual(previous.metadata, next.metadata)
+        && areSessionValueEqual(previous.ownerMetadataView ?? null, next.ownerMetadataView ?? null)
         && areSessionValueEqual(previous.agentState, next.agentState)
         && areSessionValueEqual(previous.todos ?? null, next.todos ?? null)
         && areSessionValueEqual(previous.latestUsage ?? null, next.latestUsage ?? null)

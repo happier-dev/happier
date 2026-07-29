@@ -32,6 +32,7 @@ describe('apiVoice', () => {
                         allowed: true,
                         token: 'voice_token',
                         leaseId: 'lease-1',
+                        bindingNonce: 'nonce-1',
                         expiresAtMs: Date.now() + 60_000,
                     }),
                 })) as unknown as typeof fetch,
@@ -42,6 +43,7 @@ describe('apiVoice', () => {
                 allowed: true,
                 token: 'voice_token',
                 leaseId: 'lease-1',
+                bindingNonce: 'nonce-1',
             });
         });
 
@@ -56,6 +58,7 @@ describe('apiVoice', () => {
                         allowed: true,
                         token: 'voice_token',
                         leaseId: 'lease-1',
+                        bindingNonce: 'nonce-1',
                         expiresAtMs: Date.now() + 60_000,
                     }),
                 } as any;
@@ -64,7 +67,12 @@ describe('apiVoice', () => {
             vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
             const res = await fetchHappierVoiceToken(credentials, {});
-            expect(res).toMatchObject({ allowed: true, token: 'voice_token', leaseId: 'lease-1' });
+            expect(res).toMatchObject({
+                allowed: true,
+                token: 'voice_token',
+                leaseId: 'lease-1',
+                bindingNonce: 'nonce-1',
+            });
         });
 
         it('returns denied/upstream_error for 503 responses with invalid payloads', async () => {
@@ -87,7 +95,12 @@ describe('apiVoice', () => {
                 vi.fn(async () => ({
                     ok: true,
                     status: 200,
-                    json: async () => ({ token: 'missing_allowed' }),
+                    json: async () => ({
+                        allowed: true,
+                        token: 'voice_token',
+                        leaseId: 'lease-1',
+                        expiresAtMs: Date.now() + 60_000,
+                    }),
                 })) as unknown as typeof fetch,
             );
 

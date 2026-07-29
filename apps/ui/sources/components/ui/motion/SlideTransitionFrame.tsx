@@ -13,7 +13,8 @@
  * overlaid with a per-layer `SlideTransitionBlurLayer` (web → CSS filter; native →
  * BlurView via animated intensity) when `blur === true`.
  *
- * Reduced motion: blur layer is not mounted at all (zero cost).
+ * Reduced motion: translation distance is zero and blur layers are not mounted,
+ * so adapters produce a pure crossfade.
  */
 
 import * as React from 'react';
@@ -44,7 +45,7 @@ const stylesheet = StyleSheet.create({
 export function SlideTransitionFrame(props: SlideTransitionFrameProps): React.ReactElement {
     const preset = props.preset ?? 'soft';
     const presetTokens = slideTransitionTokens[preset];
-    const distance = presetTokens.translatePx;
+    const distance = props.reducedMotion ? 0 : presetTokens.translatePx;
     const blurEnabled = props.blur !== false && !props.reducedMotion;
     const maxBlur = blurEnabled ? presetTokens.maxBlurPx : 0;
 

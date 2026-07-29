@@ -2,13 +2,14 @@ import * as React from 'react';
 import { Platform, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { readServerEnabledBit } from '@happier-dev/protocol';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text, TextInput } from '@/components/ui/text/Text';
-import { t } from '@/text';
+import { t, tLoose } from '@/text';
 import { storage } from '@/sync/domains/state/storage';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
@@ -17,22 +18,32 @@ import { createVoiceQaFormatterPrefs, formatVoiceQaSessionLabel } from '@/voice/
 import { voiceQaRecordedAudioController } from '@/voice/qa/voiceQaRecordedAudioController';
 import { useVoiceQaStore } from '@/voice/qa/voiceQaStore';
 import { voiceQaController } from '@/voice/qa/voiceQaController';
+import { voiceQaOutputFixturePlayback } from '@/voice/qa/voiceQaOutputFixturePlayback';
+import {
+  getVoiceQaOutputTapSnapshot,
+  setVoiceQaOutputTapEnabled,
+  subscribeToVoiceQaOutputTap,
+} from '@/voice/qa/voiceQaOutputTap';
+import { getVoiceConversationRuntimeSnapshot } from '@/voice/runtime/machine/voiceConversationRuntimeStore';
+import { daemonSpeechStreamDiagnostics } from '@/voice/runtime/daemonInference/daemonSpeechStreamDiagnostics';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { useVoiceSessionStore } from '@/voice/session/voiceSessionStore';
 import { selectVoiceTranscriptEntriesForConversationSession } from '@/voice/transcript/voiceTranscriptSelectors';
-
-function getConfiguredProviderLabel(providerId: string): string {
-  switch (providerId) {
-    case 'local_conversation':
-      return t('settingsVoice.mode.local');
-    case 'realtime_elevenlabs':
-      return t('settingsVoice.mode.byo');
-    case 'off':
-      return t('settingsVoice.mode.off');
-    default:
-      return providerId;
-  }
-}
+import {
+  readLocalConversationVoiceSettings,
+  readLocalDirectVoiceSettings,
+  voiceSettingsParse,
+} from '@/sync/domains/settings/voiceSettings';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
+import { resolveSelectedVoiceProviderTitleKey } from '@/voice/registry/providerSelection';
+import { resolveVoiceExecutionMachineIdFromState } from '@/voice/settings/executionMachine';
+import { getMachineRpcPeerMediationReceiptsSnapshot } from '@/sync/domains/machines/peer/mediation/rpc/receiptLog';
+import { getCachedReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
+import { apiSocket } from '@/sync/api/session/apiSocket';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { readEndpointFromMachineState } from '@/sync/domains/machines/peer/mediation/stream/productionRouteHttp';
+import { readVoiceDaemonHttpPortFromState } from '@/voice/settings/voiceProviderLocalAvailability';
+import { resolveVoiceQaTransportReadiness } from './voiceQaTransportReadiness';
 
 function VoiceQaField(props: Readonly<{ label: string; value: string; onChangeText: (value: string) => void; placeholder: string; multiline?: boolean; testID?: string }>) {
   const { theme } = useUnistyles();
@@ -111,6 +122,10 @@ export function VoiceQaScreen() {
   const router = useRouter();
   const routeParams = useLocalSearchParams<{
     voiceQaSessionId?: string | string[];
+    voiceQaMode?: string | string[];
+    voiceQaOutputCapture?: string | string[];
+    voiceQaOutputFixtureUrl?: string | string[];
+    voiceQaOutputCancelMs?: string | string[];
     voiceQaRecordedAudioDaemonSttPackId?: string | string[];
     voiceQaRecordedAudioDaemonMachineId?: string | string[];
     voiceQaRecordedAudioDaemonBasePath?: string | string[];
@@ -139,7 +154,16 @@ export function VoiceQaScreen() {
   const recordedAudioObjectUrlRef = React.useRef<string | null>(null);
   const recordedAudioWebFileRef = React.useRef<File | null>(null);
   const recordedAudioFileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const recordedAudioAbortControllersRef = React.useRef(new Set<AbortController>());
+  const recordedAudioSettingsScopeOwnerId = React.useId();
   const routeSessionId = normalizeVoiceQaRouteParam(routeParams.voiceQaSessionId);
+  const routeQaMode = normalizeVoiceQaRouteParam(routeParams.voiceQaMode) === 'media' ? 'media' : 'text';
+  const routeOutputCaptureEnabled = normalizeVoiceQaRouteParam(routeParams.voiceQaOutputCapture) === '1';
+  const routeOutputFixtureUrl = normalizeVoiceQaRouteParam(routeParams.voiceQaOutputFixtureUrl);
+  const routeOutputCancelMs = React.useMemo(() => {
+    const value = Number(normalizeVoiceQaRouteParam(routeParams.voiceQaOutputCancelMs));
+    return Number.isInteger(value) && value > 0 && value <= 60_000 ? value : null;
+  }, [routeParams.voiceQaOutputCancelMs]);
   const routeRecordedAudioDaemonSttPackId = normalizeVoiceQaRouteParam(routeParams.voiceQaRecordedAudioDaemonSttPackId);
   const routeRecordedAudioDaemonMachineId = normalizeVoiceQaRouteParam(routeParams.voiceQaRecordedAudioDaemonMachineId);
   const routeRecordedAudioDaemonBasePath = normalizeVoiceQaRouteParam(routeParams.voiceQaRecordedAudioDaemonBasePath);
@@ -246,6 +270,8 @@ export function VoiceQaScreen() {
 
     setRecordedAudioQaStatus('running');
     setRecordedAudioResult(null);
+    const abortController = new AbortController();
+    recordedAudioAbortControllersRef.current.add(abortController);
     try {
       const transcription = await voiceQaRecordedAudioController.transcribe({
         sessionId: sessionIdRef.current,
@@ -254,7 +280,10 @@ export function VoiceQaScreen() {
         machineId: recordedAudioDaemonMachineId.trim(),
         basePath: recordedAudioDaemonBasePath.trim(),
         webFile: recordedAudioWebFileRef.current,
+        settingsScopeOwnerId: recordedAudioSettingsScopeOwnerId,
+        signal: abortController.signal,
       });
+      if (abortController.signal.aborted) return;
       if (transcription) {
         setRecordedAudioResult(transcription);
         setRecordedAudioQaStatus('success');
@@ -262,16 +291,47 @@ export function VoiceQaScreen() {
       }
       setRecordedAudioQaStatus('empty');
     } catch (error) {
+      if (abortController.signal.aborted) return;
       setRecordedAudioResult(error instanceof Error ? error.message : 'recorded_audio_transcription_failed');
       setRecordedAudioQaStatus('error');
+    } finally {
+      recordedAudioAbortControllersRef.current.delete(abortController);
     }
-  }, [recordedAudioDaemonSttPackId, recordedAudioUri]);
+  }, [
+    recordedAudioDaemonBasePath,
+    recordedAudioDaemonMachineId,
+    recordedAudioDaemonSttPackId,
+    recordedAudioSettingsScopeOwnerId,
+    recordedAudioUri,
+  ]);
   React.useEffect(() => () => {
+    for (const abortController of recordedAudioAbortControllersRef.current) {
+      abortController.abort();
+    }
+    recordedAudioAbortControllersRef.current.clear();
+    voiceQaRecordedAudioController.releaseTemporarySettingsForOwner(recordedAudioSettingsScopeOwnerId);
     releaseRecordedAudioObjectUrl();
-  }, [releaseRecordedAudioObjectUrl]);
+  }, [recordedAudioSettingsScopeOwnerId, releaseRecordedAudioObjectUrl]);
 
-  const configuredProviderId = String(voice?.providerId ?? 'off');
-  const configuredProviderLabel = getConfiguredProviderLabel(configuredProviderId);
+  const configuredVoiceSettings = voiceSettingsParse(voice);
+  const configuredProviderId = configuredVoiceSettings.providerId;
+  const configuredProviderRegistry = React.useMemo(() => createDefaultVoiceProviderRegistry(), []);
+  const configuredProviderTitleKey = resolveSelectedVoiceProviderTitleKey(
+    configuredVoiceSettings,
+    configuredProviderRegistry,
+  );
+  const configuredProviderLabel = configuredProviderTitleKey
+    ? tLoose(configuredProviderTitleKey)
+    : configuredProviderId ?? t('settingsVoice.mode.off');
+  const configuredLocalSettings = configuredProviderId === 'local_direct'
+    ? readLocalDirectVoiceSettings(configuredVoiceSettings)
+    : configuredProviderId === 'local_conversation'
+      ? readLocalConversationVoiceSettings(configuredVoiceSettings)
+      : null;
+  const configuredLocalSttProvider = configuredLocalSettings?.stt.provider ?? null;
+  const configuredLocalSttModelPackId = configuredLocalSettings?.stt.localNeural.assetId?.trim() || null;
+  const configuredLocalSttBaseUrl = configuredLocalSettings?.stt.openaiCompat.baseUrl?.trim() ?? '';
+  const executionMachineId = resolveVoiceExecutionMachineIdFromState(appState);
   const formatterPrefs = React.useMemo(
     () => createVoiceQaFormatterPrefs(appState.settings),
     [appState.settings],
@@ -310,9 +370,9 @@ export function VoiceQaScreen() {
       formatVoiceQaSessionLabel(helperSessionId, formatterPrefs, {
         emptyLabel: t('voiceSurface.noTarget'),
         globalLabel: t('voiceActivity.format.voiceAgent'),
-        fallbackLabel: 'Selected session',
+        fallbackLabel: t('devVoiceQa.targetSession'),
       }),
-    [formatterPrefs, helperSessionId],
+    [appState, formatterPrefs, helperSessionId],
   );
   const runtimeSessionId =
     normalizeSessionId(qaState.runtimeSessionId)
@@ -324,9 +384,9 @@ export function VoiceQaScreen() {
       formatVoiceQaSessionLabel(runtimeSessionId, formatterPrefs, {
         emptyLabel: t('common.none'),
         globalLabel: t('voiceActivity.format.voiceAgent'),
-        fallbackLabel: 'Voice conversation',
+        fallbackLabel: t('devVoiceQa.runtimeSession'),
       }),
-    [formatterPrefs, runtimeSessionId],
+    [appState, formatterPrefs, runtimeSessionId],
   );
   const projectedConversationSessionId = React.useMemo(
     () => normalizeSessionId(boundConversationSessionId) ?? normalizeSessionId(effectiveActivitySessionId),
@@ -340,6 +400,127 @@ export function VoiceQaScreen() {
       ),
     [appState, projectedConversationSessionId],
   );
+  const outputTapSnapshot = React.useSyncExternalStore(
+    subscribeToVoiceQaOutputTap,
+    getVoiceQaOutputTapSnapshot,
+    getVoiceQaOutputTapSnapshot,
+  );
+  const daemonSpeechTransportSnapshot = React.useSyncExternalStore(
+    daemonSpeechStreamDiagnostics.subscribe,
+    daemonSpeechStreamDiagnostics.snapshot,
+    daemonSpeechStreamDiagnostics.snapshot,
+  );
+  const playOutputFixture = React.useCallback(async () => {
+    if (!routeOutputCaptureEnabled || !routeOutputFixtureUrl) return;
+    try {
+      await voiceQaOutputFixturePlayback.play(routeOutputFixtureUrl);
+    } catch (error) {
+      useVoiceQaStore
+        .getState()
+        .appendError(error instanceof Error ? error.message : 'voice_qa_output_fixture_failed');
+      throw error;
+    }
+  }, [routeOutputCaptureEnabled, routeOutputFixtureUrl]);
+  React.useEffect(() => {
+    setVoiceQaOutputTapEnabled(routeOutputCaptureEnabled);
+    return () => {
+      voiceQaOutputFixturePlayback.stop();
+      setVoiceQaOutputTapEnabled(false);
+    };
+  }, [routeOutputCaptureEnabled, routeOutputFixtureUrl]);
+  React.useEffect(() => {
+    if (
+      routeOutputCancelMs === null
+      || outputTapSnapshot.artifact?.lifecycle !== 'playing'
+    ) {
+      return;
+    }
+    const cancelTimer = setTimeout(() => {
+      voiceQaOutputFixturePlayback.stop();
+    }, routeOutputCancelMs);
+    return () => {
+      clearTimeout(cancelTimer);
+    };
+  }, [
+    outputTapSnapshot.artifact?.id,
+    outputTapSnapshot.artifact?.lifecycle,
+    routeOutputCancelMs,
+  ]);
+  const runtimeSnapshot = getVoiceConversationRuntimeSnapshot();
+  const activeServerSnapshot = getActiveServerSnapshot();
+  const cachedServerFeatures = getCachedReadyServerFeatures({
+    serverId: activeServerSnapshot.serverId,
+  });
+  const daemonHttpPort = activeServerSnapshot.serverId && executionMachineId
+    ? readVoiceDaemonHttpPortFromState({
+        state: appState,
+        serverId: activeServerSnapshot.serverId,
+        machineId: executionMachineId,
+      })
+    : null;
+  const directEndpoint = activeServerSnapshot.serverId && executionMachineId
+    ? readEndpointFromMachineState({
+        serverId: activeServerSnapshot.serverId,
+        machineId: executionMachineId,
+      })
+    : null;
+  const transportReadiness = resolveVoiceQaTransportReadiness({
+    serverFeatures: cachedServerFeatures,
+    serverId: activeServerSnapshot.serverId,
+    machineId: executionMachineId,
+    daemonHttpPort,
+    directEndpoint,
+    accountProfileId: appState.profile?.id,
+    socketStatus: appState.socketStatus,
+    activeSocketId: apiSocket.getSocketId(),
+  });
+  const machineRpcReceipts = getMachineRpcPeerMediationReceiptsSnapshot()
+    .filter((receipt) => String(receipt.method ?? '').startsWith('daemon.voice'))
+    .slice(-8);
+  const mediaSnapshotJson = JSON.stringify({
+    status: voiceSessionState.status,
+    mode: voiceSessionState.mode,
+    runtimeSessionId,
+    canStop: voiceSessionState.canStop,
+    micMuted: voiceSessionState.micMuted === true,
+    errorCode: voiceSessionState.errorCode ?? null,
+    configuredProviderId,
+    executionMachineId,
+    localSttProvider: configuredLocalSttProvider,
+    localSttModelPackId: configuredLocalSttModelPackId,
+    localSttBaseUrlConfigured: configuredLocalSttBaseUrl.length > 0,
+    ...transportReadiness,
+    runtimeState: runtimeSnapshot.state,
+    runtimeError: runtimeSnapshot.error
+      ? {
+          kind: runtimeSnapshot.error.kind,
+          reason: runtimeSnapshot.error.reason,
+          phase: runtimeSnapshot.error.phase,
+          retryPolicy: runtimeSnapshot.error.retryPolicy,
+          recoveryAction: runtimeSnapshot.error.recoveryAction,
+          presentation: runtimeSnapshot.error.presentation,
+        }
+      : null,
+    serverRoute: {
+      activeServerId: activeServerSnapshot.serverId,
+      activeServerUrl: activeServerSnapshot.serverUrl,
+      rpcDirectPeerEnabled: cachedServerFeatures
+        ? readServerEnabledBit(cachedServerFeatures, 'machines.rpc.directPeer') === true
+        : null,
+    },
+    machineRpcReceipts,
+  });
+  const outputArtifactJson = outputTapSnapshot.artifact
+    ? JSON.stringify({
+        id: outputTapSnapshot.artifact.id,
+        format: outputTapSnapshot.artifact.format,
+        originalByteLength: outputTapSnapshot.artifact.originalByteLength,
+        capturedByteLength: outputTapSnapshot.artifact.capturedByteLength,
+        truncated: outputTapSnapshot.artifact.truncated,
+        lifecycle: outputTapSnapshot.artifact.lifecycle,
+        errorCode: outputTapSnapshot.artifact.errorCode,
+      })
+    : 'null';
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: theme.colors.background.canvas }]} contentContainerStyle={styles.content}>
@@ -356,6 +537,26 @@ export function VoiceQaScreen() {
           <Item title={t('devVoiceQa.qaStatus')} detail={qaState.status} showChevron={false} />
           <Item title={t('devVoiceQa.targetSession')} detail={helperSessionText} showChevron={false} />
           <Item title={t('devVoiceQa.runtimeSession')} detail={runtimeSessionText} showChevron={false} />
+          <Text testID="voiceQa.media.snapshot" accessible={false} style={styles.qaEvidenceText}>
+            {mediaSnapshotJson}
+          </Text>
+          <Text testID="voiceQa.daemonSpeechTransport.snapshot" accessible={false} style={styles.qaEvidenceText}>
+            {JSON.stringify(daemonSpeechTransportSnapshot)}
+          </Text>
+          <Text
+            testID="voiceQa.output.artifact"
+            accessible={false}
+            style={styles.qaEvidenceText}
+          >
+            {outputArtifactJson}
+          </Text>
+          <Text
+            testID="voiceQa.output.artifactBytes"
+            accessible={false}
+            style={styles.qaEvidenceText}
+          >
+            {outputTapSnapshot.artifact?.bytesBase64 ?? ''}
+          </Text>
         </ItemGroup>
 
         <ItemGroup title={t('devVoiceQa.inputsTitle')}>
@@ -407,6 +608,7 @@ export function VoiceQaScreen() {
                     await voiceQaController.start({
                       sessionId: sessionIdRef.current,
                       initialContext: initialContextRef.current,
+                      ...(routeQaMode === 'media' ? { mode: 'media' as const } : {}),
                     });
                   })
                 }
@@ -437,6 +639,16 @@ export function VoiceQaScreen() {
                   size="normal"
                   display="inverted"
                   onPress={() => router.push(`/session/${boundConversationSessionId}` as any)}
+                />
+              ) : null}
+              {routeOutputCaptureEnabled && routeOutputFixtureUrl ? (
+                <RoundButton
+                  testID="voiceQa.output.playFixture"
+                  title={t('common.start')}
+                  size="normal"
+                  display="inverted"
+                  loading={busyAction === 'outputFixture'}
+                  onPress={() => void runAction('outputFixture', playOutputFixture)}
                 />
               ) : null}
             </View>
@@ -573,11 +785,6 @@ export function VoiceQaScreen() {
                   <Text style={[styles.entryText, { color: theme.colors.text.primary }]} selectable>
                     {entry.text}
                   </Text>
-                  {entry.raw ? (
-                    <Text style={[styles.entryRaw, { color: theme.colors.text.secondary }]} selectable>
-                      {entry.raw}
-                    </Text>
-                  ) : null}
                 </View>
               ))
             )}
@@ -671,13 +878,12 @@ const styles = StyleSheet.create(() => ({
     fontSize: 14,
     lineHeight: 20,
   },
-  entryRaw: {
-    fontSize: 12,
-    lineHeight: 18,
-  },
   activityText: {
     fontSize: 14,
     lineHeight: 20,
+  },
+  qaEvidenceText: {
+    display: 'none',
   },
 }));
 

@@ -64,8 +64,8 @@ describe('buildPetCompanionActivityModel', () => {
             v: 1,
             scope: 'primary_session',
             status: 'failed',
-            code: 'provider_session_error',
-            source: 'provider_session_error',
+            code: 'agent_session_error',
+            source: 'agent_session_error',
             occurredAt: 2_000,
         };
         const session = createSessionFixture({
@@ -126,7 +126,7 @@ describe('buildPetCompanionActivityModel', () => {
         });
     });
 
-    it('expires running activity from the latest runtime signal rather than render time', () => {
+    it('keeps projected running activity live until a terminal projection arrives', () => {
         const signalAtMs = 1_000;
         const session = createSessionFixture({
             id: 'running-expiry-session',
@@ -150,11 +150,11 @@ describe('buildPetCompanionActivityModel', () => {
         });
         expect(model.trayItems[0]).toEqual(expect.objectContaining({
             status: 'running',
-            expiresAtMs: signalAtMs + SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
+            expiresAtMs: null,
         }));
     });
 
-    it('keeps running activity alive from a fresh active heartbeat', () => {
+    it('keeps projected running activity alive regardless of heartbeat freshness', () => {
         const staleSignalAtMs = 1_000;
         const activeAtMs = 50_000;
         const session = createSessionFixture({
@@ -178,13 +178,9 @@ describe('buildPetCompanionActivityModel', () => {
             reason: 'running',
             sessionId: session.id,
         });
-        expect(model.trayItems[0]).toEqual(expect.objectContaining({
-            status: 'running',
-            expiresAtMs: activeAtMs + SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
-        }));
     });
 
-    it('does not keep running activity alive from meaningful activity alone', () => {
+    it('keeps projected running activity alive without meaningful activity freshness', () => {
         const nowMs = 1_000_000;
         const session = createSessionFixture({
             id: 'running-meaningful-activity-session',
@@ -203,10 +199,9 @@ describe('buildPetCompanionActivityModel', () => {
         });
 
         expect(model).toMatchObject({
-            state: 'idle',
-            reason: 'idle',
+            state: 'running',
+            reason: 'running',
             sessionId: session.id,
-            trayItems: [],
         });
     });
 
@@ -265,5 +260,36 @@ describe('buildPetCompanionActivityModel', () => {
             activityAtMs: null,
             subtitle: null,
         }));
+    });
+
+    it('ignores background activity while preserving foreground running behavior', () => {
+        const nowMs = 1_000_000;
+        const background = createSessionFixture({
+            id: 'background-session',
+            active: true,
+            presence: 'online',
+            thinking: false,
+            latestTurnStatus: 'completed',
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 1,
+        });
+        const foreground = createSessionFixture({
+            id: 'foreground-session',
+            active: true,
+            presence: 'online',
+            thinking: true,
+            thinkingAt: nowMs - 1,
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: nowMs - 1,
+        });
+
+        expect(buildPetCompanionActivityModel({
+            sessions: [background],
+            nowMs,
+        })).toMatchObject({ state: 'idle', trayItems: [] });
+        expect(buildPetCompanionActivityModel({
+            sessions: [foreground],
+            nowMs,
+        })).toMatchObject({ state: 'running', sessionId: foreground.id });
     });
 });

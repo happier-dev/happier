@@ -1,5 +1,11 @@
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { AgentId } from '@/agents/registry/registryCore';
-import { AGENT_IDS, DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
+import {
+    AGENT_IDS,
+    DEFAULT_AGENT_ID,
+    getAgentCore,
+    resolveAgentIdFromFlavor,
+} from '@/agents/registry/registryCore';
 
 export function resolveAgentIdOrDefault(
     flavor: string | null | undefined,
@@ -15,9 +21,13 @@ export function resolveAgentIdOrDefault(
  * This helper centralizes those heuristics.
  */
 export function resolveAgentIdForPermissionUi(params: {
+    metadata?: unknown;
     flavor: string | null | undefined;
     toolName: string;
 }): AgentId {
+    const byMetadata = resolveAgentIdFromSessionMetadata(params.metadata);
+    if (byMetadata) return byMetadata;
+
     const byFlavor = resolveAgentIdFromFlavor(params.flavor);
     if (byFlavor) return byFlavor;
 

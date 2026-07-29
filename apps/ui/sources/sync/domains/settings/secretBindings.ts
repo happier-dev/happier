@@ -1,4 +1,8 @@
-import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
+import {
+    readAiLaunchProfileCollection,
+    readProviderSettingsFromAccountSettingsV1,
+    shouldPreserveLegacyAiLaunchProfileBindingV1,
+} from '@happier-dev/protocol';
 
 type EnvVarRequirementLike = Readonly<{
     name: string;
@@ -6,9 +10,10 @@ type EnvVarRequirementLike = Readonly<{
 }>;
 
 type SettingsLike = Readonly<{
-    profiles: ReadonlyArray<Readonly<{ id: string; envVarRequirements?: unknown }>>;
+    profiles: readonly unknown[];
     secrets?: ReadonlyArray<Readonly<{ id: string }>>;
     secretBindingsByProfileId?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+    providerSettingsV1?: unknown;
 }>;
 
 function normalizeEnvVarRequirements(value: unknown): EnvVarRequirementLike[] {
@@ -27,7 +32,9 @@ function normalizeEnvVarName(input: string): string | null {
 function getAllowedSecretEnvVarNamesByProfileId(settings: SettingsLike): Record<string, Set<string>> {
     const out: Record<string, Set<string>> = {};
 
-    for (const p of settings.profiles) {
+    for (const entry of readAiLaunchProfileCollection(settings.profiles).entries) {
+        if (entry.kind !== 'legacy') continue;
+        const p = entry.profile;
         const names: Set<string> = new Set<string>(
             normalizeEnvVarRequirements(p.envVarRequirements)
                 .filter((r: EnvVarRequirementLike) => (r.kind ?? 'secret') === 'secret')
@@ -37,22 +44,6 @@ function getAllowedSecretEnvVarNamesByProfileId(settings: SettingsLike): Record<
         out[p.id] = names;
     }
 
-    // Include built-in profiles too (bindings are allowed for built-ins).
-    // We only consider built-ins that we know about; unknown profile ids are pruned.
-    const seen = new Set(Object.keys(out));
-    for (const profileId of Object.keys(settings.secretBindingsByProfileId ?? {})) {
-        if (seen.has(profileId)) continue;
-        const builtIn = getBuiltInProfile(profileId);
-        if (!builtIn) continue;
-        const names: Set<string> = new Set<string>(
-            normalizeEnvVarRequirements(builtIn.envVarRequirements)
-                .filter((r: EnvVarRequirementLike) => (r.kind ?? 'secret') === 'secret')
-                .map((r: EnvVarRequirementLike) => normalizeEnvVarName(String(r.name ?? '')))
-                .filter((n: string | null): n is string => typeof n === 'string' && n.length > 0),
-        );
-        out[profileId] = names;
-    }
-
     return out;
 }
 
@@ -60,7 +51,8 @@ function getAllowedSecretEnvVarNamesByProfileId(settings: SettingsLike): Record<
  * Remove dangling/invalid secret bindings.
  *
  * Invariants:
- * - No bindings for unknown profile ids (custom or built-in).
+ * - Unknown/historical/opaque profile bindings are preserved. Only the atomic
+ *   migration owner may move or remove them.
  * - No bindings for env var names that are not declared as a secret requirement on that profile.
  * - No bindings referencing deleted secrets.
  * - Env var names are normalized to uppercase.
@@ -71,6 +63,8 @@ export function pruneSecretBindings<TSettings extends SettingsLike>(settings: TS
 
     const secretIds = new Set((settings.secrets ?? []).map((s: { id: string }) => s.id));
     const allowedByProfileId = getAllowedSecretEnvVarNamesByProfileId(settings);
+    const collection = readAiLaunchProfileCollection(settings.profiles);
+    const migration = readProviderSettingsFromAccountSettingsV1(settings).settings.migration;
 
     let changed = false;
     const next: Record<string, Record<string, string>> = {};
@@ -78,7 +72,11 @@ export function pruneSecretBindings<TSettings extends SettingsLike>(settings: TS
     for (const [profileId, byEnv] of Object.entries(bindings)) {
         const allowed = allowedByProfileId[profileId];
         if (!allowed) {
-            changed = true;
+            if (shouldPreserveLegacyAiLaunchProfileBindingV1({ profileId, collection, migration })) {
+                next[profileId] = byEnv as Record<string, string>;
+            } else {
+                changed = true;
+            }
             continue;
         }
 

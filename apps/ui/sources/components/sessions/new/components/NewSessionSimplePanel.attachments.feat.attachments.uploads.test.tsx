@@ -76,6 +76,11 @@ installNewSessionComponentsCommonModuleMocks({
 vi.mock('react-native-keyboard-controller', () => ({
     KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('KeyboardAvoidingView', props, props.children),
+    useKeyboardHandler: () => {},
+    useReanimatedKeyboardAnimation: () => ({
+        height: { value: 0 },
+        progress: { value: 0 },
+    }),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -117,6 +122,7 @@ vi.mock('@/components/sessions/attachments/useAttachmentDraftManager', () => ({
     useAttachmentDraftManager: () => ({
         filePickerRef: { current: null },
         drafts: attachmentDraftState.drafts,
+        getDraftsSnapshot: () => attachmentDraftState.drafts,
         hasSendableAttachments: attachmentDraftState.hasSendableAttachments,
         agentInputAttachments: attachmentDraftState.agentInputAttachments,
         addWebFiles: addWebFilesSpy,
@@ -130,6 +136,14 @@ vi.mock('@/components/sessions/attachments/useAttachmentDraftManager', () => ({
 vi.mock('@/components/sessions/attachments/uploadAttachmentDraftsToSession', () => ({
     uploadAttachmentDraftsToSession: uploadAttachmentDraftsToSessionSpy,
     formatAttachmentsBlock: formatAttachmentsBlockSpy,
+    buildAttachmentMessageMeta: (uploaded: unknown) => ({
+        happier: {
+            kind: 'attachments.v1',
+            payload: {
+                attachments: uploaded,
+            },
+        },
+    }),
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -365,6 +379,9 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
             await afterCreated({
                 sessionId: 'sess_target',
                 effectiveSpawnServerId: 'server-a',
+                launchAttempt: {
+                    attachmentMessageLocalId: 'new-session-attachment-local-1',
+                },
             });
         });
 
@@ -373,6 +390,7 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
             drafts: attachmentDraftState.drafts,
             config: expect.any(Object),
             applyDraftPatch: attachmentDraftState.applyDraftPatch,
+            messageLocalId: 'new-session-attachment-local-1',
         });
         expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith({
             sessionId: 'sess_target',
@@ -380,6 +398,7 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
             initialMessageText: 'Investigate this bug\n\n[attachments block]',
             displayText: 'Investigate this bug',
             profileId: 'profile-work',
+            messageLocalId: 'new-session-attachment-local-1',
             metaOverrides: {
                 happier: {
                     kind: 'attachments.v1',

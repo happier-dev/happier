@@ -6,8 +6,8 @@
  *  - the per-section path (`renderSectionElement` in SelectionListBody.tsx),
  *    which composes section header + dynamic rows + optional stale option
  *    rows inside one wrapping `View`; and
- *  - the flat FlashList path (`SelectionListFlatFlashList.tsx`), which emits
- *    each dynamic row as a standalone FlashList row (no shared section
+ *  - the flat virtualized list path (`SelectionListVirtualizedBody.tsx`), which emits
+ *    each dynamic row as a standalone virtualized list row (no shared section
  *    wrapper).
  *
  * Style + opacity (stale wrapper) and constants are owned by this module so
@@ -77,7 +77,7 @@ const dynamicRowStyles = StyleSheet.create((theme) => ({
 export const selectionListDynamicRowStyles = dynamicRowStyles;
 
 /**
- * Loading skeleton row — used by both the flat FlashList path (one row per
+ * Loading skeleton row — used by both the flat virtualized list path (one row per
  * skeleton) and the per-section path (rendered inside a single accessibility
  * container).
  */
@@ -185,6 +185,11 @@ const sectionWrapStyles = StyleSheet.create(() => ({
     sectionWrap: {
         flexDirection: 'column',
     },
+    virtualizedSectionWrap: {
+        flexGrow: 1,
+        flexShrink: 1,
+        minHeight: 0,
+    },
 }));
 
 function SelectionListSectionScrollOffsetFrame(props: Readonly<{
@@ -247,6 +252,8 @@ export type SelectionListSectionRenderContext = Readonly<{
     focusedOptionId: string | null;
     onSelect: (id: string, option: SelectionListOption) => void;
     onPushStep: (step: SelectionListStep) => void;
+    optionPositionById: ReadonlyMap<string, number>;
+    optionSetSize: number;
     showsVerticalScrollIndicator: boolean;
     /** FR3-1 / FR3-8 — identity-free measure rendering. */
     measureMode: boolean;
@@ -255,7 +262,7 @@ export type SelectionListSectionRenderContext = Readonly<{
 /**
  * Render the section nodes from the plan. Extracted so the body can decide
  * whether to wrap them in a ScrollView (non-virtualized) or render them flat
- * (virtualized — FlashList owns the scroll container).
+ * (virtualized — virtualized list owns the scroll container).
  */
 export function renderSelectionListSectionNodes(
     plan: ReadonlyArray<SectionRenderPlan>,
@@ -274,7 +281,7 @@ export function renderSelectionListSectionNodes(
 /**
  * Render a single section. Branches on `dynamicState` to emit
  * loading/error/empty/success variants and on virtualization to choose
- * between the virtualized FlashList path and the plain mapped path.
+ * between the virtualized virtualized list path and the plain mapped path.
  *
  * R16c (Major 5): the body-level resolver decides whether THIS section is
  * allowed to virtualize. The descriptor's own virtualization hint is the
@@ -337,6 +344,8 @@ function renderSelectionListSectionElement(
                         focusedOptionId={ctx.focusedOptionId}
                         onSelect={ctx.onSelect}
                         onPushStep={ctx.onPushStep}
+                        optionPositionById={ctx.optionPositionById}
+                        optionSetSize={ctx.optionSetSize}
                         measureMode={measureMode}
                     />
                 ) : null}
@@ -368,6 +377,8 @@ function renderSelectionListSectionElement(
                             focusedOptionId={ctx.focusedOptionId}
                             onSelect={ctx.onSelect}
                             onPushStep={ctx.onPushStep}
+                            optionPositionById={ctx.optionPositionById}
+                            optionSetSize={ctx.optionSetSize}
                             measureMode={measureMode}
                         />
                     </View>
@@ -457,6 +468,8 @@ function renderSelectionListSectionElement(
                 // (matching the plain mapped path's UX).
                 focusedOptionId={ctx.focusedOptionId}
                 onSelectOption={handleVirtualizedSelect}
+                optionPositionById={ctx.optionPositionById}
+                optionSetSize={ctx.optionSetSize}
                 virtualization={sectionPlan.virtualization}
                 showsVerticalScrollIndicator={ctx.showsVerticalScrollIndicator}
             />
@@ -472,7 +485,10 @@ function renderSelectionListSectionElement(
             : undefined;
         if (virtualizedTransitionKey !== undefined) {
             return (
-                <View key={sectionPlan.id} style={wrapperStyle}>
+                <View
+                    key={sectionPlan.id}
+                    style={[wrapperStyle, wrapStyles.virtualizedSectionWrap]}
+                >
                     <VirtualizedTransitionShell
                         transitionKey={virtualizedTransitionKey}
                         sectionTestId={sectionTestId}
@@ -483,7 +499,10 @@ function renderSelectionListSectionElement(
             );
         }
         return (
-            <View key={sectionPlan.id} style={wrapperStyle}>
+            <View
+                key={sectionPlan.id}
+                style={[wrapperStyle, wrapStyles.virtualizedSectionWrap]}
+            >
                 {virtualizedNode}
             </View>
         );
@@ -512,6 +531,8 @@ function renderSelectionListSectionElement(
                     focusedOptionId={ctx.focusedOptionId}
                     onSelect={ctx.onSelect}
                     onPushStep={ctx.onPushStep}
+                    optionPositionById={ctx.optionPositionById}
+                    optionSetSize={ctx.optionSetSize}
                     transitionKey={sectionPlan.transitionKey as string}
                     sectionTestId={sectionTestId}
                 />
@@ -524,6 +545,8 @@ function renderSelectionListSectionElement(
                     focusedOptionId={ctx.focusedOptionId}
                     onSelect={ctx.onSelect}
                     onPushStep={ctx.onPushStep}
+                    optionPositionById={ctx.optionPositionById}
+                    optionSetSize={ctx.optionSetSize}
                     measureMode={measureMode}
                 />
             )}

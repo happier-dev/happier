@@ -7,6 +7,7 @@ import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibil
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol';
 import type { CLIAvailability } from '@/hooks/auth/useCLIDetection';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
@@ -101,7 +102,16 @@ export function useNewSessionWizardProps(params: Readonly<{
     acpConfigOptionOverrides?: NewSessionWizardAgentProps['acpConfigOptionOverrides'];
     setAcpConfigOptionOverride?: NewSessionWizardAgentProps['setAcpConfigOptionOverride'];
     modelMode: ModelMode | undefined;
+    modelSelection?: SessionModelSelectionV1 | null;
     setModelMode: (mode: ModelMode) => void;
+    setModelSelection?: NewSessionWizardAgentProps['setModelSelection'];
+    providerModelGroups?: NewSessionWizardAgentProps['providerModelGroups'];
+    providerModelProjectionAuthoritative?: NewSessionWizardAgentProps['providerModelProjectionAuthoritative'];
+    providerModelProjectionError?: NewSessionWizardAgentProps['providerModelProjectionError'];
+    retryProviderModelProjection?: NewSessionWizardAgentProps['retryProviderModelProjection'];
+    providerCurrentSelectionRecovery?: NewSessionWizardAgentProps['providerCurrentSelectionRecovery'];
+    hiddenNativeModelKeys?: NewSessionWizardAgentProps['hiddenNativeModelKeys'];
+    experimentalModelConfirmation?: NewSessionWizardAgentProps['experimentalModelConfirmation'];
     selectedIndicatorColor: string;
     profileMap: Map<string, AIBackendProfile>;
     permissionMode: PermissionMode;
@@ -134,6 +144,8 @@ export function useNewSessionWizardProps(params: Readonly<{
     canCreate: boolean;
     isCreating: boolean;
     pendingLaunchAttempt?: NewSessionWizardFooterProps['pendingLaunchAttempt'];
+    providerLaunchError?: NewSessionWizardFooterProps['providerLaunchError'];
+    retryProviderLaunch?: NewSessionWizardFooterProps['retryProviderLaunch'];
     submitAccessibilityLabel?: NewSessionWizardFooterProps['submitAccessibilityLabel'];
     emptyAutocompletePrefixes: any;
     emptyAutocompleteSuggestions: any;
@@ -359,7 +371,16 @@ export function useNewSessionWizardProps(params: Readonly<{
             acpConfigOptionOverrides: params.acpConfigOptionOverrides,
             setAcpConfigOptionOverride: params.setAcpConfigOptionOverride,
             modelMode: params.modelMode,
+            modelSelection: params.modelSelection,
             setModelMode: params.setModelMode,
+            setModelSelection: params.setModelSelection,
+            providerModelGroups: params.providerModelGroups,
+            providerModelProjectionAuthoritative: params.providerModelProjectionAuthoritative,
+            providerModelProjectionError: params.providerModelProjectionError,
+            retryProviderModelProjection: params.retryProviderModelProjection,
+            providerCurrentSelectionRecovery: params.providerCurrentSelectionRecovery,
+            hiddenNativeModelKeys: params.hiddenNativeModelKeys,
+            experimentalModelConfirmation: params.experimentalModelConfirmation,
             selectedIndicatorColor: params.selectedIndicatorColor,
             profileMap: params.profileMap,
             permissionMode: params.permissionMode,
@@ -380,6 +401,14 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.isAgentSelectable,
         params.isCliBannerDismissed,
         params.modelMode,
+        params.modelSelection,
+        params.providerModelGroups,
+        params.providerModelProjectionAuthoritative,
+        params.providerModelProjectionError,
+        params.retryProviderModelProjection,
+        params.providerCurrentSelectionRecovery,
+        params.hiddenNativeModelKeys,
+        params.experimentalModelConfirmation,
         params.modelOptions,
         params.modelOptionsProbe,
         params.favoriteModelSelections,
@@ -398,6 +427,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.setAcpConfigOptionOverride,
         params.setAcpSessionModeId,
         params.setModelMode,
+        params.setModelSelection,
         params.handlePermissionModeChange,
         params.tmuxRequested,
         installableDepInstallers,
@@ -453,6 +483,8 @@ export function useNewSessionWizardProps(params: Readonly<{
             canCreate: params.canCreate,
             isCreating: params.isCreating,
             pendingLaunchAttempt: params.pendingLaunchAttempt,
+            providerLaunchError: params.providerLaunchError,
+            retryProviderLaunch: params.retryProviderLaunch,
             submitAccessibilityLabel: params.submitAccessibilityLabel,
             emptyAutocompletePrefixes: params.emptyAutocompletePrefixes,
             emptyAutocompleteSuggestions: params.emptyAutocompleteSuggestions,
@@ -486,8 +518,10 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.machinePopover,
         params.pendingLaunchAttempt,
         params.pathPopover,
+        params.providerLaunchError,
         params.resumePopover,
         params.resumeSessionId,
+        params.retryProviderLaunch,
         params.sessionPrompt,
         params.sessionPromptInputMaxHeight,
         params.setSessionPrompt,

@@ -136,12 +136,21 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                 icon: ({ theme }) => <Ionicons name="sparkles-outline" size={18} color={theme.colors.text.secondary} />,
                 children: [
                     {
+                        id: 'agents',
+                        titleKey: 'settingsAgents.title',
+                        subtitleKey: 'settingsAgents.entrySubtitle',
+                        route: SETTINGS_ROUTES.agents,
+                        keywords: ['providers', 'agents', 'models', 'llm'],
+                        icon: ({ theme }) => <Ionicons name="sparkles-outline" size={18} color={theme.colors.text.secondary} />,
+                    },
+                    {
                         id: 'providers',
                         titleKey: 'settingsProviders.title',
                         subtitleKey: 'settingsProviders.entrySubtitle',
                         route: SETTINGS_ROUTES.providers,
-                        keywords: ['providers', 'agents', 'models', 'llm'],
-                        icon: ({ theme }) => <Ionicons name="sparkles-outline" size={18} color={theme.colors.text.secondary} />,
+                        keywords: ['providers', 'models', 'openrouter', 'ollama', 'lm studio'],
+                        gate: { featureId: 'providers' },
+                        icon: ({ theme }) => <Ionicons name="cube-outline" size={18} color={theme.colors.text.secondary} />,
                     },
                     {
                         id: 'subAgent',
@@ -165,7 +174,6 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                         titleKey: 'settings.connectedServices',
                         subtitleKey: 'settings.connectedServicesSubtitle',
                         route: SETTINGS_ROUTES.connectedServices,
-                        gate: { featureId: 'connectedServices' },
                         keywords: ['connected services', 'oauth', 'accounts'],
                         icon: ({ theme }) => <Ionicons name="key-outline" size={18} color={theme.colors.text.secondary} />,
                     },
@@ -235,6 +243,15 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                         route: SETTINGS_ROUTES.session,
                         keywords: ['session', 'terminal', 'tmux'],
                         icon: ({ theme }) => <Ionicons name="terminal-outline" size={18} color={theme.colors.text.secondary} />,
+                    },
+                    {
+                        id: 'externalSessions',
+                        titleKey: 'externalSessions.settingsTitle',
+                        subtitleKey: 'externalSessions.settingsEntrySubtitle',
+                        route: SETTINGS_ROUTES.externalSessions,
+                        keywords: ['external sessions', 'background follow', 'hooks'],
+                        gate: { featureId: 'sessions.direct' },
+                        icon: ({ theme }) => <Ionicons name="link-outline" size={18} color={theme.colors.text.secondary} />,
                     },
                     {
                         id: 'actions',

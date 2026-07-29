@@ -11,7 +11,8 @@ import { normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
 
 import { QrCodeScannerView } from '@/components/qr/QrCodeScannerView';
 import { WebDesktopRelayHostHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopRelayHostHandoffContent';
-import { WebDesktopBackgroundServiceHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopBackgroundServiceHandoffContent';
+import { WebDesktopDownloadCta } from '@/components/onboarding/steps/webDesktop/WebDesktopDownloadCta';
+import { MachineArrivalCard } from '@/components/onboarding/detection/MachineArrivalCard';
 import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
 import { ServerReachabilityRemediationCard } from '@/components/settings/server/sections/ServerReachabilityRemediationCard';
 import type {
@@ -33,7 +34,6 @@ import { RelayHostLocalChecklistStep } from '../checklists/relayHostLocal/RelayH
 import { RemoteSshChecklistStep } from '../checklists/remoteSsh/RemoteSshChecklistStep';
 import type { RemoteSshChecklistMode } from '../checklists/remoteSsh/types';
 import type { WizardStepId } from '../state/wizardTypes';
-import { RelayDiagram } from '../ui/RelayDiagram';
 import { ConfirmSwitchRelayStep, type RelaySwitchDecision } from '../steps/ConfirmSwitchRelayStep';
 
 import type { OnboardingWizardSurfaceStyles } from './OnboardingWizardSurface.styles';
@@ -64,6 +64,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     theme: Readonly<{ colors: Readonly<{ text: Readonly<{ secondary: string }> }> }>;
 
     layout: 'portrait' | 'landscape';
+    isDesktopShell: boolean;
     authEntryOptions: AuthEntryOptions;
 
     canScanQr: boolean;
@@ -111,7 +112,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
 
     onOpenRelaySelectionFromWelcome: () => void;
     onOpenRelaySelectionFromAuth: () => void;
-    onChangeRelayViaServerConfig: () => void;
+    onOpenSetup: () => void;
 
     onOpenRestore: () => void;
     onOpenLostAccess: () => void;
@@ -163,9 +164,6 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     if (params.stepId === 'relay_select') {
         return (
             <View testID="relay-select-route-content" style={params.styles.relaySelectRouteContent}>
-                <View style={params.styles.diagramContainer}>
-                    <RelayDiagram testID={`${params.testIDPrefix}-relay-diagram`} />
-                </View>
                 {params.relaySelectBody}
             </View>
         );
@@ -216,10 +214,14 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
 
     if (params.stepId === 'background_service_handoff') {
         return (
-            <WebDesktopBackgroundServiceHandoffContent
-                testID={`${params.testIDPrefix}-background-service-handoff`}
-                relayUrl={params.relaySelectionServerUrl ?? ''}
-            />
+            <View testID={`${params.testIDPrefix}-background-service-handoff`} style={params.styles.urlBlock}>
+                <MachineArrivalCard
+                    mode="instructional"
+                    testID={`${params.testIDPrefix}-background-service-arrival`}
+                    serverUrl={params.relaySelectionServerUrl ?? ''}
+                />
+                <WebDesktopDownloadCta testIDPrefix={`${params.testIDPrefix}-background-service-desktop-app`} />
+            </View>
         );
     }
 
@@ -316,9 +318,10 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                 <View style={params.styles.authEntryWrapper}>
                     <AuthEntryView
                         layout={params.layout}
-                        isDesktopShell={false}
+                        isDesktopShell={params.isDesktopShell}
+                        showOpenSetupAction={false}
                         options={params.authEntryOptions}
-                        onOpenSetup={() => {}}
+                        onOpenSetup={params.onOpenSetup}
                         onChangeRelay={params.onOpenRelaySelectionFromAuth}
                         onRestore={params.onOpenRestore}
                         onCreateAccount={params.onCreateAccount}

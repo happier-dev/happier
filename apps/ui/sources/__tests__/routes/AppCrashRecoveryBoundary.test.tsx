@@ -9,6 +9,13 @@ import { installRouteRootCommonModuleMocks } from './routeRootTestHelpers';
 
 installRouteRootCommonModuleMocks();
 
+vi.mock('@/utils/web/reactNativeScreensCjs', () => ({
+  requireReactNativeScreens: () => ({
+    FullWindowOverlay: ({ children }: { children?: React.ReactNode }) =>
+      React.createElement('FullWindowOverlay', { testID: 'app-crash-recovery-full-window-overlay' }, children),
+  }),
+}));
+
 vi.mock('expo-clipboard', () => ({
   setStringAsync: vi.fn(async () => {}),
 }));
@@ -114,6 +121,56 @@ describe('AppCrashRecoveryBoundary', () => {
 
     expect(textContent).toContain('boom');
     expect(textContent).toContain('Wrapper');
+  });
+
+  it('hosts the native crash fallback in a full-window overlay without RN Modal', async () => {
+    const reactNative = await import('react-native');
+    const platform = reactNative.Platform as { OS: string };
+    const originalOs = platform.OS;
+    platform.OS = 'ios';
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { AppCrashRecoveryBoundary } = await import('@/components/appShell/AppCrashRecoveryBoundary');
+      const Thrower = () => { throw new Error('boom'); };
+      const screen = await renderScreen(<AppCrashRecoveryBoundary onRestart={() => {}}><Thrower /></AppCrashRecoveryBoundary>);
+      const overlay = screen.findByTestId('app-crash-recovery-full-window-overlay');
+      expect(overlay?.findByProps({ testID: 'app-crash-restart' })).toBeTruthy();
+    } finally {
+      platform.OS = originalOs;
+      consoleError.mockRestore();
+    }
+  });
+
+  it('uses the root overlay fallback on Android', async () => {
+    const reactNative = await import('react-native');
+    const platform = reactNative.Platform as { OS: string };
+    const originalOs = platform.OS;
+    platform.OS = 'android';
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { AppCrashRecoveryBoundary } = await import('@/components/appShell/AppCrashRecoveryBoundary');
+      const Thrower = () => { throw new Error('boom'); };
+      const screen = await renderScreen(<AppCrashRecoveryBoundary onRestart={() => {}}><Thrower /></AppCrashRecoveryBoundary>);
+      expect(screen.findAllByTestId('app-crash-recovery-full-window-overlay')).toHaveLength(0);
+      expect(screen.findByTestId('app-crash-recovery-native-overlay-fallback')?.findByProps({ testID: 'app-crash-restart' })).toBeTruthy();
+    } finally {
+      platform.OS = originalOs;
+      consoleError.mockRestore();
+    }
+  });
+
+  it('keeps the web crash fallback inline without a modal host', async () => {
+    const reactNative = await import('react-native');
+    expect((reactNative.Platform as { OS: string }).OS).toBe('web');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { AppCrashRecoveryBoundary } = await import('@/components/appShell/AppCrashRecoveryBoundary');
+      const Thrower = () => { throw new Error('boom'); };
+      const screen = await renderScreen(<AppCrashRecoveryBoundary onRestart={() => {}}><Thrower /></AppCrashRecoveryBoundary>);
+      expect(screen.findByTestId('app-crash-restart')).toBeTruthy();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it('invokes onRestart when the restart button is pressed', async () => {

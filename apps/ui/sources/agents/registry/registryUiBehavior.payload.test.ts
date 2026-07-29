@@ -18,6 +18,7 @@ import {
     buildSpawnEnvironmentVariablesFromUiState,
     buildSpawnSessionExtrasFromUiState,
     buildWakeResumeExtras,
+    resolveAgentUiBehavior,
 } from './registryUiBehavior';
 import { makeSettings } from './registryUiBehavior.testHelpers';
 
@@ -66,6 +67,72 @@ describe('buildSpawnSessionExtrasFromUiState', () => {
             settings: makeSettings({ codexBackendMode: 'acp' }),
             resumeSessionId: 'x1',
         })).toEqual({});
+    });
+});
+
+describe('provider behavior runtime diagnostics', () => {
+    it('exposes Pi session artifact paths through the provider behavior surface', () => {
+        const debugBehavior = (resolveAgentUiBehavior('pi') as any).debug;
+
+        expect(debugBehavior?.resolveProviderSessionArtifactPath?.({
+            metadata: {
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'pi',
+                    provider: {
+                        resumeStrategy: 'sessionFileAbsolutePreferred',
+                        providerSessionId: 'pi-session-1',
+                        sessionFile: ' /tmp/pi/from-runtime.jsonl ',
+                    },
+                },
+                piSessionFile: '/tmp/pi/legacy.jsonl',
+            },
+        })).toBe('/tmp/pi/from-runtime.jsonl');
+    });
+
+    it('fails closed when Pi debug metadata carries a foreign runtime descriptor', () => {
+        const debugBehavior = (resolveAgentUiBehavior('pi') as any).debug;
+
+        expect(debugBehavior?.resolveProviderSessionArtifactPath?.({
+            metadata: {
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'codex',
+                    provider: {
+                        backendMode: 'appServer',
+                        sessionFile: '/tmp/not-pi.jsonl',
+                    },
+                },
+            },
+        })).toBeNull();
+    });
+
+    it('exposes Codex app-server transport synthesis through provider behavior', () => {
+        const transportBehavior = (resolveAgentUiBehavior('codex').payload as any)?.buildBackendTransportFields;
+
+        expect(transportBehavior?.({
+            agentId: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+            providerMode: 'appServer',
+            providerSessionId: 'codex-session-1',
+        })).toEqual({
+            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: expect.objectContaining({
+                v: 1,
+                agentId: 'codex',
+                agent: expect.objectContaining({
+                    backendMode: 'appServer',
+                    providerSessionId: 'codex-session-1',
+                    agentExtra: expect.objectContaining({
+                        owner: 'codex',
+                        runtimeHandle: expect.objectContaining({
+                            backendMode: 'appServer',
+                            providerSessionId: 'codex-session-1',
+                        }),
+                    }),
+                }),
+            }),
+        });
     });
 });
 
@@ -214,7 +281,7 @@ describe('buildWakeResumeExtras', () => {
                 metadata: {
                     runtimeDescriptorV1: {
                         v: 1,
-                        providerId: 'codex',
+                        agentId: 'codex',
                         provider: {
                             backendMode: 'appServer',
                             providerSessionId: 'x1',
@@ -242,7 +309,7 @@ describe('buildWakeResumeExtras', () => {
                 metadata: {
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'codex',
+                        agentId: 'codex',
                         codexBackendMode: 'appServer',
                     },
                 },
@@ -331,7 +398,7 @@ describe('buildWakeResumeExtras', () => {
                 metadata: {
                     agentRuntimeDescriptorV1: {
                         v: 1,
-                        providerId: 'opencode',
+                        agentId: 'opencode',
                         provider: {
                             backendMode: 'server',
                             providerSessionId: 'oc1',

@@ -4,6 +4,15 @@ import type { ManagedConnectionTransport, TransportDisconnectEvent } from '@happ
 
 type SyncSocket = Socket;
 
+function isSocketActive(socket: SyncSocket): boolean {
+    return (socket as unknown as { active?: boolean }).active === true;
+}
+
+function isAlreadyDisconnectedSocketError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+    return error.message.toLowerCase().includes('socket has been disconnected');
+}
+
 export function createSyncSocketTransport(params: Readonly<{
     endpoint: string;
     token: string;
@@ -71,8 +80,20 @@ export function createSyncSocketTransport(params: Readonly<{
             socket.connect();
         },
         async disconnect(options?: { intentional?: boolean }): Promise<void> {
+            if (socket.connected !== true && !isSocketActive(socket)) {
+                intentionalDisconnect = false;
+                return;
+            }
             intentionalDisconnect = options?.intentional === true;
-            socket.disconnect();
+            try {
+                socket.disconnect();
+            } catch (error) {
+                intentionalDisconnect = false;
+                if (isAlreadyDisconnectedSocketError(error)) {
+                    return;
+                }
+                throw error;
+            }
         },
         async destroy(): Promise<void> {
             intentionalDisconnect = false;

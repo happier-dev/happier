@@ -25,12 +25,15 @@ let scopeState: any = {
 };
 
 installSessionDetailsPanelCommonModuleMocks({
-    storage: async () => ({
-        useLocalSetting: (key: string) => {
-            if (key === 'embeddedTerminalDockLocation') return embeddedTerminalDockLocation;
-            return null;
-        },
-    }),
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useLocalSetting: (key: string) => {
+                if (key === 'embeddedTerminalDockLocation') return embeddedTerminalDockLocation;
+                return null;
+            },
+        });
+    },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({
@@ -46,6 +49,7 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
+    FontWeights: { regular: '400', semiBold: '500', bold: '600' },
     Typography: {
         default: () => ({}),
         mono: () => ({}),
@@ -100,6 +104,8 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSes
 }));
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+    getMachineContributionRegistryProjectionRevision: () => 0,
+    subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machineContributionRegistryProjectionDescribe: (...args: readonly unknown[]) => machineProjectionDescribeMock(...args),
 }));
 
@@ -135,11 +141,11 @@ function createRightSidebarProjection(params: Readonly<{
         sessionHeaderActionsById: Object.freeze({}),
         hostedWebById: Object.freeze({}),
         reactNativeBundlesById: Object.freeze({}),
-        embeddedWebBundlesById: Object.freeze({}),
         surfacePlacementsById: Object.freeze({ [placement.id]: placement }),
         surfacePlacementsByPlacement: Object.freeze({ 'session.rightSidebarTab': Object.freeze([placement]) }),
         uiArtifactsById: Object.freeze({}),
         digestsByPluginId: Object.freeze({}),
+        voiceProvidersById: Object.freeze({}),
         unknownEntriesById: Object.freeze({}),
     });
 }
@@ -241,6 +247,8 @@ describe('SessionRightPanel (terminal tab)', () => {
                         tabId: 'global',
                         descriptorId: 'global-session-tab',
                     }),
+                    pluginBrowserProjection: null,
+                    interactionEnabled: true,
                     machineId: 'machine-global',
                     serverId: 'server-global',
                     platform: 'web',

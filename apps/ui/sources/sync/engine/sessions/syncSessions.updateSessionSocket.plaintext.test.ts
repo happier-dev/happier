@@ -60,6 +60,9 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
       updateSeq: 10,
       updateCreatedAt: 1234,
       sessionEncryption: {
+        decryptMetadataPayload: async () => {
+          throw new Error('decryptMetadataPayload should not be called for plaintext sessions');
+        },
         decryptAgentState: async () => {
           throw new Error('decryptAgentState should not be called for plaintext sessions');
         },
@@ -75,6 +78,163 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
     expect(nextSession.agentStateVersion).toBe(3);
     const agentState = nextSession.agentState as unknown as { controlledByUser?: unknown };
     expect(agentState.controlledByUser).toBe(true);
+  });
+
+  it('applies a layout-v1 privacy contraction over higher legacy socket state versions', async () => {
+    const base = {
+      ...createSession({ sessionId: 's_privacy_socket', encryptionMode: 'plain' }),
+      metadataVersion: 9,
+      metadata: {
+        path: '/private/worktree',
+        host: 'private-host',
+        machineId: 'private-machine',
+        externalSessionV1: {
+          v: 1,
+          agentId: 'codex',
+          machineId: 'private-machine',
+          remoteSessionId: 'private-native-id',
+          source: { kind: 'codexHome', home: 'local' },
+        },
+      },
+      agentStateVersion: 8,
+      agentState: {
+        requests: {
+          privateRequest: {
+            tool: 'private-tool',
+            arguments: 'private-tool-arguments',
+          },
+        },
+      },
+    } satisfies Session;
+    const updateBody = {
+      metadataLayoutVersion: 1,
+      metadata: {
+        version: 1,
+        value: JSON.stringify({
+          v: 1,
+          summary: { text: 'Safe title', updatedAt: 10 },
+        }),
+      },
+      agentState: { version: 1, value: null },
+      pendingPermissionRequestCount: 0,
+      pendingUserActionRequestCount: 0,
+    };
+
+    const { nextSession } = await buildUpdatedSessionFromSocketUpdate({
+      session: base,
+      updateBody,
+      updateSeq: 10,
+      updateCreatedAt: 1234,
+      sessionEncryption: null,
+    });
+    const renderablePatch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({
+      renderable: {
+        id: base.id,
+        seq: base.seq,
+        createdAt: base.createdAt,
+        updatedAt: base.updatedAt,
+        active: base.active,
+        activeAt: base.activeAt,
+        metadataVersion: 9,
+        agentStateVersion: 8,
+        metadata: {
+          path: '/private/worktree',
+          host: 'private-host',
+          machineId: 'private-machine',
+          externalSessionV1: {
+            v: 1,
+            agentId: 'codex',
+            machineId: 'private-machine',
+            remoteSessionId: 'private-native-id',
+            source: { kind: 'codexHome', home: 'local' },
+          },
+        },
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online',
+        hasPendingPermissionRequests: true,
+        hasPendingUserActionRequests: true,
+      },
+      updateBody,
+      updateSeq: 10,
+      updateCreatedAt: 1234,
+      sessionEncryption: null,
+    });
+
+    expect(nextSession).toMatchObject({
+      metadataLayoutVersion: 1,
+      metadataVersion: 1,
+      agentStateVersion: 1,
+      metadata: {
+        v: 1,
+        summary: { text: 'Safe title', updatedAt: 10 },
+      },
+      agentState: {},
+    });
+    expect(renderablePatch).toMatchObject({
+      metadataLayoutVersion: 1,
+      metadataVersion: 1,
+      agentStateVersion: 1,
+      hasPendingPermissionRequests: false,
+      hasPendingUserActionRequests: false,
+    });
+    expect(JSON.stringify(nextSession)).not.toMatch(/private-native-id|private-tool-arguments|private-worktree/);
+    expect(JSON.stringify(renderablePatch)).not.toMatch(/private-native-id|private-worktree/);
+  });
+
+  it('strict-parses layout-v1 E2EE socket metadata from the raw decrypted envelope', async () => {
+    const base = {
+      ...createSession({ sessionId: 's_privacy_socket_e2ee', encryptionMode: 'e2ee' }),
+      metadataLayoutVersion: 0,
+      metadataVersion: 9,
+      metadata: {
+        path: '/private/worktree',
+        host: 'private-host',
+        externalSessionV1: { remoteSessionId: 'private-native-id' },
+      },
+      agentStateVersion: 8,
+      agentState: {
+        requests: {
+          privateRequest: {
+            tool: 'private-tool',
+            arguments: { secret: 'private-tool-arguments' },
+          },
+        },
+      },
+    } satisfies Session;
+    const sharedMetadata = {
+      v: 1 as const,
+      summary: { text: 'Safe title', updatedAt: 10 },
+    };
+    const decryptMetadataPayload = vi.fn(async () => sharedMetadata);
+    const decryptMetadata = vi.fn(async () => ({
+      ...sharedMetadata,
+      path: '',
+      host: '',
+      externalSessionV1: { remoteSessionId: 'private-native-id' },
+    }));
+    const decryptAgentState = vi.fn(async () => ({}));
+
+    const { nextSession } = await buildUpdatedSessionFromSocketUpdate({
+      session: base,
+      updateBody: {
+        metadataLayoutVersion: 1,
+        metadata: { version: 1, value: 'encrypted-shared-envelope' },
+        agentState: { version: 1, value: null },
+      },
+      updateSeq: 10,
+      updateCreatedAt: 1234,
+      sessionEncryption: {
+        decryptMetadataPayload,
+        decryptMetadata,
+        decryptAgentState,
+      } as any,
+    });
+
+    expect(decryptMetadataPayload).toHaveBeenCalledWith(1, 'encrypted-shared-envelope');
+    expect(decryptMetadata).not.toHaveBeenCalled();
+    expect(nextSession.metadata).toEqual(sharedMetadata);
+    expect(JSON.stringify(nextSession)).not.toMatch(/private-native-id|private-tool|private-worktree/);
   });
 
   it('applies archivedAt changes from update-session payloads', async () => {
@@ -97,8 +257,8 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
       v: 1,
       scope: 'primary_session',
       status: 'failed',
-      code: 'provider_status_error',
-      source: 'provider_status_error',
+      code: 'agent_status_error',
+      source: 'agent_status_error',
       occurredAt: 100,
       sanitizedPreview: 'Provider reported an error',
     } as const;
@@ -142,6 +302,27 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
   });
 
   it('applies runtime activity projection fields from update-session payloads', async () => {
+    const base = createSession({ sessionId: 's1', encryptionMode: 'plain' });
+
+    const { nextSession } = await buildUpdatedSessionFromSocketUpdate({
+      session: base,
+      updateBody: {
+        runtimeActivityState: 'active',
+        runtimeActivityActiveCount: 1,
+        runtimeActivityObservedAt: 1_000,
+        runtimeActivityRevision: 2_000,
+      },
+      updateSeq: 10,
+      updateCreatedAt: 1234,
+      sessionEncryption: null,
+    });
+
+    expect(nextSession.runtimeActivityActiveCount).toBe(1);
+    expect(nextSession.runtimeActivityObservedAt).toBe(1_000);
+    expect(nextSession.runtimeActivityRevision).toBe(2_000);
+  });
+
+  it('applies inactive projection changes without leaving stale thinking active', async () => {
     const base = {
       ...createSession({ sessionId: 's1', encryptionMode: 'plain' }),
       active: true,
@@ -420,6 +601,7 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
     syncPerformanceTelemetry.configure({ enabled: true, slowThresholdMs: 1_000_000, flushIntervalMs: 60_000 });
     syncPerformanceTelemetry.reset();
     const decryptMetadata = vi.fn(async () => ({ path: '/fallback', host: 'fallback' }));
+    const decryptMetadataPayload = vi.fn(async () => ({ path: '/fallback', host: 'fallback' }));
     const decryptAgentState = vi.fn(async () => ({ controlledByUser: false }));
     const decryptSessionSnapshotState = vi.fn(async () => ({
       metadata: { path: '/work', host: 'devbox' },
@@ -434,11 +616,17 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
       },
       updateSeq: 10,
       updateCreatedAt: 1234,
-      sessionEncryption: { decryptMetadata, decryptAgentState, decryptSessionSnapshotState },
+      sessionEncryption: {
+        decryptMetadata,
+        decryptMetadataPayload,
+        decryptAgentState,
+        decryptSessionSnapshotState,
+      },
     });
 
     expect(decryptSessionSnapshotState).toHaveBeenCalledWith(2, 'enc-meta', 3, 'enc-state');
     expect(decryptMetadata).not.toHaveBeenCalled();
+    expect(decryptMetadataPayload).not.toHaveBeenCalled();
     expect(decryptAgentState).not.toHaveBeenCalled();
     expect(nextSession.metadataVersion).toBe(2);
     expect(nextSession.agentStateVersion).toBe(3);

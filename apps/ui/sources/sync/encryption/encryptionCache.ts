@@ -1,5 +1,6 @@
 import { AgentState, Metadata, MachineMetadata } from '../domains/state/storageTypes';
 import { DecryptedMessage } from '../domains/state/storageTypes';
+import { loadSyncTuning } from '../runtime/syncTuning';
 
 interface CacheEntry<T> {
     data: T;
@@ -8,7 +9,13 @@ interface CacheEntry<T> {
 
 type MessageCacheEntry = CacheEntry<DecryptedMessage> & {
     fingerprint: string;
+    sessionId: string | null;
+    bytes: number;
 };
+
+export type EncryptionCacheOptions = Readonly<{
+    maxMessageBytes?: number;
+}>;
 
 /**
  * In-memory cache for decrypted session data to avoid expensive re-decryption
@@ -21,6 +28,7 @@ export class EncryptionCache {
     private messageCache = new Map<string, MessageCacheEntry>();
     private machineMetadataCache = new Map<string, CacheEntry<MachineMetadata>>();
     private daemonStateCache = new Map<string, CacheEntry<any>>();
+    private messageBytes = 0;
     
     // Configuration
     private readonly maxAgentStates = 1000;
@@ -28,6 +36,12 @@ export class EncryptionCache {
     private readonly maxMessages = 1000;
     private readonly maxMachineMetadata = 500;
     private readonly maxDaemonStates = 500;
+    private readonly maxMessageBytes: number;
+
+    constructor(options: EncryptionCacheOptions = {}) {
+        const configuredBudget = options.maxMessageBytes ?? loadSyncTuning().encryptionCacheMessageByteBudget;
+        this.maxMessageBytes = Math.max(1, Math.trunc(configuredBudget));
+    }
 
     /**
      * Get cached agent state for a session
@@ -101,15 +115,24 @@ export class EncryptionCache {
     /**
      * Cache decrypted message
      */
-    setCachedMessage(messageId: string, data: DecryptedMessage, fingerprint: string): void {
+    setCachedMessage(messageId: string, data: DecryptedMessage, fingerprint: string, sessionId?: string | null): void {
+        const previous = this.messageCache.get(messageId);
+        if (previous) {
+            this.messageBytes -= previous.bytes;
+        }
+        const bytes = estimateDecryptedMessageBytes(data);
         this.messageCache.set(messageId, {
             data,
             accessTime: Date.now(),
             fingerprint,
+            sessionId: normalizeSessionCacheId(sessionId),
+            bytes,
         });
+        this.messageBytes += bytes;
         
         // Evict if over limit
-        this.evictOldest(this.messageCache, this.maxMessages);
+        this.evictOldestMessage(this.maxMessages);
+        this.evictOldestMessagesToByteBudget();
     }
 
     /**
@@ -201,7 +224,15 @@ export class EncryptionCache {
             }
         }
         
-        // Note: We don't clear messages as they're immutable and session-agnostic
+        // Decrypted message objects can be large and are tied to the transcript
+        // owner that materialized them, so session release must drop them too.
+        for (const [key, entry] of this.messageCache.entries()) {
+            if (entry.sessionId === sessionId) {
+                this.messageCache.delete(key);
+                this.messageBytes -= entry.bytes;
+            }
+        }
+        this.messageBytes = Math.max(0, this.messageBytes);
     }
 
     /**
@@ -211,6 +242,7 @@ export class EncryptionCache {
         this.agentStateCache.clear();
         this.metadataCache.clear();
         this.messageCache.clear();
+        this.messageBytes = 0;
         this.machineMetadataCache.clear();
         this.daemonStateCache.clear();
     }
@@ -223,6 +255,7 @@ export class EncryptionCache {
             agentStates: this.agentStateCache.size,
             metadata: this.metadataCache.size,
             messages: this.messageCache.size,
+            messageBytes: this.messageBytes,
             machineMetadata: this.machineMetadataCache.size,
             daemonStates: this.daemonStateCache.size,
             totalEntries: this.agentStateCache.size + this.metadataCache.size + this.messageCache.size + 
@@ -233,9 +266,12 @@ export class EncryptionCache {
     /**
      * Evict oldest entries when cache exceeds limit (LRU eviction)
      */
-    private evictOldest<T>(cache: Map<string, CacheEntry<T>>, maxSize: number): void {
+    private evictOldest<TEntry extends Readonly<{ accessTime: number }>>(
+        cache: Map<string, TEntry>,
+        maxSize: number,
+    ): TEntry | null {
         if (cache.size <= maxSize) {
-            return;
+            return null;
         }
 
         // Find oldest entry by access time
@@ -250,7 +286,35 @@ export class EncryptionCache {
         }
         
         if (oldestKey) {
+            const oldestEntry = cache.get(oldestKey);
             cache.delete(oldestKey);
+            return oldestEntry ?? null;
         }
+        return null;
+    }
+
+    private evictOldestMessage(maxSize: number): void {
+        const evicted = this.evictOldest(this.messageCache, maxSize);
+        if (!evicted) return;
+        this.messageBytes = Math.max(0, this.messageBytes - evicted.bytes);
+    }
+
+    private evictOldestMessagesToByteBudget(): void {
+        while (this.messageBytes > this.maxMessageBytes && this.messageCache.size > 1) {
+            this.evictOldestMessage(this.messageCache.size - 1);
+        }
+    }
+}
+
+function normalizeSessionCacheId(sessionId: string | null | undefined): string | null {
+    const normalized = String(sessionId ?? '').trim();
+    return normalized || null;
+}
+
+function estimateDecryptedMessageBytes(message: DecryptedMessage): number {
+    try {
+        return JSON.stringify(message).length;
+    } catch {
+        return 1024;
     }
 }

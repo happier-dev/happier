@@ -3,9 +3,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
 const getActiveServerSnapshotMock = vi.hoisted(() => vi.fn(() => ({ serverId: 'server-a' })));
+const areServerProfileIdentifiersEquivalentMock = vi.hoisted(() => vi.fn((left: string | null | undefined, right: string | null | undefined) => left === right));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => getActiveServerSnapshotMock(),
+}));
+
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    areServerProfileIdentifiersEquivalent: (
+        left: string | null | undefined,
+        right: string | null | undefined,
+    ) => areServerProfileIdentifiersEquivalentMock(left, right),
 }));
 
 function createMachine(input: Readonly<{
@@ -32,6 +40,7 @@ function createMachine(input: Readonly<{
 describe('resolveMachinesForActiveServerFromState', () => {
     beforeEach(() => {
         getActiveServerSnapshotMock.mockReturnValue({ serverId: 'server-a' });
+        areServerProfileIdentifiersEquivalentMock.mockImplementation((left, right) => left === right);
     });
 
     it('resolves a single visible machine for the active server by trimmed id', async () => {
@@ -81,5 +90,28 @@ describe('resolveMachinesForActiveServerFromState', () => {
 
         expect(selectors.resolveMachineForActiveServerFromState(state, 'machine-stale')).toBeNull();
         expect(selectors.resolveVisibleMachinesForActiveServerFromState(state)).toEqual([]);
+    });
+
+    it('uses an equivalent scoped machine cache when active server id is an alias', async () => {
+        getActiveServerSnapshotMock.mockReturnValue({ serverId: 'localhost-49598' });
+        areServerProfileIdentifiersEquivalentMock.mockImplementation((left, right) => {
+            const ids = new Set([left, right]);
+            return ids.has('localhost-49598') && ids.has('srv_local_relay');
+        });
+
+        const selectors = await import('./resolveMachinesForActiveServerFromState');
+        const machine = createMachine({ id: 'machine-relay', createdAt: 10 });
+        const state = {
+            machines: {},
+            machineListByServerId: {
+                'localhost-49598': [],
+                srv_local_relay: [machine],
+            },
+        };
+
+        expect(selectors.resolveMachineForActiveServerFromState(state, 'machine-relay')).toMatchObject({
+            id: 'machine-relay',
+        });
+        expect(selectors.resolveVisibleMachinesForActiveServerFromState(state)).toEqual([machine]);
     });
 });

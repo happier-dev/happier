@@ -13,7 +13,6 @@ import { isStackContext } from '@/sync/domains/server/serverContext';
 import { isUsingCustomServer } from '@/sync/domains/server/serverConfig';
 import { resolveVisibleAppEnvironmentBadge } from '@/sync/runtime/appVariant';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
-import { useVoiceSurfaceE2eFixture } from '@/components/voice/surface/useVoiceSurfaceE2eFixture';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { DesktopSidebarChrome } from './desktopChrome/DesktopSidebarChrome';
@@ -31,9 +30,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
         borderStyle: 'solid',
+        // No border. This drew a hairline on all FOUR sides of the sidebar, so the top,
+        // bottom and left strokes ran along the window edge for no reason, and the right
+        // stroke doubled the drawer's own divider at the seam.
         backgroundColor: theme.colors.background.canvas,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.border.default,
         overflow: 'visible',
     },
 }));
@@ -46,7 +46,6 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
     const popoverBoundaryRef = React.useRef<any>(null);
     const showEnvironmentBadge = useSetting('showEnvironmentBadge');
     const [, setSidebarCollapsed] = useLocalSettingMutable('sidebarCollapsed');
-    useVoiceSurfaceE2eFixture();
     const voiceEnabled = useFeatureEnabled('voice');
     const { headerActions, topUtilityActions, renderHeaderOverflowVisual } = useSidebarHeaderActions();
     const navigationAvailability = useDesktopSidebarHistoryNavigationAvailability();

@@ -5,10 +5,12 @@ import {
 } from '@/sync/domains/session/listing/sessionListLookupState';
 import {
   resolveVoiceSessionLocationLabelFromMetadata,
+  resolveVoiceSessionSharedTitleFromMetadata,
   resolveVoiceSessionTitleFromMetadata,
 } from './sessionMetadata';
 import { normalizeNonEmptyString } from './shared';
 import { collectVoiceSessionRows } from './voiceSessionRows';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
 function normalizeVoiceSessionLookupTitle(value: string | null | undefined): string | null {
   const normalized = normalizeNonEmptyString(value);
@@ -28,8 +30,12 @@ export function resolveVoiceSessionRef(
 
   const lookupState = state as Parameters<typeof resolveSessionListPreferredSessionMetadataFromState>[0];
   const metadata = resolveSessionListPreferredSessionMetadataFromState(lookupState, normalizedSessionId);
-  const title = resolveVoiceSessionTitleFromMetadata(metadata);
-  const locationLabel = resolveVoiceSessionLocationLabelFromMetadata(metadata);
+  const ownerMetadata = readVoiceSessionOwnerMetadataFromState(lookupState, normalizedSessionId);
+  const title = resolveVoiceSessionSharedTitleFromMetadata(metadata)
+    ?? resolveVoiceSessionTitleFromMetadata(ownerMetadata);
+  const locationLabel = resolveVoiceSessionLocationLabelFromMetadata(
+    ownerMetadata,
+  );
   const serverId = normalizeNonEmptyString(options?.serverId)
     ?? resolveSessionListPreferredServerIdFromState(lookupState, normalizedSessionId)
     ?? null;

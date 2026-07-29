@@ -1,6 +1,7 @@
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
+import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { createEndpointSupervisedRequest } from '@/sync/runtime/connectivity/createEndpointSupervisedRequest';
 import { getEndpointSupervisorForServer } from '@/sync/runtime/connectivity/endpointSupervisorPool';
@@ -10,7 +11,10 @@ import {
     ServerReachabilityWaitTimeoutError,
     waitForServerReachable,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
-import { readServerReachabilityWaitTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
+import {
+    readServerFetchWriteTimeoutMs,
+    readServerReachabilityWaitTimeoutMs,
+} from '@/sync/runtime/connectivity/serverReachabilityTuning';
 import { notifyAuthCredentialsInvalidated } from '@/sync/runtime/orchestration/authCredentialsInvalidation';
 
 export { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -38,15 +42,41 @@ export class ServerFetchConnectivityTimeoutError extends Error {
     }
 }
 
+export class ServerFetchWriteTimeoutError extends Error {
+    public readonly retryable = true;
+
+    constructor() {
+        super('Timed out waiting for the server to respond to a write');
+        this.name = 'ServerFetchWriteTimeoutError';
+    }
+}
+
+export type ExpectedActiveServerFetchBasis = Readonly<{
+    serverId: string;
+    generation: number;
+}>;
+
 type ServerFetchOptions = Readonly<{
     includeAuth?: boolean;
+    expectedActiveServer?: ExpectedActiveServerFetchBasis;
     /**
      * When `none`, perform a single direct `runtimeFetch` attempt and skip reachability gating and
      * endpoint supervision. This is used by higher-level sync loops that implement their own
      * orchestration/backoff and must not get stuck behind nested connectivity supervisors.
      */
     retry?: 'default' | 'none';
+    /** Override the request bound. Zero disables it for this request. */
+    timeoutMs?: number;
 }>;
+
+const MUTATING_HTTP_METHODS: ReadonlySet<string> = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function resolveRequestTimeoutMs(method: string, optionTimeoutMs: number | undefined): number {
+    if (typeof optionTimeoutMs === 'number' && Number.isFinite(optionTimeoutMs)) {
+        return Math.max(0, Math.trunc(optionTimeoutMs));
+    }
+    return MUTATING_HTTP_METHODS.has(method) ? readServerFetchWriteTimeoutMs() : 0;
+}
 
 const inFlightControllers = new Set<AbortController>();
 let abortSequence = 0;
@@ -114,7 +144,9 @@ function maybeLogRuntimeFetchFailure(params: {
     if (!isDebugEnabled()) return;
 
     const errorName = params.error instanceof Error ? params.error.name : '';
-    const errorMessage = params.error instanceof Error ? params.error.message : String(params.error ?? '');
+    const errorMessage = redactPublicShareCapabilityUrl(
+        params.error instanceof Error ? params.error.message : String(params.error ?? ''),
+    );
     const activeServerUrl = redactUrlForLogs(params.activeServerUrl);
     const requestUrl = redactUrlForLogs(params.requestUrl);
     const key = `${params.activeServerId}|${activeServerUrl}|${requestUrl}|${errorName}|${errorMessage}`;
@@ -147,6 +179,15 @@ export async function serverFetch(
 ): Promise<Response> {
     const localAbortSequence = abortSequence;
     const snapshot = getActiveServerSnapshot();
+    if (
+        options.expectedActiveServer
+        && (
+            snapshot.serverId !== options.expectedActiveServer.serverId
+            || snapshot.generation !== options.expectedActiveServer.generation
+        )
+    ) {
+        throw new StaleServerGenerationError();
+    }
     const normalizedPath = normalizePath(path);
     const requestUrl = normalizedPath.startsWith('http://') || normalizedPath.startsWith('https://')
         ? normalizedPath
@@ -227,6 +268,15 @@ export async function serverFetch(
     }
 
     const method = String(init?.method ?? 'GET').toUpperCase();
+    const effectiveTimeoutMs = resolveRequestTimeoutMs(method, options.timeoutMs);
+    let didWriteTimeout = false;
+    let writeTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    if (effectiveTimeoutMs > 0) {
+        writeTimeoutHandle = setTimeout(() => {
+            didWriteTimeout = true;
+            requestController.abort('write-timeout');
+        }, effectiveTimeoutMs);
+    }
     const retryMode: 'default' | 'none' = options.retry ?? 'default';
     const isActiveOrigin =
         !isCrossOrigin
@@ -244,7 +294,7 @@ export async function serverFetch(
                 if (isActiveOrigin && retryMode !== 'none') {
                     const tokenForReachability =
                         usedToken
-                        ?? (peekServerReachabilityToken(snapshot.serverUrl) ?? null)
+                        ?? peekServerReachabilityToken(snapshot.serverUrl)
                         ?? null;
                     try {
                         await waitForServerReachable({
@@ -262,6 +312,10 @@ export async function serverFetch(
                             const serverSwitchAbort = reason === 'server-switch' || abortSequence !== localAbortSequence;
                             if (serverSwitchAbort) {
                                 throw new ServerFetchAbortedForServerSwitchError();
+                            }
+                            if (didWriteTimeout) {
+                                reportServerUnreachable(snapshot.serverUrl, error);
+                                throw new ServerFetchWriteTimeoutError();
                             }
                             throw error;
                         }
@@ -306,6 +360,10 @@ export async function serverFetch(
                     const serverSwitchAbort = reason === 'server-switch' || abortSequence !== localAbortSequence;
                     if (serverSwitchAbort) {
                         throw new ServerFetchAbortedForServerSwitchError();
+                    }
+                    if (didWriteTimeout) {
+                        reportServerUnreachable(snapshot.serverUrl, error);
+                        throw new ServerFetchWriteTimeoutError();
                     }
                     // Caller aborts should not poison reachability state.
                     throw error;
@@ -368,6 +426,9 @@ export async function serverFetch(
             break;
         }
     } finally {
+        if (writeTimeoutHandle) {
+            clearTimeout(writeTimeoutHandle);
+        }
         removeUpstreamListener();
         inFlightControllers.delete(requestController);
     }

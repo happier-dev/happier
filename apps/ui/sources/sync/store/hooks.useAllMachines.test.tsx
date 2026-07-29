@@ -85,7 +85,7 @@ describe('useAllMachines', () => {
         }
     });
 
-    it('keeps launch-selection machines stable when heartbeat timestamps do not change online status', async () => {
+    it('refreshes launch-selection machine freshness while heartbeat updates keep the machine online', async () => {
         const previousState = storage.getState();
         try {
             const activeAt = Date.now();
@@ -128,8 +128,8 @@ describe('useAllMachines', () => {
                 }));
             });
 
-            expect(hook.getCurrent()).toBe(firstMachines);
-            expect(hook.getCurrent()[0]?.activeAt).toBe(activeAt);
+            expect(hook.getCurrent()).not.toBe(firstMachines);
+            expect(hook.getCurrent()[0]?.activeAt).toBe(activeAt + 1000);
 
             await hook.unmount();
         } finally {
@@ -251,7 +251,7 @@ describe('useAllMachines', () => {
                 codexSessionId: 'codex-session',
                 sessionModesV1: {
                     v: 1 as const,
-                    provider: 'codex',
+                    agentId: 'codex',
                     updatedAt: 100,
                     currentModeId: 'default',
                     availableModes: [{ id: 'default', name: 'Default' }],

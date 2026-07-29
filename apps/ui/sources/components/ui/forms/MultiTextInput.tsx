@@ -7,16 +7,19 @@ import {
     TextStyle,
     findNodeHandle,
     type LayoutChangeEvent,
+    Platform,
 } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { TextInput } from '@/components/ui/text/Text';
 import { normalizeKeyboardKeyPressEvent, type KeyPressEvent as KeyboardKeyPressEvent } from '@/keyboard/events';
 import { useLocalSetting } from '@/sync/store/hooks';
+import { recordLargeTextInputDiagnostic } from '@/utils/system/userInteractionDiagnostics';
 import {
     normalizeNativeMultiTextInputMaxHeight,
     resolveNativeMultiTextInputMinHeight,
 } from './nativeMultiTextInputHeight';
+import { TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT } from './largeTextInputPolicy';
 import { MULTI_TEXT_INPUT_BASE_FONT_SIZE, MULTI_TEXT_INPUT_BASE_LINE_HEIGHT } from './multiTextInputTypography';
 
 
@@ -106,6 +109,112 @@ function clampTextSelection(selection: { start: number; end: number }, textLengt
     return { start, end };
 }
 
+function resolveTextDiffBounds(previousText: string, nextText: string): Readonly<{
+    commonPrefixLength: number;
+    commonSuffixLength: number;
+}> {
+    const previousLength = previousText.length;
+    const nextLength = nextText.length;
+    const sharedLength = Math.min(previousLength, nextLength);
+
+    let commonPrefixLength = 0;
+    while (
+        commonPrefixLength < sharedLength
+        && previousText.charCodeAt(commonPrefixLength) === nextText.charCodeAt(commonPrefixLength)
+    ) {
+        commonPrefixLength += 1;
+    }
+
+    let commonSuffixLength = 0;
+    const remainingSharedLength = sharedLength - commonPrefixLength;
+    while (
+        commonSuffixLength < remainingSharedLength
+        && previousText.charCodeAt(previousLength - commonSuffixLength - 1)
+            === nextText.charCodeAt(nextLength - commonSuffixLength - 1)
+    ) {
+        commonSuffixLength += 1;
+    }
+
+    return { commonPrefixLength, commonSuffixLength };
+}
+
+function resolveCursorFromTextDiff(previousText: string, nextText: string): { start: number; end: number } {
+    const nextLength = nextText.length;
+    const { commonPrefixLength, commonSuffixLength } = resolveTextDiffBounds(previousText, nextText);
+
+    const insertedLength = Math.max(0, nextLength - commonPrefixLength - commonSuffixLength);
+    const cursor = commonPrefixLength + insertedLength;
+    return clampTextSelection({ start: cursor, end: cursor }, nextLength);
+}
+
+function hasSelectionBasedChangeBoundaryEvidence(params: Readonly<{
+    previousText: string;
+    previousSelection: { start: number; end: number };
+    nextText: string;
+    insertedLength: number;
+}>): boolean {
+    if (params.insertedLength < 0) return true;
+
+    if (
+        params.previousSelection.start > 0
+        && params.previousText.charCodeAt(params.previousSelection.start - 1)
+            !== params.nextText.charCodeAt(params.previousSelection.start - 1)
+    ) {
+        return false;
+    }
+
+    const previousAfterOffset = params.previousSelection.end;
+    const nextAfterOffset = params.previousSelection.start + params.insertedLength;
+    if (
+        previousAfterOffset < params.previousText.length
+        && nextAfterOffset < params.nextText.length
+        && params.previousText.charCodeAt(previousAfterOffset) !== params.nextText.charCodeAt(nextAfterOffset)
+    ) {
+        return false;
+    }
+
+    return true;
+}
+
+function shouldResolveNativeChangedTextSelectionFromDiff(params: Readonly<{
+    previousText: string;
+    previousSelection: { start: number; end: number };
+    nextText: string;
+    insertedLength: number;
+}>): boolean {
+    if (params.previousText.length <= TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT) return false;
+    if (params.insertedLength < 0) return false;
+
+    const selectionWasAtDocumentStart = params.previousSelection.start === 0 && params.previousSelection.end === 0;
+    return selectionWasAtDocumentStart || !hasSelectionBasedChangeBoundaryEvidence(params);
+}
+
+function resolveNativeChangedTextSelection(params: Readonly<{
+    previousText: string;
+    previousSelection: { start: number; end: number };
+    nextText: string;
+}>): { start: number; end: number } {
+    const previousLength = params.previousText.length;
+    const nextLength = params.nextText.length;
+    const previousSelection = clampTextSelection(params.previousSelection, previousLength);
+    const selectedLength = Math.max(0, previousSelection.end - previousSelection.start);
+    const insertedLength = nextLength - (previousLength - selectedLength);
+
+    if (shouldResolveNativeChangedTextSelectionFromDiff({
+        previousText: params.previousText,
+        previousSelection,
+        nextText: params.nextText,
+        insertedLength,
+    })) {
+        return resolveCursorFromTextDiff(params.previousText, params.nextText);
+    }
+
+    const cursor = insertedLength >= 0
+        ? previousSelection.start + insertedLength
+        : Math.min(previousSelection.start, nextLength);
+    return clampTextSelection({ start: cursor, end: cursor }, nextLength);
+}
+
 function resolveNativeLineHeight(params: Readonly<{
     textStyle?: TextStyle;
     uiFontScale: number;
@@ -141,40 +250,62 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         paddingTop: props.paddingTop,
         paddingBottom: props.paddingBottom,
     });
-    // Track latest selection in a ref
     const selectionRef = React.useRef({ start: value.length, end: value.length });
     const latestNativeTextRef = React.useRef(value);
-    latestNativeTextRef.current = value;
+    const controlledValueRef = React.useRef(value);
     const inputRef = React.useRef<React.ElementRef<typeof TextInput> | null>(null);
+    if (controlledValueRef.current !== value) {
+        const previousValue = controlledValueRef.current;
+        const wasSelectionAtPreviousEnd = selectionRef.current.start === previousValue.length
+            && selectionRef.current.end === previousValue.length;
+        selectionRef.current = wasSelectionAtPreviousEnd
+            ? { start: value.length, end: value.length }
+            : clampTextSelection(selectionRef.current, value.length);
+        controlledValueRef.current = value;
+    }
+    latestNativeTextRef.current = value;
     const lastReportedContentHeightRef = React.useRef<number | null>(null);
 
     const handleKeyPress = React.useCallback((e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
-        if (!onKeyPress) return;
-
         const nativeEvent = e.nativeEvent as TextInputKeyPressEventData & Partial<KeyboardKeyPressEvent>;
         const keyEvent = normalizeKeyboardKeyPressEvent(nativeEvent);
-        if (!keyEvent) return;
+        let handled = false;
 
-        const handled = onKeyPress({
-            ...keyEvent,
-            inputState: {
-                text: value,
-                selection: { ...selectionRef.current },
-            },
-        });
+        if (onKeyPress && keyEvent) {
+            handled = onKeyPress({
+                ...keyEvent,
+                inputState: {
+                    text: latestNativeTextRef.current,
+                    selection: { ...selectionRef.current },
+                },
+            });
+        }
         if (handled) {
             e.preventDefault();
         }
-    }, [onKeyPress, value]);
+    }, [onKeyPress]);
 
     const handleTextChange = React.useCallback((text: string) => {
+        const previousText = latestNativeTextRef.current;
+        const selection = resolveNativeChangedTextSelection({
+            previousText,
+            previousSelection: selectionRef.current,
+            nextText: text,
+        });
         latestNativeTextRef.current = text;
-        // When text changes, assume cursor moves to end
-        const selection = { start: text.length, end: text.length };
         selectionRef.current = selection;
 
+        recordLargeTextInputDiagnostic({
+            phase: 'native-change',
+            platform: Platform.OS,
+            surface: 'agentInput',
+            textLength: text.length,
+            selection,
+            valueLength: controlledValueRef.current.length,
+        });
+
         onChangeText(text);
-        
+
         if (onStateChange) {
             onStateChange({ text, selection });
         }
@@ -193,17 +324,22 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             return;
         }
         lastReportedContentHeightRef.current = nextHeight;
+        recordLargeTextInputDiagnostic({
+            phase: 'native-content-size',
+            platform: Platform.OS,
+            surface: 'agentInput',
+            textLength: latestNativeTextRef.current.length,
+            contentHeight: nextHeight,
+            maxHeight: normalizedMaxHeight,
+        });
         onContentHeightChange?.(nextHeight);
-    }, [onContentHeightChange]);
+    }, [normalizedMaxHeight, onContentHeightChange]);
 
     const handleSelectionChange = React.useCallback((e: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
-        if (latestNativeTextRef.current !== value) {
-            return;
-        }
         if (e.nativeEvent.selection) {
-            const { start, end } = e.nativeEvent.selection;
-            const selection = { start, end };
-            
+            const liveText = latestNativeTextRef.current;
+            const selection = clampTextSelection(e.nativeEvent.selection, liveText.length);
+
             // Only update if selection actually changed
             if (selection.start !== selectionRef.current.start || selection.end !== selectionRef.current.end) {
                 selectionRef.current = selection;
@@ -212,11 +348,11 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
                     onSelectionChange(selection);
                 }
                 if (onStateChange) {
-                    onStateChange({ text: value, selection });
+                    onStateChange({ text: liveText, selection });
                 }
             }
         }
-    }, [value, onSelectionChange, onStateChange]);
+    }, [onSelectionChange, onStateChange]);
 
     // Imperative handle for direct control
     React.useImperativeHandle(ref, () => ({
@@ -224,9 +360,8 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             const nextSelection = clampTextSelection(selection, text.length);
             latestNativeTextRef.current = text;
             if (inputRef.current) {
-                // Use setNativeProps for direct native manipulation when the host ref is available.
                 inputRef.current.setNativeProps({
-                    text: text,
+                    text,
                     selection: nextSelection,
                 });
             }

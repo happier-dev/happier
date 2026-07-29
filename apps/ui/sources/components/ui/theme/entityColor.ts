@@ -1,4 +1,5 @@
 import { Session } from "@/sync/domains/state/storageTypes";
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 function robustHash(str: string): number {
     let hash = 5381; // Better initial value
@@ -47,5 +48,6 @@ export function entityColor(id: string) {
 }
 
 export function entitySessionColor(session: Session) {
-    return entityColor((session.metadata?.path || 'unknon').toLowerCase() + '$' + session.metadata?.machineId || 'unknown');
+    const metadata = readSessionOwnerMetadataView(session);
+    return entityColor(`${(metadata?.path || 'unknown').toLowerCase()}$${metadata?.machineId || 'unknown'}`);
 }

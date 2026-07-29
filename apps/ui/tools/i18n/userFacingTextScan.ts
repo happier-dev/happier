@@ -201,6 +201,17 @@ function collectUserFacingStringsFromExpression(args: Readonly<{
             return;
         }
 
+        if (ts.isJsxAttribute(node)) {
+            const attributeName = node.name.getText(sourceFile);
+            if (!JSX_ATTRIBUTE_USER_FACING_NAMES.has(attributeName)) {
+                return;
+            }
+            if (node.initializer) {
+                visit(node.initializer);
+            }
+            return;
+        }
+
         if (ts.isConditionalExpression(node)) {
             // Only traverse result branches; string literals in the condition are usually enum tokens / internal ids.
             visit(node.whenTrue);

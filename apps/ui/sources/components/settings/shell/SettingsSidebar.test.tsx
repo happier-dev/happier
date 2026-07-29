@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
+import {
+    clearActiveUnsavedChangesGuard,
+    setActiveUnsavedChangesGuard,
+} from '@/utils/navigation/runGuardedNavigation';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,6 +15,7 @@ const featureGateState = vi.hoisted(() => ({
 }));
 const pathnameState = vi.hoisted(() => ({ value: '/settings' }));
 const routerPushSpy = vi.hoisted(() => vi.fn());
+const routerNavigateSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -29,7 +34,7 @@ vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({
         pathname: () => pathnameState.value,
-        router: { push: routerPushSpy },
+        router: { navigate: routerNavigateSpy, push: routerPushSpy },
     }).module;
 });
 
@@ -84,15 +89,18 @@ describe('SettingsSidebar', () => {
     afterEach(() => {
         pathnameState.value = '/settings';
         routerPushSpy.mockReset();
+        routerNavigateSpy.mockReset();
         featureGateState.enabled = () => true;
+        clearActiveUnsavedChangesGuard();
     });
 
-    it('navigates to a page when pressing a nav item', async () => {
+    it('opens a sidebar destination within settings', async () => {
         const { SettingsSidebar } = await import('./SettingsSidebar');
         const screen = await renderScreen(React.createElement(SettingsSidebar));
 
         await screen.pressByTestIdAsync('settings-sidebar.item.notifications');
-        expect(routerPushSpy).toHaveBeenCalledWith('/settings/notifications');
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/settings/notifications');
+        expect(routerPushSpy).not.toHaveBeenCalled();
     });
 
     it('exposes the Settings home page as the first/top-level entry', async () => {
@@ -102,7 +110,7 @@ describe('SettingsSidebar', () => {
         const screen = await renderScreen(React.createElement(SettingsSidebar));
 
         await screen.pressByTestIdAsync('settings-sidebar.item.settings');
-        expect(routerPushSpy).toHaveBeenCalledWith('/settings');
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/settings');
     });
 
     it('treats Settings as the parent node and can collapse/expand the rest of the tree', async () => {
@@ -134,7 +142,61 @@ describe('SettingsSidebar', () => {
 
         await screen.pressByTestIdAsync('settings-sidebar.searchResult.notifications');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/settings/notifications');
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/settings/notifications');
+        expect(routerPushSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps the current settings screen when a route row encounters dirty active work', async () => {
+        const requestDecision = vi.fn(async () => 'keepEditing' as const);
+        setActiveUnsavedChangesGuard({
+            isDirtyRef: { current: true },
+            requestDecision,
+            tag: 'SettingsSidebar.test.route',
+        });
+        const { SettingsSidebar } = await import('./SettingsSidebar');
+        const screen = await renderScreen(React.createElement(SettingsSidebar));
+
+        await screen.pressByTestIdAsync('settings-sidebar.item.notifications');
+
+        expect(requestDecision).toHaveBeenCalledTimes(1);
+        expect(routerPushSpy).not.toHaveBeenCalled();
+    });
+
+    it('discards dirty active work before navigating through a route row', async () => {
+        const isDirtyRef = { current: true };
+        const requestDecision = vi.fn(async () => 'discard' as const);
+        setActiveUnsavedChangesGuard({
+            isDirtyRef,
+            requestDecision,
+            tag: 'SettingsSidebar.test.discardRoute',
+        });
+        const { SettingsSidebar } = await import('./SettingsSidebar');
+        const screen = await renderScreen(React.createElement(SettingsSidebar));
+
+        await screen.pressByTestIdAsync('settings-sidebar.item.notifications');
+
+        expect(requestDecision).toHaveBeenCalledTimes(1);
+        expect(isDirtyRef.current).toBe(false);
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/settings/notifications');
+    });
+
+    it('keeps the current settings screen when a search result encounters dirty active work', async () => {
+        const requestDecision = vi.fn(async () => 'keepEditing' as const);
+        setActiveUnsavedChangesGuard({
+            isDirtyRef: { current: true },
+            requestDecision,
+            tag: 'SettingsSidebar.test.search',
+        });
+        const { SettingsSidebar } = await import('./SettingsSidebar');
+        const screen = await renderScreen(React.createElement(SettingsSidebar));
+        await act(async () => {
+            screen.changeTextByTestId('settings-sidebar.searchInput', 'notif');
+        });
+
+        await screen.pressByTestIdAsync('settings-sidebar.searchResult.notifications');
+
+        expect(requestDecision).toHaveBeenCalledTimes(1);
+        expect(routerPushSpy).not.toHaveBeenCalled();
     });
 
     it('finds the appearance page when searching for sidebar', async () => {
@@ -146,7 +208,7 @@ describe('SettingsSidebar', () => {
         });
 
         await screen.pressByTestIdAsync('settings-sidebar.searchResult.appearance');
-        expect(routerPushSpy).toHaveBeenCalledWith('/settings/appearance');
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/settings/appearance');
     });
 
     it('swaps expandable item icons to chevrons on hover', async () => {
@@ -191,7 +253,7 @@ describe('SettingsSidebar', () => {
         });
 
         await screen.pressByTestIdAsync('settings-sidebar.toggle.machines');
-        expect(routerPushSpy).not.toHaveBeenCalled();
+        expect(routerNavigateSpy).not.toHaveBeenCalled();
         expect(screen.findByTestId('settings-sidebar.item.machinesAdd')).toBeTruthy();
     });
 });

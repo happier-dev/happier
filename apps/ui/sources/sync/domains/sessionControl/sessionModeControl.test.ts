@@ -31,7 +31,7 @@ describe('sessionModeControl', () => {
     const metadata = createMetadata({
       sessionModesV1: {
         v: 1,
-        provider: 'opencode',
+        agentId: 'opencode',
         updatedAt: 1,
         currentModeId: 'build',
         availableModes: [
@@ -53,7 +53,7 @@ describe('sessionModeControl', () => {
     const metadata = createMetadata({
       sessionModesV1: {
         v: 1,
-        provider: 'opencode',
+        agentId: 'opencode',
         updatedAt: 1,
         currentModeId: 'build',
         availableModes: [{ id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' }],
@@ -91,7 +91,7 @@ describe('sessionModeControl', () => {
     const metadata = createMetadata({
       acpSessionModesV1: {
         v: 1,
-        provider: 'opencode',
+        agentId: 'opencode',
         updatedAt: 1,
         currentModeId: 'build',
         availableModes: [{ id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' }],
@@ -108,7 +108,7 @@ describe('sessionModeControl', () => {
     const metadata = createMetadata({
       sessionModesV1: {
         v: 1,
-        provider: 'opencode',
+        agentId: 'opencode',
         updatedAt: 1,
         currentModeId: 'build',
         availableModes: [{ id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' }],
@@ -127,7 +127,7 @@ describe('sessionModeControl', () => {
     const metadata = createMetadata({
       sessionModesV1: {
         v: 1,
-        provider: 'codex',
+        agentId: 'codex',
         updatedAt: 1,
         currentModeId: 'default',
         availableModes: [
@@ -150,7 +150,7 @@ describe('sessionModeControl', () => {
     const metadata = createMetadata({
       sessionModesV1: {
         v: 1,
-        provider: 'codex',
+        agentId: 'codex',
         updatedAt: 1,
         currentModeId: 'plan',
         availableModes: [
@@ -169,7 +169,7 @@ describe('sessionModeControl', () => {
     const metadata = createMetadata({
       sessionModesV1: {
         v: 1,
-        provider: 'opencode',
+        agentId: 'opencode',
         updatedAt: 1,
         currentModeId: 'build',
         availableModes: [

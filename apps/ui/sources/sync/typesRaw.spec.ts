@@ -617,7 +617,7 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 role: 'agent',
                 content: {
                     type: 'acp',
-                    provider: 'opencode',
+                    agentId: 'opencode',
                     data: {
                         type: 'token_count',
                         tokens: {
@@ -650,7 +650,7 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 role: 'agent',
                 content: {
                     type: 'acp',
-                    provider: 'claude',
+                    agentId: 'claude',
                     data: {
                         type: 'token_count',
                         context_used_tokens: 938_843,
@@ -678,6 +678,122 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 cache_read_input_tokens: 39_231_000,
                 context_used_tokens: 938_843,
                 context_window_tokens: 1_000_000,
+            });
+        });
+
+        it('drops the Claude SDK result-usage record (turn metrics, not a transcript row)', () => {
+            // Live shape emitted by mapSdkResultUsageTranscriptEvent
+            // (packages/plugins/claude .../sdk/session.ts): a per-turn usage/cost
+            // summary carried in the transcript for the usage pipeline, NOT a
+            // visible message. Before this fix it fell through to the opaque
+            // '[Unsupported transcript record]' placeholder (R5). Sibling metrics
+            // records (token_count, task lifecycle) are already suppressed, so
+            // this one must be too.
+            const resultUsageRecord = {
+                role: 'agent',
+                content: {
+                    type: 'acp',
+                    agentId: 'claude',
+                    data: {
+                        type: 'result',
+                        subtype: 'success',
+                        uuid: 'claude-result-usage-1',
+                        session_id: 'provider-session-1',
+                        usage: {
+                            input_tokens: 1_200,
+                            output_tokens: 340,
+                            cache_read_input_tokens: 50_000,
+                            cache_creation_input_tokens: 8_000,
+                        },
+                        modelUsage: { 'claude-sonnet-4': { contextWindow: 200_000 } },
+                        total_cost_usd: 0.1234,
+                    },
+                },
+                meta: { source: 'claude-agent-sdk-result-usage', modelId: 'claude-sonnet-4' },
+            };
+
+            const normalized = normalizeRawMessage('claude-result-usage-1', null, 1003, resultUsageRecord as never);
+
+            expect(normalized).toBeNull();
+        });
+
+        it('preserves the canonical context snapshot from token_count records', () => {
+            const contextSnapshot = {
+                v: 1 as const,
+                modelId: 'gpt-5.4',
+                usedTokens: 42_000,
+                windowTokens: 400_000,
+                totalProcessedTokens: 120_000,
+                baselineTokens: 12_000,
+                isAutoCompactEnabled: null,
+                categories: null,
+                observedAtMs: 1_003,
+                source: 'provider_turn' as const,
+            };
+            const message = {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'token_count',
+                        input_tokens: 11,
+                        output_tokens: 7,
+                        contextSnapshot,
+                    },
+                },
+            };
+
+            const normalized = normalizeRawMessage('codex-context-snapshot', null, 1003, message);
+
+            expect(normalized?.role).toBe('agent');
+            if (!normalized || normalized.role !== 'agent') return;
+            expect(normalized.usage).toMatchObject({ contextSnapshot });
+        });
+
+        it('preserves context-only token_count records (no token counts — live Claude getContextUsage shape)', () => {
+            // Exact live shape captured 2026-07-10 (session cmrfb0c6r0088tmqh9atbopwa seq 10):
+            // the on-demand/live context snapshot record carries ONLY context telemetry.
+            const contextSnapshot = {
+                v: 1 as const,
+                modelId: 'claude-fable-5',
+                usedTokens: 39_072,
+                windowTokens: 1_000_000,
+                totalProcessedTokens: null,
+                baselineTokens: null,
+                isAutoCompactEnabled: true,
+                categories: [{ key: 'System prompt', label: null, tokens: 3_700 }],
+                observedAtMs: 1_004,
+                source: 'provider_live' as const,
+            };
+            const message = {
+                role: 'agent',
+                content: {
+                    type: 'acp',
+                    agentId: 'claude',
+                    data: {
+                        type: 'token_count',
+                        source: 'claude-sdk-context-usage',
+                        modelId: 'claude-fable-5',
+                        context_used_tokens: 39_072,
+                        context_window_tokens: 1_000_000,
+                        contextSnapshot,
+                    },
+                },
+            };
+
+            const normalized = normalizeRawMessage('claude-context-only', null, 1004, message);
+
+            expect(normalized).not.toBeNull();
+            expect(normalized?.role).toBe('agent');
+            if (!normalized || normalized.role !== 'agent') return;
+            expect(normalized.content).toEqual([]);
+            expect(normalized.usage).toMatchObject({
+                input_tokens: 0,
+                output_tokens: 0,
+                context_only: true,
+                context_used_tokens: 39_072,
+                context_window_tokens: 1_000_000,
+                contextSnapshot,
             });
         });
     });
@@ -1405,7 +1521,7 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
         });
 
         it('Gemini (uses codex path) works with hyphenated types', () => {
-            // Gemini uses sendCodexMessage() in CLI, so type: 'codex'
+            // Gemini uses the provider transcript dispatch path in CLI, so type: 'codex'
             const geminiMessage = {
                 role: 'agent',
                 content: {
@@ -1777,7 +1893,7 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 role: 'agent' as const,
                 content: {
                     type: 'acp' as const,
-                    provider: 'acp:live-ui-acp-stub-preset',
+                    agentId: 'acp:live-ui-acp-stub-preset',
                     data: {
                         type: 'message' as const,
                         message: 'ACP_STUB_USAGE_UPDATE_DONE live-ui-manual-qa-20260309-1',
@@ -1804,12 +1920,62 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             }
         });
 
+        it('normalizes canonical ACP text records emitted by the current runtime', () => {
+            const raw = {
+                role: 'agent' as const,
+                content: {
+                    type: 'acp' as const,
+                    agentId: 'agent',
+                    data: {
+                        type: 'text' as const,
+                        text: 'CODEX_ROLLBACK_TURN_READY',
+                    },
+                },
+            };
+
+            const normalized = normalizeRawMessage('msg-acp-text', null, Date.now(), raw);
+
+            expect(normalized?.role).toBe('agent');
+            if (normalized && normalized.role === 'agent') {
+                expect(normalized.content).toEqual([{
+                    type: 'text',
+                    text: 'CODEX_ROLLBACK_TURN_READY',
+                    uuid: 'msg-acp-text',
+                    parentUUID: null,
+                }]);
+            }
+        });
+
+        it('keeps unknown ACP record types fail-closed', () => {
+            const normalized = normalizeRawMessage('msg-acp-unknown', null, Date.now(), {
+                role: 'agent',
+                content: {
+                    type: 'acp',
+                    agentId: 'agent',
+                    data: {
+                        type: 'future-record-shape',
+                        text: 'must not be treated as visible text',
+                    },
+                },
+            } as never);
+
+            expect(normalized?.role).toBe('agent');
+            if (normalized && normalized.role === 'agent') {
+                expect(normalized.content).toEqual([{
+                    type: 'text',
+                    text: '[Unsupported transcript record]',
+                    uuid: 'msg-acp-unknown',
+                    parentUUID: null,
+                }]);
+            }
+        });
+
         it('parses ACP tool-call input when input is a JSON string', () => {
             const raw = {
                 role: 'agent' as const,
                 content: {
                     type: 'acp' as const,
-                    provider: 'codex' as const,
+                    agentId: 'codex' as const,
                     data: {
                         type: 'tool-call' as const,
                         callId: 'call_1',
@@ -1839,7 +2005,7 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 role: 'agent' as const,
                 content: {
                     type: 'acp' as const,
-                    provider: 'gemini' as const,
+                    agentId: 'gemini' as const,
                     data: {
                         type: 'tool-result' as const,
                         callId: 'call_abc123',
@@ -1865,7 +2031,7 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 role: 'agent' as const,
                 content: {
                     type: 'acp' as const,
-                    provider: 'codex' as const,
+                    agentId: 'codex' as const,
                     data: {
                         type: 'tool-result' as const,
                         callId: 'call_1',
@@ -1892,7 +2058,7 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 role: 'agent' as const,
                 content: {
                     type: 'acp' as const,
-                    provider: 'gemini' as const,
+                    agentId: 'gemini' as const,
                     data: {
                         type: 'tool-call-result' as const,
                         callId: 'call_abc123',
@@ -1918,7 +2084,7 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 role: 'agent' as const,
                 content: {
                     type: 'acp' as const,
-                    provider: 'gemini' as const,
+                    agentId: 'gemini' as const,
                     data: {
                         type: 'tool-result' as const,
                         callId: 'call_abc123',
@@ -1944,7 +2110,7 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 role: 'agent' as const,
                 content: {
                     type: 'acp' as const,
-                    provider: 'gemini' as const,
+                    agentId: 'gemini' as const,
                     data: {
                         type: 'tool-result' as const,
                         callId: 'call_abc123',
@@ -1970,7 +2136,7 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 role: 'agent' as const,
                 content: {
                     type: 'acp' as const,
-                    provider: 'gemini' as const,
+                    agentId: 'gemini' as const,
                     data: {
                         type: 'tool-result' as const,
                         callId: 'call_abc123',

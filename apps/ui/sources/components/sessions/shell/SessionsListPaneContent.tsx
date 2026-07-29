@@ -25,9 +25,10 @@ import {
     updateRetainedSessionListPaneSurfaceRoutePathname,
     useSessionListPaneSourceScopeKey,
 } from './sessionListPaneRetention';
+import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 
 type SessionsListPaneContentProps = Readonly<{
-    storageKind: 'persisted' | 'direct';
+    storageKind: SessionListStorageFilter;
     fallbackGuidanceVariant: SessionGettingStartedGuidanceVariant;
     pathname?: string;
     surfaceRoutePathname?: string;
@@ -137,30 +138,23 @@ function SessionsListPaneEmptyState(props: Pick<SessionsListPaneContentViewProps
         );
     }
 
-    if (props.storageKind === 'direct') {
-        return (
-            <View style={styles.emptyStateContainer}>
-                <View style={styles.emptyStateContentContainer}>
-                    <ExternalSessionsEmptyState surface={props.fallbackGuidanceVariant === 'sidebar' ? 'sidebar' : 'default'} />
-                </View>
-            </View>
-        );
-    }
-
-    const emptyStateKind = resolveSessionsListEmptyStateKind(gettingStarted.kind);
+    const emptyStateKind = resolveSessionsListEmptyStateKind(gettingStarted.kind, props.storageKind);
+    const content = emptyStateKind === 'external'
+        ? <ExternalSessionsEmptyState surface={props.fallbackGuidanceVariant === 'sidebar' ? 'sidebar' : 'default'} />
+        : emptyStateKind
+            ? (
+                <SessionsListEmptyState
+                    kind={emptyStateKind}
+                    targetLabel={gettingStarted.targetLabel}
+                    surface={props.fallbackGuidanceVariant === 'sidebar' ? 'sidebar' : 'default'}
+                />
+            )
+            : <SessionGettingStartedGuidance variant={props.fallbackGuidanceVariant} />;
 
     return (
         <View style={styles.emptyStateContainer}>
             <View style={styles.emptyStateContentContainer}>
-                {emptyStateKind
-                    ? (
-                        <SessionsListEmptyState
-                            kind={emptyStateKind}
-                            targetLabel={gettingStarted.targetLabel}
-                            surface={props.fallbackGuidanceVariant === 'sidebar' ? 'sidebar' : 'default'}
-                        />
-                    )
-                    : <SessionGettingStartedGuidance variant={props.fallbackGuidanceVariant} />}
+                {content}
             </View>
         </View>
     );

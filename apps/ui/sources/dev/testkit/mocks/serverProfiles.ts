@@ -6,8 +6,12 @@ export type ServerProfileMockProfile = Readonly<{
     legacyServerIds?: readonly string[];
 }>;
 
+type ServerProfilesModule = typeof import('@/sync/domains/server/serverProfiles');
+type ServerProfile = ReturnType<ServerProfilesModule['listServerProfiles']>[number];
+
 export type ServerProfilesModuleMockOptions = Readonly<{
     listServerProfiles?: () => unknown;
+    overrides?: Partial<ServerProfilesModule>;
     profiles?: readonly ServerProfileMockProfile[];
 }>;
 
@@ -15,15 +19,28 @@ function normalizeServerProfileTestId(raw: unknown): string {
     return String(raw ?? '').trim();
 }
 
-function readProfiles(options: ServerProfilesModuleMockOptions): ServerProfileMockProfile[] {
+function toServerProfile(profile: ServerProfileMockProfile): ServerProfile {
+    return {
+        id: profile.id,
+        name: profile.name ?? profile.id,
+        serverUrl: profile.serverUrl,
+        serverIdentityId: profile.serverIdentityId,
+        legacyServerIds: profile.legacyServerIds,
+        createdAt: 0,
+        updatedAt: 0,
+        lastUsedAt: 0,
+    };
+}
+
+function readProfiles(options: ServerProfilesModuleMockOptions): ServerProfile[] {
     const value = options.listServerProfiles ? options.listServerProfiles() : options.profiles;
-    return Array.isArray(value) ? value as ServerProfileMockProfile[] : [];
+    return Array.isArray(value) ? (value as ServerProfileMockProfile[]).map(toServerProfile) : [];
 }
 
 function findProfileByIdentifier(
     options: ServerProfilesModuleMockOptions,
     idRaw: unknown,
-): ServerProfileMockProfile | null {
+): ServerProfile | null {
     const id = normalizeServerProfileTestId(idRaw);
     if (!id) return null;
     return readProfiles(options).find((profile) => (
@@ -37,7 +54,7 @@ function resolveProfileScopeId(profile: Pick<ServerProfileMockProfile, 'id' | 's
     return normalizeServerProfileTestId(profile.serverIdentityId) || normalizeServerProfileTestId(profile.id);
 }
 
-export function createServerProfilesModuleMock(options: ServerProfilesModuleMockOptions = {}) {
+function createServerProfilesModuleMockBase(options: ServerProfilesModuleMockOptions) {
     return {
         listServerProfiles: () => readProfiles(options),
         getServerProfileById: (id: unknown) => findProfileByIdentifier(options, id),
@@ -55,5 +72,24 @@ export function createServerProfilesModuleMock(options: ServerProfilesModuleMock
             const rightProfile = findProfileByIdentifier(options, rightId);
             return Boolean(leftProfile && rightProfile && leftProfile.id === rightProfile.id);
         },
+    };
+}
+
+export function createServerProfilesModuleMock(options: ServerProfilesModuleMockOptions = {}) {
+    return {
+        ...createServerProfilesModuleMockBase(options),
+        ...(options.overrides ?? {}),
+    };
+}
+
+export async function createPartialServerProfilesModuleMock(
+    importOriginal: <T>() => Promise<T>,
+    options: ServerProfilesModuleMockOptions = {},
+): Promise<ServerProfilesModule> {
+    const actual = await importOriginal<ServerProfilesModule>();
+    return {
+        ...actual,
+        ...createServerProfilesModuleMockBase(options),
+        ...(options.overrides ?? {}),
     };
 }

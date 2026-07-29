@@ -9,8 +9,13 @@ export type FocusReturnRef = Readonly<{
     current: FocusReturnTarget;
 }> | null | undefined;
 
+export type NavigationFocusReturnIntent = Readonly<{
+    testId: string;
+}>;
+
 type FocusReturnContextValue = Readonly<{
     fallbackRef: React.MutableRefObject<FocusReturnTarget>;
+    navigationIntentRef: React.MutableRefObject<NavigationFocusReturnIntent | null>;
 }>;
 
 const FocusReturnContext = React.createContext<FocusReturnContextValue | null>(null);
@@ -40,7 +45,11 @@ export function restoreFocusToBestTarget(
 
 export function FocusReturnProvider(props: React.PropsWithChildren) {
     const fallbackRef = React.useRef<FocusReturnTarget>(null);
-    const value = React.useMemo<FocusReturnContextValue>(() => ({ fallbackRef }), []);
+    const navigationIntentRef = React.useRef<NavigationFocusReturnIntent | null>(null);
+    const value = React.useMemo<FocusReturnContextValue>(() => ({
+        fallbackRef,
+        navigationIntentRef,
+    }), []);
     return (
         <FocusReturnContext.Provider value={value}>
             {props.children}
@@ -53,6 +62,12 @@ export function useFocusReturnFallbackRef<T extends FocusReturnTarget>() {
     const localFallbackRef = React.useRef<FocusReturnTarget>(null);
     const fallbackRef = context?.fallbackRef ?? localFallbackRef;
     return fallbackRef as React.MutableRefObject<T>;
+}
+
+export function useNavigationFocusReturnIntentRef() {
+    const context = React.useContext(FocusReturnContext);
+    const localIntentRef = React.useRef<NavigationFocusReturnIntent | null>(null);
+    return context?.navigationIntentRef ?? localIntentRef;
 }
 
 export function useRestoreFocusToTrigger(triggerRef: FocusReturnRef) {

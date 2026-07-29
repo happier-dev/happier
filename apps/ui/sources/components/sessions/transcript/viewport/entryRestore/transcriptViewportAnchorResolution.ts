@@ -91,7 +91,9 @@ export function resolveTranscriptViewportAnchorIndex(params: Readonly<{
         if (containingIndex >= 0) return containingIndex;
     }
 
-    const itemIndex = params.items.findIndex((item) => item.id === params.anchor.itemId);
+    const itemIndex = params.items.findIndex((item) => (
+        item.kind !== 'transcript-window-gap' && item.id === params.anchor.itemId
+    ));
     if (itemIndex >= 0) return itemIndex;
 
     const anchorSeq = normalizeSeq(params.anchor.seq);
@@ -158,6 +160,7 @@ export function resolveTranscriptViewportAnchorDescriptor(
     item: TranscriptViewportAnchorResolvableItem,
 ): Pick<SessionViewportAnchorSnapshot, 'kind' | 'messageId' | 'itemId'> | null {
     if (typeof item.id !== 'string' || item.id.length === 0) return null;
+    if (item.kind === 'transcript-window-gap') return null;
 
     if (item.kind === 'message' && typeof item.messageId === 'string' && item.messageId.length > 0) {
         return {

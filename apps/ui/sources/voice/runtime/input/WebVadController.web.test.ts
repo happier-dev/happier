@@ -121,11 +121,15 @@ describe('createWebVadController', () => {
 
     it('applies the two-stage confirmMs false-start debounce: a sub-confirmMs speech segment is suppressed', async () => {
         const onEndpointSignal = vi.fn();
+        const onSpeechCandidateStart = vi.fn();
+        const onSpeechCandidateFalseAlarm = vi.fn();
         let clock = 0;
         const { createWebVadController } = await import('./WebVadController.web');
 
         const controller = createWebVadController({
             onEndpointSignal,
+            onSpeechCandidateStart,
+            onSpeechCandidateFalseAlarm,
             now: () => clock,
             turnPolicy: { confirmMs: 800, silenceMs: 700 },
         });
@@ -142,6 +146,8 @@ describe('createWebVadController', () => {
         clock = 300;
         activeOnSpeechEnd?.();
         expect(onEndpointSignal).not.toHaveBeenCalled();
+        expect(onSpeechCandidateStart).toHaveBeenCalledWith({ sessionId: 'session-web', source: 'web_vad' });
+        expect(onSpeechCandidateFalseAlarm).toHaveBeenCalledWith({ sessionId: 'session-web', source: 'web_vad' });
 
         // A subsequent sustained segment (> confirmMs) still emits.
         clock = 1_000;
@@ -153,6 +159,8 @@ describe('createWebVadController', () => {
             sessionId: 'session-web',
             source: 'web_vad',
         }));
+        expect(onSpeechCandidateStart).toHaveBeenCalledTimes(2);
+        expect(onSpeechCandidateFalseAlarm).toHaveBeenCalledTimes(1);
     });
 
     it('emits a web_vad endpoint without a speech-start edge (no regression for start-less VADs)', async () => {

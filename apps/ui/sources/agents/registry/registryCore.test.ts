@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 
 import {
     AGENT_IDS as SHARED_AGENT_IDS,
-    AGENT_PROVIDER_IDS as SHARED_AGENT_PROVIDER_IDS,
     getAgentCore as getSharedAgentCore,
     getAgentModelConfig,
     getProviderCliInstallGuideUrl,
@@ -15,7 +14,9 @@ import {
     resolveAgentIdFromCliDetectKey,
     resolveAgentIdFromConnectedServiceId,
     resolveAgentIdFromFlavor,
+    resolveAgentIdFromSessionMetadata,
     formatAgentLikeIdForDisplay,
+    getAllAgentProviderOwnedEnvironmentKeys,
     getAgentCore as getUiAgentCore,
     AGENT_IDS,
 } from './registryCore';
@@ -27,7 +28,7 @@ describe('agents/registryCore', () => {
         expect(Array.isArray(AGENT_IDS)).toBe(true);
         expect(AGENT_IDS.length).toBeGreaterThan(0);
         expect([...AGENT_IDS].sort()).toEqual([...SHARED_AGENT_IDS].sort());
-        expect([...CANONICAL_AGENT_IDS].sort()).toEqual([...SHARED_AGENT_PROVIDER_IDS].sort());
+        expect([...CANONICAL_AGENT_IDS].sort()).toEqual([...SHARED_AGENT_IDS].sort());
     });
 
     it('exports only agent ids that have a UI core config', () => {
@@ -42,6 +43,17 @@ describe('agents/registryCore', () => {
         expect(AGENTS_CORE).not.toHaveProperty(LEGACY_COMPAT_PRIMARY_AGENT_ID);
         expect(CANONICAL_AGENTS_CORE).not.toHaveProperty(LEGACY_COMPAT_PRIMARY_AGENT_ID);
         expect(CANONICAL_AGENT_IDS).not.toContain(LEGACY_COMPAT_PRIMARY_AGENT_ID);
+    });
+
+    it('unions accepted daemon plugin agent provider-owned environment keys with bundled keys', () => {
+        const keys = getAllAgentProviderOwnedEnvironmentKeys({
+            'plugin-review': {
+                id: 'plugin-review',
+                providerOwnedEnvironmentKeys: ['ACME_PROVIDER_KEY'],
+            },
+        });
+
+        expect(keys.has('ACME_PROVIDER_KEY')).toBe(true);
     });
 
     it('resolves known flavors and aliases to canonical agent ids', () => {
@@ -60,6 +72,28 @@ describe('agents/registryCore', () => {
         expect(resolveAgentIdFromFlavor('')).toBeNull();
         expect(resolveAgentIdFromFlavor(null)).toBeNull();
         expect(resolveAgentIdFromFlavor(undefined)).toBeNull();
+    });
+
+    it('resolves agent ids from canonical session runtime metadata when flavor is absent', () => {
+        expect(resolveAgentIdFromSessionMetadata({
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'pi',
+                provider: {
+                    resumeStrategy: 'sessionFileAbsolutePreferred',
+                    providerSessionId: 'pi-session-1',
+                },
+            },
+        })).toBe('pi');
+        expect(resolveAgentIdFromSessionMetadata({
+            flavor: 'customAcp',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'claude',
+                provider: {},
+            },
+        })).toBe('claude');
+        expect(resolveAgentIdFromSessionMetadata({ runtimeDescriptorV1: { v: 1, providerId: 'customAcp' } })).toBeNull();
     });
 
     it('resolves agent ids from cli detect keys and handles malformed values', () => {
@@ -83,6 +117,7 @@ describe('agents/registryCore', () => {
         expect(resolveAgentIdFromConnectedServiceId('Anthropic')).toBe('claude');
         expect(resolveAgentIdFromConnectedServiceId('claude-subscription')).toBe('claude');
         expect(resolveAgentIdFromConnectedServiceId('openai')).toBe('codex');
+        expect(resolveAgentIdFromConnectedServiceId('gemini')).toBe('gemini');
         expect(resolveAgentIdFromConnectedServiceId('')).toBeNull();
         expect(resolveAgentIdFromConnectedServiceId(null)).toBeNull();
         expect(resolveAgentIdFromConnectedServiceId(undefined)).toBeNull();
@@ -145,15 +180,22 @@ describe('agents/registryCore', () => {
         }
     });
 
+    it('surfaces shared flavor aliases from @happier-dev/agents', () => {
+        for (const agentId of AGENT_IDS) {
+            const sharedAliases = [...(getSharedAgentCore(agentId).flavorAliases ?? [])];
+            expect(getUiAgentCore(agentId).flavorAliases).toEqual(expect.arrayContaining(sharedAliases));
+        }
+    });
+
     it('exposes an explicit UI-only connected service surface separate from capability metadata', () => {
         expect(getUiAgentCore('claude').uiConnectedService).toEqual({
             serviceId: 'anthropic',
-            label: 'Claude Code',
+            labelKey: 'agentInput.connectedServiceLabel.claude',
             connectRoute: '/(app)/settings/connect/claude',
         });
         expect(getUiAgentCore('opencode').uiConnectedService).toEqual({
             serviceId: null,
-            label: 'OpenCode',
+            labelKey: 'agentInput.agent.opencode',
             connectRoute: null,
         });
     });

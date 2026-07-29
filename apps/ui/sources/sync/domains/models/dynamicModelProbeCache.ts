@@ -1,5 +1,5 @@
 import { normalizeAcpConfigOptionsArray, type AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
-import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
+import { createUnavailablePreflightModelList, type PreflightModelList } from '@/sync/domains/models/modelOptions';
 import type { ProbedResourceSnapshot } from '@happier-dev/protocol';
 
 import { createPersistentProbedResourceCache } from '@/sync/runtime/probedResources/createPersistentProbedResourceCache';
@@ -62,6 +62,12 @@ const transientSuccessByKey = new Map<string, Readonly<{
     value: PreflightModelList;
 }>>();
 
+const transientUnavailableByKey = new Map<string, Readonly<{
+    updatedAt: number;
+    expiresAt: number;
+    value: PreflightModelList;
+}>>();
+
 const persistedCache = createPersistentProbedResourceCache<PreflightModelList>({
     cacheId: 'dynamic-model-probe-cache',
     persistKey: PERSIST_KEY,
@@ -76,6 +82,7 @@ const persistedCache = createPersistentProbedResourceCache<PreflightModelList>({
 
 export function resetDynamicModelProbeCacheForTests(): void {
     transientSuccessByKey.clear();
+    transientUnavailableByKey.clear();
     persistedCache.resetForTests();
 }
 
@@ -84,6 +91,22 @@ function readTransientSuccess(key: string, nowMs = Date.now()): DynamicModelProb
     if (!entry) return null;
     if (nowMs >= 0 && nowMs > entry.retainUntil) {
         transientSuccessByKey.delete(key);
+        return null;
+    }
+    return {
+        kind: 'success',
+        updatedAt: entry.updatedAt,
+        expiresAt: entry.expiresAt,
+        value: entry.value,
+        cacheable: false,
+    };
+}
+
+function readTransientUnavailable(key: string, nowMs = Date.now()): DynamicModelProbeCacheEntry | null {
+    const entry = transientUnavailableByKey.get(key) ?? null;
+    if (!entry) return null;
+    if (nowMs >= 0 && nowMs > entry.expiresAt) {
+        transientUnavailableByKey.delete(key);
         return null;
     }
     return {
@@ -106,6 +129,8 @@ export function readDynamicModelProbeCache(key: string): DynamicModelProbeCacheE
             cacheable: true,
         };
     }
+    const transientUnavailable = readTransientUnavailable(key);
+    if (transientUnavailable) return transientUnavailable;
     const transient = readTransientSuccess(key);
     if (transient) return transient;
     if (snap.errorUpdatedAt !== null) {
@@ -120,6 +145,7 @@ export function readDynamicModelProbeCache(key: string): DynamicModelProbeCacheE
 
 export function writeDynamicModelProbeCacheSuccess(key: string, value: PreflightModelList, nowMs = Date.now()): void {
     transientSuccessByKey.delete(key);
+    transientUnavailableByKey.delete(key);
     persistedCache.writeSuccess(key, value, nowMs);
 }
 
@@ -137,7 +163,18 @@ export function writeDynamicModelProbeCacheTransientSuccess(
 }
 
 export function writeDynamicModelProbeCacheError(key: string, nowMs = Date.now()): void {
+    transientUnavailableByKey.delete(key);
     persistedCache.writeError(key, new Error('dynamic-model-probe-failed'), nowMs);
+}
+
+export function writeDynamicModelProbeCacheUnavailable(key: string, nowMs = Date.now()): void {
+    transientSuccessByKey.delete(key);
+    persistedCache.writeError(key, new Error('dynamic-model-probe-unavailable'), nowMs);
+    transientUnavailableByKey.set(key, {
+        updatedAt: nowMs,
+        expiresAt: nowMs + DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS,
+        value: createUnavailablePreflightModelList(),
+    });
 }
 
 export async function runDynamicModelProbeDedupe<T>(

@@ -39,6 +39,7 @@ function createAdapter(params: Readonly<{
     stop: ReturnType<typeof vi.fn>;
     start: ReturnType<typeof vi.fn>;
     toggle: ReturnType<typeof vi.fn>;
+    bargeIn: ReturnType<typeof vi.fn>;
 }> {
     let snapshot = params.snapshot;
     const listeners = new Set<() => void>();
@@ -58,14 +59,17 @@ function createAdapter(params: Readonly<{
         }
     });
     const toggle = vi.fn(async () => {});
+    const bargeIn = vi.fn(async () => {});
 
     return {
         controller: {
             id: params.id,
+            engineKind: 'realtime',
             start,
             stop,
             toggle,
             interrupt: vi.fn(async () => {}),
+            bargeIn,
             setMuted: vi.fn(async () => {}),
             sendContextUpdate: vi.fn(() => {}),
             getSnapshot: () => snapshot,
@@ -83,10 +87,211 @@ function createAdapter(params: Readonly<{
         stop,
         start,
         toggle,
+        bargeIn,
     };
 }
 
 describe('createVoiceSessionLifecycleController', () => {
+    it('reports the configured provider consumed by the lifecycle owner', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({
+            get: () => null,
+            list: () => [],
+        }) });
+
+        expect(controller.getConfiguredProviderId()).toBeNull();
+        controller.setConfiguredProviderId('local_conversation');
+        expect(controller.getConfiguredProviderId()).toBe('local_conversation');
+    });
+
+    it('publishes the configured provider recoverable error after it disconnects', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const deniedSnapshot: VoiceSessionSnapshot = {
+            adapterId: 'local_conversation',
+            sessionId: 'session-1',
+            status: 'disconnected',
+            mode: 'idle',
+            canStop: false,
+            errorCode: 'mic_permission_denied',
+            errorMessage: 'mic_permission_denied',
+            errorRecoveryAction: 'open_settings',
+            errorPresentation: 'permission_required',
+        };
+        const configured = createAdapter({
+            id: 'local_conversation',
+            snapshot: deniedSnapshot,
+        });
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({
+            get: (id: string) => id === configured.controller.id ? configured.controller : null,
+            list: () => [configured.controller],
+        }) });
+
+        controller.setConfiguredProviderId('local_conversation');
+        controller.rearmAfterCredentialAuthorityChange();
+
+        expect(controller.getSnapshot()).toEqual(deniedSnapshot);
+    });
+
+    it('rearms only a terminal provider-auth failure and waits for the next explicit start', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const authFailure: VoiceSessionSnapshot = {
+            adapterId: 'realtime_openai',
+            sessionId: 'session-1',
+            status: 'disconnected',
+            mode: 'idle',
+            canStop: false,
+            errorCode: 'provider_auth_invalid',
+            errorMessage: 'credential_unavailable',
+            errorRecoveryAction: 'review_credentials',
+            errorPresentation: 'error',
+        };
+        const configured = createAdapter({
+            id: 'realtime_openai',
+            snapshot: authFailure,
+        });
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({
+            get: (id: string) => id === configured.controller.id ? configured.controller : null,
+            list: () => [configured.controller],
+        }) });
+
+        controller.setConfiguredProviderId('realtime_openai');
+        controller.rearmAfterCredentialAuthorityChange();
+
+        expect(controller.getSnapshot()).toEqual({
+            adapterId: null,
+            sessionId: null,
+            status: 'disconnected',
+            mode: 'idle',
+            canStop: false,
+        });
+        expect(configured.start).not.toHaveBeenCalled();
+        expect(configured.stop).not.toHaveBeenCalled();
+
+        await controller.toggle('session-2');
+        expect(configured.start).toHaveBeenCalledWith({ sessionId: 'session-2' });
+
+        configured.setSnapshot(authFailure);
+        expect(controller.getSnapshot()).toEqual(authFailure);
+    });
+
+    it('fences an active attachment when its credential authority changes', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const active = createAdapter({
+            id: 'realtime_codex',
+            snapshot: {
+                adapterId: 'realtime_codex',
+                sessionId: 'global-voice-home',
+                status: 'connected',
+                mode: 'listening',
+                canStop: true,
+            },
+        });
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({
+            get: (id: string) => id === active.controller.id ? active.controller : null,
+            list: () => [active.controller],
+        }) });
+
+        controller.setConfiguredProviderId('realtime_codex');
+        controller.rearmAfterCredentialAuthorityChange({ fenceActive: true });
+
+        expect(active.stop).toHaveBeenCalledOnce();
+        expect(active.stop).toHaveBeenCalledWith({ sessionId: 'global-voice-home' });
+        expect(active.start).not.toHaveBeenCalled();
+    });
+
+    it('aborts a connecting attachment even when the change is classified as next-start-only', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const connecting = createAdapter({
+            id: 'realtime_openai',
+            snapshot: {
+                adapterId: 'realtime_openai',
+                sessionId: 'voice-session',
+                status: 'connecting',
+                mode: 'idle',
+                canStop: true,
+            },
+        });
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({
+            get: (id: string) => id === connecting.controller.id ? connecting.controller : null,
+            list: () => [connecting.controller],
+        }) });
+
+        controller.setConfiguredProviderId('realtime_openai');
+        controller.rearmAfterCredentialAuthorityChange({ fenceActive: false });
+
+        expect(connecting.stop).toHaveBeenCalledOnce();
+        expect(connecting.stop).toHaveBeenCalledWith({ sessionId: 'voice-session' });
+    });
+
+    it('aborts in-flight preparation for a next-start-only change before connecting is published', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const startDeferred = createDeferred<void>();
+        const preparing = createAdapter({
+            id: 'realtime_openai',
+            snapshot: {
+                adapterId: 'realtime_openai',
+                sessionId: null,
+                status: 'disconnected',
+                mode: 'idle',
+                canStop: false,
+            },
+            start: async () => {
+                await startDeferred.promise;
+            },
+        });
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({
+            get: (id: string) => id === preparing.controller.id ? preparing.controller : null,
+            list: () => [preparing.controller],
+        }) });
+
+        controller.setConfiguredProviderId('realtime_openai');
+        const preparation = controller.toggle('voice-session');
+        controller.rearmAfterCredentialAuthorityChange({ fenceActive: false });
+
+        expect(preparing.stop).toHaveBeenCalledOnce();
+        expect(preparing.stop).toHaveBeenCalledWith({ sessionId: 'voice-session' });
+
+        startDeferred.resolve();
+        await preparation;
+    });
+
+    it('retains an established ordinary OpenAI attachment until terminal after a next-start-only change', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const connected = createAdapter({
+            id: 'realtime_openai',
+            snapshot: {
+                adapterId: 'realtime_openai',
+                sessionId: 'voice-session',
+                status: 'connected',
+                mode: 'listening',
+                canStop: true,
+            },
+        });
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({
+            get: (id: string) => id === connected.controller.id ? connected.controller : null,
+            list: () => [connected.controller],
+        }) });
+
+        controller.setConfiguredProviderId('realtime_openai');
+        controller.rearmAfterCredentialAuthorityChange({ fenceActive: false });
+
+        expect(connected.stop).not.toHaveBeenCalled();
+    });
+
+    it('routes barge-in only through the active adapter capability', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const active = createAdapter({
+            id: 'active',
+            snapshot: { adapterId: 'active', sessionId: 'session-1', status: 'connected', mode: 'speaking', canStop: true },
+        });
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({
+            get: (id: string) => id === 'active' ? active.controller : null,
+            list: () => [active.controller],
+        }) });
+        controller.setConfiguredProviderId('active');
+        await controller.bargeIn('fallback');
+        expect(active.bargeIn).toHaveBeenCalledWith({ sessionId: 'session-1' });
+    });
     it('does not republish a pending switch after dispose', async () => {
         vi.resetModules();
 

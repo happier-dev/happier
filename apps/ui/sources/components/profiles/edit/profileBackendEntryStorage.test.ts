@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
 
 import {
     isProfileCompatibleWithResolvedBackendEntry,
@@ -9,18 +10,31 @@ import {
     resolveProfileBackendTargetKeyForEntry,
     stripLegacyProviderSentinelTargetKeys,
 } from './profileBackendEntryStorage';
+import { buildLegacyProfileSave } from './legacy/buildLegacyProfileSave';
 
 const pluginBackendEntry: ResolvedBackendCatalogEntry = {
     backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
     backendTargetKey: resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'acme.review.backend' }),
     kind: 'pluginBackend',
     backendId: 'acme.review.backend',
-    providerId: 'acme.review.provider',
-    providerAgentId: 'claude',
+    agentId: 'acme.review.provider',
+    catalogAgentId: 'claude',
     builtInAgentId: null,
     iconAgentId: 'claude',
     title: 'Acme Review Backend',
     subtitle: 'Plugin-backed review engine',
+};
+const ohMyPiEntry: ResolvedBackendCatalogEntry = {
+    backendTarget: { kind: 'backend', backendId: 'ohMyPi', sourceKind: 'built_in' },
+    backendTargetKey: 'agent:happier.agent.ohmypi/ohmypi',
+    kind: 'builtInAgent',
+    backendId: 'ohMyPi',
+    agentId: 'ohMyPi',
+    catalogAgentId: 'ohMyPi',
+    builtInAgentId: 'ohMyPi',
+    iconAgentId: 'ohMyPi',
+    title: 'Oh My Pi',
+    subtitle: 'Oh My Pi',
 };
 
 describe('profileBackendEntryStorage', () => {
@@ -52,10 +66,52 @@ describe('profileBackendEntryStorage', () => {
             {
                 [pluginBackendEntry.backendTargetKey]: true,
                 [profileTargetKey]: true,
+                'backend:unused': undefined,
             },
             [pluginBackendEntry],
         )).toEqual({
             [profileTargetKey]: true,
         });
+    });
+
+    it('reads a flat Oh My Pi profile once and saves only the qualified Agent key', () => {
+        const seeded = AIBackendProfileSchema.parse({
+            id: 'omp-profile',
+            name: 'Oh My Pi profile',
+            environmentVariables: [],
+            authMode: 'machineLogin',
+            requiresMachineLoginTargetKey: 'agent:ohMyPi',
+            defaultPermissionModeByTargetKey: { 'agent:ohMyPi': 'acceptEdits' },
+            defaultPersistenceModeByTargetKey: { 'agent:ohMyPi': 'direct' },
+            compatibilityByTargetKey: { 'agent:ohMyPi': true },
+            compatibility: {},
+            isBuiltIn: false,
+            createdAt: 1,
+            updatedAt: 1,
+        });
+        const qualifiedKey = 'agent:happier.agent.ohmypi/ohmypi';
+
+        const saved = buildLegacyProfileSave({
+            profile: seeded,
+            name: seeded.name,
+            environmentVariables: seeded.environmentVariables,
+            envVarRequirements: seeded.envVarRequirements,
+            authMode: seeded.authMode,
+            machineLoginTargetKey: qualifiedKey,
+            resolvedBackendEntries: [ohMyPiEntry],
+            supportedDirectBackendEntries: [ohMyPiEntry],
+            defaultPermissionModesByTargetKey: { [qualifiedKey]: 'acceptEdits' },
+            defaultTranscriptStorageModesByTargetKey: { [qualifiedKey]: 'direct' },
+            compatibilityByTargetKey: { [qualifiedKey]: true },
+            updatedAt: 2,
+        });
+        expect(saved).toMatchObject({
+            requiresMachineLoginTargetKey: qualifiedKey,
+            defaultPermissionModeByTargetKey: { [qualifiedKey]: 'acceptEdits' },
+            defaultPersistenceModeByTargetKey: { [qualifiedKey]: 'direct' },
+            compatibilityByTargetKey: { [qualifiedKey]: true },
+        });
+        expect(AIBackendProfileSchema.parse(saved)).toMatchObject(saved);
+        expect(JSON.stringify(saved)).not.toContain('ohMyPi');
     });
 });

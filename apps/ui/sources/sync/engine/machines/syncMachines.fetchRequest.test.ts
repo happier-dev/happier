@@ -187,6 +187,57 @@ describe('fetchAndApplyMachines request override', () => {
         ], { replace: false });
     });
 
+    it('caps background warm display hydration rows on boot', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const rows = Array.from({ length: 6 }, (_, index) => ({
+            id: `m_${index + 1}`,
+            metadata: `encrypted-meta-${index + 1}`,
+            metadataVersion: 2,
+            daemonState: null,
+            daemonStateVersion: 0,
+            dataEncryptionKey: 'key-1',
+            seq: index + 1,
+            active: true,
+            activeAt: 10 + index,
+            revokedAt: null,
+            createdAt: 1,
+            updatedAt: 10 + index,
+        } satisfies RawMachine));
+        const requestSpy = vi.fn(async () => jsonResponse(rows));
+        const encryption = createEncryptionHarness();
+        const applyMachines = vi.fn();
+        const applyMachineDisplayEntries = vi.fn();
+        const cachedMachineDisplayEntries = Object.fromEntries(rows.map((row) => [
+            row.id,
+            {
+                machineId: row.id,
+                metadataVersion: 1,
+                updatedAt: row.updatedAt,
+                active: row.active,
+                activeAt: row.activeAt,
+                revokedAt: null,
+                displayName: `Cached ${row.id}`,
+                host: 'mbp',
+                homeDir: '/home/u',
+            },
+        ]));
+
+        await fetchAndApplyMachines({
+            credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
+            encryption,
+            machineDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applyMachines,
+            cachedMachineDisplayEntries,
+            applyMachineDisplayEntries,
+            machineDisplayHydrationMaxRows: 2,
+        } as any);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(encryption.decryptMetadata).toHaveBeenCalledTimes(2);
+    });
+
     it('carries machine replacement metadata from fetched rows into applied machine state', async () => {
         const fetchAndApplyMachines = await loadFetchAndApplyMachines();
         const requestSpy = vi.fn(async (_path: string, _init?: RequestInit) =>

@@ -321,6 +321,7 @@ describe('resolveActivitySurfaceSlots', () => {
                     active: true,
                     presence: 'online',
                     thinking: true,
+                    thinkingAt: 950,
                     metadata: {
                         path: '/Users/tester/project/thinking',
                         host: 'tester.local',
@@ -331,6 +332,7 @@ describe('resolveActivitySurfaceSlots', () => {
                 createSessionFixture({
                     id: 'unread',
                     seq: 4,
+                    latestReadyEventSeq: 4,
                     lastViewedSessionSeq: 1,
                     metadata: {
                         path: '/Users/tester/project/unread',
@@ -340,6 +342,7 @@ describe('resolveActivitySurfaceSlots', () => {
                     },
                 }),
             ],
+            nowMs: 1_000,
         });
 
         const slots = resolveActivitySurfaceSlots({

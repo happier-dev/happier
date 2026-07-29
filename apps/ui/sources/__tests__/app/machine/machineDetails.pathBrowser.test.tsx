@@ -20,7 +20,6 @@ function createMachineRecord() {
     daemonState: null,
     daemonStateVersion: 0,
     revokedAt: null,
-    spawnReadinessStatus: 'ready',
     };
 }
 
@@ -30,7 +29,7 @@ const mockState = vi.hoisted(() => ({
     machinesState: { 'machine-1': createMachineRecord() } as Record<string, unknown>,
     machineTargetSessionsState: {} as Record<string, unknown>,
     multiTextInputSpy: vi.fn(),
-    machineSpawnNewSessionMock: vi.fn(async () => ({ type: 'error', errorCode: 'unexpected', errorMessage: 'noop' })),
+    machineSpawnNewSessionMock: vi.fn(async (_params: unknown) => ({ type: 'error', errorCode: 'unexpected', errorMessage: 'noop' })),
     openMachinePathBrowserModalMock: vi.fn<(params: unknown) => Promise<string | null>>(async () => '/Users/test/project'),
     projectForSession: {} as Record<string, { key?: { machineId?: string; rootPath?: string } } | null>,
     routeParamsRef: { current: { id: 'machine-1' } as Record<string, string> },
@@ -120,6 +119,8 @@ vi.mock('@/sync/ops', () => ({
 }));
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+    getMachineContributionRegistryProjectionRevision: () => 0,
+    subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machineContributionRegistryProjectionDescribe: (...args: Parameters<MachineContributionRegistryProjectionDescribeFn>) =>
         machineContributionRegistryProjectionDescribe(...args),
 }));
@@ -194,6 +195,10 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readDisplayMachineIdForSession: ({ sessionId, metadata }: { sessionId: string; metadata?: any }) => {
         const project = mockState.projectForSession[sessionId];
         return project?.key?.machineId ?? metadata?.machineId ?? null;
+    },
+    readDisplayPathForSession: ({ sessionId, metadata }: { sessionId: string; metadata?: any }) => {
+        const project = mockState.projectForSession[sessionId];
+        return project?.key?.rootPath ?? metadata?.path ?? '';
     },
 }));
 
@@ -339,19 +344,9 @@ describe('MachineDetailScreen path browser', () => {
         }));
     });
 
-    it('does not spawn when exact machine readiness is unknown even if the machine appears online', async () => {
-        mockState.machinesState['machine-1'] = {
-            ...createMachineRecord(),
-            active: true,
-            activeAt: Date.now(),
-            spawnReadinessStatus: 'unknown',
-        };
-
+    it('does not let machine detail supply a custom custody fingerprint', async () => {
         const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
         const screen = await renderScreen(React.createElement(MachineDetailScreen));
-
-        const browseButton = screen.findByTestId('path-browser-trigger');
-        expect(browseButton?.props.disabled).toBe(true);
 
         const startButtons = screen.findAll((node) =>
             String(node.type) === 'Pressable'
@@ -359,13 +354,50 @@ describe('MachineDetailScreen path browser', () => {
             && typeof node.props?.disabled === 'boolean',
         );
 
-        expect(startButtons[0]?.props.disabled).toBe(true);
+        expect(startButtons[0]).toBeTruthy();
+
+        await act(async () => {
+            await startButtons[0].props.onPress();
+            await startButtons[0].props.onPress();
+        });
+
+        expect(mockState.machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('spawnAttemptKey');
+        expect(mockState.machineSpawnNewSessionMock.mock.calls[1]?.[0]).not.toHaveProperty('spawnAttemptKey');
+    });
+
+    it('lets a structurally ready machine without synthetic spawn readiness reach the spawn operation', async () => {
+        mockState.machinesState['machine-1'] = {
+            ...createMachineRecord(),
+            active: true,
+            activeAt: Date.now(),
+        };
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+
+        const pathInput = mockState.multiTextInputSpy.mock.calls.at(-1)?.[0];
+        await act(async () => {
+            pathInput?.onChangeText?.('/Users/test/project');
+        });
+
+        const browseButton = screen.findByTestId('path-browser-trigger');
+        expect(browseButton?.props.disabled).toBe(false);
+
+        const startButtons = screen.findAll((node) =>
+            String(node.type) === 'Pressable'
+            && typeof node.props?.onPress === 'function'
+            && typeof node.props?.disabled === 'boolean',
+        );
+
+        expect(startButtons[0]?.props.disabled).toBe(false);
 
         await act(async () => {
             await startButtons[0]?.props.onPress();
         });
 
-        expect(mockState.machineSpawnNewSessionMock).not.toHaveBeenCalled();
+        expect(mockState.machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+        }));
     });
 
     it('falls back to the preferred built-in target when the stored configured backend is stale', async () => {
@@ -408,10 +440,9 @@ describe('MachineDetailScreen path browser', () => {
             supported: true,
             projection: {
                 v: 1,
-                providersById: {
+                agentsById: {
                     'acme.review.provider': {
                         id: 'acme.review.provider',
-                        providerId: 'acme.review.provider',
                         title: 'Acme Review Provider',
                         channel: 'plugin',
                         isBuiltIn: false,
@@ -422,7 +453,7 @@ describe('MachineDetailScreen path browser', () => {
                     'acme.review.backend': {
                         id: 'acme.review.backend',
                         backendId: 'acme.review.backend',
-                        providerId: 'acme.review.provider',
+                        agentId: 'acme.review.provider',
                         title: 'Acme Review Backend',
                     },
                 },

@@ -15,6 +15,7 @@ import { useSettings } from '@/sync/store/hooks';
 import type { AgentEvent } from '@/sync/typesRaw';
 import { t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
+import type { TranscriptEventEmphasis } from './transcriptEventEmphasis';
 
 import { buildConnectedServiceAccountSwitchMessage } from './connectedServiceAccountSwitchMessage';
 
@@ -270,9 +271,12 @@ function formatRuntimeConfigOutcomeSessionModeChange(changes: RuntimeConfigOutco
 export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: {
     event: AgentEvent;
     sessionId?: string | null;
+    emphasis?: TranscriptEventEmphasis;
 }) {
     const { theme } = useUnistyles();
     const settings = useSettings();
+    const deemphasized = props.emphasis === 'deemphasized';
+    const eventColor = deemphasized ? theme.colors.text.tertiary : theme.colors.text.secondary;
     let iconName: React.ComponentProps<typeof Ionicons>['name'] = 'information-circle-outline';
     let text = t('message.unknownEvent');
     let detailText: string | undefined;
@@ -337,14 +341,14 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
             event: props.event,
             labelsByKey: settings.connectedServicesProfileLabelByKey,
         });
-    } else if (props.event.type === 'provider-quota-wait') {
-        testID = 'transcript-event-provider-quota-wait';
+    } else if (props.event.type === 'agent-quota-wait') {
+        testID = 'transcript-event-agent-quota-wait';
         iconName = 'time-outline';
-        text = t('message.providerQuotaWait', { time: formatQuotaResetTime(props.event.resetAtMs) });
-    } else if (props.event.type === 'provider-quota-recovered') {
-        testID = 'transcript-event-provider-quota-recovered';
+        text = t('message.agentQuotaWait', { time: formatQuotaResetTime(props.event.resetAtMs) });
+    } else if (props.event.type === 'agent-quota-recovered') {
+        testID = 'transcript-event-agent-quota-recovered';
         iconName = 'checkmark-circle-outline';
-        text = t('message.providerQuotaRecovered');
+        text = t('message.agentQuotaRecovered');
     } else if (props.event.type === 'connected-service-account-switch-attempt') {
         testID = 'transcript-event-connected-service-account-switch-attempt';
         const outcome = resolveConnectedServiceSwitchAttemptOutcome(props.event);
@@ -399,21 +403,21 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
         testID = 'transcript-event-connected-service-account-switch-deferral-superseded';
         iconName = 'swap-horizontal-outline';
         text = t('message.connectedServiceSwitchDeferralSuperseded');
-    } else if (props.event.type === 'provider-state-sharing-degraded') {
+    } else if (props.event.type === 'agent-state-sharing-degraded') {
         // O1: state-sharing degraded — partial materialization warning
-        testID = 'transcript-event-provider-state-sharing-degraded';
+        testID = 'transcript-event-agent-state-sharing-degraded';
         iconName = 'warning-outline';
-        text = t('message.providerStateSharingDegraded');
+        text = t('message.agentStateSharingDegraded');
     }
 
     const content = (
         <>
             <View style={styles.row}>
                 <View style={styles.iconContainer}>
-                    <Ionicons name={iconName} size={EVENT_ICON_SIZE} color={theme.colors.text.secondary} />
+                    <Ionicons name={iconName} size={EVENT_ICON_SIZE} color={eventColor} />
                 </View>
                 <View style={styles.textColumn} testID={testID ? `${testID}-body` : undefined}>
-                    <Text selectable style={styles.text}>
+                    <Text selectable style={[styles.text, deemphasized ? styles.deemphasizedText : null]}>
                         {text}
                     </Text>
                     {detailText ? (
@@ -433,7 +437,7 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
     );
 
     return (
-        <View style={styles.container} testID={testID}>
+        <View style={[styles.container, deemphasized ? styles.deemphasizedContainer : null]} testID={testID}>
             {testID === 'transcript-event-connected-service-account-switch' ? (
                 <View testID="session-event-connected-service-account-switch">
                     {content}
@@ -472,6 +476,12 @@ const styles = StyleSheet.create((theme) => ({
         lineHeight: 20,
         fontWeight: '500',
         flexShrink: 1,
+    },
+    deemphasizedText: {
+        color: theme.colors.text.tertiary,
+    },
+    deemphasizedContainer: {
+        opacity: 0.58,
     },
     detailText: {
         color: theme.colors.text.tertiary,

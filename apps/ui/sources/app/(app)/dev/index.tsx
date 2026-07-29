@@ -15,9 +15,9 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { useUnistyles } from 'react-native-unistyles';
 import { getLatestReleaseId, setLastViewedReleaseId } from '@/changelog';
 import { t } from '@/text';
-import { MotionPreviewDevSection } from './MotionPreviewDevSection';
-import { StoryDeckPreviewDevSection } from './StoryDeckPreviewDevSection';
-import { WebHmrDevSettingsSection } from './WebHmrDevSettingsSection';
+import { MotionPreviewDevSection } from '@/components/dev/MotionPreviewDevSection';
+import { StoryDeckPreviewDevSection } from '@/components/dev/StoryDeckPreviewDevSection';
+import { WebHmrDevSettingsSection } from '@/components/dev/WebHmrDevSettingsSection';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export default function DevScreen() {
@@ -249,6 +249,12 @@ export default function DevScreen() {
                     subtitle={t('devVoiceQa.menuSubtitle')}
                     icon={<Ionicons name="mic-outline" size={28} color="#AF52DE" />}
                     onPress={() => router.push('/dev/voice-qa')}
+                />
+                <Item
+                    title="Voice Concepts"
+                    subtitle="Design lab — five structurally different Voice directions, side by side"
+                    icon={<Ionicons name="color-wand-outline" size={28} color="#6D94FF" />}
+                    onPress={() => router.push('/dev/voice-lab')}
                 />
                 <Item
                     title="Unistyles Demo"

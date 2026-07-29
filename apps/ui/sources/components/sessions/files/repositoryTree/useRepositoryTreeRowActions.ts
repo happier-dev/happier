@@ -16,7 +16,7 @@ export function useRepositoryTreeRowActions(params: Readonly<{
     expandedPaths: readonly string[];
     onExpandedPathsChange: (paths: string[]) => void;
     onRequestRefresh?: (() => void) | null;
-    onRequestDownload?: ((params: Readonly<{ path: string; asZip: boolean }>) => Promise<{ ok: true } | { ok: false; error: string }>) | null;
+    onRequestDownload?: ((params: Readonly<{ path: string; asZip: boolean }>) => Promise<{ ok: true } | { ok: false; error: string; canceled?: true }>) | null;
 }>): Readonly<{
     onSelectRowMenuItem: (node: RepositoryTreeNodeLike, itemId: RepositoryTreeRowActionMenuItemId) => Promise<void>;
 }> {

@@ -48,6 +48,8 @@ export function createSessionItemRowViewModel(
         sessionKey,
         session,
         sessionStatus: DEFAULT_SESSION_ITEM_ROW_STATUS,
+        externalSessionRuntime: null,
+        externalSessionIdentity: null,
         isIdentityLoading: false,
         nextRuntimeFreshnessAtMs: null,
         hasUnreadMessages: false,

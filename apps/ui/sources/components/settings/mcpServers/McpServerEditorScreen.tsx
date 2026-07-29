@@ -19,6 +19,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Modal } from '@/modal';
+import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 import { randomUUID } from '@/platform/randomUUID';
 import { useAllMachines, useSettingMutable } from '@/sync/domains/state/storage';
 import { deleteMcpServerCatalogEntryV1, upsertMcpServerWithBindingsV1 } from '@/sync/domains/settings/mcpServers/mcpServerCrud';
@@ -113,7 +114,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     const ignoreBeforeRemoveRef = React.useRef(false);
     const isDirtyRef = React.useRef(false);
     const machines = useAllMachines();
-    const [secrets, setSecrets] = useSettingMutable('secrets');
+    const [secrets, setSecrets] = useSavedSecretsMutable();
 
     const {
         serverId: serverIdParam,
@@ -381,10 +382,11 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     }, [closeToMcpServersSettings, nav.dispatch]);
 
     useUnsavedChangesBeforeRemoveGuard({
-        navigation,
         ignoreRef: ignoreBeforeRemoveRef,
+        isDirty,
         isDirtyRef,
         requestDecision: requestUnsavedChangesDecision,
+        onDiscard: discardDraft,
         onSave: commitDraft,
         onContinue: continueNavigation,
         tag: 'McpServerEditorScreen.beforeRemove',

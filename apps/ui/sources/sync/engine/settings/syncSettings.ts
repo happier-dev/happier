@@ -1,6 +1,10 @@
 import { tracking } from '@/track';
 import { HappyError } from '@/utils/errors/errors';
 import { applySettings, settingsDefaults, settingsParse, type Settings } from '@/sync/domains/settings/settings';
+import {
+    normalizeVoiceSettingsLocalDelta,
+    normalizeVoiceSettingsServerDelta,
+} from '@/sync/domains/settings/voiceSettingsPersistence';
 import { summarizeSettings, summarizeSettingsDelta, dbgSettings, isSettingsSyncDebugEnabled } from '@/sync/domains/settings/debugSettings';
 import {
     pickLocalOnlyAccountSettings,
@@ -92,6 +96,10 @@ export type SyncSettingsParams = {
     clearPendingSettings: (nextPendingSettings: Partial<Settings>) => void;
     settingsSecretsKey?: Uint8Array | null;
     settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
+    /** Recomputed against every fetched CAS baseline, including conflict winners. */
+    serverSettingsMutation?: (
+        raw: Readonly<Record<string, unknown>>,
+    ) => Record<string, unknown>;
 };
 
 export async function syncSettings(params: SyncSettingsParams): Promise<void> {
@@ -391,18 +399,35 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
             strippedLocalOnly as Record<string, unknown>,
             stripped as Record<string, unknown>,
         );
+        // Enforce Voice persistence compatibility at the final write boundary.
+        // This also covers crash-recovered pending deltas created by an older
+        // build and every CAS conflict retry baseline.
+        const voiceNormalized = normalizeVoiceSettingsServerDelta(stripped);
+        const voiceChanged = !areAccountSettingsRawObjectsEqual(
+            stripped as Record<string, unknown>,
+            voiceNormalized as Record<string, unknown>,
+        );
         if (params.mode === 'plain') {
-            const unsealed = unsealSecretsDeepWithKeys(stripped, settingsSecretsReadKeys) as Record<string, unknown>;
-            return { value: unsealed, changed: migratedOrganizationStripped || unsealed !== stripped };
+            const unsealed = unsealSecretsDeepWithKeys(voiceNormalized, settingsSecretsReadKeys) as Record<string, unknown>;
+            return {
+                value: unsealed,
+                changed: migratedOrganizationStripped || voiceChanged || unsealed !== voiceNormalized,
+            };
         }
         if (!settingsSecretsKey) {
-            return { value: stripped as Record<string, unknown>, changed: migratedOrganizationStripped };
+            return {
+                value: voiceNormalized as Record<string, unknown>,
+                changed: migratedOrganizationStripped || voiceChanged,
+            };
         }
-        const resealed = resealSecretsDeep(stripped, {
+        const resealed = resealSecretsDeep(voiceNormalized, {
             readKeys: settingsSecretsReadKeys,
             writeKey: settingsSecretsKey,
         });
-        return { value: resealed.value as Record<string, unknown>, changed: migratedOrganizationStripped || resealed.changed };
+        return {
+            value: resealed.value as Record<string, unknown>,
+            changed: migratedOrganizationStripped || voiceChanged || resealed.changed,
+        };
     }
 
     function createSettingsContentForWrite(raw: Record<string, unknown>): {
@@ -544,7 +569,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     let prefetchedFinalBaseline: AccountSettingsServerBaseline | null = null;
 
     // Apply pending settings
-    if (Object.keys(pendingServerSettings).length > 0) {
+    if (Object.keys(pendingServerSettings).length > 0 || params.serverSettingsMutation) {
         dbgSettings('syncSettings: pending detected; will POST', {
             endpoint: activeServerUrl,
             pendingKeys: Object.keys(pendingServerSettings).sort(),
@@ -558,13 +583,27 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         );
         while (retryCount < maxRetries) {
             const version = baseline.version;
+            const mutationBaseline = params.serverSettingsMutation
+                ? params.serverSettingsMutation(baseline.raw ?? {})
+                : baseline.raw;
             const merged = mergePendingSettingsIntoRawBaseline({
-                rawBaseline: baseline.raw,
+                rawBaseline: mutationBaseline,
                 pendingSettings: pendingServerSettings,
                 normalizeForPersistedStorage: (raw) => normalizeSettingsForServerStorageResult({ raw, mode: accountMode }),
             });
+            const normalizedUnmutatedBaseline = normalizeSettingsForServerStorageResult({
+                raw: baseline.raw ?? {},
+                mode: accountMode,
+            }).value;
+            const serverMutationChanged = !areAccountSettingsRawObjectsEqual(
+                normalizedUnmutatedBaseline,
+                merged.comparisonRaw,
+            );
 
-            if (!baseline.serverIdentityKeysChanged && !merged.comparisonChanged && areAccountSettingsRawObjectsEqual(merged.comparisonRaw, merged.outgoingRaw)) {
+            if (!baseline.serverIdentityKeysChanged
+                && !serverMutationChanged
+                && !merged.comparisonChanged
+                && areAccountSettingsRawObjectsEqual(merged.comparisonRaw, merged.outgoingRaw)) {
                 const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings, {
                     preserveMigratedSessionOrganizationSettings: Object.keys(pendingLegacySessionOrganizationSettings).length > 0
                         && !pendingLegacySessionOrganizationImported,
@@ -766,11 +805,8 @@ async function decryptAccountSettingsCiphertextForUi(encryption: Encryption, cip
         return opened.value as Record<string, unknown>;
     }
 
-    // Backwards compatibility for historical ciphertext formats produced by older app builds.
-    const decrypted = await encryption.decryptRaw(ciphertext);
-    if (decrypted && typeof decrypted === 'object' && !Array.isArray(decrypted)) {
-        return decrypted as Record<string, unknown>;
-    }
+    // Historical raw settings/templates shared a key without a content tag.
+    // Fail closed rather than admitting a cross-domain raw object.
     return null;
 }
 
@@ -786,7 +822,36 @@ export function applySettingsLocalDelta(params: {
     let { delta } = params;
 
     // Seal secret settings fields before any persistence.
+    const currentSettings = storage.getState().settings;
     delta = sealSecretsDeep(delta, settingsSecretsKey);
+
+    const hasRealChangeAgainstCurrent = (candidate: Partial<Settings>): boolean => {
+        const entries = Object.entries(candidate) as Array<[keyof Settings, unknown]>;
+        return entries.some(([key, next]) => {
+            const prev = currentSettings[key];
+            if (Object.is(prev, next)) return false;
+
+            const prevIsObj = prev !== null && typeof prev === 'object';
+            const nextIsObj = next !== null && typeof next === 'object';
+            if (prevIsObj || nextIsObj) {
+                return !areAccountSettingsJsonValuesEqual(prev, next);
+            }
+            return true;
+        });
+    };
+
+    // Preserve the no-op contract before compatibility projection. A rebuilt
+    // equal voice object must not become a write merely because an older local
+    // snapshot has not yet acquired the canonical diagnostics root field.
+    if (!hasRealChangeAgainstCurrent(delta)) {
+        dbgSettings('applySettings skipped (no-op delta)', {
+            delta: summarizeSettingsDelta(delta),
+            base: summarizeSettings(currentSettings, { version: storage.getState().settingsVersion }),
+        });
+        return;
+    }
+
+    delta = normalizeVoiceSettingsLocalDelta(delta, currentSettings) as Partial<Settings>;
 
     // Avoid no-op writes. Settings writes cause:
     // - local persistence writes
@@ -794,20 +859,7 @@ export function applySettingsLocalDelta(params: {
     // - a server POST (eventually)
     //
     // So we must not write when nothing actually changed.
-    const currentSettings = storage.getState().settings;
-    const deltaEntries = Object.entries(delta) as Array<[keyof Settings, unknown]>;
-    const hasRealChange = deltaEntries.some(([key, next]) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const prev = (currentSettings as any)[key];
-        if (Object.is(prev, next)) return false;
-
-        const prevIsObj = prev !== null && typeof prev === 'object';
-        const nextIsObj = next !== null && typeof next === 'object';
-        if (prevIsObj || nextIsObj) {
-            return !areAccountSettingsJsonValuesEqual(prev, next);
-        }
-        return true;
-    });
+    const hasRealChange = hasRealChangeAgainstCurrent(delta);
     if (!hasRealChange) {
         dbgSettings('applySettings skipped (no-op delta)', {
             delta: summarizeSettingsDelta(delta),
@@ -842,7 +894,9 @@ export function applySettingsLocalDelta(params: {
     });
     storage.getState().applySettingsLocal(delta);
 
-    const deltaForServer = stripLocalOnlyAccountSettings(delta);
+    const deltaForServer = stripLocalOnlyAccountSettings(
+        normalizeVoiceSettingsServerDelta(delta, nextSettings) as Partial<Settings>,
+    );
     if (Object.keys(deltaForServer).length === 0) {
         dbgSettings('applySettings: local-only delta (no pending sync)', {
             delta: summarizeSettingsDelta(delta),

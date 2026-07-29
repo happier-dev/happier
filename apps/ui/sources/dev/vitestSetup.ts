@@ -5,6 +5,7 @@ import { installVitestRnShim } from './vitestRnShim';
 import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { standardCleanup } from './testkit/cleanup/standardCleanup';
 import { createReanimatedModuleMock } from './testkit/mocks/reanimated';
+import { createReactNavigationNativeMock } from './testkit/mocks/reactNavigation';
 
 // UI tests should not inherit embedded build-policy gating (set in CI).
 // Clear it by default so feature tests can opt-in explicitly per case.
@@ -124,6 +125,24 @@ console.error = (...args: unknown[]) => {
     }
     originalConsoleError(...args);
 };
+
+const VITEST_RUNTIME_CLEANUPS_KEY = Symbol.for('happier.vitest.runtimeCleanups');
+
+type RuntimeCleanupForTests = () => Promise<void> | void;
+type RuntimeCleanupRegistryForTests = Map<string, RuntimeCleanupForTests>;
+
+function getRuntimeCleanupRegistryForTests(): RuntimeCleanupRegistryForTests {
+    const globalWithRegistry = globalThis as unknown as {
+        [key: symbol]: RuntimeCleanupRegistryForTests | undefined;
+    };
+    const existing = globalWithRegistry[VITEST_RUNTIME_CLEANUPS_KEY];
+    if (existing) return existing;
+    const next: RuntimeCleanupRegistryForTests = new Map();
+    globalWithRegistry[VITEST_RUNTIME_CLEANUPS_KEY] = next;
+    return next;
+}
+
+getRuntimeCleanupRegistryForTests();
 
 function maybeLogActiveHandles(tag: string): void {
     if (process.env.HAPPIER_VITEST_DEBUG_ACTIVE_HANDLES !== '1') return;
@@ -255,6 +274,20 @@ async function closeUndiciGlobalDispatcherForTests(): Promise<void> {
     }
 }
 
+async function runRegisteredRuntimeCleanupsForTests(
+    cleanupTimeoutMs: number,
+    debugCleanup: boolean,
+): Promise<void> {
+    for (const [id, cleanup] of getRuntimeCleanupRegistryForTests()) {
+        if (debugCleanup) originalConsoleError(`[vitest] afterAll cleanup: ${id} (start)`);
+        try {
+            await withTimeout(Promise.resolve(cleanup()), cleanupTimeoutMs, id);
+        } finally {
+            if (debugCleanup) originalConsoleError(`[vitest] afterAll cleanup: ${id} (end)`);
+        }
+    }
+}
+
 if (process.env.HAPPIER_VITEST_ENABLE_SIGNAL_DUMP === '1') {
     // NOTE: Node uses SIGUSR1 to toggle the inspector, so use SIGUSR2 for our own dumps.
     process.on('SIGUSR2', () => {
@@ -272,10 +305,31 @@ vi.mock('react-native', async () => await import('./reactNativeStub'));
 // Vitest runs in Node; `react-native-mmkv` depends on React Native internals and can fail to parse.
 // Provide a minimal in-memory implementation for tests.
 const store = new Map<string, unknown>();
+const asyncStorageBacking = new Map<string, string>();
 const localStorageBacking = new Map<string, string>();
 const sessionStorageBacking = new Map<string, string>();
 
 vi.mock('expo-notifications', async () => await import('./expoNotificationsStub'));
+
+// AsyncStorage's web adapter reads `window.localStorage` during module evaluation. Most UI tests
+// run in a pure Node environment, so keep that native persistence boundary deterministic and
+// resettable here. Focused storage tests can still replace this module with a file-local mock.
+vi.mock('@react-native-async-storage/async-storage', () => {
+    const asyncStorage = {
+        getItem: async (key: string) => asyncStorageBacking.get(String(key)) ?? null,
+        setItem: async (key: string, value: string) => {
+            asyncStorageBacking.set(String(key), String(value));
+        },
+        removeItem: async (key: string) => {
+            asyncStorageBacking.delete(String(key));
+        },
+        clear: async () => {
+            asyncStorageBacking.clear();
+        },
+        getAllKeys: async () => Array.from(asyncStorageBacking.keys()),
+    };
+    return { default: asyncStorage };
+});
 
 beforeEach(() => {
     // Some test files enable fake timers and forget to restore them. Force real timers at the start
@@ -288,6 +342,7 @@ beforeEach(() => {
     restoreDomGlobalsToOriginal();
 
     store.clear();
+    asyncStorageBacking.clear();
     localStorageBacking.clear();
     sessionStorageBacking.clear();
 
@@ -342,36 +397,12 @@ afterAll(async () => {
     const cleanupTimeoutMs = Number.isFinite(cleanupTimeoutMsRaw) && cleanupTimeoutMsRaw > 0 ? cleanupTimeoutMsRaw : 30_000;
     const debugCleanup = process.env.HAPPIER_VITEST_DEBUG_AFTERALL_CLEANUP === '1';
 
-    // Endpoint supervisors can start background timers and keep the Vitest fork alive even after all tests finish.
-    // Stop them before resetting reachability supervisors so the process can exit cleanly.
-    const endpointSupervisorMod = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
-    if (debugCleanup) originalConsoleError('[vitest] afterAll cleanup: resetEndpointSupervisorPoolForTests (start)');
-    try {
-        await withTimeout(
-            endpointSupervisorMod.resetEndpointSupervisorPoolForTests(),
-            cleanupTimeoutMs,
-            'resetEndpointSupervisorPoolForTests',
-        );
-    } finally {
-        if (debugCleanup) originalConsoleError('[vitest] afterAll cleanup: resetEndpointSupervisorPoolForTests (end)');
-    }
+    // Runtime modules with background timers register their own test cleanup callbacks when they
+    // are imported. Do not import those modules here: pure structural/domain tests should not pay
+    // or hang on unrelated connectivity module graphs during global teardown.
+    await runRegisteredRuntimeCleanupsForTests(cleanupTimeoutMs, debugCleanup);
 
-    maybeLogActiveHandles('after resetEndpointSupervisorPoolForTests');
-
-    // `serverFetch(...)` can start background server reachability supervisors. Ensure they are
-    // fully stopped at the end of the test run so the Vitest fork can exit cleanly.
-    //
-    // IMPORTANT: this must be awaited. Background retry timers inside the connection supervisor keep the
-    // fork process alive, which can otherwise hang the suite after the last test file completes.
-    const mod = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
-    if (debugCleanup) originalConsoleError('[vitest] afterAll cleanup: resetServerReachabilitySupervisors (start)');
-    try {
-        await withTimeout(mod.resetServerReachabilitySupervisors(), cleanupTimeoutMs, 'resetServerReachabilitySupervisors');
-    } finally {
-        if (debugCleanup) originalConsoleError('[vitest] afterAll cleanup: resetServerReachabilitySupervisors (end)');
-    }
-
-    maybeLogActiveHandles('after resetServerReachabilitySupervisors');
+    maybeLogActiveHandles('after registered runtime cleanups');
 
     if (debugCleanup) originalConsoleError('[vitest] afterAll cleanup: closeUndiciGlobalDispatcherForTests (start)');
     try {
@@ -411,6 +442,10 @@ vi.mock('react-native-mmkv', () => {
 
         delete(key: string) {
             store.delete(key);
+        }
+
+        getAllKeys() {
+            return [...store.keys()];
         }
 
         clearAll() {
@@ -467,6 +502,29 @@ vi.mock('@shopify/react-native-skia', () => ({
     vec: (x: number, y: number) => ({ x, y }),
 }));
 
+// `react-native-svg` requires native bindings; provide a lightweight host-element
+// mock for node/Vitest so components rendering SVG (gauges/rings) can mount. Any
+// named export resolves to a host component of the same name. Tests that need to
+// assert on specific SVG props may still mock it locally (local mocks win).
+vi.mock('react-native-svg', () => {
+    const makeHost = (name: string) => {
+        const Component = (props: Record<string, unknown> & { children?: unknown }) =>
+            React.createElement(name, props, props?.children as never);
+        Component.displayName = name;
+        return Component;
+    };
+    const Svg = makeHost('Svg');
+    return {
+        default: Svg,
+        Svg,
+        Circle: makeHost('Circle'),
+        Line: makeHost('Line'),
+        Path: makeHost('Path'),
+        Text: makeHost('SvgText'),
+        SvgXml: makeHost('SvgXml'),
+    };
+});
+
 // `react-native-reanimated` requires native bindings; provide a lightweight mock for node/Vitest.
 vi.mock('react-native-reanimated', () => createReanimatedModuleMock());
 const createReanimatedSubpathMock = vi.hoisted(() => () => createReanimatedModuleMock());
@@ -475,6 +533,11 @@ vi.mock('react-native-reanimated/lib/module/index', createReanimatedSubpathMock)
 vi.mock('react-native-reanimated/lib/module/index.js', createReanimatedSubpathMock);
 vi.mock('react-native-reanimated/lib/module/publicGlobals', createReanimatedSubpathMock);
 vi.mock('react-native-reanimated/lib/module/publicGlobals.js', createReanimatedSubpathMock);
+
+// React Navigation resolves a nested React Native peer under Yarn v1 and its hooks require a
+// mounted navigation container. Route unit tests use this deterministic boundary by default;
+// navigation-specific tests can override it locally with the same testkit factory.
+vi.mock('@react-navigation/native', () => createReactNavigationNativeMock());
 
 // `react-native-typography` relies on React Native's platform resolution (e.g. systemWeights.web.js),
 // which Node/Vitest cannot resolve via CJS `require("../helpers/systemWeights")`. Provide a minimal
@@ -531,23 +594,6 @@ vi.mock('expo-image', () => ({
 // `expo-video` ships native/web entrypoints that Vitest cannot parse under Node.
 // Product tests assert story-deck video behavior through focused local mocks.
 vi.mock('expo-video', async () => await import('./expoVideoStub'));
-
-// FlashList v2 depends on React Native new architecture internals that do not exist in node/Vitest.
-// Most unit tests only need a stable host component shape.
-vi.mock('@shopify/flash-list', () => ({
-    FlashList: 'FlashList',
-}));
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () => {
-    const flashListModule = await import('@shopify/flash-list');
-    return {
-        FlashList: flashListModule.FlashList,
-        flashListRuntime: {
-            Component: flashListModule.FlashList,
-            usingFallback: false,
-            reason: null,
-        },
-    };
-});
 
 // `expo-secure-store` is native; stub its async API for token storage tests.
 vi.mock('expo-secure-store', () => ({
@@ -608,6 +654,12 @@ vi.mock('react-native-unistyles', () => {
                 surface: 'transparent',
                 strong: '#d6d6d6',
                 modal: 'rgba(0, 0, 0, 0.1)',
+            },
+            glass: {
+                border: 'rgba(255, 255, 255, 0.92)',
+                innerShadow: 'inset 0px 8px 14px -10px rgba(0, 0, 0, 0.036)',
+                castShadow: '0px 4px 28px rgba(0, 0, 0, 0.07)',
+                composerSurface: '#ffffff',
             },
             effect: { surfaceHighlight: 'transparent' },
             chrome: {

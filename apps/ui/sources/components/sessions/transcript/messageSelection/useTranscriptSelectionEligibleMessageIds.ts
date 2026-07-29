@@ -6,9 +6,11 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 import { compareTranscriptMessagesOldestFirst } from '@/sync/domains/messages/transcriptOrdering';
 import { storage, useSetting } from '@/sync/domains/state/storage';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import { useSessionDebugInformationEnabled } from '@/sync/runtime/useSessionDebugInformationEnabled';
 
 import { isAgentTextMessageActivelyStreamingForSelection, resolveSelectableMessageText } from './resolveSelectableMessageText';
 import {
+    isTranscriptSelectionHiddenUnsupportedContent,
     normalizeTranscriptSelectionThinkingVisibility,
     shouldExcludeMessageFromTranscriptSelection,
 } from './transcriptSelectionMessageVisibility';
@@ -40,7 +42,7 @@ function listMessagesByFallbackOrder(messagesById: Record<string, Message | unde
         .sort(compareTranscriptMessagesOldestFirst);
 }
 
-function resolveMessageEligibility(message: Message, discarded: boolean, hiddenThinking: boolean): Readonly<{
+function resolveMessageEligibility(message: Message, discarded: boolean, hiddenThinking: boolean, debugInformationEnabled: boolean): Readonly<{
     token: string;
     eligible: boolean;
 }> {
@@ -50,7 +52,12 @@ function resolveMessageEligibility(message: Message, discarded: boolean, hiddenT
     if (message.kind === 'user-text' || message.kind === 'agent-text') {
         if (discarded) {
             token = `${message.id}:${message.kind}:discarded`;
-        } else if (hiddenThinking && shouldExcludeMessageFromTranscriptSelection(message, { sessionThinkingDisplayMode: 'hidden' })) {
+        } else if (isTranscriptSelectionHiddenUnsupportedContent(message, debugInformationEnabled)) {
+            token = `${message.id}:${message.kind}:unsupported-content-hidden`;
+        } else if (hiddenThinking && shouldExcludeMessageFromTranscriptSelection(message, {
+            sessionThinkingDisplayMode: 'hidden',
+            debugInformationEnabled,
+        })) {
             token = `${message.id}:${message.kind}:thinking-hidden`;
         } else if (isAgentTextMessageActivelyStreamingForSelection(message)) {
             // Active assistant segments change text very frequently. Their selection eligibility cannot
@@ -112,6 +119,7 @@ export function useTranscriptSelectionEligibleMessageIds(
 ): readonly string[] {
     const enabled = options?.enabled !== false;
     const sessionThinkingDisplayMode = useSetting('sessionThinkingDisplayMode');
+    const debugInformationEnabled = useSessionDebugInformationEnabled();
     const thinkingVisibilitySignature = normalizeTranscriptSelectionThinkingVisibility(sessionThinkingDisplayMode);
     const hiddenThinking = thinkingVisibilitySignature === 'hidden';
     const discardedLocalIdsSignature = React.useMemo(
@@ -128,7 +136,7 @@ export function useTranscriptSelectionEligibleMessageIds(
         const fallbackMessages = Array.isArray(messageIds) && messageIds.length > 0
             ? null
             : listMessagesByFallbackOrder(messagesById);
-        const cacheKey = `${sessionId}\0${discardedLocalIdsSignature}\0thinking:${thinkingVisibilitySignature}`;
+        const cacheKey = `${sessionId}\0${discardedLocalIdsSignature}\0thinking:${thinkingVisibilitySignature}\0debug:${debugInformationEnabled ? 'on' : 'off'}`;
         if ((!Array.isArray(messageIds) || messageIds.length === 0) && (!fallbackMessages || fallbackMessages.length === 0)) {
             if (sessionMessages?.isLoaded === false) {
                 const cachedIds = readCachedEligibleIds(cacheKey);
@@ -153,7 +161,7 @@ export function useTranscriptSelectionEligibleMessageIds(
                 && typeof message.localId === 'string'
                 && discardedLocalIds !== null
                 && discardedLocalIds.has(message.localId);
-            const eligibility = resolveMessageEligibility(message, discarded, hiddenThinking);
+            const eligibility = resolveMessageEligibility(message, discarded, hiddenThinking, debugInformationEnabled);
             signatureParts.push(eligibility.token);
             if (eligibility.eligible) eligibleIds.push(message.id);
         };

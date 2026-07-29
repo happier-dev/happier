@@ -1,3 +1,5 @@
+import { Platform, type ViewStyle } from 'react-native';
+
 export type TranscriptNavigationRailMarkerMotion = Readonly<{
     opacity: number;
     translateYPx: number;
@@ -12,13 +14,6 @@ export type ResolveTranscriptNavigationRailMarkerMotionInput = Readonly<{
     visible: boolean;
 }>;
 
-export type ResolveTranscriptNavigationRailMotionUpdateIndexesInput = Readonly<{
-    markerCount: number;
-    nextFocusIndex: number | null;
-    previousFocusIndex: number | null;
-    radius?: number;
-}>;
-
 const REST_WIDTH_PX = 3;
 const FOCUS_WIDTH_PX = 16;
 const REST_OPACITY = 0.28;
@@ -26,8 +21,10 @@ const VISIBLE_OPACITY_FLOOR = 0.56;
 const ACTIVE_OPACITY_FLOOR = 0.9;
 const FOCUS_OPACITY_FLOOR = 0.7;
 const FALLOFF_SIGMA = 1.35;
-// Matches the default update-window radius: markers past this distance rest
-// exactly so focus changes never restyle the whole rail.
+// Markers past this distance resolve to EXACTLY the rest motion, so a focus
+// change produces an identical motion value for every marker outside the window
+// and the memoized markers skip re-rendering — the bounded update window is a
+// property of the resolver, not of an imperative writer.
 const FALLOFF_WINDOW_RADIUS = 5;
 
 function finiteIntegerOrNull(value: number | null): number | null {
@@ -67,28 +64,24 @@ export function resolveTranscriptNavigationRailMarkerMotion(
     };
 }
 
-export type TranscriptNavigationRailMarkerMotionStep = Readonly<{
-    motion: TranscriptNavigationRailMarkerMotion;
-    settled: boolean;
-}>;
-
 /**
- * Per-frame smoothing factor for the rail's critically-damped glide toward the
- * resolved marker style. Tuned so magnification eases in over ~8-12 frames at
- * 60fps instead of stepping to the target in one write.
+ * The rail's easing lives in CSS on the marker's own stable class, so React stays
+ * the single owner of every motion channel: it renders the resolved target and
+ * the browser interpolates. Reduced motion collapses the duration to zero rather
+ * than removing the declaration, so the same style path serves both preferences.
+ * Native never renders the rail (`deriveTranscriptNavigationRailLayout` hides it
+ * off web), so there is no setNativeProps counterpart to keep in sync.
  */
-export const RAIL_MARKER_MOTION_SMOOTHING = 0.3;
-
-const SETTLE_EPSILON_PX = 0.25;
-const SETTLE_EPSILON_OPACITY = 0.01;
-
-function isRenderableMotion(motion: TranscriptNavigationRailMarkerMotion | null | undefined): motion is TranscriptNavigationRailMarkerMotion {
-    return (
-        !!motion &&
-        Number.isFinite(motion.opacity) &&
-        Number.isFinite(motion.translateYPx) &&
-        Number.isFinite(motion.widthPx)
-    );
+export function resolveTranscriptNavigationRailMarkerTransitionStyle(
+    reducedMotion: boolean,
+): ViewStyle | null {
+    if (Platform.OS !== 'web') return null;
+    // react-native-web supports transition* style props; cast at this web boundary.
+    return {
+        transitionProperty: 'width, opacity, transform, background-color',
+        transitionDuration: reducedMotion ? '0ms' : '160ms',
+        transitionTimingFunction: 'cubic-bezier(0.2, 0, 0, 1)',
+    } as unknown as ViewStyle;
 }
 
 export function transcriptNavigationRailMarkerMotionEquals(
@@ -100,74 +93,4 @@ export function transcriptNavigationRailMarkerMotionEquals(
         left.translateYPx === right.translateYPx &&
         left.widthPx === right.widthPx
     );
-}
-
-/**
- * Advances an in-flight marker style one frame toward its target with a lerp
- * (`value + (target - value) * smoothing`), snapping exactly onto the target
- * once every channel is within its settle epsilon. Broken inputs (missing or
- * non-finite current values, non-finite smoothing) settle immediately so the
- * rail can never animate from — or toward — garbage.
- */
-export function stepTranscriptNavigationRailMarkerMotion(
-    current: TranscriptNavigationRailMarkerMotion | null | undefined,
-    target: TranscriptNavigationRailMarkerMotion,
-    smoothing: number = RAIL_MARKER_MOTION_SMOOTHING,
-): TranscriptNavigationRailMarkerMotionStep {
-    const factor = Number.isFinite(smoothing) ? Math.min(1, Math.max(0.01, smoothing)) : 1;
-    if (!isRenderableMotion(current) || factor >= 1) {
-        return { motion: target, settled: true };
-    }
-
-    const opacity = current.opacity + ((target.opacity - current.opacity) * factor);
-    const translateYPx = current.translateYPx + ((target.translateYPx - current.translateYPx) * factor);
-    const widthPx = current.widthPx + ((target.widthPx - current.widthPx) * factor);
-    const settled = (
-        Math.abs(target.opacity - opacity) < SETTLE_EPSILON_OPACITY &&
-        Math.abs(target.translateYPx - translateYPx) < SETTLE_EPSILON_PX &&
-        Math.abs(target.widthPx - widthPx) < SETTLE_EPSILON_PX
-    );
-
-    return settled
-        ? { motion: target, settled: true }
-        : { motion: { opacity, translateYPx, widthPx }, settled: false };
-}
-
-function appendFocusWindow(
-    indexes: Set<number>,
-    params: Readonly<{
-        focusIndex: number | null;
-        markerCount: number;
-        radius: number;
-    }>,
-): void {
-    if (params.focusIndex === null) return;
-    const start = Math.max(0, params.focusIndex - params.radius);
-    const end = Math.min(params.markerCount - 1, params.focusIndex + params.radius);
-    for (let index = start; index <= end; index += 1) {
-        indexes.add(index);
-    }
-}
-
-export function resolveTranscriptNavigationRailMotionUpdateIndexes(
-    input: ResolveTranscriptNavigationRailMotionUpdateIndexesInput,
-): readonly number[] {
-    const markerCount = Number.isInteger(input.markerCount) && input.markerCount > 0 ? input.markerCount : 0;
-    if (markerCount === 0) return [];
-    const inputRadius = input.radius;
-    const radius = typeof inputRadius === 'number' && Number.isInteger(inputRadius) && inputRadius >= 0
-        ? inputRadius
-        : FALLOFF_WINDOW_RADIUS;
-    const indexes = new Set<number>();
-    appendFocusWindow(indexes, {
-        focusIndex: finiteIntegerOrNull(input.previousFocusIndex),
-        markerCount,
-        radius,
-    });
-    appendFocusWindow(indexes, {
-        focusIndex: finiteIntegerOrNull(input.nextFocusIndex),
-        markerCount,
-        radius,
-    });
-    return [...indexes].sort((left, right) => left - right);
 }

@@ -6,15 +6,12 @@ const baseInput = {
     connectedServicesRestartState: null,
     restartingText: 'restarting connected service',
     switchFailedText: 'switch failed',
-    resumingText: 'resuming',
     inactiveStatusText: null,
+    sessionStatusResuming: false,
     sessionStatusText: 'ready',
     sessionStatusColor: 'status-color',
     sessionStatusDotColor: 'dot-color',
     sessionStatusPulsing: false,
-    isResuming: false,
-    isPendingQueueWakeResuming: false,
-    isSessionStatusResuming: false,
 } as const;
 
 describe('resolveSessionViewConnectionStatus', () => {
@@ -29,7 +26,6 @@ describe('resolveSessionViewConnectionStatus', () => {
                     reason: 'manual_auth_switch',
                     startedAtMs: 1_000,
                 },
-                isSessionStatusResuming: true,
             })).toEqual({
                 text: 'restarting connected service',
                 color: 'status-color',
@@ -56,4 +52,20 @@ describe('resolveSessionViewConnectionStatus', () => {
             isPulsing: false,
         });
     });
+
+    it('lets the canonical resuming lifecycle override the otherwise inactive session copy', () => {
+        expect(resolveSessionViewConnectionStatus({
+            ...baseInput,
+            inactiveStatusText: 'inactive',
+            sessionStatusResuming: true,
+            sessionStatusText: 'resuming',
+            sessionStatusPulsing: true,
+        })).toEqual({
+            text: 'resuming',
+            color: 'status-color',
+            dotColor: 'dot-color',
+            isPulsing: true,
+        });
+    });
+
 });

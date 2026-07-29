@@ -58,12 +58,16 @@ export function LocalVoiceSttGroup(props: {
         }}
       />
 
-      <providerSpec.Settings
-        cfgStt={normalized}
-        setStt={props.setStt}
-        popoverBoundaryRef={props.popoverBoundaryRef}
-        daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
-      />
+      {providerSpec ? (
+        <providerSpec.Settings
+          cfgStt={normalized}
+          setStt={props.setStt}
+          popoverBoundaryRef={props.popoverBoundaryRef}
+          daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+        />
+      ) : (
+        <Item title={t('common.unavailable')} />
+      )}
     </ItemGroup>
   );
 }

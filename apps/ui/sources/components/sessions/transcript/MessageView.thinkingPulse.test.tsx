@@ -3,6 +3,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,20 +20,6 @@ installMessageViewCommonModuleMocks({
             Easing: {
                 bezier: () => ({}),
                 linear: () => ({}),
-            },
-            Animated: {
-                Value: class AnimatedValue {
-                    constructor(public _value: number) {}
-                    interpolate() {
-                        return this as any;
-                    }
-                },
-                timing: (_value: any, _config: any) => ({
-                    start: (cb?: any) => {
-                        cb?.();
-                    },
-                }),
-                View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
             },
             Dimensions: {
                 get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
@@ -65,12 +52,12 @@ installMessageViewCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'sessionThinkingDisplayMode') return 'inline';
                     if (key === 'sessionThinkingInlinePresentation') return 'full';
                     if (key === 'sessionThinkingInlineChrome') return 'plain';
                     return null;
-                },
+                } }),
                 useSession: () => null,
             },
         });
@@ -95,7 +82,7 @@ vi.mock('@/components/sessions/transcript/structured/StructuredMessageBlock', ()
     renderStructuredMessage: () => null,
     StructuredMessageBlock: () => React.createElement('StructuredMessageBlock'),
 }));
-vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({ shouldShowMessageCopyButton: () => false }));
+vi.mock('@/components/sessions/transcript/transcriptRowActionVisibility', () => ({ shouldShowTranscriptRowActions: () => false, shouldShowTranscriptRowPinAction: () => false }));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => true }));
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({ isCommittedMessageDiscarded: () => false }));
 vi.mock('@/utils/url/sessionFileDeepLink', () => ({ buildSessionFileDeepLink: () => '' }));

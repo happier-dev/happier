@@ -15,5 +15,21 @@ describe('parseHappierMetaEnvelope', () => {
         });
         expect(parsed).toEqual({ kind: 'review_comments.v1', payload: { ok: true } });
     });
-});
 
+    it('preserves optional qualified resource refs while accepting historical envelopes without them', () => {
+        expect(parseHappierMetaEnvelope({
+            happier: {
+                kind: 'acme.preview/v1',
+                payload: { ok: true },
+                resources: ['preview-icon', { pluginId: 'acme.shared', localId: 'logo' }],
+            },
+        })).toEqual({
+            kind: 'acme.preview/v1',
+            payload: { ok: true },
+            resources: ['preview-icon', { pluginId: 'acme.shared', localId: 'logo' }],
+        });
+        expect(parseHappierMetaEnvelope({
+            happier: { kind: 'acme.preview/v1', payload: { ok: true } },
+        })).toEqual({ kind: 'acme.preview/v1', payload: { ok: true } });
+    });
+});

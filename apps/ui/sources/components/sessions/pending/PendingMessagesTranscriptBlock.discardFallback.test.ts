@@ -55,13 +55,16 @@ installPendingMessagesCommonModuleMocks({
             },
         });
     },
-    storage: async (importOriginal) => createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSession: () => null,
-            useSetting: () => undefined,
-        },
-    }),
+    storage: async (importOriginal) => {
+        const { createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSession: () => null,
+                useSetting: createUseSettingMock(),
+            },
+        });
+    },
     unistyles: async () => {
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
         return createUnistylesMock({
@@ -172,8 +175,7 @@ describe('PendingMessagesTranscriptBlock discard fallback', () => {
     it('falls back to discarding when delete fails after send', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         modalConfirm.mockResolvedValueOnce(true);
-        sessionAbort.mockResolvedValueOnce(undefined);
-        sendPendingMessageNow.mockResolvedValueOnce(undefined);
+        sendPendingMessageNow.mockResolvedValueOnce({ type: 'committed', persistence: 'provider_direct' });
         deletePendingMessage.mockRejectedValueOnce(new Error('delete failed'));
         discardPendingMessage.mockResolvedValueOnce(undefined);
 
@@ -192,6 +194,11 @@ describe('PendingMessagesTranscriptBlock discard fallback', () => {
             await screen.pressByTestIdAsync('pendingMessages.sendNow:p1');
         });
 
+        expect(sessionAbort).toHaveBeenCalledTimes(0);
+        expect(sendPendingMessageNow).toHaveBeenCalledWith('s1', expect.objectContaining({
+            localId: 'p1',
+            deliveryIntent: 'interrupt_and_send',
+        }));
         expect(deletePendingMessage).toHaveBeenCalledTimes(1);
         expect(discardPendingMessage).toHaveBeenCalledTimes(1);
         expect(modalAlert).toHaveBeenCalledTimes(0);

@@ -72,7 +72,10 @@ export function setAuthState(next: { isAuthenticated: boolean; credentials: { to
     authState = next;
 }
 
-vi.mock('react-native-reanimated', () => ({}));
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
+});
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');

@@ -39,11 +39,10 @@ const styles = StyleSheet.create((theme) => ({
     },
     eyebrow: {
         ...Typography.default('semiBold'),
-        fontSize: 11,
-        lineHeight: 14,
+        fontSize: 13,
+        lineHeight: 16,
         color: theme.colors.text.secondary,
-        textTransform: 'uppercase',
-        letterSpacing: 0.24,
+        letterSpacing: -0.08,
     },
     title: {
         ...Typography.default('semiBold'),

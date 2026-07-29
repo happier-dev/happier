@@ -1,16 +1,32 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
+import {
+    loadPendingOutboxForSession,
+    savePendingOutboxMessage,
+} from '@/sync/domains/state/pendingOutboxPersistence';
 import { Encryption } from '@/sync/encryption/encryption';
 import type { RawRecord } from '@/sync/typesRaw';
 
-import { fetchAndApplyPendingMessagesV2 } from './pendingQueueV2';
+import {
+    fetchAndApplyPendingMessagesV2 as fetchAndApplyPendingMessagesV2Impl,
+    replayPersistedPendingOutboxForSession,
+} from './pendingQueueV2';
 import {
     createPendingQueueEncryption,
     encryptRawRecordForPending,
     getSessionEncryptionOrThrow,
     resetPendingQueueState,
 } from './pendingQueueV2.testHelpers';
+
+const outboxScope = { serverId: 'server-test', accountId: 'account-test' } as const;
+const fetchAndApplyPendingMessagesV2 = (
+    params: Omit<Parameters<typeof fetchAndApplyPendingMessagesV2Impl>[0], 'outboxScope'>,
+) => fetchAndApplyPendingMessagesV2Impl({
+    ...params,
+    outboxScope,
+    isOutboxScopeCurrent: () => true,
+});
 
 describe('pendingQueueV2 decrypt mapping', () => {
     beforeEach(() => {
@@ -98,6 +114,142 @@ describe('pendingQueueV2 decrypt mapping', () => {
         const messages = storage.getState().sessionPending[sessionId]?.messages ?? [];
         expect(messages.map((m) => m.localId)).toEqual(['a']);
         expect(messages[0]?.text).toBe('ok');
+    });
+
+    it('projects the server-owned requested action and marks malformed non-null actions', async () => {
+        const sessionId = 's_pending_actions';
+        const encryption = await createPendingQueueEncryption({ sessionId });
+
+        await fetchAndApplyPendingMessagesV2({
+            sessionId,
+            encryption,
+            request: async () => Response.json({
+                pending: [
+                    {
+                        localId: 'send-now',
+                        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'send' } } },
+                        requestedAction: { v: 1, kind: 'send_now' },
+                        status: 'queued', position: 0, createdAt: 1, updatedAt: 1,
+                    },
+                    {
+                        localId: 'malformed',
+                        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'bad' } } },
+                        requestedActionMalformed: true,
+                        status: 'queued',
+                        deliveryStatus: { status: 'blocked', reason: 'unsupported_action' },
+                        position: 1, createdAt: 2, updatedAt: 2,
+                    },
+                ],
+            }),
+        });
+
+        const messages = storage.getState().sessionPending[sessionId]?.messages ?? [];
+        expect(messages[0]).toMatchObject({ pendingRequestedAction: { v: 1, kind: 'send_now' } });
+        expect(messages[1]).toMatchObject({
+            pendingRequestedActionMalformed: true,
+            pendingDeliveryStatus: 'blocked',
+            pendingDeliveryBlockedReason: 'unsupported_action',
+        });
+        expect(messages[1]?.pendingRequestedAction).toBeUndefined();
+    });
+
+    it('maps provider-owned rows from server delivery state without local accepted delivery metadata', async () => {
+        const sessionId = 's_additive_delivery_state_pending';
+        const encryption = await createPendingQueueEncryption({ sessionId });
+
+        await fetchAndApplyPendingMessagesV2({
+            sessionId,
+            encryption,
+            request: async () =>
+                new Response(
+                    JSON.stringify({
+                        pending: [
+                            {
+                                localId: 'provider-owned',
+                                content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'provider owned' } } },
+                                status: 'queued',
+                                deliveryState: 'delivering',
+                                position: 0,
+                                createdAt: 1,
+                                updatedAt: 1,
+                            },
+                            {
+                                localId: 'blocked-additive',
+                                content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'blocked additive' } } },
+                                status: 'queued',
+                                deliveryState: 'blocked',
+                                deliveryBlockedReason: 'payload_too_large',
+                                position: 1,
+                                createdAt: 2,
+                                updatedAt: 2,
+                            },
+                        ],
+                    }),
+                    { status: 200 },
+                ),
+        });
+
+        const messages = storage.getState().sessionPending[sessionId]?.messages ?? [];
+        expect(messages.map((message) => message.localId)).toEqual(['provider-owned', 'blocked-additive']);
+        expect(messages.map((message) => message.pendingDeliveryStatus)).toEqual(['server_delivering', 'blocked']);
+        expect(messages.map((message) => message.deliveryStatus)).toEqual([undefined, undefined]);
+        expect(messages[1]?.pendingDeliveryBlockedReason).toBe('payload_too_large');
+    });
+
+    it('prefers typed delivery status while retaining raw-field fallback', async () => {
+        const sessionId = 's_typed_delivery_status_pending';
+        const encryption = await createPendingQueueEncryption({ sessionId });
+
+        await fetchAndApplyPendingMessagesV2({
+            sessionId,
+            encryption,
+            request: async () =>
+                new Response(
+                    JSON.stringify({
+                        pending: [
+                            {
+                                localId: 'typed-delivering',
+                                content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'typed delivering' } } },
+                                status: 'queued',
+                                deliveryState: 'blocked',
+                                deliveryBlockedReason: 'payload_too_large',
+                                deliveryStatus: { status: 'delivering', detail: 'custody_observed' },
+                                position: 0,
+                                createdAt: 1,
+                                updatedAt: 1,
+                            },
+                            {
+                                localId: 'raw-blocked',
+                                content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'raw blocked' } } },
+                                status: 'queued',
+                                deliveryState: 'blocked',
+                                deliveryBlockedReason: 'runtime_config_blocked',
+                                position: 1,
+                                createdAt: 2,
+                                updatedAt: 2,
+                            },
+                            {
+                                localId: 'typed-external-handoff',
+                                content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'typed external handoff' } } },
+                                status: 'queued',
+                                deliveryState: 'external_handoff',
+                                deliveryStatus: { status: 'external_handoff' },
+                                position: 2,
+                                createdAt: 3,
+                                updatedAt: 3,
+                            },
+                        ],
+                    }),
+                    { status: 200 },
+                ),
+        });
+
+        const messages = storage.getState().sessionPending[sessionId]?.messages ?? [];
+        expect(messages.map((message) => message.localId)).toEqual(['typed-delivering', 'raw-blocked', 'typed-external-handoff']);
+        expect(messages.map((message) => message.pendingDeliveryStatus)).toEqual(['server_delivering', 'blocked', 'external_handoff']);
+        expect(messages[0]?.pendingDeliveryDetail).toBe('custody_observed');
+        expect(messages[0]?.pendingDeliveryBlockedReason).toBeUndefined();
+        expect(messages[1]?.pendingDeliveryBlockedReason).toBe('runtime_config_blocked');
     });
 
     it('skips malformed pending rows and keeps valid rows while retaining decrypt failures explicitly', async () => {
@@ -254,5 +406,45 @@ describe('pendingQueueV2 decrypt mapping', () => {
         const pendingState = storage.getState().sessionPending[sessionId];
         expect(pendingState?.messages.map((message) => message.localId)).toEqual(['queued-missing-key']);
         expect(pendingState?.messages[0]).toMatchObject({ pendingDecryptFailure: { kind: 'decrypt_failed' } });
+    });
+
+    it('treats a same-ID server row with malformed content as persisted and retires enqueue custody into an explicit failure', async () => {
+        const sessionId = 's_malformed_server_row_retires_custody';
+        const localId = 'malformed-server-row';
+        const rawRecord = { role: 'user' as const, content: { type: 'text' as const, text: 'local custody' }, meta: {} };
+        savePendingOutboxMessage({
+            sessionId,
+            localId,
+            createdAt: 1,
+            text: 'local custody',
+            rawRecord,
+            request: {
+                v: 1,
+                body: JSON.stringify({ localId, content: { t: 'plain', v: rawRecord }, messageRole: 'user' }),
+            },
+        }, outboxScope);
+        replayPersistedPendingOutboxForSession(sessionId, outboxScope);
+
+        await fetchAndApplyPendingMessagesV2({
+            sessionId,
+            encryption: await createPendingQueueEncryption({ sessionId }),
+            request: async () => Response.json({ pending: [{
+                localId,
+                content: { t: 'future-content-envelope', value: 'unsupported' },
+                status: 'queued',
+                position: 0,
+                createdAt: 2,
+                updatedAt: 2,
+            }] }),
+        });
+
+        expect(loadPendingOutboxForSession(sessionId, outboxScope)).toEqual([]);
+        expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+            expect.objectContaining({
+                localId,
+                source: 'server_pending',
+                pendingDecryptFailure: { kind: 'decrypt_failed' },
+            }),
+        ]);
     });
 });

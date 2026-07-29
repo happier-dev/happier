@@ -1,21 +1,41 @@
-import { createVoiceToolHandlers } from '@/voice/tools/handlers';
+import {
+  createVoiceToolHandlers,
+  resolveVoiceToolEffectClass,
+} from '@/voice/tools/handlers';
 import { resolveToolSessionId } from '@/voice/tools/resolveToolSessionId';
+import {
+  readVoiceAgentActionEffectId,
+  type VoiceAgentSendTurnOptions,
+} from '@/voice/agent/types';
+import {
+  getRetainedLocalVoiceEffectOutcomes,
+  type LocalVoiceAgentToolResultEntry,
+} from '@/voice/tools/localVoiceEffectOutcomeCustody';
+import {
+  formatVoiceToolResultsFollowUp,
+  type VoiceAgentOutputEventV1,
+  VOICE_TOOL_RESULT_INSTRUCTIONS_PREFIX,
+} from '@happier-dev/protocol';
 import { resolveVoiceToolResultHumanSummary } from '@/voice/context/resolveVoiceToolResultHumanSummary';
 import { isAgentId } from '@/agents/catalog/catalog';
 import { storage } from '@/sync/domains/state/storage';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import {
+  isVoiceToolResultBlockedByPrivacy,
   redactVoiceToolResultValue,
   type VoiceToolResultRedactionPrefs,
 } from '@/voice/context/redactVoiceToolResult';
 
 type VoiceToolAction = Readonly<{ t?: unknown; args?: unknown }>;
 
+const MAX_RETAINED_LOCAL_EFFECT_OUTCOMES_PER_SESSION = 8_192;
+
 /**
  * Privacy controls that gate what tool-result detail is serialized back to the voice provider on
  * the follow-up turn. Sourced from the canonical voice privacy settings so the local agent honors
- * the same `shareFilePaths`/`shareSessionSummary`/`sharePermissionRequests` prefs as the push-based
- * context formatters. Redaction itself is owned by `@/voice/context/redactVoiceToolResult`.
+ * the same file-path, session-summary, permission-request, and device-inventory prefs as the
+ * push-based context formatters. Redaction itself is owned by
+ * `@/voice/context/redactVoiceToolResult` plus the canonical inventory action policy.
  */
 export type VoiceToolResultPrivacyPrefs = VoiceToolResultRedactionPrefs;
 
@@ -25,27 +45,21 @@ function resolveVoiceToolResultPrivacyPrefs(): VoiceToolResultPrivacyPrefs {
     shareFilePaths: privacy.shareFilePaths,
     shareSessionSummary: privacy.shareSessionSummary,
     sharePermissionRequests: privacy.sharePermissionRequests,
+    shareDeviceInventory: privacy.shareDeviceInventory,
+    shareRecentMessages: privacy.shareRecentMessages,
   };
 }
 
 type VoiceAgentSessionsLike = Readonly<{
+  commitUserTranscript?: (sessionId: string, userText: string, localId: string) => Promise<void>;
   sendTurn: (
     sessionId: string,
     userText: string,
-    opts?:
-      | {
-          onTextDelta?: (delta: string) => void;
-          signal?: AbortSignal;
-        }
-      | undefined,
+    opts?: VoiceAgentSendTurnOptions,
   ) => Promise<{ assistantText: string; actions?: ReadonlyArray<unknown> }>;
 }>;
 
-export type LocalVoiceAgentToolResultEntry = Readonly<{
-  t: string;
-  args: unknown;
-  result: unknown;
-}>;
+export type { LocalVoiceAgentToolResultEntry } from '@/voice/tools/localVoiceEffectOutcomeCustody';
 
 const FOLLOW_UP_RESULT_MAX_ITEMS = 8;
 const FOLLOW_UP_RESULT_MAX_STRING_LENGTH = 160;
@@ -141,6 +155,18 @@ function compactToolResultsForFollowUp(
   }
 
   return toolResults.map((entry) => {
+    if (isVoiceToolResultBlockedByPrivacy(entry.t, prefs)) {
+      return {
+        t: entry.t,
+        args: null,
+        result: {
+          ok: false,
+          errorCode: 'privacy_disabled',
+          errorMessage: 'privacy_disabled',
+        },
+      };
+    }
+
     const humanSummary = resolveVoiceToolResultHumanSummary({
       toolName: entry.t,
       toolInput: entry.args,
@@ -186,6 +212,14 @@ function compactToolResultsForFollowUp(
         ? ((result as { items: ReadonlyArray<Record<string, unknown>> }).items ?? []).slice(0, FOLLOW_UP_RESULT_MAX_ITEMS).map((item) => ({
             modelId: typeof item?.modelId === 'string' ? item.modelId : '',
             label: typeof item?.label === 'string' ? item.label : '',
+            ...(typeof item?.providerConnectionId === 'string'
+              ? { providerConnectionId: item.providerConnectionId }
+              : item?.providerConnectionId === null
+                ? { providerConnectionId: null }
+                : {}),
+            ...(typeof item?.providerName === 'string' && item.providerName.trim().length > 0
+              ? { providerName: item.providerName }
+              : {}),
           }))
         : [];
 
@@ -236,10 +270,10 @@ export function buildToolResultsFollowUpPrompt(
   });
 
   const instruction = hasErrors
-    ? 'VOICE_TOOL_RESULT_INSTRUCTIONS: At least one action failed. Do not claim success, do not repeat a requested success token, and explain the failure plainly.'
-    : 'VOICE_TOOL_RESULT_INSTRUCTIONS: All actions succeeded. Summarize the completed outcome accurately.';
+    ? `${VOICE_TOOL_RESULT_INSTRUCTIONS_PREFIX} At least one action failed. Do not claim success, do not repeat a requested success token, and explain the failure plainly.`
+    : `${VOICE_TOOL_RESULT_INSTRUCTIONS_PREFIX} All actions succeeded. Summarize the completed outcome accurately.`;
 
-  return `VOICE_TOOL_RESULTS_JSON:\n${JSON.stringify({ toolResults: compactToolResultsForFollowUp(toolResults, prefs) })}\n${instruction}`;
+  return `${formatVoiceToolResultsFollowUp({ toolResults: compactToolResultsForFollowUp(toolResults, prefs) })}\n${instruction}`;
 }
 
 function createAbortError() {
@@ -262,6 +296,56 @@ function parseToolResult(value: string): unknown {
   } catch {
     return trimmed;
   }
+}
+
+function stableEffectValue(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableEffectValue(entry)).join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    return `{${Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableEffectValue((value as Record<string, unknown>)[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(String(value));
+}
+
+function localEffectFingerprint(toolName: string, args: unknown): string {
+  return `${JSON.stringify(toolName)}:${stableEffectValue(args)}`;
+}
+
+function createLocalToolErrorResult(
+  toolName: string,
+  args: unknown,
+  errorCode: string,
+): LocalVoiceAgentToolResultEntry {
+  return {
+    t: toolName,
+    args,
+    result: { ok: false, errorCode, errorMessage: errorCode },
+  };
+}
+
+function readToolResultErrorCode(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Readonly<Record<string, unknown>>;
+  if (record.ok !== false) return null;
+  return typeof record.errorCode === 'string' ? record.errorCode : null;
+}
+
+function redactCompletedLocalEffectOutcome(
+  entry: LocalVoiceAgentToolResultEntry,
+): LocalVoiceAgentToolResultEntry {
+  return compactToolResultsForFollowUp(
+    [entry],
+    resolveVoiceToolResultPrivacyPrefs(),
+  )[0] ?? createLocalToolErrorResult(entry.t, null, 'redaction_failed');
 }
 
 function isSuccessfulToolShortcutResult(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -352,11 +436,9 @@ function mapDirectDecisionToUserActionDecision(decision: 'allow' | 'deny'): 'app
 }
 
 function resolveDirectPermissionDisambiguationText(
-  permissionShortcutResult: unknown,
   userActionShortcutResult: unknown,
 ): string | null {
   const errorCodes = new Set([
-    getToolShortcutErrorCode(permissionShortcutResult),
     getToolShortcutErrorCode(userActionShortcutResult),
   ]);
 
@@ -394,10 +476,11 @@ function normalizeAssistantTextForActions(
 export async function runVoiceAgentTurnWithTools(params: Readonly<{
   sessionId: string;
   userText: string;
+  durableLocalId: string;
   currentToolSessionId?: string | null;
   voiceAgentSessions: VoiceAgentSessionsLike;
   signal?: AbortSignal;
-  onTextDelta?: (delta: string) => void;
+  onOutputEvent?: (event: VoiceAgentOutputEventV1) => void | Promise<void>;
   onAssistantTurn?: (params: Readonly<{
     assistantText: string;
     actions: ReadonlyArray<unknown>;
@@ -421,6 +504,8 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
       ? Math.max(1, Math.min(8, Math.floor(maxToolRoundsRaw)))
       : 3;
 
+  throwIfAborted(params.signal);
+
   const tools = createVoiceToolHandlers({
     resolveSessionId: (explicitSessionId) =>
       resolveToolSessionId({
@@ -430,47 +515,24 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
   });
 
   const directPermissionDecision = resolveDirectPermissionDecision(params.userText);
+  let outerTranscriptCommitted = false;
   if (directPermissionDecision) {
-    const permissionShortcutResult = parseToolResult(
-      await (tools as any).processPermissionRequest({ decision: directPermissionDecision, currentSessionOnly: true }),
-    );
-
-    if (isSuccessfulToolShortcutResult(permissionShortcutResult)) {
-      const toolResults = [
-        {
-          t: 'processPermissionRequest',
-          args: { decision: directPermissionDecision },
-          result: permissionShortcutResult,
-        },
-      ] satisfies LocalVoiceAgentToolResultEntry[];
-      const assistantText =
-        directPermissionDecision === 'allow'
-          ? 'Approved the pending permission request.'
-          : 'Denied the pending permission request.';
-
-      await params.onAssistantTurn?.({
-        assistantText,
-        actions: [{ t: 'processPermissionRequest', args: { decision: directPermissionDecision } }],
-        turnIndex: 0,
-      });
-      await params.onToolResults?.({
-        toolResults,
-        turnIndex: 0,
-      });
-
-      return {
-        assistantTurns: [assistantText],
-        toolResultBatches: [toolResults],
-        totalActions: 1,
-      };
+    if (!params.voiceAgentSessions.commitUserTranscript) {
+      throw new Error('voice_user_transcript_commit_required');
     }
-
+    await params.voiceAgentSessions.commitUserTranscript(
+      params.sessionId,
+      params.userText,
+      params.durableLocalId,
+    );
+    outerTranscriptCommitted = true;
     const userActionShortcutResult = parseToolResult(
       await (tools as any).answerUserActionRequest({
         decision: mapDirectDecisionToUserActionDecision(directPermissionDecision),
         currentSessionOnly: true,
       }),
     );
+    throwIfAborted(params.signal);
     if (isSuccessfulToolShortcutResult(userActionShortcutResult)) {
       const toolResults = [
         {
@@ -502,7 +564,6 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     }
 
     const directPermissionDisambiguation = resolveDirectPermissionDisambiguationText(
-      permissionShortcutResult,
       userActionShortcutResult,
     );
     if (directPermissionDisambiguation) {
@@ -519,7 +580,59 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     }
   }
 
-  const runActionsOnce = async (actions: ReadonlyArray<unknown>): Promise<LocalVoiceAgentToolResultEntry[]> => {
+  const retainedEffectOutcomes = getRetainedLocalVoiceEffectOutcomes(params.sessionId);
+
+  const runRetainedEffect = async (input: Readonly<{
+    effectId: string;
+    toolName: string;
+    args: unknown;
+    handler: (input: unknown) => Promise<string>;
+  }>): Promise<Readonly<{
+    result: LocalVoiceAgentToolResultEntry;
+    completedOrReused: boolean;
+  }>> => {
+    const fingerprint = localEffectFingerprint(input.toolName, input.args);
+    const existing = retainedEffectOutcomes.get(input.effectId);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        return {
+          result: createLocalToolErrorResult(input.toolName, input.args, 'tool_call_identity_conflict'),
+          completedOrReused: false,
+        };
+      }
+      return { result: await existing.outcome, completedOrReused: true };
+    }
+
+    if (retainedEffectOutcomes.size >= MAX_RETAINED_LOCAL_EFFECT_OUTCOMES_PER_SESSION) {
+      return {
+        result: createLocalToolErrorResult(input.toolName, input.args, 'tool_outcome_capacity_exceeded'),
+        completedOrReused: false,
+      };
+    }
+
+    const outcome = (async (): Promise<LocalVoiceAgentToolResultEntry> => {
+      try {
+        const parsedResult = parseToolResult(await input.handler(input.args));
+        const result = readToolResultErrorCode(parsedResult) === 'action_failed'
+          ? createLocalToolErrorResult(input.toolName, input.args, 'outcome_unknown')
+          : { t: input.toolName, args: input.args, result: parsedResult };
+        return redactCompletedLocalEffectOutcome(result);
+      } catch {
+        return redactCompletedLocalEffectOutcome(
+          createLocalToolErrorResult(input.toolName, input.args, 'outcome_unknown'),
+        );
+      }
+    })();
+    retainedEffectOutcomes.set(input.effectId, { fingerprint, outcome });
+    return { result: await outcome, completedOrReused: true };
+  };
+
+  const runActionsOnce = async (
+    actions: ReadonlyArray<unknown>,
+  ): Promise<Readonly<{
+    results: LocalVoiceAgentToolResultEntry[];
+    interruptedAfterRetainedOutcome: boolean;
+  }>> => {
     const results: LocalVoiceAgentToolResultEntry[] = [];
     for (const actionRaw of actions) {
       throwIfAborted(params.signal);
@@ -534,6 +647,22 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
           args: action?.args ?? null,
           result: { ok: false, errorCode: 'tool_not_supported', errorMessage: 'tool_not_supported' },
         });
+        continue;
+      }
+
+      const effectId = readVoiceAgentActionEffectId(actionRaw);
+      const effectClass = resolveVoiceToolEffectClass(toolName);
+      if (effectId && effectClass !== 'read_only') {
+        const retained = await runRetainedEffect({
+          effectId,
+          toolName,
+          args: action?.args ?? null,
+          handler,
+        });
+        results.push(retained.result);
+        if (retained.completedOrReused && isAbortRequested(params.signal)) {
+          return { results, interruptedAfterRetainedOutcome: true };
+        }
         continue;
       }
 
@@ -558,7 +687,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
         });
       }
     }
-    return results;
+    return { results, interruptedAfterRetainedOutcome: false };
   };
 
   const assistantTurns: string[] = [];
@@ -573,13 +702,17 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
       params.sessionId,
       nextPrompt,
       turnIndex === 0
-        ? (params.onTextDelta || params.signal
-            ? {
-                ...(params.onTextDelta ? { onTextDelta: params.onTextDelta } : {}),
-                ...(params.signal ? { signal: params.signal } : {}),
-              }
-            : undefined)
-        : (params.signal ? { signal: params.signal } : undefined),
+        ? {
+            ...(params.onOutputEvent ? { onOutputEvent: params.onOutputEvent } : {}),
+            ...(params.signal ? { signal: params.signal } : {}),
+            userTranscript: outerTranscriptCommitted
+              ? { mode: 'suppress' as const }
+              : { mode: 'persist' as const, localId: params.durableLocalId },
+          }
+        : {
+            ...(params.signal ? { signal: params.signal } : {}),
+            userTranscript: { mode: 'suppress' as const },
+          },
     );
 
     throwIfAborted(params.signal);
@@ -603,12 +736,21 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
       };
     }
 
-    const toolResults = await runActionsOnce(actions);
+    const actionRun = await runActionsOnce(actions);
+    const toolResults = actionRun.results;
     toolResultBatches.push(toolResults);
     await params.onToolResults?.({
       toolResults,
       turnIndex,
     });
+
+    if (actionRun.interruptedAfterRetainedOutcome) {
+      return {
+        assistantTurns,
+        toolResultBatches,
+        totalActions,
+      };
+    }
 
     if (toolResults.length === 0) {
       return {

@@ -183,7 +183,8 @@ describe('WorkspaceDetailsPanel review comment launcher', () => {
             resource: { kind: 'scmReview' },
         });
         expect(React.isValidElement(tabContent)).toBe(true);
-        expect((tabContent as React.ReactElement).props).toEqual(expect.objectContaining({
+        await renderScreen(tabContent as React.ReactElement);
+        expect(workspaceScmReviewDetailsViewSpy).toHaveBeenCalledWith(expect.objectContaining({
             rootPath: '/repo/worktree-a',
             machineId: 'machine-1',
             serverId: 'server-1',
@@ -244,7 +245,8 @@ describe('WorkspaceDetailsPanel review comment launcher', () => {
         });
 
         expect(React.isValidElement(tabContent)).toBe(true);
-        expect((tabContent as React.ReactElement).props).toEqual(expect.objectContaining({
+        await renderScreen(tabContent as React.ReactElement);
+        expect(projectTerminalSurfaceSpy).toHaveBeenCalledWith(expect.objectContaining({
             terminalInstanceId: 'terminal-instance-2',
         }));
     });

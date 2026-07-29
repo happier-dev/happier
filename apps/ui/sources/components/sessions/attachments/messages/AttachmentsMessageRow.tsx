@@ -78,15 +78,23 @@ export const AttachmentsMessageRow = React.memo(function AttachmentsMessageRow(p
         <View testID="message-attachments-row" style={styles.container}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
                 {props.attachments.map((a) => (
-                    <Pressable
-                        key={`${a.path}:${a.name}`}
-                        onPress={props.onOpenPath ? () => props.onOpenPath?.(a.path) : undefined}
-                        style={styles.attachmentChip}
-                    >
-                        <Ionicons name={resolveAttachmentIconName(a.mimeType)} size={14} color={theme.colors.text.secondary} />
-                        <Text numberOfLines={1} style={styles.attachmentText}>{a.name}</Text>
-                        <Text style={styles.attachmentMeta}>{formatBytes(a.sizeBytes)}</Text>
-                    </Pressable>
+                    props.onOpenPath ? (
+                        <Pressable
+                            key={`${a.path}:${a.name}`}
+                            onPress={() => props.onOpenPath?.(a.path)}
+                            style={styles.attachmentChip}
+                        >
+                            <Ionicons name={resolveAttachmentIconName(a.mimeType)} size={14} color={theme.colors.text.secondary} />
+                            <Text numberOfLines={1} style={styles.attachmentText}>{a.name}</Text>
+                            <Text style={styles.attachmentMeta}>{formatBytes(a.sizeBytes)}</Text>
+                        </Pressable>
+                    ) : (
+                        <View key={`${a.path}:${a.name}`} style={styles.attachmentChip}>
+                            <Ionicons name={resolveAttachmentIconName(a.mimeType)} size={14} color={theme.colors.text.secondary} />
+                            <Text numberOfLines={1} style={styles.attachmentText}>{a.name}</Text>
+                            <Text style={styles.attachmentMeta}>{formatBytes(a.sizeBytes)}</Text>
+                        </View>
+                    )
                 ))}
             </ScrollView>
         </View>

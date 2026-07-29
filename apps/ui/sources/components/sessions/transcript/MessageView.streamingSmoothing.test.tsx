@@ -1,10 +1,11 @@
 import React from 'react';
-import { act } from 'react-test-renderer';
+import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { AgentTextMessage } from '@/sync/domains/messages/messageTypes';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -78,7 +79,7 @@ installMessageViewCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'sessionThinkingDisplayMode') return 'inline';
                     if (key === 'sessionThinkingInlinePresentation') return 'full';
                     if (key === 'sessionThinkingInlineChrome') return 'plain';
@@ -87,7 +88,7 @@ installMessageViewCommonModuleMocks({
                     if (key === 'transcriptStreamingPartialOutputEnabled') return captured.streamingPartialEnabled;
                     if (key === 'transcriptStreamingMarkdownRenderingEnabled') return captured.streamingMarkdownEnabled;
                     return null;
-                },
+                } }),
                 useSession: () => null,
             },
         });
@@ -115,7 +116,7 @@ vi.mock('@/components/sessions/transcript/structured/StructuredMessageBlock', ()
     renderStructuredMessage: () => null,
     StructuredMessageBlock: () => React.createElement('StructuredMessageBlock'),
 }));
-vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({ shouldShowMessageCopyButton: () => false }));
+vi.mock('@/components/sessions/transcript/transcriptRowActionVisibility', () => ({ shouldShowTranscriptRowActions: () => false, shouldShowTranscriptRowPinAction: () => false }));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => true }));
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({ isCommittedMessageDiscarded: () => false }));
 vi.mock('@/utils/url/sessionFileDeepLink', () => ({ buildSessionFileDeepLink: () => '' }));
@@ -189,7 +190,74 @@ describe('MessageView (streaming smoothing)', () => {
         vi.useRealTimers();
     });
 
-    it('renders streaming Markdown while an agent message is actively streaming then returns to static Markdown after settling', async () => {
+    it('records streaming Markdown placeholder history only after the same-message render commits', async () => {
+        const { MessageView } = await import('./MessageView');
+        const interaction = { canSendMessages: true, canApprovePermissions: true };
+        const staticMessage = createAgentMessage();
+        const streamingMessage = createAgentMessage({
+            localId: 'assistant-segment-1',
+            meta: {
+                happierStreamSegmentV1: {
+                    v: 1,
+                    segmentKind: 'assistant',
+                    segmentLocalId: 'assistant-segment-1',
+                    segmentState: 'streaming',
+                    startedAtMs: 1_000,
+                    updatedAtMs: 1_000,
+                },
+            },
+        });
+        const neverSettles = new Promise<never>(() => {});
+        const SuspendAfterRow = (props: Readonly<{ shouldSuspend: boolean }>) => {
+            if (props.shouldSuspend) throw neverSettles;
+            return null;
+        };
+        const renderMessage = (message: AgentTextMessage, shouldSuspend = false) => (
+            <React.Suspense fallback={null}>
+                <MessageView
+                    message={message}
+                    metadata={null}
+                    sessionId="s1"
+                    interaction={interaction}
+                />
+                <SuspendAfterRow shouldSuspend={shouldSuspend} />
+            </React.Suspense>
+        );
+        let tree!: renderer.ReactTestRenderer;
+
+        await act(async () => {
+            tree = renderer.create(renderMessage(staticMessage), {
+                unstable_isConcurrent: true,
+            } as unknown as renderer.TestRendererOptions);
+        });
+        expect(captured.markdownProps.at(-1)?.staticRenderPlaceholderEnabled).toBeUndefined();
+        captured.markdownProps.length = 0;
+
+        await act(async () => {
+            React.startTransition(() => {
+                tree.update(renderMessage(streamingMessage, true));
+            });
+            await Promise.resolve();
+        });
+        await act(async () => {
+            tree.update(renderMessage({ ...staticMessage }));
+        });
+        expect(captured.markdownProps.at(-1)?.staticRenderPlaceholderEnabled).toBeUndefined();
+
+        await act(async () => {
+            tree.update(renderMessage(streamingMessage));
+        });
+        await act(async () => {
+            tree.update(renderMessage({ ...staticMessage }));
+        });
+        expect(captured.markdownProps.at(-1)?.staticRenderPlaceholderEnabled).toBe(false);
+
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+
+    it('paces appended streaming text instead of jumping, then returns to static Markdown after settling', async () => {
         const { MessageView } = await import('./MessageView');
         const baseMessage = createAgentMessage();
 
@@ -222,8 +290,10 @@ describe('MessageView (streaming smoothing)', () => {
         });
         await flushHookEffects({ cycles: 2, turns: 2 });
 
+        // The appended suffix is paced: immediately after the update the reveal
+        // cursor still trails, so only the previously shown prefix renders.
         expect(captured.markdownProps.at(-1)).toMatchObject({
-            markdown: 'Hello wor',
+            markdown: 'Hello',
             streamingMode: 'streaming',
             streamingAnimated: true,
             streamingRevealPreset: 'subtle',
@@ -232,41 +302,18 @@ describe('MessageView (streaming smoothing)', () => {
         expect(captured.extractMentionsCalls).toBe(0);
         captured.markdownProps.length = 0;
 
+        // With no further input the backlog drains and the message settles back
+        // to the static Markdown path with the complete text.
         await act(async () => {
-            await screen.update(
-                <MessageView
-                    message={createAgentMessage({ text: 'Hello world!' })}
-                    metadata={null}
-                    sessionId="s1"
-                    interaction={{ canSendMessages: true, canApprovePermissions: true }}
-                />,
-            );
-        });
-        await flushHookEffects({ cycles: 2, turns: 2 });
-        await act(async () => {
-            vi.advanceTimersByTime(0);
-        });
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        expect(captured.markdownProps.at(-1)).toMatchObject({
-            markdown: 'Hello wor',
-            streamingMode: 'streaming',
-            streamingAnimated: true,
-            streamingRevealPreset: 'subtle',
-        });
-        expect(screen.findByTestId('transcript-streaming-plain:m1')).toBe(null);
-        captured.markdownProps.length = 0;
-
-        await act(async () => {
-            vi.advanceTimersByTime(250);
+            vi.advanceTimersByTime(2000);
         });
         await flushHookEffects({ cycles: 3, turns: 3 });
 
         expect(screen.findByTestId('transcript-streaming-plain:m1')).toBe(null);
-        expect(captured.markdownProps).toHaveLength(1);
-        expect(captured.markdownProps[0]?.markdown).toBe('Hello world!');
-        expect(captured.markdownProps[0]?.streamingMode).toBeUndefined();
-        expect(captured.markdownProps[0]?.staticRenderPlaceholderEnabled).toBe(false);
+        const settled = captured.markdownProps.at(-1);
+        expect(settled?.markdown).toBe('Hello wor');
+        expect(settled?.streamingMode).toBeUndefined();
+        expect(settled?.staticRenderPlaceholderEnabled).toBe(false);
         expect(captured.extractMentionsCalls).toBeGreaterThan(0);
     });
 
@@ -301,7 +348,7 @@ describe('MessageView (streaming smoothing)', () => {
         expect(captured.extractMentionsCalls).toBe(0);
     });
 
-    it('throttles active streaming Markdown updates without switching to the plain fallback', async () => {
+    it('reveals active streaming Markdown progressively without switching to the plain fallback', async () => {
         const { MessageView } = await import('./MessageView');
         const streamingMeta = {
             happierStreamSegmentV1: {
@@ -313,6 +360,8 @@ describe('MessageView (streaming smoothing)', () => {
                 updatedAtMs: 1_000,
             },
         } satisfies AgentTextMessage['meta'];
+
+        const fullText = 'Hello world! And an appended continuation with several more streamed words to pace.';
 
         const screen = await renderScreen(
             <MessageView
@@ -329,7 +378,7 @@ describe('MessageView (streaming smoothing)', () => {
         await act(async () => {
             await screen.update(
                 <MessageView
-                    message={createAgentMessage({ localId: 'assistant-segment-1', text: 'Hello wor', meta: streamingMeta })}
+                    message={createAgentMessage({ localId: 'assistant-segment-1', text: fullText, meta: streamingMeta })}
                     metadata={null}
                     sessionId="s1"
                     interaction={{ canSendMessages: true, canApprovePermissions: true }}
@@ -342,17 +391,58 @@ describe('MessageView (streaming smoothing)', () => {
         });
         await flushHookEffects({ cycles: 2, turns: 2 });
 
+        // Immediately after the update only the previous prefix is shown.
         expect(captured.markdownProps.at(-1)).toMatchObject({
-            markdown: 'Hello wor',
+            markdown: 'Hello',
             streamingMode: 'streaming',
         });
         expect(screen.findByTestId('transcript-streaming-plain:m1')).toBe(null);
+
+        // The reveal grows monotonically frame over frame instead of jumping.
+        const observed: string[] = [];
+        for (let step = 0; step < 12; step += 1) {
+            await act(async () => {
+                vi.advanceTimersByTime(150);
+            });
+            await flushHookEffects({ cycles: 2, turns: 2 });
+            const markdown = captured.markdownProps.at(-1)?.markdown;
+            if (typeof markdown === 'string') observed.push(markdown);
+        }
+        for (let index = 1; index < observed.length; index += 1) {
+            expect(observed[index]!.startsWith(observed[index - 1]!)).toBe(true);
+        }
+        expect(observed.some((markdown) => markdown.length > 'Hello'.length && markdown.length < fullText.length)).toBe(true);
+
+        // The full text is reached while remaining on the streaming Markdown path.
+        expect(captured.markdownProps.at(-1)).toMatchObject({
+            markdown: fullText,
+            streamingMode: 'streaming',
+        });
+        expect(screen.findByTestId('transcript-streaming-plain:m1')).toBe(null);
+    });
+
+    it('paces streaming thinking text through the same reveal instead of jumping', async () => {
+        const { MessageView } = await import('./MessageView');
+        const baseThinking = createAgentMessage({ isThinking: true, text: 'Considering the request' });
+
+        const screen = await renderScreen(
+            <MessageView
+                message={baseThinking}
+                metadata={null}
+                sessionId="s1"
+                interaction={{ canSendMessages: true, canApprovePermissions: true }}
+            />,
+        );
+        await flushHookEffects({ cycles: 2, turns: 2 });
         captured.markdownProps.length = 0;
 
         await act(async () => {
             await screen.update(
                 <MessageView
-                    message={createAgentMessage({ localId: 'assistant-segment-1', text: 'Hello world!', meta: streamingMeta })}
+                    message={createAgentMessage({
+                        isThinking: true,
+                        text: 'Considering the request and weighing several alternatives before answering.',
+                    })}
                     metadata={null}
                     sessionId="s1"
                     interaction={{ canSendMessages: true, canApprovePermissions: true }}
@@ -365,22 +455,21 @@ describe('MessageView (streaming smoothing)', () => {
         });
         await flushHookEffects({ cycles: 2, turns: 2 });
 
+        // The appended thinking suffix is paced exactly like assistant text:
+        // right after the update only the previous prefix renders.
         expect(captured.markdownProps.at(-1)).toMatchObject({
-            markdown: 'Hello wor',
+            markdown: 'Considering the request',
             streamingMode: 'streaming',
         });
-        expect(screen.findByTestId('transcript-streaming-plain:m1')).toBe(null);
 
         await act(async () => {
-            vi.advanceTimersByTime(200);
+            vi.advanceTimersByTime(2000);
         });
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects({ cycles: 3, turns: 3 });
 
-        expect(captured.markdownProps.at(-1)).toMatchObject({
-            markdown: 'Hello world!',
-            streamingMode: 'streaming',
-        });
-        expect(screen.findByTestId('transcript-streaming-plain:m1')).toBe(null);
+        const settled = captured.markdownProps.at(-1);
+        expect(settled?.markdown).toBe('Considering the request and weighing several alternatives before answering.');
+        expect(settled?.streamingMode).toBeUndefined();
     });
 
     it('marks active web assistant streaming content as a polite log live region', async () => {
@@ -487,6 +576,88 @@ describe('MessageView (streaming smoothing)', () => {
             streamingMode: 'streaming',
             streamingAnimated: false,
         });
+    });
+
+    it('bypasses character pacing entirely when the effective transcript motion preset is off', async () => {
+        captured.transcriptMotionConfig = {
+            preset: 'off',
+            freshnessMs: 60_000,
+            animateNewItemsEnabled: false,
+            animateToolExpandCollapseEnabled: false,
+            animateToolExpandCollapseFreshOnly: false,
+            animateThinkingEnabled: false,
+        };
+        const { MessageView } = await import('./MessageView');
+        const baseMessage = createAgentMessage();
+        const screen = await renderScreen(
+            <MessageView
+                message={baseMessage}
+                metadata={null}
+                sessionId="s1"
+                interaction={{ canSendMessages: true, canApprovePermissions: true }}
+            />,
+        );
+        captured.markdownProps.length = 0;
+
+        await screen.update(
+            <MessageView
+                message={createAgentMessage({ text: 'Hello, immediately.' })}
+                metadata={null}
+                sessionId="s1"
+                interaction={{ canSendMessages: true, canApprovePermissions: true }}
+            />,
+        );
+
+        expect(captured.markdownProps.at(-1)).toMatchObject({
+            markdown: 'Hello, immediately.',
+        });
+        expect(captured.markdownProps.at(-1)?.streamingMode).toBeUndefined();
+    });
+
+    it('renders the active plain streaming fallback immediately when effective motion is off', async () => {
+        captured.streamingMarkdownEnabled = false;
+        captured.transcriptMotionConfig = {
+            preset: 'off',
+            freshnessMs: 60_000,
+            animateNewItemsEnabled: false,
+            animateToolExpandCollapseEnabled: false,
+            animateToolExpandCollapseFreshOnly: false,
+            animateThinkingEnabled: false,
+        };
+        const streamingMeta = {
+            happierStreamSegmentV1: {
+                v: 1,
+                segmentKind: 'assistant',
+                segmentLocalId: 'assistant-segment-1',
+                segmentState: 'streaming',
+                startedAtMs: 1_000,
+                updatedAtMs: 1_000,
+            },
+        } satisfies AgentTextMessage['meta'];
+        const { MessageView } = await import('./MessageView');
+        const screen = await renderScreen(
+            <MessageView
+                message={createAgentMessage({ localId: 'assistant-segment-1', meta: streamingMeta })}
+                metadata={null}
+                sessionId="s1"
+                interaction={{ canSendMessages: true, canApprovePermissions: true }}
+            />,
+        );
+
+        await screen.update(
+            <MessageView
+                message={createAgentMessage({
+                    localId: 'assistant-segment-1',
+                    meta: streamingMeta,
+                    text: 'Hello, immediately.',
+                })}
+                metadata={null}
+                sessionId="s1"
+                interaction={{ canSendMessages: true, canApprovePermissions: true }}
+            />,
+        );
+
+        expect(screen.findByTestId('transcript-streaming-plain:m1')?.props.children).toBe('Hello, immediately.');
     });
 
     it('renders active streaming plain text with the themed transcript color', async () => {

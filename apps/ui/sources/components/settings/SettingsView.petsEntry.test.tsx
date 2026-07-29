@@ -7,6 +7,7 @@ import {
 } from '@/dev/testkit';
 
 import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -32,7 +33,7 @@ installSettingsViewCommonModuleMocks({
                 useEntitlement: () => false,
                 useLocalSetting,
                 useLocalSettingMutable: createUseLocalSettingMutableMock(useLocalSetting),
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'serverSelectionGroups') return [];
                     if (key === 'serverSelectionActiveTargetKind') return null;
                     if (key === 'serverSelectionActiveTargetId') return null;
@@ -41,7 +42,7 @@ installSettingsViewCommonModuleMocks({
                     if (key === 'useProfiles') return false;
                     if (key === 'sessionUseTmux') return false;
                     return null;
-                },
+                } }),
                 useAllMachines: () => [],
                 useMachineListByServerId: () => ({}),
                 useMachineListStatusByServerId: () => ({}),
@@ -121,10 +122,6 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (handler: () => unknown) => [false, handler],
 }));
 
-vi.mock('@/sync/api/account/apiVendorTokens', () => ({
-    disconnectVendorToken: vi.fn(async () => {}),
-}));
-
 vi.mock('@/sync/domains/profiles/profile', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/profiles/profile')>();
     return {
@@ -145,7 +142,7 @@ vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
 
 vi.mock('@/agents/catalog/catalog', () => ({
     DEFAULT_AGENT_ID: 'agent_default',
-    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', label: 'Anthropic', connectRoute: null } }),
+    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', labelKey: 'agentInput.agent.claude', connectRoute: null } }),
     resolveAgentIdFromConnectedServiceId: () => null,
 }));
 
@@ -212,6 +209,6 @@ describe('SettingsView pets entry', () => {
         screen.pressRow('settings-pets-row');
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/pets');
+        expect(shared.routerPushSpy).toHaveBeenCalledWith('/settings/pets');
     });
 });

@@ -1,12 +1,5 @@
-import { describe, expect, it } from 'vitest';
 import { createFeatureDecision } from '@happier-dev/protocol';
-
-type AvailabilityModule = typeof import('./availability');
-
-async function loadAvailabilityModule(): Promise<AvailabilityModule | null> {
-    const modulePath = './availability';
-    return import(modulePath).catch(() => null) as Promise<AvailabilityModule | null>;
-}
+import { describe, expect, it } from 'vitest';
 
 function featureDecision(featureId: 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted', enabled: boolean) {
     return createFeatureDecision({
@@ -21,12 +14,14 @@ function featureDecision(featureId: 'machines.tunnel.directPeer' | 'machines.tun
 }
 
 describe('resolvePeerTcpTunnelAvailability', () => {
-    it('selects loopback direct when feature decisions allow direct and loopback is selected', async () => {
-        const mod = await loadAvailabilityModule();
+    it('selects loopback direct when direct peer routing and loopback availability are both present', async () => {
+        const mod = await import('./availability').catch((importError: unknown) => ({ importError }));
+        expect(mod).toHaveProperty('resolvePeerTcpTunnelAvailability');
+        if (!('resolvePeerTcpTunnelAvailability' in mod)) return;
 
-        expect(mod?.resolvePeerTcpTunnelAvailability({
+        expect(mod.resolvePeerTcpTunnelAvailability({
             directPeerDecision: featureDecision('machines.tunnel.directPeer', true),
-            serverRoutedDecision: featureDecision('machines.tunnel.serverRouted', false),
+            serverRoutedDecision: featureDecision('machines.tunnel.serverRouted', true),
             loopback: {
                 kind: 'selected',
                 receipt: 'peer.route.selected',
@@ -38,24 +33,27 @@ describe('resolvePeerTcpTunnelAvailability', () => {
             kind: 'available',
             routeKind: 'loopback_direct',
             endpointFingerprint: 'endpoint_1',
-            allowServerRelayFallback: false,
+            allowServerRelayFallback: true,
         });
     });
 
-    it('reports relay disabled by server policy when direct is unavailable and relay decision is disabled', async () => {
-        const mod = await loadAvailabilityModule();
+    it('falls back to server relay only when relay is enabled', async () => {
+        const mod = await import('./availability').catch((importError: unknown) => ({ importError }));
+        expect(mod).toHaveProperty('resolvePeerTcpTunnelAvailability');
+        if (!('resolvePeerTcpTunnelAvailability' in mod)) return;
 
-        expect(mod?.resolvePeerTcpTunnelAvailability({
+        expect(mod.resolvePeerTcpTunnelAvailability({
             directPeerDecision: featureDecision('machines.tunnel.directPeer', true),
-            serverRoutedDecision: featureDecision('machines.tunnel.serverRouted', false),
+            serverRoutedDecision: featureDecision('machines.tunnel.serverRouted', true),
             loopback: {
                 kind: 'fallback',
                 receipt: 'peer.route.fallback',
                 reasonCode: 'route_unavailable',
             },
         })).toEqual({
-            kind: 'unavailable',
-            reasonCode: 'relay_disabled_by_server_policy',
+            kind: 'available',
+            routeKind: 'server_relay',
+            allowServerRelayFallback: true,
         });
     });
 });

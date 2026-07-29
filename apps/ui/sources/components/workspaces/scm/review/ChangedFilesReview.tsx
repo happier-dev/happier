@@ -665,14 +665,14 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     }, [resolveWebScrollRoot, scheduleWebFrame]);
 
     const handleScroll = React.useCallback((event: any) => {
-        // Some consumers (scroll-edge fades) assume `event.nativeEvent` exists. FlashList can invoke
-        // onScroll with non-standard shapes on web, so guard defensively.
+        // Some virtualized-list implementations can invoke onScroll with non-standard shapes on web,
+        // while scroll-edge consumers assume `event.nativeEvent` exists.
         if (event?.nativeEvent) {
             props.onScroll?.(event);
         }
 
         if (Platform.OS === 'web') {
-            // Prefer DOM scrollTop over RN-web's `contentOffset.y` (often unreliable with FlashList).
+            // Prefer DOM scrollTop over RN-web's sometimes-unreliable `contentOffset.y`.
             const scrollRoot = webScrollRootRef.current ?? resolveWebScrollRoot();
             const current = scrollRoot && typeof (scrollRoot as any).scrollTop === 'number' ? (scrollRoot as any).scrollTop : null;
             if (typeof current === 'number') {
@@ -697,7 +697,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                     scrollRoot && typeof (scrollRoot as any).scrollTop === 'number' ? Number((scrollRoot as any).scrollTop) : null;
                 const trackedTop = Number.isFinite(lastScrollTopRef.current) ? lastScrollTopRef.current : 0;
                 // If the user has already scrolled but we haven't yet observed a stable scrollTop via
-                // FlashList events (common during early mount on web), do not override their position.
+                // virtualized-list events during early mount on web, do not override their position.
                 if (typeof currentTop === 'number' && currentTop > 0 && trackedTop <= 0) {
                     return true;
                 }

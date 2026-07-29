@@ -1,16 +1,23 @@
 import * as React from 'react';
 
-import * as Clipboard from 'expo-clipboard';
-
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 export type ScmChangeOverflowMenuProps = Readonly<{
     title: string;
     filePath: string;
     onRevealInTree?: () => void;
+    onCopyPathSuccess?: () => void;
+    /**
+     * When provided, a destructive "Discard changes" action is appended to the menu.
+     * The revert affordance lives here (instead of an inline row button) so the row
+     * stays legible at narrow widths. Discard itself confirms before running.
+     */
+    onDiscard?: () => void;
+    discardDisabled?: boolean;
 }>;
 
 export const ScmChangeOverflowMenu = React.memo((props: ScmChangeOverflowMenuProps) => {
@@ -22,8 +29,12 @@ export const ScmChangeOverflowMenu = React.memo((props: ScmChangeOverflowMenuPro
                 icon: 'copy-outline',
                 onPress: () => {
                     void (async () => {
-                        await Clipboard.setStringAsync(props.filePath);
-                        Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: t('common.path') }));
+                        const ok = await setClipboardStringSafe(props.filePath);
+                        if (!ok) {
+                            Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
+                            return;
+                        }
+                        props.onCopyPathSuccess?.();
                     })();
                 },
             },
@@ -38,8 +49,19 @@ export const ScmChangeOverflowMenu = React.memo((props: ScmChangeOverflowMenuPro
             });
         }
 
+        if (props.onDiscard) {
+            out.push({
+                id: 'discard',
+                title: t('common.discardChanges'),
+                icon: 'arrow-undo-outline',
+                destructive: true,
+                disabled: props.discardDisabled,
+                onPress: props.onDiscard,
+            });
+        }
+
         return out;
-    }, [props.filePath, props.onRevealInTree]);
+    }, [props.filePath, props.onRevealInTree, props.onCopyPathSuccess, props.onDiscard, props.discardDisabled]);
 
     return (
         <ItemRowActions

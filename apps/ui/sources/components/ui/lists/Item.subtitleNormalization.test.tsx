@@ -117,6 +117,8 @@ describe('Item', () => {
         const pressable = findInteractivePressable(screen);
         expect(pressable).toBeTruthy();
         expect(pressable?.props.accessibilityRole).toBeUndefined();
+        expect(pressable?.props.role).toBe('button');
+        expect(pressable?.props.accessibilityLabel).toBe('Title');
         expect(pressable?.props.tabIndex).toBe(0);
 
         expect(findTestInstanceByTypeWithProps(screen, 'Ionicons' as any, { name: 'chevron-forward' })).toBeTruthy();

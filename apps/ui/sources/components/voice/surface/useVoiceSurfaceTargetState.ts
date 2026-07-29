@@ -2,10 +2,14 @@ import * as React from 'react';
 
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useFocusedSessionId } from '@/sync/domains/session/sessionSurfaceVisibility';
-import { useSession } from '@/sync/store/hooks';
+import { useSessionListPreferredMetadata } from '@/sync/store/hooks';
 import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoiceAgentSessionTeleportAvailability';
 import { resolveVoiceSessionLabel } from '@/voice/context/resolveVoiceSessionLabel';
-import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import {
+    useVoiceTargetStore,
+    type VoiceAssistantScope,
+} from '@/voice/runtime/voiceTargetStore';
+import { resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAdapterRegistry';
 
 import type { VoiceSurfaceVariant } from './voiceSurfaceTypes';
 
@@ -22,11 +26,9 @@ type VoiceSurfacePrivacySettings = Readonly<{
 }>;
 
 export function useVoiceSurfaceTargetState(params: Readonly<{
-    localConversationMode: string | null;
     pathname: string | null | undefined;
     providerId: string;
     sessionId: string | null | undefined;
-    sessionLabelById: ReadonlyMap<string, string>;
     variant: VoiceSurfaceVariant;
     voice: any;
     voicePrivacy: VoiceSurfacePrivacySettings;
@@ -37,13 +39,10 @@ export function useVoiceSurfaceTargetState(params: Readonly<{
     const activityFeedEnabled = params.voice?.ui?.activityFeedEnabled === true;
     const focusedSessionId = useFocusedSessionId();
     const lastFocusedSessionId = useVoiceTargetStore((state) => state.lastFocusedSessionId);
-    const primaryActionSessionId = useVoiceTargetStore((state) => state.primaryActionSessionId);
-    const primaryActionSession = useSession(
-        typeof primaryActionSessionId === 'string' ? primaryActionSessionId.trim() : '',
-    );
-    const voiceScope = useVoiceTargetStore((state) => state.scope);
     const routeSessionId = params.variant === 'sidebar' ? resolveSessionIdFromPathname(params.pathname) : null;
-    const startSessionId =
+    const surfaceCapabilities = resolveVoiceAdapterSurfaceCapabilities(params.providerId, params.voice);
+    const allowsGlobalStart = surfaceCapabilities?.allowsGlobalStart === true;
+    const exactSessionId =
         params.variant === 'session'
             ? (typeof params.sessionId === 'string' ? params.sessionId : null)
             : (
@@ -51,15 +50,17 @@ export function useVoiceSurfaceTargetState(params: Readonly<{
                 ?? routeSessionId
                 ?? (typeof lastFocusedSessionId === 'string' ? lastFocusedSessionId : null)
             );
+    const bindingScope: VoiceAssistantScope =
+        scopeDefault === 'global' && allowsGlobalStart
+            ? 'global'
+            : 'session';
+    const startSessionId = bindingScope === 'global' ? null : exactSessionId;
+    const displayedBindingSessionMetadata = useSessionListPreferredMetadata(startSessionId);
     const voiceAgentEnabled = useFeatureEnabled('voice.agent');
-    const allowsGlobalStart =
-        params.providerId === 'realtime_elevenlabs'
-        || (params.providerId === 'local_conversation' && params.localConversationMode === 'agent');
-    const localAgentCfg = params.providerId === 'local_conversation' ? params.voice?.adapters?.local_conversation?.agent ?? null : null;
+    const bargeInEnabled = surfaceCapabilities?.bargeInEnabled === true;
+    const cancelResponseSupported = surfaceCapabilities?.cancelResponse === 'immediate';
     const daemonLocalVoiceUnavailable =
-        params.providerId === 'local_conversation'
-        && params.localConversationMode === 'agent'
-        && localAgentCfg?.backend === 'daemon'
+        surfaceCapabilities?.requiresVoiceAgentFeature === true
         && voiceAgentEnabled !== true;
     const canTeleportToSessionRoot =
         params.variant === 'session'
@@ -76,18 +77,22 @@ export function useVoiceSurfaceTargetState(params: Readonly<{
     })();
 
     const targetLabel =
-        params.variant === 'sidebar' && voiceScope === 'global' && primaryActionSessionId
+        startSessionId
             ? (
-                resolveVoiceSessionLabel(primaryActionSessionId, {
+                resolveVoiceSessionLabel(startSessionId, {
                     voiceShareSessionSummary: params.voicePrivacy.shareSessionSummary,
                     voiceShareFilePaths: params.voicePrivacy.shareFilePaths,
-                }, primaryActionSession ? { metadata: primaryActionSession.metadata } : undefined)
+                }, displayedBindingSessionMetadata ? { metadata: displayedBindingSessionMetadata } : undefined)
             )
             : null;
 
     return {
         activityFeedEnabled,
         allowsGlobalStart,
+        bargeInEnabled,
+        bindingScope,
+        cancelResponseSupported,
+        agentRuntime: surfaceCapabilities?.agentRuntime ?? null,
         canTeleportToSessionRoot,
         daemonLocalVoiceUnavailable,
         locationAllowsVariant,

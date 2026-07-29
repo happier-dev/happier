@@ -6,6 +6,10 @@ const sessionRpcMock = vi.hoisted(() => vi.fn());
 const canUseSessionRpcMock = vi.hoisted(() => vi.fn(() => true));
 const notifyExecutionRunActivityMock = vi.hoisted(() => vi.fn());
 const expectRpcTimeout = expect.objectContaining({ timeoutMs: expect.any(Number) });
+const sessionState = vi.hoisted(() => ({
+    sessions: {} as Record<string, any>,
+    settings: {},
+}));
 
 vi.mock('../api/session/apiSocket', () => ({
     apiSocket: {
@@ -22,6 +26,15 @@ vi.mock('@/sync/runtime/executionRuns/executionRunActivityBus', () => ({
     notifyExecutionRunActivity: (...args: Parameters<typeof notifyExecutionRunActivityMock>) =>
         notifyExecutionRunActivityMock(...args),
 }));
+
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        storage: {
+            getState: () => sessionState,
+        },
+    });
+});
 
 describe('sessionExecutionRuns', () => {
     let sessionExecutionRuns: typeof import('./sessionExecutionRuns');
@@ -40,6 +53,8 @@ describe('sessionExecutionRuns', () => {
         canUseSessionRpcMock.mockReset();
         canUseSessionRpcMock.mockReturnValue(true);
         notifyExecutionRunActivityMock.mockReset();
+        sessionState.sessions = {};
+        sessionState.settings = {};
     });
 
     it('calls execution.run.action through session RPC', async () => {
@@ -194,19 +209,42 @@ describe('sessionExecutionRuns', () => {
         expect((response as any).errorCode).toBe('execution_run_not_found');
     });
 
-    it('allows execution.run.send for inactive sessions through session RPC', async () => {
+    it('rejects execution.run.send for inactive replay forks that cannot resume before session RPC', async () => {
         sessionRpcMock.mockResolvedValue({ ok: true });
-        canUseSessionRpcMock.mockReturnValue(false);
+        sessionState.sessions['session-inactive'] = {
+            id: 'session-inactive',
+            active: false,
+            metadata: {
+                flavor: 'claude',
+                claudeSessionId: '',
+                forkV1: {
+                    v: 1,
+                    parentSessionId: 'parent-session',
+                    parentCutoffSeqInclusive: 7,
+                    createdAtMs: 1000,
+                    strategy: 'replay',
+                    providerHint: { providerId: 'claude' },
+                },
+                replaySeedV1: {
+                    v: 1,
+                    seedText: '',
+                    sourceSessionId: 'parent-session',
+                    sourceCutoffSeqInclusive: 7,
+                    createdAtMs: 1000,
+                    appliedToLocalId: 'local-1',
+                    appliedAtMs: 2000,
+                },
+            },
+        };
 
         const response = await sessionExecutionRuns.sessionExecutionRunSend('session-inactive', { runId: 'run_1', message: 'hello' });
 
-        expect(sessionRpcMock).toHaveBeenCalledWith(
-            'session-inactive',
-            SESSION_RPC_METHODS.EXECUTION_RUN_SEND,
-            { runId: 'run_1', message: 'hello', delivery: 'steer_if_supported' },
-            expectRpcTimeout,
-        );
-        expect(response).toEqual({ ok: true });
+        expect(sessionRpcMock).not.toHaveBeenCalled();
+        expect(response).toEqual({
+            ok: false,
+            error: 'SESSION_NOT_RESUMABLE',
+            errorCode: 'SESSION_NOT_RESUMABLE',
+        });
     });
 
     it('calls execution.run.stop through session RPC', async () => {
@@ -304,9 +342,33 @@ describe('sessionExecutionRuns', () => {
         expect((response as any).errorCode).toBe('execution_run_not_found');
     });
 
-    it('allows execution.run.action for inactive sessions through session RPC', async () => {
+    it('rejects execution.run.action for inactive replay forks that cannot resume before session RPC', async () => {
         sessionRpcMock.mockResolvedValue({ ok: true });
-        canUseSessionRpcMock.mockReturnValue(false);
+        sessionState.sessions['session-inactive'] = {
+            id: 'session-inactive',
+            active: false,
+            metadata: {
+                flavor: 'claude',
+                claudeSessionId: '',
+                forkV1: {
+                    v: 1,
+                    parentSessionId: 'parent-session',
+                    parentCutoffSeqInclusive: 7,
+                    createdAtMs: 1000,
+                    strategy: 'replay',
+                    providerHint: { providerId: 'claude' },
+                },
+                replaySeedV1: {
+                    v: 1,
+                    seedText: '',
+                    sourceSessionId: 'parent-session',
+                    sourceCutoffSeqInclusive: 7,
+                    createdAtMs: 1000,
+                    appliedToLocalId: 'local-1',
+                    appliedAtMs: 2000,
+                },
+            },
+        };
 
         const response = await sessionExecutionRuns.sessionExecutionRunAction('session-inactive', {
             runId: 'run_1',
@@ -314,20 +376,29 @@ describe('sessionExecutionRuns', () => {
             input: { findings: [{ id: 'f1', status: 'accept' }] },
         });
 
-        expect(sessionRpcMock).toHaveBeenCalledWith(
-            'session-inactive',
-            SESSION_RPC_METHODS.EXECUTION_RUN_ACTION,
-            {
-                runId: 'run_1',
-                actionId: 'review.triage',
-                input: { findings: [{ id: 'f1', status: 'accept' }] },
-            },
-            expectRpcTimeout,
-        );
-        expect(response).toEqual({ ok: true });
+        expect(sessionRpcMock).not.toHaveBeenCalled();
+        expect(response).toEqual({
+            ok: false,
+            error: 'SESSION_NOT_RESUMABLE',
+            errorCode: 'SESSION_NOT_RESUMABLE',
+        });
     });
 
     it('detects terminal not-running send errors by error code', async () => {
+        expect(
+            sessionExecutionRuns.isExecutionRunNotRunningMutationError({
+                ok: false,
+                error: 'Not running',
+                errorCode: 'execution_run_not_allowed',
+            }),
+        ).toBe(true);
+        expect(
+            sessionExecutionRuns.isExecutionRunNotRunningMutationError({
+                ok: false,
+                error: 'Already finished',
+                errorCode: 'execution_run_not_running',
+            }),
+        ).toBe(true);
         expect(
             sessionExecutionRuns.isExecutionRunNotRunningSendError({
                 ok: false,
@@ -335,24 +406,17 @@ describe('sessionExecutionRuns', () => {
                 errorCode: 'execution_run_not_allowed',
             }),
         ).toBe(true);
-        expect(
-            sessionExecutionRuns.isExecutionRunNotRunningSendError({
-                ok: false,
-                error: 'Already finished',
-                errorCode: 'execution_run_not_running',
-            }),
-        ).toBe(true);
     });
 
     it('detects terminal not-running send errors by message fallback', async () => {
         expect(
-            sessionExecutionRuns.isExecutionRunNotRunningSendError({
+            sessionExecutionRuns.isExecutionRunNotRunningMutationError({
                 ok: false,
                 error: 'execution run is not running anymore',
             }),
         ).toBe(true);
         expect(
-            sessionExecutionRuns.isExecutionRunNotRunningSendError({
+            sessionExecutionRuns.isExecutionRunNotRunningMutationError({
                 ok: false,
                 error: 'some other transport failure',
             }),

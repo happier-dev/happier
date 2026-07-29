@@ -16,42 +16,6 @@ function arrayCount(value: unknown): number {
     return Array.isArray(value) ? value.length : 0;
 }
 
-function buildSessionTagSummaryProperties(value: unknown): Record<string, number> {
-    const entries = value && typeof value === 'object' && !Array.isArray(value)
-        ? Object.entries(value as Record<string, unknown>)
-        : [];
-
-    let taggedSessionCount = 0;
-    let totalTagsCount = 0;
-    for (const [, tags] of entries) {
-        if (!Array.isArray(tags)) continue;
-        taggedSessionCount += 1;
-        totalTagsCount += tags.length;
-    }
-
-    return {
-        taggedSessionCount,
-        totalTagsCount,
-    };
-}
-
-function buildSessionListGroupOrderSummaryProperties(value: unknown): Record<string, number> {
-    const entries = value && typeof value === 'object' && !Array.isArray(value)
-        ? Object.entries(value as Record<string, unknown>)
-        : [];
-
-    let totalOrderedKeyCount = 0;
-    for (const [, orderedKeys] of entries) {
-        if (!Array.isArray(orderedKeys)) continue;
-        totalOrderedKeyCount += orderedKeys.length;
-    }
-
-    return {
-        groupOverrideCount: entries.length,
-        totalOrderedKeyCount,
-    };
-}
-
 function buildDismissedCliWarningsSummaryProperties(value: unknown): Record<string, number> {
     const record = value && typeof value === 'object' && !Array.isArray(value)
         ? value as Record<string, unknown>
@@ -163,16 +127,8 @@ export const ACCOUNT_COLLECTION_SETTING_DEFINITIONS = defineSettingDefinitions({
     pinnedSessionKeysV1: {
         schema: z.array(z.string()).default([]),
         default: [],
-        description: 'Pinned session keys (format: serverId:sessionId)',
+        description: 'Legacy pinned session keys imported into session organization',
         storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrent: arrayCount,
-        },
     },
     workspaceRefsV1: {
         schema: z.array(WorkspaceRefV1Schema).default([]),
@@ -205,91 +161,32 @@ export const ACCOUNT_COLLECTION_SETTING_DEFINITIONS = defineSettingDefinitions({
     workspaceLabelsV1: {
         schema: z.record(z.string(), z.string()).default({}),
         default: {},
-        description: 'Custom display labels for workspace groups in the session list',
+        description: 'Legacy custom workspace labels imported into session organization',
         storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrent: objectKeyCount,
-        },
-    },
-    collapsedGroupKeysV1: {
-        schema: z.record(z.string(), z.boolean()).default({}),
-        default: {},
-        description: 'Collapsed state for session list groups',
-        storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrent: objectKeyCount,
-        },
     },
     sessionTagsV1: {
         schema: z.record(z.string(), z.array(z.string())).default({}),
         default: {},
-        description: 'User-defined tags per session',
+        description: 'Legacy user-defined tags imported into session organization',
         storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrentProperties: buildSessionTagSummaryProperties,
-        },
     },
     sessionListGroupOrderV1: {
         schema: z.record(z.string(), z.array(z.string())).default({}),
         default: {},
-        description: 'Manual ordering overrides by groupKey',
+        description: 'Legacy manual session-list ordering imported into session organization',
         storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrentProperties: buildSessionListGroupOrderSummaryProperties,
-        },
     },
     sessionWorkspaceOrderV1: {
         schema: z.record(z.string(), z.array(z.string())).default({}),
         default: {},
-        description: 'Manual workspace ordering overrides by server scope',
+        description: 'Legacy manual workspace ordering imported into session organization',
         storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrentProperties: buildSessionListGroupOrderSummaryProperties,
-        },
     },
     sessionFoldersV1: {
         schema: SessionFoldersV1Schema.default({ v: 1, folders: [] }),
         default: { v: 1, folders: [] },
-        description: 'User-defined folders for organizing synced sessions',
+        description: 'Legacy session folders imported into session organization',
         storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrent: (value: unknown) => {
-                const folders = value && typeof value === 'object' && !Array.isArray(value)
-                    ? (value as Record<string, unknown>).folders
-                    : null;
-                return Array.isArray(folders) ? folders.length : 0;
-            },
-        },
     },
     sessionSplitCanvasLayoutsV1: {
         schema: SessionSplitCanvasLayoutsSchema,

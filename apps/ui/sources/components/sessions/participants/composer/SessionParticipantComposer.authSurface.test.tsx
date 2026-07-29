@@ -155,6 +155,7 @@ describe('SessionParticipantComposer auth send surface', () => {
     it('surfaces not_authenticated from the real pending send path instead of silently enqueueing', async () => {
         const sessionId = 's_auth_surface';
         storage.getState().applySessions([createActiveSession(sessionId)]);
+        storage.getState().applySettingsLocal({ sessionMessageSendMode: 'agent_queue' });
 
         const encryption = await Encryption.create(new Uint8Array(32).fill(9));
         await encryption.initializeSessions(new Map([[sessionId, null]]));

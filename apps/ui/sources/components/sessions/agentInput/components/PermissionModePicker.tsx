@@ -61,6 +61,9 @@ export function PermissionModePicker(props: {
                     <Pressable
                         key={option.value}
                         testID={`permission-mode-${option.value}`}
+                        accessibilityRole="radio"
+                        accessibilityLabel={option.label}
+                        accessibilityState={{ checked: isSelected }}
                         onPress={() => props.onSelect(option.value)}
                         style={({ pressed }) => [props.styles.overlayOptionRow, pressed ? props.styles.overlayOptionRowPressed : null]}
                     >

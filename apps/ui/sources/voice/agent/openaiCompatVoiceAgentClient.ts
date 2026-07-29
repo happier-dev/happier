@@ -1,16 +1,20 @@
 import { storage } from '@/sync/domains/state/storage';
-import { sync } from '@/sync/sync';
-import { buildOpenAiChatCompletionRequest, parseOpenAiChatCompletionAssistantText, type OpenAiCompatChatMessage } from '@/voice/local/openaiCompatChat';
-import { fetchWithTimeout, resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
 import { extractVoiceActionsFromAssistantText, type VoiceAssistantAction } from '@happier-dev/protocol';
 import { buildLocalVoiceAgentSystemPrompt } from '@happier-dev/agents';
 import { resolveDisabledVoiceActionIdsFromState } from '@/voice/tools/resolveDisabledVoiceActionIds';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveUiMemoryRecallGuidanceEnabled } from '@/sync/domains/memory/resolveUiMemoryRecallGuidanceEnabled';
-import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { resolveUiVoicePromptStackBlocks } from '@/voice/agent/resolveUiVoicePromptStackBlocks';
+import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
+import { OpenAiCompatDaemonClient } from '@/voice/local/openaiCompat/client';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
 import type { VoiceAgentClient, VoiceAgentStartParams, VoiceAgentStartResult, VoiceAgentTurnStreamEvent } from './types';
+
+type OpenAiCompatChatMessage = Readonly<{
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}>;
 
 type VoiceAgentState = {
   sessionId: string;
@@ -19,15 +23,21 @@ type VoiceAgentState = {
   messages: OpenAiCompatChatMessage[];
   temperature: number;
   maxTokens: number | null;
-  apiKey: string | null;
   baseUrl: string;
+  insecureLocalOriginConsent: string | null;
+  insecureLocalConsentMachineId: string | null;
 };
 
 export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
+  private readonly daemonClient: Pick<OpenAiCompatDaemonClient, 'chat' | 'listModels'>;
   private readonly voiceAgents = new Map<string, VoiceAgentState>();
   private readonly streams = new Map<string, { sessionId: string; voiceAgentId: string; events: VoiceAgentTurnStreamEvent[]; done: boolean }>();
   private static readonly MAX_TURNS_IN_MEMORY = 24;
   private static readonly STREAM_DELTA_CHUNK_CHARS = 180;
+
+  constructor(options?: Readonly<{ daemonClient?: Pick<OpenAiCompatDaemonClient, 'chat' | 'listModels'> }>) {
+    this.daemonClient = options?.daemonClient ?? new OpenAiCompatDaemonClient();
+  }
 
   private capMessages(messages: OpenAiCompatChatMessage[]): OpenAiCompatChatMessage[] {
     if (messages.length <= 1) return messages;
@@ -40,11 +50,11 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
 
   async start(params: VoiceAgentStartParams): Promise<VoiceAgentStartResult> {
     const settings: any = storage.getState().settings;
-    const cfg = settings?.voice?.adapters?.local_conversation?.agent?.openaiCompat ?? null;
+    const localConversation = readLocalConversationSettingsFromAccountSettings(settings);
+    const cfg = localConversation.agent.openaiCompat;
     const baseUrl = String(cfg?.chatBaseUrl ?? '').trim();
     if (!baseUrl) throw new Error('missing_chat_base_url');
 
-    const apiKey = cfg?.chatApiKey ? (sync.decryptSecretValue(cfg.chatApiKey) ?? null) : null;
     const temperatureRaw = cfg?.temperature;
     const temperature = typeof temperatureRaw === 'number' && Number.isFinite(temperatureRaw) ? temperatureRaw : 0.4;
     const maxTokensRaw = cfg?.maxTokens;
@@ -58,7 +68,7 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
     const disabledActionIds = Array.isArray(params.disabledActionIds)
       ? params.disabledActionIds
       : resolveDisabledVoiceActionIdsFromState(storage.getState() as any);
-    const sessionMetadata = resolveSessionListPreferredSessionMetadataFromState(storage.getState() as any, params.sessionId);
+    const sessionMetadata = readVoiceSessionOwnerMetadataFromState(storage.getState() as any, params.sessionId);
     const memoryRecallGuidanceEnabled = await resolveUiMemoryRecallGuidanceEnabled({
       settings,
       serverId: getActiveServerSnapshot().serverId,
@@ -86,11 +96,12 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
       messages: [system],
       temperature: Math.max(0, Math.min(2, temperature)),
       maxTokens,
-      apiKey,
       baseUrl,
+      insecureLocalOriginConsent: cfg?.insecureLocalOriginConsent ?? null,
+      insecureLocalConsentMachineId: cfg?.insecureLocalConsentMachineId ?? null,
     });
 
-    return { voiceAgentId, effective: { chatModelId: params.chatModelId, commitModelId: params.commitModelId, permissionPolicy: params.permissionPolicy } };
+    return { voiceAgentId, effective: { chatModelId: params.chatModelId, commitModelId: params.commitModelId, permissionIntent: params.permissionIntent } };
   }
 
   async sendTurn(
@@ -98,30 +109,39 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
   ): Promise<{ assistantText: string; actions?: VoiceAssistantAction[] }> {
     const state = this.voiceAgents.get(params.voiceAgentId);
     if (!state || state.sessionId !== params.sessionId) throw new Error('VOICE_AGENT_NOT_FOUND');
-    const timeoutMs = resolveVoiceNetworkTimeoutMs(
-      (storage.getState().settings as any)?.voice?.adapters?.local_conversation?.networkTimeoutMs,
-      15_000,
-    );
-
     const userMessage: OpenAiCompatChatMessage = { role: 'user', content: params.userText };
-    const req = buildOpenAiChatCompletionRequest({
-      baseUrl: state.baseUrl,
-      apiKey: state.apiKey,
-      model: state.chatModelId,
-      messages: [...state.messages, userMessage],
-      temperature: state.temperature,
-      maxTokens: state.maxTokens,
-    });
-
-    const res = await fetchWithTimeout(req.url, req.init, timeoutMs, 'chat_timeout');
-    if (!res.ok) throw new Error('chat_failed');
-    const assistantTextRaw = await parseOpenAiChatCompletionAssistantText(res);
+    let assistantTextRaw: string;
+    try {
+      assistantTextRaw = await this.daemonClient.chat({
+        baseUrl: state.baseUrl,
+        insecureLocalOriginConsent: state.insecureLocalOriginConsent,
+        insecureLocalConsentMachineId: state.insecureLocalConsentMachineId,
+        credentialKind: 'chat_api_key',
+        model: state.chatModelId,
+        messages: [...state.messages, userMessage],
+        temperature: state.temperature,
+        ...(state.maxTokens !== null ? { maxTokens: state.maxTokens } : {}),
+      });
+    } catch {
+      throw new Error('chat_failed');
+    }
     const extracted = extractVoiceActionsFromAssistantText(assistantTextRaw);
     const assistantText = extracted.assistantText;
     state.messages.push(userMessage);
     state.messages.push({ role: 'assistant', content: assistantText });
     state.messages = this.capMessages(state.messages);
     return extracted.actions.length > 0 ? { assistantText, actions: extracted.actions } : { assistantText };
+  }
+
+  async commitUserTranscript(_params: Readonly<{
+    sessionId: string;
+    voiceAgentId: string;
+    text: string;
+    displayText?: string;
+    localId: string;
+  }>): Promise<{ ok: true }> {
+    // The OpenAI-compatible backend is UI-owned and does not write a daemon transcript.
+    return { ok: true };
   }
 
   async welcome(_params: Readonly<{ sessionId: string; voiceAgentId: string; welcomeText?: string }>): Promise<{ assistantText: string }> {
@@ -142,12 +162,43 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
     const events: VoiceAgentTurnStreamEvent[] = [];
     try {
       const { assistantText, actions } = await this.sendTurn(params);
+      let outputSeq = 0;
+      let segmentIndex = 0;
       for (let i = 0; i < assistantText.length; i += OpenAiCompatVoiceAgentClient.STREAM_DELTA_CHUNK_CHARS) {
         const textDelta = assistantText.slice(i, i + OpenAiCompatVoiceAgentClient.STREAM_DELTA_CHUNK_CHARS);
         if (!textDelta) continue;
-        events.push({ t: 'delta', textDelta });
+        events.push({
+          t: 'voice_output',
+          output: {
+            v: 1,
+            kind: 'speech_segment',
+            turnId: streamId,
+            seq: outputSeq,
+            segmentId: `${streamId}:segment:${segmentIndex}`,
+            text: textDelta,
+          },
+        });
+        outputSeq += 1;
+        segmentIndex += 1;
       }
-      events.push(actions && actions.length > 0 ? { t: 'done', assistantText, actions } : { t: 'done', assistantText });
+      for (const [actionIndex, action] of (actions ?? []).entries()) {
+        events.push({
+          t: 'voice_output',
+          output: {
+            v: 1,
+            kind: 'side_effect',
+            turnId: streamId,
+            seq: outputSeq,
+            effectId: `${streamId}:effect:${actionIndex}`,
+            action,
+          },
+        });
+        outputSeq += 1;
+      }
+      events.push({
+        t: 'voice_output',
+        output: { v: 1, kind: 'turn_final', turnId: streamId, seq: outputSeq, text: assistantText },
+      });
     } catch (error) {
       events.push({
         t: 'error',
@@ -201,8 +252,6 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
   async commit(params: Readonly<{ sessionId: string; voiceAgentId: string; kind: 'session_instruction'; maxChars?: number }>): Promise<{ commitText: string }> {
     const state = this.voiceAgents.get(params.voiceAgentId);
     if (!state || state.sessionId !== params.sessionId) throw new Error('VOICE_AGENT_NOT_FOUND');
-    const timeoutMs = resolveVoiceNetworkTimeoutMs((storage.getState().settings as any).voiceLocalNetworkTimeoutMs, 15_000);
-
     const maxChars = typeof params.maxChars === 'number' && Number.isFinite(params.maxChars) ? Math.floor(params.maxChars) : 4000;
     const commitMessages: OpenAiCompatChatMessage[] = [
       ...state.messages,
@@ -215,18 +264,21 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
       },
     ];
 
-    const req = buildOpenAiChatCompletionRequest({
-      baseUrl: state.baseUrl,
-      apiKey: state.apiKey,
-      model: state.commitModelId,
-      messages: commitMessages,
-      temperature: 0.2,
-      maxTokens: state.maxTokens,
-    });
-
-    const res = await fetchWithTimeout(req.url, req.init, timeoutMs, 'commit_timeout');
-    if (!res.ok) throw new Error('commit_failed');
-    const commitText = await parseOpenAiChatCompletionAssistantText(res);
+    let commitText: string;
+    try {
+      commitText = await this.daemonClient.chat({
+        baseUrl: state.baseUrl,
+        insecureLocalOriginConsent: state.insecureLocalOriginConsent,
+        insecureLocalConsentMachineId: state.insecureLocalConsentMachineId,
+        credentialKind: 'chat_api_key',
+        model: state.commitModelId,
+        messages: commitMessages,
+        temperature: 0.2,
+        ...(state.maxTokens !== null ? { maxTokens: state.maxTokens } : {}),
+      });
+    } catch {
+      throw new Error('commit_failed');
+    }
     if (!commitText) throw new Error('commit_empty_response');
     return { commitText };
   }
@@ -244,7 +296,22 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
   }
 
   async getModels(_params: Readonly<{ sessionId: string }>): Promise<{ availableModels: Array<{ id: string; name: string; description?: string }>; supportsFreeform: boolean }> {
-    // Best-effort only; many OSS servers do not implement /v1/models.
-    return { availableModels: [], supportsFreeform: true };
+    const cfg = readLocalConversationSettingsFromAccountSettings(storage.getState().settings).agent.openaiCompat;
+    const baseUrl = String(cfg?.chatBaseUrl ?? '').trim();
+    if (!baseUrl) return { availableModels: [], supportsFreeform: true };
+    try {
+      const models = await this.daemonClient.listModels({
+        baseUrl,
+        insecureLocalOriginConsent: cfg?.insecureLocalOriginConsent ?? null,
+        insecureLocalConsentMachineId: cfg?.insecureLocalConsentMachineId ?? null,
+        credentialKind: 'chat_api_key',
+      });
+      return {
+        availableModels: models.map(({ id }) => ({ id, name: id })),
+        supportsFreeform: true,
+      };
+    } catch {
+      return { availableModels: [], supportsFreeform: true };
+    }
   }
 }

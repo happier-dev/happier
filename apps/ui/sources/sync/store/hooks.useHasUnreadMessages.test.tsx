@@ -31,7 +31,7 @@ describe('useHasUnreadMessages', () => {
                             machineId: 'machine-1',
                             externalSessionV1: {
                                 v: 1,
-                                providerId: 'claude',
+                                agentId: 'claude',
                                 machineId: 'machine-1',
                                 remoteSessionId: 'remote-1',
                                 source: { kind: 'claudeConfig', configDir: '/tmp/.claude', projectId: null },
@@ -89,7 +89,7 @@ describe('useHasUnreadMessages', () => {
                             host: 'localhost',
                             externalSessionV1: {
                                 v: 1,
-                                providerId: 'claude',
+                                agentId: 'claude',
                             },
                         },
                         thinking: false,
@@ -137,6 +137,63 @@ describe('useHasUnreadMessages', () => {
                                 localId: null,
                                 createdAt: 1,
                                 text: 'Visible assistant message',
+                            },
+                        },
+                    },
+                },
+                sessionListRenderables: {},
+                isDataReady: true,
+            } as never));
+
+            const hook = await renderHook(() => useHasUnreadMessages('s1'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent()).toBe(false);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('does not report unread when only connected-service auth maintenance events are newer than the cursor', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                sessions: {
+                    s1: {
+                        id: 's1',
+                        seq: 946,
+                        lastViewedSessionSeq: 945,
+                        latestTurnStatus: 'in_progress',
+                        metadata: null,
+                    },
+                },
+                sessionMessages: {
+                    s1: {
+                        messageIdsOldestFirst: ['m-visible', 'm-auth'],
+                        messagesById: {
+                            'm-visible': {
+                                id: 'm-visible',
+                                kind: 'agent-text',
+                                seq: 945,
+                                localId: null,
+                                createdAt: 1,
+                                text: 'Visible assistant message',
+                            },
+                            'm-auth': {
+                                id: 'm-auth',
+                                kind: 'agent-event',
+                                seq: 946,
+                                createdAt: 2,
+                                event: {
+                                    type: 'connected-service-account-switch-attempt',
+                                    ok: true,
+                                    action: 'hot_applied',
+                                    outcome: 'succeeded',
+                                },
                             },
                         },
                     },

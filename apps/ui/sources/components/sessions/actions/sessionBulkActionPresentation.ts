@@ -41,9 +41,9 @@ export function listSessionBulkActionDescriptors(params: Readonly<{
 }>): SessionBulkActionDescriptor[] {
     const targets = params.targets;
     if (targets.length === 0) return [];
-    const hasStoppable = targets.some((target) => target.active === true && target.canStop !== false);
-    const hasArchivable = targets.some((target) => target.archived !== true && target.canArchive !== false);
-    const hasUnarchivable = targets.some((target) => target.archived === true && target.hasAdminAccess !== false);
+    const hasStoppable = targets.some((target) => target.active === true && target.canStop === true);
+    const hasArchivable = targets.some((target) => target.archived !== true && target.canArchive === true);
+    const hasUnarchivable = targets.some((target) => target.archived === true && target.hasAdminAccess === true);
     const hasPinned = targets.some((target) => target.pinned === true);
     const hasUnpinned = targets.some((target) => target.pinned !== true);
     const hasTags = targets.some((target) => (target.tags?.length ?? 0) > 0);
@@ -79,7 +79,7 @@ export function listSessionBulkActionDescriptors(params: Readonly<{
         }
         descriptors.push(createBulkDescriptor(SESSION_BULK_ACTION_IDS.tagsSet));
     }
-    if (params.moveEnabled) {
+    if (params.moveEnabled && targets.some((target) => target.canMoveToFolder === true)) {
         descriptors.push(createBulkDescriptor(SESSION_BULK_ACTION_IDS.moveToFolder));
     }
 

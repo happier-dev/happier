@@ -28,12 +28,15 @@ installSessionDetailsPanelCommonModuleMocks({
             },
         });
     },
-    storage: async () => ({
-        useLocalSetting: (key: string) => {
-            if (key === 'embeddedTerminalDockLocation') return 'sidebar';
-            return null;
-        },
-    }),
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useLocalSetting: (key: string) => {
+                if (key === 'embeddedTerminalDockLocation') return 'sidebar';
+                return null;
+            },
+        });
+    },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({

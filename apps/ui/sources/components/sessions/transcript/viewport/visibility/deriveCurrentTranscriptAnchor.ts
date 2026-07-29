@@ -1,4 +1,7 @@
-import type { NavigationVisibilitySnapshot } from './transcriptNavigationVisibilityStore';
+import {
+    EMPTY_TRANSCRIPT_NAVIGATION_VISIBILITY_SNAPSHOT,
+    type NavigationVisibilitySnapshot,
+} from './transcriptNavigationVisibilityStore';
 
 export type TranscriptNavigationAnchorKind =
     | 'user-turn'
@@ -20,10 +23,16 @@ export type TranscriptVisibleSourceRange = Readonly<{
 
 export type DeriveCurrentTranscriptAnchorInput = Readonly<{
     anchors: readonly TranscriptNavigationAnchorCandidate[];
+    /**
+     * The anchor a jump landing PUT the reader on, while that landing still owns
+     * the viewport. Intent outranks geometric containment: a landing routinely
+     * settles the renderer window one or two rows above the target row (the
+     * previous turn's tail still grazes the viewport top), and index space cannot
+     * tell that apart from genuinely reading the previous turn.
+     */
+    landedAnchorId?: string | null;
     preferUserTurnAnchor?: boolean;
-    topVisibleAnchorId?: string | null;
-    visibleAnchorIds?: readonly string[];
-    visibleSourceRange?: TranscriptVisibleSourceRange | null;
+    visibleSourceRange: TranscriptVisibleSourceRange | null | undefined;
 }>;
 
 function isValidSourceIndex(value: unknown): value is number {
@@ -39,15 +48,15 @@ function isValidRange(range: TranscriptVisibleSourceRange | null | undefined): r
     );
 }
 
-function normalizeAnchorId(value: unknown): string | null {
-    return typeof value === 'string' && value.length > 0 ? value : null;
-}
-
 function normalizeAnchors(
     anchors: readonly TranscriptNavigationAnchorCandidate[],
 ): readonly TranscriptNavigationAnchorCandidate[] {
     return anchors
-        .filter((anchor) => normalizeAnchorId(anchor.id) !== null && isValidSourceIndex(anchor.sourceIndex))
+        .filter((anchor) => (
+            typeof anchor.id === 'string' &&
+            anchor.id.length > 0 &&
+            isValidSourceIndex(anchor.sourceIndex)
+        ))
         .slice()
         .sort((left, right) => {
             if (left.sourceIndex !== right.sourceIndex) return left.sourceIndex - right.sourceIndex;
@@ -55,79 +64,63 @@ function normalizeAnchors(
         });
 }
 
-function dedupeAnchorIds(ids: readonly string[], knownIds: ReadonlySet<string>): readonly string[] {
-    const out: string[] = [];
-    const seen = new Set<string>();
-    for (const value of ids) {
-        const id = normalizeAnchorId(value);
-        if (!id || !knownIds.has(id) || seen.has(id)) continue;
-        seen.add(id);
-        out.push(id);
+/**
+ * Scrollspy containment in renderer index space: the current anchor is the
+ * GREATEST anchor whose row starts at or above the leading visible row.
+ *
+ * Partial-visibility tie-break. An anchor sitting exactly at `firstSourceIndex`
+ * is the leading row: it counts as landed whether its top has already scrolled a
+ * little above the viewport edge or a freshly aligned jump placed it just below
+ * it. An anchor BELOW the leading row is only peeking in from the bottom and
+ * must not steal `current` from the turn whose body the reader is actually
+ * inside — that turn's own prompt row is usually unmounted by virtualization,
+ * which is precisely why this cannot be answered from mounted rows.
+ */
+function resolveContainingAnchorId(
+    anchors: readonly TranscriptNavigationAnchorCandidate[],
+    firstSourceIndex: number,
+    requiredKind: TranscriptNavigationAnchorKind | null,
+): string | null {
+    let containing: TranscriptNavigationAnchorCandidate | null = null;
+    for (const anchor of anchors) {
+        if (anchor.sourceIndex > firstSourceIndex) break;
+        if (requiredKind !== null && anchor.kind !== requiredKind) continue;
+        containing = anchor;
     }
-    return out;
-}
-
-function resolveVisibleAnchorIds(params: Readonly<{
-    anchors: readonly TranscriptNavigationAnchorCandidate[];
-    knownIds: ReadonlySet<string>;
-    visibleAnchorIds?: readonly string[];
-    visibleSourceRange?: TranscriptVisibleSourceRange | null;
-}>): readonly string[] {
-    if (params.visibleAnchorIds) {
-        return dedupeAnchorIds(params.visibleAnchorIds, params.knownIds);
-    }
-    if (!isValidRange(params.visibleSourceRange)) return [];
-    return params.anchors
-        .filter((anchor) => (
-            anchor.sourceIndex >= params.visibleSourceRange!.firstSourceIndex &&
-            anchor.sourceIndex <= params.visibleSourceRange!.lastSourceIndex
-        ))
-        .map((anchor) => anchor.id);
+    return containing?.id ?? null;
 }
 
 export function deriveCurrentTranscriptAnchor(
     input: DeriveCurrentTranscriptAnchorInput,
 ): NavigationVisibilitySnapshot {
     const anchors = normalizeAnchors(input.anchors);
-    if (anchors.length === 0) {
-        return { currentAnchorId: null, visibleAnchorIds: [] };
-    }
-    const knownIds = new Set(anchors.map((anchor) => anchor.id));
-    const anchorsById = new Map(anchors.map((anchor) => [anchor.id, anchor] as const));
-    const visibleAnchorIds = resolveVisibleAnchorIds({
-        anchors,
-        knownIds,
-        visibleAnchorIds: input.visibleAnchorIds,
-        visibleSourceRange: input.visibleSourceRange,
-    });
-    const topVisibleAnchorId = normalizeAnchorId(input.topVisibleAnchorId);
-    if (input.preferUserTurnAnchor === true && visibleAnchorIds.length > 0) {
-        const currentAnchorId = visibleAnchorIds.find((id) => anchorsById.get(id)?.kind === 'user-turn') ?? topVisibleAnchorId ?? visibleAnchorIds[0] ?? null;
-        return {
-            currentAnchorId,
-            visibleAnchorIds: topVisibleAnchorId && knownIds.has(topVisibleAnchorId) && !visibleAnchorIds.includes(topVisibleAnchorId)
-                ? [topVisibleAnchorId, ...visibleAnchorIds]
-                : visibleAnchorIds,
-        };
-    }
-    if (topVisibleAnchorId && knownIds.has(topVisibleAnchorId)) {
-        return {
-            currentAnchorId: topVisibleAnchorId,
-            visibleAnchorIds: visibleAnchorIds.includes(topVisibleAnchorId)
-                ? visibleAnchorIds
-                : [topVisibleAnchorId, ...visibleAnchorIds],
-        };
-    }
-    if (visibleAnchorIds.length === 0) {
-        return { currentAnchorId: null, visibleAnchorIds: [] };
+    const range = input.visibleSourceRange;
+    if (anchors.length === 0 || !isValidRange(range)) {
+        return EMPTY_TRANSCRIPT_NAVIGATION_VISIBILITY_SNAPSHOT;
     }
 
-    const currentAnchorId = input.preferUserTurnAnchor === true
-        ? visibleAnchorIds.find((id) => anchorsById.get(id)?.kind === 'user-turn') ?? visibleAnchorIds[0] ?? null
-        : visibleAnchorIds[0] ?? null;
+    const visibleAnchorIds = anchors
+        .filter((anchor) => (
+            anchor.sourceIndex >= range.firstSourceIndex &&
+            anchor.sourceIndex <= range.lastSourceIndex
+        ))
+        .map((anchor) => anchor.id);
 
-    return {
-        currentAnchorId,
-        visibleAnchorIds,
-    };
+    const landedAnchorId = typeof input.landedAnchorId === 'string' && input.landedAnchorId.length > 0
+        ? input.landedAnchorId
+        : null;
+
+    const currentAnchorId = (
+        (landedAnchorId !== null && anchors.some((anchor) => anchor.id === landedAnchorId)
+            ? landedAnchorId
+            : null)
+        ?? (input.preferUserTurnAnchor === true
+            ? resolveContainingAnchorId(anchors, range.firstSourceIndex, 'user-turn')
+            : null)
+        ?? resolveContainingAnchorId(anchors, range.firstSourceIndex, null)
+        ?? visibleAnchorIds[0]
+        ?? null
+    );
+
+    return { currentAnchorId, visibleAnchorIds };
 }

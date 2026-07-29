@@ -1,5 +1,9 @@
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import * as React from 'react';
-import { Ionicons, Octicons } from '@expo/vector-icons';
+import {
+    Ionicons,
+    Octicons,
+} from '@expo/vector-icons';
 
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
@@ -8,7 +12,9 @@ import { knownTools } from '@/components/tools/catalog';
 import { getToolViewComponent } from '@/components/tools/renderers/core/_registry';
 import { normalizeToolCallForRendering } from '@/components/tools/normalization/core/normalizeToolCallForRendering';
 import { resolveToolHeaderTextPresentation } from '@/components/tools/shell/presentation/resolveToolHeaderTextPresentation';
-import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import {
+    getAgentCore,
+} from '@/agents/catalog/catalog';
 
 export type ToolHeaderModel = Readonly<{
     toolForRendering: ToolCall;
@@ -48,7 +54,7 @@ export function buildToolHeaderModel(input: {
         toolForRendering.permission?.status === 'pending' &&
         toolForRendering.state === 'running';
 
-    const agentId = resolveAgentIdFromFlavor(input.metadata?.flavor);
+    const agentId = resolveAgentIdFromSessionMetadata(input.metadata);
     const hideUnknownToolsByDefault = agentId ? getAgentCore(agentId).toolRendering.hideUnknownToolsByDefault : false;
 
     const shouldHideBodyPermanently = hideUnknownToolsByDefault && isUnknownTool;

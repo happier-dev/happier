@@ -22,6 +22,13 @@ const expoImageState = vi.hoisted(() => ({
     image: 'Image' as unknown,
 }));
 
+const badgeSettingsState = vi.hoisted(() => ({
+    friends: true,
+    inbox: true,
+    sessions: true,
+    showLabels: true,
+}));
+
 installNavigationCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -35,6 +42,14 @@ installNavigationCommonModuleMocks({
         return {
             ...actual,
             useFriendRequests: (() => friendRequestsState.items) as typeof import('@/sync/domains/state/storage').useFriendRequests,
+            useSetting: ((key: string) => {
+                if (key === 'tabBarFriendsBadgeEnabled') return badgeSettingsState.friends;
+                if (key === 'tabBarInboxBadgeEnabled') return badgeSettingsState.inbox;
+                if (key === 'tabBarSessionsBadgeEnabled') return badgeSettingsState.sessions;
+                if (key === 'tabBarShowLabels') return badgeSettingsState.showLabels;
+                if (key === 'tabBarSize') return 'regular';
+                return undefined;
+            }) as typeof import('@/sync/domains/state/storage').useSetting,
         };
     },
 });
@@ -47,6 +62,11 @@ vi.mock('expo-image', () => ({
     get Image() {
         return expoImageState.image;
     },
+}));
+
+vi.mock('expo-blur', () => ({
+    BlurView: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) =>
+        React.createElement('BlurView', props, children),
 }));
 
 vi.mock('@/components/ui/layout/layout', () => ({
@@ -87,7 +107,102 @@ describe('MainAppTabBar', () => {
         inboxState.hasContent = false;
         sessionsAttentionState.hasAttention = false;
         expoImageState.image = 'Image';
+        badgeSettingsState.friends = true;
+        badgeSettingsState.inbox = true;
+        badgeSettingsState.sessions = true;
+        badgeSettingsState.showLabels = true;
         vi.resetModules();
+    });
+
+    it('exposes localized tab semantics and selected state when visual labels are hidden', async () => {
+        badgeSettingsState.showLabels = false;
+        friendRequestsState.items = [{ id: 'fr-1' }, { id: 'fr-2' }];
+        inboxState.hasContent = true;
+        sessionsAttentionState.hasAttention = true;
+        const { MainAppTabBar } = await import('./MainAppTabBar');
+
+        const screen = await renderScreen(
+            <MainAppTabBar activeTab="sessions" onTabPress={() => {}} />,
+        );
+
+        expect(screen.tree.findAll((node) => node.props.accessibilityRole === 'tablist')).toHaveLength(1);
+
+        const expectedTabs = [
+            ['settings', 'tabs.settings', false],
+            ['friends', 'tabs.friends', false],
+            ['projects', 'tabs.projects', false],
+            ['sessions', 'tabs.sessions', true],
+            ['inbox', 'tabs.inbox', false],
+        ] as const;
+
+        for (const [id, label, selected] of expectedTabs) {
+            const tab = screen.findByTestId(`tabbar-tab-${id}`);
+            expect(tab?.props.accessibilityRole).toBe('tab');
+            expect(tab?.props.accessibilityLabel).toBe(label);
+            expect(tab?.props.accessibilityState).toEqual({ selected });
+            expect(tab?.props['aria-selected']).toBe(selected);
+            expect(tab && hasTextChild(tab, label)).toBe(false);
+        }
+    });
+
+    it('supplements RNW tab activation for Space without double-handling Enter or pointer presses', async () => {
+        const onTabPress = vi.fn();
+        const { MainAppTabBar } = await import('./MainAppTabBar');
+        const screen = await renderScreen(
+            <MainAppTabBar activeTab="sessions" onTabPress={onTabPress} />,
+        );
+        const projectsTab = screen.findByTestId('tabbar-tab-projects');
+        const preventDefault = vi.fn();
+
+        expect(projectsTab?.props.onKeyDown).toEqual(expect.any(Function));
+        projectsTab?.props.onKeyDown({
+            key: ' ',
+            nativeEvent: { key: ' ' },
+            preventDefault,
+        });
+        expect(preventDefault).toHaveBeenCalledOnce();
+        expect(onTabPress).toHaveBeenCalledOnce();
+        expect(onTabPress).toHaveBeenLastCalledWith('projects');
+
+        projectsTab?.props.onKeyDown({
+            key: 'Enter',
+            nativeEvent: { key: 'Enter' },
+            preventDefault,
+        });
+        expect(onTabPress).toHaveBeenCalledOnce();
+
+        projectsTab?.props.onPress();
+        expect(onTabPress).toHaveBeenCalledTimes(2);
+        expect(onTabPress).toHaveBeenLastCalledWith('projects');
+
+        const { Platform } = await import('react-native');
+        const previousPlatform = Platform.OS;
+        (Platform as { OS: string }).OS = 'ios';
+        try {
+            const nativeScreen = await renderScreen(
+                <MainAppTabBar activeTab="sessions" onTabPress={onTabPress} />,
+            );
+            expect(nativeScreen.findByTestId('tabbar-tab-projects')?.props.onKeyDown).toBeUndefined();
+        } finally {
+            (Platform as { OS: string }).OS = previousPlatform;
+        }
+    });
+
+    it('hides tab badges when disabled in settings', async () => {
+        friendRequestsState.items = [{ id: 'fr-1' }, { id: 'fr-2' }];
+        inboxState.hasContent = true;
+        sessionsAttentionState.hasAttention = true;
+        badgeSettingsState.friends = false;
+        badgeSettingsState.inbox = false;
+        badgeSettingsState.sessions = false;
+        const { MainAppTabBar } = await import('./MainAppTabBar');
+
+        const tree = (await renderScreen(<MainAppTabBar activeTab="sessions" onTabPress={() => {}} />)).tree;
+
+        const tabs = tree.findAll((node) => typeof node.props?.onPress === 'function');
+        const allTextNodes = tree.findAllByType('Text' as never);
+        expect(tabs.some((tab) => hasIndicatorDot(tab))).toBe(false);
+        expect(allTextNodes.some((node) => String(node.props.children) === '2')).toBe(false);
     });
 
     it('renders tabs in settings, friends, projects, sessions, inbox order', async () => {

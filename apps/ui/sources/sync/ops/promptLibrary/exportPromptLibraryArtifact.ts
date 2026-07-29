@@ -15,6 +15,9 @@ import { sync } from '@/sync/sync';
 import { machinePromptAssetsWrite } from '@/sync/ops/machinePromptAssets';
 import { randomUUID } from '@/platform/randomUUID';
 import { findPromptExternalLink, upsertPromptExternalLink } from './promptDocs';
+import { runTransferFinalizeRecovery } from '@/components/transfers/recovery/runTransferFinalizeRecovery';
+import { t } from '@/text';
+import { isTransferFinalizeRecoveryFailure } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/directTransferFinalizeRecovery';
 
 export type ExportablePromptLibraryArtifact =
   | Readonly<{ libraryKind: 'doc'; title: string; markdown: string }>
@@ -124,11 +127,31 @@ export async function writePromptLibraryArtifactToExternalAsset(args: Readonly<{
         expectedDigest,
       };
 
-  const response = await machinePromptAssetsWrite(
+  let response = await machinePromptAssetsWrite(
     args.machineId,
     request,
     args.serverId ? { serverId: args.serverId } : undefined,
   );
+  if (isTransferFinalizeRecoveryFailure<PromptAssetMutationResponseV1>(response)) {
+    const recoveryResult = await runTransferFinalizeRecovery({
+      recovery: response.recovery,
+      title: t('transferRecovery.title'),
+      message: t('transferRecovery.message'),
+    });
+    if (recoveryResult?.status === 'finalized') {
+      response = recoveryResult.response;
+    } else {
+      response = {
+        ok: false,
+        error: recoveryResult?.status === 'unavailable'
+          ? t('transferRecovery.unavailable')
+          : recoveryResult?.status === 'discarded'
+            ? t('transferRecovery.discarded')
+            : response.error,
+        errorCode: 'internal_error',
+      };
+    }
+  }
   if (!response.ok) {
     return {
       ok: false,

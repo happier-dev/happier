@@ -1,4 +1,3 @@
-import { Platform } from 'react-native';
 import type { TranscriptPrependHost } from './useTranscriptPrependHost';
 
 type MutableRef<T> = { current: T };
@@ -21,7 +20,6 @@ export type TranscriptPrependOlderLoadSyncOptions = Readonly<{
 
 export async function runTranscriptPrependOlderLoad(params: Readonly<{
     clearOlderLoadSpinnerDelay: () => void;
-    hasActiveEntrySliceWindow: () => boolean;
     hasMoreOlder: boolean | null;
     hasMoreOlderRef: MutableRef<boolean | null>;
     hideOlderLoadSpinner: () => void;
@@ -31,7 +29,6 @@ export async function runTranscriptPrependOlderLoad(params: Readonly<{
     olderLoadSpinnerDelayTimeoutRef: MutableRef<ReturnType<typeof setTimeout> | null>;
     options?: TranscriptPrependOlderLoadOptions;
     prependHost: TranscriptPrependHost;
-    revealEntrySliceWindow: () => number;
     resolveSyncLoadOlderOptions: () => TranscriptPrependOlderLoadSyncOptions | null;
     setHasMoreOlder: (value: boolean) => void;
     setIsLoadingOlder: (value: boolean) => void;
@@ -67,28 +64,7 @@ export async function runTranscriptPrependOlderLoad(params: Readonly<{
     }
     let loadCompleted = false;
     try {
-        if (preservePrependViewport && params.hasActiveEntrySliceWindow()) {
-            const revealed = params.revealEntrySliceWindow();
-            if (revealed > 0) {
-                loadCompleted = true;
-                return {
-                    loaded: revealed,
-                    hasMore: params.hasMoreOlderRef.current ?? true,
-                    status: 'loaded',
-                };
-            }
-        }
-        if (Platform.OS === 'web') {
-            params.prependHost.webBeforeLoad({ preservePrependViewport });
-        }
         const result = await params.loadOlderMessages(params.resolveSyncLoadOlderOptions());
-
-        if (Platform.OS === 'web') {
-            params.prependHost.webAfterLoad({
-                loadedRowCount: result.loaded,
-                preservePrependViewport,
-            });
-        }
         loadCompleted = true;
         if (result.status === 'no_more') {
             params.hasMoreOlderRef.current = false;
@@ -99,9 +75,6 @@ export async function runTranscriptPrependOlderLoad(params: Readonly<{
         }
         return result;
     } finally {
-        if (Platform.OS === 'web' && !loadCompleted) {
-            params.prependHost.webClear('abandoned-identity');
-        }
         if (!loadCompleted && params.prependHost.hasOpenNativeTransaction()) {
             params.prependHost.invalidateNativeTransaction('load-empty');
         }

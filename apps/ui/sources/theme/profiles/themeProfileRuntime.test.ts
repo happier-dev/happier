@@ -13,7 +13,7 @@ import { getBuiltInThemeProfileDefinition } from './builtInThemeProfiles';
 import type { ThemeProfilesLocalStateV1 } from './themeProfileTypes';
 
 const profileState: ThemeProfilesLocalStateV1 = {
-    activeProfileId: 'ocean',
+    activeProfileIds: { light: 'ocean', dark: 'ocean' },
     profiles: [{
         schemaVersion: 1,
         id: 'ocean',
@@ -27,6 +27,39 @@ const profileState: ThemeProfilesLocalStateV1 = {
         },
     }],
 };
+
+const pairedProfileState = {
+    activeProfileIds: {
+        light: 'paper',
+        dark: 'noir',
+    },
+    profiles: [
+        {
+            schemaVersion: 1,
+            id: 'paper',
+            name: 'Paper',
+            createdAt: '2026-05-11T00:00:00.000Z',
+            updatedAt: '2026-05-11T00:00:00.000Z',
+            base: { light: 'light', dark: 'dark' },
+            overrides: {
+                light: { 'background.canvas': '#f8f6ef' },
+                dark: { 'background.canvas': '#101010' },
+            },
+        },
+        {
+            schemaVersion: 1,
+            id: 'noir',
+            name: 'Noir',
+            createdAt: '2026-05-11T00:00:00.000Z',
+            updatedAt: '2026-05-11T00:00:00.000Z',
+            base: { light: 'light', dark: 'dark' },
+            overrides: {
+                light: { 'background.canvas': '#eeeeee' },
+                dark: { 'background.canvas': '#08090a' },
+            },
+        },
+    ],
+} as unknown as ThemeProfilesLocalStateV1;
 
 describe('theme profile runtime', () => {
     it('falls back to canonical base themes when startup effective theme resolution fails', () => {
@@ -75,9 +108,16 @@ describe('theme profile runtime', () => {
         expect(themes.dark.colors.background.canvas).toBe('#0a0a0a');
     });
 
+    it('resolves light and dark runtime themes from independent active profile selections', () => {
+        const themes = resolveThemeRuntimeThemes(pairedProfileState);
+
+        expect(themes.light.colors.background.canvas).toBe('#f8f6ef');
+        expect(themes.dark.colors.background.canvas).toBe('#08090a');
+    });
+
     it('resolves startup themes from an active built-in preset without requiring a stored profile', () => {
         const themes = resolveThemeRuntimeThemes({
-            activeProfileId: 'premiumDark',
+            activeProfileIds: { light: null, dark: 'premiumDark' },
             profiles: [],
         });
         const premiumDark = getBuiltInThemeProfileDefinition('premiumDark')?.profile;
@@ -89,7 +129,7 @@ describe('theme profile runtime', () => {
     it('falls back to canonical base themes when the active profile id is missing', () => {
         const themes = resolveThemeRuntimeThemes({
             ...profileState,
-            activeProfileId: 'missing',
+            activeProfileIds: { light: 'missing', dark: 'missing' },
         });
 
         expect(themes.light).toBe(lightTheme);
@@ -165,6 +205,33 @@ describe('theme profile runtime', () => {
             visualTheme: 'dark',
             platform: 'ios',
         }));
+    });
+
+    it('updates both registered Unistyles themes on native when adaptive mode can switch visual themes later', () => {
+        const updateTheme = vi.fn();
+        const setAdaptiveThemes = vi.fn();
+        const setTheme = vi.fn();
+        const setRootViewBackgroundColor = vi.fn();
+
+        applyThemeRuntimeSelection({
+            themePreference: 'adaptive',
+            themeProfiles: pairedProfileState,
+            systemTheme: 'light',
+            platform: 'ios',
+            unistylesRuntime: {
+                updateTheme,
+                setAdaptiveThemes,
+                setTheme,
+                setRootViewBackgroundColor,
+            },
+            setSystemBackgroundColor: vi.fn(),
+        });
+
+        expect(updateTheme).toHaveBeenCalledWith('light', expect.any(Function));
+        expect(updateTheme).toHaveBeenCalledWith('dark', expect.any(Function));
+        expect(setAdaptiveThemes).toHaveBeenCalledWith(true);
+        expect(setTheme).not.toHaveBeenCalled();
+        expect(setRootViewBackgroundColor).toHaveBeenCalledWith('#f8f6ef');
     });
 
     it('falls back to canonical base themes when profile resolution fails during application', () => {
@@ -251,7 +318,9 @@ describe('theme profile runtime', () => {
             reduceMotion: false,
         }));
         expect(saveLocalSettings).toHaveBeenCalledWith(expect.objectContaining({
-            themeProfiles: expect.objectContaining({ activeProfileId: 'ocean' }),
+            themeProfiles: expect.objectContaining({
+                activeProfileIds: { light: 'ocean', dark: 'ocean' },
+            }),
         }));
     });
 
@@ -285,7 +354,9 @@ describe('theme profile runtime', () => {
 
         expect(saveLocalSettings).toHaveBeenCalledWith(expect.objectContaining({
             uiFontScale: 1.2,
-            themeProfiles: expect.objectContaining({ activeProfileId: 'ocean' }),
+            themeProfiles: expect.objectContaining({
+                activeProfileIds: { light: 'ocean', dark: 'ocean' },
+            }),
         }));
     });
 
@@ -302,7 +373,7 @@ describe('theme profile runtime', () => {
             systemTheme: 'dark',
             loadLocalSettings: () => ({
                 themePreference: 'dark',
-                themeProfiles: { activeProfileId: null, profiles: [] },
+                themeProfiles: { activeProfileIds: { light: null, dark: null }, profiles: [] },
             }),
             saveLocalSettings,
             runThemePreferenceChange,
@@ -312,7 +383,7 @@ describe('theme profile runtime', () => {
 
         expect(saveLocalSettings).toHaveBeenCalledWith(expect.objectContaining({
             themeProfiles: {
-                activeProfileId: 'premiumDark',
+                activeProfileIds: { light: null, dark: 'premiumDark' },
                 profiles: [],
             },
         }));

@@ -170,6 +170,7 @@ export const SessionShareDialog = memo(function SessionShareDialog({
                                             ) : null}
                                             <Item
                                                 title={t('session.sharing.stopSharing')}
+                                                subtitle={t('session.sharing.stopSharingDescription')}
                                                 onPress={() => handleRemoveShare(share.id)}
                                                 destructive
                                                 showDivider={false}

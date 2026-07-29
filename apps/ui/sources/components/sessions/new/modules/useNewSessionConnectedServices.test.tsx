@@ -2,7 +2,14 @@ import { renderHook } from '@/dev/testkit';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { act } from 'react-test-renderer';
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    createConnectedAccountDescriptorProjectionLoadingState,
+    type ConnectedAccountDescriptorProjectionState,
+} from '@/sync/domains/connectedServices/connectedAccountDescriptorProjection';
+import {
+    installConnectedAccountDescriptorProjection,
+} from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { installNewSessionModulesCommonModuleMocks } from './newSessionModulesTestHelpers';
 
 (
@@ -13,6 +20,57 @@ import { installNewSessionModulesCommonModuleMocks } from './newSessionModulesTe
 
 const modalShowMock = vi.hoisted(() => vi.fn());
 const useFeatureEnabledMock = vi.hoisted(() => vi.fn());
+const newSessionConnectedAccountProjection = {
+    scopeKey: 'new-session-test',
+    status: 'ready',
+    descriptors: [{
+        id: 'openai-codex',
+        serviceId: 'openai-codex',
+        pluginId: 'happier.agent.codex',
+        provenance: 'first_party',
+        sourceKind: 'bundled',
+        title: 'Codex',
+        authentication: {
+            defaultModeId: 'oauth',
+            modes: [{
+                id: 'oauth',
+                kind: 'oauthAuthorizationCode',
+                scopes: ['openid', 'profile', 'email', 'offline_access'],
+                pkce: 'required',
+                outcomeReconciliation: 'none',
+            }],
+        },
+        capabilities: [],
+        availability: { state: 'available', reason: 'resolved' },
+        diagnostics: [],
+    }, {
+        id: 'anthropic',
+        serviceId: 'anthropic',
+        pluginId: 'happier.agent.claude',
+        provenance: 'first_party',
+        sourceKind: 'bundled',
+        title: 'Anthropic API key',
+        authentication: {
+            defaultModeId: 'api-key',
+            modes: [{
+                id: 'api-key',
+                kind: 'manual',
+                outcomeReconciliation: 'none',
+                fields: [{
+                    id: 'token',
+                    title: 'Anthropic API key',
+                    schema: { type: 'string', minLength: 1 },
+                    secret: true,
+                }],
+            }],
+        },
+        capabilities: [],
+        availability: { state: 'available', reason: 'resolved' },
+        diagnostics: [],
+    }],
+    conflicts: [],
+    errorReason: null,
+} satisfies ConnectedAccountDescriptorProjectionState;
 type TestAccountProfile = Readonly<{
     connectedServicesV2: Array<{
         serviceId: string;
@@ -90,7 +148,6 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 vi.mock('@/sync/store/hooks', () => ({
     useProfile: () => profileState.current,
 }));
-
 function requireCollapsedContentPopover(chip: AgentInputExtraActionChip | null) {
     const popover = chip?.collapsedContentPopover;
     if (!popover) {
@@ -101,6 +158,7 @@ function requireCollapsedContentPopover(chip: AgentInputExtraActionChip | null) 
 
 describe('useNewSessionConnectedServices', () => {
     beforeEach(() => {
+        installConnectedAccountDescriptorProjection(newSessionConnectedAccountProjection);
         modalShowMock.mockReset();
         useFeatureEnabledMock.mockReset();
         useFeatureEnabledMock.mockReturnValue(true);
@@ -119,6 +177,12 @@ describe('useNewSessionConnectedServices', () => {
                 },
             ],
         };
+    });
+
+    afterEach(() => {
+        installConnectedAccountDescriptorProjection(
+            createConnectedAccountDescriptorProjectionLoadingState('new-session-test-cleanup'),
+        );
     });
 
     it('returns a connected-services chip that opens the anchored account picker popover', async () => {
@@ -236,7 +300,7 @@ describe('useNewSessionConnectedServices', () => {
             { anthropic: { source: 'connected', selection: 'profile', profileId: 'work' } },
         );
         expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
-            .toBe('connectedServices.serviceNames.anthropic: Work');
+            .toBe('Anthropic API key: Work');
 
         const reopenedPopoverRenderer = requireCollapsedContentPopover(
             hook.getCurrent().connectedServicesAuthChip,
@@ -256,11 +320,11 @@ describe('useNewSessionConnectedServices', () => {
         await hook.unmount();
     });
 
-    it('uses spawn-scoped feature gating so the chip stays available for the selected target server', async () => {
+    it('keeps the core chip available while scoping the account-groups decision to the target server', async () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
 
         useFeatureEnabledMock.mockImplementation((featureId: string, scope?: { scopeKind?: string; serverId?: string | null }) => {
-            return featureId === 'connectedServices'
+            return featureId === 'connectedServices.accountGroups'
                 && scope?.scopeKind === 'spawn'
                 && scope?.serverId === 'server-123';
         });
@@ -291,14 +355,18 @@ describe('useNewSessionConnectedServices', () => {
                 controlId: 'connectedServices',
             }),
         );
+        expect(useFeatureEnabledMock).toHaveBeenCalledWith('connectedServices.accountGroups', {
+            scopeKind: 'spawn',
+            serverId: 'server-123',
+        });
         await hook.unmount();
     });
 
-    it('uses the default feature scope when no target server is selected', async () => {
+    it('keeps the core chip available while using the default scope for account groups', async () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
 
         useFeatureEnabledMock.mockImplementation((featureId: string, scope?: { scopeKind?: string; serverId?: string | null }) => {
-            return featureId === 'connectedServices' && scope === undefined;
+            return featureId === 'connectedServices.accountGroups' && scope === undefined;
         });
 
         const hook = await renderHook(() =>
@@ -327,8 +395,8 @@ describe('useNewSessionConnectedServices', () => {
                 controlId: 'connectedServices',
             }),
         );
-        expect(useFeatureEnabledMock).toHaveBeenCalledWith('connectedServices', undefined);
         expect(useFeatureEnabledMock).toHaveBeenCalledWith('connectedServices.accountGroups', undefined);
+        expect(useFeatureEnabledMock).toHaveBeenCalledTimes(1);
         await hook.unmount();
     });
 
@@ -377,7 +445,7 @@ describe('useNewSessionConnectedServices', () => {
             },
         });
         expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
-            .toBe('connectedServices.serviceNames.anthropic: Work');
+            .toBe('Anthropic API key: Work');
 
         await hook.unmount();
     });
@@ -453,12 +521,12 @@ describe('useNewSessionConnectedServices', () => {
             },
         });
         expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
-            .toBe('connectedServices.serviceNames.openaiCodex: Primary pool');
+            .toBe('Codex: Primary pool');
 
         await hook.unmount();
     });
 
-    it('degrades a stale default group binding to native', async () => {
+    it('preserves a stale default group identity while presenting native availability', async () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
 
         profileState.current = {
@@ -513,7 +581,16 @@ describe('useNewSessionConnectedServices', () => {
             }),
         );
 
-        expect(hook.getCurrent().connectedServicesBindingsPayload).toBeNull();
+        expect(hook.getCurrent().connectedServicesBindingsPayload).toEqual({
+            v: 1,
+            bindingsByServiceId: {
+                'openai-codex': {
+                    source: 'connected',
+                    selection: 'group',
+                    groupId: 'missing-group',
+                },
+            },
+        });
         expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
             .toBe('connectedServices.authChip.nativeLabel');
 
@@ -540,7 +617,7 @@ describe('useNewSessionConnectedServices', () => {
         await hook.unmount();
     });
 
-    it('routes the settings action from the new-session popover without closing it first', async () => {
+    it('deep-links the picker settings action to the tapped service settings screen (UI-2)', async () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
 
         const requestClose = vi.fn();
@@ -576,16 +653,23 @@ describe('useNewSessionConnectedServices', () => {
             requestClose,
             maxHeight: 420,
         }) as React.ReactElement<{
-            onOpenSettings?: () => void;
+            onOpenSettings: (serviceId: string) => void;
         }>;
 
         expect(typeof popover.props.onOpenSettings).toBe('function');
         act(() => {
-            popover.props.onOpenSettings?.();
+            popover.props.onOpenSettings('anthropic');
         });
 
-        expect(requestClose).not.toHaveBeenCalled();
-        expect(routerPush).toHaveBeenCalledWith('/settings/connected-services');
+        // UI-2: the picker's settings action deep-links to the tapped service's
+        // settings screen instead of discarding the serviceId.
+        expect(routerPush).toHaveBeenCalledWith({
+            pathname: '/(app)/settings/connected-services/account',
+            params: {
+                pluginId: 'happier.agent.claude',
+                localId: 'anthropic',
+            },
+        });
 
         await hook.unmount();
     });
@@ -652,7 +736,14 @@ describe('useNewSessionConnectedServices', () => {
         });
 
         expect(requestClose).not.toHaveBeenCalled();
-        expect(routerPush).toHaveBeenCalledWith('/settings/connected-services/oauth?serviceId=openai-codex&profileId=happier');
+        expect(routerPush).toHaveBeenCalledWith({
+            pathname: '/(app)/settings/connected-services/account',
+            params: {
+                pluginId: 'happier.agent.codex',
+                localId: 'openai-codex',
+                accountId: 'happier',
+            },
+        });
 
         await hook.unmount();
     });
@@ -719,7 +810,14 @@ describe('useNewSessionConnectedServices', () => {
         });
 
         expect(requestClose).not.toHaveBeenCalled();
-        expect(routerPush).toHaveBeenCalledWith('/settings/connected-services/profile?serviceId=anthropic&profileId=work%40example.com');
+        expect(routerPush).toHaveBeenCalledWith({
+            pathname: '/(app)/settings/connected-services/account',
+            params: {
+                pluginId: 'happier.agent.claude',
+                localId: 'anthropic',
+                accountId: 'work@example.com',
+            },
+        });
 
         await hook.unmount();
     });

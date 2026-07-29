@@ -2,7 +2,7 @@ import {
     readRuntimeDescriptorV1,
     readServerEnabledBit,
     SessionHandoffCommitResponseSchema,
-    SessionHandoffPrepareTargetResultGetResponseSchema,
+    SessionHandoffPrepareTargetResultGetSuccessResponseSchema,
     SessionHandoffPrepareTargetResponseSchema,
     SessionHandoffStartResponseSchema,
     SessionHandoffStatusSchema,
@@ -20,7 +20,7 @@ import type {
 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { buildCodexBackendTransportFields } from '../domains/session/codexBackendTransport';
+import { buildBackendTransportFieldsFromUiState } from '@/agents/registry/registryUiBehavior';
 
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { sync } from '../sync';
@@ -49,6 +49,7 @@ import { resolveMachineTransferAvailability } from '../domains/transfers/runtime
 import { followUpSpawnedSessionWithServerScope } from '../runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
 import { buildSessionHandoffMetadataPatch } from './buildSessionHandoffMetadataPatch';
 import { resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { readSessionOwnerMetadataView } from '../domains/session/readSessionOwnerMetadataView';
 
 type MetadataRecord = Metadata;
 type HandoffErrorResult = Readonly<{
@@ -115,6 +116,11 @@ export type PerformSessionHandoffRecoveryActionResult =
 
 function normalizeId(raw: unknown): string {
     return String(raw ?? '').trim();
+}
+
+function readStoredSessionOwnerMetadata(sessionId: string): MetadataRecord | null {
+    const session = storage.getState().sessions?.[sessionId] ?? null;
+    return session ? readSessionOwnerMetadataView(session) : null;
 }
 
 function resolveTargetPreparePathForCrossPlatformHandoff(params: Readonly<{
@@ -277,7 +283,9 @@ function writeSessionMetadataToLocalSession(sessionId: string, metadata: Metadat
 
     state.applySessions([{
         ...currentSession,
-        metadata,
+        ...((currentSession.metadataLayoutVersion ?? 0) === 1
+            ? { ownerMetadataView: metadata }
+            : { metadata }),
     }]);
 
     return currentSession;
@@ -289,6 +297,69 @@ function readSessionHandoffRuntimeDescriptor(value: unknown): RuntimeDescriptorV
     }
 
     return readRuntimeDescriptorV1((value as { runtimeDescriptorV1?: unknown }).runtimeDescriptorV1) ?? undefined;
+}
+
+async function finalizeCommittedSessionHandoffTarget(
+    target: NonNullable<SessionHandoffRecoveryPlan['committedTarget']>,
+): Promise<void> {
+    const runtimeConfig = resolveSessionHandoffRuntimeConfig();
+    const buildNextMetadata = (metadata: MetadataRecord) => buildSessionHandoffMetadataPatch({
+        metadata,
+        sourceMetadataForHandoff: target.sourceMetadataForHandoff,
+        agentId: target.agentId,
+        sourceMachineId: target.sourceMachineId,
+        targetMachineId: target.targetMachineId,
+        sessionStorageBefore: target.sessionStorageBefore,
+        sessionStorageAfter: target.sessionStorageAfter,
+        targetPath: target.targetPath,
+        transportStrategy: target.transportStrategy,
+        completedAtMs: target.completedAtMs,
+        targetRemoteSessionId: target.targetRemoteSessionId,
+        targetDirectSource: target.targetDirectSource,
+        ...(target.targetRuntimeDescriptor
+            ? { targetRuntimeDescriptor: target.targetRuntimeDescriptor }
+            : {}),
+    });
+    const reapplyOptimisticBinding = () => {
+        const current = (
+            readStoredSessionOwnerMetadata(target.sessionId)
+            ?? target.sourceMetadataForHandoff
+        ) as MetadataRecord;
+        writeSessionMetadataToLocalSession(target.sessionId, buildNextMetadata(current));
+    };
+    reapplyOptimisticBinding();
+    const stabilized = await stabilizeSessionHandoffTargetBinding({
+        readSession: () => readSessionHandoffSessionActivity(target.sessionId),
+        readTargetMachineId: () => readMachineControlTargetForSession(target.sessionId)?.machineId ?? null,
+        reapplyOptimisticBinding,
+        targetMachineId: target.targetMachineId,
+        timeoutMs: runtimeConfig.postCommitBindingStabilizationTimeoutMs,
+        pollIntervalMs: runtimeConfig.postCommitBindingStabilizationIntervalMs,
+        requiredStablePolls: runtimeConfig.postCommitBindingStablePolls,
+    });
+    if (!stabilized.ok) reapplyOptimisticBinding();
+    await sync.patchSessionMetadataWithRetry(
+        target.sessionId,
+        (metadata) => buildNextMetadata(
+            (metadata ?? target.sourceMetadataForHandoff) as MetadataRecord,
+        ),
+        { serverId: target.serverId },
+    );
+    await sync.ensureSessionVisibleForMessageRoute(target.sessionId, {
+        forceRefresh: true,
+        ...(target.serverId ? { serverId: target.serverId } : {}),
+    });
+    reapplyOptimisticBinding();
+    const finalStabilized = await stabilizeSessionHandoffTargetBinding({
+        readSession: () => readSessionHandoffSessionActivity(target.sessionId),
+        readTargetMachineId: () => readMachineControlTargetForSession(target.sessionId)?.machineId ?? null,
+        reapplyOptimisticBinding,
+        targetMachineId: target.targetMachineId,
+        timeoutMs: runtimeConfig.postCommitBindingStabilizationTimeoutMs,
+        pollIntervalMs: runtimeConfig.postCommitBindingStabilizationIntervalMs,
+        requiredStablePolls: runtimeConfig.postCommitBindingStablePolls,
+    });
+    if (!finalStabilized.ok) reapplyOptimisticBinding();
 }
 
 function normalizePrepareTargetResponseCandidate(raw: unknown): Record<string, unknown> | null {
@@ -615,7 +686,7 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
     intervalMs: number;
     now: () => number;
     sleep: (delayMs: number) => Promise<void>;
-    onStatus?: (status: SessionHandoffStatus) => void;
+    onStatus?: (status: SessionHandoffStatus, transitionRevision?: number) => void;
 }>): Promise<
     | Readonly<{ ok: true; response: SessionHandoffPrepareTargetResponse }>
     | Readonly<{ ok: false; errorCode: string; errorMessage: string; status?: SessionHandoffStatus }>
@@ -669,7 +740,7 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
             });
             const resultError = readRawSessionHandoffError(rawResult);
             if (!resultError) {
-                const parsedResult = SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(rawResult);
+                const parsedResult = SessionHandoffPrepareTargetResultGetSuccessResponseSchema.safeParse(rawResult);
                 if (parsedResult.success) {
                     params.onStatus?.(parsedResult.data.status);
                     return { ok: true, response: parsedResult.data };
@@ -678,7 +749,10 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
                     `Unsupported target handoff prepare result response from daemon (${describeUnsupportedResponseKeys(rawResult)})`,
                 );
             }
-            if (resultError.errorCode !== 'not_found') {
+            if (
+                resultError.errorCode !== 'not_found'
+                && resultError.errorCode !== 'awaiting_user_resume'
+            ) {
                 return {
                     ok: false,
                     errorCode: resultError.errorCode,
@@ -722,8 +796,21 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
                     `Unsupported target handoff status response from daemon (${describeUnsupportedResponseKeys(rawStatus)})`,
                 );
             }
-            params.onStatus?.(parsedStatus.data);
+            const transitionRevision = (rawStatus as { transitionRevision?: unknown }).transitionRevision;
+            params.onStatus?.(
+                parsedStatus.data,
+                typeof transitionRevision === 'number'
+                    && Number.isSafeInteger(transitionRevision)
+                    && transitionRevision >= 0
+                    ? transitionRevision
+                    : undefined,
+            );
             noteProgress(parsedStatus.data);
+            if (parsedStatus.data.status === 'awaiting_user_resume') {
+                // Explicit user recovery is not a stalled transfer. Keep the passive status
+                // observation alive without advancing work while the modal awaits a press.
+                lastProgressAtMs = params.now();
+            }
             if (
                 parsedStatus.data.status === 'aborted'
                 || parsedStatus.data.status === 'awaiting_recovery'
@@ -763,7 +850,7 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
 
 export async function prepareTargetSessionHandoffWithRetry(
     params: Parameters<typeof prepareTargetSessionHandoff>[0] & Readonly<{
-        onStatus?: (status: SessionHandoffStatus) => void;
+        onStatus?: (status: SessionHandoffStatus, transitionRevision?: number) => void;
     }>,
     retryOptions?: CompleteSessionHandoffOptions['targetPrepareRetry'],
 ): Promise<Awaited<ReturnType<typeof prepareTargetSessionHandoff>>> {
@@ -943,12 +1030,13 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
     });
     let sourceRecovery: SessionHandoffRecoveryPlan | undefined;
     let lastReportedStatus: SessionHandoffStatus | null = null;
-    const reportStatus = (status: SessionHandoffStatus) => {
+    const reportStatus = (status: SessionHandoffStatus, transitionRevision?: number) => {
         lastReportedStatus = status;
         publishSessionHandoffProgress({
             sessionId: options.sessionId,
             targetMachineId: options.targetMachineId,
             status,
+            ...(transitionRevision === undefined ? {} : { transitionRevision }),
         });
     };
 
@@ -1002,7 +1090,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
     reportStatus(started.response.status);
 
     const directPeerEndpointCandidates =
-        started.response.handoffMetadataV2?.providerBundleTransferPublication?.endpointCandidates
+        started.response.handoffMetadataV2?.agentBundleTransferPublication?.endpointCandidates
         ?? started.response.endpointCandidates;
     const directPeerRouteInput = {
         serverId,
@@ -1051,7 +1139,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
             // the original source workspace root so one-way-safe baseline checks don't treat the
             // entire tree as diverged (a cross-platform rewrite would create a fresh sibling path).
             const metadataForTargetPathOverride =
-                (storage.getState().sessions?.[options.sessionId]?.metadata ?? options.sourceMetadata) as
+                (readStoredSessionOwnerMetadata(options.sessionId) ?? options.sourceMetadata) as
                     | { handoffV1?: Record<string, unknown> }
                     | null;
             const priorHandoff = metadataForTargetPathOverride?.handoffV1 ?? null;
@@ -1123,7 +1211,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
 
     const preparedRuntimeDescriptorV1 = readSessionHandoffRuntimeDescriptor(preparedResponse);
     const resumeConnectedServices = (() => {
-        const metadata = (storage.getState().sessions?.[options.sessionId]?.metadata ?? options.sourceMetadata) as MetadataRecord | null;
+        const metadata = (readStoredSessionOwnerMetadata(options.sessionId) ?? options.sourceMetadata) as MetadataRecord | null;
         if (!metadata) return undefined;
         return Object.prototype.hasOwnProperty.call(metadata, 'connectedServices')
             ? (metadata as unknown as Record<string, unknown>).connectedServices
@@ -1142,8 +1230,9 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         ...(preparedResponse.resume.environmentVariables ? { environmentVariables: preparedResponse.resume.environmentVariables } : {}),
         ...(resumeConnectedServices !== undefined ? { connectedServices: resumeConnectedServices } : {}),
         transcriptStorage: preparedResponse.resume.transcriptStorage,
-        ...buildCodexBackendTransportFields({
-            codexBackendMode: preparedResponse.resume.codexBackendMode,
+        ...buildBackendTransportFieldsFromUiState({
+            backendTarget: { kind: 'backend', backendId: preparedResponse.resume.agent },
+            providerMode: preparedResponse.resume.codexBackendMode,
             runtimeDescriptorV1: preparedRuntimeDescriptorV1,
         }),
         ...(normalizeId(options.serverId) ? { serverId: normalizeId(options.serverId) } : {}),
@@ -1163,13 +1252,13 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
             ...(sourceRecovery ? { recovery: sourceRecovery } : {}),
         };
     }
-    const providerId = resolveAgentIdFromFlavor(preparedResponse.resume.agent);
-    if (!providerId) {
+    const agentId = resolveAgentIdFromFlavor(preparedResponse.resume.agent);
+    if (!agentId) {
         throw new Error(`Unsupported session handoff provider: ${preparedResponse.resume.agent}`);
     }
     const targetSessionStorageMode = options.targetSessionStorageMode ?? options.sessionStorageMode;
     const completedAtMs = Date.now();
-    const sourceMetadataForHandoffPatch = (storage.getState().sessions?.[options.sessionId]?.metadata ?? options.sourceMetadata) as MetadataRecord;
+    const sourceMetadataForHandoffPatch = (readStoredSessionOwnerMetadata(options.sessionId) ?? options.sourceMetadata) as MetadataRecord;
     const transportStrategy: SessionHandoffTransportStrategy =
         prepared.response.status.transportStrategy === 'direct_peer'
         || prepared.response.status.transportStrategy === 'server_routed_stream'
@@ -1178,7 +1267,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
     const buildNextMetadata = (metadata: MetadataRecord) => buildSessionHandoffMetadataPatch({
         metadata,
         sourceMetadataForHandoff: sourceMetadataForHandoffPatch,
-        providerId,
+        agentId,
         sourceMachineId: started.sourceMachineId,
         targetMachineId: options.targetMachineId,
         sessionStorageBefore: options.sessionStorageMode,
@@ -1203,7 +1292,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         );
     };
     const reapplyOptimisticBinding = () => {
-        const reboundMetadata = (storage.getState().sessions?.[options.sessionId]?.metadata ?? options.sourceMetadata) as MetadataRecord;
+        const reboundMetadata = (readStoredSessionOwnerMetadata(options.sessionId) ?? options.sourceMetadata) as MetadataRecord;
         writeSessionMetadataToLocalSession(options.sessionId, buildNextMetadata(reboundMetadata));
     };
     let targetSessionActive;
@@ -1255,7 +1344,10 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
     }
 
     await publishTargetMetadata();
-    await sync.ensureSessionVisibleForMessageRoute(options.sessionId, { forceRefresh: true });
+    await sync.ensureSessionVisibleForMessageRoute(options.sessionId, {
+        forceRefresh: true,
+        ...(serverId ? { serverId } : {}),
+    });
     reapplyOptimisticBinding();
 
     const committed = await commitSessionHandoff({
@@ -1267,6 +1359,35 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
     if (!committed.ok) return committed;
     reportStatus(committed.response.status);
     reapplyOptimisticBinding();
+    const committedRecovery: SessionHandoffRecoveryPlan = {
+        handoffId: committed.response.handoffId,
+        actions: ['retry_source_cleanup'],
+        committedTarget: {
+            sessionId: options.sessionId,
+            sourceMachineId: started.sourceMachineId,
+            targetMachineId: options.targetMachineId,
+            serverId,
+            sourceMetadataForHandoff: sourceMetadataForHandoffPatch,
+            agentId,
+            sessionStorageBefore: options.sessionStorageMode,
+            sessionStorageAfter: targetSessionStorageMode,
+            targetPath: preparedResponse.resume.directory,
+            transportStrategy,
+            completedAtMs,
+            targetRemoteSessionId: preparedResponse.remoteSessionId,
+            targetDirectSource: preparedResponse.directSource as unknown as Record<string, unknown>,
+            ...(preparedRuntimeDescriptorV1
+                ? { targetRuntimeDescriptor: preparedRuntimeDescriptorV1 }
+                : {}),
+        },
+        sourceCleanup: {
+            machineId: started.sourceMachineId,
+            serverId,
+            workspaceReplicationReverseSourceRootPath: preparedResponse.resume.directory,
+            workspaceReplicationReverseTargetRootPath:
+                started.response.handoffMetadataV2?.workspaceReplicationSourceRootPath ?? null,
+        },
+    };
 
     // Source-side cleanup must complete before we declare the handoff "done". If the source keeps
     // running, it can still publish metadata updates (including machine binding) that overwrite the
@@ -1281,34 +1402,26 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         // workspace root, not a cross-platform rewrite of the target machine's prepare path.
         workspaceReplicationReverseTargetRootPath: started.response.handoffMetadataV2?.workspaceReplicationSourceRootPath ?? null,
     });
-    if (!sourceCleanup.ok) return sourceCleanup;
-
-    const stabilizedBinding = await stabilizeSessionHandoffTargetBinding({
-        readSession: () => readSessionHandoffSessionActivity(options.sessionId),
-        readTargetMachineId: () => readMachineControlTargetForSession(options.sessionId)?.machineId ?? null,
-        reapplyOptimisticBinding,
-        targetMachineId: options.targetMachineId,
-        timeoutMs: runtimeConfig.postCommitBindingStabilizationTimeoutMs,
-        pollIntervalMs: runtimeConfig.postCommitBindingStabilizationIntervalMs,
-        requiredStablePolls: runtimeConfig.postCommitBindingStablePolls,
-    });
-    if (!stabilizedBinding.ok) {
-        reapplyOptimisticBinding();
+    if (!sourceCleanup.ok) {
+        return {
+            ...sourceCleanup,
+            handoffId: committed.response.handoffId,
+            status: committed.response.status,
+            recovery: committedRecovery,
+        };
     }
-    await publishTargetMetadata();
-    await sync.ensureSessionVisibleForMessageRoute(options.sessionId, { forceRefresh: true });
-    reapplyOptimisticBinding();
-    const finalStabilizedBinding = await stabilizeSessionHandoffTargetBinding({
-        readSession: () => readSessionHandoffSessionActivity(options.sessionId),
-        readTargetMachineId: () => readMachineControlTargetForSession(options.sessionId)?.machineId ?? null,
-        reapplyOptimisticBinding,
-        targetMachineId: options.targetMachineId,
-        timeoutMs: runtimeConfig.postCommitBindingStabilizationTimeoutMs,
-        pollIntervalMs: runtimeConfig.postCommitBindingStabilizationIntervalMs,
-        requiredStablePolls: runtimeConfig.postCommitBindingStablePolls,
-    });
-    if (!finalStabilizedBinding.ok) {
-        reapplyOptimisticBinding();
+
+    try {
+        await finalizeCommittedSessionHandoffTarget(committedRecovery.committedTarget!);
+    } catch (error) {
+        return {
+            ok: false,
+            errorCode: 'target_finalization_failed',
+            errorMessage: error instanceof Error ? error.message : 'Failed to finalize target session binding',
+            handoffId: committed.response.handoffId,
+            status: committed.response.status,
+            recovery: committedRecovery,
+        };
     }
 
     return {
@@ -1320,9 +1433,44 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
 
 export async function performSessionHandoffRecoveryAction(params: Readonly<{
     recovery: SessionHandoffRecoveryPlan;
-    action: 'restart_on_source' | 'keep_stopped';
+    action: 'restart_on_source' | 'keep_stopped' | 'retry_source_cleanup';
 }>): Promise<PerformSessionHandoffRecoveryActionResult> {
     if (params.action === 'keep_stopped') {
+        return { ok: true };
+    }
+    if (params.action === 'retry_source_cleanup') {
+        const target = params.recovery.committedTarget;
+        const cleanup = params.recovery.sourceCleanup;
+        if (!target || !cleanup) {
+            return { ok: false, error: 'Committed handoff cleanup recovery coordinates are unavailable' };
+        }
+        try {
+            await finalizeCommittedSessionHandoffTarget(target);
+        } catch (error) {
+            return {
+                ok: false,
+                error: error instanceof Error ? error.message : 'Failed to restore target binding before cleanup',
+            };
+        }
+        const cleaned = await commitSessionHandoff({
+            machineId: cleanup.machineId,
+            handoffId: params.recovery.handoffId,
+            mode: 'source_cleanup',
+            serverId: cleanup.serverId,
+            workspaceReplicationReverseSourceRootPath:
+                cleanup.workspaceReplicationReverseSourceRootPath,
+            workspaceReplicationReverseTargetRootPath:
+                cleanup.workspaceReplicationReverseTargetRootPath,
+        });
+        if (!cleaned.ok) return { ok: false, error: cleaned.errorMessage };
+        try {
+            await finalizeCommittedSessionHandoffTarget(target);
+        } catch (error) {
+            return {
+                ok: false,
+                error: error instanceof Error ? error.message : 'Failed to restore target binding after cleanup',
+            };
+        }
         return { ok: true };
     }
     const sourceResume = params.recovery.sourceResume;
@@ -1339,8 +1487,9 @@ export async function performSessionHandoffRecoveryAction(params: Readonly<{
         ...(sourceRuntimeDescriptorV1 ? { runtimeDescriptorV1: sourceRuntimeDescriptorV1 } : {}),
         ...(sourceResume.environmentVariables ? { environmentVariables: sourceResume.environmentVariables } : {}),
         transcriptStorage: sourceResume.transcriptStorage,
-        ...buildCodexBackendTransportFields({
-            codexBackendMode: sourceResume.codexBackendMode,
+        ...buildBackendTransportFieldsFromUiState({
+            backendTarget: { kind: 'backend', backendId: sourceResume.agent },
+            providerMode: sourceResume.codexBackendMode,
             runtimeDescriptorV1: sourceRuntimeDescriptorV1,
         }),
         ...(sourceResume.serverId ? { serverId: sourceResume.serverId } : {}),

@@ -194,6 +194,14 @@ function resolveKnownServerIdForSession(
     return serverIds.length === 1 ? serverIds[0]! : null;
 }
 
+function resolveActionContextServerId(serverId: string | null | undefined): string | null {
+    const normalized = typeof serverId === 'string' ? serverId.trim() : '';
+    if (!normalized || normalized === 'local') {
+        return null;
+    }
+    return normalized;
+}
+
 function collectKnownInteractionIdentities(
     snapshot: DesktopActivityOverlaySnapshot,
 ): readonly ActivityInteractionIdentity[] {
@@ -245,6 +253,11 @@ function buildDirectActionTargetContext(payload: InteractionPayload): ActivityIn
     };
 }
 
+function buildCanonicalDirectActionPayload(data: Record<string, unknown> | undefined): Record<string, unknown> {
+    const { serverId: _serverId, serverUrl: _serverUrl, ...payload } = data ?? {};
+    return payload;
+}
+
 function buildVerifiedDesktopDirectActionCommand(params: Readonly<{
     actionIdentifier: string;
     payload: InteractionPayload;
@@ -263,7 +276,7 @@ function buildVerifiedDesktopDirectActionCommand(params: Readonly<{
     return {
         kind: 'executeAction',
         actionId: params.actionIdentifier as ActionId,
-        payload: params.payload.data ?? {},
+        payload: buildCanonicalDirectActionPayload(params.payload.data),
         defaultSessionId: sessionId,
         target: buildDirectActionTargetContext(params.payload),
         identity: {
@@ -544,9 +557,11 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
                 const requestId = readRequestIdFromInteraction(payload);
                 fireAndForget((async () => {
                     try {
+                        const serverId = resolveActionContextServerId(command.identity?.serverId ?? command.target.serverId);
                         const result = await actionExecutor.execute(command.actionId, command.payload, {
                             surface: 'ui',
                             defaultSessionId: command.defaultSessionId,
+                            ...(serverId ? { serverId } : {}),
                         });
                         emitDirectActionInteractionResult(requestId, result);
                     } catch (error) {

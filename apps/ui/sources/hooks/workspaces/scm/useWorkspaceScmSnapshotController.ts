@@ -54,6 +54,7 @@ export function useWorkspaceScmSnapshotController(scope: WorkspaceScopeBase | nu
         setLoading(true);
         try {
             const next = await scmRepositoryService.fetchSnapshotForMachinePath({
+                serverId: normalizedScope.serverId,
                 machineId: normalizedScope.machineId,
                 path: normalizedScope.rootPath,
             });

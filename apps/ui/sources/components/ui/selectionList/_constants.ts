@@ -13,7 +13,7 @@ export const SELECTION_LIST_DEFAULT_LOADING_SKELETON_ROWS = 3;
 
 /**
  * Above this row count per section, `SelectionListVirtualizedSection` switches
- * to FlashList (via the repo `flashListCompat` wrapper). Below it, sections
+ * to the canonical virtualized-list owner. Below it, sections
  * render as plain mapped `Item` rows under `ItemGroup` for simplicity.
  *
  * Verified via Phase 0.5 audit: `ItemList` is `ScrollView`-based and renders
@@ -22,7 +22,7 @@ export const SELECTION_LIST_DEFAULT_LOADING_SKELETON_ROWS = 3;
  */
 export const SELECTION_LIST_VIRTUALIZATION_THRESHOLD = 50;
 
-/** Estimated row height passed to FlashList for the virtualized path. */
+/** Estimated row height passed to the virtualized backend. */
 export const SELECTION_LIST_VIRTUALIZED_ROW_ESTIMATED_HEIGHT_PX = 56;
 
 /**

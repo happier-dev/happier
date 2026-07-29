@@ -23,6 +23,11 @@ const runtimeActiveMockState = vi.hoisted(() => ({
     value: true,
 }));
 
+const syncStoreHooksMockState = vi.hoisted(() => ({
+    sessions: [] as Array<Record<string, unknown>>,
+    machines: {} as Record<string, Record<string, unknown>>,
+}));
+
 const relayAccessWizardMockState = vi.hoisted(() => ({
     providerId: 'lan' as 'lan' | 'cloudflareNamed' | 'tailscaleServe' | 'tailscaleFunnel',
     latestProps: null as Record<string, unknown> | null,
@@ -31,6 +36,31 @@ const relayAccessWizardMockState = vi.hoisted(() => ({
     effectSelectionProviderId: 'lan' as 'lan' | 'cloudflareNamed' | 'tailscaleServe' | 'tailscaleFunnel',
     effectSelectionNotificationCount: 0,
 }));
+
+function directChildTestIDs(node: { props: { children?: React.ReactNode } } | null | undefined): string[] {
+    return React.Children.toArray(node?.props.children)
+        .map((child) => {
+            if (!React.isValidElement<{ testID?: string; testIDPrefix?: string }>(child)) {
+                return null;
+            }
+            if (typeof child.props.testID === 'string') {
+                return child.props.testID;
+            }
+            if (typeof child.props.testIDPrefix === 'string') {
+                return `${child.props.testIDPrefix}-download-cta`;
+            }
+            return null;
+        })
+        .filter((testID): testID is string => typeof testID === 'string');
+}
+
+function findAllInCurrentWizardBodyByType(screen: Readonly<{
+    findByTestId: (testID: string) => ReactTestInstance | null;
+    findAllByType: (type: never) => ReactTestInstance[];
+}>, type: never): ReactTestInstance[] {
+    return screen.findByTestId('onboarding-wizard-body-transition-current-layer')?.findAllByType(type)
+        ?? screen.findAllByType(type);
+}
 
 vi.mock('@/components/onboarding/steps/relayAccess/RelayAccessLanUrlStep', () => ({
     RelayAccessLanUrlStep: (_props: Record<string, unknown>) => {
@@ -148,7 +178,7 @@ const runtimeFetchMock = vi.hoisted(() => vi.fn(async (input: RequestInfo | URL,
         url.includes('https://unreachable-relay.example.test')
         && url.endsWith('/health')
     ) {
-        return new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+        return new Response(JSON.stringify({ ok: false }), { status: 404, headers: { 'content-type': 'application/json' } });
     }
     return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
 }));
@@ -274,6 +304,7 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     }),
 }));
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    HAPPIER_CLOUD_SERVER_URL: 'https://api.happier.dev',
     getResetToDefaultServerId: () => getResetToDefaultServerIdMock(),
     getServerProfileById: (serverId: string) => getServerProfileByIdMock(serverId),
     listServerProfiles: () => listServerProfilesMock(),
@@ -345,16 +376,26 @@ vi.mock('@/components/systemTasks', async (importOriginal) => {
 });
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     isSameServerUrl: (left: string, right: string) => left === right,
-    normalizeServerUrl: (value: string) => value,
+    normalizeServerUrl: (value: string) => String(value).trim() === 'not a url' ? null : value,
     upsertActivateAndSwitchServer: upsertActivateAndSwitchServerMock,
     setActiveServerAndSwitch: setActiveServerAndSwitchMock,
 }));
+vi.mock('@/sync/store/hooks', () => {
+    const localSettings: Record<string, unknown> = {
+        hasCompletedAuthOnce: false,
+        uiBackdropBlurEnabled: false,
+        uiFontScale: 1,
+    };
+    return {
+        useAllSessions: () => syncStoreHooksMockState.sessions,
+        useSetting: (key: string) => localSettings[key] ?? null,
+        useLocalSetting: (key: string) => localSettings[key] ?? null,
+        useMachine: (machineId: string) => syncStoreHooksMockState.machines[machineId] ?? null,
+    };
+});
 vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
     getServerFeaturesSnapshot: vi.fn(async () => ({ status: 'ready', features: { capabilities: { auth: { methods: [] } } } })),
     getCachedServerFeaturesSnapshot: () => null,
-}));
-vi.mock('@/components/onboarding/ui/RelayDiagram', () => ({
-    RelayDiagram: () => null,
 }));
 vi.mock('@/components/onboarding/restore/RestoreIndexEmbedded', () => ({
     RestoreIndexEmbedded: (props: Record<string, unknown>) => React.createElement('RestoreIndexEmbedded', props),
@@ -409,6 +450,7 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 vi.mock('@expo/vector-icons/Ionicons', () => ({
     default: 'Ionicons',
+    Ionicons: 'Ionicons',
 }));
 vi.mock('@/components/qr/QrCodeScannerView', () => ({
     QrCodeScannerView: (props: Record<string, unknown>) => React.createElement('QrCodeScannerView', props),
@@ -436,6 +478,26 @@ vi.mock('@/text', async () => {
         },
     });
 });
+vi.mock('@/text/i18n', () => ({
+    DEFAULT_LANGUAGE: 'en',
+    SUPPORTED_LANGUAGE_CODES: ['en'],
+    SUPPORTED_LANGUAGES: { en: { code: 'en', nativeName: 'English', englishName: 'English' } },
+    getAllTranslationKeys: () => [],
+    getLanguageEnglishName: () => 'English',
+    getLanguageNativeName: () => 'English',
+    getPreferredLanguage: () => 'en',
+    getTranslationValue: () => undefined,
+    hasTranslation: () => false,
+    setPreferredLanguageFromSettings: () => undefined,
+    t: (key: string, params?: Record<string, unknown>) => {
+        if (!params) return key;
+        const values = Object.values(params)
+            .map((value) => String(value))
+            .join(' ');
+        return values ? `${key} ${values}` : key;
+    },
+    tLoose: (key: string) => key,
+}));
 
 const baseAuthOptions = {
     serverAvailability: 'ready' as const,
@@ -504,6 +566,8 @@ describe('OnboardingWizardSurface', () => {
         relayAccessWizardMockState.emitSelectedProviderFromEffect = false;
         relayAccessWizardMockState.effectSelectionProviderId = 'lan';
         relayAccessWizardMockState.effectSelectionNotificationCount = 0;
+        syncStoreHooksMockState.sessions = [];
+        syncStoreHooksMockState.machines = {};
     });
 
     it('exposes wizard state and navigation through the controller hook', async () => {
@@ -516,7 +580,6 @@ describe('OnboardingWizardSurface', () => {
             onCreateAccountViaProvider: vi.fn(),
             onLoginWithKeylessProvider: vi.fn(),
             onLoginWithMtls: vi.fn(),
-            onChangeRelayViaServerConfig: vi.fn(),
         }));
 
         let controller = hook.getCurrent();
@@ -562,7 +625,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -588,7 +650,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -621,7 +682,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -640,7 +700,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -661,7 +720,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -669,6 +727,25 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-bare-title')).toBeTruthy();
         expect(screen.getTextContent()).toContain('setupOnboarding.preAuthTitle');
         expect(screen.findByTestId('onboarding-wizard-primary')).toBeTruthy();
+    });
+
+    it('renders bare skip affordance when the controller exposes skip for a non-welcome step', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                wizardChromeMode: 'bare',
+                initialStepId: 'relay_select',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+            }),
+        );
+
+        expect(screen.findByTestId('onboarding-wizard-skip')).toBeTruthy();
     });
 
     it('uses the physical screen size (not the window size) for web QR-scanner heuristics on desktop shells', async () => {
@@ -691,7 +768,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -725,7 +801,6 @@ describe('OnboardingWizardSurface', () => {
                     onCreateAccountViaProvider: vi.fn(),
                     onLoginWithKeylessProvider: vi.fn(),
                     onLoginWithMtls: vi.fn(),
-                    onChangeRelayViaServerConfig: vi.fn(),
                 }),
             );
 
@@ -761,7 +836,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
         await flushHookEffects({ cycles: 2, turns: 2 });
@@ -828,7 +902,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
         await flushHookEffects({ cycles: 2, turns: 2 });
@@ -884,7 +957,6 @@ describe('OnboardingWizardSurface', () => {
                     onCreateAccountViaProvider: vi.fn(),
                     onLoginWithKeylessProvider: vi.fn(),
                     onLoginWithMtls: vi.fn(),
-                    onChangeRelayViaServerConfig: vi.fn(),
                 }),
             );
 
@@ -933,7 +1005,6 @@ describe('OnboardingWizardSurface', () => {
                     onCreateAccountViaProvider: vi.fn(),
                     onLoginWithKeylessProvider: vi.fn(),
                     onLoginWithMtls: vi.fn(),
-                    onChangeRelayViaServerConfig: vi.fn(),
                 }),
             );
 
@@ -965,7 +1036,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -999,7 +1069,6 @@ describe('OnboardingWizardSurface', () => {
                     onCreateAccountViaProvider: vi.fn(),
                     onLoginWithKeylessProvider: vi.fn(),
                     onLoginWithMtls: vi.fn(),
-                    onChangeRelayViaServerConfig: vi.fn(),
                 }),
             );
 
@@ -1009,6 +1078,74 @@ describe('OnboardingWizardSurface', () => {
             if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
             else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
         }
+    });
+
+    it('shows Happier Cloud when allowed without creating a server profile during render', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                initialStepId: 'relay_select',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+            }),
+        );
+
+        expect(screen.findByTestId('onboarding-wizard-relay:cloud')).toBeTruthy();
+        expect(getOrCreateHappierCloudServerProfileMock).not.toHaveBeenCalled();
+    });
+
+    it('creates the canonical cloud profile from welcome auth actions only after user intent', async () => {
+        listServerProfilesMock.mockReturnValue([]);
+        activeServerSnapshotMock.serverUrl = '';
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+            }),
+        );
+
+        expect(getOrCreateHappierCloudServerProfileMock).not.toHaveBeenCalled();
+
+        await act(async () => {
+            await screen.findByTestId('onboarding-wizard-primary')!.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        await act(async () => {
+            await screen.findByTestId('onboarding-wizard-relay:cloud')!.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        await act(async () => {
+            await screen.findByTestId('onboarding-wizard-back')!.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
+
+        await act(async () => {
+            await screen.findByTestId('welcome-secondary-login')!.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(getOrCreateHappierCloudServerProfileMock).toHaveBeenCalledTimes(1);
+        expect(setActiveServerAndSwitchMock).toHaveBeenCalledWith({
+            serverId: 'cloud-profile',
+            scope: 'device',
+        });
+        expect(upsertActivateAndSwitchServerMock).not.toHaveBeenCalled();
     });
 
     it('hides manual relay URL entry when setup surface policy denies it', async () => {
@@ -1026,7 +1163,6 @@ describe('OnboardingWizardSurface', () => {
                     onCreateAccountViaProvider: vi.fn(),
                     onLoginWithKeylessProvider: vi.fn(),
                     onLoginWithMtls: vi.fn(),
-                    onChangeRelayViaServerConfig: vi.fn(),
                 }),
             );
 
@@ -1052,7 +1188,6 @@ describe('OnboardingWizardSurface', () => {
                     onCreateAccountViaProvider: vi.fn(),
                     onLoginWithKeylessProvider: vi.fn(),
                     onLoginWithMtls: vi.fn(),
-                    onChangeRelayViaServerConfig: vi.fn(),
                 }),
             );
 
@@ -1075,7 +1210,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1100,7 +1234,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1112,7 +1245,7 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(screen.findAllByType('RestoreIndexEmbedded' as never)).toHaveLength(0);
+        expect(findAllInCurrentWizardBodyByType(screen, 'RestoreIndexEmbedded' as never)).toHaveLength(0);
         expect(screen.findAllByTestId('onboarding-wizard-welcome-auth')).toHaveLength(0);
         expect(screen.findByType('AuthEntryView' as never)).toBeTruthy();
         expect(screen.findByTestId('onboarding-wizard-lost-access')).toBeTruthy();
@@ -1130,7 +1263,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1142,8 +1274,8 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(screen.findAllByType('RestoreIndexEmbedded' as never)).toHaveLength(0);
-        expect(screen.findAllByType('SecretKeyLoginEmbedded' as never)).toHaveLength(0);
+        expect(findAllInCurrentWizardBodyByType(screen, 'RestoreIndexEmbedded' as never)).toHaveLength(0);
+        expect(findAllInCurrentWizardBodyByType(screen, 'SecretKeyLoginEmbedded' as never)).toHaveLength(0);
         expect(screen.findByType('AuthEntryView' as never)).toBeTruthy();
     });
 
@@ -1182,7 +1314,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1237,7 +1368,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1269,7 +1399,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1289,7 +1418,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
         await flushHookEffects({ cycles: 1, turns: 1 });
@@ -1321,7 +1449,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1345,7 +1472,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1366,7 +1492,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1394,7 +1519,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1428,7 +1552,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1455,7 +1578,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1481,7 +1603,7 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(screen.findAllByType('RestoreIndexEmbedded' as never)).toHaveLength(0);
+        expect(findAllInCurrentWizardBodyByType(screen, 'RestoreIndexEmbedded' as never)).toHaveLength(0);
         expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
         expect(screen.findByTestId('onboarding-wizard-relay-hint')).toBeTruthy();
     });
@@ -1503,7 +1625,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1525,7 +1646,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1570,7 +1690,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1603,7 +1722,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider,
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1636,7 +1754,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls,
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1667,7 +1784,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1700,7 +1816,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1725,7 +1840,6 @@ describe('OnboardingWizardSurface', () => {
             },
         ]);
 
-        const onChangeRelayViaServerConfig = vi.fn();
         const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
@@ -1736,11 +1850,9 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig,
             }),
         );
 
-        expect(onChangeRelayViaServerConfig).toHaveBeenCalledTimes(0);
         expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
         expect(screen.findAllByTestId('onboarding-wizard-change-relay')).toHaveLength(0);
     });
@@ -1770,7 +1882,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1822,7 +1933,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1865,8 +1975,8 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(screen.findAllByType('SecretKeyLoginEmbedded' as never)).toHaveLength(0);
-        expect(screen.findAllByType('RestoreIndexEmbedded' as never)).toHaveLength(1);
+        expect(findAllInCurrentWizardBodyByType(screen, 'SecretKeyLoginEmbedded' as never)).toHaveLength(0);
+        expect(findAllInCurrentWizardBodyByType(screen, 'RestoreIndexEmbedded' as never)).toHaveLength(1);
 
         const backFromRestore = screen.findByTestId('onboarding-wizard-back')!;
         await act(async () => {
@@ -1874,7 +1984,7 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(screen.findAllByType('RestoreIndexEmbedded' as never)).toHaveLength(0);
+        expect(findAllInCurrentWizardBodyByType(screen, 'RestoreIndexEmbedded' as never)).toHaveLength(0);
         expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
     });
 
@@ -1892,7 +2002,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
         await flushHookEffects({ cycles: 1, turns: 1 });
@@ -1929,7 +2038,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
         await flushHookEffects({ cycles: 1, turns: 1 });
@@ -1964,7 +2072,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -1978,6 +2085,180 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(screen.findByTestId('onboarding-wizard-relay:cloud')).toBeTruthy();
+    });
+
+    it('threads desktop shell status to auth but suppresses the setup affordance before auth', async () => {
+        activeServerSnapshotMock.serverUrl = 'https://relay.example.test';
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                initialStepId: 'auth',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+            }),
+        );
+
+        const authEntry = screen.findByType('AuthEntryView' as never) as unknown as {
+            props: { isDesktopShell?: boolean; showOpenSetupAction?: boolean; onOpenSetup?: () => void };
+        };
+        expect(authEntry.props.isDesktopShell).toBe(true);
+        expect(authEntry.props.showOpenSetupAction).toBe(false);
+        expect(authEntry.props.onOpenSetup).toEqual(expect.any(Function));
+
+        expect(expoRouterMock.spies.push).not.toHaveBeenCalledWith('/setup');
+    });
+
+    type PreAuthMatrixPlatform = 'desktop' | 'web' | 'native';
+    type RenderedOnboardingScreen = Awaited<ReturnType<typeof renderScreen>>;
+
+    const setPreAuthMatrixPlatform = (platform: PreAuthMatrixPlatform) => {
+        reactNativeMockState.os = platform === 'native' ? 'ios' : 'web';
+        activeServerSnapshotMock.serverUrl = 'https://api.happier.dev';
+        activeServerSnapshotMock.activeLocalRelayUrl = null;
+    };
+
+    const renderPreAuthRelayMatrix = async (platform: PreAuthMatrixPlatform) => {
+        setPreAuthMatrixPlatform(platform);
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        return renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: platform === 'desktop',
+                authEntryOptions: baseAuthOptions,
+                initialStepId: 'relay_select',
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+            }),
+        );
+    };
+
+    const pressOnboarding = async (screen: RenderedOnboardingScreen, testID: string) => {
+        const node = screen.findByTestId(testID);
+        expect(node).toBeTruthy();
+        await act(async () => {
+            await node?.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+    };
+
+    const getOnboardingStepId = (screen: RenderedOnboardingScreen) => (
+        screen.findByType(WizardModalShell as never).props.contentTransitionKey
+    );
+
+    it.each([
+        { branch: 'cloud', platform: 'desktop', rowTestID: 'onboarding-wizard-relay:cloud', expectedStepId: 'auth' },
+        { branch: 'cloud', platform: 'web', rowTestID: 'onboarding-wizard-relay:cloud', expectedStepId: 'auth' },
+        { branch: 'cloud', platform: 'native', rowTestID: 'onboarding-wizard-relay:cloud', expectedStepId: 'auth' },
+        { branch: 'local', platform: 'desktop', rowTestID: 'onboarding-wizard-relay:thisComputer', expectedStepId: 'host_relay_local' },
+        { branch: 'local', platform: 'web', rowTestID: 'onboarding-wizard-relay:thisComputer', expectedStepId: 'desktop_handoff' },
+        { branch: 'local', platform: 'native', rowTestID: 'onboarding-wizard-relay:thisComputer', expectedStepId: 'desktop_handoff' },
+        { branch: 'remote', platform: 'desktop', rowTestID: 'onboarding-wizard-relay:remoteComputer', expectedStepId: 'host_relay_remote' },
+    ] as const)('characterizes pre-auth relay advance: $branch on $platform', async (row) => {
+        const screen = await renderPreAuthRelayMatrix(row.platform);
+
+        await pressOnboarding(screen, row.rowTestID);
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+
+        expect(getOnboardingStepId(screen)).toBe(row.expectedStepId);
+    });
+
+    it.each([
+        ['web', 'web'],
+        ['native', 'native'],
+    ] as const)('characterizes pre-auth remote relay hosting as unavailable on %s', async (_label, platform) => {
+        const screen = await renderPreAuthRelayMatrix(platform);
+
+        expect(screen.findByTestId('onboarding-wizard-relay:remoteComputer')).toBeNull();
+        expect(getOnboardingStepId(screen)).toBe('relay_select');
+    });
+
+    it.each([
+        ['desktop', 'desktop'],
+        ['web', 'web'],
+        ['native', 'native'],
+    ] as const)('characterizes manual custom relay URL unset vs set on %s', async (_label, platform) => {
+        const screen = await renderPreAuthRelayMatrix(platform);
+
+        await pressOnboarding(screen, 'onboarding-wizard-relay:customUrl');
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+        expect(getOnboardingStepId(screen)).toBe('relay_enter_url');
+
+        const relayInput = screen.findByTestId('onboarding-wizard-relay-url-input');
+        expect(relayInput).toBeTruthy();
+        await act(async () => {
+            relayInput?.props.onChangeText?.(`https://${platform}.custom-relay.example.test`);
+        });
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+
+        expect(getOnboardingStepId(screen)).toBe('auth');
+        expect(upsertActivateAndSwitchServerMock).toHaveBeenLastCalledWith({
+            serverUrl: `https://${platform}.custom-relay.example.test`,
+            source: 'url',
+            scope: 'device',
+        });
+    });
+
+    it.each([
+        ['desktop', 'desktop'],
+        ['web', 'web'],
+        ['native', 'native'],
+    ] as const)('characterizes saved relay profile selection on %s', async (_label, platform) => {
+        listServerProfilesMock.mockReturnValue([
+            {
+                id: `saved-${platform}`,
+                name: `${platform} saved relay`,
+                serverUrl: `https://${platform}.saved-relay.example.test`,
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+                source: 'manual',
+            },
+        ]);
+        const screen = await renderPreAuthRelayMatrix(platform);
+
+        await pressOnboarding(screen, `onboarding-wizard-relay:profile:saved-${platform}`);
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+
+        expect(getOnboardingStepId(screen)).toBe('auth');
+        expect(upsertActivateAndSwitchServerMock).toHaveBeenLastCalledWith({
+            serverUrl: `https://${platform}.saved-relay.example.test`,
+            source: 'url',
+            scope: 'device',
+        });
+    });
+
+    it.each([
+        ['web', 'web'],
+        ['native', 'native'],
+    ] as const)('characterizes Phase-0 fixed %s this-computer URL handoff route', async (_label, platform) => {
+        const screen = await renderPreAuthRelayMatrix(platform);
+
+        await pressOnboarding(screen, 'onboarding-wizard-relay:thisComputer');
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+        expect(getOnboardingStepId(screen)).toBe('desktop_handoff');
+
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+        expect(getOnboardingStepId(screen)).toBe('relay_enter_url');
+
+        const relayInput = screen.findByTestId('onboarding-wizard-relay-url-input');
+        expect(relayInput).toBeTruthy();
+        await act(async () => {
+            relayInput?.props.onChangeText?.(`https://${platform}.local-relay.example.test`);
+        });
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+
+        expect(getOnboardingStepId(screen)).toBe('background_service_handoff');
+
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+        expect(getOnboardingStepId(screen)).toBe('auth');
     });
 
     it('guides web users to continue on desktop when selecting "On this computer"', async () => {
@@ -1995,7 +2276,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2033,7 +2313,7 @@ describe('OnboardingWizardSurface', () => {
                 url.includes('http://localhost:53288')
                 && url.endsWith('/health')
             ) {
-                return new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+                return new Response(JSON.stringify({ ok: false }), { status: 404, headers: { 'content-type': 'application/json' } });
             }
             return previousFetchImpl
                 ? previousFetchImpl(input, init)
@@ -2051,7 +2331,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2089,7 +2368,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2126,7 +2404,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2165,7 +2442,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2187,8 +2463,11 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-desktop-handoff')).toBeTruthy();
     });
 
-    it('returns web users to auth after saving a relay url from the web "On this computer" handoff', async () => {
-        reactNativeMockState.os = 'web';
+    it.each([
+        ['web', 'web' as const],
+        ['native', 'ios' as const],
+    ])('routes %s users through background service handoff after saving a relay url from the "On this computer" handoff', async (_label, os) => {
+        reactNativeMockState.os = os;
         vi.resetModules();
 
         activeServerSnapshotMock.serverUrl = 'https://api.happier.dev';
@@ -2205,7 +2484,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2240,8 +2518,25 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 4, turns: 4 });
 
+        const backgroundServiceHandoff = screen.findByTestId('onboarding-wizard-background-service-handoff');
+        expect(backgroundServiceHandoff).not.toBeNull();
+        expect(directChildTestIDs(backgroundServiceHandoff).slice(0, 2)).toEqual([
+            'onboarding-wizard-background-service-arrival',
+            'onboarding-wizard-background-service-desktop-app-download-cta',
+        ]);
+        expect(screen.findByTestId('onboarding-wizard-background-service-arrival')).not.toBeNull();
+        expect(screen.findByTestId('machine-arrival-card-status')).toBeNull();
+        expect(screen.findByTestId('onboarding-wizard-background-service-desktop-app-download-cta')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('setupOnboarding.machineArrival.detectedAfterSignIn');
+        expect(screen.findByTestId('onboarding-wizard-lost-access')).toBeNull();
+
+        const advanceToAuthButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await advanceToAuthButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
         expect(screen.findByTestId('onboarding-wizard-lost-access')).not.toBeNull();
-        expect(screen.findByTestId('onboarding-wizard-background-service-handoff')).toBeNull();
     });
 
     it('skips relay URL entry when a custom relay has already been resolved', async () => {
@@ -2258,7 +2553,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
         await flushHookEffects({ cycles: 1, turns: 1 });
@@ -2321,7 +2615,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2356,7 +2649,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2424,7 +2716,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2477,7 +2768,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2515,7 +2805,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2539,7 +2828,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2575,7 +2863,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2633,7 +2920,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2725,7 +3011,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2824,7 +3109,7 @@ describe('OnboardingWizardSurface', () => {
             ) {
                 return relayReachable
                     ? new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })
-                    : new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+                    : new Response(JSON.stringify({ ok: false }), { status: 404, headers: { 'content-type': 'application/json' } });
             }
             return previousFetchImpl
                 ? previousFetchImpl(input, init)
@@ -2852,7 +3137,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -2954,7 +3238,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3013,7 +3296,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
         await flushHookEffects({ cycles: 1, turns: 1 });
@@ -3024,6 +3306,47 @@ describe('OnboardingWizardSurface', () => {
         expect(relayRow?.props.selected).toBe(true);
         expect(screen.findByTestId('onboarding-wizard-relay:customUrl')).toBeTruthy();
         expect(screen.findByProps({ testID: 'onboarding-wizard-relay:cloud' } as never)?.props.selected).toBe(false);
+    });
+
+    it('continues from the default active saved relay without requiring the user to reselect it', async () => {
+        activeServerSnapshotMock.serverId = 'relay-real';
+        activeServerSnapshotMock.serverUrl = 'http://localhost:53288';
+        listServerProfilesMock.mockReturnValue([
+            {
+                id: 'relay-real',
+                name: 'Current Relay',
+                serverUrl: 'http://localhost:53288',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+                source: 'manual',
+            },
+        ]);
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                initialStepId: 'relay_select',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+            }),
+        );
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByProps({
+            testID: 'onboarding-wizard-relay:profile:relay-real',
+        } as never)?.props.selected).toBe(true);
+
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+
+        expect(screen.findByType('AuthEntryView' as never)).toBeTruthy();
+        expect(screen.findByTestId('onboarding-wizard-relay-url-input')).toBeNull();
+        expect(upsertActivateAndSwitchServerMock).not.toHaveBeenCalled();
     });
 
     it('marks an unreachable saved relay as unavailable and offers a retry action', async () => {
@@ -3050,7 +3373,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3110,7 +3432,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3178,7 +3499,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3227,7 +3547,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3269,7 +3588,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3320,7 +3638,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3354,7 +3671,7 @@ describe('OnboardingWizardSurface', () => {
                 url.includes('https://typed-unreachable-relay.example.test')
                 && url.endsWith('/health')
             ) {
-                return new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+                return new Response(JSON.stringify({ ok: false }), { status: 404, headers: { 'content-type': 'application/json' } });
             }
             return previousFetchImpl
                 ? previousFetchImpl(input, init)
@@ -3376,7 +3693,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3431,7 +3747,7 @@ describe('OnboardingWizardSurface', () => {
                 url.includes('https://typed-relay.example.ts.net')
                 && url.endsWith('/health')
             ) {
-                return new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+                return new Response(JSON.stringify({ ok: false }), { status: 404, headers: { 'content-type': 'application/json' } });
             }
             return previousFetchImpl
                 ? previousFetchImpl(input, init)
@@ -3449,7 +3765,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3491,7 +3806,7 @@ describe('OnboardingWizardSurface', () => {
                 url.includes('https://typed-relay.example.ts.net')
                 && url.endsWith('/health')
             ) {
-                return new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+                return new Response(JSON.stringify({ ok: false }), { status: 404, headers: { 'content-type': 'application/json' } });
             }
             return previousFetchImpl
                 ? previousFetchImpl(input, init)
@@ -3509,7 +3824,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3552,7 +3866,7 @@ describe('OnboardingWizardSurface', () => {
                 url.includes('https://typed-relay.example.ts.net')
                 && url.endsWith('/health')
             ) {
-                return new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+                return new Response(JSON.stringify({ ok: false }), { status: 404, headers: { 'content-type': 'application/json' } });
             }
             return previousFetchImpl
                 ? previousFetchImpl(input, init)
@@ -3570,7 +3884,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3647,7 +3960,6 @@ describe('OnboardingWizardSurface', () => {
                     onCreateAccountViaProvider: vi.fn(),
                     onLoginWithKeylessProvider: vi.fn(),
                     onLoginWithMtls: vi.fn(),
-                    onChangeRelayViaServerConfig: vi.fn(),
                 }),
             );
 
@@ -3679,7 +3991,7 @@ describe('OnboardingWizardSurface', () => {
                 url.includes('http://localhost:53288')
                 && url.endsWith('/health')
             ) {
-                return new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+                return new Response(JSON.stringify({ ok: false }), { status: 404, headers: { 'content-type': 'application/json' } });
             }
             return previousFetchImpl
                 ? previousFetchImpl(input, init)
@@ -3698,7 +4010,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3749,7 +4060,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3795,7 +4105,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3816,7 +4125,7 @@ describe('OnboardingWizardSurface', () => {
                 url.includes('https://api.happier.dev')
                 && url.endsWith('/health')
             ) {
-                return new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+                return new Response(JSON.stringify({ ok: false }), { status: 404, headers: { 'content-type': 'application/json' } });
             }
             return previousFetchImpl
                 ? previousFetchImpl(input, init)
@@ -3837,7 +4146,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3874,7 +4182,7 @@ describe('OnboardingWizardSurface', () => {
                 url.includes('http://localhost:59331')
                 && url.endsWith('/health')
             ) {
-                return new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+                return new Response(JSON.stringify({ ok: false }), { status: 404, headers: { 'content-type': 'application/json' } });
             }
             return previousFetchImpl ? previousFetchImpl(input, init) : new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
         });
@@ -3893,7 +4201,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3922,7 +4229,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -3989,7 +4295,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
         await flushHookEffects({ cycles: 1, turns: 1 });
@@ -4026,7 +4331,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 
@@ -4046,6 +4350,49 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-relay-url-input')).not.toBeNull();
     });
 
+    it('clears scan-step opt-in after backing out of the QR scanner', async () => {
+        webQrScannerSupportedMock.value = true;
+        webMobileLikeQrScannerHostMock.value = true;
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+            }),
+        );
+
+        const loginButton = screen.findByTestId('welcome-secondary-login')!;
+        await act(async () => {
+            await loginButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByType('QrCodeScannerView')).toBeTruthy();
+
+        const backButton = screen.findByTestId('onboarding-wizard-back')!;
+        await act(async () => {
+            await backButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
+
+        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await startButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-relay:cloud')).toBeTruthy();
+        expect(screen.findAllByType('QrCodeScannerView')).toHaveLength(0);
+    });
+
     it('requires explicit confirmation before locking in a scanned relay url', async () => {
         webQrScannerSupportedMock.value = true;
         webMobileLikeQrScannerHostMock.value = true;
@@ -4060,7 +4407,6 @@ describe('OnboardingWizardSurface', () => {
                 onCreateAccountViaProvider: vi.fn(),
                 onLoginWithKeylessProvider: vi.fn(),
                 onLoginWithMtls: vi.fn(),
-                onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
 

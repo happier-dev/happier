@@ -4,8 +4,10 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
+import { SoftSlideTransitionFrame } from '@/components/ui/motion/SoftSlideTransitionFrame';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 import { WizardLogotype } from '../ui/WizardLogotype';
 import { WizardModalShell } from '../ui/WizardModalShell';
@@ -131,15 +133,18 @@ const bareStylesheet = StyleSheet.create((theme) => ({
     },
     footer: {
         width: '100%',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         gap: 14,
     },
     footerHint: {
-        alignItems: 'center',
+        alignItems: 'flex-start',
         justifyContent: 'center',
     },
     primaryButton: {
         width: '100%',
+        maxWidth: 360,
+    },
+    skipButton: {
         maxWidth: 360,
     },
 }));
@@ -148,12 +153,14 @@ function BareOnboardingWorkflowContent(props: BareOnboardingWorkflowContentProps
     useUnistyles();
     const styles = bareStylesheet;
     const controller = props.controller;
+    const reducedMotion = useReducedMotionPreference();
 
     if (controller.stepId === 'welcome') {
         return controller.body;
     }
 
-    const hasFooter = Boolean(controller.footerHint) || Boolean(controller.onPrimary);
+    const canShowSkip = Boolean(controller.onSkip) && controller.showSkip !== false;
+    const hasFooter = Boolean(controller.footerHint) || Boolean(controller.onPrimary) || canShowSkip;
 
     return (
         <View
@@ -175,9 +182,16 @@ function BareOnboardingWorkflowContent(props: BareOnboardingWorkflowContentProps
                         </Text>
                     ) : null}
                 </View>
-                <View style={styles.body}>
-                    {controller.body}
-                </View>
+                <SoftSlideTransitionFrame
+                    transitionKey={controller.stepId}
+                    direction={controller.contentTransitionDirection}
+                    reducedMotion={reducedMotion}
+                    testID={`${props.testID}-bare-body-transition`}
+                >
+                    <View style={styles.body}>
+                        {controller.body}
+                    </View>
+                </SoftSlideTransitionFrame>
             </View>
             {hasFooter ? (
                 <View style={styles.footer}>
@@ -195,6 +209,20 @@ function BareOnboardingWorkflowContent(props: BareOnboardingWorkflowContentProps
                                 disabled={controller.primaryDisabled}
                                 onPress={() => {
                                     void controller.onPrimary?.();
+                                }}
+                            />
+                        </View>
+                    ) : null}
+                    {canShowSkip ? (
+                        <View style={styles.skipButton}>
+                            <RoundButton
+                                testID={`${props.testID}-skip`}
+                                size="small"
+                                display="inverted"
+                                title={controller.skipLabel ?? undefined}
+                                disabled={controller.skipDisabled}
+                                onPress={() => {
+                                    void controller.onSkip?.();
                                 }}
                             />
                         </View>

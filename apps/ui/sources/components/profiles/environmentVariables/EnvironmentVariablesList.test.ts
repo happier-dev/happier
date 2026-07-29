@@ -81,6 +81,7 @@ async function renderList(params: {
     environmentVariables: Array<{ name: string; value: string; isSecret?: boolean }>;
     profileDocs?: ProfileDocumentation | null;
     onChange?: ReturnType<typeof vi.fn<(next: Array<{ name: string; value: string; isSecret?: boolean }>) => void>>;
+    allowSourceRequirements?: boolean;
 }) {
     const onChange =
         params.onChange ??
@@ -95,6 +96,7 @@ async function renderList(params: {
             onUpdateSourceRequirement: () => {},
             getDefaultSecretNameForSourceVar: () => null,
             onPickDefaultSecretForSourceVar: () => {},
+            allowSourceRequirements: params.allowSourceRequirements,
         }),
     );
     return { screen, onChange };
@@ -110,6 +112,14 @@ describe('EnvironmentVariablesList', () => {
     beforeEach(() => {
         useEnvironmentVariablesMock.mockClear();
         environmentVariableCardProps.length = 0;
+    });
+
+    it('suppresses profile secret-requirement controls for slim launch profiles', async () => {
+        await renderList({
+            environmentVariables: [{ name: 'SAFE_FLAG', value: '1' }],
+            allowSourceRequirements: false,
+        });
+        expect(environmentVariableCardProps[0]?.showSourceRequirements).toBe(false);
     });
 
     describe('inline add interaction', () => {

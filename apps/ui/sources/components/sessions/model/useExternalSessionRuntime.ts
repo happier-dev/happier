@@ -1,4 +1,8 @@
 import * as React from 'react';
+import {
+    readExternalAgentObservationSessionState,
+    type ExternalAgentObservationSnapshotV1,
+} from '@happier-dev/agents';
 import type { ExternalSessionStatusGetResponse } from '@happier-dev/protocol';
 import { AppState, Platform } from 'react-native';
 
@@ -10,10 +14,23 @@ import {
     machineExternalSessionDetach,
     machineExternalSessionStatusGet,
 } from '@/sync/ops/machineExternalSessions';
+import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
 import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
+import {
+    replaceExternalSessionStatusDemandViewport,
+} from '@/sync/runtime/orchestration/externalSessions/externalSessionStatusDemandCoordinator';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { sync } from '@/sync/sync';
+import {
+    createExternalSessionTranscriptLeaseScopeKeyFromLink,
+} from '@/sync/runtime/external/externalSessionTranscriptAuthority';
 
 export type ExternalSessionRuntimeStatus = Extract<ExternalSessionStatusGetResponse, { ok: true }>;
+
+export type ExternalSessionRuntimeRefreshOptions = Readonly<{
+    takeoverReadiness?: 'fresh';
+}>;
 
 type UseExternalSessionRuntimeParams = Readonly<{
     sessionId: string;
@@ -23,37 +40,18 @@ type UseExternalSessionRuntimeParams = Readonly<{
 
 export type UseExternalSessionRuntimeResult = Readonly<{
     externalSessionLink: ReturnType<typeof readExternalSessionLink>;
+    externalAgent: ExternalAgentObservationSnapshotV1 | null;
     sessionServerId: string | null;
     status: ExternalSessionRuntimeStatus | null;
-    refreshNow: () => Promise<ExternalSessionRuntimeStatus | null>;
+    refreshNow: (options?: ExternalSessionRuntimeRefreshOptions) => Promise<ExternalSessionRuntimeStatus | null>;
 }>;
 
 type ExternalSessionTarget = Readonly<{
     machineId: string;
-    providerId: NonNullable<ReturnType<typeof readExternalSessionLink>>['providerId'];
+    agentId: NonNullable<ReturnType<typeof readExternalSessionLink>>['agentId'];
     remoteSessionId: string;
     source: NonNullable<ReturnType<typeof readExternalSessionLink>>['source'];
 }>;
-
-function readActivePollMsFromEnv(): number {
-    const raw = Number.parseInt(String(process.env.EXPO_PUBLIC_HAPPIER_EXTERNAL_SESSIONS_TAIL_POLL_MS_ACTIVE ?? ''), 10);
-    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 250;
-    return Math.max(50, Math.min(60_000, configured));
-}
-
-function readIdlePollMsFromEnv(): number {
-    const raw = Number.parseInt(String(process.env.EXPO_PUBLIC_HAPPIER_EXTERNAL_SESSIONS_TAIL_POLL_MS_IDLE ?? ''), 10);
-    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 2_000;
-    return Math.max(100, Math.min(120_000, configured));
-}
-
-function resolvePollDelayMs(status: ExternalSessionRuntimeStatus | null): number {
-    if (status?.machineOnline === false) return readIdlePollMsFromEnv();
-    if (status?.activity === 'running' || status?.activity === 'active_recently') {
-        return readActivePollMsFromEnv();
-    }
-    return readIdlePollMsFromEnv();
-}
 
 function readAttachLeaseTtlMsFromEnv(): number {
     const raw = Number.parseInt(String(process.env.EXPO_PUBLIC_HAPPIER_EXTERNAL_SESSIONS_ATTACH_LEASE_TTL_MS ?? ''), 10);
@@ -73,10 +71,17 @@ function readAttachRetryMsFromEnv(): number {
     return Math.max(1_000, Math.min(60_000, configured));
 }
 
-function useRuntimeActive(): boolean {
-    const [runtimeActive, setRuntimeActive] = React.useState(() => isRuntimeActive());
+const noopSubscribe = () => () => {};
+
+function useRuntimeActive(enabled: boolean): boolean {
+    const [runtimeActive, setRuntimeActive] = React.useState(() => enabled && isRuntimeActive());
 
     React.useEffect(() => {
+        if (!enabled) {
+            setRuntimeActive(false);
+            return;
+        }
+
         const update = () => {
             setRuntimeActive(isRuntimeActive());
         };
@@ -96,32 +101,31 @@ function useRuntimeActive(): boolean {
             appStateSubscription?.remove?.();
             removeVisibilityListener?.();
         };
-    }, []);
+    }, [enabled]);
 
     return runtimeActive;
 }
 
 export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParams): UseExternalSessionRuntimeResult {
-    const runtimeEnabled = params.enabled !== false;
+    const runtimeEnabled = params.enabled !== false && !isDemoModeActive();
     const normalizedSessionId = React.useMemo(() => normalizeSessionId(params.sessionId), [params.sessionId]);
     const externalSessionLink = React.useMemo(
         () => readExternalSessionLink(params.metadata),
         [params.metadata],
     );
+    const externalAgent = React.useMemo(
+        () => readExternalAgentObservationSessionState(params.metadata ?? {}).value,
+        [params.metadata],
+    );
     const externalSessionTargetKey = React.useMemo(() => {
         if (!externalSessionLink) return null;
-        return JSON.stringify([
-            externalSessionLink.machineId,
-            externalSessionLink.providerId,
-            externalSessionLink.remoteSessionId,
-            externalSessionLink.source,
-        ]);
+        return createExternalSessionTranscriptLeaseScopeKeyFromLink(externalSessionLink);
     }, [externalSessionLink]);
     const externalSessionTarget = React.useMemo<ExternalSessionTarget | null>(() => {
         if (!externalSessionLink) return null;
         return {
             machineId: externalSessionLink.machineId,
-            providerId: externalSessionLink.providerId,
+            agentId: externalSessionLink.agentId,
             remoteSessionId: externalSessionLink.remoteSessionId,
             source: externalSessionLink.source,
         };
@@ -130,11 +134,70 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
     const statusRef = React.useRef<ExternalSessionRuntimeStatus | null>(null);
     const inFlightRefreshRef = React.useRef<Promise<ExternalSessionRuntimeStatus | null> | null>(null);
     const currentLeaseIdRef = React.useRef<string | null>(null);
+    const acceptedTailCursor = React.useSyncExternalStore(
+        React.useCallback(
+            (listener) => runtimeEnabled
+                ? sync.subscribeAcceptedExternalSessionTailCursor(
+                    normalizedSessionId,
+                    listener,
+                )
+                : noopSubscribe(),
+            [normalizedSessionId, runtimeEnabled],
+        ),
+        React.useCallback(
+            () => runtimeEnabled
+                ? sync.getAcceptedExternalSessionTailCursor(normalizedSessionId)
+                : null,
+            [normalizedSessionId, runtimeEnabled],
+        ),
+        () => null,
+    );
+    const acceptedTailCursorRef = React.useRef<string | null>(acceptedTailCursor);
+    acceptedTailCursorRef.current = acceptedTailCursor;
+    const lastDemandedTailCursorRef = React.useRef<string | null | undefined>(undefined);
+    const requestLeaseEnsureRef = React.useRef<(() => void) | null>(null);
     const generationRef = React.useRef(0);
     const previousServerIdRef = React.useRef<string | null | undefined>(undefined);
     const previousRuntimeScopeRef = React.useRef<string | null>(null);
-    const runtimeActive = useRuntimeActive();
-    const sessionServerId = usePreferredServerIdForSession(normalizedSessionId);
+    const runtimeActive = useRuntimeActive(runtimeEnabled);
+    const sessionServerId = usePreferredServerIdForSession(
+        normalizedSessionId,
+        undefined,
+        runtimeEnabled,
+    );
+    const statusDemandViewportId = React.useId();
+    const statusDemandEntry = React.useMemo(() => {
+        const linkGeneration = externalSessionLink?.linkedAtMs;
+        if (
+            !runtimeEnabled
+            || !runtimeActive
+            || !externalSessionLink
+            || typeof linkGeneration !== 'number'
+            || !Number.isFinite(linkGeneration)
+        ) {
+            return null;
+        }
+        const serverId = String(
+            sessionServerId ?? getActiveServerSnapshot().serverId,
+        ).trim();
+        if (!serverId) {
+            return null;
+        }
+        return {
+            serverId,
+            sessionId: normalizedSessionId,
+            machineId: externalSessionLink.machineId,
+            linkGeneration: String(linkGeneration),
+            demand: 'open' as const,
+        };
+    }, [
+        externalSessionLink?.linkedAtMs,
+        externalSessionLink?.machineId,
+        normalizedSessionId,
+        runtimeActive,
+        runtimeEnabled,
+        sessionServerId,
+    ]);
 
     React.useEffect(() => {
         statusRef.current = status;
@@ -154,6 +217,24 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
         }
         previousServerIdRef.current = sessionServerId;
     }, [sessionServerId]);
+
+    React.useEffect(() => {
+        if (!runtimeEnabled) {
+            return;
+        }
+        if (!statusDemandEntry) {
+            replaceExternalSessionStatusDemandViewport(statusDemandViewportId, []);
+            return;
+        }
+        replaceExternalSessionStatusDemandViewport(statusDemandViewportId, [statusDemandEntry]);
+        return () => {
+            replaceExternalSessionStatusDemandViewport(statusDemandViewportId, []);
+        };
+    }, [
+        runtimeEnabled,
+        statusDemandEntry,
+        statusDemandViewportId,
+    ]);
 
     React.useEffect(() => {
         const nextRuntimeScope = runtimeEnabled && externalSessionTargetKey
@@ -176,7 +257,9 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
         previousRuntimeScopeRef.current = nextRuntimeScope;
     }, [externalSessionTargetKey, normalizedSessionId, runtimeEnabled]);
 
-    const refreshNow = React.useCallback(async (): Promise<ExternalSessionRuntimeStatus | null> => {
+    const refreshNow = React.useCallback(async (
+        options?: ExternalSessionRuntimeRefreshOptions,
+    ): Promise<ExternalSessionRuntimeStatus | null> => {
         if (!runtimeEnabled) {
             if (statusRef.current !== null) {
                 statusRef.current = null;
@@ -193,8 +276,13 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
             return null;
         }
 
-        if (inFlightRefreshRef.current) {
+        const requiresFreshTakeoverReadiness = options?.takeoverReadiness === 'fresh';
+        if (inFlightRefreshRef.current && !requiresFreshTakeoverReadiness) {
             return inFlightRefreshRef.current;
+        }
+        if (inFlightRefreshRef.current) {
+            inFlightRefreshRef.current = null;
+            generationRef.current += 1;
         }
 
         const currentGeneration = generationRef.current;
@@ -203,22 +291,25 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
             const statusResult = await machineExternalSessionStatusGet({
                 machineId: externalSessionTarget.machineId,
                 sessionId: normalizedSessionId,
-                providerId: externalSessionTarget.providerId,
+                agentId: externalSessionTarget.agentId,
                 remoteSessionId: externalSessionTarget.remoteSessionId,
                 source: externalSessionTarget.source,
+                ...(requiresFreshTakeoverReadiness
+                    ? { takeoverReadiness: 'fresh' as const }
+                    : {}),
             }, { serverId: sessionServerId ?? undefined })
                 .then((response) => ({ ok: true as const, response }))
                 .catch((error: unknown) => ({ ok: false as const, error }));
             if (!statusResult.ok) {
-                return statusRef.current;
+                return null;
             }
             const response = statusResult.response;
             if (!response.ok) {
-                return statusRef.current;
+                return null;
             }
 
             if (generationRef.current !== currentGeneration) {
-                return statusRef.current;
+                return null;
             }
 
             statusRef.current = response;
@@ -235,44 +326,6 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
     }, [externalSessionTarget, normalizedSessionId, runtimeEnabled, sessionServerId]);
 
     React.useEffect(() => {
-        if (!externalSessionTarget || !runtimeEnabled) {
-            if (statusRef.current !== null) {
-                statusRef.current = null;
-                setStatus(null);
-            }
-            return;
-        }
-        if (!runtimeActive) {
-            return;
-        }
-
-        let cancelled = false;
-        let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
-        const scheduleNext = (nextStatus: ExternalSessionRuntimeStatus | null) => {
-            if (cancelled) return;
-            timeoutId = setTimeout(() => {
-                void runPoll();
-            }, resolvePollDelayMs(nextStatus));
-        };
-
-        const runPoll = async () => {
-            const nextStatus = await refreshNow().catch(() => statusRef.current);
-            if (cancelled) return;
-            scheduleNext(nextStatus);
-        };
-
-        void runPoll();
-
-        return () => {
-            cancelled = true;
-            if (timeoutId) {
-                clearTimeout(timeoutId);
-            }
-        };
-    }, [externalSessionTarget, refreshNow, runtimeActive, runtimeEnabled]);
-
-    React.useEffect(() => {
         if (!externalSessionTarget || !runtimeActive || !runtimeEnabled) {
             currentLeaseIdRef.current = null;
             return;
@@ -280,6 +333,8 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
 
         let cancelled = false;
         let renewTimeoutId: ReturnType<typeof setTimeout> | null = null;
+        let attachInFlight = false;
+        let attachPending = false;
 
         const clearRenewTimeout = () => {
             if (renewTimeoutId) {
@@ -292,48 +347,79 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
             const renewLeadMs = readAttachRenewLeadMsFromEnv();
             const delayMs = Math.max(1_000, expiresAtMs - Date.now() - renewLeadMs);
             renewTimeoutId = setTimeout(() => {
-                void ensureLease();
+                requestLeaseEnsure();
             }, delayMs);
         };
 
         const scheduleRetry = () => {
             const delayMs = readAttachRetryMsFromEnv();
             renewTimeoutId = setTimeout(() => {
-                void ensureLease();
+                requestLeaseEnsure();
             }, delayMs);
         };
 
-        const ensureLease = async () => {
+        const pumpLeaseEnsure = async () => {
+            attachInFlight = true;
             try {
-                const response = await machineExternalSessionAttach({
-                    machineId: externalSessionTarget.machineId,
-                    sessionId: normalizedSessionId,
-                    providerId: externalSessionTarget.providerId,
-                    remoteSessionId: externalSessionTarget.remoteSessionId,
-                    source: externalSessionTarget.source,
-                    ...(currentLeaseIdRef.current ? { leaseId: currentLeaseIdRef.current } : {}),
-                    ttlMs: readAttachLeaseTtlMsFromEnv(),
-                }, { serverId: sessionServerId ?? undefined });
-                if (cancelled) return;
-                if (!response.ok) {
-                    clearRenewTimeout();
-                    scheduleRetry();
-                    return;
+                do {
+                    attachPending = false;
+                    const requestedTailCursor = acceptedTailCursorRef.current;
+                    lastDemandedTailCursorRef.current = requestedTailCursor;
+                    try {
+                        const response = await machineExternalSessionAttach({
+                            machineId: externalSessionTarget.machineId,
+                            sessionId: normalizedSessionId,
+                            agentId: externalSessionTarget.agentId,
+                            remoteSessionId: externalSessionTarget.remoteSessionId,
+                            source: externalSessionTarget.source,
+                            ...(currentLeaseIdRef.current
+                                ? { leaseId: currentLeaseIdRef.current }
+                                : {}),
+                            ...(requestedTailCursor
+                                ? { acceptedTailCursor: requestedTailCursor }
+                                : {}),
+                            ttlMs: readAttachLeaseTtlMsFromEnv(),
+                        }, { serverId: sessionServerId ?? undefined });
+                        if (cancelled) return;
+                        if (!response.ok) {
+                            clearRenewTimeout();
+                            scheduleRetry();
+                            return;
+                        }
+                        currentLeaseIdRef.current = response.leaseId;
+                        clearRenewTimeout();
+                        scheduleRenew(response.expiresAtMs);
+                    } catch {
+                        if (cancelled) return;
+                        clearRenewTimeout();
+                        scheduleRetry();
+                        return;
+                    }
+                    if (acceptedTailCursorRef.current !== requestedTailCursor) {
+                        attachPending = true;
+                    }
+                } while (attachPending && !cancelled);
+            } finally {
+                attachInFlight = false;
+                if (attachPending && !cancelled) {
+                    void pumpLeaseEnsure();
                 }
-                currentLeaseIdRef.current = response.leaseId;
-                clearRenewTimeout();
-                scheduleRenew(response.expiresAtMs);
-            } catch {
-                if (cancelled) return;
-                clearRenewTimeout();
-                scheduleRetry();
             }
         };
 
-        void ensureLease();
+        const requestLeaseEnsure = () => {
+            attachPending = true;
+            if (!attachInFlight) {
+                void pumpLeaseEnsure();
+            }
+        };
+
+        requestLeaseEnsureRef.current = requestLeaseEnsure;
+        requestLeaseEnsure();
 
         return () => {
             cancelled = true;
+            requestLeaseEnsureRef.current = null;
             clearRenewTimeout();
             const leaseId = currentLeaseIdRef.current;
             currentLeaseIdRef.current = null;
@@ -346,8 +432,14 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
         };
     }, [externalSessionTarget, normalizedSessionId, runtimeActive, runtimeEnabled, sessionServerId]);
 
+    React.useEffect(() => {
+        if (lastDemandedTailCursorRef.current === acceptedTailCursor) return;
+        requestLeaseEnsureRef.current?.();
+    }, [acceptedTailCursor]);
+
     return {
         externalSessionLink,
+        externalAgent,
         sessionServerId,
         status,
         refreshNow,

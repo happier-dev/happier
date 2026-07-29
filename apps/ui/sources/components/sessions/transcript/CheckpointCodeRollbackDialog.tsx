@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Typography } from '@/constants/Typography';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import {
@@ -113,6 +114,7 @@ function choiceDescription(mode: SessionRollbackCodeMode): string {
 
 export function CheckpointCodeRollbackDialog(props: CheckpointCodeRollbackDialogProps) {
     const styles = stylesheet;
+    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
     const choices = React.useMemo(
         () => resolveCheckpointCodeRollbackChoices({
             conversationRollbackSupported: props.conversationRollbackSupported,
@@ -156,6 +158,7 @@ export function CheckpointCodeRollbackDialog(props: CheckpointCodeRollbackDialog
                     }}
                     style={[
                         styles.choice,
+                        { minHeight: minimumInteractiveTargetSize },
                         selectedMode === rollbackChoice.mode ? styles.choiceSelected : null,
                         !rollbackChoice.enabled ? styles.choiceDisabled : null,
                     ]}
@@ -179,7 +182,7 @@ export function CheckpointCodeRollbackDialog(props: CheckpointCodeRollbackDialog
                             setSelectedMode(null);
                         }
                     }}
-                    style={styles.advancedButton}
+                    style={[styles.advancedButton, { minHeight: minimumInteractiveTargetSize }]}
                 >
                     <Text style={styles.footerText}>{t('session.rollback.checkpointCode.showAdvanced')}</Text>
                 </Pressable>
@@ -191,13 +194,19 @@ export function CheckpointCodeRollbackDialog(props: CheckpointCodeRollbackDialog
                     accessibilityRole="checkbox"
                     accessibilityState={{ checked: codeOnlyConfirmed }}
                     onPress={() => setCodeOnlyConfirmed((value) => !value)}
+                    style={{ minHeight: minimumInteractiveTargetSize, justifyContent: 'center' }}
                 >
                     <Text style={styles.hint}>{t('session.rollback.checkpointCode.codeOnlyConfirmation')}</Text>
                 </Pressable>
             ) : null}
 
             <View style={styles.footer}>
-                <Pressable testID="checkpoint-rollback-cancel" onPress={handleCancel} style={styles.footerButton}>
+                <Pressable
+                    testID="checkpoint-rollback-cancel"
+                    accessibilityRole="button"
+                    onPress={handleCancel}
+                    style={[styles.footerButton, { minHeight: minimumInteractiveTargetSize }]}
+                >
                     <Text style={styles.footerText}>{t('common.cancel')}</Text>
                 </Pressable>
                 <Pressable
@@ -213,7 +222,12 @@ export function CheckpointCodeRollbackDialog(props: CheckpointCodeRollbackDialog
                             ...(requiresAdvancedConfirmation ? { codeOnlyTranscriptDivergenceConfirmed: true as const } : {}),
                         });
                     }}
-                    style={[styles.footerButton, styles.confirmButton, confirmDisabled ? styles.confirmDisabled : null]}
+                    style={[
+                        styles.footerButton,
+                        { minHeight: minimumInteractiveTargetSize },
+                        styles.confirmButton,
+                        confirmDisabled ? styles.confirmDisabled : null,
+                    ]}
                 >
                     <Text style={styles.footerText}>{t('common.continue')}</Text>
                 </Pressable>

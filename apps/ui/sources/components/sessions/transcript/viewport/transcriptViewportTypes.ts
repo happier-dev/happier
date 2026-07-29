@@ -1,4 +1,3 @@
-import type { WebTranscriptPrependAnchor } from '@/components/sessions/transcript/viewport/prepend/webTranscriptPrependAnchor';
 import type { TranscriptJumpTargetRole } from './jump/transcriptJumpTargetTypes';
 
 export type TranscriptViewportMode =
@@ -26,17 +25,6 @@ export type TranscriptViewportScrollReason =
     | 'viewport-resized'
     | 'mount-settle'
     | 'passive-drift';
-
-export type TranscriptViewportSchedulerAuthorityWriter =
-    | 'automatic-live-tail'
-    | 'blank-recovery'
-    | 'content-growth'
-    | 'deferred-post-scroll'
-    | 'hot-tail-carve'
-    | 'passive-drift'
-    | 'proactive-auto-follow'
-    | 'settle-reconfirm'
-    | 'web-passive-correction';
 
 export type TranscriptViewportAnchorIdentity = Readonly<{
     kind: 'message' | 'toolGroup' | 'item';
@@ -69,16 +57,7 @@ export type TranscriptViewportCommand =
     | Readonly<{ kind: 'restore-anchor'; sessionId: string; reason: TranscriptViewportScrollReason; mode: 'restore-anchor'; target: TranscriptViewportRestoreAnchorTarget; animated?: boolean }>
     | Readonly<{ kind: 'restore-visible-anchor'; sessionId: string; reason: Extract<TranscriptViewportScrollReason, 'content-size-change' | 'entry-restore'>; mode: 'restore-anchor'; target: TranscriptViewportRestoreAnchorTarget; animated?: boolean }>
     | Readonly<{ kind: 'jump-to-seq'; sessionId: string; reason: 'jump-to-seq'; mode: 'jump-to-seq'; seq: number; routeMessageId?: string | null; transcriptBlockIndex?: number | null; role?: TranscriptJumpTargetRole | null; align?: TranscriptViewportJumpAlignment; animated?: boolean }>
-    | Readonly<{ kind: 'recover-jump-to-seq'; sessionId: string; reason: 'jump-to-seq'; mode: 'jump-to-seq'; failedRenderedIndex: number; averageItemLengthPx: number; animated?: boolean }>
-    | Readonly<{ kind: 'preserve-live-tail-distance'; sessionId: string; reason: TranscriptViewportScrollReason; mode: 'follow-bottom'; previousDistanceFromLiveTailPx: number; animated?: boolean; schedulerAuthorityReason?: TranscriptViewportScrollReason; schedulerAuthorityWriter?: TranscriptViewportSchedulerAuthorityWriter }>
-    | Readonly<{ kind: 'restore-web-prepend-anchor'; sessionId: string; reason: 'prepend-restore'; mode: 'restore-anchor'; anchor: WebTranscriptPrependAnchor; animated?: boolean }>
-    | Readonly<{
-        kind: 'skip-native-js-pin';
-        sessionId: string;
-        reason: TranscriptViewportScrollReason;
-        skipReason: 'mvcp-only';
-        mode: TranscriptViewportMode;
-    }>;
+    | Readonly<{ kind: 'recover-jump-to-seq'; sessionId: string; reason: 'jump-to-seq'; mode: 'jump-to-seq'; failedRenderedIndex: number; averageItemLengthPx: number; animated?: boolean }>;
 
 export type TranscriptViewportControllerInput =
     | Readonly<{
@@ -93,18 +72,6 @@ export type TranscriptViewportControllerInput =
         sessionId: string;
         distanceFromBottom: number;
         pinThresholdPx: number;
-    }>
-    | Readonly<{
-        type: 'auto-follow';
-        sessionId: string;
-        distanceFromBottom: number;
-        pinThresholdPx: number;
-        recentUserIntent: boolean;
-        wantsPinned: boolean;
-        reason: TranscriptViewportScrollReason;
-        observedContentHeightPx?: number;
-        observedLayoutHeightPx?: number;
-        skipNativeJsPin?: boolean;
     }>
     | Readonly<{
         type: 'jump-to-bottom';
@@ -164,23 +131,5 @@ export type TranscriptViewportControllerInput =
         sessionId: string;
         failedRenderedIndex: number;
         averageItemLengthPx: number;
-        animated?: boolean;
-    }>
-    | Readonly<{
-        type: 'preserve-live-tail-distance';
-        sessionId: string;
-        previousDistanceFromLiveTailPx: number;
-        pinThresholdPx: number;
-        recentUserIntent: boolean;
-        wantsPinned: boolean;
-        reason: TranscriptViewportScrollReason;
-        animated?: boolean;
-        schedulerAuthorityReason?: TranscriptViewportScrollReason;
-        schedulerAuthorityWriter?: TranscriptViewportSchedulerAuthorityWriter;
-    }>
-    | Readonly<{
-        type: 'restore-web-prepend-anchor';
-        sessionId: string;
-        anchor: WebTranscriptPrependAnchor;
         animated?: boolean;
     }>;

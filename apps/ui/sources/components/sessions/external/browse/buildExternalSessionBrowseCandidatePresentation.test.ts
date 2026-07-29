@@ -6,8 +6,8 @@ import { lightTheme } from '@/theme';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/components/ui/status/StatusDot', () => ({
-    StatusDot: 'StatusDot',
+vi.mock('@/components/ui/status/StatusPill', () => ({
+    StatusPill: 'StatusPill',
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -16,7 +16,8 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => {
+    return createTextModuleMock({ translate: (key: string, params?: Record<string, unknown>) => {
+        if (key === 'time.daysAgoShort') return `${String(params?.count)}d ago`;
         return key;
     } });
 });
@@ -51,7 +52,7 @@ describe('buildExternalSessionBrowseCandidatePresentation', () => {
 
         const screen = await renderScreen(React.createElement('View', null, subtitle));
         const textNodes = screen.findAllByType('Text');
-        expect(String(textNodes[1]?.props?.children)).toMatch(/\d+y ago/);
+        expect(String(textNodes[1]?.props?.children)).toMatch(/\d+d ago/);
         expect(textNodes[1]?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ color: '#666' })]));
         expect(String(textNodes[3]?.props?.children)).toBe('/Users/leeroy/Documents/Development/happier/dev');
         expect(textNodes[3]?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ color: '#999' })]));

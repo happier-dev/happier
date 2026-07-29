@@ -43,4 +43,38 @@ describe('areStoredSessionsEqual', () => {
 
         expect(areStoredSessionsEqual(previous, next)).toBe(false);
     });
+
+    it('treats runtime activity projection changes as stored session changes', () => {
+        const previous = makeSession({
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: 1_000,
+            runtimeActivityRevision: 2_000,
+        });
+        const next = makeSession({
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: 1_500,
+            runtimeActivityRevision: 2_500,
+        });
+
+        expect(areStoredSessionsEqual(previous, next)).toBe(false);
+    });
+
+    it('treats layout and owner metadata view changes as stored session changes', () => {
+        const previous = makeSession({
+            metadataLayoutVersion: 1,
+            metadata: null,
+            ownerMetadataView: { path: '/owner/old', host: 'owner-host' },
+        });
+        const next = makeSession({
+            metadataLayoutVersion: 1,
+            metadata: null,
+            ownerMetadataView: { path: '/owner/new', host: 'owner-host' },
+        });
+
+        expect(areStoredSessionsEqual(previous, next)).toBe(false);
+        expect(areStoredSessionsEqual(previous, {
+            ...previous,
+            metadataLayoutVersion: 2,
+        })).toBe(false);
+    });
 });

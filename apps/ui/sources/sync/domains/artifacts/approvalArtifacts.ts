@@ -60,14 +60,14 @@ function readCreatedBySurface(artifact: DecryptedArtifact): ApprovalRequestV1['c
     const surface = readString(artifact.header?.createdBySurface);
     if (
         surface === 'voice' ||
-        surface === 'session_agent' ||
+        surface === 'agent' ||
         surface === 'mcp' ||
         surface === 'cli' ||
         surface === 'system'
     ) {
         return surface;
     }
-    return 'session_agent';
+    return 'agent';
 }
 
 function createHeaderBackedApprovalRequest(

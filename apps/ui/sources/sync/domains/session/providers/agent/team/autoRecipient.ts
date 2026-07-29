@@ -11,6 +11,7 @@ import {
     isAgentTeamSubagentSpawnToolName,
     messagesContainAgentTeamToolSignal,
 } from './descriptor';
+import { resolveAgentTeamSessionFlavor } from './sessionFlavor';
 
 import type {
     AgentTeamReadableSessionSubagent,
@@ -89,9 +90,7 @@ export function createAgentTeamMemberAutoRecipientResolver(descriptor: AgentTeam
             return inferredMatch.recipient;
         }
 
-        const flavor = typeof (context.session as { metadata?: { flavor?: unknown } })?.metadata?.flavor === 'string'
-            ? String((context.session as { metadata?: { flavor?: string } }).metadata?.flavor)
-            : null;
+        const flavor = resolveAgentTeamSessionFlavor((context.session as { metadata?: unknown })?.metadata);
         const hasAgentTeamToolSignal = messagesContainAgentTeamToolSignal(descriptor, context.messages);
         const snapshot = hasAgentTeamFlavor(descriptor, flavor) || hasAgentTeamToolSignal
             ? deriveAgentTeamParticipants({ descriptor, messages: context.messages })

@@ -1,4 +1,5 @@
 import { VoiceLocalSttSchema } from '@/sync/domains/settings/voiceLocalSttSettings';
+import { resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
 
 export type LocalNeuralSttCaptureSettings = Readonly<{
   packId: string;
@@ -12,11 +13,7 @@ function normalizeNonEmpty(value: unknown): string | null {
 }
 
 function resolveAdapterSettings(settings: any): unknown {
-  const voice = settings?.voice ?? null;
-  const providerId = normalizeNonEmpty(voice?.providerId);
-  return providerId === 'local_direct'
-    ? voice?.adapters?.local_direct?.stt
-    : voice?.adapters?.local_conversation?.stt ?? voice?.adapters?.local_direct?.stt;
+  return resolveLocalVoiceAdapterSettings(settings).config?.stt;
 }
 
 export function resolveLocalNeuralSttCaptureSettings(settings: unknown): LocalNeuralSttCaptureSettings {

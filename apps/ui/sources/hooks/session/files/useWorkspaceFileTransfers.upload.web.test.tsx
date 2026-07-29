@@ -8,6 +8,7 @@ const uploadDaemonWorkspaceFileFromReaderMock = vi.hoisted(() => vi.fn());
 const callDaemonWorkspaceStatFileRpcMock = vi.hoisted(() => vi.fn());
 const openLocalUploadSourceReaderMock = vi.hoisted(() => vi.fn());
 const uploadReaderCloseSpy = vi.hoisted(() => vi.fn());
+const runTransferFinalizeRecoveryMock = vi.hoisted(() => vi.fn());
 
 installSessionFilesHookCommonModuleMocks();
 
@@ -19,6 +20,10 @@ vi.mock('@/sync/domains/transfers/runtime/transferRuntime', () => ({
 vi.mock('@/sync/runtime/files/localUploadSourceReader', () => ({
     openLocalUploadSourceReader: (...args: unknown[]) => openLocalUploadSourceReaderMock(...args),
     resolveLocalUploadSourceSizeBytes: async (source: { kind: 'web'; file: File }) => source.file.size,
+}));
+
+vi.mock('@/components/transfers/recovery/runTransferFinalizeRecovery', () => ({
+    runTransferFinalizeRecovery: (...args: unknown[]) => runTransferFinalizeRecoveryMock(...args),
 }));
 
 describe('useWorkspaceFileTransfers upload pipeline', () => {
@@ -40,6 +45,7 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
         callDaemonWorkspaceStatFileRpcMock.mockReset();
         openLocalUploadSourceReaderMock.mockReset();
         uploadReaderCloseSpy.mockReset();
+        runTransferFinalizeRecoveryMock.mockReset();
         openLocalUploadSourceReaderMock.mockImplementation(async (source: { kind: 'web'; file: File }) => ({
             sizeBytes: source.file.size,
             readBytes: async (offset: number, length: number) => {
@@ -253,5 +259,116 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
         expect(result).toEqual({ ok: false, error: 'Upload source reader exploded' });
         expect(uploadDaemonWorkspaceFileFromReaderMock).toHaveBeenCalledTimes(1);
         expect(uploadReaderCloseSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('finishes the exact staged file without starting a second upload', async () => {
+        callDaemonWorkspaceStatFileRpcMock.mockResolvedValue({ success: true, exists: false });
+        const recovery = {
+            kind: 'transfer_finalize_recovery' as const,
+            expiresAt: Date.now() + 60_000,
+            actions: ['retry_finalize', 'discard_staged'] as const,
+            invoke: vi.fn(),
+        };
+        uploadDaemonWorkspaceFileFromReaderMock.mockResolvedValueOnce({
+            success: false,
+            error: 'Finalize recovery is required',
+            errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED',
+            recovery,
+        });
+        runTransferFinalizeRecoveryMock.mockResolvedValueOnce({
+            status: 'finalized',
+            response: {
+                success: true,
+                path: 'workspace/files/hello.txt',
+                sizeBytes: 5,
+                sha256: 'sha256',
+            },
+        });
+        const { useWorkspaceFileTransfers } = await import('@/hooks/workspaces/transfers/useWorkspaceFileTransfers');
+
+        let api: WorkspaceFileTransfersApi | null = null;
+        function Test() {
+            api = useWorkspaceFileTransfers({
+                workspaceScope: {
+                    serverId: 'server-1',
+                    machineId: 'm1',
+                    rootPath: '/repo',
+                },
+            }) as unknown as WorkspaceFileTransfersApi;
+            return null;
+        }
+        await renderScreen(<Test />);
+        const file = new File([new TextEncoder().encode('hello')], 'hello.txt', { type: 'text/plain' });
+
+        let result: { ok: boolean; error?: string } | null = null;
+        await act(async () => {
+            result = await api!.startUploads({
+                destinationDir: 'workspace/files',
+                entries: [{ kind: 'web', file, relativePath: 'hello.txt' }],
+            });
+        });
+
+        expect(result).toEqual({ ok: true });
+        expect(uploadDaemonWorkspaceFileFromReaderMock).toHaveBeenCalledTimes(1);
+        expect(runTransferFinalizeRecoveryMock).toHaveBeenCalledWith(expect.objectContaining({ recovery }));
+    });
+
+    it('blocks a fresh upload while finalize recovery is in flight', async () => {
+        callDaemonWorkspaceStatFileRpcMock.mockResolvedValue({ success: true, exists: false });
+        const recovery = {
+            kind: 'transfer_finalize_recovery' as const,
+            expiresAt: Date.now() + 60_000,
+            actions: ['retry_finalize', 'discard_staged'] as const,
+            invoke: vi.fn(),
+        };
+        uploadDaemonWorkspaceFileFromReaderMock.mockResolvedValueOnce({
+            success: false,
+            error: 'Finalize recovery is required',
+            errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED',
+            recovery,
+        });
+        let finishRecovery!: (value: unknown) => void;
+        runTransferFinalizeRecoveryMock.mockImplementationOnce(async () => await new Promise((resolve) => {
+            finishRecovery = resolve;
+        }));
+        const { useWorkspaceFileTransfers } = await import('@/hooks/workspaces/transfers/useWorkspaceFileTransfers');
+        let api: WorkspaceFileTransfersApi | null = null;
+        function Test() {
+            api = useWorkspaceFileTransfers({
+                workspaceScope: { serverId: 'server-1', machineId: 'm1', rootPath: '/repo' },
+            }) as unknown as WorkspaceFileTransfersApi;
+            return null;
+        }
+        await renderScreen(<Test />);
+        const file = new File([new TextEncoder().encode('hello')], 'hello.txt', { type: 'text/plain' });
+        const input = {
+            destinationDir: 'workspace/files',
+            entries: [{ kind: 'web' as const, file, relativePath: 'hello.txt' }],
+        };
+
+        let firstUpload!: Promise<{ ok: boolean; error?: string }>;
+        await act(async () => {
+            firstUpload = api!.startUploads(input);
+            await vi.waitFor(() => expect(runTransferFinalizeRecoveryMock).toHaveBeenCalledTimes(1));
+        });
+        await expect(api!.startUploads(input)).resolves.toEqual({
+            ok: false,
+            error: 'Uploads already in progress',
+        });
+        expect(uploadDaemonWorkspaceFileFromReaderMock).toHaveBeenCalledTimes(1);
+
+        finishRecovery({
+            status: 'finalized',
+            response: {
+                success: true,
+                path: 'workspace/files/hello.txt',
+                sizeBytes: 5,
+                sha256: 'sha256',
+            },
+        });
+        await act(async () => {
+            await expect(firstUpload).resolves.toEqual({ ok: true });
+        });
+        expect(uploadDaemonWorkspaceFileFromReaderMock).toHaveBeenCalledTimes(1);
     });
 });

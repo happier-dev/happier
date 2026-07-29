@@ -28,9 +28,11 @@ import { Text } from '@/components/ui/text/Text';
 import { UserCard } from '@/components/ui/cards/UserCard';
 import { trackFriendsProfileView } from '@/track';
 import { ApprovalInboxCard } from '@/components/inbox/cards/ApprovalInboxCard';
+import { isOpenApprovalInboxArtifact } from '@/components/approvals/approvalInboxHeader';
 import { InboxSessionAttentionGroupCard } from '@/components/inbox/sessionAttention/InboxSessionAttentionGroupCard';
 import { getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 import { buildInboxSessionState } from '@/hooks/inbox/buildInboxSessionState';
+import { useInboxSessionMessagesById } from '@/hooks/inbox/useInboxSessionMessagesById';
 import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
@@ -96,14 +98,19 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
     const sessions = useAllSessionsForAttention();
     const sessionRows = useAllSessionListAttentionRows();
+    const sessionMessagesById = useInboxSessionMessagesById({
+        sessions,
+        sessionRows,
+    });
     const { unreadSessions, sessionsNeedingAttention } = React.useMemo(
-        () => buildInboxSessionState({ sessions, sessionRows }),
-        [sessionRows, sessions],
+        () => buildInboxSessionState({ sessions, sessionRows, sessionMessagesById }),
+        [sessionMessagesById, sessionRows, sessions],
     );
 
-    const openApprovals = React.useMemo(() => {
-        return artifacts.filter((a) => a.header?.kind === 'approval_request.v1' && a.header?.approvalStatus === 'open');
-    }, [artifacts]);
+    const openApprovals = React.useMemo(
+        () => artifacts.filter(isOpenApprovalInboxArtifact),
+        [artifacts],
+    );
 
     const showFriendsActivity = friendsEnabled && friendsIdentityReady;
 

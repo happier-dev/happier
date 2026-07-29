@@ -14,6 +14,7 @@ import {
     listDetailsWorkspaceGroupIds,
     mapDetailsWorkspaceAxisToSplitCanvasAxis,
 } from './detailsWorkspaceSplitCanvas';
+import { arePaneStateJsonValuesEqual } from '../../model/paneStateStructuralEquality';
 
 const ROOT_GROUP_ID = 'group:1';
 
@@ -209,17 +210,26 @@ export function applyOpenDetailsTab(
         const existing = details.tabsByKey[params.tab.key]!;
         const isPinned = params.openAs === 'pinned' ? true : existing.isPinned;
         const isPreview = isPinned ? false : existing.isPreview;
+        const nextTabState = {
+            ...params.tab,
+            isPinned,
+            isPreview,
+        };
+        if (
+            details.isOpen === true
+            && details.focusedGroupId === existingGroupId
+            && details.groupsById[existingGroupId]?.activeTabKey === params.tab.key
+            && arePaneStateJsonValuesEqual(existing, nextTabState)
+        ) {
+            return details;
+        }
         return cleanupDetailsState({
             ...details,
             isOpen: true,
             focusedGroupId: existingGroupId,
             tabsByKey: {
                 ...details.tabsByKey,
-                [params.tab.key]: {
-                    ...params.tab,
-                    isPinned,
-                    isPreview,
-                },
+                [params.tab.key]: nextTabState,
             },
             groupsById: {
                 ...details.groupsById,
@@ -261,6 +271,80 @@ export function applyOpenDetailsTab(
     });
 }
 
+export function applyReplaceDetailsTab(
+    detailsState: PaneDetailsState,
+    params: Readonly<{ tabKey: string; tab: DetailsTab; openAs?: DetailsTabOpenMode }>,
+): PaneDetailsState {
+    const sourceGroupId = findGroupIdByTabKey(detailsState, params.tabKey);
+    const existing = detailsState.tabsByKey[params.tabKey];
+    if (!sourceGroupId || !existing) return detailsState;
+
+    const isPinned =
+        params.openAs === 'pinned'
+            ? true
+            : params.openAs === 'preview'
+                ? false
+                : existing.isPinned;
+    const isPreview =
+        isPinned
+            ? false
+            : params.openAs === 'preview'
+                ? true
+                : existing.isPreview;
+
+    let details = isPreview
+        ? removePreviewTabsFromGroup(detailsState, sourceGroupId, params.tabKey)
+        : detailsState;
+    const sourceGroup = details.groupsById[sourceGroupId];
+    if (!sourceGroup) return detailsState;
+
+    const nextTab: DetailsTabState = {
+        ...params.tab,
+        isPinned,
+        isPreview,
+    };
+    const nextTabsByKey = { ...details.tabsByKey } as Record<string, DetailsTabState>;
+    const nextTabState = { ...details.tabState } as Record<string, unknown>;
+
+    delete nextTabsByKey[params.tabKey];
+    nextTabsByKey[nextTab.key] = nextTab;
+
+    if (params.tabKey !== nextTab.key && Object.prototype.hasOwnProperty.call(nextTabState, params.tabKey)) {
+        nextTabState[nextTab.key] = nextTabState[params.tabKey];
+        delete nextTabState[params.tabKey];
+    }
+
+    const nextGroupsById = Object.fromEntries(
+        Object.entries(details.groupsById).map(([groupId, group]) => {
+            const seen = new Set<string>();
+            const tabKeys: string[] = [];
+            for (const tabKey of group.tabKeys) {
+                if (groupId !== sourceGroupId && (tabKey === params.tabKey || tabKey === nextTab.key)) {
+                    continue;
+                }
+                const nextKey = groupId === sourceGroupId && tabKey === params.tabKey
+                    ? nextTab.key
+                    : tabKey;
+                if (seen.has(nextKey)) continue;
+                seen.add(nextKey);
+                tabKeys.push(nextKey);
+            }
+            return [groupId, {
+                ...group,
+                tabKeys,
+                activeTabKey: group.activeTabKey === params.tabKey ? nextTab.key : group.activeTabKey,
+            }];
+        }),
+    ) as Record<string, DetailsWorkspaceGroupState>;
+
+    return cleanupDetailsState({
+        ...details,
+        tabsByKey: nextTabsByKey,
+        tabState: nextTabState,
+        groupsById: nextGroupsById,
+    });
+}
+
 export function applySetDetailsTabState(
     details: PaneDetailsState,
     tabKey: string,
@@ -271,6 +355,9 @@ export function applySetDetailsTabState(
         const nextTabState = { ...details.tabState } as Record<string, unknown>;
         delete nextTabState[tabKey];
         return { ...details, tabState: nextTabState };
+    }
+    if (arePaneStateJsonValuesEqual(details.tabState[tabKey], nextState)) {
+        return details;
     }
     return {
         ...details,
@@ -545,7 +632,7 @@ function areTabStateRecordsEqual(
     if (leftKeys.length !== rightKeys.length) return false;
     for (const key of leftKeys) {
         if (!Object.prototype.hasOwnProperty.call(right, key)) return false;
-        if (!Object.is(left[key], right[key])) return false;
+        if (!arePaneStateJsonValuesEqual(left[key], right[key])) return false;
     }
     return true;
 }

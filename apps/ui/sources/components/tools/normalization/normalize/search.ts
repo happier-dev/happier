@@ -2,6 +2,44 @@ import { asRecord, firstNonEmptyString } from './_shared';
 
 type SearchMatch = { filePath?: string; line?: number; excerpt?: string };
 
+function readReleasedCodeSearchAggregateCount(record: Record<string, unknown>): number | null {
+    const totalMatches = record.totalMatches;
+    if (typeof totalMatches === 'number' && Number.isSafeInteger(totalMatches) && totalMatches >= 0) {
+        return totalMatches;
+    }
+    const totalFiles = record.totalFiles;
+    if (typeof totalFiles === 'number' && Number.isSafeInteger(totalFiles) && totalFiles >= 0) {
+        return totalFiles;
+    }
+    return null;
+}
+
+function hasSearchError(record: Record<string, unknown>): boolean {
+    const error = record.error;
+    return record.isError === true
+        || error === true
+        || (typeof error === 'string' && error.trim().length > 0)
+        || (error !== null && typeof error === 'object')
+        || record.status === 'error'
+        || record.status === 'failed';
+}
+
+// cli-v0.2.1 (b1d15a8) persisted CodeSearch aggregates as an explicit empty
+// matches array plus a positive aggregate count. Newer producers own the
+// canonical detailsUnavailable marker, so this adapter stays exact and narrow.
+function normalizeReleasedCodeSearchAggregateRecord(
+    record: Record<string, unknown>,
+): Record<string, unknown> | null {
+    if (hasSearchError(record) || !Array.isArray(record.matches) || record.matches.length !== 0) {
+        return null;
+    }
+    const count = readReleasedCodeSearchAggregateCount(record);
+    if (count === null || count === 0 || record.detailsUnavailable === true) {
+        return null;
+    }
+    return { ...record, detailsUnavailable: true };
+}
+
 function normalizeStringLines(value: string): string[] {
     return value
         .replace(/\r\n/g, '\n')
@@ -115,7 +153,7 @@ export function normalizeGrepResultForRendering(result: unknown): Record<string,
             matches.every((m) => {
                 const rec = asRecord(m);
                 return !!rec && (typeof (rec as any).filePath === 'string' || typeof (rec as any).excerpt === 'string');
-            });
+        });
         if (allCanonicalObjects) return null;
         return normalized.length > 0 ? { ...record, matches: normalized } : null;
     }
@@ -190,9 +228,10 @@ export function normalizeCodeSearchResultForRendering(result: unknown): Record<s
             matches.every((m) => {
                 const rec = asRecord(m);
                 return !!rec && (typeof (rec as any).filePath === 'string' || typeof (rec as any).excerpt === 'string');
-            });
+        });
         if (allCanonicalObjects) return null;
-        return normalized.length > 0 ? { ...record, matches: normalized } : null;
+        if (normalized.length > 0) return { ...record, matches: normalized };
+        return normalizeReleasedCodeSearchAggregateRecord(record);
     }
 
     if (typeof result === 'string') {

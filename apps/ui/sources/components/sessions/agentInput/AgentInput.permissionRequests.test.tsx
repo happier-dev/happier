@@ -121,7 +121,7 @@ vi.mock('@/sync/domains/models/modelOptions', () => ({
 }));
 
 vi.mock('@/sync/domains/models/describeEffectiveModelMode', () => ({
-    describeEffectiveModelMode: () => ({ effectiveModelId: 'default' }),
+    describeEffectiveModelMode: () => ({ selectedModelId: 'default', appliedModelId: null, effectiveModelId: 'default' }),
 }));
 
 vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
@@ -253,6 +253,7 @@ vi.mock('@/components/ui/layout/layout', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
+    FontWeights: { regular: '400', semiBold: '500', bold: '600' },
     Typography: { default: () => ({}), mono: () => ({}), header: () => ({}) },
 }));
 

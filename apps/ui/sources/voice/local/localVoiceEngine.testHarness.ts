@@ -1,12 +1,26 @@
 import { afterEach, beforeEach, vi } from 'vitest';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import type { machineContributionRegistryProjectionDescribe as machineContributionRegistryProjectionDescribeFn } from '@/sync/ops/machineContributionRegistryProjection';
-import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/sync/domains/settings/voiceSettings';
+import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/voice/adapters/local/settings';
+import { createTransferRecipientKeyPair } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption';
 
 type MachineContributionRegistryProjectionDescribeFn = typeof machineContributionRegistryProjectionDescribeFn;
 
 export const sendMessage = vi.fn();
+export const submitMessage = vi.fn();
+export const enqueuePendingMessage = vi.fn(async (
+    _sessionId: string,
+    _text: string,
+    _media: unknown,
+    _replyTo: unknown,
+    options?: Readonly<{ localId?: string }>,
+) => ({
+    localId: options?.localId ?? 'voice-test-pending-message',
+    accepted: true,
+    externalHandoffClaimed: true,
+}));
 export const daemonVoiceAgentStart = vi.fn();
 export const daemonVoiceAgentSendTurn = vi.fn();
 export const daemonVoiceAgentWelcome = vi.fn();
@@ -23,6 +37,7 @@ export const sessionExecutionRunSend = vi.fn();
 export const sessionExecutionRunStop = vi.fn();
 export const sendSessionMessageWithServerScope = vi.fn();
 export const sessionRpcWithServerScope = vi.fn();
+export const machineRpcWithServerScope = vi.fn();
 export const createdAudioPlayers: any[] = [];
 export const fileDelete = vi.fn(async () => {});
 export const expoSpeechSpeak = vi.fn();
@@ -80,7 +95,9 @@ export const machineContributionRegistryProjectionDescribe = vi.fn<MachineContri
 
 let platformOs: 'ios' | 'web' = 'ios';
 let nextRecorderPrepareError: Error | null = null;
+let recorderUri: string | null = 'file:///tmp/rec.m4a';
 let speechRecRecognitionAvailable = true;
+let sherpaNativeModuleAvailable = true;
 
 const EXPO_SPEECH_STATE_KEY = Symbol.for('happier.vitest.expoSpeechStub.state');
 const EXPO_SPEECH_REC_STATE_KEY = Symbol.for('happier.vitest.expoSpeechRecognitionStub.state');
@@ -109,6 +126,10 @@ export function setSpeechRecRecognitionAvailable(next: boolean) {
     }
 }
 
+export function setSherpaNativeModuleAvailable(next: boolean) {
+    sherpaNativeModuleAvailable = next;
+}
+
 export function emitSpeechRecEvent(eventName: string, event: any = {}) {
     const state = (globalThis as any)[EXPO_SPEECH_REC_STATE_KEY];
     const set: Set<(event: any) => void> | undefined = state?.listeners?.get?.(eventName);
@@ -133,22 +154,25 @@ export const BASE_SETTINGS = {
     ],
     voice: {
         providerId: 'local_conversation',
+        assistantLanguage: null,
+        welcome: { enabled: false, mode: 'immediate', templateId: null },
+        executionMachine: { mode: 'auto', machineId: null, autoMachineId: null },
         privacy: {
             shareSessionSummary: true,
             shareRecentMessages: true,
             recentMessagesCount: 3,
             shareToolNames: true,
             sharePermissionRequests: true,
+            shareDeviceInventory: true,
             shareFilePaths: false,
             shareToolArgs: false,
         },
-        adapters: {
-            realtime_elevenlabs: {
-                assistantLanguage: null,
+        providers: {
+            realtime_elevenlabs: { schemaVersion: 2, config: {
                 billingMode: 'happier',
-                byo: { agentId: null, apiKey: null },
-            },
-	            local_direct: {
+                byo: { agentId: null },
+            } },
+	            local_direct: { schemaVersion: 1, config: {
                 stt: {
                     baseUrl: 'http://localhost:8000',
                     apiKey: null,
@@ -166,7 +190,13 @@ export const BASE_SETTINGS = {
                         voice: 'alloy',
                         format: 'mp3',
                     },
-                    kokoro: { assetSetId: null, voiceId: null, speed: null },
+                    localNeural: {
+                        model: 'kokoro',
+                        assetId: null,
+                        voiceId: null,
+                        speed: null,
+                        execution: 'auto',
+                    },
                 },
                 networkTimeoutMs: 15_000,
 	                handsFree: {
@@ -176,8 +206,8 @@ export const BASE_SETTINGS = {
 	                        minSpeechMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs,
 	                    },
 	                },
-	            },
-            local_conversation: {
+	            } },
+            local_conversation: { schemaVersion: 1, config: {
                 conversationMode: 'direct_session',
                 stt: {
                     baseUrl: 'http://localhost:8000',
@@ -196,7 +226,13 @@ export const BASE_SETTINGS = {
                         voice: 'alloy',
                         format: 'mp3',
                     },
-                    kokoro: { assetSetId: null, voiceId: null, speed: null },
+                    localNeural: {
+                        model: 'kokoro',
+                        assetId: null,
+                        voiceId: null,
+                        speed: null,
+                        execution: 'auto',
+                    },
                 },
                 networkTimeoutMs: 15_000,
 	                handsFree: {
@@ -210,7 +246,7 @@ export const BASE_SETTINGS = {
                     backend: 'daemon',
                     agentSource: 'session',
                     agentId: 'claude',
-                    permissionPolicy: 'read_only',
+                    permissionIntent: 'read-only',
                     idleTtlSeconds: 300,
                     chatModelSource: 'custom',
                     chatModelId: 'default',
@@ -231,7 +267,7 @@ export const BASE_SETTINGS = {
                     ttsEnabled: false,
                     ttsChunkChars: 200,
                 },
-            },
+            } },
         },
     },
 } as const;
@@ -242,6 +278,10 @@ export function setPlatformOs(next: 'ios' | 'web') {
 
 export function setNextRecorderPrepareError(next: Error | null) {
     nextRecorderPrepareError = next;
+}
+
+export function setRecorderUri(next: string | null) {
+    recorderUri = next;
 }
 
 export async function getStorage() {
@@ -265,6 +305,14 @@ export async function loadLocalVoiceEngineWithCompatState(): Promise<
     typeof import('./localVoiceEngine') & Readonly<{ getLocalVoiceState: () => LocalVoiceEngineCompatState }>
 > {
     const localVoiceEngine = await import('./localVoiceEngine');
+    // Mirror VoiceSessionRuntime startup with the real local-conversation
+    // adapter. Import the engine first so per-test boundary overrides can still
+    // be installed before this helper assembles the production adapter.
+    const [{ createLocalConversationVoiceAdapter }, { registerVoiceAdapters }] = await Promise.all([
+        import('@/voice/adapters/localConversation/localConversationAdapter'),
+        import('@/voice/session/voiceAdapterRegistry'),
+    ]);
+    registerVoiceAdapters([createLocalConversationVoiceAdapter()]);
     const { deriveLocalVoiceRuntimeProjection } = await import('@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot');
     const { getVoiceConversationRuntimeSnapshot } = await import('@/voice/runtime/machine/voiceConversationRuntimeStore');
 
@@ -285,6 +333,8 @@ export async function loadLocalVoiceEngineWithCompatState(): Promise<
 vi.mock('@/sync/sync', () => ({
     sync: {
         sendMessage,
+        submitMessage,
+        enqueuePendingMessage,
         ensureSessionVisibleForMessageRoute: vi.fn(async () => {}),
         refreshSessionMessages: vi.fn(async () => {}),
         refreshSessions: (...args: any[]) => (refreshSessions as any)(...args),
@@ -293,13 +343,23 @@ vi.mock('@/sync/sync', () => ({
             const { storage } = await import('@/sync/domains/state/storage');
             const state: any = storage.getState();
             const session: any = state.sessions?.[sessionId] ?? null;
-            const nextMeta = patch(session?.metadata ?? {});
+            const writesOwnerView = session?.metadataLayoutVersion === 1;
+            const nextMeta = patch(
+                writesOwnerView ? session?.ownerMetadataView ?? {} : session?.metadata ?? {},
+            );
             if (typeof (storage as any).__setState === 'function') {
                 (storage as any).__setState({
                     ...state,
                     sessions: {
                         ...state.sessions,
-                        [sessionId]: session ? { ...session, metadata: nextMeta } : { id: sessionId, metadata: nextMeta },
+                        [sessionId]: session
+                            ? {
+                                ...session,
+                                ...(writesOwnerView
+                                    ? { ownerMetadataView: nextMeta }
+                                    : { metadata: nextMeta }),
+                            }
+                            : { id: sessionId, metadata: nextMeta },
                     },
                 });
             }
@@ -326,6 +386,10 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', (
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage', () => ({
     sendSessionMessageWithServerScope: (args: any) => sendSessionMessageWithServerScope(args),
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: (request: any) => machineRpcWithServerScope(request),
 }));
 
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
@@ -407,6 +471,12 @@ vi.mock('@/voice/modelPacks/manifests', () => ({
     resolveModelPackManifestUrl: (params: any) => (resolveModelPackManifestUrl as any)(params),
 }));
 
+// The production binary speech tunnel is a network boundary. Local-engine unit
+// suites exercise the deterministic JSON-RPC compatibility path beneath it.
+vi.mock('@/voice/runtime/daemonInference/DaemonSpeechStreamProductionTunnelTransport', () => ({
+    createProductionDaemonSpeechStreamingSttTransport: vi.fn(async () => null),
+}));
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
@@ -429,8 +499,11 @@ vi.mock('react-native', async () => {
 vi.mock('expo-audio', () => ({
     RecordingPresets: { HIGH_QUALITY: { extension: '.m4a' } },
     AudioModule: {
+        setAudioModeAsync: vi.fn(async () => {}),
         AudioRecorder: class {
-            uri: string | null = null;
+            get uri(): string | null {
+                return recorderUri;
+            }
             async prepareToRecordAsync() {
                 if (nextRecorderPrepareError) {
                     const error = nextRecorderPrepareError;
@@ -439,9 +512,7 @@ vi.mock('expo-audio', () => ({
                 }
             }
             record() { }
-            async stop() {
-                this.uri = 'file:///tmp/rec.m4a';
-            }
+            async stop() { }
         },
     },
     createAudioPlayer: (source?: any) => {
@@ -466,9 +537,20 @@ vi.mock('expo-file-system', () => ({
     Paths: { cache: 'file:///tmp/' },
     File: class {
         uri: string;
+        size = 3;
         constructor(...uris: any[]) {
             const [base, name] = uris;
             this.uri = `${String(base)}${String(name ?? '')}`;
+        }
+        open() {
+            let offset = 0;
+            return {
+                size: this.size,
+                get offset() { return offset; },
+                set offset(next: number) { offset = next; },
+                readBytes: (length: number) => new Uint8Array([1, 2, 3]).slice(offset, offset + length),
+                close: () => {},
+            };
         }
         write(_content: any) { }
         delete = fileDelete;
@@ -492,22 +574,53 @@ vi.mock(
         };
 
         return {
-            getOptionalHappierAudioStreamNativeModule: () => ({
-                start: (...args: any[]) => (audioStreamStart as any)(...args),
-                stop: (...args: any[]) => (audioStreamStop as any)(...args),
-                addListener,
+            getSharedVoicePcmCapture: () => ({
+                acquire: async (request: any) => {
+                    const subscription = addListener('audioFrame', (event: any) => {
+                        if (request.shouldDeliver?.() === false) return;
+                        void Promise.resolve(request.onFrame(event)).catch((error) => request.onError?.(error));
+                    });
+                    await (audioStreamStart as any)({
+                        sampleRate: request.format.sampleRate,
+                        channels: request.format.channels,
+                        frameMs: request.format.frameMs,
+                    });
+                    let released = false;
+                    return {
+                        id: `test-pcm-capture:${String(request.ownerId)}`,
+                        release: async () => {
+                            if (released) return;
+                            released = true;
+                            subscription.remove();
+                            await (audioStreamStop as any)();
+                        },
+                        waitForDrain: async () => {},
+                    };
+                },
+            }),
+            getSharedVoiceAudioSessionCoordinator: () => ({
+                acquire: async () => ({
+                    id: 'test-audio-session-lease',
+                    capabilities: { aecAvailable: false, aecActive: false, route: 'test' },
+                    release: async () => {},
+                }),
+                subscribe: () => ({ remove: () => {} }),
+                getSnapshot: () => ({ generation: 0, leaseCount: 0, configuration: null, capabilities: null }),
+                dispose: async () => {},
             }),
         };
     },
 );
 
 vi.mock('@happier-dev/sherpa-native', () => ({
-    getOptionalHappierSherpaNativeModule: () => ({
-        createStreamingRecognizer: (...args: any[]) => (sherpaStreamingCreate as any)(...args),
-        pushAudioFrame: (...args: any[]) => (sherpaStreamingPushFrame as any)(...args),
-        finishStreaming: (...args: any[]) => (sherpaStreamingFinish as any)(...args),
-        cancel: (...args: any[]) => (sherpaStreamingCancel as any)(...args),
-    }),
+    getOptionalHappierSherpaNativeModule: () => sherpaNativeModuleAvailable
+        ? {
+            createStreamingRecognizer: (...args: any[]) => (sherpaStreamingCreate as any)(...args),
+            pushAudioFrame: (...args: any[]) => (sherpaStreamingPushFrame as any)(...args),
+            finishStreaming: (...args: any[]) => (sherpaStreamingFinish as any)(...args),
+            cancel: (...args: any[]) => (sherpaStreamingCancel as any)(...args),
+        }
+        : null,
 }));
 
 vi.mock('@/sync/domains/state/storage', () => {
@@ -552,15 +665,22 @@ vi.mock('@/sync/domains/state/storage', () => {
                     const metadata = (session as any).metadata && typeof (session as any).metadata === 'object'
                         ? (session as any).metadata
                         : {};
+                    const ownerMetadataView =
+                        (session as any).ownerMetadataView && typeof (session as any).ownerMetadataView === 'object'
+                            ? (session as any).ownerMetadataView
+                            : {};
+                    const executionMetadata = {
+                        host: 'test',
+                        machineId: 'machine-1',
+                        path: `/Users/test/.happier/worktree/${String(id)}`,
+                        ...((session as any).metadataLayoutVersion === 1 ? ownerMetadataView : metadata),
+                    };
                     normalizedSessions[id] = {
                         ...session,
                         // Voice runtime paths often need these for session-root target resolution.
-                        metadata: {
-                            host: 'test',
-                            machineId: 'machine-1',
-                            path: `/Users/test/.happier/worktree/${String(id)}`,
-                            ...metadata,
-                        },
+                        ...((session as any).metadataLayoutVersion === 1
+                            ? { metadata, ownerMetadataView: executionMetadata }
+                            : { metadata: executionMetadata }),
                     };
                 }
                 normalizedPatch.sessions = normalizedSessions;
@@ -576,7 +696,9 @@ vi.mock('@/sync/domains/state/storage', () => {
     return { storage };
 });
 
-export function registerLocalVoiceEngineHarnessHooks() {
+export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
+    resetModulesBetweenTests?: boolean;
+}>) {
     const originalFetch = globalThis.fetch;
     const originalConsoleError = console.error;
     const originalCreateObjectURL = (globalThis as any)?.URL?.createObjectURL;
@@ -584,13 +706,18 @@ export function registerLocalVoiceEngineHarnessHooks() {
     const originalAudioCtor = (globalThis as any)?.Audio;
 
     beforeEach(async () => {
-        vi.resetModules();
+        if (options?.resetModulesBetweenTests !== false) {
+            vi.resetModules();
+        }
         vi.doUnmock('@/voice/runtime/input/LocalVoiceCaptureOwner');
         vi.doUnmock('@/voice/input/DeviceSttController');
         vi.doUnmock('@/voice/input/SherpaStreamingSttController');
         vi.doUnmock('@/voice/runtime/mic/NativeMicSession');
         console.error = (() => {}) as any;
         sendMessage.mockReset();
+        submitMessage.mockReset();
+        submitMessage.mockResolvedValue(undefined);
+        enqueuePendingMessage.mockClear();
         daemonVoiceAgentStart.mockReset();
         daemonVoiceAgentSendTurn.mockReset();
         daemonVoiceAgentStartTurnStream.mockReset();
@@ -600,9 +727,11 @@ export function registerLocalVoiceEngineHarnessHooks() {
         daemonVoiceAgentStop.mockReset();
         sendSessionMessageWithServerScope.mockReset();
         sessionRpcWithServerScope.mockReset();
+        machineRpcWithServerScope.mockReset();
         platformOs = 'ios';
         createdAudioPlayers.length = 0;
         nextRecorderPrepareError = null;
+        recorderUri = 'file:///tmp/rec.m4a';
         fileDelete.mockReset();
         expoSpeechSpeak.mockReset();
         expoSpeechStop.mockReset();
@@ -638,6 +767,7 @@ export function registerLocalVoiceEngineHarnessHooks() {
         isRuntimeFeatureEnabled.mockReset();
         isRuntimeFeatureEnabled.mockResolvedValue(true);
         speechRecRecognitionAvailable = true;
+        sherpaNativeModuleAvailable = true;
         setExpoSpeechStubState({
             speakImpl: (...args: any[]) => (expoSpeechSpeak as any)(...args),
             stopImpl: (...args: any[]) => (expoSpeechStop as any)(...args),
@@ -651,6 +781,54 @@ export function registerLocalVoiceEngineHarnessHooks() {
             requestPermissionsImpl: (...args: any[]) => (speechRecRequestPermissionsAsync as any)(...args),
         });
         globalThis.fetch = vi.fn() as any;
+        machineRpcWithServerScope.mockImplementation(async (request: any) => {
+            switch (request?.method) {
+                case RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_INIT: {
+                    const recipient = createTransferRecipientKeyPair();
+                    return {
+                        success: true,
+                        uploadId: 'local-engine-test-upload',
+                        chunkSizeBytes: 64 * 1024,
+                        recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
+                    };
+                }
+                case RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_CHUNK:
+                    return { success: true };
+                case RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_FINALIZE:
+                    return {
+                        success: true,
+                        uploadId: 'local-engine-test-upload',
+                        sizeBytes: 3,
+                        sha256: 'a'.repeat(64),
+                    };
+                case RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE: {
+                    // These legacy engine-behavior suites use fetch queues only as
+                    // deterministic third-party response fixtures. Production UI
+                    // still crosses the machine-scoped daemon RPC boundary above.
+                    const response = await (globalThis.fetch as any)('http://localhost:8000/v1/audio/transcriptions', {
+                        method: 'POST',
+                        body: request?.payload ?? null,
+                        signal: request?.signal,
+                    });
+                    const body = await response.json();
+                    return { ok: true, text: String(body?.text ?? '') };
+                }
+                case RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_CHAT: {
+                    const response = await (globalThis.fetch as any)('http://localhost:8002/v1/chat/completions', {
+                        method: 'POST',
+                        body: JSON.stringify(request?.payload ?? {}),
+                        signal: request?.signal,
+                    });
+                    const body = await response.json();
+                    return {
+                        ok: true,
+                        text: String(body?.choices?.[0]?.message?.content ?? body?.text ?? ''),
+                    };
+                }
+                default:
+                    throw new Error(`unexpected local voice engine machine RPC: ${String(request?.method)}`);
+            }
+        });
         // Node's URL implementation does not always provide these (browser-only) APIs.
         // The web voice runtime uses them for in-memory audio playback.
         (globalThis as any).URL.createObjectURL = vi.fn(() => 'blob:happier-test');
@@ -737,7 +915,6 @@ export function registerLocalVoiceEngineHarnessHooks() {
             active: true,
             createdAt: Date.now(),
             activeAt: Date.now(),
-            spawnReadinessStatus: 'ready',
             metadata: {
                 host: 'test',
                 happyHomeDir: '/Users/test/.happier',
@@ -754,6 +931,7 @@ export function registerLocalVoiceEngineHarnessHooks() {
                 'server-a': [machine],
             },
         });
+
     });
 
     afterEach(() => {

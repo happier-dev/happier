@@ -218,6 +218,26 @@ describe('/session/[id]/terminal', () => {
         expect(setRightTabSpy).toHaveBeenCalledWith('terminal');
     });
 
+    it('does not re-target the terminal tab after the shared panel selects another tab', async () => {
+        const screen = await renderRouteScreen();
+        openRightSpy.mockClear();
+        setRightTabSpy.mockClear();
+
+        isFocused = false;
+        await screen.update(<SessionTerminalRouteScreen />);
+
+        scopeState = {
+            right: { isOpen: true, activeTabId: 'files', tabState: {} },
+            details: null,
+        };
+        isFocused = true;
+
+        await screen.update(<SessionTerminalRouteScreen />);
+
+        expect(openRightSpy).not.toHaveBeenCalled();
+        expect(setRightTabSpy).not.toHaveBeenCalled();
+    });
+
     it('hydrates the session for deep links by requesting session visibility', async () => {
         await renderRouteScreen();
 

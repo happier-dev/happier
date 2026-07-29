@@ -23,7 +23,25 @@ export const stableCredentials = {
 
 let currentCredentials: Readonly<{ token: string; secret: string }> = stableCredentials;
 
+export const activeServerSnapshotState = {
+    current: {
+        serverId: 'server-a',
+        serverUrl: 'https://server-a.example.test',
+        generation: 1,
+    },
+};
+
 export const useFeatureEnabledSpy = vi.fn((_featureId: string) => true);
+export const useServerFeaturesRuntimeSnapshotSpy = vi.fn(() => ({
+    status: 'ready' as const,
+    features: {
+        capabilities: {
+            connectedServices: {
+                credentialDelete: { revisionGuard: true },
+            },
+        },
+    },
+}));
 
 const quotaSnapshotMocks = vi.hoisted(() => ({
     fetchAccountEncryptionModeSpy: vi.fn<
@@ -57,6 +75,26 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => useFeatureEnabledSpy(featureId),
 }));
 
+vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
+    useServerFeaturesRuntimeSnapshot: () =>
+        useServerFeaturesRuntimeSnapshotSpy(),
+}));
+
+vi.mock('@/sync/store/hooks', () => ({
+    useProfile: () => ({
+        connectedAccountsV4: [],
+    }),
+}));
+
+vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
+    useActiveServerSnapshot: () => activeServerSnapshotState.current,
+}));
+
+vi.mock('./useConnectedServiceLegacyOperationAdmission', () => ({
+    useConnectedServiceLegacyOperationAdmission: () => async () => {},
+    useConnectedAccountOperationAdmission: () => async () => {},
+}));
+
 vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
     fetchAccountEncryptionMode: fetchAccountEncryptionModeSpy,
 }));
@@ -83,9 +121,24 @@ export function setCurrentCredentials(credentials: Readonly<{ token: string; sec
 
 export function resetConnectedServiceQuotaSnapshotsTestState(): void {
     currentCredentials = stableCredentials;
+    activeServerSnapshotState.current = {
+        serverId: 'server-a',
+        serverUrl: 'https://server-a.example.test',
+        generation: 1,
+    };
     vi.resetModules();
     vi.clearAllMocks();
     useFeatureEnabledSpy.mockReturnValue(true);
+    useServerFeaturesRuntimeSnapshotSpy.mockReturnValue({
+        status: 'ready',
+        features: {
+            capabilities: {
+                connectedServices: {
+                    credentialDelete: { revisionGuard: true },
+                },
+            },
+        },
+    });
     fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
 }
 
@@ -155,21 +208,6 @@ export function makeProviderAccountUsageSnapshot(): ProviderAccountUsageSnapshot
             kind: 'providerSubject',
             id: 'acct_stable',
         },
-        aliases: [
-            {
-                kind: 'connectedServiceProfile',
-                providerId: 'codex',
-                serviceId: 'openai-codex',
-                profileId: 'work',
-                accountSubjectId: 'acct_stable',
-            },
-            {
-                kind: 'nativeCli',
-                providerId: 'codex',
-                localCredentialRef: 'codex-home',
-                accountSubjectId: 'acct_stable',
-            },
-        ],
         observedAtMs: fetchedAtMs,
         fetchedAtMs,
         staleAfterMs: 60_000,

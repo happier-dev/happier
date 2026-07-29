@@ -76,6 +76,12 @@ function readNumericStyle(style: Record<string, unknown>, key: string): number {
     return value;
 }
 
+function findNativePortalBackdropPressable(tree: ReturnType<typeof renderer.create> | undefined) {
+    return tree?.root.findAllByType('Pressable' as any).find((node) => {
+        return flattenTestStyle(node.props.style).zIndex === 200000;
+    }) ?? null;
+}
+
 describe('Popover (native portal)', () => {
     let restorePopoverWebGlobals: (() => void) | null = null;
 
@@ -214,6 +220,68 @@ describe('Popover (native portal)', () => {
             vi.advanceTimersByTime(1);
         });
         expect(tree?.root.findAllByType('PopoverChild' as any)).toHaveLength(0);
+    });
+
+    it('does not let a closing native backdrop intercept taps above follow-up modals', async () => {
+        vi.useFakeTimers();
+
+        const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
+        const { Popover } = await import('./Popover');
+
+        const anchorRef = {
+            current: {
+                measureInWindow: (cb: any) => {
+                    queueMicrotask(() => cb(100, 100, 20, 20));
+                },
+            },
+        } as any;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        tree = (await renderScreen(React.createElement(
+            OverlayPortalProvider,
+            null,
+            React.createElement(Popover, {
+                open: true,
+                anchorRef,
+                placement: 'bottom',
+                portal: { native: true },
+                backdrop: { enabled: true, blockOutsidePointerEvents: true },
+                onRequestClose: () => {},
+                children: () => React.createElement(PopoverChild),
+            } as any),
+            React.createElement(OverlayPortalHost),
+        ))).tree;
+
+        await act(async () => {
+            await flushInitialPositioning();
+        });
+
+        expect(findNativePortalBackdropPressable(tree)?.props.pointerEvents).toBe('auto');
+
+        await act(async () => {
+            tree?.update(React.createElement(
+                OverlayPortalProvider,
+                null,
+                React.createElement(Popover, {
+                    open: false,
+                    anchorRef,
+                    placement: 'bottom',
+                    portal: { native: true },
+                    backdrop: { enabled: true, blockOutsidePointerEvents: true },
+                    onRequestClose: () => {},
+                    children: () => React.createElement(PopoverChild),
+                } as any),
+                React.createElement(OverlayPortalHost),
+            ));
+        });
+
+        expect(tree?.root.findAllByType('PopoverChild' as any)).toHaveLength(1);
+        expect(findNativePortalBackdropPressable(tree)?.props.pointerEvents).toBe('none');
+
+        await act(async () => {
+            vi.advanceTimersByTime(motionTokens.overlay.popover.exitMs);
+        });
+        expect(findNativePortalBackdropPressable(tree)).toBeNull();
     });
 
     it('anchors top-placed portals using the portal root height (not the window height) so contained sheets/drawers do not offset', async () => {

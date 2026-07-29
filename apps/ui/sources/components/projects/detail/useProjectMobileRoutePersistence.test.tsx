@@ -60,11 +60,13 @@ describe('useProjectMobileRoutePersistence', () => {
     it('canonicalizes a stale explicit worktreeId query param back to the root route selection', async () => {
         localSettingsMock = {};
         Object.values(setLocalSettingSpies).forEach((spy) => spy.mockClear());
+        routerMock.spies.replace.mockClear();
         routerMock.state.router.setParams({});
 
         const { useProjectMobileRoutePersistence } = await import('./useProjectMobileRoutePersistence');
         const hook = await renderHook(() => useProjectMobileRoutePersistence({
             workspaceRef,
+            isFocused: true,
             rawWorktreeId: 'gitwt_deleted',
             rawActiveRootPath: undefined,
             persistedSurface: 'browse',
@@ -100,6 +102,7 @@ describe('useProjectMobileRoutePersistence', () => {
         const { useProjectMobileRoutePersistence } = await import('./useProjectMobileRoutePersistence');
         const hook = await renderHook(() => useProjectMobileRoutePersistence({
             workspaceRef,
+            isFocused: true,
             rawWorktreeId: undefined,
             rawActiveRootPath: undefined,
             persistedSurface: 'browse',
@@ -125,6 +128,7 @@ describe('useProjectMobileRoutePersistence', () => {
         const { useProjectMobileRoutePersistence } = await import('./useProjectMobileRoutePersistence');
         const hook = await renderHook(() => useProjectMobileRoutePersistence({
             workspaceRef,
+            isFocused: true,
             rawWorktreeId: undefined,
             rawActiveRootPath: undefined,
             persistedSurface: 'browse',
@@ -134,6 +138,33 @@ describe('useProjectMobileRoutePersistence', () => {
         await vi.waitFor(() => {
             expect(setLocalSettingSpies.projectLastMobileSurfaceByWorkspaceRefId).toHaveBeenCalledWith({ wr_1: 'browse' });
         });
+
+        await hook.unmount();
+    });
+
+    it('does not persist surface or canonicalize route params while the route is not focused', async () => {
+        localSettingsMock = {};
+        Object.values(setLocalSettingSpies).forEach((spy) => spy.mockClear());
+        routerMock.spies.replace.mockClear();
+        routerMock.state.router.setParams({});
+
+        const { useProjectMobileRoutePersistence } = await import('./useProjectMobileRoutePersistence');
+        const hook = await renderHook(() => useProjectMobileRoutePersistence({
+            workspaceRef,
+            isFocused: false,
+            rawWorktreeId: 'gitwt_deleted',
+            rawActiveRootPath: undefined,
+            persistedSurface: 'browse',
+            resolveRouteHref: ({ activeRootPath, activeWorktreeId }) => `/projects/wr_1/files?root=${encodeURIComponent(activeRootPath)}&worktree=${activeWorktreeId ?? '@root'}`,
+        }));
+
+        expect(hook.getCurrent().resolvedActiveRootPath).toBe('/repo');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(routerMock.spies.replace).not.toHaveBeenCalled();
+        expect(setLocalSettingSpies.projectLastMobileSurfaceByWorkspaceRefId).not.toHaveBeenCalled();
+        expect(setLocalSettingSpies.projectLastActiveRootPathByWorkspaceRefId).not.toHaveBeenCalled();
+        expect(setLocalSettingSpies.projectLastActiveWorktreeIdByWorkspaceRefId).not.toHaveBeenCalled();
 
         await hook.unmount();
     });

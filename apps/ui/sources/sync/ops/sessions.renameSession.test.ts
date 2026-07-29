@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Typed generics for vi.fn differ across Vitest versions; keep this untyped here.
 const patchSessionMetadataWithRetryMock = vi.hoisted(() => vi.fn());
+const getSyncSingletonMock = vi.hoisted(() => vi.fn());
+
+vi.mock('@/sync/runtime/getSyncSingleton', () => ({
+    getSyncSingleton: getSyncSingletonMock,
+}));
 
 vi.mock('../sync', () => ({
     sync: {
@@ -23,6 +28,10 @@ const sessionsModulePromise = import('./sessions');
 describe('sessionRename', () => {
     beforeEach(() => {
         patchSessionMetadataWithRetryMock.mockReset();
+        getSyncSingletonMock.mockReset();
+        getSyncSingletonMock.mockReturnValue({
+            patchSessionMetadataWithRetry: patchSessionMetadataWithRetryMock,
+        });
     });
 
     it('updates metadata summary via sync.patchSessionMetadataWithRetry', async () => {
@@ -32,6 +41,7 @@ describe('sessionRename', () => {
         const result = await sessionRename('sess-1', 'New title');
 
         expect(result).toEqual({ success: true });
+        expect(getSyncSingletonMock).toHaveBeenCalledTimes(1);
         expect(patchSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
 
         const [sessionId, updater] = patchSessionMetadataWithRetryMock.mock.calls[0] as [

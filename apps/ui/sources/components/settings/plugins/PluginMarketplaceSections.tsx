@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -6,6 +7,7 @@ import type { PluginProjectionDiagnostic } from '@/agents/backendCatalog/daemonC
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
 import { PluginDiagnosticsSection } from './diagnostics/PluginDiagnosticsSection';
@@ -13,9 +15,9 @@ import type { PluginMarketplaceCatalog } from './readPluginMarketplaceCatalog';
 import {
     formatCatalogEntryVersion,
     formatCatalogSubtitle,
+    formatDevelopmentPluginSubtitle,
     formatInstalledSubtitle,
-    isUpdateAvailable,
-    readInstalledPluginCatalogVersion,
+    type DevelopmentPluginEntry,
     type InstalledPluginEntry,
     type PluginMarketplaceActionRequest,
 } from './model/pluginMarketplaceModel';
@@ -26,7 +28,7 @@ export function InstalledPluginsSection(props: Readonly<{
     canRunActions: boolean;
     isPluginActionInFlight: (pluginId: string) => boolean;
     onNavigateToPlugin: (pluginId: string) => void;
-    onRunAction: (action: 'reload' | 'update' | 'enable' | 'disable', pluginId: string) => void;
+    onRunAction: (action: 'enable' | 'disable', pluginId: string) => void;
 }>) {
     const { theme } = useUnistyles();
     return (
@@ -40,37 +42,13 @@ export function InstalledPluginsSection(props: Readonly<{
                     detail={entry.version}
                     icon={<Ionicons name="archive-outline" size={29} color={theme.colors.text.secondary} />}
                     onPress={() => props.onNavigateToPlugin(entry.pluginId)}
+                    rightElementOutsidePressable
                     rightElement={(
                         <ItemRowActions
                             title={entry.title}
-                            compactActionIds={['reload', entry.enabled ? 'disable' : 'enable']}
+                            compactActionIds={[entry.enabled ? 'disable' : 'enable']}
                             overflowTriggerTestID={`settings.plugins.marketplace.installed.${entry.pluginId}.actions.overflow`}
                             actions={[
-                                {
-                                    id: 'reload',
-                                    title: t('settingsPlugins.reloadAction'),
-                                    subtitle: t('settingsPlugins.reloadSubtitle'),
-                                    icon: 'refresh-outline',
-                                    inlineTestID: `settings.plugins.marketplace.installed.${entry.pluginId}.action.reload`,
-                                    disabled: !props.canRunActions || props.isPluginActionInFlight(entry.pluginId),
-                                    onPress: () => props.onRunAction('reload', entry.pluginId),
-                                },
-                                ...(entry.source.kind === 'catalog' ? [{
-                                    id: 'update',
-                                    title: t('common.update'),
-                                    subtitle: (
-                                        readInstalledPluginCatalogVersion(entry, props.catalog)
-                                            ? t('deps.ui.installedUpdateAvailable', {
-                                                installedVersion: entry.version,
-                                                latestVersion: readInstalledPluginCatalogVersion(entry, props.catalog) ?? entry.version,
-                                            })
-                                            : entry.source.locator
-                                    ),
-                                    icon: 'cloud-download-outline' as const,
-                                    inlineTestID: `settings.plugins.marketplace.installed.${entry.pluginId}.action.update`,
-                                    disabled: !props.canRunActions || props.isPluginActionInFlight(entry.pluginId),
-                                    onPress: () => props.onRunAction('update', entry.pluginId),
-                                }] : []),
                                 {
                                     id: entry.enabled ? 'disable' : 'enable',
                                     title: entry.enabled ? t('common.disable') : t('common.enable'),
@@ -110,6 +88,110 @@ export function RegistryDiagnosticsSection(props: Readonly<{
     );
 }
 
+export function DevelopmentPluginsSection(props: Readonly<{
+    developmentPlugins: readonly DevelopmentPluginEntry[];
+    createAvailable: boolean;
+    canRunActions: boolean;
+    isPluginActionInFlight: (pluginId: string) => boolean;
+    onCreate: () => void;
+    onRunAction: (action: 'test' | 'pack', pluginId: string) => void;
+}>) {
+    const { theme } = useUnistyles();
+    return (
+        <ItemGroup title={t('settingsPlugins.developmentTitle')} footer={t('settingsPlugins.developmentFooter')}>
+            <Item
+                testID="settings.plugins.management.development.action.create"
+                title={t('settingsPlugins.developmentCreate')}
+                subtitle={t('settingsPlugins.developmentCreateSubtitle')}
+                icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.text.secondary} />}
+                onPress={props.onCreate}
+                disabled={!props.canRunActions || !props.createAvailable}
+                showChevron={false}
+            />
+            {props.developmentPlugins.length > 0 ? props.developmentPlugins.map((entry) => (
+                <React.Fragment key={entry.installed.pluginId}>
+                    <Item
+                        testID={`settings.plugins.management.development.${entry.installed.pluginId}`}
+                        title={entry.installed.title}
+                        subtitle={(
+                            <Text
+                                testID={`settings.plugins.management.development.${entry.installed.pluginId}.details`}
+                                selectable
+                            >
+                                {formatDevelopmentPluginSubtitle(entry)}
+                                {' | '}
+                                {t('settingsPlugins.developmentWatchConfigured')}
+                                {' | '}
+                                {entry.reload.state === 'clear'
+                                    ? t('settingsPlugins.developmentReloadClear')
+                                    : t('settingsPlugins.developmentReloadAttention')}
+                            </Text>
+                        )}
+                        detail={entry.installed.version}
+                        icon={<Ionicons name="code-slash-outline" size={29} color={theme.colors.text.secondary} />}
+                        showChevron={false}
+                        mode="info"
+                    />
+                    <Item
+                        testID={`settings.plugins.management.development.${entry.installed.pluginId}.action.test`}
+                        title={t('settingsPlugins.developmentTest')}
+                        subtitle={t('settingsPlugins.developmentTestSubtitle')}
+                        icon={<Ionicons name="checkmark-done-outline" size={29} color={theme.colors.text.secondary} />}
+                        onPress={() => props.onRunAction('test', entry.installed.pluginId)}
+                        disabled={!props.canRunActions || !entry.actions.test || props.isPluginActionInFlight(entry.installed.pluginId)}
+                        showChevron={false}
+                    />
+                    <Item
+                        testID={`settings.plugins.management.development.${entry.installed.pluginId}.action.pack`}
+                        title={t('settingsPlugins.developmentPack')}
+                        subtitle={t('settingsPlugins.developmentPackSubtitle')}
+                        icon={<Ionicons name="cube-outline" size={29} color={theme.colors.text.secondary} />}
+                        onPress={() => props.onRunAction('pack', entry.installed.pluginId)}
+                        disabled={!props.canRunActions || !entry.actions.pack || props.isPluginActionInFlight(entry.installed.pluginId)}
+                        showChevron={false}
+                    />
+                </React.Fragment>
+            )) : (
+                <Item
+                    testID="settings.plugins.management.development.empty"
+                    title={t('settingsPlugins.developmentEmpty')}
+                    subtitle={t('settingsPlugins.developmentEmptySubtitle')}
+                    icon={<Ionicons name="code-slash-outline" size={29} color={theme.colors.text.secondary} />}
+                    showChevron={false}
+                    mode="info"
+                />
+            )}
+        </ItemGroup>
+    );
+}
+
+export function PluginDiagnosticsSnapshotSection(props: Readonly<{
+    diagnostics: readonly PluginProjectionDiagnostic[];
+}>) {
+    const { theme } = useUnistyles();
+    return (
+        <View
+            testID="settings.plugins.management.diagnostics.live"
+            accessibilityLiveRegion="polite"
+        >
+            {props.diagnostics.length > 0 ? (
+                <RegistryDiagnosticsSection diagnostics={props.diagnostics} />
+            ) : (
+                <ItemGroup title={t('settingsPlugins.diagnosticsSnapshotTitle')} footer={t('settingsPlugins.diagnosticsSnapshotFooter')}>
+                    <Item
+                        testID="settings.plugins.management.diagnostics.empty"
+                        title={t('settingsPlugins.diagnosticsSnapshotEmpty')}
+                        subtitle={t('settingsPlugins.diagnosticsSnapshotEmptySubtitle')}
+                        icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.text.secondary} />}
+                        showChevron={false}
+                        mode="info"
+                    />
+                </ItemGroup>
+            )}
+        </View>
+    );
+}
+
 export function CatalogEntriesSection(props: Readonly<{
     catalog: PluginMarketplaceCatalog | null;
     loadingCatalog: boolean;
@@ -117,7 +199,7 @@ export function CatalogEntriesSection(props: Readonly<{
     loadedCatalogTitle: string;
     loadedCatalogFooter: string;
     installedPluginById: ReadonlyMap<string, InstalledPluginEntry>;
-    canRefreshInstalledPlugins: boolean;
+    canRunCatalogActions: boolean;
     isPluginActionInFlight: (pluginId: string) => boolean;
     onAction: (request: PluginMarketplaceActionRequest) => void;
 }>) {
@@ -127,44 +209,47 @@ export function CatalogEntriesSection(props: Readonly<{
         const installed = props.installedPluginById.get(catalogEntry.id) ?? null;
 
         if (!installed) {
+            if (!catalogEntry.installable) return null;
             return (
                 <Item
                     testID={`settings.plugins.marketplace.action.install.${catalogEntry.id}`}
-                    title={t('common.install')}
+                    title={t('settingsPlugins.installAndTrust')}
                     subtitle={catalogEntry.description ?? t('deps.ui.notInstalled')}
                     icon={<Ionicons name="download-outline" size={29} color={theme.colors.text.secondary} />}
                     onPress={() => props.onAction({
                         method: 'install',
                         pluginId: catalogEntry.id,
-                        sourceUrl: props.resolvedCatalogUrl,
+                        sourceId: catalogEntry.sourceId,
                     })}
-                    disabled={!props.canRefreshInstalledPlugins || props.isPluginActionInFlight(catalogEntry.id) || props.loadingCatalog}
+                    disabled={!catalogEntry.installable || !props.canRunCatalogActions || props.isPluginActionInFlight(catalogEntry.id) || props.loadingCatalog}
                     showChevron={false}
                 />
             );
         }
 
-        const actionRows: React.ReactNode[] = [];
-        if (isUpdateAvailable(installed, props.catalog)) {
-            actionRows.push(
+        const updateAvailable = catalogEntry.updateable
+            && catalogEntry.version !== null
+            && catalogEntry.version !== installed.version;
+        const actionRows: React.ReactNode[] = [
+            ...(updateAvailable ? [
                 <Item
                     key="update"
                     testID={`settings.plugins.marketplace.action.update.${catalogEntry.id}`}
                     title={t('common.update')}
-                    subtitle={catalogEntry.description ?? t('deps.ui.installed')}
-                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.text.secondary} />}
+                    subtitle={t('settingsPlugins.marketplaceUpdateVersion', {
+                        installedVersion: installed.version,
+                        availableVersion: catalogEntry.version,
+                    })}
+                    icon={<Ionicons name="arrow-up-circle-outline" size={29} color={theme.colors.text.secondary} />}
                     onPress={() => props.onAction({
                         method: 'update',
                         pluginId: catalogEntry.id,
-                        sourceUrl: props.resolvedCatalogUrl,
+                        sourceId: catalogEntry.sourceId,
                     })}
-                    disabled={!props.canRefreshInstalledPlugins || props.isPluginActionInFlight(catalogEntry.id) || props.loadingCatalog}
+                    disabled={!props.canRunCatalogActions || props.isPluginActionInFlight(catalogEntry.id) || props.loadingCatalog}
                     showChevron={false}
                 />,
-            );
-        }
-
-        actionRows.push(
+            ] : []),
             <Item
                 key={installed.enabled ? 'disable' : 'enable'}
                 testID={`settings.plugins.marketplace.action.${installed.enabled ? 'disable' : 'enable'}.${catalogEntry.id}`}
@@ -175,10 +260,10 @@ export function CatalogEntriesSection(props: Readonly<{
                     method: installed.enabled ? 'disable' : 'enable',
                     pluginId: catalogEntry.id,
                 })}
-                disabled={!props.canRefreshInstalledPlugins || props.isPluginActionInFlight(catalogEntry.id) || props.loadingCatalog}
+                disabled={!props.canRunCatalogActions || props.isPluginActionInFlight(catalogEntry.id) || props.loadingCatalog}
                 showChevron={false}
             />,
-        );
+        ];
 
         return actionRows;
     };
@@ -186,13 +271,20 @@ export function CatalogEntriesSection(props: Readonly<{
     return (
         <ItemGroup title={props.loadedCatalogTitle} footer={props.loadedCatalogFooter}>
             {props.loadingCatalog ? (
-                <Item
-                    testID="settings.plugins.marketplace.catalog.loading"
-                    title={t('common.loading')}
-                    subtitle={props.resolvedCatalogUrl || t('settingsPlugins.emptySubtitle')}
-                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.text.secondary} />}
-                    showChevron={false}
-                />
+                <View
+                    testID="settings.plugins.marketplace.catalog.loading.status"
+                    accessible
+                    accessibilityLiveRegion="polite"
+                    accessibilityLabel={t('common.loading')}
+                >
+                    <Item
+                        testID="settings.plugins.marketplace.catalog.loading"
+                        title={t('common.loading')}
+                        subtitle={props.resolvedCatalogUrl || t('settingsPlugins.emptySubtitle')}
+                        icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.text.secondary} />}
+                        showChevron={false}
+                    />
+                </View>
             ) : null}
             {props.catalog ? (
                 props.catalog.entries.length > 0 ? props.catalog.entries.map((entry) => {
@@ -208,6 +300,34 @@ export function CatalogEntriesSection(props: Readonly<{
                                 showChevron={false}
                                 mode="info"
                             />
+                            {entry.warning === 'withdrawn' ? (
+                                <View accessibilityLiveRegion="assertive">
+                                    <Item
+                                        testID={`settings.plugins.marketplace.warning.${entry.id}`}
+                                        title={t('settingsPlugins.marketplaceWithdrawnTitle')}
+                                        subtitle={installed
+                                            ? t('settingsPlugins.marketplaceWithdrawnInstalledBody')
+                                            : t('settingsPlugins.marketplaceWithdrawnBody')}
+                                        subtitleLines={0}
+                                        icon={<Ionicons name="warning-outline" size={29} color={theme.colors.state.warning.foreground} />}
+                                        showChevron={false}
+                                        mode="info"
+                                    />
+                                </View>
+                            ) : null}
+                            {entry.sourceKind === 'community-npm' && entry.reviewStatus === 'unreviewed' ? (
+                                <View accessibilityLiveRegion="polite">
+                                    <Item
+                                        testID={`settings.plugins.marketplace.unreviewed.${entry.id}`}
+                                        title={t('settingsPlugins.marketplaceCommunityUnreviewedTitle')}
+                                        subtitle={t('settingsPlugins.marketplaceCommunityUnreviewedBody')}
+                                        subtitleLines={0}
+                                        icon={<Ionicons name="shield-half-outline" size={29} color={theme.colors.state.warning.foreground} />}
+                                        showChevron={false}
+                                        mode="info"
+                                    />
+                                </View>
+                            ) : null}
                             {renderCatalogEntryActionRows(entry)}
                         </React.Fragment>
                     );

@@ -108,17 +108,54 @@ const androidEnableMinifyInReleaseBuilds = readBoolEnv('HAPPIER_ANDROID_ENABLE_M
 const androidEnableShrinkResourcesInReleaseBuilds = readBoolEnv('HAPPIER_ANDROID_ENABLE_SHRINK_RESOURCES', false);
 const androidGradleJvmArgsOverride = String(process.env.HAPPIER_ANDROID_GRADLE_JVMARGS ?? '').trim();
 const androidUsesCleartextTraffic = readBoolEnv('HAPPIER_ANDROID_USES_CLEARTEXT_TRAFFIC', true);
-const expoAndroidBuildPropertiesPlugin = [
+// Canonical owner of the generated native build properties. Every prebuild path derives
+// ios/Podfile.properties.json from this: `yarn prebuild`, `expo run:ios`, `hstack mobile`,
+// and EAS (which re-prebuilds because /ios/ is .easignore'd).
+//
+// `ios.buildReactNativeFromSource` is load-bearing, not a preference: patches/ edits React
+// Native core .mm sources (composer caret reveal + jiggle, ScrollView MVCP). With prebuilt
+// RNCore, React-RCTFabric compiles headers only, so those patches apply to node_modules and
+// are then silently discarded at compile time. `deploymentTarget` stays at 16.4 because the
+// ExpoGlassEffect pod refuses to build below it.
+// Enforced by the verify-native-patch-compilation postinstall task.
+const expoBuildPropertiesPlugin = [
     "expo-build-properties",
     {
         android: {
             usesCleartextTraffic: androidUsesCleartextTraffic === true,
+        },
+        ios: {
+            buildReactNativeFromSource: true,
+            deploymentTarget: "16.4",
         },
     },
 ];
 const shouldUseAndroidReleaseShrinkerPlugin =
     androidEnableMinifyInReleaseBuilds || androidEnableShrinkResourcesInReleaseBuilds;
 const nativeSshTransportEnabled = readBoolEnv('HAPPIER_ENABLE_NATIVE_SSH', false);
+const terminalNativeRendererEnabled = readBoolEnv('HAPPIER_ENABLE_TERMINAL_NATIVE', false);
+const nativeAutolinkingSearchPaths = [
+    "../../node_modules",
+    "./node_modules",
+];
+const excludedOptionalNativeModules = [
+    ...(nativeSshTransportEnabled ? [] : ["@happier-dev/ssh-native"]),
+    ...(terminalNativeRendererEnabled ? [] : ["@happier-dev/terminal-native"]),
+];
+const optionalNativeAutolinkingConfig = {
+    searchPaths: nativeAutolinkingSearchPaths,
+    ...(excludedOptionalNativeModules.length === 0
+        ? {}
+        : {
+            exclude: excludedOptionalNativeModules,
+            ios: {
+                exclude: excludedOptionalNativeModules,
+            },
+            android: {
+                exclude: excludedOptionalNativeModules,
+            },
+        }),
+};
 
 const androidReleaseShrinkerPlugin = shouldUseAndroidReleaseShrinkerPlugin
     ? [
@@ -375,21 +412,12 @@ const baseExpoConfig = {
             output: "single",
             favicon: "./sources/assets/images/favicon.png"
         },
-        autolinking: nativeSshTransportEnabled
-            ? undefined
-            : {
-                exclude: ["@happier-dev/ssh-native"],
-                ios: {
-                    exclude: ["@happier-dev/ssh-native"],
-                },
-                android: {
-                    exclude: ["@happier-dev/ssh-native"],
-                },
-            },
+        autolinking: optionalNativeAutolinkingConfig,
         plugins: [
-            expoAndroidBuildPropertiesPlugin,
+            expoBuildPropertiesPlugin,
             require("./plugins/withEinkCompatibility.js"),
             require("./plugins/withAndroidReactNativeArchitectures.js"),
+            require("./plugins/withReactNativeRepackRuntime.js"),
             require("./modules/happier-hardware-keyboard-shortcuts/app.plugin.js"),
             ...(androidReleaseShrinkerPlugin ? [androidReleaseShrinkerPlugin] : []),
             [
@@ -481,9 +509,7 @@ const baseExpoConfig = {
             [
                 "expo-image-picker",
                 {
-                    photosPermission: "Allow $(PRODUCT_NAME) to access your photo library so you can attach images.",
-                    // expo-image-picker otherwise adds RECORD_AUDIO on Android by default.
-                    microphonePermission: false
+                    photosPermission: "Allow $(PRODUCT_NAME) to access your photo library so you can attach images."
                 }
             ],
             [

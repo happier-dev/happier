@@ -1,5 +1,8 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { serverFetch } from '@/sync/http/client';
+import {
+    serverFetch,
+    type ExpectedActiveServerFetchBasis,
+} from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
 
@@ -44,7 +47,10 @@ function parseRecordId(recordId: ProviderAccountUsageRecordId): ProviderAccountU
 export async function getProviderAccountUsageSnapshotPlain(
     credentials: AuthCredentials,
     params: Readonly<{ recordId: ProviderAccountUsageRecordId }>,
-    opts?: Readonly<{ signal?: AbortSignal }>,
+    opts?: Readonly<{
+        signal?: AbortSignal;
+        expectedActiveServer?: ExpectedActiveServerFetchBasis;
+    }>,
 ): Promise<ProviderAccountUsageSnapshotV1 | null> {
     const recordId = parseRecordId(params.recordId);
     return await backoff(async () => {
@@ -58,7 +64,15 @@ export async function getProviderAccountUsageSnapshotPlain(
                     'Content-Type': 'application/json',
                 },
             },
-            { includeAuth: false },
+            {
+                includeAuth: false,
+                ...(opts?.expectedActiveServer
+                    ? {
+                        expectedActiveServer:
+                            opts.expectedActiveServer,
+                    }
+                    : {}),
+            },
         );
 
         if (response.status === 404) return null;
@@ -95,7 +109,10 @@ export async function getProviderAccountUsageSnapshotPlain(
 export async function getProviderAccountUsageSnapshotSealed(
     credentials: AuthCredentials,
     params: Readonly<{ recordId: ProviderAccountUsageRecordId }>,
-    opts?: Readonly<{ signal?: AbortSignal }>,
+    opts?: Readonly<{
+        signal?: AbortSignal;
+        expectedActiveServer?: ExpectedActiveServerFetchBasis;
+    }>,
 ): Promise<Readonly<{
     sealed: SealedProviderAccountUsageSnapshotV1;
     metadata: z.infer<typeof ProviderAccountUsageMetadataSchema>;
@@ -112,7 +129,15 @@ export async function getProviderAccountUsageSnapshotSealed(
                     'Content-Type': 'application/json',
                 },
             },
-            { includeAuth: false },
+            {
+                includeAuth: false,
+                ...(opts?.expectedActiveServer
+                    ? {
+                        expectedActiveServer:
+                            opts.expectedActiveServer,
+                    }
+                    : {}),
+            },
         );
 
         if (response.status === 404) return null;
@@ -143,7 +168,10 @@ export async function getProviderAccountUsageSnapshotSealed(
 export async function requestProviderAccountUsageSnapshotRefresh(
     credentials: AuthCredentials,
     params: Readonly<{ recordId: ProviderAccountUsageRecordId }>,
-    opts: Readonly<{ mode: 'plain' | 'e2ee' }>,
+    opts: Readonly<{
+        mode: 'plain' | 'e2ee';
+        expectedActiveServer?: ExpectedActiveServerFetchBasis;
+    }>,
 ): Promise<boolean> {
     const recordId = parseRecordId(params.recordId);
     const routeVersion = opts.mode === 'plain' ? 'v3' : 'v2';
@@ -158,7 +186,15 @@ export async function requestProviderAccountUsageSnapshotRefresh(
                 },
                 body: JSON.stringify({}),
             },
-            { includeAuth: false },
+            {
+                includeAuth: false,
+                ...(opts.expectedActiveServer
+                    ? {
+                        expectedActiveServer:
+                            opts.expectedActiveServer,
+                    }
+                    : {}),
+            },
         );
 
         if (response.status === 404) return false;

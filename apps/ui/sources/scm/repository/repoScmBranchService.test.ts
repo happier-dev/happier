@@ -7,6 +7,7 @@ import { machineScmBranchList } from '@/sync/ops/scm/machineScm';
 const storageGetStateMock = vi.hoisted(() => vi.fn());
 const sessionScmBranchListMock = vi.hoisted(() => vi.fn());
 const resolveRepoScmSessionRequestMock = vi.hoisted(() => vi.fn());
+const resolvePreferredServerIdForSessionIdMock = vi.hoisted(() => vi.fn());
 
 installRepositoryScmCommonModuleMocks({
     storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
@@ -26,6 +27,10 @@ vi.mock('@/sync/ops', () => ({
 
 vi.mock('./resolveRepoScmSessionRequest', () => ({
     resolveRepoScmSessionRequest: (...args: unknown[]) => resolveRepoScmSessionRequestMock(...args),
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdMock(sessionId),
 }));
 
 describe('repoScmBranchService', () => {
@@ -70,6 +75,8 @@ describe('repoScmBranchService', () => {
         storageGetStateMock.mockReturnValue({});
         sessionScmBranchListMock.mockReset();
         resolveRepoScmSessionRequestMock.mockReset();
+        resolvePreferredServerIdForSessionIdMock.mockReset();
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue(undefined);
         vi.restoreAllMocks();
     });
 
@@ -95,15 +102,20 @@ describe('repoScmBranchService', () => {
         const { RepoScmBranchService } = await import('./repoScmBranchService');
         const service = new RepoScmBranchService();
         const branches = await service.fetchBranchesForMachinePath({
+            serverId: 'server-a',
             machineId: 'machine-a',
             path: '~/repo',
             includeRemotes: true,
         });
 
-        expect(machineScmBranchList).toHaveBeenCalledWith('machine-a', {
-            cwd: '/Users/tester/repo',
-            includeRemotes: true,
-        });
+        expect(machineScmBranchList).toHaveBeenCalledWith(
+            'machine-a',
+            {
+                cwd: '/Users/tester/repo',
+                includeRemotes: true,
+            },
+            { serverId: 'server-a' },
+        );
         expect(branches).toEqual([
             { name: 'main', type: 'local', isCurrent: true, upstream: 'origin/main' },
             { name: 'origin/release', type: 'remote', isCurrent: false, upstream: null },
@@ -189,6 +201,41 @@ describe('repoScmBranchService', () => {
             includeRemotes: true,
         })).toEqual(branches);
         expect(sessionScmBranchListMock).not.toHaveBeenCalled();
+    });
+
+    it('carries the preferred session server into machine-backed branch requests', async () => {
+        storageGetStateMock.mockReturnValue(createSessionBranchState() as any);
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
+        resolveRepoScmSessionRequestMock.mockReturnValue({
+            sessionId: 'session_1',
+            machineId: 'machine-a',
+            resolvedPath: '/Users/tester/repo',
+            repoIdentityKey: 'machine-a:/Users/tester/repo',
+        });
+        vi.mocked(machineScmBranchList).mockResolvedValue({
+            success: true,
+            branches: [{ name: 'main', type: 'local', isCurrent: true, upstream: 'origin/main' }],
+        } as any);
+
+        const { RepoScmBranchService } = await import('./repoScmBranchService');
+        const service = new RepoScmBranchService();
+        const branches = await service.fetchBranchesForSession({
+            sessionId: 'session_1',
+            includeRemotes: true,
+        });
+
+        expect(resolvePreferredServerIdForSessionIdMock).toHaveBeenCalledWith('session_1');
+        expect(machineScmBranchList).toHaveBeenCalledWith(
+            'machine-a',
+            {
+                cwd: '/Users/tester/repo',
+                includeRemotes: true,
+            },
+            { serverId: 'server-owned' },
+        );
+        expect(branches).toEqual([
+            { name: 'main', type: 'local', isCurrent: true, upstream: 'origin/main' },
+        ]);
     });
 
     it('deduplicates concurrent session and machine/path branch requests for the same repo identity', async () => {

@@ -31,10 +31,17 @@ type ActiveNativeVadSession = Readonly<{
     token: number;
 }>;
 
+type PendingNativeVadStart = Readonly<{
+    sessionId: string;
+    token: number;
+}>;
+
 type NativeVadControllerDeps = Readonly<{
     bridge?: NativeVadBridge | null;
     now?: () => number;
     onEndpointSignal: (signal: TurnEndpointSignal) => void;
+    onSpeechCandidateStart?: (input: Readonly<{ sessionId: string; source: 'native_vad' }>) => void;
+    onSpeechCandidateFalseAlarm?: (input: Readonly<{ sessionId: string; source: 'native_vad' }>) => void;
     /**
      * Two-stage hysteresis policy. Applied only when the bridge surfaces a
      * speech-start edge; otherwise the controller stays single-stage. Defaults to
@@ -73,9 +80,18 @@ function normalizeDurationMs(value: number): number {
     return Math.max(0, Math.round(value));
 }
 
+function safelyNotifyObserver(notify: () => void): void {
+    try {
+        notify();
+    } catch {
+        // Observers cannot take ownership of native session lifecycle or teardown.
+    }
+}
+
 export function createNativeVadController(deps: NativeVadControllerDeps): NativeVadController {
     const now = deps.now ?? (() => Date.now());
     let activeSession: ActiveNativeVadSession | null = null;
+    let pendingStart: PendingNativeVadStart | null = null;
     let nextToken = 1;
     const turnPolicyEndpointGate = createTurnPolicyEndpointGate({
         ...(deps.turnPolicy ? { policy: deps.turnPolicy } : {}),
@@ -84,8 +100,15 @@ export function createNativeVadController(deps: NativeVadControllerDeps): Native
     const resolveBridge = async (): Promise<NativeVadBridge | null | undefined> =>
         deps.bridge === undefined ? await resolveNativeSileroVadBridge() : deps.bridge;
 
-    const clearActiveSession = async (sessionId?: string | null) => {
+    const clearActiveSession = async (sessionId?: string | null, preservePendingToken?: number) => {
         const normalizedSessionId = normalizeSessionId(sessionId);
+        if (
+            pendingStart
+            && pendingStart.token !== preservePendingToken
+            && (!normalizedSessionId || pendingStart.sessionId === normalizedSessionId)
+        ) {
+            pendingStart = null;
+        }
         if (!activeSession) {
             return;
         }
@@ -97,6 +120,10 @@ export function createNativeVadController(deps: NativeVadControllerDeps): Native
         const previousSession = activeSession;
         activeSession = null;
         turnPolicyEndpointGate.reset();
+        safelyNotifyObserver(() => deps.onSpeechCandidateFalseAlarm?.({
+            sessionId: previousSession.sessionId,
+            source: 'native_vad',
+        }));
         try {
             await previousSession.session.stop();
         } catch {
@@ -108,17 +135,29 @@ export function createNativeVadController(deps: NativeVadControllerDeps): Native
         isActiveSession: (sessionId) => activeSession?.sessionId === normalizeSessionId(sessionId),
         startSession: async ({ minSpeechMs, redemptionMs, sessionId }) => {
             const normalizedSessionId = normalizeSessionId(sessionId);
-            const bridge = await resolveBridge();
-            if (!normalizedSessionId || !bridge) {
+            if (!normalizedSessionId) {
                 await clearActiveSession();
                 return false;
             }
 
-            await clearActiveSession();
             turnPolicyEndpointGate.reset();
 
             const token = nextToken++;
+            pendingStart = { sessionId: normalizedSessionId, token };
+            await clearActiveSession(undefined, token);
+            if (pendingStart?.token !== token) {
+                return false;
+            }
             try {
+                const bridge = await resolveBridge();
+                if (pendingStart?.token !== token) {
+                    return false;
+                }
+                if (!bridge) {
+                    pendingStart = null;
+                    return false;
+                }
+
                 const session = await bridge.startSession({
                     minSpeechMs: normalizeDurationMs(minSpeechMs),
                     // Speech-START edge → two-stage machine (when the native module
@@ -129,6 +168,10 @@ export function createNativeVadController(deps: NativeVadControllerDeps): Native
                             return;
                         }
                         turnPolicyEndpointGate.noteSpeechDetected();
+                        safelyNotifyObserver(() => deps.onSpeechCandidateStart?.({
+                            sessionId: normalizedSessionId,
+                            source: 'native_vad',
+                        }));
                     },
                     onSpeechEnd: () => {
                         if (!activeSession || activeSession.sessionId !== normalizedSessionId || activeSession.token !== token) {
@@ -136,10 +179,14 @@ export function createNativeVadController(deps: NativeVadControllerDeps): Native
                         }
                         // False-start debounce: drop a segment shorter than confirmMs.
                         if (!turnPolicyEndpointGate.shouldEmitEndpoint()) {
+                            safelyNotifyObserver(() => deps.onSpeechCandidateFalseAlarm?.({
+                                sessionId: normalizedSessionId,
+                                source: 'native_vad',
+                            }));
                             return;
                         }
 
-                        deps.onEndpointSignal({
+                        safelyNotifyObserver(() => deps.onEndpointSignal({
                             detectedAt: now(),
                             sessionId: normalizedSessionId,
                             source: 'native_vad',
@@ -149,12 +196,23 @@ export function createNativeVadController(deps: NativeVadControllerDeps): Native
                             // can demote a short acknowledgement instead of treating
                             // every endpoint as duration-unknown.
                             durationMs: turnPolicyEndpointGate.getLastSegmentDurationMs(),
-                        });
+                            endpoint: { reason: 'acoustic_endpoint', confidence: null },
+                        }));
                     },
                     redemptionMs: normalizeDurationMs(redemptionMs),
                     sessionId: normalizedSessionId,
                 });
 
+                if (pendingStart?.token !== token) {
+                    try {
+                        await session.stop();
+                    } catch {
+                        // A late native session still loses ownership even if teardown fails.
+                    }
+                    return false;
+                }
+
+                pendingStart = null;
                 activeSession = {
                     session,
                     sessionId: normalizedSessionId,
@@ -162,8 +220,8 @@ export function createNativeVadController(deps: NativeVadControllerDeps): Native
                 };
                 return true;
             } catch {
-                if (activeSession?.token === token) {
-                    activeSession = null;
+                if (pendingStart?.token === token) {
+                    pendingStart = null;
                 }
                 return false;
             }

@@ -1,11 +1,7 @@
-import { resolveWebColdListScrollTarget } from '@/components/sessions/transcript/segments/resolveWebHotColdScrollDecision';
 import { queryExactWebTranscriptDataTestId } from '@/components/sessions/transcript/webTranscriptDomTestId';
-import { TRANSCRIPT_WEB_HOT_TAIL_ITEM_TEST_ID_PREFIX } from '@/components/sessions/transcript/web/WebTranscriptSplitFooter';
 import {
     restoreWebTranscriptViewportAnchor,
-    restoreWebTranscriptPrependAnchor,
     TRANSCRIPT_WEB_PREPEND_ANCHOR_TEST_ID_PREFIX,
-    type WebTranscriptPrependRestoreResult,
     type WebTranscriptViewportAnchorRestoreResult,
 } from '@/components/sessions/transcript/viewport/prepend/webTranscriptPrependAnchor';
 import {
@@ -30,14 +26,41 @@ type TestIdElement = Readonly<{
     getBoundingClientRect?: () => Readonly<{ bottom: number; height?: number; top: number }>;
 }>;
 
+/**
+ * Whether the renderer already owns the live tail through its held-'end' intent.
+ * Tail-targeting driver writes defer while it is live: the renderer's
+ * maintain-at-end + verifyLanding machinery is the ONE landing owner (native
+ * pin-bottom already routes through the renderer via scrollRendererToEnd), and a
+ * parallel DOM write reads a different scrollHeight snapshot mid-measure — the
+ * captured session-open jiggle (2026-07-22, three writers chasing an oscillating
+ * bottom).
+ */
+function rendererOwnsLiveWebTail(deps: TranscriptViewportDriverDeps): boolean {
+    return deps.listRef.current?.hasLiveWebHold?.({ kind: 'end' }) === true;
+}
+
+function handBottomLandingToRenderer(deps: TranscriptViewportDriverDeps): boolean {
+    const renderer = deps.listRef.current;
+    if (typeof renderer?.hasLiveWebHold !== 'function' || typeof renderer.scrollToEnd !== 'function') {
+        return false;
+    }
+    renderer.scrollToEnd({ animated: false });
+    return true;
+}
+
 export function performWebDomViewportCommand(
     command: TranscriptViewportCommand,
     deps: TranscriptViewportDriverDeps,
 ): boolean {
     if (command.kind === 'pin-bottom') {
-        deps.clearWebPrependRangeReserve();
         const metrics = deps.resolveWebScrollMetrics();
         if (!metrics) return false;
+        if (rendererOwnsLiveWebTail(deps)) return true;
+        // Legend must own the first physical landing as well as steady follow. A
+        // raw DOM write can clamp against the pre-mutation height without updating
+        // Legend's maintain-at-end state, so subsequent streamed growth never
+        // enters its threshold.
+        if (handBottomLandingToRenderer(deps)) return true;
         return writeWebDomScrollTop({
             deps,
             metrics,
@@ -50,34 +73,12 @@ export function performWebDomViewportCommand(
         });
     }
 
-    if (command.kind === 'preserve-live-tail-distance') {
-        const metrics = deps.resolveWebScrollMetrics();
-        if (!metrics) return false;
-        const maxScrollTop = resolveWebTranscriptMaxScrollTop(metrics);
-        const previousDistanceFromLiveTailPx = Math.max(0, Math.trunc(command.previousDistanceFromLiveTailPx));
-        const targetScrollTop = Math.max(0, Math.min(maxScrollTop, maxScrollTop - previousDistanceFromLiveTailPx));
-        if (Math.abs(targetScrollTop - metrics.scrollTop) < 0.5) return false;
-
-        return writeWebDomScrollTop({
-            deps,
-            metrics,
-            mode: command.mode,
-            reason: command.reason,
-            schedulerAuthorityReason: command.schedulerAuthorityReason,
-            schedulerAuthorityWriter: command.schedulerAuthorityWriter,
-            targetScrollTop,
-            trigger: 'restore',
-            writer: 'web-dom-bottom',
-            distanceFromBottom: (landedScrollTop) => getWebTranscriptDistanceFromBottom({
-                ...metrics,
-                scrollTop: landedScrollTop,
-            }),
-        });
-    }
-
     if (command.kind === 'restore-distance') {
         const metrics = deps.resolveWebScrollMetrics();
         if (!metrics) return false;
+        // Distance 0 IS the live tail: same single-owner rule as pin-bottom /
+        // pin-bottom. Detached distances stay transaction-owned.
+        if (command.distanceFromLiveTailPx === 0 && rendererOwnsLiveWebTail(deps)) return true;
         const targetScrollTop = Math.max(0, resolveWebTranscriptMaxScrollTop(metrics) - command.distanceFromLiveTailPx);
 
         return writeWebDomScrollTop({
@@ -97,68 +98,65 @@ export function performWebDomViewportCommand(
         return result.status === 'restored' || result.status === 'already_aligned';
     }
 
-    if (command.kind === 'restore-web-prepend-anchor') {
-        return performWebDomPrependAnchorRestoreCommand(command, deps).didAdjustScroll;
-    }
-
     if (command.kind === 'restore-anchor' || command.kind === 'jump-to-seq') {
-        let index = command.kind === 'jump-to-seq'
-            ? (command.routeMessageId
-                ? deps.resolveJumpToSeqIndex(
-                    command.seq,
-                    command.routeMessageId,
-                    command.transcriptBlockIndex,
-                    command.role,
-                )
-                : deps.resolveJumpToSeqIndex(command.seq))
-            : deps.resolveRestoreAnchorIndex(command.target.anchor);
-        if (typeof index !== 'number' || !Number.isFinite(index)) return false;
-        const webHotColdCounts = deps.webHotColdCountsRef.current;
-        let hotFooterItemId: string | null = null;
-        if (webHotColdCounts.hotCount > 0 && index >= webHotColdCounts.coldCount) {
-            // Web hot-tail footer target: footer rows render outside the recycler but still
-            // mount their `transcript-item-<id>` testids, so an exact rect scroll onto the
-            // target row itself beats the legacy "last cold row" clamp (which strands the
-            // viewport one footer-height above the target).
-            hotFooterItemId = resolveTranscriptViewportListDataItemIdAtIndex(deps.itemsRef.current, index);
-        }
-        if (webHotColdCounts.hotCount > 0 && !hotFooterItemId) {
-            const target = resolveWebColdListScrollTarget({
-                fullIndex: index,
-                coldCount: webHotColdCounts.coldCount,
-                reason: command.kind === 'jump-to-seq'
-                    ? 'jump-to-seq'
-                    : command.reason === 'prepend-restore'
-                        ? 'prepend-recovery'
-                        : 'restore-anchor',
-            });
-            if (target.kind === 'pin_to_bottom') {
-                const metrics = deps.resolveWebScrollMetrics();
-                if (!metrics) return false;
-                return writeWebDomScrollTop({
-                    deps,
-                    metrics,
-                    mode: command.mode,
-                    reason: command.reason,
-                    targetScrollTop: metrics.scrollHeight,
-                    trigger: command.kind === 'jump-to-seq' ? 'jump' : command.reason === 'prepend-restore' ? 'prepend-restore' : 'restore',
-                    writer: 'web-dom-bottom',
-                    distanceFromBottom: (landedScrollTop) => getWebTranscriptDistanceFromBottom({
-                        ...metrics,
-                        scrollTop: landedScrollTop,
-                    }),
-                });
+        if (command.kind === 'jump-to-seq') {
+            // An explicit user jump revokes tail ownership AT DISPATCH, not only at
+            // landing: an out-of-window target pages older content in for seconds
+            // before any landing write, and a surviving held-'end' re-pins to the
+            // bottom through every prepend — the user is dragged away from where
+            // they navigated (live capture 2026-07-23). The landing arms the keyed
+            // anchor hold as the new owner; a landing already owned by a live
+            // keyed hold defers below before this release can disturb it.
+            if (deps.listRef.current?.hasLiveWebHold?.({ kind: 'end' }) === true) {
+                deps.listRef.current?.releaseWebHeldIntent?.();
             }
-            index = target.index;
         }
+        const rendererTarget = deps.resolveRendererDataTarget(command);
+        if (!rendererTarget) return false;
+        const index = rendererTarget.kind === 'data'
+            ? rendererTarget.index
+            : rendererTarget.fallbackIndex;
 
-        const itemId = hotFooterItemId ?? resolveTranscriptViewportListDataItemIdAtIndex(deps.listDataRef.current, index);
-        if (!itemId) return false;
         const metrics = deps.resolveWebScrollMetrics();
         if (!metrics) return false;
+        if (index == null) {
+            // Outside-data target with no fallback index: the only remaining semantic is the
+            // visual end of the loaded window.
+            if (rendererOwnsLiveWebTail(deps)) return true;
+            return writeWebDomScrollTop({
+                deps,
+                metrics,
+                mode: command.mode,
+                reason: command.reason,
+                targetScrollTop: metrics.scrollHeight,
+                trigger: command.kind === 'jump-to-seq'
+                    ? 'jump'
+                    : command.reason === 'prepend-restore'
+                        ? 'prepend-restore'
+                        : 'restore',
+                writer: 'web-dom-bottom',
+                distanceFromBottom: (landedScrollTop) => getWebTranscriptDistanceFromBottom({
+                    ...metrics,
+                    scrollTop: landedScrollTop,
+                }),
+            });
+        }
+        const itemId = resolveTranscriptViewportListDataItemIdAtIndex(deps.listDataRef.current, index);
+        if (!itemId) return false;
         if (
             command.kind === 'jump-to-seq'
-            && !hotFooterItemId
+            && deps.listRef.current?.hasLiveWebHold?.({ kind: 'item', itemId }) === true
+        ) {
+            // The renderer already holds this jump target (armed by the first landing
+            // below): its keyed hold owns landing corrections through re-measure churn.
+            // Re-writing here from the app-side re-verify loop creates a second landing
+            // verifier and the two oscillate the viewport indefinitely (live capture
+            // 2026-07-22: verifyLanding vs jump re-verify, ±24px every frame after a
+            // nav-rail jump while pinned).
+            return true;
+        }
+        if (
+            command.kind === 'jump-to-seq'
             && !findWebTranscriptItemElement({ container: metrics.element, itemId })
         ) {
             // Unmounted jump target: after a data replacement (target-window activation) the
@@ -167,28 +165,31 @@ export function performWebDomViewportCommand(
             // its window at the target; prepend/entry restores intentionally stay DOM-only so
             // they preserve the existing anchor-recovery ownership contract.
             try {
-                deps.listRef.current?.scrollToIndex?.({ index, animated: false });
+                deps.listRef.current?.scrollToIndex?.({ index: index ?? 0, animated: false });
             } catch {
                 // Renderer refusal is non-fatal; the DOM estimate write still applies.
             }
         }
         // Prefer measured-band extrapolation over the renderer's estimated layout for
         // unmounted targets; the estimate goes stale once measured rows shift content.
-        // Hot-tail footer targets are always mounted but use a different testID prefix
-        // (`transcript-web-hot-tail-item-*` vs `transcript-item-*`) so findWebTranscriptItemElement
-        // cannot locate them. Read their rect directly via the hot-tail prefix so
-        // scrollWebDomToTranscriptItem can use the measured layout path instead.
-        const bandLayout = hotFooterItemId
-            ? null
-            : resolveWebBandExtrapolatedTranscriptItemLayout({
-                container: metrics.element,
-                listData: deps.listDataRef.current,
-                scrollTop: metrics.scrollTop,
-                targetIndex: index,
-            });
-        const itemLayout = hotFooterItemId
-            ? readWebHotTailItemLayout(metrics.element, hotFooterItemId, metrics.scrollTop)
-            : bandLayout ?? readScrollableChatListItemLayout(deps.listRef.current, index);
+        const bandLayout = resolveWebBandExtrapolatedTranscriptItemLayout({
+            container: metrics.element,
+            listData: deps.listDataRef.current,
+            scrollTop: metrics.scrollTop,
+            targetIndex: index,
+        });
+        const itemLayout = bandLayout ?? readScrollableChatListItemLayout(deps.listRef.current, index);
+        // Pre-write reads for the jump anchor hold below: rects and scrollTop both
+        // change once the write lands, but content-y (rect-derived + scrollTop at the
+        // same instant) is scroll-invariant only when both are read together.
+        const preWriteScrollTop = metrics.scrollTop;
+        const holdTargetElement = command.kind === 'jump-to-seq'
+            ? findWebTranscriptItemElement({ container: metrics.element, itemId })
+            : null;
+        const holdTargetRect = holdTargetElement?.getBoundingClientRect?.();
+        const exactHoldItemContentY = holdTargetRect
+            ? holdTargetRect.top - metrics.element.getBoundingClientRect().top + preWriteScrollTop
+            : null;
         const result = scrollWebDomToTranscriptItem({
             align: command.kind === 'jump-to-seq'
                 ? command.align ?? { kind: 'center' }
@@ -199,6 +200,37 @@ export function performWebDomViewportCommand(
             observation: deps.webDomObservation,
         });
         if (!result.ok) return false;
+        if (command.kind === 'jump-to-seq' && exactHoldItemContentY !== null) {
+            // Take renderer ownership of the jump target, exactly like pin-bottom takes
+            // the tail (scrollToEnd) and restore-anchor takes its anchor: the
+            // armed hold REPLACES any index bootstrap left by an earlier unmounted
+            // approach, leaving ONE landing owner with the re-measure machinery.
+            // An estimate-only approach is not a completed landing: publishing its
+            // extrapolated content-y as an anchor makes later landing passes defer before
+            // the target has ever mounted.
+            deps.listRef.current?.holdWebEntryAnchor?.({
+                itemId,
+                itemOffsetPx: Math.round(exactHoldItemContentY - result.targetScrollTop),
+                kind: 'item',
+                messageId: null,
+                reason: command.reason,
+            });
+        }
+        if (command.kind === 'restore-anchor') {
+            // Legend web: entry/prepend anchor restores land against estimate-heavy geometry;
+            // giant-row measurements can collapse the content several-fold right after the
+            // write (live A->B->A: 25938px of estimates measured down to ~4903px, clamping
+            // scrollTop and losing the restored row). Arm the renderer-owned bounded anchor
+            // hold — the same contract restore-visible-anchor already uses — so measurement
+            // signals keep re-verifying the restored identity.
+            deps.listRef.current?.holdWebEntryAnchor?.({
+                itemId,
+                itemOffsetPx: command.target.itemOffsetPx,
+                kind: command.target.anchor.kind,
+                messageId: command.target.anchor.messageId ?? null,
+                reason: command.reason,
+            });
+        }
         deps.recordViewportTelemetryEvent({
             type: 'scroll-write',
             writer: 'web-dom-restore',
@@ -228,30 +260,27 @@ export function performWebDomViewportCommand(
     return false;
 }
 
-export function performWebDomPrependAnchorRestoreCommand(
-    command: Extract<TranscriptViewportCommand, Readonly<{ kind: 'restore-web-prepend-anchor' }>>,
+export function performWebDomVisibleAnchorRestoreCommand(
+    command: Extract<TranscriptViewportCommand, Readonly<{ kind: 'restore-visible-anchor' }>>,
     deps: TranscriptViewportDriverDeps,
-): WebTranscriptPrependRestoreResult {
-    const metrics = deps.resolveWebScrollMetrics();
-    if (!metrics) return { didAdjustScroll: false, strategy: 'none' };
-    return restoreWebTranscriptPrependAnchor(command.anchor, {
-        writeScrollTop: (targetScrollTop) => writeWebDomScrollTop({
-            deps,
-            metrics,
-            mode: command.mode,
+): WebTranscriptViewportAnchorRestoreResult {
+    const result = performWebDomVisibleAnchorRestoreCommandInner(command, deps);
+    if (result.status === 'restored' || result.status === 'already_aligned') {
+        // Legend web: arm the renderer-owned bounded anchor hold so post-restore row
+        // remeasurement (estimate-heavy re-entry windows) cannot silently displace the
+        // restored anchor.
+        deps.listRef.current?.holdWebEntryAnchor?.({
+            itemId: command.target.anchor.itemId,
+            itemOffsetPx: command.target.itemOffsetPx,
+            kind: command.target.anchor.kind,
+            messageId: command.target.anchor.messageId ?? null,
             reason: command.reason,
-            targetScrollTop,
-            trigger: 'prepend-restore',
-            writer: 'web-dom-restore',
-            distanceFromBottom: (landedScrollTop) => getWebTranscriptDistanceFromBottom({
-                ...metrics,
-                scrollTop: landedScrollTop,
-            }),
-        }),
-    });
+        });
+    }
+    return result;
 }
 
-export function performWebDomVisibleAnchorRestoreCommand(
+function performWebDomVisibleAnchorRestoreCommandInner(
     command: Extract<TranscriptViewportCommand, Readonly<{ kind: 'restore-visible-anchor' }>>,
     deps: TranscriptViewportDriverDeps,
 ): WebTranscriptViewportAnchorRestoreResult {
@@ -285,17 +314,33 @@ export function performWebDomVisibleAnchorRestoreCommand(
     const itemIndex = command.target.itemIndex;
     if (typeof itemIndex !== 'number' || !Number.isFinite(itemIndex)) return directResult;
     const normalizedIndex = Math.max(0, Math.trunc(itemIndex));
-    // Hot-tail guard: FlashList excludes hot-tail items from listData on web. When the anchor
-    // index falls in the hot tail the item won't be in the DOM and attempting any layout-based
-    // scroll writes the wrong coordinates. Return not_found so the caller can use the
-    // distance-from-bottom fallback instead.
+    // The requested source index must belong to the current projected list. An out-of-projection
+    // target has no valid DOM geometry, so leave it not_found for the caller's fallback.
     if (normalizedIndex >= deps.listDataRef.current.length) return directResult;
-    // Anchor is within the cold list but was not found in the DOM on the first attempt.
-    // FlashList only renders a virtual window of rows; the anchor may not yet be in that
-    // window. Call scrollToIndex to bring it into view — FlashList will render the item and
-    // change listContentHeight, triggering a retry attempt that will succeed via direct lookup.
+    // The anchor belongs to the projection but is outside the mounted virtual window.
+    // Materialize it through scrollToIndex; the resulting layout/content signal retries
+    // the direct keyed lookup against measured DOM geometry.
     try {
-        deps.listRef.current?.scrollToIndex?.({ index: normalizedIndex, animated: false });
+        deps.listRef.current?.scrollToIndex?.({
+            index: normalizedIndex,
+            animated: false,
+            viewOffset: command.target.itemOffsetPx,
+            viewPosition: 0,
+            ...(command.reason === 'entry-restore'
+                ? {
+                    context: {
+                        anchor: {
+                            itemId: command.target.anchor.itemId,
+                            itemOffsetPx: command.target.itemOffsetPx,
+                            kind: command.target.anchor.kind,
+                            messageId: command.target.anchor.messageId ?? null,
+                            reason: command.reason,
+                        },
+                        kind: 'entry-placement' as const,
+                    },
+                }
+                : {}),
+        });
     } catch {
         // scrollToIndex can throw when the item layout is not yet known; non-fatal.
     }
@@ -445,7 +490,7 @@ export function restoreWebDomPrependGrowth(params: Readonly<{
 
 /**
  * Position estimate for an UNMOUNTED listData row, extrapolated from the rows that ARE
- * mounted in the DOM. FlashList layout estimates go stale the moment measured rows shift
+ * mounted in the DOM. Virtual layout estimates go stale the moment measured rows shift
  * real content — an estimate-space write then parks the viewport inside an unrendered gap
  * and re-issuing the same estimate never converges (live RG1/RG2 evidence). Measured
  * neighbors give a monotonically improving aim: interpolate between the nearest mounted
@@ -558,9 +603,7 @@ function writeWebDomScrollTop(params: Readonly<{
     distanceFromBottom: (landedScrollTop: number) => number;
     metrics: WebTranscriptScrollMetrics;
     mode: TranscriptViewportCommand['mode'];
-    reason: Exclude<TranscriptViewportCommand, Readonly<{ kind: 'none' }> | Readonly<{ kind: 'skip-native-js-pin' }>>['reason'];
-    schedulerAuthorityReason?: Extract<TranscriptViewportCommand, { kind: 'preserve-live-tail-distance' }>['schedulerAuthorityReason'];
-    schedulerAuthorityWriter?: Extract<TranscriptViewportCommand, { kind: 'preserve-live-tail-distance' }>['schedulerAuthorityWriter'];
+    reason: Exclude<TranscriptViewportCommand, Readonly<{ kind: 'none' }>>['reason'];
     targetScrollTop: number;
     trigger: 'prepend-restore' | 'jump' | 'restore';
     writer: 'web-dom-bottom' | 'web-dom-restore';
@@ -578,8 +621,6 @@ function writeWebDomScrollTop(params: Readonly<{
         mode: params.mode,
         targetOffsetY: write.landedScrollTop,
         previousOffsetY,
-        ...(params.schedulerAuthorityReason ? { schedulerAuthorityReason: params.schedulerAuthorityReason } : {}),
-        ...(params.schedulerAuthorityWriter ? { schedulerAuthorityWriter: params.schedulerAuthorityWriter } : {}),
         layoutHeight: params.metrics.clientHeight,
         contentHeight: params.metrics.scrollHeight,
         distanceFromBottom: params.distanceFromBottom(write.landedScrollTop),
@@ -669,45 +710,6 @@ function resolveTranscriptViewportListDataItemIdAtIndex(
     const item = listData[index];
     const itemId = item?.id;
     return typeof itemId === 'string' && itemId.trim().length > 0 ? itemId : null;
-}
-
-/**
- * Resolves the measured layout for a web hot-tail footer item. Hot-tail items are always
- * mounted in the DOM but use the `transcript-web-hot-tail-item-*` testID prefix rather
- * than `transcript-item-*`, so `findWebTranscriptItemElement` cannot locate them. This
- * helper uses the correct prefix and computes an absolute scroll-space `y` from the
- * element's bounding rect relative to the scroll container.
- */
-function readWebHotTailItemLayout(
-    container: HTMLElement,
-    itemId: string,
-    scrollTop: number,
-): Readonly<{ height: number; y: number }> | null {
-    if (typeof container.getBoundingClientRect !== 'function') return null;
-    if (typeof container.querySelectorAll !== 'function') return null;
-    const targetTestId = `${TRANSCRIPT_WEB_HOT_TAIL_ITEM_TEST_ID_PREFIX}${itemId}`;
-    const exactMatch = queryExactWebTranscriptDataTestId(container, targetTestId);
-    let element: TestIdElement | null = null;
-    if (exactMatch.attempted) {
-        element = exactMatch.element as TestIdElement | null;
-    } else {
-        for (const node of container.querySelectorAll('[data-testid]')) {
-            const el = node as TestIdElement;
-            if (el.getAttribute?.('data-testid') === targetTestId) {
-                element = el;
-                break;
-            }
-        }
-    }
-    if (!element || typeof element.getBoundingClientRect !== 'function') return null;
-    const containerRect = container.getBoundingClientRect();
-    const rect = element.getBoundingClientRect();
-    const top = rect.top - containerRect.top + scrollTop;
-    const height = Math.max(0, typeof rect.height === 'number' && Number.isFinite(rect.height)
-        ? rect.height
-        : rect.bottom - rect.top);
-    if (!Number.isFinite(top) || !Number.isFinite(height)) return null;
-    return { y: top, height };
 }
 
 function readScrollableChatListItemLayout(

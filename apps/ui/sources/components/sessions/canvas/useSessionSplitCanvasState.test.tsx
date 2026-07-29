@@ -105,6 +105,47 @@ describe('useSessionSplitCanvasState', () => {
         await hook.unmount();
     });
 
+    it('does not re-persist server-normalized split layouts when only JSON key order differs', async () => {
+        const scope = createScope();
+        const scopeKey = resolveSessionSplitCanvasScopeKey(scope);
+        if (!scopeKey) {
+            throw new Error('Expected a scope key');
+        }
+
+        storageState.isDataReady = true;
+        storageState.sessionSplitCanvasLayoutsV1 = {
+            [scopeKey]: {
+                focusedLeafId: 'session-leaf:sess_a',
+                maxLeaves: 8,
+                maximizedLeafId: null,
+                root: {
+                    id: 'session-leaf:sess_a',
+                    kind: 'leaf',
+                    leafKind: 'session',
+                    payload: {
+                        sessionId: 'sess_a',
+                    },
+                },
+                version: 1,
+            },
+        };
+
+        const { useSessionSplitCanvasState } = await import('./useSessionSplitCanvasState');
+        const hook = await renderHook(() => useSessionSplitCanvasState({
+            routeSessionId: 'sess_a',
+            scope,
+        }));
+
+        setSessionSplitCanvasLayoutsV1Spy.mockClear();
+
+        await hook.rerender(undefined);
+
+        expect(collectOpenSessionIds(hook.getCurrent().state)).toEqual(['sess_a']);
+        expect(setSessionSplitCanvasLayoutsV1Spy).not.toHaveBeenCalled();
+
+        await hook.unmount();
+    });
+
     it('persists split layout changes after the hydrated restore baseline has been established', async () => {
         const scope = createScope();
         const scopeKey = resolveSessionSplitCanvasScopeKey(scope);

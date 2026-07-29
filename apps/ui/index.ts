@@ -68,5 +68,19 @@ try {
     // Background wake is best-effort and native-only; unsupported runtimes keep booting normally.
 }
 
+try {
+    // RN-1: one-time Re.Pack ScriptManager init for plugin React Native bundle surfaces.
+    // Native-only and fail-soft — web/test and non-Re.Pack hosts keep booting normally.
+    const mod = require('./sources/components/plugins/reactNative/scriptManagerBoot');
+    if (typeof mod === 'object' && mod !== null && 'initializePluginReactNativeScriptManagerOnce' in mod) {
+        const init = (mod as { initializePluginReactNativeScriptManagerOnce?: unknown }).initializePluginReactNativeScriptManagerOnce;
+        if (typeof init === 'function') {
+            init();
+        }
+    }
+} catch {
+    // Re.Pack ScriptManager is only initializable in a Re.Pack-bundled native host.
+}
+
 require('./sources/unistyles');
 require('expo-router/entry');

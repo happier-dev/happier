@@ -14,8 +14,8 @@
  *           promote.
  *   backup  `.<packId>.backup`         — STABLE name; the prior live tree during
  *           the swap window.
- *   intent  `.<packId>.promote-intent` — durable promote-intent marker, present
- *           only across the swap window so a crash there is recoverable on boot
+ *   intent  `.<packId>.promote-intent` — durable promotion transaction marker,
+ *           present through swap and commit so a crash can be rolled back
  *           (X-M1, via {@link reconcileExpoModelPackPromotion}).
  *
  * Streaming: chunks are appended with `file.write(chunk, { append: true })`
@@ -31,10 +31,19 @@ import { randomUUID } from '@/platform/randomUUID';
 import type {
   ModelPackDownloadRequest,
   ModelPackDownloadStream,
+  ModelPackDurableRecoveryRecord,
   ModelPackInstallerHost,
+  ModelPackPromotionIntentV1,
+  ModelPackPromotionPriorInstallV1,
+  ModelPackStagingPlan,
   ModelPackStagingHandle,
 } from '@happier-dev/voice-modelpacks';
-import { createSha256Hasher } from '@happier-dev/voice-modelpacks';
+import {
+  createSha256Hasher,
+  isLegacyModelPackPromotionIntent,
+  MODEL_PACK_PROMOTION_INTENT_MAX_BYTES,
+  parseModelPackPromotionIntentV1,
+} from '@happier-dev/voice-modelpacks';
 
 import {
   filePathParts,
@@ -48,6 +57,47 @@ import type { ExpoFsDirectory, ExpoFsFile, InstallerFs } from './types';
 const SCRATCH_SUFFIX = '.scratch';
 const BACKUP_SUFFIX = '.backup';
 const INTENT_SUFFIX = '.promote-intent';
+const RESUME_PLAN_FILE = '.resume-plan.json';
+type ExpoModelPackOperationLease = Readonly<{
+  key: string;
+  token: symbol;
+  release: () => void;
+}>;
+
+const activeOperationTokens = new Map<string, symbol>();
+
+function installKeyFor(fs: InstallerFs, packId: string): string {
+  return getPackRootDir(fs, packId).uri;
+}
+
+function acquireOperationLease(fs: InstallerFs, packId: string): ExpoModelPackOperationLease {
+  const key = installKeyFor(fs, packId);
+  if (activeOperationTokens.has(key)) throw new Error('model_pack_install_already_in_progress');
+  const token = Symbol(key);
+  activeOperationTokens.set(key, token);
+  let released = false;
+  return Object.freeze({
+    key,
+    token,
+    release: () => {
+      if (released) return;
+      released = true;
+      if (activeOperationTokens.get(key) === token) activeOperationTokens.delete(key);
+    },
+  });
+}
+
+function assertOperationAvailable(
+  fs: InstallerFs,
+  packId: string,
+  lease?: ExpoModelPackOperationLease,
+): void {
+  const key = installKeyFor(fs, packId);
+  const activeToken = activeOperationTokens.get(key);
+  if (activeToken && activeToken !== lease?.token) {
+    throw new Error('model_pack_install_already_in_progress');
+  }
+}
 
 function tryDelete(node: Pick<ExpoFsFile | ExpoFsDirectory, 'exists' | 'delete'>): void {
   try {
@@ -55,6 +105,13 @@ function tryDelete(node: Pick<ExpoFsFile | ExpoFsDirectory, 'exists' | 'delete'>
   } catch {
     // ignore
   }
+}
+
+function deleteRequired(node: Pick<ExpoFsFile | ExpoFsDirectory, 'exists' | 'delete'>): void {
+  if (!node.exists) return;
+  if (!node.delete) throw new Error('model_pack_scratch_cleanup_unavailable');
+  node.delete({ idempotent: true });
+  if (node.exists) throw new Error('model_pack_scratch_cleanup_failed');
 }
 
 function tryMkdir(dir: Pick<ExpoFsDirectory, 'create'>): void {
@@ -103,6 +160,36 @@ async function streamFile(file: ExpoFsFile, onChunk: (chunk: Uint8Array) => void
   }
 }
 
+function pruneScratchTreeToPlan(
+  scratchDir: ExpoFsDirectory,
+  filePaths: readonly string[],
+): void {
+  const allowedFiles = new Set(filePaths);
+  allowedFiles.add(RESUME_PLAN_FILE);
+  const allowedDirectories = new Set<string>();
+  for (const filePath of filePaths) {
+    const parts = filePathParts(filePath);
+    for (let length = 1; length < parts.length; length += 1) {
+      allowedDirectories.add(parts.slice(0, length).join('/'));
+    }
+  }
+
+  const visit = (directory: ExpoFsDirectory, parentParts: readonly string[]): void => {
+    for (const entry of directory.list()) {
+      const parts = [...parentParts, entry.name];
+      const relativePath = parts.join('/');
+      const isDirectory = typeof (entry as ExpoFsDirectory).list === 'function';
+      if (isDirectory && allowedDirectories.has(relativePath)) {
+        visit(entry as ExpoFsDirectory, parts);
+      } else if (!(isDirectory === false && allowedFiles.has(relativePath))) {
+        deleteRequired(entry);
+      }
+    }
+  };
+
+  visit(scratchDir, []);
+}
+
 /**
  * Open a download stream. When `rangeStart` is set, request the remaining bytes
  * with an HTTP Range header; `isPartial` reflects whether the server honored it
@@ -143,6 +230,9 @@ function createDownloadOpener(
           if (done) return null;
           return value ? new Uint8Array(value) : new Uint8Array();
         },
+        cancel: () => {
+          void reader.cancel?.().catch?.(() => undefined);
+        },
       };
     }
 
@@ -171,7 +261,8 @@ export function createExpoModelPackInstallerHost(opts: {
   return {
     openDownload: createDownloadOpener(fetchImpl, opts.timeoutMs),
     createHasher: createSha256Hasher,
-    beginStaging: async (packId): Promise<ModelPackStagingHandle> => {
+    beginStaging: async (packId, plan: ModelPackStagingPlan): Promise<ModelPackStagingHandle> => {
+      const lease = acquireOperationLease(fs, packId);
       // `Directory.move` mutates the instance uri, so never reuse a captured handle
       // across a move. Build a fresh handle for the current path each time.
       const freshScratchDir = () => getPackSiblingDir(fs, packId, SCRATCH_SUFFIX);
@@ -179,10 +270,52 @@ export function createExpoModelPackInstallerHost(opts: {
       const freshIntentFile = () => getPackSiblingFile(fs, packId, INTENT_SUFFIX);
 
       let promoted = false;
+      let promotionSettled = false;
+      let promotionRecovery: ModelPackDurableRecoveryRecord | null = null;
+      let promotionPhase: 'swap_prepared' | 'metadata_pending' | 'metadata_committed' | 'rollback_pending' = 'swap_prepared';
+      let promotionPriorInstall: ModelPackPromotionPriorInstallV1 = null;
+      const promotionStartedAtMs = Date.now();
+      const promotionToken = randomUUID();
 
-      // Stable scratch dir: do NOT wipe on begin — a prior interrupted attempt
-      // left resumable partials here that the core re-hashes and resumes from.
-      tryMkdir(freshScratchDir());
+      const writeIntent = () => freshIntentFile().write(JSON.stringify({
+        schemaVersion: 1,
+        packId,
+        phase: promotionPhase,
+        startedAtMs: promotionStartedAtMs,
+        token: promotionToken,
+        priorInstall: promotionPriorInstall,
+        recovery: promotionRecovery,
+      }));
+
+      const freshResumePlanFile = () => new fs.File(freshScratchDir(), RESUME_PLAN_FILE);
+
+      try {
+        let storedPlanKey: string | null = null;
+        try {
+          if (freshResumePlanFile().exists) {
+            const stored = JSON.parse(await freshResumePlanFile().text()) as { key?: unknown };
+            storedPlanKey = typeof stored.key === 'string' ? stored.key : null;
+          }
+        } catch {
+          storedPlanKey = null;
+        }
+        if (storedPlanKey !== plan.key) {
+          deleteRequired(freshScratchDir());
+        } else if (freshScratchDir().exists) {
+          pruneScratchTreeToPlan(freshScratchDir(), plan.filePaths);
+        }
+        tryMkdir(freshScratchDir());
+        const resumePlanFile = freshResumePlanFile();
+        try {
+          resumePlanFile.create?.();
+        } catch {
+          // ignore; write creates/replaces on supported Expo hosts
+        }
+        resumePlanFile.write(JSON.stringify({ schemaVersion: 1, key: plan.key, filePaths: plan.filePaths }));
+      } catch (error) {
+        lease.release();
+        throw error;
+      }
 
       return {
         partialByteLength: async (filePath) => {
@@ -227,11 +360,17 @@ export function createExpoModelPackInstallerHost(opts: {
           }
           meta.write(JSON.stringify({ manifest }));
         },
-        promote: async () => {
+        promote: async (declaredPriorInstall) => {
           const liveDir = getPackRootDir(fs, packId);
+          promotionPriorInstall = declaredPriorInstall === undefined
+            ? (liveDir.exists
+                ? Object.freeze({ scopeKey: `filesystem:${liveDir.uri}`, identityKey: packId })
+                : null)
+            : declaredPriorInstall;
           if (liveDir.exists && freshBackupDir().exists && !freshIntentFile().exists) {
             tryDelete(freshBackupDir());
           }
+          tryDelete(freshResumePlanFile());
           // Durable promote-intent marker, written BEFORE the swap window opens so
           // a crash between the two moves is recoverable on boot (X-M1).
           const intent = freshIntentFile();
@@ -240,7 +379,7 @@ export function createExpoModelPackInstallerHost(opts: {
           } catch {
             // ignore
           }
-          intent.write(JSON.stringify({ packId, startedAtMs: Date.now(), token: randomUUID() }));
+          writeIntent();
 
           let backupCreated = false;
           let swapWindowClosed = false;
@@ -269,16 +408,48 @@ export function createExpoModelPackInstallerHost(opts: {
             }
             throw error;
           } finally {
-            if (promoted && backupCreated) {
-              tryDelete(freshBackupDir());
-            }
-            // Intent cleared last: only once the swap window is fully closed is the
-            // install state durable.
-            if (swapWindowClosed) {
+            if (swapWindowClosed && !promoted) {
               tryDelete(freshIntentFile());
             }
           }
-          return { rootLocation: getPackRootDir(fs, packId).uri };
+          return {
+            rootLocation: getPackRootDir(fs, packId).uri,
+            prepareDurableCommit: async (recovery) => {
+              if (promotionSettled) throw new Error('model_pack_promotion_settled');
+              promotionRecovery = recovery;
+              promotionPhase = 'metadata_pending';
+              writeIntent();
+            },
+            markDurableCommitted: async () => {
+              if (promotionSettled) throw new Error('model_pack_promotion_settled');
+              promotionPhase = 'metadata_committed';
+              writeIntent();
+            },
+            commit: async () => {
+              if (promotionSettled) return;
+              promotionSettled = true;
+              tryDelete(freshIntentFile());
+              tryDelete(freshBackupDir());
+            },
+            rollback: async () => {
+              if (promotionSettled) return;
+              promotionPhase = 'rollback_pending';
+              writeIntent();
+              deleteRequired(getPackRootDir(fs, packId));
+              if (backupCreated && freshBackupDir().exists) {
+                if (promotionPriorInstall) freshBackupDir().move(getPackRootDir(fs, packId));
+                else deleteRequired(freshBackupDir());
+              } else if (promotionPriorInstall) {
+                throw new Error('model_pack_promotion_prior_missing');
+              }
+              promoted = false;
+            },
+            completeRollback: async () => {
+              if (promotionSettled) return;
+              promotionSettled = true;
+              deleteRequired(freshIntentFile());
+            },
+          };
         },
         cleanup: async () => {
           // On failure keep the scratch dir so the next attempt resumes; only a
@@ -287,6 +458,7 @@ export function createExpoModelPackInstallerHost(opts: {
           if (promoted) {
             tryDelete(freshScratchDir());
           }
+          lease.release();
         },
       };
     },
@@ -303,34 +475,132 @@ export function createExpoModelPackInstallerHost(opts: {
  * the installable pack ids). Safe to call for any pack id; a no-op when no intent
  * marker is present.
  */
-export function reconcileExpoModelPackPromotion(opts: { fs: InstallerFs; packId: string }): boolean {
+export async function reconcileExpoModelPackPromotion(opts: {
+  fs: InstallerFs;
+  packId: string;
+  outcome?: 'commit' | 'rollback';
+}): Promise<boolean> {
+  return reconcileExpoModelPackPromotionOwned(opts);
+}
+
+async function reconcileExpoModelPackPromotionOwned(opts: {
+  fs: InstallerFs;
+  packId: string;
+  outcome?: 'commit' | 'rollback';
+}, lease?: ExpoModelPackOperationLease): Promise<boolean> {
   const { fs, packId } = opts;
+  assertOperationAvailable(fs, packId, lease);
   const intentFile = getPackSiblingFile(fs, packId, INTENT_SUFFIX);
   const liveDir = getPackRootDir(fs, packId);
   const backupDir = getPackSiblingDir(fs, packId, BACKUP_SUFFIX);
   if (!intentFile.exists) {
     if (liveDir.exists && backupDir.exists) {
-      tryDelete(backupDir);
+      deleteRequired(backupDir);
     }
+    return false;
+  }
+
+  let raw: unknown;
+  try {
+    if (
+      typeof intentFile.size === 'number'
+      && (!Number.isSafeInteger(intentFile.size)
+        || intentFile.size < 0
+        || intentFile.size > MODEL_PACK_PROMOTION_INTENT_MAX_BYTES)
+    ) {
+      throw new Error('model_pack_promotion_intent_invalid');
+    }
+    raw = JSON.parse(await intentFile.text()) as unknown;
+  } catch {
+    throw new Error('model_pack_promotion_intent_invalid');
+  }
+  let intent: ModelPackPromotionIntentV1;
+  try {
+    intent = parseModelPackPromotionIntentV1(raw, packId);
+  } catch {
+    if (!isLegacyModelPackPromotionIntent(raw, packId)) {
+      throw new Error('model_pack_promotion_intent_invalid');
+    }
+    if (liveDir.exists && !backupDir.exists) {
+      throw new Error('model_pack_promotion_legacy_ambiguous');
+    }
+    intent = {
+      schemaVersion: 1,
+      packId,
+      phase: 'swap_prepared',
+      startedAtMs: 0,
+      token: 'legacy',
+      priorInstall: backupDir.exists
+        ? Object.freeze({ scopeKey: `legacy-filesystem:${liveDir.uri}`, identityKey: packId })
+        : null,
+      recovery: null,
+    };
+  }
+
+  const outcome = opts.outcome ?? (intent.phase === 'swap_prepared'
+    ? 'rollback'
+    : null);
+  if (!outcome) throw new Error('model_pack_promotion_outcome_required');
+
+  if (outcome === 'commit') {
+    if (!liveDir.exists) throw new Error('model_pack_promotion_live_missing');
+    deleteRequired(intentFile);
+    deleteRequired(backupDir);
     return false;
   }
 
   let restored = false;
 
-  if (!liveDir.exists && backupDir.exists) {
+  if (backupDir.exists) {
     // Crash in the swap window: roll back to the prior install.
     try {
-      backupDir.move(getPackRootDir(fs, packId));
-      restored = true;
-    } catch {
-      // Leave the marker so a later run can retry rather than losing the backup.
-      return false;
+      if (liveDir.exists) deleteRequired(liveDir);
+      if (intent.priorInstall) {
+        backupDir.move(getPackRootDir(fs, packId));
+        restored = true;
+      } else {
+        deleteRequired(backupDir);
+      }
+    } catch (error) {
+      // Leave the marker so a later run can retry rather than losing the backup,
+      // and stop callers from observing a topology that did not converge.
+      throw new Error('model_pack_promotion_rollback_failed', { cause: error });
     }
-  } else if (liveDir.exists && backupDir.exists) {
-    // Swap completed but backup cleanup was interrupted: drop the stale backup.
-    tryDelete(getPackSiblingDir(fs, packId, BACKUP_SUFFIX));
+  } else if (intent.priorInstall && !liveDir.exists) {
+    throw new Error('model_pack_promotion_prior_missing');
+  } else if (liveDir.exists && !intent.priorInstall) {
+    // Uncommitted first install has no prior tree to restore.
+    deleteRequired(liveDir);
   }
 
-  tryDelete(getPackSiblingFile(fs, packId, INTENT_SUFFIX));
+  deleteRequired(getPackSiblingFile(fs, packId, INTENT_SUFFIX));
   return restored;
+}
+
+function throwIfRemoveAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error('model_pack_remove_aborted');
+}
+
+export async function removeExpoModelPackWithHost(opts: {
+  fs: InstallerFs;
+  packId: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const { fs, packId, signal } = opts;
+  const lease = acquireOperationLease(fs, packId);
+  try {
+    throwIfRemoveAborted(signal);
+    await reconcileExpoModelPackPromotionOwned({ fs, packId, outcome: 'rollback' }, lease);
+    throwIfRemoveAborted(signal);
+
+    deleteRequired(getPackSiblingDir(fs, packId, SCRATCH_SUFFIX));
+    throwIfRemoveAborted(signal);
+    deleteRequired(getPackRootDir(fs, packId));
+    throwIfRemoveAborted(signal);
+    deleteRequired(getPackSiblingDir(fs, packId, BACKUP_SUFFIX));
+    throwIfRemoveAborted(signal);
+    deleteRequired(getPackSiblingFile(fs, packId, INTENT_SUFFIX));
+  } finally {
+    lease.release();
+  }
 }

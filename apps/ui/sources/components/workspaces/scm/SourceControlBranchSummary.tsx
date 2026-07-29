@@ -11,6 +11,7 @@ type SourceControlBranchSummaryProps = {
     theme: any;
     scmStatusFiles: ScmStatusFiles;
     variant?: 'screen' | 'rail';
+    backendLabel?: string;
     branchTrigger?: React.ReactNode;
     actionSlot?: React.ReactNode;
 };
@@ -55,6 +56,7 @@ function areSourceControlBranchSummaryPropsEqual(
     next: SourceControlBranchSummaryProps,
 ): boolean {
     return previous.variant === next.variant
+        && previous.backendLabel === next.backendLabel
         && previous.branchTrigger === next.branchTrigger
         && previous.actionSlot === next.actionSlot
         && areBranchSummaryThemeTokensEqual(previous.theme, next.theme)
@@ -65,6 +67,7 @@ function SourceControlBranchSummaryImpl({
     theme,
     scmStatusFiles,
     variant = 'screen',
+    backendLabel,
     branchTrigger,
     actionSlot,
 }: SourceControlBranchSummaryProps) {
@@ -174,6 +177,21 @@ function SourceControlBranchSummaryImpl({
                             )}
                         </View>
 
+                        {backendLabel ? (
+                            <Text
+                                testID="scm-backend-label"
+                                accessibilityRole="text"
+                                numberOfLines={1}
+                                style={{
+                                    fontSize: 11,
+                                    color: theme.colors.text.secondary,
+                                    ...Typography.default('semiBold'),
+                                }}
+                            >
+                                {backendLabel}
+                            </Text>
+                        ) : null}
+
                         {showTracking ? (
                             <Text
                                 numberOfLines={1}
@@ -224,6 +242,21 @@ function SourceControlBranchSummaryImpl({
                 >
                     {scmStatusFiles.branch || t('files.detachedHead')}
                 </Text>
+                {backendLabel ? (
+                    <Text
+                        testID="scm-backend-label"
+                        accessibilityRole="text"
+                        numberOfLines={1}
+                        style={{
+                            marginLeft: 8,
+                            fontSize: 12,
+                            color: theme.colors.text.secondary,
+                            ...Typography.default('semiBold'),
+                        }}
+                    >
+                        {backendLabel}
+                    </Text>
+                ) : null}
             </View>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                 <StatPill label={includedLabel} value={staged} iconName="diff-added" />

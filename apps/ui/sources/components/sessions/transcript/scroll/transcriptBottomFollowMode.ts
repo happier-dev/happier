@@ -26,6 +26,11 @@ export type TranscriptScrollPinEvent =
         pinnedOffsetThresholdPx: number;
     }
     | {
+        type: 'rendererAtEnd';
+        enabled: boolean;
+        isAtEnd: boolean;
+    }
+    | {
         type: 'newActivity';
         enabled: boolean;
         activityKey: string | null;
@@ -44,8 +49,7 @@ export type TranscriptBottomFollowModeEvent =
     | { type: 'momentum-settle'; distanceFromBottom: number | null; pinThresholdPx: number }
     | { type: 'release-live-tail-intent' }
     | { type: 'jump-to-bottom' }
-    | { type: 'follow-bottom-intent' }
-    | { type: 'content-growth' };
+    | { type: 'follow-bottom-intent' };
 
 export function resolveTranscriptBottomFollowMode(
     state: TranscriptBottomFollowModeState,
@@ -213,8 +217,6 @@ export function resolveTranscriptBottomFollowMode(
                 dragSession: null,
                 mode: 'following',
             };
-        case 'content-growth':
-            return state;
     }
 }
 
@@ -250,6 +252,15 @@ export function reduceTranscriptScrollPinState(
             return { ...state, isPinned: true, newActivityCount: 0 };
         }
 
+        if (!state.isPinned) return state;
+        return { ...state, isPinned: false };
+    }
+
+    if (event.type === 'rendererAtEnd') {
+        if (!event.enabled || event.isAtEnd) {
+            if (state.isPinned && state.newActivityCount === 0) return state;
+            return { ...state, isPinned: true, newActivityCount: 0 };
+        }
         if (!state.isPinned) return state;
         return { ...state, isPinned: false };
     }

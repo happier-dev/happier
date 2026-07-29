@@ -17,6 +17,9 @@ vi.mock('react-native-mmkv', () => {
         delete(key: string) {
             kvStore.delete(key);
         }
+        getAllKeys() {
+            return [...kvStore.keys()];
+        }
         clearAll() {
             kvStore.clear();
         }
@@ -46,7 +49,10 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
         connect: vi.fn(),
         disconnect: vi.fn(),
         initialize: vi.fn(),
-        request: vi.fn(async () => new Response('ok', { status: 200 })),
+        request: vi.fn(async () => new Response(
+            JSON.stringify({ messages: [], hasMore: false, nextAfterSeq: null }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )),
     },
 }));
 
@@ -60,8 +66,9 @@ describe('sync session viewport', () => {
             sessionId: string,
             state: Readonly<{
                 isPinned: boolean;
-                offsetY: number;
+                offsetY?: number;
                 shouldRestoreViewport?: boolean;
+                shouldPersistViewport?: boolean;
                 anchor?: unknown;
             }>,
         ) => void;
@@ -70,6 +77,7 @@ describe('sync session viewport', () => {
     const validViewportAnchor = {
         kind: 'message',
         messageId: 'message-1',
+        seq: 42,
         itemId: 'item-1',
         itemOffsetPx: 84,
         capturedAtMs: 1234,
@@ -160,6 +168,75 @@ describe('sync session viewport', () => {
             offsetY: 420,
             source: 'observed',
         });
+    });
+
+    it('hydrates a cold persisted viewport before session visibility can apply live-tail intent', async () => {
+        const { upsertPersistedSessionViewport } = await import('./domains/state/sessionViewportPersistence');
+        upsertPersistedSessionViewport('session-cold', {
+            isPinned: false,
+            anchor: validViewportAnchor,
+            offsetY: 420,
+            lastUpdatedAt: 2_000,
+        });
+
+        const { sync } = await import('./sync');
+        sync.onSessionVisible('session-cold');
+
+        expect(sync.getSessionViewport('session-cold')).toMatchObject({
+            isPinned: false,
+            offsetY: 420,
+            source: 'observed',
+            anchor: validViewportAnchor,
+        });
+    });
+
+    it('preserves prior position and anchor when a detach report has unknown position', async () => {
+        const { sync } = await import('./sync');
+        const runtimeSync = sync as unknown as RuntimeViewportChangeSync;
+
+        sync.onSessionViewportChange('session-1', {
+            isPinned: false,
+            offsetY: 420,
+            shouldRestoreViewport: true,
+            anchor: validViewportAnchor,
+        });
+        runtimeSync.onSessionViewportChange('session-1', {
+            isPinned: false,
+            shouldRestoreViewport: true,
+            shouldPersistViewport: false,
+        });
+
+        expect(sync.getSessionViewport('session-1')).toMatchObject({
+            isPinned: false,
+            offsetY: 420,
+            source: 'observed',
+            anchor: validViewportAnchor,
+        });
+    });
+
+    it('preserves an omitted anchor but clears an explicitly null anchor', async () => {
+        const { sync } = await import('./sync');
+
+        sync.onSessionViewportChange('session-1', {
+            isPinned: false,
+            offsetY: 420,
+            shouldRestoreViewport: true,
+            anchor: validViewportAnchor,
+        });
+        sync.onSessionViewportChange('session-1', {
+            isPinned: false,
+            offsetY: 320,
+            shouldRestoreViewport: true,
+        });
+        expect(sync.getSessionViewport('session-1')).toMatchObject({ anchor: validViewportAnchor });
+
+        sync.onSessionViewportChange('session-1', {
+            isPinned: false,
+            offsetY: 300,
+            shouldRestoreViewport: true,
+            anchor: null,
+        });
+        expect(sync.getSessionViewport('session-1')).toMatchObject({ anchor: null });
     });
 
     it('stores a valid viewport anchor for observed restore intent', async () => {
@@ -347,7 +424,7 @@ describe('sync session viewport', () => {
         });
     });
 
-    it('keeps viewport state memory-only across runtime reloads', async () => {
+    it('hydrates durable identity-first viewport state across runtime reloads', async () => {
         const { sync } = await import('./sync');
 
         sync.onSessionViewportChange('session-1', {
@@ -361,18 +438,51 @@ describe('sync session viewport', () => {
         vi.resetModules();
         const { sync: reloadedSync } = await import('./sync');
 
-        expect(reloadedSync.getSessionViewport('session-1')).toBeNull();
-
-        reloadedSync.onSessionVisible('session-1');
         expect(reloadedSync.getSessionViewport('session-1')).toMatchObject({
-            isPinned: true,
-            offsetY: 0,
-            source: 'default',
-            anchor: null,
+            isPinned: false,
+            offsetY: 420,
+            source: 'observed',
+            anchor: validViewportAnchor,
         });
     });
 
-    it('resets stale hidden transcript markers and clears the reveal marker after invalidation', async () => {
+    it('deletes the durable viewport record when live-tail intent wins', async () => {
+        const { sync } = await import('./sync');
+        sync.onSessionViewportChange('session-1', {
+            isPinned: false,
+            offsetY: 420,
+            shouldRestoreViewport: true,
+            anchor: validViewportAnchor,
+        });
+        sync.markSessionLiveTailIntent('session-1');
+
+        vi.resetModules();
+        const { sync: reloadedSync } = await import('./sync');
+        expect(reloadedSync.getSessionViewport('session-1')).toBeNull();
+    });
+
+    it('deletes a same-session viewport another tab persisted after hydration', async () => {
+        const { sync } = await import('./sync');
+        const {
+            readPersistedSessionViewport,
+            upsertPersistedSessionViewport,
+        } = await import('./domains/state/sessionViewportPersistence');
+
+        expect(sync.getSessionViewport('session-shared')).toBeNull();
+        upsertPersistedSessionViewport('session-shared', {
+            isPinned: false,
+            anchor: validViewportAnchor,
+            offsetY: 420,
+            lastUpdatedAt: 2_000,
+        });
+        expect(readPersistedSessionViewport('session-shared')).not.toBeNull();
+
+        sync.markSessionLiveTailIntent('session-shared');
+
+        expect(readPersistedSessionViewport('session-shared')).toBeNull();
+    });
+
+    it('preserves stale hidden transcript rows on reveal while scheduling repair', async () => {
         const { sync } = await import('./sync');
         const { storage } = await import('@/sync/domains/state/storage');
         const invalidateCoalesced = vi.fn();
@@ -387,7 +497,9 @@ describe('sync session viewport', () => {
         };
         const harness = sync as unknown as StaleTranscriptHarness;
 
+        (sync as any).encryption = { getSessionEncryption: () => null };
         storage.getState().applyMessages(sessionId, [buildMessage('message-stale', 7)]);
+        storage.getState().applyMessagesLoaded(sessionId);
         harness.messagesSync = new Map([[sessionId, { invalidateCoalesced }]]);
         harness.sessionMaterializedMaxSeqById = { [sessionId]: 7 };
         harness.markSessionTranscriptStale(sessionId, {
@@ -398,16 +510,10 @@ describe('sync session viewport', () => {
 
         sync.onSessionVisible(sessionId);
 
-        expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst).toEqual([]);
-        expect(storage.getState().sessionMessages[sessionId]?.isLoaded).toBe(false);
-        expect(harness.sessionMaterializedMaxSeqById[sessionId]).toBe(0);
-        expect(invalidateCoalesced).toHaveBeenCalledTimes(1);
-
-        storage.getState().applyMessages(sessionId, [buildMessage('message-after-reset', 8)]);
-        sync.onSessionVisible(sessionId);
-
         expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst).toHaveLength(1);
-        expect(invalidateCoalesced).toHaveBeenCalledTimes(2);
+        expect(storage.getState().sessionMessages[sessionId]?.isLoaded).toBe(true);
+        expect(harness.sessionMaterializedMaxSeqById[sessionId]).toBe(7);
+        expect(invalidateCoalesced).toHaveBeenCalledTimes(1);
     });
 
     it('hydrates deferred hidden session state on reveal and clears the marker', async () => {

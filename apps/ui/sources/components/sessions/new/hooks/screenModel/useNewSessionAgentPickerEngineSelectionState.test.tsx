@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit';
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol';
 
 import { useNewSessionAgentPickerEngineSelectionState } from './useNewSessionAgentPickerEngineSelectionState';
 
@@ -13,8 +14,8 @@ function createBuiltInBackendEntry(backendId: 'claude' | 'codex' | 'kimi', title
         backendTargetKey: formatBackendTargetKeyV2(backendTarget),
         kind: 'builtInAgent',
         backendId,
-        providerId: backendId,
-        providerAgentId: backendId as any,
+        agentId: backendId,
+        catalogAgentId: backendId as any,
         builtInAgentId: backendId as any,
         iconAgentId: backendId as any,
         title,
@@ -23,6 +24,125 @@ function createBuiltInBackendEntry(backendId: 'claude' | 'codex' | 'kimi', title
 }
 
 describe('useNewSessionAgentPickerEngineSelectionState', () => {
+    it('preserves provider connection identity when reapplying the focused model selection', async () => {
+        const codexEntry = createBuiltInBackendEntry('codex', 'Codex');
+        const modelSelection = SessionModelSelectionV1Schema.parse({
+            v: 1,
+            updatedAt: 123,
+            ref: {
+                agentTargetKey: codexEntry.backendTargetKey,
+                providerConnectionId: 'pc_01J00000000000000000000000',
+                modelId: 'openai/gpt-5.5',
+            },
+        });
+        const setEngineSelectionForBackendTarget = vi.fn();
+        const hook = await renderHook(() => useNewSessionAgentPickerEngineSelectionState({
+            selectedBackendEntry: codexEntry,
+            selectedBackendTargetKey: codexEntry.backendTargetKey,
+            modelMode: modelSelection.ref.modelId,
+            modelSelection,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            setBackendTarget: vi.fn(),
+            setModelMode: vi.fn() as any,
+            setAcpSessionModeId: vi.fn() as any,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+            setEngineSelectionForBackendTarget,
+        }));
+
+        hook.getCurrent().selectEngineSelection(codexEntry, {
+            modelId: modelSelection.ref.modelId,
+            modelSelection,
+            sessionModeId: null,
+            configOverrides: {},
+        });
+
+        expect(setEngineSelectionForBackendTarget).toHaveBeenCalledWith(
+            codexEntry.backendTargetKey,
+            expect.objectContaining({ modelSelection }),
+        );
+    });
+
+    it('preserves a provider-bound model literally named default', async () => {
+        const codexEntry = createBuiltInBackendEntry('codex', 'Codex');
+        const modelSelection = SessionModelSelectionV1Schema.parse({
+            v: 1,
+            updatedAt: 123,
+            ref: {
+                agentTargetKey: codexEntry.backendTargetKey,
+                providerConnectionId: 'pc_01J00000000000000000000000',
+                modelId: 'default',
+            },
+        });
+        const setEngineSelectionForBackendTarget = vi.fn();
+        const hook = await renderHook(() => useNewSessionAgentPickerEngineSelectionState({
+            selectedBackendEntry: codexEntry,
+            selectedBackendTargetKey: codexEntry.backendTargetKey,
+            modelMode: 'default',
+            modelSelection,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            setBackendTarget: vi.fn(),
+            setModelMode: vi.fn() as any,
+            setAcpSessionModeId: vi.fn() as any,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+            setEngineSelectionForBackendTarget,
+        }));
+
+        hook.getCurrent().selectEngineSelection(codexEntry, {
+            modelId: 'default',
+            modelSelection,
+            sessionModeId: null,
+            configOverrides: {},
+        });
+
+        expect(setEngineSelectionForBackendTarget).toHaveBeenCalledWith(
+            codexEntry.backendTargetKey,
+            expect.objectContaining({ modelSelection }),
+        );
+    });
+
+    it('does not let lagging same-id native props overwrite a pending provider selection', async () => {
+        const codexEntry = createBuiltInBackendEntry('codex', 'Codex');
+        const providerSelection = SessionModelSelectionV1Schema.parse({
+            v: 1,
+            updatedAt: 123,
+            ref: {
+                agentTargetKey: codexEntry.backendTargetKey,
+                providerConnectionId: 'pc_01J00000000000000000000000',
+                modelId: 'shared-id',
+            },
+        });
+        type Props = Parameters<typeof useNewSessionAgentPickerEngineSelectionState>[0];
+        const baseProps: Props = {
+            selectedBackendEntry: codexEntry,
+            selectedBackendTargetKey: codexEntry.backendTargetKey,
+            modelMode: 'shared-id',
+            modelSelection: null,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            setBackendTarget: vi.fn(),
+            setModelMode: vi.fn() as any,
+            setAcpSessionModeId: vi.fn() as any,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+        };
+        const hook = await renderHook(
+            (props: Props) => useNewSessionAgentPickerEngineSelectionState(props),
+            { initialProps: baseProps },
+        );
+
+        hook.getCurrent().selectEngineSelection(codexEntry, {
+            modelId: 'shared-id',
+            modelSelection: providerSelection,
+            sessionModeId: null,
+            configOverrides: {},
+        });
+        await hook.rerender({ ...baseProps });
+
+        expect(hook.getCurrent().getEngineSelectionForTargetKey(codexEntry.backendTargetKey).modelSelection)
+            .toEqual(providerSelection);
+    });
+
     it('hydrates non-focused engine selections from remembered account preferences', async () => {
         const claudeEntry = createBuiltInBackendEntry('claude', 'Claude');
         const codexEntry = createBuiltInBackendEntry('codex', 'Codex');
@@ -41,7 +161,15 @@ describe('useNewSessionAgentPickerEngineSelectionState', () => {
             rememberedEngineSelectionsByScope: {
                 [`server-1:${codexEntry.backendTargetKey}`]: {
                     v: 1,
-                    modelId: 'gpt-5.4',
+                    modelSelection: {
+                        v: 1,
+                        updatedAt: 123,
+                        ref: {
+                            agentTargetKey: codexEntry.backendTargetKey,
+                            providerConnectionId: null,
+                            modelId: 'gpt-5.4',
+                        },
+                    },
                     acpSessionModeId: 'plan',
                     sessionConfigOptionOverrides: {
                         v: 1,
@@ -61,6 +189,15 @@ describe('useNewSessionAgentPickerEngineSelectionState', () => {
 
         expect(hook.getCurrent().getEngineSelectionForTargetKey(codexEntry.backendTargetKey)).toEqual({
             modelId: 'gpt-5.4',
+            modelSelection: {
+                v: 1,
+                updatedAt: 123,
+                ref: {
+                    agentTargetKey: codexEntry.backendTargetKey,
+                    providerConnectionId: null,
+                    modelId: 'gpt-5.4',
+                },
+            },
             sessionModeId: 'plan',
             configOverrides: {
                 reasoning_effort: 'high',
@@ -95,7 +232,15 @@ describe('useNewSessionAgentPickerEngineSelectionState', () => {
         });
 
         expect(onRememberEngineSelection).toHaveBeenCalledWith(codexEntry.backendTarget, {
-            modelId: 'gpt-5.4',
+            modelSelection: {
+                v: 1,
+                updatedAt: expect.any(Number),
+                ref: {
+                    agentTargetKey: codexEntry.backendTargetKey,
+                    providerConnectionId: null,
+                    modelId: 'gpt-5.4',
+                },
+            },
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: expect.objectContaining({
                 overrides: {
@@ -135,7 +280,15 @@ describe('useNewSessionAgentPickerEngineSelectionState', () => {
 
         expect(setAcpSessionModeId).toHaveBeenCalledWith(null);
         expect(onRememberEngineSelection).toHaveBeenCalledWith(kimiEntry.backendTarget, {
-            modelId: 'kimi-code/kimi-for-coding',
+            modelSelection: {
+                v: 1,
+                updatedAt: expect.any(Number),
+                ref: {
+                    agentTargetKey: kimiEntry.backendTargetKey,
+                    providerConnectionId: null,
+                    modelId: 'kimi-code/kimi-for-coding',
+                },
+            },
             acpSessionModeId: null,
             sessionConfigOptionOverrides: null,
         });

@@ -1,13 +1,23 @@
-import { getAgentCore, isAgentId, resolveAgentIdFromFlavor, resolveVendorHandoffIdFromSessionMetadata } from '@happier-dev/agents';
+import { evaluateVendorHandoffEligibility, isAgentId, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { readExternalSessionLink } from '../session/external/readExternalSessionLink';
 import { resolveSessionHandoffSourceMachineId } from './resolveSessionHandoffSourceMachineId';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 type SessionLike = Readonly<{
     metadata?: Record<string, unknown> | null;
+    metadataLayoutVersion?: number;
+    ownerMetadataView?: Record<string, unknown> | null;
 }>;
 
 export function canHandoffConversation(params: Readonly<{ sessionId?: string | null; session: SessionLike | null | undefined }>): boolean {
-    const metadata = params.session?.metadata ?? null;
+    const metadata = params.session
+        ? readSessionOwnerMetadataView({
+            metadataLayoutVersion: params.session.metadataLayoutVersion,
+            metadata: params.session.metadata ?? null,
+            ownerMetadataView: params.session.ownerMetadataView,
+        })
+        : null;
     if (!metadata) return false;
 
     const machineId = resolveSessionHandoffSourceMachineId({
@@ -18,18 +28,14 @@ export function canHandoffConversation(params: Readonly<{ sessionId?: string | n
     });
     if (!machineId) return false;
 
-    const agentId = resolveAgentIdFromFlavor(metadata.flavor);
+    const agentId = resolveAgentIdFromSessionMetadata(metadata);
     if (!agentId) return false;
     if (!isAgentId(agentId)) return false;
 
-    const agent = getAgentCore(agentId);
-    const sessionStorageMode = metadata.externalSessionV1 ? 'direct' : 'persisted';
-    if (!agent.sessionStorage[sessionStorageMode]) return false;
-    if (agent.handoff.vendorStateTransfer === 'unsupported') return false;
-
-    // Keep the UI consistent with daemon eligibility: handoff requires a vendor-resumable id so the
-    // target can reliably resume the session vendor state (and so QA can fail fast before stopping
-    // the source session).
-    if (!resolveVendorHandoffIdFromSessionMetadata(agentId, metadata)) return false;
-    return true;
+    const sessionStorageMode = readExternalSessionLink(metadata) ? 'direct' : 'persisted';
+    return evaluateVendorHandoffEligibility({
+        agentId,
+        storageMode: sessionStorageMode,
+        metadata,
+    }).eligible === true;
 }

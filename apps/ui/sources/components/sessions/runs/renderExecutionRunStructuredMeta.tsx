@@ -12,6 +12,7 @@ import { ReviewFindingsMessageCard } from '@/components/sessions/reviews/message
 import { ReviewFollowUpMessageCard } from '@/components/sessions/reviews/messages/ReviewFollowUpMessageCard';
 import { PlanOutputMessageCard } from '@/components/sessions/plans/messages/PlanOutputMessageCard';
 import { DelegateOutputMessageCard } from '@/components/sessions/delegations/messages/DelegateOutputMessageCard';
+import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 
 export type ExecutionRunStructuredMetaEnvelope = Readonly<{
     kind: string;
@@ -21,6 +22,7 @@ export type ExecutionRunStructuredMetaEnvelope = Readonly<{
 export function renderExecutionRunStructuredMeta(params: Readonly<{
     meta: ExecutionRunStructuredMetaEnvelope;
     sessionId: string;
+    interaction: TranscriptInteraction;
 }>): React.ReactElement | null {
     const kind = params.meta.kind;
     const payload = params.meta.payload;
@@ -28,13 +30,25 @@ export function renderExecutionRunStructuredMeta(params: Readonly<{
     if (kind === 'review_findings.v1') {
         const parsed = ReviewFindingsV1Schema.safeParse(payload);
         if (!parsed.success) return null;
-        return <ReviewFindingsMessageCard payload={parsed.data} sessionId={params.sessionId} />;
+        return (
+            <ReviewFindingsMessageCard
+                payload={parsed.data}
+                sessionId={params.sessionId}
+                canSendMessages={params.interaction.canSendMessages === true}
+            />
+        );
     }
 
     if (kind === 'review_findings.v2') {
         const parsed = ReviewFindingsV2Schema.safeParse(payload);
         if (!parsed.success) return null;
-        return <ReviewFindingsMessageCard payload={parsed.data} sessionId={params.sessionId} />;
+        return (
+            <ReviewFindingsMessageCard
+                payload={parsed.data}
+                sessionId={params.sessionId}
+                canSendMessages={params.interaction.canSendMessages === true}
+            />
+        );
     }
 
     if (kind === 'review_follow_up.v1') {
@@ -46,7 +60,13 @@ export function renderExecutionRunStructuredMeta(params: Readonly<{
     if (kind === 'plan_output.v1') {
         const parsed = PlanOutputV1Schema.safeParse(payload);
         if (!parsed.success) return null;
-        return <PlanOutputMessageCard payload={parsed.data} sessionId={params.sessionId} />;
+        return (
+            <PlanOutputMessageCard
+                payload={parsed.data}
+                sessionId={params.sessionId}
+                canSendMessages={params.interaction.canSendMessages === true}
+            />
+        );
     }
 
     if (kind === 'delegate_output.v1') {

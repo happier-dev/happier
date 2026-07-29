@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createVoiceConversationRuntimeMachine } from './VoiceConversationRuntimeMachine';
+import { createVoiceMachineError } from './voiceMachineError';
 
 function createDeferred<T>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -19,9 +20,7 @@ describe('VoiceConversationRuntimeMachine', () => {
 
     it('waits for listening start confirmation before entering listening', async () => {
         const deferred = createDeferred<void>();
-        const machine = createVoiceConversationRuntimeMachine({
-            listeningStartTimeoutMs: 1_000,
-        });
+        const machine = createVoiceConversationRuntimeMachine();
 
         const rearmPromise = machine.rearmListening({
             controlSessionId: 's1',
@@ -43,28 +42,32 @@ describe('VoiceConversationRuntimeMachine', () => {
         });
     });
 
-    it('transitions to mic_error with stt_timeout when listening start confirmation times out', async () => {
+    it('keeps a bounded provider-owned start acquiring beyond the former blanket timeout, then listens', async () => {
         vi.useFakeTimers();
         try {
-            const machine = createVoiceConversationRuntimeMachine({
-                listeningStartTimeoutMs: 25,
-            });
+            const deferred = createDeferred<void>();
+            const machine = createVoiceConversationRuntimeMachine();
 
             const rearmPromise = machine.rearmListening({
                 controlSessionId: 's1',
-                startListening: () => new Promise<void>(() => {}),
+                startListening: () => deferred.promise,
             });
 
             await vi.advanceTimersByTimeAsync(30);
+
+            expect(machine.getSnapshot()).toMatchObject({
+                controlSessionId: 's1',
+                state: 'acquiring_mic',
+                error: null,
+            });
+
+            deferred.resolve();
             await rearmPromise;
 
             expect(machine.getSnapshot()).toMatchObject({
                 controlSessionId: 's1',
-                state: 'mic_error',
-                error: {
-                    kind: 'stt_timeout',
-                    recoverable: true,
-                },
+                state: 'listening',
+                error: null,
             });
         } finally {
             vi.useRealTimers();
@@ -72,9 +75,7 @@ describe('VoiceConversationRuntimeMachine', () => {
     });
 
     it('maps rejected startListening calls onto recoverable mic_error', async () => {
-        const machine = createVoiceConversationRuntimeMachine({
-            listeningStartTimeoutMs: 1_000,
-        });
+        const machine = createVoiceConversationRuntimeMachine();
 
         await machine.rearmListening({
             controlSessionId: 's1',
@@ -119,11 +120,7 @@ describe('VoiceConversationRuntimeMachine', () => {
 
         machine.transitionToDisconnected({
             controlSessionId: 's1',
-            error: {
-                kind: 'transport_disconnect',
-                reason: 'lost connection',
-                recoverable: true,
-            },
+            error: createVoiceMachineError({ kind: 'transport_disconnect', reason: 'lost connection' }),
         });
         expect(machine.getSnapshot()).toMatchObject({
             controlSessionId: 's1',
@@ -171,6 +168,63 @@ describe('VoiceConversationRuntimeMachine', () => {
         expect(machine.getSnapshot()).toMatchObject({
             state: 'disconnected',
             adapterId: null,
+            reconnecting: false,
+        });
+    });
+
+    it('projects reconnecting only for the current adapter and control-session owner', () => {
+        const machine = createVoiceConversationRuntimeMachine();
+
+        machine.transitionToConnecting({ controlSessionId: 's1', adapterId: 'realtime_elevenlabs' });
+        machine.transitionToConnected({ controlSessionId: 's1', adapterId: 'realtime_elevenlabs' });
+        machine.setReconnecting({
+            controlSessionId: 's1',
+            adapterId: 'realtime_elevenlabs',
+            reconnecting: true,
+        });
+        expect(machine.getSnapshot()).toMatchObject({
+            controlSessionId: 's1',
+            adapterId: 'realtime_elevenlabs',
+            state: 'connected',
+            reconnecting: true,
+        });
+
+        machine.setReconnecting({
+            controlSessionId: 'stale-session',
+            adapterId: 'realtime_elevenlabs',
+            reconnecting: false,
+        });
+        machine.setReconnecting({
+            controlSessionId: 's1',
+            adapterId: 'realtime_openai',
+            reconnecting: false,
+        });
+        expect(machine.getSnapshot().reconnecting).toBe(true);
+
+        machine.transitionToDisconnected({ controlSessionId: 's1', adapterId: 'realtime_elevenlabs' });
+        expect(machine.getSnapshot().reconnecting).toBe(false);
+    });
+
+    it('clears a stale realtime owner when a local entry transition starts after a declined realtime attempt', () => {
+        const machine = createVoiceConversationRuntimeMachine();
+
+        machine.transitionToConnecting({ controlSessionId: 'realtime-s1', adapterId: 'realtime_elevenlabs' });
+        machine.transitionToDisconnected({
+            controlSessionId: 'realtime-s1',
+            adapterId: 'realtime_elevenlabs',
+            error: createVoiceMachineError({ kind: 'provider_error', reason: 'realtime_declined' }),
+        });
+
+        // Local adapters intentionally omit adapterId because null is the local
+        // engine owner. Starting local capture must replace, not inherit, the
+        // retained realtime owner used to project the declined error.
+        machine.transitionToAcquiringMic({ controlSessionId: 'local-s1' });
+
+        expect(machine.getSnapshot()).toMatchObject({
+            controlSessionId: 'local-s1',
+            state: 'acquiring_mic',
+            adapterId: null,
+            error: null,
         });
     });
 
@@ -228,9 +282,7 @@ describe('VoiceConversationRuntimeMachine', () => {
     });
 
     it('ignores a stale rearm rejection after control session ownership retargets', async () => {
-        const machine = createVoiceConversationRuntimeMachine({
-            listeningStartTimeoutMs: 1_000,
-        });
+        const machine = createVoiceConversationRuntimeMachine();
         const deferred = createDeferred<void>();
 
         const rearmPromise = machine.rearmListening({
@@ -252,65 +304,69 @@ describe('VoiceConversationRuntimeMachine', () => {
         });
     });
 
-    it('ignores a stale rearm timeout after control session ownership retargets', async () => {
-        vi.useFakeTimers();
-        try {
-            const machine = createVoiceConversationRuntimeMachine({
-                listeningStartTimeoutMs: 25,
-            });
+    it('ignores a stale rearm completion after control session ownership retargets', async () => {
+        const machine = createVoiceConversationRuntimeMachine();
+        const deferred = createDeferred<void>();
 
-            const rearmPromise = machine.rearmListening({
-                controlSessionId: 's1',
-                startListening: () => new Promise<void>(() => {}),
-            });
+        const rearmPromise = machine.rearmListening({
+            controlSessionId: 's1',
+            startListening: () => deferred.promise,
+        });
 
-            // A newer owner takes over before the stale timeout fires.
-            machine.transitionToAcquiringMic({ controlSessionId: 's2' });
+        machine.transitionToAcquiringMic({ controlSessionId: 's2' });
+        deferred.resolve();
+        await rearmPromise;
 
-            await vi.advanceTimersByTimeAsync(30);
-            await rearmPromise;
-
-            expect(machine.getSnapshot()).toMatchObject({
-                controlSessionId: 's2',
-                state: 'acquiring_mic',
-                error: null,
-            });
-        } finally {
-            vi.useRealTimers();
-        }
+        expect(machine.getSnapshot()).toMatchObject({
+            controlSessionId: 's2',
+            state: 'acquiring_mic',
+            error: null,
+        });
     });
 
-    it('aborts the in-flight capture signal when the listening start times out', async () => {
-        vi.useFakeTimers();
-        try {
-            const machine = createVoiceConversationRuntimeMachine({
-                listeningStartTimeoutMs: 25,
-            });
+    it('aborts the in-flight provider start when the runtime is explicitly reset', async () => {
+        const machine = createVoiceConversationRuntimeMachine();
+        let observedSignal: AbortSignal | undefined;
+        const rearmPromise = machine.rearmListening({
+            controlSessionId: 's1',
+            startListening: (signal) => {
+                observedSignal = signal;
+                return new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }));
+            },
+        });
 
-            let observedSignal: AbortSignal | undefined;
-            const rearmPromise = machine.rearmListening({
-                controlSessionId: 's1',
-                startListening: (signal) => {
-                    observedSignal = signal;
-                    return new Promise<void>(() => {});
-                },
-            });
+        expect(observedSignal?.aborted).toBe(false);
+        machine.reset();
+        expect(observedSignal?.aborted).toBe(true);
+        await rearmPromise;
 
-            expect(observedSignal).toBeDefined();
-            expect(observedSignal?.aborted).toBe(false);
+        expect(machine.getSnapshot()).toMatchObject({
+            controlSessionId: null,
+            state: 'disconnected',
+            error: null,
+        });
+    });
 
-            await vi.advanceTimersByTimeAsync(30);
-            await rearmPromise;
+    it('aborts the in-flight provider start when the owning session disconnects', async () => {
+        const machine = createVoiceConversationRuntimeMachine();
+        let observedSignal: AbortSignal | undefined;
+        const rearmPromise = machine.rearmListening({
+            controlSessionId: 's1',
+            startListening: (signal) => {
+                observedSignal = signal;
+                return new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }));
+            },
+        });
 
-            expect(observedSignal?.aborted).toBe(true);
-            expect(machine.getSnapshot()).toMatchObject({
-                controlSessionId: 's1',
-                state: 'mic_error',
-                error: { kind: 'stt_timeout' },
-            });
-        } finally {
-            vi.useRealTimers();
-        }
+        machine.transitionToDisconnected({ controlSessionId: 's1' });
+
+        expect(observedSignal?.aborted).toBe(true);
+        await rearmPromise;
+        expect(machine.getSnapshot()).toMatchObject({
+            controlSessionId: 's1',
+            state: 'disconnected',
+            error: null,
+        });
     });
 
     it('interrupts speaking and rearms listening through the machine owner seam', async () => {

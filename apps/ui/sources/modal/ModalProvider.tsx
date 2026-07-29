@@ -71,7 +71,6 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
         const id = generateId();
         const modalConfig = { ...config, id, visible: true } as ModalHostEntry;
         clearRemovalTimer(id);
-        
         setState(prev => {
             const nextState = {
                 modals: [...prev.modals, modalConfig]
@@ -79,7 +78,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
             stateRef.current = nextState;
             return nextState;
         });
-        
+
         return id;
     }, [clearRemovalTimer, generateId]);
 
@@ -154,12 +153,36 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
             return undefined;
         }
 
-        return Modal.registerProvider({
+        const unregisterProvider = Modal.registerProvider({
             showModal,
             hideModal,
             hideAllModals,
             updateCustomModalProps,
         });
+        return () => {
+            // Restore the previous host before settling this host's work so a
+            // continuation can re-present through the canonical provider stack.
+            unregisterProvider();
+            const ownedModals = stateRef.current.modals;
+            const nextState = { modals: [] };
+            stateRef.current = nextState;
+            setState(nextState);
+            for (const modal of ownedModals) {
+                try {
+                    if (modal.type === 'alert') {
+                        Modal.resolveAlert(modal.id);
+                    } else if (modal.type === 'confirm') {
+                        Modal.resolveConfirm(modal.id, false);
+                    } else if (modal.type === 'prompt') {
+                        Modal.resolvePrompt(modal.id, null);
+                    } else {
+                        modal.onHostUnmount?.();
+                    }
+                } catch {
+                    // One modal owner must not strand the remaining host-owned work.
+                }
+            }
+        };
     }, [active, showModal, hideModal, hideAllModals, updateCustomModalProps]);
 
     useEffect(() => {

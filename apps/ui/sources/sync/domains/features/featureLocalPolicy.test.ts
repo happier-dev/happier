@@ -5,33 +5,6 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { FeatureId } from '@happier-dev/protocol';
 
 describe('featureLocalPolicy', () => {
-    it('disables connectedServices when build-time env is falsy', () => {
-        const envBackup = process.env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED;
-        try {
-            process.env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED = '0';
-            expect(resolveLocalFeaturePolicyEnabled('connectedServices', {
-                ...settingsDefaults,
-                experiments: true,
-                featureToggles: {},
-            })).toBe(false);
-        } finally {
-            if (typeof envBackup === 'string') {
-                process.env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED = envBackup;
-            } else {
-                const env = process.env as Record<string, string | undefined>;
-                delete env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED;
-            }
-        }
-    });
-
-    it('disables connectedServices by default when experiments are on', () => {
-        expect(resolveLocalFeaturePolicyEnabled('connectedServices', {
-            ...settingsDefaults,
-            experiments: true,
-            featureToggles: {},
-        })).toBe(false);
-    });
-
     it('disables connectedServices.quotas by default when experiments are on', () => {
         expect(resolveLocalFeaturePolicyEnabled('connectedServices.quotas', {
             ...settingsDefaults,
@@ -102,6 +75,18 @@ describe('featureLocalPolicy', () => {
             experiments: true,
             featureToggles: { 'terminal.embeddedPty': true },
         })).toBe(true);
+    });
+
+    it('does not hard-disable native terminal renderer gates when the TERM foundation is eligible', () => {
+        const settings = {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: {},
+        };
+
+        expect(resolveLocalFeaturePolicyEnabled('terminal.renderer.native', settings)).toBe(true);
+        expect(resolveLocalFeaturePolicyEnabled('terminal.renderer.iosGhostty', settings)).toBe(true);
+        expect(resolveLocalFeaturePolicyEnabled('terminal.renderer.androidTermux', settings)).toBe(true);
     });
 
     it('enables memory.search when explicitly enabled', () => {
@@ -298,5 +283,61 @@ describe('featureLocalPolicy', () => {
             experiments: true,
             featureToggles: {},
         })).not.toThrow();
+    });
+
+    it('defers browser.automation to the server decision and keeps the finer eval tiers fail-closed', () => {
+        // §13.4: browser.automation is server-represented + default-ALLOW. The UI local policy must
+        // NOT force it closed (that would override the now-ON server bit, since a server-represented
+        // decision combines `localPolicyEnabled && serverEnabled`). It defers via the unlisted-id
+        // fallback (returns true). The finer injectedPage/eval tiers stay client + fail-closed.
+        const settings = { ...settingsDefaults, experiments: true, featureToggles: {} };
+        expect(resolveLocalFeaturePolicyEnabled('browser.automation', settings)).toBe(true);
+        expect(resolveLocalFeaturePolicyEnabled('browser.automation.injectedPage', settings)).toBe(false);
+        expect(resolveLocalFeaturePolicyEnabled('browser.automation.eval', settings)).toBe(false);
+    });
+
+    it('defers server-represented plugin UI tiers to the server decision and keeps dev hot reload fail-closed', () => {
+        // §4.1/§13.5.3: hostedWeb / structuredMessages / reactNativeBundles are
+        // server-represented + default-ALLOW kill-switches. The UI local policy must NOT force them
+        // closed (that would override the now-ON server bit, since a server-represented decision
+        // combines `localPolicyEnabled && serverEnabled`). They defer via the unlisted-id fallback
+        // (returns true). Per-plugin install/enable/trust/runtime derivation (5.1/5.2) still governs
+        // actual render. The finer dev-only hot-reload tier stays client + fail-closed.
+        const settings = { ...settingsDefaults, experiments: true, featureToggles: {} };
+        expect(resolveLocalFeaturePolicyEnabled('plugins.ui.hostedWeb', settings)).toBe(true);
+        expect(resolveLocalFeaturePolicyEnabled('plugins.ui.reactNativeBundles', settings)).toBe(true);
+        expect(resolveLocalFeaturePolicyEnabled('plugins.ui.structuredMessages', settings)).toBe(true);
+        expect(resolveLocalFeaturePolicyEnabled('plugins.ui.reactNativeBundles.devHotReload', settings)).toBe(false);
+    });
+
+    it('resolves the client fail-closed browser/plugin opt-in tiers from a REAL env flag (never a hardcoded false)', () => {
+        // A6 / PATCH-04: the injectedPage/eval/devHotReload tiers are fail-closed but the opt-in must
+        // genuinely exist (mirror the CLI featureLocalPolicy env opt-in). With the env flag set the
+        // resolver returns true — proving the value comes from env, not a dead `() => false` constant.
+        const settings = { ...settingsDefaults, experiments: true, featureToggles: {} };
+        const env = process.env as Record<string, string | undefined>;
+        const keys = [
+            'EXPO_PUBLIC_HAPPIER_FEATURE_BROWSER_AUTOMATION_INJECTED_PAGE__ENABLED',
+            'EXPO_PUBLIC_HAPPIER_FEATURE_BROWSER_AUTOMATION_EVAL__ENABLED',
+            'EXPO_PUBLIC_HAPPIER_FEATURE_PLUGINS_UI_REACT_NATIVE_BUNDLES_DEV_HOT_RELOAD__ENABLED',
+        ] as const;
+        const backup = keys.map((key) => [key, env[key]] as const);
+        try {
+            for (const key of keys) env[key] = '1';
+            expect(resolveLocalFeaturePolicyEnabled('browser.automation.injectedPage', settings)).toBe(true);
+            expect(resolveLocalFeaturePolicyEnabled('browser.automation.eval', settings)).toBe(true);
+            expect(resolveLocalFeaturePolicyEnabled('plugins.ui.reactNativeBundles.devHotReload', settings)).toBe(true);
+        } finally {
+            for (const [key, value] of backup) {
+                if (typeof value === 'string') env[key] = value; else delete env[key];
+            }
+        }
+    });
+
+    it('defers devices.simulatorPreview to the server decision', () => {
+        // §4.1: devices.simulatorPreview is server-represented + default-ALLOW (viewing your own
+        // simulator). The UI local policy defers to the server bit via the unlisted-id fallback.
+        const settings = { ...settingsDefaults, experiments: true, featureToggles: {} };
+        expect(resolveLocalFeaturePolicyEnabled('devices.simulatorPreview', settings)).toBe(true);
     });
 });

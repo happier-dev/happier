@@ -21,12 +21,15 @@ export function useActiveSuggestions(
 
     // State for suggestions
     const [state, setState] = React.useState<{
+        query: string | null;
         suggestions: AutocompleteSuggestion[];
         selected: number,
     }>({
+        query: null,
         suggestions: [],
         selected: -1
     });
+    const activeSyncRef = React.useRef<ValueSync<string | null> | null>(null);
 
     const moveUp = React.useCallback(() => {
         setState((prev) => {
@@ -68,57 +71,81 @@ export function useActiveSuggestions(
 
     // Sync query to suggestions
     const sync = React.useMemo(() => {
-        return new ValueSync<string | null>(async (query) => {
-            if (!query) {
+        let ownSync!: ValueSync<string | null>;
+        ownSync = new ValueSync<string | null>(async (nextQuery) => {
+            if (!nextQuery) {
+                setState((prev) => (
+                    prev.query === null && prev.suggestions.length === 0 && prev.selected === -1
+                        ? prev
+                        : { query: null, suggestions: [], selected: -1 }
+                ));
                 return;
             }
-            const suggestions = await handler(query);
+            const suggestions = await handler(nextQuery);
+            if (activeSyncRef.current !== ownSync) {
+                return;
+            }
             setState((prev) => {
+                const previousSuggestions = prev.query === nextQuery ? prev.suggestions : [];
+                const previousSelected = prev.query === nextQuery ? prev.selected : -1;
                 if (clampSelection) {
                     // Simply clamp the selection to valid range
-                    let newSelected = prev.selected;
+                    let newSelected = previousSelected;
                     
                     if (suggestions.length === 0) {
                         newSelected = -1;
-                    } else if (autoSelectFirst && prev.suggestions.length === 0) {
+                    } else if (autoSelectFirst && previousSuggestions.length === 0) {
                         // First time showing suggestions, auto-select first
                         newSelected = 0;
-                    } else if (prev.selected >= suggestions.length) {
+                    } else if (previousSelected >= suggestions.length) {
                         // Selection is out of bounds, clamp to last item
                         newSelected = suggestions.length - 1;
-                    } else if (prev.selected < 0 && suggestions.length > 0 && autoSelectFirst) {
+                    } else if (previousSelected < 0 && suggestions.length > 0 && autoSelectFirst) {
                         // No selection but we have suggestions
                         newSelected = 0;
                     }
                     
-                    return { suggestions, selected: newSelected };
+                    return { query: nextQuery, suggestions, selected: newSelected };
                 } else {
                     // Try to preserve selection by key (old behavior)
-                    if (prev.selected >= 0 && prev.selected < prev.suggestions.length) {
-                        const previousKey = prev.suggestions[prev.selected].key;
+                    if (previousSelected >= 0 && previousSelected < previousSuggestions.length) {
+                        const previousKey = previousSuggestions[previousSelected].key;
                         const newIndex = suggestions.findIndex(s => s.key === previousKey);
                         if (newIndex !== -1) {
                             // Found the same key, keep it selected
-                            return { suggestions, selected: newIndex };
+                            return { query: nextQuery, suggestions, selected: newIndex };
                         }
                     }
 
                     // Key not found or no previous selection, clamp the selection
-                    const clampedSelection = Math.min(prev.selected, suggestions.length - 1);
+                    const clampedSelection = Math.min(previousSelected, suggestions.length - 1);
                     return {
+                        query: nextQuery,
                         suggestions,
                         selected: clampedSelection < 0 && suggestions.length > 0 && autoSelectFirst ? 0 : clampedSelection
                     };
                 }
             });
         });
+        return ownSync;
     }, [clampSelection, autoSelectFirst, handler]);
+
+    React.useEffect(() => {
+        activeSyncRef.current = sync;
+        return () => {
+            if (activeSyncRef.current === sync) {
+                activeSyncRef.current = null;
+            }
+            sync.stop();
+        };
+    }, [sync]);
+
     React.useEffect(() => {
         sync.setValue(query);
-    }, [query]);
+    }, [query, sync]);
 
     // If no query return empty suggestions
-    if (!query) {
+    if (!query || state.query !== query) {
         return [[], -1, moveUp, moveDown] as const;
     }
 

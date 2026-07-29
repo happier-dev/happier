@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol';
 
 import type { SpawnSessionOptions } from '../../domains/session/spawn/spawnSessionPayload';
 import { buildSpawnHappySessionRpcParams } from '../../domains/session/spawn/spawnSessionPayload';
@@ -64,13 +65,27 @@ describe('buildSpawnHappySessionRpcParams', () => {
             machineId: 'm1',
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-            modelId: 'o3',
-            modelUpdatedAt: 123,
+            modelSelection: SessionModelSelectionV1Schema.parse({
+                v: 1,
+                updatedAt: 123,
+                ref: {
+                    agentTargetKey: 'backend:claude',
+                    providerConnectionId: null,
+                    modelId: 'o3',
+                },
+            }),
         } satisfies SpawnSessionOptions);
 
         expect(params).toMatchObject({
-            modelId: 'o3',
-            modelUpdatedAt: 123,
+            modelSelection: {
+                v: 1,
+                updatedAt: 123,
+                ref: {
+                    agentTargetKey: 'backend:claude',
+                    providerConnectionId: null,
+                    modelId: 'o3',
+                },
+            },
         });
     });
 
@@ -118,7 +133,7 @@ describe('buildSpawnHappySessionRpcParams', () => {
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
             modelUpdatedAt: 123,
-        } satisfies SpawnSessionOptions);
+        } as unknown as SpawnSessionOptions);
 
         expect('modelId' in params).toBe(false);
         expect('modelUpdatedAt' in params).toBe(false);
@@ -130,7 +145,7 @@ describe('buildSpawnHappySessionRpcParams', () => {
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
             modelId: 'o3',
-        } satisfies SpawnSessionOptions);
+        } as unknown as SpawnSessionOptions);
 
         expect('modelId' in params).toBe(false);
         expect('modelUpdatedAt' in params).toBe(false);
@@ -143,7 +158,7 @@ describe('buildSpawnHappySessionRpcParams', () => {
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
             modelId: 'default',
             modelUpdatedAt: 123,
-        } satisfies SpawnSessionOptions);
+        } as unknown as SpawnSessionOptions);
 
         expect('modelId' in params).toBe(false);
         expect('modelUpdatedAt' in params).toBe(false);

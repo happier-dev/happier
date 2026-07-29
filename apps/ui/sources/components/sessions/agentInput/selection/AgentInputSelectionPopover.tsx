@@ -6,6 +6,7 @@ import { useAgentInputPopoverLayout } from './useAgentInputPopoverLayout';
 
 export type AgentInputSelectionPopoverProps = Readonly<{
     open: boolean;
+    autoFocusOnOpen?: boolean;
     anchorRef: React.RefObject<any>;
     boundaryRef?: React.RefObject<any> | null;
     onRequestClose: () => void;
@@ -15,9 +16,9 @@ export type AgentInputSelectionPopoverProps = Readonly<{
     children: (args: Readonly<{ maxHeight: number }>) => React.ReactNode;
 }>;
 
-export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) {
+function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) {
     const popoverLayout = useAgentInputPopoverLayout({
-        open: props.open,
+        open: true,
         maxHeightCap: props.maxHeightCap,
         portalTopBottomLayout: props.portalTopBottomLayout,
     });
@@ -30,6 +31,7 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
     return (
         <Popover
             open={props.open}
+            autoFocusOnOpen={props.autoFocusOnOpen}
             anchorRef={props.anchorRef}
             // IMPORTANT:
             // Forward `undefined` so Popover can fall back to PopoverBoundaryProvider context.
@@ -65,4 +67,9 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
             )}
         </Popover>
     );
+}
+
+export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) {
+    if (!props.open) return null;
+    return <OpenAgentInputSelectionPopover {...props} />;
 }

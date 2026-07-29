@@ -22,7 +22,7 @@ export type ConnectedServiceQuotaSummaryCard = Readonly<{
 
 function formatRemainingPct(value: number | null): string {
     if (value === null || !Number.isFinite(value)) {
-        return t('usage.noData');
+        return t('usage.noData.title');
     }
 
     return `${Math.round(value)}%`;
@@ -42,7 +42,7 @@ export function buildConnectedServiceQuotaSummaryCards(
             key: summary.key,
             title: resolveConnectedServiceDisplayName(summary.serviceId, t),
             value: formatRemainingPct(summary.primaryMeter?.remainingPct ?? null),
-            subtitle: subtitleParts.join(' · ') || t('usage.noData'),
+            subtitle: subtitleParts.join(' · ') || t('usage.noData.title'),
             meters: summary.meters.map((meter) => ({
                 key: meter.meterId,
                 label: meter.label,

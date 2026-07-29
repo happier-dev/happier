@@ -7,13 +7,13 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 const virtualizationState = vi.hoisted(() => ({
     platformOS: 'web',
     flatListProps: null as any,
-    flashListProps: null as any,
+    legendListProps: null as any,
 }));
 
 installSessionShellCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        const { createCapturingFlatListMock } = await import('@/dev/testkit/mocks/flashList');
+        const { createCapturingFlatListMock } = await import('@/dev/testkit/mocks/virtualizedList');
         const runtime = await createReactNativeWebMock();
         const flatListMock = createCapturingFlatListMock({ renderItems: false });
         const platform = { ...runtime.Platform };
@@ -38,11 +38,11 @@ installSessionShellCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () => {
+vi.mock('@legendapp/list/react-native', async () => {
     const ReactModule = await import('react');
     return {
-        FlashList: ReactModule.forwardRef<any, any>((props, ref) => {
-            virtualizationState.flashListProps = props;
+        LegendList: ReactModule.forwardRef<any, any>((props, ref) => {
+            virtualizationState.legendListProps = props;
             if (typeof ref === 'function') {
                 ref({
                     scrollToOffset: () => {},
@@ -54,7 +54,7 @@ vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () => {
                     scrollToIndex: () => {},
                 };
             }
-            return ReactModule.createElement('FlashListCompat', props);
+            return ReactModule.createElement('LegendList', props);
         }),
     };
 });
@@ -101,7 +101,7 @@ describe('SessionListVirtualizedContent virtualization', () => {
     beforeEach(() => {
         virtualizationState.platformOS = 'web';
         virtualizationState.flatListProps = null;
-        virtualizationState.flashListProps = null;
+        virtualizationState.legendListProps = null;
     });
 
     afterEach(() => {
@@ -114,42 +114,43 @@ describe('SessionListVirtualizedContent virtualization', () => {
         });
 
         expect(virtualizationState.flatListProps).toBeTruthy();
-        expect(virtualizationState.flashListProps).toBeNull();
+        expect(virtualizationState.legendListProps).toBeNull();
         expect(virtualizationState.flatListProps.disableVirtualization).toBe(true);
         expect(virtualizationState.flatListProps.scrollEventThrottle).toBe(32);
         expect(typeof virtualizationState.flatListProps.onWheel).toBe('function');
         expect(typeof virtualizationState.flatListProps.onTouchMove).toBe('function');
     });
 
-    it('uses FlashListCompat for large web lists', async () => {
+    it('uses the canonical Legend-backed VirtualizedList for large web lists without recycling stateful rows', async () => {
         await renderVirtualizedContent({
             nodes: buildNodes(121),
         });
 
         expect(virtualizationState.flatListProps).toBeNull();
-        expect(virtualizationState.flashListProps).toBeTruthy();
-        expect(virtualizationState.flashListProps.scrollEventThrottle).toBe(32);
+        expect(virtualizationState.legendListProps).toBeTruthy();
+        expect(virtualizationState.legendListProps.scrollEventThrottle).toBe(32);
+        expect(virtualizationState.legendListProps.recycleItems).toBe(false);
         // Session cell heights depend on group position (last/single rows
         // carry the inter-group gap) and density, so recycling pools are
         // keyed on the HEIGHT CLASS (body vs tail) — a recycled cell can then
         // never bring a stale height from a different position into view.
-        expect(virtualizationState.flashListProps.getItemType({
+        expect(virtualizationState.legendListProps.getItemType({
             id: 'session:1',
             rowViewModel: { isLast: false, isSingle: false },
         })).toBe('session:default:body');
-        expect(virtualizationState.flashListProps.getItemType({
+        expect(virtualizationState.legendListProps.getItemType({
             id: 'session:1',
             rowViewModel: { isLast: true, isSingle: false },
         })).toBe('session:default:tail');
-        expect(virtualizationState.flashListProps.getItemType({ id: 'session:1' })).toBe('session:default:body');
-        expect(virtualizationState.flashListProps.getItemType({ id: 'header:date:today' })).toBe('header:date');
-        expect(typeof virtualizationState.flashListProps.overrideProps?.onWheel).toBe('function');
-        expect(typeof virtualizationState.flashListProps.overrideProps?.onTouchMove).toBe('function');
-        expect(virtualizationState.flashListProps.getItemLayout).toBeUndefined();
-        expect(virtualizationState.flashListProps.removeClippedSubviews).toBeUndefined();
+        expect(virtualizationState.legendListProps.getItemType({ id: 'session:1' })).toBe('session:default:body');
+        expect(virtualizationState.legendListProps.getItemType({ id: 'header:date:today' })).toBe('header:date');
+        expect(typeof virtualizationState.legendListProps.onWheel).toBe('function');
+        expect(typeof virtualizationState.legendListProps.onTouchMove).toBe('function');
+        expect(virtualizationState.legendListProps.getItemLayout).toBeUndefined();
+        expect(virtualizationState.legendListProps.removeClippedSubviews).toBeUndefined();
     });
 
-    it('keeps native lists on FlashListCompat with native refresh and scroll tuning', async () => {
+    it('keeps native lists on the canonical Legend-backed VirtualizedList with native refresh and scroll tuning', async () => {
         const refreshControl = React.createElement('RefreshControl');
         virtualizationState.platformOS = 'ios';
 
@@ -158,9 +159,9 @@ describe('SessionListVirtualizedContent virtualization', () => {
         });
 
         expect(virtualizationState.flatListProps).toBeNull();
-        expect(virtualizationState.flashListProps).toBeTruthy();
-        expect(virtualizationState.flashListProps.scrollEventThrottle).toBe(16);
-        expect(virtualizationState.flashListProps.refreshControl).toBe(refreshControl);
-        expect(virtualizationState.flashListProps.overrideProps).toBeUndefined();
+        expect(virtualizationState.legendListProps).toBeTruthy();
+        expect(virtualizationState.legendListProps.scrollEventThrottle).toBe(16);
+        expect(virtualizationState.legendListProps.refreshControl).toBe(refreshControl);
+        expect(virtualizationState.legendListProps.onWheel).toBeUndefined();
     });
 });

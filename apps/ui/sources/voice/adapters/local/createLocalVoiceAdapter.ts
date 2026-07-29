@@ -6,7 +6,9 @@ import {
 } from '@/voice/runtime/machine/voiceConversationRuntimeStore';
 import type {
   VoiceAdapterController,
+  VoiceAdapterContextChannel,
   VoiceAdapterId,
+  VoiceAdapterSurfaceCapabilities,
   VoiceAdapterTranscriptMode,
   VoiceSessionSnapshot,
 } from '@/voice/session/types';
@@ -27,6 +29,8 @@ export type LocalVoiceAdapterCapabilities = Readonly<{
    * (e.g. `local_direct`).
    */
   resolveBindingTranscriptMode?: (settings: unknown) => VoiceAdapterTranscriptMode | null;
+  resolveSurfaceCapabilities?: (voiceSettings: unknown) => VoiceAdapterSurfaceCapabilities | null;
+  resolveContextChannel?: (voiceSettings: unknown) => VoiceAdapterContextChannel | null;
 }>;
 
 /**
@@ -41,7 +45,7 @@ export function createLocalVoiceAdapter(
   capabilities: LocalVoiceAdapterCapabilities,
 ): VoiceAdapterController {
   const getSnapshot = (): VoiceSessionSnapshot =>
-    deriveLocalVoiceSessionSnapshot(id, getVoiceConversationRuntimeSnapshot());
+    deriveLocalVoiceSessionSnapshot(id, 'local', getVoiceConversationRuntimeSnapshot());
 
   const start = async (opts: Readonly<{ sessionId: string; initialContext?: string }>) => {
     void opts.initialContext;
@@ -58,6 +62,10 @@ export function createLocalVoiceAdapter(
     await localVoiceRuntimeController.abortTurn(opts.sessionId);
   };
 
+  const bargeIn = async (opts: Readonly<{ sessionId: string }>) => {
+    await localVoiceRuntimeController.toggleTurn(opts.sessionId);
+  };
+
   const setMuted = async (opts: Readonly<{ sessionId: string; muted: boolean }>) => {
     await localVoiceRuntimeController.setMuted(opts.sessionId, opts.muted);
   };
@@ -69,20 +77,26 @@ export function createLocalVoiceAdapter(
     : () => {};
 
   const sendTextTurn = capabilities.textTurns
-    ? async (opts: Readonly<{ controlSessionId: string; conversationSessionId: string; text: string }>) => {
+    ? async (opts: Parameters<NonNullable<VoiceAdapterController['sendTextTurn']>>[0]) => {
         await localVoiceRuntimeController.sendAgentTextTurn({
           controlSessionId: opts.controlSessionId,
           text: opts.text,
+          durableDispatch: {
+            localId: opts.localId,
+            deliveryCommand: opts.deliveryCommand,
+          },
         });
       }
     : undefined;
 
   return {
     id,
+    engineKind: 'local',
     start,
     stop,
     toggle,
     interrupt,
+    bargeIn,
     setMuted,
     sendContextUpdate,
     ...(sendTextTurn ? { sendTextTurn } : {}),
@@ -90,6 +104,12 @@ export function createLocalVoiceAdapter(
     subscribe: (listener) => useVoiceConversationRuntimeStore.subscribe(() => listener()),
     ...(capabilities.resolveBindingTranscriptMode
       ? { resolveBindingTranscriptMode: capabilities.resolveBindingTranscriptMode }
+      : {}),
+    ...(capabilities.resolveSurfaceCapabilities
+      ? { resolveSurfaceCapabilities: capabilities.resolveSurfaceCapabilities }
+      : {}),
+    ...(capabilities.resolveContextChannel
+      ? { resolveContextChannel: capabilities.resolveContextChannel }
       : {}),
   };
 }

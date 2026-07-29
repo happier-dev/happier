@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { buildAcpConfigOptionOverridesV1, type BackendTargetRefV2 } from '@happier-dev/protocol';
+import { buildAcpConfigOptionOverridesV1, type BackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
 
 import { getAgentCore, isAgentId } from '@/agents/catalog/catalog';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -16,6 +16,7 @@ type UseNewSessionAgentPickerEngineSelectionStateParams = Readonly<{
     selectedBackendEntry: ResolvedBackendCatalogEntry | null;
     selectedBackendTargetKey: string;
     modelMode: ModelMode;
+    modelSelection?: SessionModelSelectionV1 | null;
     acpSessionModeId: string | null;
     sessionConfigOptionOverrides: ReturnType<typeof buildAcpConfigOptionOverridesV1> | null;
     setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV2>>;
@@ -24,6 +25,7 @@ type UseNewSessionAgentPickerEngineSelectionStateParams = Readonly<{
     setSessionConfigOptionOverrides: React.Dispatch<React.SetStateAction<ReturnType<typeof buildAcpConfigOptionOverridesV1> | null>>;
     setEngineSelectionForBackendTarget?: (backendTargetKey: string, selection: {
         modelMode: ModelMode;
+        modelSelection?: SessionModelSelectionV1 | null;
         acpSessionModeId: string | null;
         sessionConfigOptionOverrides: ReturnType<typeof buildAcpConfigOptionOverridesV1> | null;
     }) => void;
@@ -31,7 +33,7 @@ type UseNewSessionAgentPickerEngineSelectionStateParams = Readonly<{
     rememberedEngineSelectionsByScope?: RememberedEngineSelectionsByScopeV1 | null;
     rememberedEngineSelectionServerId?: string | null;
     onRememberEngineSelection?: (backendTarget: BackendTargetRefV2, selection: {
-        modelId: string;
+        modelSelection: SessionModelSelectionV1 | null;
         acpSessionModeId: string | null;
         sessionConfigOptionOverrides: ReturnType<typeof buildAcpConfigOptionOverridesV1> | null;
     }) => void;
@@ -54,15 +56,20 @@ function areEngineSelectionsEqual(
     a: NewSessionAgentPickerSelection,
     b: NewSessionAgentPickerSelection,
 ): boolean {
+    const leftRef = a.modelSelection?.ref ?? null;
+    const rightRef = b.modelSelection?.ref ?? null;
     return a.modelId === b.modelId
+        && leftRef?.agentTargetKey === rightRef?.agentTargetKey
+        && leftRef?.providerConnectionId === rightRef?.providerConnectionId
+        && leftRef?.modelId === rightRef?.modelId
         && a.sessionModeId === b.sessionModeId
         && areConfigOverridesEqual(a.configOverrides, b.configOverrides);
 }
 
 function backendEntrySupportsSessionModeSelection(entry: ResolvedBackendCatalogEntry | null): boolean {
     if (!entry) return true;
-    if (!isAgentId(entry.providerAgentId)) return true;
-    return getAgentCore(entry.providerAgentId)?.sessionModes?.kind !== 'none';
+    if (!isAgentId(entry.catalogAgentId)) return true;
+    return getAgentCore(entry.catalogAgentId)?.sessionModes?.kind !== 'none';
 }
 
 function normalizeSessionModeIdForEntry(
@@ -91,6 +98,7 @@ export function useNewSessionAgentPickerEngineSelectionState(
         if (targetKey === selectedTargetKey) {
             return {
                 modelId: String(params.modelMode),
+                modelSelection: params.modelSelection ?? null,
                 sessionModeId: normalizeSessionModeIdForEntry(params.selectedBackendEntry, params.acpSessionModeId),
                 configOverrides: Object.fromEntries(
                     Object.entries(params.sessionConfigOptionOverrides?.overrides ?? {})
@@ -108,7 +116,8 @@ export function useNewSessionAgentPickerEngineSelectionState(
         });
         if (remembered) {
             return {
-                modelId: remembered.modelId,
+                modelId: remembered.modelSelection?.ref.modelId ?? 'default',
+                modelSelection: remembered.modelSelection,
                 sessionModeId: remembered.acpSessionModeId ?? 'default',
                 configOverrides: Object.fromEntries(
                     Object.entries(remembered.sessionConfigOptionOverrides?.overrides ?? {})
@@ -126,6 +135,7 @@ export function useNewSessionAgentPickerEngineSelectionState(
     }, [
         params.acpSessionModeId,
         params.modelMode,
+        params.modelSelection,
         params.rememberEngineSelectionsEnabled,
         params.rememberedEngineSelectionServerId,
         params.rememberedEngineSelectionsByScope,
@@ -180,6 +190,22 @@ export function useNewSessionAgentPickerEngineSelectionState(
                 ),
             });
         const modelMode = selection.modelId as ModelMode;
+        const matchingStructuredSelection = selection.modelSelection?.ref.agentTargetKey === entry.backendTargetKey
+            && selection.modelSelection.ref.modelId === selection.modelId
+            ? selection.modelSelection
+            : null;
+        const modelSelection = selection.modelId === 'default'
+            && matchingStructuredSelection?.ref.providerConnectionId == null
+            ? null
+            : matchingStructuredSelection ?? {
+                    v: 1 as const,
+                    updatedAt,
+                    ref: {
+                        agentTargetKey: entry.backendTargetKey,
+                        providerConnectionId: null,
+                        modelId: selection.modelId,
+                    },
+                };
         pendingAppliedSelectionRef.current = {
             targetKey: entry.backendTargetKey,
             selection: {
@@ -192,6 +218,7 @@ export function useNewSessionAgentPickerEngineSelectionState(
         if (params.setEngineSelectionForBackendTarget) {
             params.setEngineSelectionForBackendTarget(entry.backendTargetKey, {
                 modelMode,
+                modelSelection,
                 acpSessionModeId: normalizedSessionModeId,
                 sessionConfigOptionOverrides,
             });
@@ -201,7 +228,7 @@ export function useNewSessionAgentPickerEngineSelectionState(
             params.setSessionConfigOptionOverrides(sessionConfigOptionOverrides);
         }
         params.onRememberEngineSelection?.(entry.backendTarget, {
-            modelId: selection.modelId,
+            modelSelection,
             acpSessionModeId: normalizedSessionModeId,
             sessionConfigOptionOverrides,
         });

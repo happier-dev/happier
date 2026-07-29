@@ -152,12 +152,44 @@ describe('CustomModal', () => {
         expect(modalCardFrame.props.scrollHost).toBe('body');
         expect(modalCardFrame.props.bodyScroll).toBe('auto');
         expect(screen.findByType(ChromeModal).props.label).toBe('browse');
+        expect(screen.findByType('BaseModal' as any).props.accessibilityLabel).toBe('Browse provider sessions');
 
         act(() => {
             modalCardFrame.props.onClose();
         });
 
         expect(onRequestClose).toHaveBeenCalledTimes(1);
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets a non-dismissible custom modal close only through its component action', async () => {
+        const onClose = vi.fn();
+        const onRequestClose = vi.fn();
+        const screen = await renderCustomModal({
+            type: 'custom',
+            component: ChromeModal,
+            props: { label: 'recovery' },
+            dismissible: false,
+            onRequestClose,
+            chrome: {
+                kind: 'card',
+                title: 'Recovery required',
+                closeButtonTestID: 'recovery-close',
+            },
+        }, onClose);
+
+        expect(screen.findByType(ModalCardFrame).props.onClose).toBeUndefined();
+
+        act(() => {
+            screen.findByType('BaseModal' as any).props.onClose();
+        });
+        expect(onRequestClose).not.toHaveBeenCalled();
+        expect(onClose).not.toHaveBeenCalled();
+
+        act(() => {
+            screen.findByType(ChromeModal).props.onClose();
+        });
+        expect(onRequestClose).not.toHaveBeenCalled();
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 

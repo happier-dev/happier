@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { FlatList, Platform, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -8,7 +8,7 @@ import { Typography } from '@/constants/Typography';
 
 import type { FilesystemBrowserListProps } from './filesystemBrowserTypes';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { FlashList, type FlashListRef } from '@/components/ui/lists/flashListCompat/FlashListCompat';
+import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 
 const FILESYSTEM_BROWSER_ESTIMATED_ITEM_SIZE = 38;
 type FilesystemBrowserListNode = FilesystemBrowserListProps['nodes'][number];
@@ -72,40 +72,29 @@ export const FilesystemBrowserList = React.memo(function FilesystemBrowserList(p
         })
     ), [props.nodes.length, props.renderRow]);
 
-    const sharedListProps = {
-        data: props.nodes,
-        keyExtractor,
-        style: props.style,
-        contentContainerStyle: props.contentContainerStyle,
-        extraData: props.extraData,
-        ListHeaderComponent: listHeaderComponent,
-        renderItem,
-        initialNumToRender: props.initialNumToRender,
-        maxToRenderPerBatch: props.maxToRenderPerBatch,
-        windowSize: props.windowSize,
-        removeClippedSubviews: props.removeClippedSubviews,
-        onLayout: props.onLayout,
-        onContentSizeChange: props.onContentSizeChange,
-        onScroll: props.onScroll,
-        onScrollToIndexFailed: props.onScrollToIndexFailed,
-        scrollEventThrottle: props.scrollEventThrottle,
-        getItemLayout: props.getItemLayout,
-    } satisfies React.ComponentProps<typeof FlatList<FilesystemBrowserListNode>>;
-
-    if (Platform.OS !== 'web') {
-        return (
-            <FlashList
-                {...sharedListProps}
-                ref={props.listRef as React.Ref<FlashListRef<FilesystemBrowserListNode>>}
-                estimatedItemSize={FILESYSTEM_BROWSER_ESTIMATED_ITEM_SIZE}
-            />
-        );
-    }
-
+    // The virtualized abstraction owns the platform/backend choice; `auto`
+    // resolves to the canonical Legend backend on every platform.
     return (
-        <FlatList
-            {...sharedListProps}
-            ref={props.listRef as React.Ref<FlatList<FilesystemBrowserListNode>>}
+        <VirtualizedList<FilesystemBrowserListNode>
+            data={props.nodes}
+            keyExtractor={keyExtractor}
+            style={props.style}
+            contentContainerStyle={props.contentContainerStyle}
+            extraData={props.extraData}
+            ListHeaderComponent={listHeaderComponent}
+            renderItem={renderItem}
+            initialNumToRender={props.initialNumToRender}
+            maxToRenderPerBatch={props.maxToRenderPerBatch}
+            windowSize={props.windowSize}
+            removeClippedSubviews={props.removeClippedSubviews}
+            onLayout={props.onLayout}
+            onContentSizeChange={props.onContentSizeChange}
+            onScroll={props.onScroll}
+            onScrollToIndexFailed={props.onScrollToIndexFailed}
+            scrollEventThrottle={props.scrollEventThrottle}
+            getItemLayout={props.getItemLayout}
+            estimatedItemSize={FILESYSTEM_BROWSER_ESTIMATED_ITEM_SIZE}
+            ref={props.listRef}
         />
     );
 });

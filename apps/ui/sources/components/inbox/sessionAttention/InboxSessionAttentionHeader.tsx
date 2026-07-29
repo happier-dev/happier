@@ -1,11 +1,14 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { SessionContextChips } from '@/components/sessions/context/SessionContextChips';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+
+const MINIMUM_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 
 export const InboxSessionAttentionHeader = React.memo(function InboxSessionAttentionHeader(props: Readonly<{
     sessionTitle: string;
@@ -26,7 +29,7 @@ export const InboxSessionAttentionHeader = React.memo(function InboxSessionAtten
 
             <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={t('common.open')}
+                accessibilityLabel={t('inbox.openSession', { session: props.sessionTitle })}
                 onPress={props.onOpenSession}
                 style={({ pressed }) => [styles.openButton, pressed && styles.openButtonPressed]}
             >
@@ -56,8 +59,8 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.primary,
     },
     openButton: {
-        width: 32,
-        height: 32,
+        width: MINIMUM_TARGET_SIZE,
+        height: MINIMUM_TARGET_SIZE,
         borderRadius: 10,
         alignItems: 'center',
         justifyContent: 'center',

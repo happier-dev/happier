@@ -3,7 +3,7 @@ import { MMKV } from 'react-native-mmkv';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopedStorageKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
-import { fromRecord, toRecord, type PendingSetupIntent } from './pendingSetupIntent.shared';
+import { emitPendingSetupIntentChanged, fromRecord, fromSerializedRecord, toRecord, type PendingSetupIntent } from './pendingSetupIntent.shared';
 import { getActivePendingServerUrl, isPendingServerUrlActive, normalizePendingServerUrl, pendingServerScopedKey } from './pendingServerScopedKeys';
 
 const scope = readStorageScopeFromEnv();
@@ -11,6 +11,7 @@ const storage = new MMKV({ id: scopedStorageId('pending-setup-intent', scope) })
 const KEY_RECORD = 'record';
 const KEY_RECORD_PREFIX = 'record:v2';
 const KEY_SERVER_RECORD_PREFIX = 'record:server:v1';
+const knownServerScopedKeys = new Set<string>();
 
 function resolveIntentServerUrl(value: PendingSetupIntent): string | null {
     return normalizePendingServerUrl(value.relayUrl) ?? getActivePendingServerUrl();
@@ -24,17 +25,27 @@ function resolveActiveServerScopedKey(): string | null {
 function readRecord(key: string): PendingSetupIntent | null {
     const raw = storage.getString(key);
     if (!raw) return null;
-    try {
-        const parsed = JSON.parse(raw) as unknown;
-        const record = fromRecord(parsed);
-        if (!record) {
-            storage.delete(key);
-            return null;
-        }
-        return record;
-    } catch {
+    const record = fromSerializedRecord(raw);
+    if (!record) {
         storage.delete(key);
         return null;
+    }
+    return record;
+}
+
+function dropMismatchedServerScopedIntent(activeServerScopedKey: string | null): void {
+    const storageKeys = typeof (storage as unknown as { getAllKeys?: unknown }).getAllKeys === 'function'
+        ? (storage as unknown as { getAllKeys: () => string[] }).getAllKeys()
+        : [];
+    const keys = new Set([...storageKeys, ...knownServerScopedKeys]);
+    for (const key of keys) {
+        if (!key.startsWith(`${KEY_SERVER_RECORD_PREFIX}:`)) continue;
+        if (activeServerScopedKey && key === activeServerScopedKey) continue;
+        const record = readRecord(key);
+        if (!record) continue;
+        storage.delete(key);
+        knownServerScopedKeys.delete(key);
+        console.debug('[pendingSetupIntent] dropped server-scoped setup intent after relay URL mismatch');
     }
 }
 
@@ -47,10 +58,17 @@ export function setPendingSetupIntent(value: PendingSetupIntent): void {
     if (activeScope) {
         storage.set(serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope), JSON.stringify(record));
         const serverScopedKey = resolveActiveServerScopedKey();
-        if (serverScopedKey) storage.delete(serverScopedKey);
+        if (serverScopedKey) {
+            storage.delete(serverScopedKey);
+            knownServerScopedKeys.delete(serverScopedKey);
+        }
+        emitPendingSetupIntentChanged();
         return;
     }
-    storage.set(pendingServerScopedKey(KEY_SERVER_RECORD_PREFIX, serverUrl), JSON.stringify(record));
+    const serverScopedKey = pendingServerScopedKey(KEY_SERVER_RECORD_PREFIX, serverUrl);
+    storage.set(serverScopedKey, JSON.stringify(record));
+    knownServerScopedKeys.add(serverScopedKey);
+    emitPendingSetupIntentChanged();
 }
 
 export function getPendingSetupIntent(): PendingSetupIntent | null {
@@ -60,7 +78,12 @@ export function getPendingSetupIntent(): PendingSetupIntent | null {
         if (record) return record;
     }
     const serverScopedKey = resolveActiveServerScopedKey();
-    return serverScopedKey ? readRecord(serverScopedKey) : null;
+    const record = serverScopedKey ? readRecord(serverScopedKey) : null;
+    if (record) return record;
+    if (activeScope) {
+        dropMismatchedServerScopedIntent(serverScopedKey);
+    }
+    return null;
 }
 
 export function clearPendingSetupIntent(): void {
@@ -71,9 +94,13 @@ export function clearPendingSetupIntent(): void {
     const serverScopedKey = resolveActiveServerScopedKey();
     if (serverScopedKey) {
         storage.delete(serverScopedKey);
+        knownServerScopedKeys.delete(serverScopedKey);
     }
     const legacy = storage.getString(KEY_RECORD);
-    if (!legacy) return;
+    if (!legacy) {
+        emitPendingSetupIntentChanged();
+        return;
+    }
     try {
         const record = fromRecord(JSON.parse(legacy) as unknown);
         if (!record || !record.relayUrl || isPendingServerUrlActive(record.relayUrl)) {
@@ -82,6 +109,7 @@ export function clearPendingSetupIntent(): void {
     } catch {
         storage.delete(KEY_RECORD);
     }
+    emitPendingSetupIntentChanged();
 }
 
 export function migratePendingSetupIntentScopes(
@@ -99,6 +127,7 @@ export function migratePendingSetupIntentScopes(
             if (record) {
                 storage.set(canonicalKey, JSON.stringify(record));
                 hasCanonicalRecord = true;
+                emitPendingSetupIntentChanged();
             }
         }
         storage.delete(legacyKey);

@@ -34,6 +34,7 @@ function RegisteringBridge(props: Readonly<{
         sessionId: 'session-1',
         activeSurface: props.activeSurface ?? 'chat',
         terminalTabAvailable: true,
+        openDetailsTabCount: 0,
         switchSurface,
     }), [props.activeSurface, register, switchSurface]);
 
@@ -92,6 +93,7 @@ function ControlledRegistrationHarness(props: Readonly<{
             sessionId: 'session-1',
             activeSurface,
             terminalTabAvailable: true,
+            openDetailsTabCount: 0,
             switchSurface,
         });
     }, [register, switchSurface]);
@@ -179,4 +181,5 @@ describe('SessionCockpitChromeRegistry', () => {
         expect(readRegistration(screen).activeSurface).toBe('git');
         expect(heights).toEqual([0, 25, 25]);
     });
+
 });

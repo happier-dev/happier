@@ -3,6 +3,7 @@ import {
     type TurnEndpointController,
     type TurnEndpointSignal,
 } from '@/voice/runtime/input/TurnEndpointController';
+import { normalizeTurnEndpointPolicy } from '@/voice/runtime/input/TurnEndpointDetector';
 import {
     createNativeVadController,
     type NativeVadController,
@@ -11,6 +12,7 @@ import {
     createWebVadController,
     type WebVadController,
 } from '@/voice/runtime/input/WebVadController';
+import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/voice/adapters/local/settings';
 import type { createDeviceSttController, DeviceSttController } from '@/voice/input/DeviceSttController';
 import type {
     createSherpaStreamingSttController,
@@ -30,7 +32,8 @@ import {
     type RuntimeTurnStatus,
 } from '@/voice/runtime/input/createRuntimeTurnPolicyController';
 import type { VoiceMachineErrorKind } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
-import type { SttSink } from '@/voice/input/sttController';
+import type { SttController, SttSink } from '@/voice/input/sttController';
+import { resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
 
 type RuntimeCaptureError = Readonly<{
     controlSessionId: string;
@@ -80,6 +83,7 @@ export type LocalVoiceCaptureOwner = Readonly<{
         provider: LocalVoiceCaptureProvider;
         handsFree: boolean;
         localNeuralExecution?: LocalNeuralCaptureExecution;
+        settings?: any;
         signal?: AbortSignal;
     }>) => Promise<void>;
     stopCapture: (args: Readonly<{
@@ -107,6 +111,14 @@ type LocalVoiceCaptureOwnerDeps = Readonly<{
     onCaptureError: (error: RuntimeCaptureError) => void;
     getSettings: () => any;
     onEndpointSignal?: (signal: TurnEndpointSignal) => void;
+    onSpeechCandidateStart?: (input: Readonly<{
+        controlSessionId: string;
+        source: Extract<TurnEndpointSignal['source'], 'native_vad' | 'web_vad' | 'device_recognizer'>;
+    }>) => void;
+    onSpeechCandidateFalseAlarm?: (input: Readonly<{
+        controlSessionId: string;
+        source: Extract<TurnEndpointSignal['source'], 'native_vad' | 'web_vad' | 'device_recognizer'>;
+    }>) => void;
     /** Interim/committed transcript updates, equality-gated + throttled by the owner. */
     onPartialTranscript?: (partial: RuntimeCapturePartial) => void;
     /**
@@ -125,8 +137,9 @@ type LocalVoiceCaptureOwnerOptions = Readonly<{
     createDaemonStreamingSttController?: (
         deps: DaemonStreamingSttControllerDeps,
     ) => DaemonStreamingSttController;
+    nativeVadController?: NativeVadController;
     runtimeTurnPolicyController?: RuntimeTurnPolicyController;
-    /** Silent-capture watchdog window; no audio within it surfaces `mic_plateau`. */
+    /** Silent-capture watchdog window after provider startup; no audio within it surfaces `mic_plateau`. */
     micPlateauTimeoutMs?: number;
     /** Minimum spacing between forwarded partial-transcript snapshots. */
     partialThrottleMs?: number;
@@ -166,18 +179,23 @@ export function createLocalVoiceCaptureOwner(
     options: LocalVoiceCaptureOwnerOptions = {},
 ): LocalVoiceCaptureOwner {
     let liveMicSession: MicSession | null = null;
+    let liveMicGeneration = 0;
     let recordingMicSession: RecordingMicSession | null = null;
     let activeCaptureSessionId: string | null = null;
     let activeCaptureProvider: LocalVoiceCaptureProvider | null = null;
+    let activeCaptureSettings: any | null = null;
     let mutedSessionId: string | null = null;
     let muted = false;
     // Per-capture streaming state (single capture active at a time).
     let activeAbortController: AbortController | null = null;
     let activeCaptureErrored = false;
+    let pendingCaptureStart: Promise<void> | null = null;
+    let pendingFailureCleanup: Promise<void> | null = null;
     let micPlateauTimer: ReturnType<typeof setTimeout> | null = null;
     let latestPartialTranscript: string | null = null;
     let lastPublishedPartial: string | null = null;
     let lastPartialAt = 0;
+    let nativeVadController: NativeVadController | null = options.nativeVadController ?? null;
     const normalizeSessionId = (sessionId: string | null | undefined): string | null =>
         typeof sessionId === 'string' && sessionId.trim().length > 0
             ? sessionId.trim()
@@ -194,6 +212,8 @@ export function createLocalVoiceCaptureOwner(
     const runtimeTurnPolicyController =
         options.runtimeTurnPolicyController
         ?? createRuntimeTurnPolicyController();
+    const getCaptureSettings = (): any =>
+        activeCaptureSettings ?? deps.getSettings();
     const clearMicPlateauWatchdog = (): void => {
         if (micPlateauTimer !== null) {
             clearTimer(micPlateauTimer);
@@ -204,17 +224,27 @@ export function createLocalVoiceCaptureOwner(
     // tears the capture down and surfaces a typed, recoverable error. Used by
     // both the live-mic failure callback and the silent-capture watchdog so the
     // failure is bound to the actual capture source, not an unused stream.
-    const failActiveCapture = (failure: MicSessionFailure): void => {
+    const waitForPendingFailureCleanup = async (): Promise<void> => {
+        const cleanup = pendingFailureCleanup;
+        if (cleanup) {
+            await cleanup.catch(() => {});
+        }
+    };
+    const failActiveCapture = (failure: MicSessionFailure): Promise<void> => {
         const activeSessionId = activeCaptureSessionId;
         const activeProvider = activeCaptureProvider;
         if (!activeSessionId || (activeProvider !== 'device' && activeProvider !== 'local_neural')) {
-            return;
+            return Promise.resolve();
         }
 
         clearMicPlateauWatchdog();
         activeCaptureErrored = true;
         activeCaptureSessionId = null;
         activeCaptureProvider = null;
+        activeCaptureSettings = null;
+        const failedCaptureAbortController = activeAbortController;
+        activeAbortController = null;
+        failedCaptureAbortController?.abort();
         runtimeTurnPolicyController.clearHandsFreeCaptureSession({
             provider: activeProvider,
             sessionId: activeSessionId,
@@ -222,19 +252,41 @@ export function createLocalVoiceCaptureOwner(
 
         const activeLiveMicSession = liveMicSession;
         liveMicSession = null;
-        if (activeLiveMicSession) {
-            activeLiveMicSession.setMuted(false);
-            void activeLiveMicSession.teardown().catch(() => {});
-        }
+        const failedLocalNeuralExecution = activeLocalNeuralExecution;
+        const cleanup = (async () => {
+            if (activeProvider === 'local_neural' && nativeVadController) {
+                await nativeVadController.stopSession(activeSessionId).catch(() => {});
+            }
+            if (activeProvider === 'device' && deviceSttController) {
+                await deviceSttController.stop().catch(() => {});
+            }
+            if (activeProvider === 'local_neural') {
+                const controller = failedLocalNeuralExecution === 'daemon'
+                    ? daemonStreamingSttController
+                    : sherpaSttController;
+                await controller?.stop().catch(() => {});
+            }
+            if (activeLiveMicSession) {
+                activeLiveMicSession.setMuted(false);
+                await activeLiveMicSession.teardown().catch(() => {});
+            }
 
-        deps.onCaptureError({
-            controlSessionId: activeSessionId,
-            kind: failure.kind,
-            reason: failure.reason,
-        });
+            deps.onCaptureError({
+                controlSessionId: activeSessionId,
+                kind: failure.kind,
+                reason: failure.reason,
+            });
+        })();
+        pendingFailureCleanup = cleanup;
+        void cleanup.finally(() => {
+            if (pendingFailureCleanup === cleanup) {
+                pendingFailureCleanup = null;
+            }
+        }).catch(() => {});
+        return cleanup;
     };
     const handleLiveMicFailure = (failure: MicSessionFailure): void => {
-        failActiveCapture(failure);
+        void failActiveCapture(failure);
     };
     // Single mic-release path for a FAILED endpoint-driven capture startup. The
     // mic is activated (`ensureActive`) before the STT recognizer/stream setup, so
@@ -245,11 +297,16 @@ export function createLocalVoiceCaptureOwner(
         sessionId: string,
         provider: Extract<LocalVoiceCaptureProvider, 'device' | 'local_neural'>,
     ): Promise<void> => {
+        await waitForPendingFailureCleanup();
         clearMicPlateauWatchdog();
         runtimeTurnPolicyController.clearHandsFreeCaptureSession({ provider, sessionId });
         if (activeCaptureSessionId === sessionId && activeCaptureProvider === provider) {
             activeCaptureSessionId = null;
             activeCaptureProvider = null;
+            activeCaptureSettings = null;
+        }
+        if (provider === 'local_neural' && nativeVadController) {
+            await nativeVadController.stopSession(sessionId).catch(() => {});
         }
         const activeLiveMicSession = liveMicSession;
         liveMicSession = null;
@@ -264,6 +321,24 @@ export function createLocalVoiceCaptureOwner(
         clearMicPlateauWatchdog();
         const controlSessionId = activeCaptureSessionId ?? signal.sessionId;
         deps.onEndpointSignal?.({ ...signal, sessionId: controlSessionId });
+    };
+    const forwardSpeechCandidateStart = (input: Readonly<{
+        sessionId: string;
+        source: 'native_vad' | 'web_vad' | 'device_recognizer';
+    }>): void => {
+        deps.onSpeechCandidateStart?.({
+            controlSessionId: activeCaptureSessionId ?? input.sessionId,
+            source: input.source,
+        });
+    };
+    const forwardSpeechCandidateFalseAlarm = (input: Readonly<{
+        sessionId: string;
+        source: 'native_vad' | 'web_vad' | 'device_recognizer';
+    }>): void => {
+        deps.onSpeechCandidateFalseAlarm?.({
+            controlSessionId: activeCaptureSessionId ?? input.sessionId,
+            source: input.source,
+        });
     };
     const emitThrottledPartial = (controlSessionId: string, transcript: string, flush: boolean): void => {
         const trimmed = transcript.trim();
@@ -290,12 +365,18 @@ export function createLocalVoiceCaptureOwner(
     const beginSttCapture = (
         controlSessionId: string,
         externalSignal?: AbortSignal,
-    ): Readonly<{ sink: SttSink; signal: AbortSignal; unlinkExternalAbort: () => void }> => {
+    ): Readonly<{
+        armMicPlateauWatchdog: () => void;
+        sink: SttSink;
+        signal: AbortSignal;
+        unlinkExternalAbort: () => void;
+    }> => {
         clearMicPlateauWatchdog();
         activeCaptureErrored = false;
         latestPartialTranscript = null;
         lastPublishedPartial = null;
         lastPartialAt = 0;
+        let audioStarted = false;
         const abortController = new AbortController();
         activeAbortController = abortController;
         let unlinkExternalAbort = (): void => {};
@@ -312,15 +393,24 @@ export function createLocalVoiceCaptureOwner(
                 };
             }
         }
-        micPlateauTimer = setTimer(() => {
-            micPlateauTimer = null;
-            if (activeCaptureSessionId !== controlSessionId || activeCaptureErrored) {
+        const armMicPlateauWatchdog = (): void => {
+            // Admission can legitimately outlive the silent-audio window (for
+            // example, while a daemon stream negotiates its route). Start this
+            // source-health timer only once the provider owns a live capture.
+            if (audioStarted || activeCaptureErrored || abortController.signal.aborted) {
                 return;
             }
-            failActiveCapture({ kind: 'mic_plateau', reason: 'mic_audio_plateau' });
-        }, micPlateauTimeoutMs);
+            micPlateauTimer = setTimer(() => {
+                micPlateauTimer = null;
+                if (activeCaptureSessionId !== controlSessionId || activeCaptureErrored) {
+                    return;
+                }
+                void failActiveCapture({ kind: 'mic_plateau', reason: 'mic_audio_plateau' });
+            }, micPlateauTimeoutMs);
+        };
         const sink: SttSink = {
             onAudioStarted: () => {
+                audioStarted = true;
                 clearMicPlateauWatchdog();
             },
             onPartial: (text) => {
@@ -330,26 +420,35 @@ export function createLocalVoiceCaptureOwner(
                 emitThrottledPartial(controlSessionId, text, true);
             },
             onEndpoint: () => {
+                audioStarted = true;
                 clearMicPlateauWatchdog();
             },
             onError: (error) => {
-                activeCaptureErrored = true;
-                clearMicPlateauWatchdog();
-                deps.onCaptureError({
-                    controlSessionId,
-                    kind: error.kind,
-                    reason: error.reason,
-                });
+                void failActiveCapture(error);
             },
         };
-        return { sink, signal: abortController.signal, unlinkExternalAbort };
+        return {
+            armMicPlateauWatchdog,
+            sink,
+            signal: abortController.signal,
+            unlinkExternalAbort,
+        };
     };
     const getLiveMicSession = (): MicSession => {
+        if (liveMicSession) {
+            return liveMicSession;
+        }
+        const generation = ++liveMicGeneration;
         const micSessionOptions = {
-            onFailure: handleLiveMicFailure,
+            onFailure: (failure: MicSessionFailure) => {
+                if (generation !== liveMicGeneration || !liveMicSession) {
+                    return;
+                }
+                handleLiveMicFailure(failure);
+            },
             ...(deps.onLevel ? { onLevel: deps.onLevel } : {}),
         };
-        liveMicSession ??=
+        liveMicSession =
             options.createLiveMicSession?.(micSessionOptions)
             ?? createLiveMicSession(micSessionOptions);
         return liveMicSession;
@@ -367,20 +466,39 @@ export function createLocalVoiceCaptureOwner(
     // VAD endpoint signal carries the recognized text (and, via duration, lets the
     // downstream barge-in gate evaluate real input) instead of an empty string.
     const getLatestPartialTranscript = (): string | null => latestPartialTranscript;
-    const createOwnedNativeVadController = (): NativeVadController => createNativeVadController({
-        onEndpointSignal: forwardEndpointSignal,
-        getLatestPartialTranscript,
-    });
+    const getNativeVadController = (): NativeVadController => {
+        nativeVadController ??= createNativeVadController({
+            onEndpointSignal: forwardEndpointSignal,
+            onSpeechCandidateStart: forwardSpeechCandidateStart,
+            onSpeechCandidateFalseAlarm: forwardSpeechCandidateFalseAlarm,
+            getLatestPartialTranscript,
+        });
+        return nativeVadController;
+    };
+    const resolveHandsFreeTurnEndpointPolicy = () => {
+        const adapter = resolveLocalVoiceAdapterSettings(getCaptureSettings()).config;
+        return normalizeTurnEndpointPolicy({
+            silenceMs:
+                adapter?.handsFree?.endpointing?.silenceMs
+                ?? VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs,
+            minSpeechMs:
+                adapter?.handsFree?.endpointing?.minSpeechMs
+                ?? VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs,
+        });
+    };
     const createOwnedWebVadController = (): WebVadController => createWebVadController({
         onEndpointSignal: forwardEndpointSignal,
+        onSpeechCandidateStart: forwardSpeechCandidateStart,
+        onSpeechCandidateFalseAlarm: forwardSpeechCandidateFalseAlarm,
         getLatestPartialTranscript,
     });
     let deviceSttController: DeviceSttController | null = null;
     const getDeviceSttController = (): DeviceSttController => {
         const deviceDeps: DeviceSttControllerDeps = {
             endpointController: createEndpointController(),
-            getSettings: deps.getSettings,
-            nativeVadController: createOwnedNativeVadController(),
+            getSettings: getCaptureSettings,
+            onSpeechCandidateStart: forwardSpeechCandidateStart,
+            onSpeechCandidateFalseAlarm: forwardSpeechCandidateFalseAlarm,
             webVadController: createOwnedWebVadController(),
         };
         deviceSttController ??= options.createDeviceSttController?.(deviceDeps)
@@ -393,7 +511,7 @@ export function createLocalVoiceCaptureOwner(
     const getSherpaSttController = (): SherpaStreamingSttController => {
         const sherpaDeps: SherpaStreamingSttControllerDeps = {
             endpointController: createEndpointController(),
-            getSettings: deps.getSettings,
+            getSettings: getCaptureSettings,
         };
         sherpaSttController ??= options.createSherpaSttController?.(sherpaDeps)
             ?? createDefaultSherpaStreamingSttController(sherpaDeps);
@@ -401,7 +519,8 @@ export function createLocalVoiceCaptureOwner(
     };
     const getDaemonStreamingSttController = (): DaemonStreamingSttController => {
         const daemonDeps: DaemonStreamingSttControllerDeps = {
-            getSettings: deps.getSettings,
+            endpointController: createEndpointController(),
+            getSettings: getCaptureSettings,
         };
         daemonStreamingSttController ??= options.createDaemonStreamingSttController?.(daemonDeps)
             ?? createDefaultDaemonStreamingSttController(daemonDeps);
@@ -414,6 +533,19 @@ export function createLocalVoiceCaptureOwner(
             ? getDaemonStreamingSttController()
             : getSherpaSttController()
     );
+    const stopSttController = async (
+        controller: SttController,
+    ): Promise<Readonly<{ finalText: string; failed: boolean }>> => {
+        const result = await controller.stop();
+        if ('error' in result) {
+            await failActiveCapture({
+                kind: result.error.kind,
+                reason: result.error.reason,
+            });
+            return { finalText: '', failed: true };
+        }
+        return { finalText: result.finalText, failed: false };
+    };
 
     const configureHandsFree = (args: Readonly<{
         sessionId: string;
@@ -447,9 +579,9 @@ export function createLocalVoiceCaptureOwner(
         const stopped = await (async () => {
             switch (args.provider) {
                 case 'device': {
-                    const { finalText } = await getDeviceSttController().stop();
+                    const { finalText, failed } = await stopSttController(getDeviceSttController());
                     return {
-                        continueHandsFree: runtimeTurnPolicyController.isHandsFreeCaptureSession({
+                        continueHandsFree: !failed && runtimeTurnPolicyController.isHandsFreeCaptureSession({
                             provider: args.provider,
                             sessionId: args.sessionId,
                         }),
@@ -457,9 +589,14 @@ export function createLocalVoiceCaptureOwner(
                     } as const;
                 }
                 case 'local_neural': {
-                    const { finalText } = await getLocalNeuralSttController(activeLocalNeuralExecution).stop();
+                    if (nativeVadController) {
+                        await nativeVadController.stopSession(args.sessionId).catch(() => {});
+                    }
+                    const { finalText, failed } = await stopSttController(
+                        getLocalNeuralSttController(activeLocalNeuralExecution),
+                    );
                     return {
-                        continueHandsFree: runtimeTurnPolicyController.isHandsFreeCaptureSession({
+                        continueHandsFree: !failed && runtimeTurnPolicyController.isHandsFreeCaptureSession({
                             provider: args.provider,
                             sessionId: args.sessionId,
                         }),
@@ -483,18 +620,38 @@ export function createLocalVoiceCaptureOwner(
         resolveEndpointSignalAction: (args) => runtimeTurnPolicyController.resolveEndpointSignalAction(args),
         isHandsFreeCaptureSession: ({ sessionId, provider }) =>
             runtimeTurnPolicyController.isHandsFreeCaptureSession({ sessionId, provider }),
-        startCapture: async ({ sessionId, provider, handsFree, localNeuralExecution, signal: externalSignal }) => {
-            configureHandsFree({ sessionId, provider, handsFree });
-            const normalizedSessionId = normalizeSessionId(sessionId) ?? sessionId;
-            activeCaptureSessionId = normalizedSessionId;
-            activeCaptureProvider = provider;
-            switch (provider) {
+        startCapture: async ({
+            sessionId,
+            provider,
+            handsFree,
+            localNeuralExecution,
+            settings,
+            signal: externalSignal,
+        }) => {
+            let resolveCaptureStart!: () => void;
+            const captureStart = new Promise<void>((resolve) => {
+                resolveCaptureStart = resolve;
+            });
+            pendingCaptureStart = captureStart;
+            try {
+                await waitForPendingFailureCleanup();
+                configureHandsFree({ sessionId, provider, handsFree });
+                const normalizedSessionId = normalizeSessionId(sessionId) ?? sessionId;
+                activeCaptureSessionId = normalizedSessionId;
+                activeCaptureProvider = provider;
+                activeCaptureSettings = settings ?? null;
+                switch (provider) {
                 case 'device': {
                     const micSession = getLiveMicSession();
                     syncMutedStateForSession(normalizedSessionId);
-                    const { sink, signal, unlinkExternalAbort } = beginSttCapture(normalizedSessionId, externalSignal);
+                    const {
+                        armMicPlateauWatchdog,
+                        sink,
+                        signal,
+                        unlinkExternalAbort,
+                    } = beginSttCapture(normalizedSessionId, externalSignal);
                     try {
-                        await getDeviceSttController().start({ micSession, sink, signal });
+                        await getDeviceSttController().start({ sessionId: normalizedSessionId, micSession, sink, signal });
                     } catch (error) {
                         unlinkExternalAbort();
                         await releaseLiveMicAfterFailedStartup(normalizedSessionId, provider);
@@ -511,6 +668,7 @@ export function createLocalVoiceCaptureOwner(
                         await releaseLiveMicAfterFailedStartup(normalizedSessionId, provider);
                         return;
                     }
+                    armMicPlateauWatchdog();
                     deps.onCaptureStarted(normalizedSessionId);
                     return;
                 }
@@ -518,9 +676,55 @@ export function createLocalVoiceCaptureOwner(
                     activeLocalNeuralExecution = localNeuralExecution ?? 'device';
                     const micSession = getLiveMicSession();
                     syncMutedStateForSession(normalizedSessionId);
-                    const { sink, signal, unlinkExternalAbort } = beginSttCapture(normalizedSessionId, externalSignal);
+                    const {
+                        armMicPlateauWatchdog,
+                        sink,
+                        signal,
+                        unlinkExternalAbort,
+                    } = beginSttCapture(normalizedSessionId, externalSignal);
+                    if (signal.aborted) {
+                        unlinkExternalAbort();
+                        await releaseLiveMicAfterFailedStartup(normalizedSessionId, provider);
+                        return;
+                    }
+                    if (activeLocalNeuralExecution === 'device' && handsFree) {
+                        const endpointPolicy = resolveHandsFreeTurnEndpointPolicy();
+                        const nativeVadStart = getNativeVadController().startSession({
+                            minSpeechMs: endpointPolicy.minSpeechMs,
+                            redemptionMs: endpointPolicy.silenceMs,
+                            sessionId: normalizedSessionId,
+                        });
+                        const nativeVadSettledBeforeAbort = await new Promise<boolean>((resolve) => {
+                            let settled = false;
+                            const finish = (value: boolean): void => {
+                                if (settled) {
+                                    return;
+                                }
+                                settled = true;
+                                signal.removeEventListener('abort', onAbort);
+                                resolve(value);
+                            };
+                            const onAbort = (): void => finish(false);
+                            if (signal.aborted) {
+                                finish(false);
+                                return;
+                            }
+                            signal.addEventListener('abort', onAbort, { once: true });
+                            void nativeVadStart.then(
+                                () => finish(true),
+                                () => finish(true),
+                            );
+                        });
+                        if (!nativeVadSettledBeforeAbort || signal.aborted) {
+                            unlinkExternalAbort();
+                            await releaseLiveMicAfterFailedStartup(normalizedSessionId, provider);
+                            return;
+                        }
+                    } else if (nativeVadController) {
+                        await nativeVadController.stopSession().catch(() => {});
+                    }
                     try {
-                        await getLocalNeuralSttController(activeLocalNeuralExecution).start({ micSession, sink, signal });
+                        await getLocalNeuralSttController(activeLocalNeuralExecution).start({ sessionId: normalizedSessionId, micSession, sink, signal });
                     } catch (error) {
                         unlinkExternalAbort();
                         await releaseLiveMicAfterFailedStartup(normalizedSessionId, provider);
@@ -535,13 +739,20 @@ export function createLocalVoiceCaptureOwner(
                         await releaseLiveMicAfterFailedStartup(normalizedSessionId, provider);
                         return;
                     }
+                    armMicPlateauWatchdog();
                     deps.onCaptureStarted(normalizedSessionId);
                     return;
                 }
                 default: {
                     const micSession = getRecordingMicSession();
                     syncMutedStateForSession(normalizedSessionId);
-                    await micSession.beginRecording();
+                    await micSession.beginRecording(externalSignal);
+                }
+                }
+            } finally {
+                resolveCaptureStart();
+                if (pendingCaptureStart === captureStart) {
+                    pendingCaptureStart = null;
                 }
             }
         },
@@ -550,32 +761,39 @@ export function createLocalVoiceCaptureOwner(
             clearMicPlateauWatchdog();
             switch (provider) {
                 case 'device': {
-                    const { finalText } = await getDeviceSttController().stop();
+                    const { finalText, failed } = await stopSttController(getDeviceSttController());
                     const text = finalText;
                     if (activeCaptureProvider === provider && activeCaptureSessionId === normalizedSessionId) {
                         activeCaptureProvider = null;
                         activeCaptureSessionId = null;
+                        activeCaptureSettings = null;
                     }
                     return {
                         provider,
                         text,
-                        continueHandsFree: runtimeTurnPolicyController.isHandsFreeCaptureSession({
+                        continueHandsFree: !failed && runtimeTurnPolicyController.isHandsFreeCaptureSession({
                             provider,
                             sessionId,
                         }),
                     } as const;
                 }
                 case 'local_neural': {
-                    const { finalText } = await getLocalNeuralSttController(activeLocalNeuralExecution).stop();
+                    if (nativeVadController) {
+                        await nativeVadController.stopSession(normalizedSessionId).catch(() => {});
+                    }
+                    const { finalText, failed } = await stopSttController(
+                        getLocalNeuralSttController(activeLocalNeuralExecution),
+                    );
                     const text = finalText;
                     if (activeCaptureProvider === provider && activeCaptureSessionId === normalizedSessionId) {
                         activeCaptureProvider = null;
                         activeCaptureSessionId = null;
+                        activeCaptureSettings = null;
                     }
                     return {
                         provider,
                         text,
-                        continueHandsFree: runtimeTurnPolicyController.isHandsFreeCaptureSession({
+                        continueHandsFree: !failed && runtimeTurnPolicyController.isHandsFreeCaptureSession({
                             provider,
                             sessionId,
                         }),
@@ -585,6 +803,7 @@ export function createLocalVoiceCaptureOwner(
                     if (activeCaptureProvider === provider && activeCaptureSessionId === normalizedSessionId) {
                         activeCaptureProvider = null;
                         activeCaptureSessionId = null;
+                        activeCaptureSettings = null;
                     }
                     return {
                         provider,
@@ -616,6 +835,7 @@ export function createLocalVoiceCaptureOwner(
                 : null;
 
             clearMicPlateauWatchdog();
+            const captureStart = pendingCaptureStart;
             if (activeAbortController) {
                 try {
                     activeAbortController.abort();
@@ -624,7 +844,14 @@ export function createLocalVoiceCaptureOwner(
                 }
                 activeAbortController = null;
             }
+            if (captureStart) {
+                await captureStart;
+            }
+            await waitForPendingFailureCleanup();
 
+            if (nativeVadController) {
+                await nativeVadController.stopSession(normalizedSessionId).catch(() => {});
+            }
             if (deviceSttController) {
                 await deviceSttController.stop().catch(() => {});
             }
@@ -654,6 +881,7 @@ export function createLocalVoiceCaptureOwner(
             }
             activeCaptureSessionId = null;
             activeCaptureProvider = null;
+            activeCaptureSettings = null;
             mutedSessionId = null;
             muted = false;
         },

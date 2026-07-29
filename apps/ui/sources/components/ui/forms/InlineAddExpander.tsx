@@ -1,6 +1,6 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import type { StyleProp, ViewStyle } from 'react-native';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -49,7 +49,6 @@ export function InlineAddExpander({
     autoFocusRef,
     expandedContainerStyle,
 }: InlineAddExpanderProps) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
 
     React.useEffect(() => {
@@ -74,7 +73,7 @@ export function InlineAddExpander({
             {isOpen ? (
                 <View style={[styles.expandedContainer, expandedContainerStyle]}>
                     {helpText ? (
-                        <Text style={styles.helpText}>
+                        <Text accessibilityLiveRegion="polite" style={styles.helpText}>
                             {helpText}
                         </Text>
                     ) : null}

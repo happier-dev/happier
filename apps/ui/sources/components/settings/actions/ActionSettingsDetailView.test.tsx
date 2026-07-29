@@ -3,6 +3,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks, resetSettingsViewCommonModuleMockState } from '../settingsViewTestHelpers';
+import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,6 +19,7 @@ const capture = vi.hoisted(() => ({
     stackOptions: null as Record<string, unknown> | null,
     switches: [] as Array<Record<string, unknown>>,
     windowWidth: 800,
+    routeActionId: 'review.start',
     setRawSettings: vi.fn(),
     reset() {
         this.items = [];
@@ -31,6 +33,7 @@ const capture = vi.hoisted(() => ({
         this.stackOptions = null;
         this.switches = [];
         this.windowWidth = 800;
+        this.routeActionId = 'review.start';
         this.setRawSettings.mockReset();
     },
 }));
@@ -55,7 +58,7 @@ installSettingsViewCommonModuleMocks({
         const { createExpoRouterMock, createStackOptionsCapture } = await import('@/dev/testkit/mocks/router');
         const stackOptionsCapture = createStackOptionsCapture();
         const routerMock = createExpoRouterMock({
-            params: { actionId: 'review.start' },
+            params: () => ({ actionId: capture.routeActionId }),
             stackOptionsCapture,
         });
         const StackScreen = routerMock.module.Stack.Screen;
@@ -75,11 +78,11 @@ installSettingsViewCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettingMutable: () => [capture.rawSettings, (next: unknown) => {
+                useSettingMutable: createUseSettingMutableMockFromReader(() => [capture.rawSettings, (next: unknown) => {
                     capture.rawSettings = next;
                     capture.setRawSettings(next);
-                }] as const,
-                useSetting: () => ({ privacy: { shareDeviceInventory: true } }),
+                }] as const),
+                useSetting: createUseSettingMock({ fallback: () => ({ privacy: { shareDeviceInventory: true } }) }),
             },
         });
     },
@@ -182,17 +185,41 @@ describe('ActionSettingsDetailView', () => {
             capture.renderOrder.indexOf('settings-actions:action:review.start:summary'),
         );
         expect(await screen.findByTestId('settings-actions:approval-mode-help')).toBeTruthy();
-        expect(capture.switches.some((switchProps) =>
+        const summarySwitch = capture.switches.find((switchProps) =>
             switchProps.testID === 'settings-actions:action:review.start:enabled',
-        )).toBe(true);
+        );
+        expect(summarySwitch?.accessibilityLabel).toBe('Start review');
         expect(capture.items.some((item) => item.testID === 'settings-actions:action:review.start:target:cli')).toBe(true);
         expect(capture.segmentedTabBars.some((bar) =>
             bar.testIDPrefix === 'settings-actions:action:review.start:target:cli:mode'
             && bar.activeTabId === 'allowed',
         )).toBe(true);
-        expect(capture.switches.some((switchProps) =>
+        const commandPaletteSwitch = capture.switches.find((switchProps) =>
             switchProps.testID === 'settings-actions:action:review.start:target:command_palette:enabled',
-        )).toBe(true);
+        );
+        const commandPaletteRow = capture.items.find((item) =>
+            item.testID === 'settings-actions:action:review.start:target:command_palette',
+        );
+        expect(commandPaletteSwitch?.accessibilityLabel).toBe(commandPaletteRow?.title);
+    });
+
+    it('renders prompt_doc.update Session agent as ask-first and removes Allowed (LIVE-1)', async () => {
+        const { ActionSettingsDetailContent } = await import('./ActionSettingsDetailView');
+
+        const screen = await renderScreen(<ActionSettingsDetailContent actionId="prompt_doc.update" />);
+
+        const sessionAgentMode = capture.segmentedTabBars.find((bar) =>
+            bar.testIDPrefix === 'settings-actions:action:prompt_doc.update:target:agent:mode',
+        );
+        expect(sessionAgentMode).toBeTruthy();
+        expect(sessionAgentMode?.activeTabId).toBe('ask_first');
+        expect((sessionAgentMode?.tabs as Array<{ id: string }>).map((tab) => tab.id)).toEqual([
+            'off',
+            'ask_first',
+        ]);
+        expect(await screen.findByTestId(
+            'settings-actions:action:prompt_doc.update:target:agent:floored-reason',
+        )).toBeTruthy();
     });
 
     it('persists ask-first approval mode through the canonical settings writer', async () => {
@@ -228,7 +255,7 @@ describe('ActionSettingsDetailView', () => {
 
         const sessionAgentExposure = capture.dropdownMenus.find((menu) => {
             const itemTrigger = menu.itemTrigger as { itemProps?: { testID?: string } } | undefined;
-            return itemTrigger?.itemProps?.testID === 'settings-actions:action:review.start:target:session_agent:tool-exposure';
+            return itemTrigger?.itemProps?.testID === 'settings-actions:action:review.start:target:agent:tool-exposure';
         });
         const mcpExposure = capture.dropdownMenus.find((menu) => {
             const itemTrigger = menu.itemTrigger as { itemProps?: { testID?: string } } | undefined;
@@ -249,16 +276,16 @@ describe('ActionSettingsDetailView', () => {
             selectedId: 'default',
         });
         expect((sessionAgentExposure?.items as Array<{ testID?: string }>).map((item) => item.testID)).toEqual([
-            'settings-actions:action:review.start:target:session_agent:tool-exposure:default',
-            'settings-actions:action:review.start:target:session_agent:tool-exposure:discoverable_only',
-            'settings-actions:action:review.start:target:session_agent:tool-exposure:direct',
+            'settings-actions:action:review.start:target:agent:tool-exposure:default',
+            'settings-actions:action:review.start:target:agent:tool-exposure:discoverable_only',
+            'settings-actions:action:review.start:target:agent:tool-exposure:direct',
         ]);
         expect(capture.dropdownMenus.some((menu) => {
             const itemTrigger = menu.itemTrigger as { itemProps?: { testID?: string } } | undefined;
             return itemTrigger?.itemProps?.testID === 'settings-actions:action:review.start:target:agent_input_chips:tool-exposure';
         })).toBe(false);
         expect(await screen.findByTestId(
-            'settings-actions:action:review.start:target:session_agent:tool-exposure:resolved:discoverable_only',
+            'settings-actions:action:review.start:target:agent:tool-exposure:resolved:discoverable_only',
         )).toBeTruthy();
         expect(await screen.findByTestId(
             'settings-actions:action:review.start:target:mcp:tool-exposure:resolved:direct',
@@ -272,7 +299,7 @@ describe('ActionSettingsDetailView', () => {
 
         const sessionAgentExposure = capture.dropdownMenus.find((menu) => {
             const itemTrigger = menu.itemTrigger as { itemProps?: { testID?: string } } | undefined;
-            return itemTrigger?.itemProps?.testID === 'settings-actions:action:review.start:target:session_agent:tool-exposure';
+            return itemTrigger?.itemProps?.testID === 'settings-actions:action:review.start:target:agent:tool-exposure';
         });
         expect(sessionAgentExposure).toBeTruthy();
 
@@ -287,7 +314,7 @@ describe('ActionSettingsDetailView', () => {
                     disabledPlacements: [],
                     approvalRequiredSurfaces: [],
                     toolExposureModes: {
-                        session_agent: 'direct',
+                        agent: 'direct',
                     },
                 },
             },
@@ -297,7 +324,7 @@ describe('ActionSettingsDetailView', () => {
         await renderScreen(<ActionSettingsDetailContent actionId="review.start" />);
         const resetSessionAgentExposure = capture.dropdownMenus.find((menu) => {
             const itemTrigger = menu.itemTrigger as { itemProps?: { testID?: string } } | undefined;
-            return itemTrigger?.itemProps?.testID === 'settings-actions:action:review.start:target:session_agent:tool-exposure';
+            return itemTrigger?.itemProps?.testID === 'settings-actions:action:review.start:target:agent:tool-exposure';
         });
         expect(resetSessionAgentExposure).toBeTruthy();
 
@@ -307,6 +334,27 @@ describe('ActionSettingsDetailView', () => {
             v: 1,
             actions: {},
         });
+    });
+
+    it('renders and persists session-agent spawn policy toggles for Create session', async () => {
+        const { ActionSettingsDetailContent } = await import('./ActionSettingsDetailView');
+
+        await renderScreen(<ActionSettingsDetailContent actionId="session.spawn_new" />);
+
+        const envToggle = capture.switches.find((switchProps) =>
+            switchProps.testID === 'settings-actions:session-spawn-policy:allowEnvironmentVariables',
+        );
+        expect(envToggle).toBeTruthy();
+        expect(envToggle?.value).toBe(true);
+
+        const onEnvToggleChange = envToggle?.onValueChange;
+        expect(typeof onEnvToggleChange).toBe('function');
+        (onEnvToggleChange as (next: boolean) => void)(false);
+
+        expect(capture.setRawSettings).toHaveBeenCalledWith(expect.objectContaining({
+            v: 1,
+            allowEnvironmentVariables: false,
+        }));
     });
 
     it('moves approval mode controls into the target text column on narrow mobile widths', async () => {
@@ -333,5 +381,20 @@ describe('ActionSettingsDetailView', () => {
         await renderScreen(<ActionSettingsDetailView />);
 
         expect(capture.stackOptions?.headerTitle).toBe('Start review');
+    });
+
+    it('treats direct links to non-configurable runtime actions as invalid', async () => {
+        // `devices.simulator.input.orientation` is statically-unbacked (no producer in stock scrcpy),
+        // so it stays UNSURFACED / non-configurable — a direct link must be rejected. (The browser
+        // diagnostics interaction verbs, incl. `eval`, are now executor-backed and configurable, so
+        // they are no longer the canonical non-configurable example.)
+        const { getActionSpec } = await import('@happier-dev/protocol');
+        capture.routeActionId = 'devices.simulator.input.orientation';
+        const { ActionSettingsDetailView } = await import('./ActionSettingsDetailView');
+
+        await renderScreen(<ActionSettingsDetailView />);
+
+        expect(capture.stackOptions?.headerTitle).not.toBe(getActionSpec('devices.simulator.input.orientation').title);
+        expect(capture.items.some((item) => item.testID === 'settings-actions:action:devices.simulator.input.orientation:summary')).toBe(false);
     });
 });

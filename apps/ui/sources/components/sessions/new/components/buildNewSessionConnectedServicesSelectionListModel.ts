@@ -188,7 +188,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
         for (const group of groupOptions) {
             if (group.status !== 'ready') continue;
             const groupId = group.groupId.trim();
-            const activeProfileId = group.activeProfileId.trim();
+            const activeProfileId = group.activeProfileId?.trim() ?? '';
             if (!groupId || !activeProfileId || !connectedProfileIds.includes(activeProfileId)) continue;
             const selected = binding?.source === 'connected'
                 && binding.selection === 'group'

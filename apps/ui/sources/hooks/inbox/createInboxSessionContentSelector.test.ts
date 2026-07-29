@@ -193,6 +193,53 @@ describe('createInboxSessionContentSelector', () => {
         expect(buildInboxState).toHaveBeenCalledTimes(1);
     });
 
+    it('reuses the previous result without reading sessions on an empty session-list delta tick', () => {
+        const buildInboxState = vi.fn(emptyInboxState);
+        const selectInboxSessionContent = createInboxSessionContentSelector(buildInboxState);
+        let statusReads = 0;
+        const session = createQuietSession({ id: 'session-1' });
+        Object.defineProperty(session, 'latestTurnStatus', {
+            configurable: true,
+            enumerable: true,
+            get: () => {
+                statusReads += 1;
+                return null;
+            },
+        });
+
+        registerStorageStateReader(() => createStorageState({
+            sessionListRenderableDelta: {
+                revision: 1,
+                changedSessionIds: ['session-1'],
+                removedSessionIds: [],
+                rebuiltSessionListIndex: true,
+            },
+        }));
+        expect(selectInboxSessionContent({
+            sessions: [session],
+            sessionRows: [],
+            nowMs: 10_000,
+        })).toBe(false);
+        const readsAfterFirstSelection = statusReads;
+
+        registerStorageStateReader(() => createStorageState({
+            sessionListRenderableDelta: {
+                revision: 2,
+                changedSessionIds: [],
+                removedSessionIds: [],
+                rebuiltSessionListIndex: false,
+            },
+        }));
+        expect(selectInboxSessionContent({
+            sessions: [session],
+            sessionRows: [],
+            nowMs: 10_000,
+        })).toBe(false);
+
+        expect(buildInboxState).toHaveBeenCalledTimes(1);
+        expect(statusReads).toBe(readsAfterFirstSelection);
+    });
+
     it('reuses derived transcript pending state for unrelated session heartbeat updates', () => {
         const buildInboxState = vi.fn((): InboxSessionState => ({
             unreadSessions: [],
@@ -375,7 +422,108 @@ describe('createInboxSessionContentSelector', () => {
         expect(buildInboxState).toHaveBeenCalledTimes(2);
     });
 
-    it('expires pending inbox content when runtime freshness changes', () => {
+    it('rebuilds when a hidden session becomes Voice custody with the same pending request facts', () => {
+        const selectInboxSessionContent = createInboxSessionContentSelector();
+        const pendingPermissionSession = createQuietSession({
+            id: 'hidden-custody',
+            serverId: 'server-a',
+            active: true,
+            presence: 'online',
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    approve: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: { command: 'git status' },
+                        createdAt: 9_000,
+                    },
+                },
+            },
+        });
+
+        expect(selectInboxSessionContent({
+            sessions: [{
+                ...pendingPermissionSession,
+                metadata: {
+                    path: '/tmp/hidden-custody',
+                    host: 'test-host',
+                    systemSessionV1: { v: 1, key: 'diagnostics', hidden: true },
+                },
+            }],
+            sessionRows: [],
+            nowMs: 10_000,
+        })).toBe(false);
+        expect(selectInboxSessionContent({
+            sessions: [{
+                ...pendingPermissionSession,
+                metadata: {
+                    path: '/tmp/hidden-custody',
+                    host: 'test-host',
+                    systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+                },
+            }],
+            sessionRows: [],
+            nowMs: 10_000,
+        })).toBe(true);
+    });
+
+    it('invalidates pending inbox projection when same-id request coverage changes through arguments only', () => {
+        const selectInboxSessionContent = createInboxSessionContentSelector();
+        const coveredSession = createQuietSession({
+            active: true,
+            presence: 'online',
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    approve: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: { command: 'git status' },
+                        createdAt: 9_000,
+                    },
+                },
+                completedRequests: {
+                    approve: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: { command: 'git status' },
+                        completedAt: 9_100,
+                        status: 'approved',
+                    },
+                },
+            },
+        });
+        const uncoveredSession = createQuietSession({
+            active: true,
+            presence: 'online',
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    approve: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: { command: 'git diff' },
+                        createdAt: 9_000,
+                    },
+                },
+                completedRequests: coveredSession.agentState?.completedRequests,
+            },
+        });
+
+        expect(selectInboxSessionContent({
+            sessions: [coveredSession],
+            sessionRows: [],
+            nowMs: 10_000,
+        })).toBe(false);
+        expect(selectInboxSessionContent({
+            sessions: [uncoveredSession],
+            sessionRows: [],
+            nowMs: 10_000,
+        })).toBe(true);
+    });
+
+    it('keeps unresolved permission inbox content after transient runtime freshness expires', () => {
         const observedAtMs = 1_000;
         const selectInboxSessionContent = createInboxSessionContentSelector();
         const input = {
@@ -406,6 +554,50 @@ describe('createInboxSessionContentSelector', () => {
         expect(selectInboxSessionContent({
             ...input,
             nowMs: observedAtMs + SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 1,
+        })).toBe(true);
+    });
+
+    it('recomputes same-seq renderable request summaries when only agent state advances', () => {
+        const selectInboxSessionContent = createInboxSessionContentSelector();
+        const sessions = [
+            createQuietSession({
+                id: 'summary-permission',
+                serverId: 'server-a',
+                seq: 4,
+                lastViewedSessionSeq: 4,
+                agentStateVersion: 6,
+                agentState: null,
+            }),
+        ];
+        const buildRow = (
+            agentStateVersion: number,
+            hasPendingPermissionRequests: boolean,
+        ): SessionListAttentionRow => createAttentionRow('server-a', {
+            id: 'summary-permission',
+            seq: 4,
+            lastViewedSessionSeq: 4,
+            active: true,
+            presence: 'online',
+            agentStateVersion,
+            hasPendingPermissionRequests,
+            hasPendingUserActionRequests: false,
+            pendingRequestObservedAt: hasPendingPermissionRequests ? 9_000 : null,
+        });
+
+        expect(selectInboxSessionContent({
+            sessions,
+            sessionRows: [buildRow(6, false)],
+            nowMs: 10_000,
+        })).toBe(false);
+        expect(selectInboxSessionContent({
+            sessions,
+            sessionRows: [buildRow(7, true)],
+            nowMs: 10_000,
+        })).toBe(true);
+        expect(selectInboxSessionContent({
+            sessions,
+            sessionRows: [buildRow(8, false)],
+            nowMs: 10_000,
         })).toBe(false);
     });
 

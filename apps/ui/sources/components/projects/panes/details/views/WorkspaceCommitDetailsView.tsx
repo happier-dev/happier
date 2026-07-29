@@ -39,7 +39,11 @@ export const WorkspaceCommitDetailsView = React.memo((props: WorkspaceCommitDeta
             setLoading(true);
             setError(null);
             try {
-                const response = await machineScmDiffCommit(props.machineId, { cwd: props.rootPath, commit: props.sha });
+                const response = await machineScmDiffCommit(
+                    props.machineId,
+                    { cwd: props.rootPath, commit: props.sha },
+                    { serverId: props.serverId },
+                );
                 if (!active) return;
                 if (!response.success) {
                     setError(response.error || t('files.commitDetails.failedToLoadDiff'));
@@ -58,7 +62,7 @@ export const WorkspaceCommitDetailsView = React.memo((props: WorkspaceCommitDeta
         return () => {
             active = false;
         };
-    }, [props.machineId, props.rootPath, props.sha]);
+    }, [props.machineId, props.rootPath, props.serverId, props.sha]);
 
     if (loading) {
         return (

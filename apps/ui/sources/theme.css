@@ -22,6 +22,17 @@
     --happier-route-modal-box-shadow: 0 14px 40px rgba(0, 0, 0, 0.16), 0 6px 18px rgba(0, 0, 0, 0.12);
 }
 
+/*
+ * Font rendering. React-Native-Web does not set any smoothing hint, so on macOS the
+ * whole product renders with subpixel antialiasing, which reads noticeably heavier
+ * and blurrier than every native surface next to it. Set once at the root and let it
+ * inherit — no component should ever restate this.
+ */
+html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
 @keyframes happierStatusDotPulse {
     from {
         opacity: 1;
@@ -144,7 +155,7 @@ html[data-happy-backdrop-blur="off"] [data-vaul-overlay] {
     overflow-anchor: none;
 }
 
-/* SCM review (FlashList) mounts/unmounts large diff blocks; prevent browser scroll anchoring jumps on web. */
+/* SCM review virtualization mounts/unmounts large diff blocks; prevent browser scroll anchoring jumps on web. */
 [data-testid="scm-review-list"],
 [data-testid="scm-review-list"] * {
     overflow-anchor: none;

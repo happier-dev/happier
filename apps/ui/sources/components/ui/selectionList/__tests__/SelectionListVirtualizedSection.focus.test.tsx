@@ -1,10 +1,16 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { createCapturingFlashListMock } from '@/dev/testkit/mocks/flashList';
+import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
 
 import type { SelectionListOption, SelectionListSection } from '../_types';
+
+const reducedMotionState = vi.hoisted(() => ({ value: false }));
+
+vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
+    useReducedMotionPreference: () => reducedMotionState.value,
+}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -16,16 +22,13 @@ vi.mock('react-native', async () => {
 const scrollToIndex = vi.fn<(args: { index: number; animated?: boolean; viewPosition?: number }) => void>();
 const scrollToOffset = vi.fn();
 
-const { module: capturedFlashList, state: flashListState } = createCapturingFlashListMock({
-    componentName: 'FlashListMock',
-    itemWrapperName: 'FlashListItemMock',
+const { module: capturedLegendList, state: legendListState } = createCapturingLegendListMock({
     renderItems: true,
     refHandle: { scrollToIndex, scrollToOffset },
 });
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
-    FlashList: capturedFlashList.FlashList,
-    flashListRuntime: { usingFallback: true },
+vi.mock('@legendapp/list/react-native', () => ({
+    LegendList: capturedLegendList.LegendList,
 }));
 
 function makeOptions(count: number, prefix = 'opt'): ReadonlyArray<SelectionListOption> {
@@ -46,9 +49,8 @@ function makeSection(count: number): SelectionListSection {
 /**
  * RV-2 / F4 — Virtualized rows must achieve focus parity with the
  * non-virtualized path:
- *   1. Mirror the focused-row visual state by selecting the focused option's
- *      `Item.selected` prop (matches `PlanOptionRow`'s
- *      `selected={isSelected || isFocused}` rule in SelectionListBody).
+ *   1. Mirror the focused-row visual state through `Item.focused` while
+ *      keeping `Item.selected` reserved for the actual selection state.
  *   2. Imperatively scroll the focused row into view via
  *      `flashListRef.current.scrollToIndex({ index, viewPosition: 0.5,
  *      animated: true })` whenever `focusedOptionId` changes AND the focused
@@ -57,6 +59,10 @@ function makeSection(count: number): SelectionListSection {
  *      (e.g. focus is in a different section), do NOT call scrollToIndex.
  */
 describe('SelectionListVirtualizedSection focus parity (F4)', () => {
+    beforeEach(() => {
+        reducedMotionState.value = false;
+        scrollToIndex.mockClear();
+    });
     /**
      * Resolve the Item composite instance that owns `selected` (vs the host
      * Pressable that `findByTestId` returns by preference). React Test
@@ -68,8 +74,8 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
         return all.find((node) => typeof node.type === 'function');
     }
 
-    it('marks the focused row as visually selected via Item.selected (focus parity with non-virtualized rows)', async () => {
-        flashListState.props = null;
+    it('marks the focused row visually focused without reporting it selected', async () => {
+        legendListState.reset();
         scrollToIndex.mockClear();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
 
@@ -85,21 +91,22 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
             />,
         );
 
-        // Focused row: Item.selected must be true so the row paints the
-        // focused/selected styling (the Item primitive treats selected as
-        // its visual focused state via showSelectedBackground).
+        // Focus is visual state; selection remains the semantic row state
+        // consumed by aria-selected.
         const focusedItem = findItemComposite(screen, 'sl:root:option:opt-25');
         expect(focusedItem).toBeTruthy();
-        expect(focusedItem!.props.selected).toBe(true);
+        expect(focusedItem!.props.focused).toBe(true);
+        expect(focusedItem!.props.selected).toBe(false);
 
-        // Non-focused row: Item.selected must be false.
+        // A different unselected row has neither state.
         const otherItem = findItemComposite(screen, 'sl:root:option:opt-3');
         expect(otherItem).toBeTruthy();
+        expect(otherItem!.props.focused).toBe(false);
         expect(otherItem!.props.selected).toBe(false);
     });
 
     it('still marks selected rows as selected when no focus is set', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         scrollToIndex.mockClear();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
 
@@ -121,7 +128,7 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
     });
 
     it('calls scrollToIndex(viewPosition: 0.5) when focusedOptionId changes to a row in this section', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         scrollToIndex.mockClear();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
 
@@ -159,8 +166,37 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
         expect(call.animated).toBe(true);
     });
 
+    it('scrolls focused rows without animation when reduced motion is enabled', async () => {
+        reducedMotionState.value = true;
+        const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
+        const section = makeSection(60);
+        const screen = await renderScreen(
+            <SelectionListVirtualizedSection
+                section={section}
+                stepId="root"
+                rootTestID="sl"
+                selectedOptionId={null}
+                focusedOptionId={null}
+                onSelectOption={() => {}}
+            />,
+        );
+
+        await screen.update(
+            <SelectionListVirtualizedSection
+                section={section}
+                stepId="root"
+                rootTestID="sl"
+                selectedOptionId={null}
+                focusedOptionId="opt-30"
+                onSelectOption={() => {}}
+            />,
+        );
+
+        expect(scrollToIndex).toHaveBeenCalledWith({ index: 30, viewPosition: 0.5, animated: false });
+    });
+
     it('does not call scrollToIndex when focusedOptionId does not match any row in this section', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         scrollToIndex.mockClear();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
 

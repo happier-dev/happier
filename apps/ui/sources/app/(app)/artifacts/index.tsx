@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, FlatList, Pressable } from 'react-native';
+import { View, Pressable } from 'react-native';
+import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import { Text } from '@/components/ui/text/Text';
 import { useArtifacts } from '@/sync/domains/state/storage';
 import { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -252,7 +253,7 @@ export default function ArtifactsScreen() {
 
     return (
         <View style={styles.container}>
-            <FlatList
+            <VirtualizedList
                 data={artifacts}
                 renderItem={renderItem}
                 keyExtractor={keyExtractor}

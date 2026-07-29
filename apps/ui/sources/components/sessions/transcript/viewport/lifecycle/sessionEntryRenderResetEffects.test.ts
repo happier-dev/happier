@@ -37,12 +37,8 @@ describe('session-entry render-reset effect selector', () => {
             throw new Error('expected native session-entry render-reset effects');
         }
         expect(resolved.webDomObservationReset.type).toBe('session-entry-web-dom-observation-reset');
-        expect(resolved.nativeBottomPinCommandCacheReset.type)
-            .toBe('session-entry-native-bottom-pin-command-cache-reset');
         expect(resolved.nativeGestureMomentumMirrorReset.type)
             .toBe('session-entry-native-gesture-momentum-mirror-reset');
-        expect(resolved.nativeStreamAppendRecordReset.type)
-            .toBe('session-entry-native-stream-append-content-version-record-reset');
         expect(resolved.activityKeyBaselineReset.type).toBe('session-entry-activity-key-baseline-reset');
         expect(resolved.olderPaginationReset.type).toBe('session-entry-older-pagination-reset');
         expect(resolved.nativeSessionViewportReset.type).toBe('session-entry-native-session-viewport-reset');

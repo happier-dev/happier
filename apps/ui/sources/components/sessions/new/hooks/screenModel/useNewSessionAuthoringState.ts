@@ -14,8 +14,8 @@ import { normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessi
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
-import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
+import type { BackendTargetRefV2, SessionModelSelectionV1 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
@@ -44,7 +44,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     selectedProfileId: string | null;
     resumeSessionId: string;
     permissionMode: PermissionMode;
-    modelMode: ModelMode;
+    modelSelection: SessionModelSelectionV1 | null;
     mcpSelection: BuildResolvedInputs['mcpSelection'];
     agentNewSessionOptions: Record<string, unknown> | null;
     settings: Settings;
@@ -58,6 +58,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     getSessionOnlySecretValueEncByProfileIdByEnvVarName: () => BuildPersistedInputs['sessionOnlySecretValueEncByProfileIdByEnvVarName'];
     backendNewSessionOptionStateByTargetKey: BackendNewSessionOptionStateByTargetKey;
     draftScope?: ServerAccountScope | null;
+    launchUserAttemptId?: string | null;
 }>): Readonly<{
     authoringContext: ReturnType<typeof buildNewSessionAuthoringContext>;
     currentAuthoringDraft: SessionAuthoringDraft;
@@ -91,8 +92,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         resumeSessionId: params.resumeSessionId,
         permissionMode: params.permissionMode,
         permissionModeUpdatedAt: null,
-        modelId: params.modelMode === 'default' ? null : params.modelMode,
-        modelUpdatedAt: null,
+        modelSelection: params.modelSelection,
         mcpSelection: params.mcpSelection ?? null,
         connectedServices: normalizeSessionAuthoringConnectedServices(params.agentNewSessionOptions?.connectedServices ?? null),
         terminal: resolveTerminalSpawnOptions({
@@ -118,7 +118,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         draftAgentId,
         params.effectiveWindowsRemoteSessionLaunchMode,
         params.mcpSelection,
-        params.modelMode,
+        params.modelSelection,
         params.permissionMode,
         params.resumeSessionId,
         params.selectedMachineId,
@@ -170,8 +170,12 @@ export function useNewSessionAuthoringState(params: Readonly<{
             updatedAt: Date.now(),
         });
 
+        const launchUserAttemptId = typeof params.launchUserAttemptId === 'string'
+            ? params.launchUserAttemptId.trim()
+            : '';
         return {
             ...persistedDraft,
+            ...(launchUserAttemptId ? { launchUserAttemptId } : {}),
             agentType: resolveNewSessionCompatAgentType({
                 backendTarget: persistedDraft.backendTarget ?? null,
                 persistedAgentId: draftAgentId,
@@ -189,6 +193,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.automationRequestedByRoute,
         draftAgentId,
         params.getSessionOnlySecretValueEncByProfileIdByEnvVarName,
+        params.launchUserAttemptId,
         params.selectedMachineId,
         params.selectedSecretId,
         params.selectedSecretIdByProfileIdByEnvVarName,

@@ -163,6 +163,22 @@ describe('/session/[id]/git', () => {
         expect(setRightTabSpy).toHaveBeenCalledWith('git');
     });
 
+    it('does not re-target the git tab after the shared panel selects another tab', async () => {
+        const screen = await renderRouteScreen();
+        openRightSpy.mockClear();
+        setRightTabSpy.mockClear();
+
+        scopeState = {
+            right: { isOpen: true, activeTabId: 'files', tabState: {} },
+            details: null,
+        };
+
+        await screen.update(<SessionGitRouteScreen />);
+
+        expect(openRightSpy).not.toHaveBeenCalled();
+        expect(setRightTabSpy).not.toHaveBeenCalled();
+    });
+
     it('renders the session cockpit shell on phone in cockpit mode', async () => {
         deviceType = 'phone';
         mobileWorkspaceExperience = 'cockpit';

@@ -1,5 +1,8 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { serverFetch } from '@/sync/http/client';
+import {
+  serverFetch,
+  type ExpectedActiveServerFetchBasis,
+} from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
 
@@ -25,7 +28,10 @@ const ConnectedServiceQuotasV3ResponseSchema = z.object({
 export async function getConnectedServiceQuotaSnapshotPlain(
   credentials: AuthCredentials,
   params: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>,
-  opts?: Readonly<{ signal?: AbortSignal }>,
+  opts?: Readonly<{
+    signal?: AbortSignal;
+    expectedActiveServer?: ExpectedActiveServerFetchBasis;
+  }>,
 ): Promise<ConnectedServiceQuotaSnapshotV1 | null> {
   return await backoff(async () => {
     const response = await serverFetch(
@@ -38,7 +44,12 @@ export async function getConnectedServiceQuotaSnapshotPlain(
           'Content-Type': 'application/json',
         },
       },
-      { includeAuth: false },
+      {
+        includeAuth: false,
+        ...(opts?.expectedActiveServer
+          ? { expectedActiveServer: opts.expectedActiveServer }
+          : {}),
+      },
     );
 
     if (response.status === 404) return null;
@@ -76,6 +87,9 @@ export async function getConnectedServiceQuotaSnapshotPlain(
 export async function requestConnectedServiceQuotaSnapshotRefreshV3(
   credentials: AuthCredentials,
   params: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>,
+  opts?: Readonly<{
+    expectedActiveServer?: ExpectedActiveServerFetchBasis;
+  }>,
 ): Promise<boolean> {
   return await backoff(async () => {
     const response = await serverFetch(
@@ -88,7 +102,12 @@ export async function requestConnectedServiceQuotaSnapshotRefreshV3(
         },
         body: JSON.stringify({}),
       },
-      { includeAuth: false },
+      {
+        includeAuth: false,
+        ...(opts?.expectedActiveServer
+          ? { expectedActiveServer: opts.expectedActiveServer }
+          : {}),
+      },
     );
 
     if (response.status === 404) return false;

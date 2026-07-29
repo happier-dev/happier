@@ -4,7 +4,13 @@ import { runVoiceAgentTurnWithTools } from '@/voice/local/runVoiceAgentTurnWithT
 import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
 import { buildVoiceInitialContext } from '@/voice/context/buildVoiceInitialContext';
 import { captureAssistantTextMessageBaseline } from '@/voice/runtime/waitForNextAssistantTextMessage';
-import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
+import type { VoiceSessionSnapshot } from '@/voice/session/types';
+import {
+  submitDurableVoiceTextTurn,
+  type VoiceTextTurnPendingPort,
+} from '@/voice/binding/sendVoiceSessionComposerText';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
+import type { VoiceAgentSendTurnOptions } from '@/voice/agent/types';
 
 import { formatVoiceQaErrorMessage } from './formatVoiceQaErrorMessage';
 import { createDefaultVoiceQaControllerDeps } from './voiceQaRuntimeDeps';
@@ -44,7 +50,13 @@ export type VoiceQaControllerDeps = Readonly<{
   ensureLocalRunningAndMaybeWelcome: (sessionId: string) => Promise<string | null>;
   ensureSessionVisibleForMessageRoute?: (sessionId: string, options?: Readonly<{ forceRefresh?: boolean }>) => Promise<unknown> | void;
   refreshSessionMessages?: (sessionId: string) => Promise<void> | void;
-  sendLocalTurn: (sessionId: string, prompt: string) => Promise<Readonly<{ assistantText: string; actions?: ReadonlyArray<unknown> }>>;
+  pendingPort?: VoiceTextTurnPendingPort;
+  commitLocalUserTranscript?: (sessionId: string, prompt: string, localId: string) => Promise<void>;
+  sendLocalTurn: (
+    sessionId: string,
+    prompt: string,
+    options?: VoiceAgentSendTurnOptions,
+  ) => Promise<Readonly<{ assistantText: string; actions?: ReadonlyArray<unknown> }>>;
   stopLocal: (sessionId: string) => Promise<void>;
   appendLocalContextUpdate: (sessionId: string, update: string) => void;
   startRealtime: (sessionId: string, initialContext?: string, options?: Readonly<{ textOnly?: boolean }>) => Promise<void>;
@@ -61,13 +73,25 @@ export type VoiceQaControllerDeps = Readonly<{
       baselineCount: number;
     }> | null;
   }>) => Promise<string | null>;
+  /** Dev-route media QA delegates to the same lifecycle owner as VoiceSurface. */
+  startMedia?: (sessionId: string) => Promise<void>;
+  stopMedia?: (sessionId: string, adapterId: string | null) => Promise<void>;
+  getMediaSnapshot?: () => VoiceSessionSnapshot;
   qaStore: typeof useVoiceQaStore;
 }>;
+
+export type VoiceQaStartMode = 'text' | 'media';
 
 export function createVoiceQaController(
   deps: VoiceQaControllerDeps = createDefaultVoiceQaControllerDeps(),
 ) {
-  const start = async (params?: Readonly<{ sessionId?: string | null; initialContext?: string | null }>) => {
+  let activeMediaSession: Readonly<{ sessionId: string; adapterId: string | null }> | null = null;
+
+  const start = async (params?: Readonly<{
+    sessionId?: string | null;
+    initialContext?: string | null;
+    mode?: VoiceQaStartMode;
+  }>) => {
     const settings = deps.getSettings();
     const provider = resolveConfiguredVoiceQaProvider(settings);
     const targetSessionId = resolveEffectiveVoiceQaSessionId(params?.sessionId, deps.getVoiceTargetState);
@@ -77,6 +101,41 @@ export function createVoiceQaController(
     deps.qaStore.getState().appendSystem(`Starting ${provider} QA session for ${formatVoiceQaTargetLabel(targetSessionId, settings)}`);
 
     try {
+      if (params?.mode === 'media') {
+        if (!deps.startMedia || !deps.stopMedia || !deps.getMediaSnapshot) {
+          throw new Error('voice_qa_media_mode_unavailable');
+        }
+
+        await deps.startMedia(targetSessionId);
+        const snapshot = deps.getMediaSnapshot();
+        if (
+          snapshot.status === 'disconnected'
+          || snapshot.status === 'error'
+          || !snapshot.sessionId
+        ) {
+          const adapterId = snapshot.adapterId ?? 'none';
+          const errorCode = snapshot.errorCode ?? 'none';
+          const errorReason = snapshot.errorMessage ?? 'none';
+          throw new Error(
+            `voice_qa_media_session_not_started:adapter=${adapterId},status=${snapshot.status},mode=${snapshot.mode},error=${errorCode},reason=${errorReason}`,
+          );
+        }
+
+        activeMediaSession = {
+          sessionId: snapshot.sessionId,
+          adapterId: snapshot.adapterId,
+        };
+        deps.qaStore.getState().setResolvedSessions({
+          targetSessionId,
+          runtimeSessionId: snapshot.sessionId,
+        });
+        deps.qaStore
+          .getState()
+          .appendSystem(`Media session started: status=${snapshot.status} mode=${snapshot.mode}`);
+        deps.qaStore.getState().setStatus('running');
+        return { provider, sessionId: snapshot.sessionId };
+      }
+
       if (provider === 'local_voice_agent') {
         assertLocalVoiceAgentSupportedForQa(settings);
         const binding = await deps.ensureLocalBinding({
@@ -109,7 +168,7 @@ export function createVoiceQaController(
         }
         if (targetSessionId !== VOICE_AGENT_GLOBAL_SESSION_ID) {
           const state = storage.getState() as any;
-          const targetSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, targetSessionId);
+          const targetSessionMetadata = readVoiceSessionOwnerMetadataFromState(state, targetSessionId);
           const targetSession = state?.sessions?.[targetSessionId] ?? null;
           const permissionMode = normalizeVoiceQaText(targetSessionMetadata?.permissionMode ?? targetSession?.permissionMode);
           if (permissionMode === 'read-only' || permissionMode === 'plan') {
@@ -209,14 +268,11 @@ export function createVoiceQaController(
           targetSessionId,
           runtimeSessionId: resolveVoiceQaRuntimeSessionId(binding, runtimeSessionId),
         });
-        const baseline =
-          conversationSessionId
-            ? captureAssistantTextMessageBaseline(conversationSessionId)
-            : null;
+        if (!conversationSessionId) throw new Error('voice_session_binding_required');
+        const baseline = captureAssistantTextMessageBaseline(conversationSessionId);
         let appendedAssistantTurn = false;
         let shouldWatchAsyncTargetFollowUp = false;
         const appendFollowUpAssistantTurn = async (timeoutMs: number): Promise<string | null> => {
-          if (!conversationSessionId) return null;
           const followUpAssistantText = await deps.waitForInterruptedLocalAssistantTurn({
             conversationSessionId,
             timeoutMs,
@@ -228,26 +284,71 @@ export function createVoiceQaController(
           return normalizedFollowUpAssistantText;
         };
         try {
-          const result = await runVoiceAgentTurnWithTools({
-            sessionId: runtimeSessionId,
-            userText: prompt,
-            currentToolSessionId: targetSessionId === VOICE_AGENT_GLOBAL_SESSION_ID ? null : targetSessionId,
-            voiceAgentSessions: {
-              sendTurn: deps.sendLocalTurn,
-            },
-            onAssistantTurn: async ({ assistantText }) => {
-              deps.qaStore.getState().appendAssistant(assistantText);
-              if (normalizeVoiceQaText(assistantText)) appendedAssistantTurn = true;
-            },
-            onToolResults: async ({ toolResults }) => {
-              if (toolResults.length > 0) {
-                deps.qaStore.getState().appendSystem(formatVoiceQaToolResultsSummary(toolResults));
-                if (shouldVoiceQaWatchForAsyncTargetFollowUp(toolResults)) {
-                  shouldWatchAsyncTargetFollowUp = true;
+          let result: Awaited<ReturnType<typeof runVoiceAgentTurnWithTools>> | null = null;
+          let interruptedFollowUpText: string | null = null;
+          const durableResult = await submitDurableVoiceTextTurn({
+            conversationSessionId,
+            text: prompt,
+            pendingPort: deps.pendingPort,
+            dispatch: async ({ localId }) => {
+              try {
+                result = await runVoiceAgentTurnWithTools({
+                  sessionId: runtimeSessionId,
+                  userText: prompt,
+                  durableLocalId: localId,
+                  currentToolSessionId: targetSessionId === VOICE_AGENT_GLOBAL_SESSION_ID ? null : targetSessionId,
+                  voiceAgentSessions: {
+                    ...(deps.commitLocalUserTranscript
+                      ? { commitUserTranscript: deps.commitLocalUserTranscript }
+                      : {}),
+                    sendTurn: deps.sendLocalTurn,
+                  },
+                  onAssistantTurn: async ({ assistantText }) => {
+                    deps.qaStore.getState().appendAssistant(assistantText);
+                    if (normalizeVoiceQaText(assistantText)) appendedAssistantTurn = true;
+                  },
+                  onToolResults: async ({ toolResults }) => {
+                    if (toolResults.length > 0) {
+                      deps.qaStore.getState().appendSystem(formatVoiceQaToolResultsSummary(toolResults));
+                      if (shouldVoiceQaWatchForAsyncTargetFollowUp(toolResults)) {
+                        shouldWatchAsyncTargetFollowUp = true;
+                      }
+                    }
+                  },
+                });
+              } catch (error) {
+                if (!isVoiceQaTurnAbortedError(error)) throw error;
+                const followUp = await appendFollowUpAssistantTurn(20_000);
+                if (followUp) appendedAssistantTurn = true;
+                interruptedFollowUpText = followUp;
+                result = {
+                  assistantTurns: followUp ? [followUp] : [],
+                  toolResultBatches: [],
+                  totalActions: 0,
+                };
+                if (!followUp) {
+                  deps.qaStore.getState().appendSystem('Local voice turn was interrupted by a higher-priority update.');
                 }
               }
             },
           });
+          if (!durableResult.ok) {
+            deps.qaStore.getState().setStatus('error');
+            throw new Error(durableResult.message ?? durableResult.reason);
+          }
+          if (interruptedFollowUpText) {
+            return { assistantText: interruptedFollowUpText, actions: [] };
+          }
+          if (durableResult.disposition === 'settled') {
+            return { assistantText: '', actions: [] };
+          }
+          if (durableResult.disposition !== 'handoff_acknowledged' || result === null) {
+            throw new Error(
+              durableResult.disposition === 'ambiguous'
+                ? 'voice_turn_dispatch_ambiguous'
+                : 'voice_turn_pending',
+            );
+          }
           if (appendedAssistantTurn && shouldWatchAsyncTargetFollowUp) {
             void appendFollowUpAssistantTurn(15_000);
           }
@@ -275,9 +376,8 @@ export function createVoiceQaController(
         }
       }
 
-      const session = deps.getRealtimeSession();
       const binding = deps.getRealtimeBinding(sessionId);
-      if (binding?.adapterId === 'realtime_elevenlabs') {
+      if (binding) {
         deps.qaStore.getState().setResolvedSessions({
           targetSessionId,
           runtimeSessionId: normalizeVoiceQaText(binding.conversationSessionId) || targetSessionId,
@@ -290,14 +390,10 @@ export function createVoiceQaController(
         return { assistantText: '', actions: [] };
       }
 
-      if (!session) {
-        const error = new Error('realtime_voice_session_not_registered');
-        deps.qaStore.getState().setStatus('error');
-        deps.qaStore.getState().appendError(error.message);
-        throw error;
-      }
-      session.sendTextMessage(prompt);
-      return { assistantText: '', actions: [] };
+      const error = new Error('realtime_voice_session_binding_required');
+      deps.qaStore.getState().setStatus('error');
+      deps.qaStore.getState().appendError(error.message);
+      throw error;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'voice_qa_send_failed';
       deps.qaStore.getState().appendError(message);
@@ -367,6 +463,18 @@ export function createVoiceQaController(
     deps.qaStore.getState().setStatus('stopping');
 
     try {
+      if (activeMediaSession) {
+        const mediaSession = activeMediaSession;
+        if (!deps.stopMedia) {
+          throw new Error('voice_qa_media_mode_unavailable');
+        }
+        await deps.stopMedia(mediaSession.sessionId, mediaSession.adapterId);
+        activeMediaSession = null;
+        deps.qaStore.getState().appendSystem('Stopped media QA session');
+        deps.qaStore.getState().setStatus('idle');
+        return;
+      }
+
       if (provider === 'local_voice_agent') {
         const binding = deps.getLocalBinding?.(sessionId) ?? null;
         const runtimeSessionId = resolveLocalVoiceQaRuntimeSessionId(binding, sessionId);

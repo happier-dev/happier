@@ -136,7 +136,7 @@ function installWorkletNodeMock(workletNode = createWorkletNode()) {
 
 function emitWorkletPcm(node: TestWorkletNode, bytes: Uint8Array): void {
   const copy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-  node.port.onmessage?.({ data: { type: 'pcm16', pcm16Bytes: copy } });
+  node.port.onmessage?.({ data: { type: 'pcm16le', bytes: copy, level: 0.25 } });
 }
 
 function installVisibilityDocumentMock(): TestVisibilityDocument {
@@ -167,6 +167,26 @@ describe('createWebDaemonSpeechPcmCapture', () => {
     vi.unstubAllGlobals();
   });
 
+  it('preserves the microphone acquisition stage in the Voice machine error', async () => {
+    const { audioContext } = createAudioContext();
+    const micSession = createMicSession({ audioContext });
+    micSession.ensureActive.mockRejectedValueOnce(new Error('permission denied'));
+    const onError = vi.fn();
+    const capture = createWebDaemonSpeechPcmCapture({
+      micSession,
+      onAudioStarted: vi.fn(),
+      onChunk: vi.fn(),
+      onError,
+    });
+
+    await capture.start();
+
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'provider_error',
+      reason: 'daemon_streaming_stt_web_mic_acquisition_failed',
+    }));
+  });
+
   it('prefers AudioWorklet capture when the browser supports it', async () => {
     const workletAddModule = vi.fn(async () => {});
     const { audioContext, source } = createAudioContext({ workletAvailable: true, workletAddModule });
@@ -182,7 +202,9 @@ describe('createWebDaemonSpeechPcmCapture', () => {
     });
 
     await capture.start();
-    emitWorkletPcm(workletNode, new Uint8Array([0, 0, 1, 0]));
+    const expected = new Uint8Array(640);
+    expected[2] = 1;
+    emitWorkletPcm(workletNode, expected);
     await capture.waitForDrain();
     await capture.stop();
 
@@ -192,7 +214,7 @@ describe('createWebDaemonSpeechPcmCapture', () => {
     expect(source.connect).toHaveBeenCalledWith(workletNode);
     expect(workletNode.connect).toHaveBeenCalledWith(audioContext.destination);
     expect(onAudioStarted).toHaveBeenCalledTimes(1);
-    expect(onChunk).toHaveBeenCalledWith(new Uint8Array([0, 0, 1, 0]));
+    expect(onChunk).toHaveBeenCalledWith(expected);
   });
 
   it('falls back to ScriptProcessor when AudioWorklet is unavailable', async () => {
@@ -211,7 +233,8 @@ describe('createWebDaemonSpeechPcmCapture', () => {
     });
 
     await capture.start();
-    processor.onaudioprocess?.(createAudioProcessEvent([-1, 0, 1, 0.5]));
+    const samples = Array.from({ length: 320 }, (_, index) => [-1, 0, 1, 0.5][index % 4]!);
+    processor.onaudioprocess?.(createAudioProcessEvent(samples));
     await capture.waitForDrain();
     await capture.stop();
 
@@ -225,7 +248,8 @@ describe('createWebDaemonSpeechPcmCapture', () => {
     if (!(firstChunk instanceof Uint8Array)) {
       throw new Error('expected PCM capture to emit PCM bytes');
     }
-    expect(toInt16Values(firstChunk)).toEqual([-32768, 0, 32767, 16384]);
+    expect(toInt16Values(firstChunk)).toHaveLength(320);
+    expect(toInt16Values(firstChunk).slice(0, 4)).toEqual([-32768, 0, 32767, 16384]);
     expect(source.disconnect).toHaveBeenCalledTimes(1);
     expect(processor.disconnect).toHaveBeenCalledTimes(1);
     expect(micSession.teardown).not.toHaveBeenCalled();
@@ -288,18 +312,22 @@ describe('createWebDaemonSpeechPcmCapture', () => {
     });
 
     await capture.start();
-    emitWorkletPcm(workletNode, new Uint8Array([1, 0]));
+    const mutedChunk = new Uint8Array(640);
+    mutedChunk[0] = 1;
+    emitWorkletPcm(workletNode, mutedChunk);
     await capture.waitForDrain();
     expect(onAudioStarted).not.toHaveBeenCalled();
     expect(onChunk).not.toHaveBeenCalled();
 
     muted = false;
-    emitWorkletPcm(workletNode, new Uint8Array([2, 0]));
+    const audibleChunk = new Uint8Array(640);
+    audibleChunk[0] = 2;
+    emitWorkletPcm(workletNode, audibleChunk);
     await capture.waitForDrain();
 
     expect(onAudioStarted).toHaveBeenCalledTimes(1);
     expect(onChunk).toHaveBeenCalledTimes(1);
-    expect(onChunk).toHaveBeenCalledWith(new Uint8Array([2, 0]));
+    expect(onChunk).toHaveBeenCalledWith(audibleChunk);
   });
 
   it('stops fallback streaming on abort and ignores later audio process callbacks', async () => {

@@ -21,19 +21,18 @@ export type SoftSlideTransitionFrameProps = Readonly<{
 }>;
 
 const USE_NATIVE_DRIVER = Platform.OS !== 'web';
+const REDUCED_MOTION_CROSSFADE_MS = 180;
 
 type WebSlidePhase = 'idle' | 'prepare' | 'animate';
 
 const stylesheet = StyleSheet.create({
     container: {
-        flex: 1,
-        minHeight: 0,
+        width: '100%',
         overflow: 'hidden',
         position: 'relative',
     },
     currentLayer: {
-        flex: 1,
-        minHeight: 0,
+        width: '100%',
     },
     exitLayer: {
         ...StyleSheet.absoluteFillObject,
@@ -67,12 +66,14 @@ type NativeBlurViewProps = Readonly<{
 let cachedNativeBlurView: React.ComponentType<NativeBlurViewProps> | null = null;
 let pendingNativeBlurView: Promise<React.ComponentType<NativeBlurViewProps> | null> | null = null;
 
-function cssTransitionStyle(phase: 'enter' | 'exit'): StyleProp<ViewStyle> {
+function cssTransitionStyle(phase: 'enter' | 'exit', reducedMotion: boolean): StyleProp<ViewStyle> {
     return {
         transitionDelay: '0ms',
-        transitionDuration: `${phase === 'enter'
-            ? softSlideTransitionTokens.durationMs.enter
-            : softSlideTransitionTokens.durationMs.exit}ms`,
+        transitionDuration: `${reducedMotion
+            ? REDUCED_MOTION_CROSSFADE_MS
+            : phase === 'enter'
+                ? softSlideTransitionTokens.durationMs.enter
+                : softSlideTransitionTokens.durationMs.exit}ms`,
         transitionProperty: 'opacity, transform, filter',
         transitionTimingFunction: softSlideTransitionTokens.easingCss,
         willChange: 'opacity, transform, filter',
@@ -127,12 +128,6 @@ function WebSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
             timeoutRef.current = null;
         }
 
-        if (props.reducedMotion) {
-            setPhase('idle');
-            setExitLayer(null);
-            return;
-        }
-
         setExitLayer(outgoingLayer);
         setPhase('prepare');
 
@@ -156,13 +151,13 @@ function WebSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
             timeoutRef.current = null;
             setExitLayer(null);
             setPhase('idle');
-        }, softSlideTransitionTokens.durationMs.enter);
+        }, props.reducedMotion ? REDUCED_MOTION_CROSSFADE_MS : softSlideTransitionTokens.durationMs.enter);
     }, [props.children, props.direction, props.reducedMotion, props.transitionKey]);
 
-    const currentOffset = phase === 'prepare' ? enterOffset(props.direction) : 0;
-    const exitOffsetX = exitLayer && phase === 'animate' ? exitOffset(exitLayer.direction) : 0;
-    const currentBlur = phase === 'prepare' ? softSlideTransitionTokens.blurPx : 0;
-    const exitBlur = exitLayer && phase === 'animate' ? softSlideTransitionTokens.blurPx : 0;
+    const currentOffset = !props.reducedMotion && phase === 'prepare' ? enterOffset(props.direction) : 0;
+    const exitOffsetX = !props.reducedMotion && exitLayer && phase === 'animate' ? exitOffset(exitLayer.direction) : 0;
+    const currentBlur = !props.reducedMotion && phase === 'prepare' ? softSlideTransitionTokens.blurPx : 0;
+    const exitBlur = !props.reducedMotion && exitLayer && phase === 'animate' ? softSlideTransitionTokens.blurPx : 0;
     const currentOpacity = phase === 'prepare' ? 0 : 1;
     const exitOpacity = exitLayer && phase === 'animate' ? 0 : 1;
 
@@ -173,7 +168,7 @@ function WebSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
                     pointerEvents="none"
                     style={[
                         styles.exitLayer,
-                        cssTransitionStyle('exit'),
+                        cssTransitionStyle('exit', props.reducedMotion),
                         {
                             opacity: exitOpacity,
                             filter: `blur(${exitBlur}px)`,
@@ -188,7 +183,7 @@ function WebSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
             <View
                 style={[
                     styles.currentLayer,
-                    cssTransitionStyle('enter'),
+                    cssTransitionStyle('enter', props.reducedMotion),
                     {
                         opacity: currentOpacity,
                         filter: `blur(${currentBlur}px)`,
@@ -298,14 +293,6 @@ function NativeSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
             timeoutRef.current = null;
         }
 
-
-        if (props.reducedMotion) {
-            enterProgress.setValue(1);
-            exitProgress.setValue(1);
-            setExitLayer(null);
-            return;
-        }
-
         enterProgress.setValue(0);
         exitProgress.setValue(0);
         setExitLayer(outgoingLayer);
@@ -315,13 +302,13 @@ function NativeSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
         Animated.parallel([
             Animated.timing(enterProgress, {
                 toValue: 1,
-                duration: softSlideTransitionTokens.durationMs.enter,
+                duration: props.reducedMotion ? REDUCED_MOTION_CROSSFADE_MS : softSlideTransitionTokens.durationMs.enter,
                 easing: softSlideTransitionTokens.easing,
                 useNativeDriver: USE_NATIVE_DRIVER,
             }),
             Animated.timing(exitProgress, {
                 toValue: 1,
-                duration: softSlideTransitionTokens.durationMs.exit,
+                duration: props.reducedMotion ? REDUCED_MOTION_CROSSFADE_MS : softSlideTransitionTokens.durationMs.exit,
                 easing: softSlideTransitionTokens.easingExit,
                 useNativeDriver: USE_NATIVE_DRIVER,
             }),
@@ -332,7 +319,7 @@ function NativeSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
             if (transitionRun === transitionRunRef.current) {
                 setExitLayer(null);
             }
-        }, softSlideTransitionTokens.durationMs.enter);
+        }, props.reducedMotion ? REDUCED_MOTION_CROSSFADE_MS : softSlideTransitionTokens.durationMs.enter);
     }, [
         enterProgress,
         exitProgress,
@@ -344,12 +331,12 @@ function NativeSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
 
     const enterTranslateX = enterProgress.interpolate({
         inputRange: [0, 1],
-        outputRange: [enterOffset(props.direction), 0],
+        outputRange: [props.reducedMotion ? 0 : enterOffset(props.direction), 0],
     });
     const exitTranslateX = exitLayer
         ? exitProgress.interpolate({
             inputRange: [0, 1],
-            outputRange: [0, exitOffset(exitLayer.direction)],
+            outputRange: [0, props.reducedMotion ? 0 : exitOffset(exitLayer.direction)],
         })
         : 0;
 
@@ -371,12 +358,14 @@ function NativeSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
                     testID={props.testID ? `${props.testID}-exit-layer` : undefined}
                 >
                     {exitLayer.children}
-                    <NativeSlideBlurOverlay
-                        opacity={exitProgress.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [0, 1],
-                        })}
-                    />
+                    {props.reducedMotion ? null : (
+                        <NativeSlideBlurOverlay
+                            opacity={exitProgress.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [0, 1],
+                            })}
+                        />
+                    )}
                 </Animated.View>
             ) : null}
             <Animated.View
@@ -390,12 +379,14 @@ function NativeSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
                 testID={props.testID ? `${props.testID}-current-layer` : undefined}
             >
                 {props.children}
-                <NativeSlideBlurOverlay
-                    opacity={enterProgress.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [1, 0],
-                    })}
-                />
+                {props.reducedMotion ? null : (
+                    <NativeSlideBlurOverlay
+                        opacity={enterProgress.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [1, 0],
+                        })}
+                    />
+                )}
             </Animated.View>
         </View>
     );

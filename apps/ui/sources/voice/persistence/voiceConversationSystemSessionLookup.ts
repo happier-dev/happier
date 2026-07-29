@@ -1,10 +1,16 @@
 import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol';
 
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
-import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
 export const VOICE_CONVERSATION_SYSTEM_SESSION_KEY = 'voice_conversation';
 export const VOICE_CONVERSATION_RETIRED_SYSTEM_SESSION_KEY = 'voice_conversation_retired';
+/**
+ * Released stable/preview Voice sessions used this marker. Keep this reader
+ * only while those releases remain inside the supported upgrade window; every
+ * successful ensure rewrites the session to `voice_conversation`.
+ */
+export const VOICE_CONVERSATION_LEGACY_SYSTEM_SESSION_KEY = 'voice_carrier';
 
 export type VoiceConversationSystemSessionCandidate = Readonly<{
     session: any;
@@ -12,17 +18,44 @@ export type VoiceConversationSystemSessionCandidate = Readonly<{
     metadata: unknown;
     updatedAt: number;
     legacyLinked: boolean;
+    legacySystemKey: boolean;
     reusable: boolean;
 }>;
 
 export function isVoiceConversationSystemSessionMetadata(metadata: unknown): boolean {
     const systemSession = readSystemSessionMetadataFromMetadata({ metadata });
     const key = String(systemSession?.key ?? '').trim();
-    return systemSession?.hidden === true && key === VOICE_CONVERSATION_SYSTEM_SESSION_KEY;
+    return systemSession?.hidden === true
+        && (
+            key === VOICE_CONVERSATION_SYSTEM_SESSION_KEY
+            || key === VOICE_CONVERSATION_LEGACY_SYSTEM_SESSION_KEY
+        );
+}
+
+/**
+ * Activity custody includes retired Voice sessions while they still carry
+ * actionable or unread state. Retirement prevents reuse; it must not strand
+ * permissions or late results already owned by the session.
+ */
+export function isVoiceConversationCustodySessionMetadata(metadata: unknown): boolean {
+    const systemSession = readSystemSessionMetadataFromMetadata({ metadata });
+    const key = String(systemSession?.key ?? '').trim();
+    return systemSession?.hidden === true
+        && (
+            key === VOICE_CONVERSATION_SYSTEM_SESSION_KEY
+            || key === VOICE_CONVERSATION_LEGACY_SYSTEM_SESSION_KEY
+            || key === VOICE_CONVERSATION_RETIRED_SYSTEM_SESSION_KEY
+        );
+}
+
+function hasLegacyVoiceConversationSystemSessionKey(metadata: unknown): boolean {
+    const systemSession = readSystemSessionMetadataFromMetadata({ metadata });
+    return systemSession?.hidden === true
+        && String(systemSession.key ?? '').trim() === VOICE_CONVERSATION_LEGACY_SYSTEM_SESSION_KEY;
 }
 
 export function resolveVoiceConversationSessionMetadataFromState(state: any, sessionId: string): unknown {
-    return resolveSessionListPreferredSessionMetadataFromState(state, sessionId) ?? state?.sessions?.[sessionId]?.metadata ?? null;
+    return readVoiceSessionOwnerMetadataFromState(state, sessionId);
 }
 
 export function shouldRetireLegacyVoiceConversationSession(session: any): boolean {
@@ -50,6 +83,7 @@ function buildVoiceConversationSystemSessionCandidate(
         metadata,
         updatedAt: typeof session.updatedAt === 'number' && Number.isFinite(session.updatedAt) ? session.updatedAt : 0,
         legacyLinked: shouldRetireLegacyVoiceConversationSession({ metadata }),
+        legacySystemKey: hasLegacyVoiceConversationSystemSessionKey(metadata),
         reusable: isReusableVoiceConversationRuntimeSession(session),
     };
 }

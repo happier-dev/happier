@@ -192,6 +192,74 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
         expect(second.localBadgeState).toEqual({ count: 1, showNonNumericDot: false });
     });
 
+    it('invalidates the badge snapshot when renderable blocked pending delivery changes', () => {
+        const selector = createSelector();
+        const first = selector(createStorageState({
+            sessionListRenderables: {
+                session1: createRenderable({
+                    id: 'session1',
+                    pendingCount: 4,
+                    pendingBlockedCount: 0,
+                    metadata: { path: '/repo', host: 'local' },
+                    updatedAt: 10,
+                } as Partial<SessionListRenderableSession> & Pick<SessionListRenderableSession, 'id'>),
+            },
+            sessionListIndexByServerId: {
+                server1: [{ type: 'session', sessionId: 'session1', serverId: 'server1', serverName: undefined }],
+            },
+        }));
+
+        const second = selector(createStorageState({
+            sessionListRenderables: {
+                session1: createRenderable({
+                    id: 'session1',
+                    pendingCount: 4,
+                    pendingBlockedCount: 1,
+                    metadata: { path: '/repo', host: 'local' },
+                    updatedAt: 10,
+                } as Partial<SessionListRenderableSession> & Pick<SessionListRenderableSession, 'id'>),
+            },
+            sessionListIndexByServerId: {
+                server1: [{ type: 'session', sessionId: 'session1', serverId: 'server1', serverName: undefined }],
+            },
+        }));
+
+        expect(first.localBadgeState).toEqual({ count: 0, showNonNumericDot: false });
+        expect(second).not.toBe(first);
+        expect(second.localBadgeState).toEqual({ count: 1, showNonNumericDot: false });
+    });
+
+    it('invalidates the badge snapshot when optimistic thinking starts without another session field changing', () => {
+        const selector = createSelector();
+        const firstSession = createSession({
+            id: 'optimistic-thinking',
+            optimisticThinkingAt: null,
+        });
+        const secondSession = {
+            ...firstSession,
+            optimisticThinkingAt: Date.now(),
+        };
+        const first = selector(createStorageState({
+            sessions: {
+                [firstSession.id]: firstSession,
+            },
+            sessionListIndexByServerId: {
+                server1: [{ type: 'session', sessionId: firstSession.id, serverId: 'server1', serverName: undefined }],
+            },
+        }));
+
+        const second = selector(createStorageState({
+            sessions: {
+                [secondSession.id]: secondSession,
+            },
+            sessionListIndexByServerId: {
+                server1: [{ type: 'session', sessionId: secondSession.id, serverId: 'server1', serverName: undefined }],
+            },
+        }));
+
+        expect(second).not.toBe(first);
+    });
+
     it('invalidates the badge snapshot when stored message versions change for a candidate session', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date(2_100));
@@ -349,6 +417,56 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
         expect(snapshot?.hasLocalActivitySource).toBe(true);
     });
 
+    it('does no per-session renderable derivation on an empty session-list delta tick', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(10_000));
+        const selector = createSelector();
+        let thinkingAtReads = 0;
+        const renderable = createRenderable({
+            id: 'session1',
+            hasUnreadMessages: true,
+            metadata: { path: '/repo', host: 'local' },
+        });
+        Object.defineProperty(renderable, 'thinkingAt', {
+            configurable: true,
+            enumerable: true,
+            get: () => {
+                thinkingAtReads += 1;
+                return 0;
+            },
+        });
+        const sessionListRenderables = { session1: renderable };
+        const first = selector(createStorageState({
+            sessionListRenderableDelta: {
+                revision: 1,
+                changedSessionIds: ['session1'],
+                removedSessionIds: [],
+                rebuiltSessionListIndex: true,
+            },
+            sessionListRenderables,
+            sessionListIndexByServerId: {
+                server1: [{ type: 'session', sessionId: 'session1', serverId: 'server1', serverName: undefined }],
+            },
+        }));
+        const readsAfterFirstSelection = thinkingAtReads;
+
+        const second = selector(createStorageState({
+            sessionListRenderableDelta: {
+                revision: 2,
+                changedSessionIds: [],
+                removedSessionIds: [],
+                rebuiltSessionListIndex: false,
+            },
+            sessionListRenderables,
+            sessionListIndexByServerId: {
+                server1: [{ type: 'session', sessionId: 'session1', serverId: 'server1', serverName: undefined }],
+            },
+        }));
+
+        expect(second).toBe(first);
+        expect(thinkingAtReads).toBe(readsAfterFirstSelection);
+    });
+
     it('counts transcript-only pending permissions from the selector state', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date(1_000));
@@ -379,6 +497,102 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
         registerStorageStateReader(() => createStorageState({}));
 
         const snapshot = selector(state);
+
+        expect(snapshot.localBadgeState.count).toBe(1);
+    });
+
+    it('counts same-id pending agent requests when the completed request arguments differ', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(12_600));
+        const selector = createSelector();
+        const snapshot = selector(createStorageState({
+            sessions: {
+                session1: createSession({
+                    id: 'session1',
+                    active: true,
+                    presence: 'online',
+                    pendingPermissionRequestCount: 1,
+                    pendingRequestObservedAt: null,
+                    metadata: { path: '/repo', host: 'local' },
+                    agentState: {
+                        controlledByUser: null,
+                        requests: {
+                            permission_retry: {
+                                tool: 'Bash',
+                                kind: 'permission',
+                                arguments: { command: 'git status' },
+                                createdAt: 12_345,
+                            },
+                        },
+                        completedRequests: {
+                            permission_retry: {
+                                tool: 'Bash',
+                                kind: 'permission',
+                                arguments: { command: 'git diff' },
+                                completedAt: 12_500,
+                                status: 'approved',
+                            },
+                        },
+                    },
+                }),
+            },
+            sessionListIndexByServerId: {
+                server1: [{ type: 'session', sessionId: 'session1', serverId: 'server1', serverName: undefined }],
+            },
+        }));
+
+        expect(snapshot.localBadgeState.count).toBe(1);
+    });
+
+    it('still probes transcript freshness when raw agent requests are terminal-covered', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(1_000));
+        const selector = createSelector();
+        const permissionMessage = createPermissionMessage(1_000);
+        const snapshot = selector(createStorageState({
+            sessions: {
+                session1: createSession({
+                    id: 'session1',
+                    active: true,
+                    activeAt: 0,
+                    presence: 'online',
+                    latestTurnStatusObservedAt: 0,
+                    metadata: { path: '/repo', host: 'local' },
+                    agentState: {
+                        controlledByUser: null,
+                        requests: {
+                            covered_request: {
+                                tool: 'Bash',
+                                kind: 'permission',
+                                arguments: { command: 'git status' },
+                                createdAt: 900,
+                            },
+                        },
+                        completedRequests: {
+                            covered_request: {
+                                tool: 'Bash',
+                                kind: 'permission',
+                                arguments: { command: 'git status' },
+                                completedAt: 950,
+                                status: 'approved',
+                            },
+                        },
+                    },
+                }),
+            },
+            sessionListIndexByServerId: {
+                server1: [{ type: 'session', sessionId: 'session1', serverId: 'server1', serverName: undefined }],
+            },
+            sessionMessages: {
+                session1: createSessionMessages({
+                    messageIdsOldestFirst: [permissionMessage.id],
+                    messagesById: {
+                        [permissionMessage.id]: permissionMessage,
+                    },
+                    messagesVersion: 2,
+                }),
+            },
+        }));
 
         expect(snapshot.localBadgeState.count).toBe(1);
     });

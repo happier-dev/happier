@@ -10,6 +10,7 @@ type InstallPermissionShellCommonModuleMocksOptions = Readonly<{
     text?: PermissionShellModuleFactory;
     router?: PermissionShellModuleFactory;
     storage?: PermissionShellStorageModuleFactory;
+    log?: PermissionShellModuleFactory;
 }>;
 
 const permissionShellModuleState = vi.hoisted(() => ({
@@ -19,6 +20,7 @@ const permissionShellModuleState = vi.hoisted(() => ({
         text: undefined as PermissionShellModuleFactory | undefined,
         router: undefined as PermissionShellModuleFactory | undefined,
         storage: undefined as PermissionShellStorageModuleFactory | undefined,
+        log: undefined as PermissionShellModuleFactory | undefined,
     },
 }));
 
@@ -31,6 +33,7 @@ export function installPermissionShellCommonModuleMocks(
         text: options.text,
         router: options.router,
         storage: options.storage,
+        log: options.log,
     };
 
     vi.mock('react-native', async () => {
@@ -96,5 +99,18 @@ export function installPermissionShellCommonModuleMocks(
 
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({});
+    });
+
+    vi.mock('@/log', async () => {
+        const activeOptions = permissionShellModuleState.options;
+        if (activeOptions.log) {
+            return await activeOptions.log();
+        }
+
+        return {
+            log: {
+                log: vi.fn(),
+            },
+        };
     });
 }

@@ -86,9 +86,44 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
         });
 
         expect(screen.findByTestId('ionicons:alert-circle')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('common.error');
+        expect(screen.findByTestId('tool-calls-group-status:error')).toMatchObject({
+            props: {
+                accessible: true,
+                accessibilityLabel: 'common.error',
+            },
+        });
     });
 
-    it('stops reporting running for pending-permission tools in inactive sessions, like the grouped row', async () => {
+    it('reports a blocked aggregate when any settled tool was denied instead of showing success', async () => {
+        const screen = await renderHeaderRow({
+            toolMessages: [
+                createToolCallMessageFixture({
+                    id: 'm0',
+                    createdAt: 1,
+                    tool: { state: 'completed' } as any,
+                }),
+                createToolCallMessageFixture({
+                    id: 'm1',
+                    createdAt: 2,
+                    tool: { state: 'error', permission: { id: 'p1', status: 'denied' } } as any,
+                }),
+            ],
+        });
+
+        expect(screen.findAllByType('ActivityIndicator' as any)).toHaveLength(0);
+        expect(screen.findByTestId('ionicons:checkmark-circle')).toBeNull();
+        expect(screen.findByTestId('ionicons:remove-circle-outline')).not.toBeNull();
+        expect(screen.findByTestId('tool-calls-group-status:permission_denied')).toMatchObject({
+            props: {
+                accessible: true,
+                accessibilityLabel: 'errors.permissionDenied',
+            },
+        });
+        expect(screen.getTextContent()).toContain('errors.permissionDenied');
+    });
+
+    it('reports inactive pending permissions as blocked instead of successful', async () => {
         const screen = await renderHeaderRow({
             interaction: {
                 canSendMessages: false,
@@ -104,11 +139,14 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
             ],
         });
 
-        // resolveInactiveSessionToolCallFailure cancels the pending permission, and the
-        // canceled permission resolves to 'permission_blocked' — not running, not error —
-        // exactly as ToolCallsGroupRow derives the grouped status today.
         expect(screen.findAllByType('ActivityIndicator' as any)).toHaveLength(0);
-        expect(screen.findByTestId('ionicons:checkmark-circle')).not.toBeNull();
+        expect(screen.findByTestId('ionicons:checkmark-circle')).toBeNull();
+        expect(screen.findByTestId('ionicons:remove-circle-outline')).not.toBeNull();
+        expect(screen.findByTestId('tool-calls-group-status:permission_canceled')).toMatchObject({
+            props: {
+                accessibilityLabel: 'errors.permissionCanceled',
+            },
+        });
     });
 
     it('keeps the header non-pressable while collapsed and collapses via setExpanded(false) when expanded', async () => {

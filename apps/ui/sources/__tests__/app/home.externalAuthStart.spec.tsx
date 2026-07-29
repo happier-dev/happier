@@ -20,12 +20,18 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 vi.mock('@expo/vector-icons/Ionicons', () => ({
     default: 'Ionicons',
+    Ionicons: 'Ionicons',
 }));
 
 const expoRouterMock = createExpoRouterMock({
     router: { push: vi.fn(), replace: vi.fn() },
 });
 vi.mock('expo-router', () => expoRouterMock.module);
+
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock();
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
@@ -82,6 +88,18 @@ vi.mock('@/components/account/auth/useAuthEntryOptions', () => ({
             toLegacySignupProvider: false,
         },
         retryServerCheck: vi.fn(),
+    }),
+}));
+
+vi.mock('@/hooks/server/useFeatureDecision', () => ({
+    useFeatureDecision: (featureId: string, scope?: unknown) => ({
+        featureId,
+        state: 'disabled',
+        blockedBy: 'server',
+        blockerCode: 'feature_disabled',
+        diagnostics: [],
+        evaluatedAt: 0,
+        scope: scope ?? { scopeKind: 'runtime' },
     }),
 }));
 

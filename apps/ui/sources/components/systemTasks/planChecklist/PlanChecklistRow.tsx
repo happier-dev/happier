@@ -115,6 +115,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 12,
         backgroundColor: theme.colors.surface.base,
     },
+    rowOnboarding: {
+        paddingHorizontal: 20,
+        paddingVertical: 18,
+        alignItems: 'flex-start',
+        gap: 14,
+    },
     rowCompact: {
         paddingVertical: 10,
         gap: 10,
@@ -135,6 +141,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 12,
     },
+    rowContentOnboarding: {
+        alignItems: 'flex-start',
+        gap: 14,
+    },
     rowContentCompact: {
         gap: 10,
     },
@@ -147,6 +157,60 @@ const stylesheet = StyleSheet.create((theme) => ({
     leadingCompact: {
         width: 22,
         height: 22,
+    },
+    leadingTimeline: {
+        width: 30,
+        alignSelf: 'stretch',
+        alignItems: 'center',
+        position: 'relative',
+        paddingTop: 1,
+    },
+    leadingTimelineCompact: {
+        width: 24,
+    },
+    timelineConnector: {
+        position: 'absolute',
+        top: 30,
+        bottom: -18,
+        width: 1,
+        backgroundColor: theme.colors.border.default,
+    },
+    timelineConnectorCompact: {
+        top: 24,
+        bottom: -10,
+    },
+    timelineNode: {
+        width: 30,
+        height: 30,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: theme.colors.border.modal,
+        backgroundColor: theme.colors.surface.base,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1,
+    },
+    timelineNodeCompact: {
+        width: 24,
+        height: 24,
+    },
+    timelineNodeDone: {
+        borderColor: theme.colors.state.success.foreground,
+        backgroundColor: theme.colors.surface.pressedOverlay,
+    },
+    timelineNodeError: {
+        borderColor: theme.colors.state.danger.foreground,
+        backgroundColor: theme.colors.surface.pressedOverlay,
+    },
+    timelineNodeRunning: {
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.pressedOverlay,
+    },
+    timelineNumber: {
+        ...Typography.default('semiBold'),
+        color: theme.colors.text.secondary,
+        fontSize: 12,
+        lineHeight: 16,
     },
     iconBox: {
         alignItems: 'center',
@@ -185,6 +249,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 8,
         flexShrink: 0,
+    },
+    trailingOnboarding: {
+        paddingTop: 2,
     },
     statusLabel: {
         ...Typography.default('semiBold'),
@@ -275,9 +342,11 @@ export type PlanChecklistRowProps = Readonly<{
     expanded: boolean;
     childrenContent?: React.ReactNode;
     depth?: number;
+    positionIndex?: number;
+    isLast?: boolean;
     onToggle: () => void;
     onToggleExpanded: () => void;
-    onCopyDiagnostics?: () => void | Promise<void>;
+    onCopyDiagnostics?: () => boolean | void | Promise<boolean | void>;
 }>;
 
 export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: PlanChecklistRowProps) {
@@ -329,6 +398,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
     const statusSlotTestID = props.testID ? `${props.testID}-status-slot` : undefined;
     const usesOnboardingVariant = props.variant === 'onboarding';
     const usesCompactNestedRow = usesOnboardingVariant && (props.depth ?? 0) > 0;
+    const timelineNodeIndex = props.positionIndex ?? 1;
 
     const detailsToggle = detailsAvailable ? (
         <View style={styles.detailsToggleSlot} pointerEvents={shouldRevealDetailsToggle ? 'auto' : 'none'}>
@@ -365,6 +435,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                 onHoverOut={Platform.OS === 'web' && detailsAvailable ? () => setHovered(false) : undefined}
                 style={({ pressed }) => ([
                     styles.row,
+                    usesOnboardingVariant ? styles.rowOnboarding : null,
                     usesCompactNestedRow ? styles.rowCompact : null,
                     props.selected ? styles.rowSelected : null,
                     hovered && !props.selected && rowOnPress ? styles.rowHovered : null,
@@ -372,12 +443,30 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                     dimRow ? styles.rowDisabled : null,
                 ])}
             >
-                <View style={[styles.rowContent, usesCompactNestedRow ? styles.rowContentCompact : null]}>
-                    <View style={[styles.leading, usesCompactNestedRow ? styles.leadingCompact : null]}>
+                <View style={[
+                    styles.rowContent,
+                    usesOnboardingVariant ? styles.rowContentOnboarding : null,
+                    usesCompactNestedRow ? styles.rowContentCompact : null,
+                ]}>
+                    <View style={[
+                        usesOnboardingVariant ? styles.leadingTimeline : styles.leading,
+                        usesCompactNestedRow ? styles.leadingTimelineCompact : null,
+                        !usesOnboardingVariant && usesCompactNestedRow ? styles.leadingCompact : null,
+                    ]}>
+                        {usesOnboardingVariant && !props.isLast ? (
+                            <View style={[
+                                styles.timelineConnector,
+                                usesCompactNestedRow ? styles.timelineConnectorCompact : null,
+                            ]} />
+                        ) : null}
                         <View
                             testID={statusSlotTestID}
                             style={[
-                                usesOnboardingVariant ? styles.iconPlainBase : styles.iconBoxBase,
+                                usesOnboardingVariant ? styles.timelineNode : styles.iconBoxBase,
+                                usesOnboardingVariant && status === 'done' ? styles.timelineNodeDone : null,
+                                usesOnboardingVariant && status === 'error' ? styles.timelineNodeError : null,
+                                usesOnboardingVariant && status === 'running' ? styles.timelineNodeRunning : null,
+                                usesCompactNestedRow ? styles.timelineNodeCompact : null,
                                 !usesOnboardingVariant && status === 'done' ? styles.iconBoxDone : null,
                                 !usesOnboardingVariant && status === 'error' ? styles.iconBoxError : null,
                                 !usesOnboardingVariant && status === 'queued' ? styles.iconBoxQueued : null,
@@ -391,22 +480,26 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                             {status === 'running' ? (
                                 <ActivitySpinner
                                     size={usesCompactNestedRow ? 16 : (usesOnboardingVariant ? 18 : 16)}
-                                    color={theme.colors.accent.blue}
+                                    color={usesOnboardingVariant ? theme.colors.text.secondary : theme.colors.accent.blue}
                                 />
                             ) : iconName ? (
-                                <Ionicons
-                                    name={iconName}
-                                    size={usesCompactNestedRow ? 18 : (usesOnboardingVariant ? 22 : 16)}
-                                    color={
-                                        status === 'done'
-                                            ? theme.colors.state.success.foreground
-                                            : status === 'error'
-                                                ? theme.colors.state.danger.foreground
-                                                : props.selected
-                                                    ? theme.colors.accent.blue
-                                                    : theme.colors.text.tertiary
-                                    }
-                                />
+                                usesOnboardingVariant && status !== 'done' && status !== 'error' ? (
+                                    <Text style={styles.timelineNumber}>{timelineNodeIndex}</Text>
+                                ) : (
+                                    <Ionicons
+                                        name={iconName}
+                                        size={usesCompactNestedRow ? 16 : (usesOnboardingVariant ? 18 : 16)}
+                                        color={
+                                            status === 'done'
+                                                ? theme.colors.state.success.foreground
+                                                : status === 'error'
+                                                    ? theme.colors.state.danger.foreground
+                                                    : props.selected
+                                                        ? (usesOnboardingVariant ? theme.colors.text.primary : theme.colors.accent.blue)
+                                                        : theme.colors.text.tertiary
+                                        }
+                                    />
+                                )
                             ) : null}
                         </View>
                     </View>
@@ -415,7 +508,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                         <Text
                             testID={props.testID ? `${props.testID}-title` : undefined}
                             style={[styles.title, usesCompactNestedRow ? styles.titleCompact : null]}
-                            numberOfLines={1}
+                            numberOfLines={usesOnboardingVariant ? undefined : 1}
                         >
                             {props.item.title}
                         </Text>
@@ -431,7 +524,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                     </View>
                 </View>
 
-                <View style={styles.trailing}>
+                <View style={[styles.trailing, usesOnboardingVariant ? styles.trailingOnboarding : null]}>
                     {statusLabel ? (
                         <Text style={styles.statusLabel}>{statusLabel}</Text>
                     ) : null}

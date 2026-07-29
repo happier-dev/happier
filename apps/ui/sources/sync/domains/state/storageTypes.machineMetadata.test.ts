@@ -25,4 +25,17 @@ describe('MachineMetadataSchema', () => {
         } as any);
         expect((parsed as any).windowsRemoteSessionLaunchMode).toBeUndefined();
     });
+
+    it('preserves the daemon typed session-attach capability when advertised', () => {
+        const parsed = MachineMetadataSchema.parse({
+            host: 'host',
+            platform: 'darwin',
+            happyCliVersion: '0.2.10',
+            happyHomeDir: '/tmp/happier',
+            homeDir: '/tmp',
+            daemonTerminalSessionAttachSupported: true,
+        });
+
+        expect(parsed.daemonTerminalSessionAttachSupported).toBe(true);
+    });
 });

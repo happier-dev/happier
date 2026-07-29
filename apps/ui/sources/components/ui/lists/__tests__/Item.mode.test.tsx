@@ -22,6 +22,15 @@ function findHostNodeByTestID(
     return screen.findAllByTestId(testID).find((node) => typeof node.type === 'string');
 }
 
+function hasAncestor(node: ReactTestInstance, ancestor: ReactTestInstance) {
+    let parent = node.parent;
+    while (parent) {
+        if (parent === ancestor) return true;
+        parent = parent.parent;
+    }
+    return false;
+}
+
 installUiListsCommonModuleMocks();
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -123,7 +132,7 @@ describe('Item mode prop', () => {
         const screen = await renderScreen(<Item title="Compact by setting" subtitle="Subtitle" />);
 
         const titleNode = findTextNode(screen, 'Compact by setting');
-        expect(titleNode?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ fontSize: 14, lineHeight: 20 })]));
+        expect(flattenTestStyle(titleNode?.props?.style)).toMatchObject({ fontSize: 14, lineHeight: 20 });
         uiItemDensitySetting = 'comfortable';
     });
 
@@ -134,7 +143,7 @@ describe('Item mode prop', () => {
         const screen = await renderScreen(<Item title="Explicit density" subtitle="Subtitle" density="comfortable" />);
 
         const titleNode = findTextNode(screen, 'Explicit density');
-        expect(titleNode?.props?.style).not.toEqual(expect.arrayContaining([expect.objectContaining({ fontSize: 13, lineHeight: 18 })]));
+        expect(flattenTestStyle(titleNode?.props?.style)).not.toMatchObject({ fontSize: 13, lineHeight: 18 });
         uiItemDensitySetting = 'comfortable';
     });
 
@@ -174,6 +183,99 @@ describe('Item mode prop', () => {
         const chevronIcon = screen.findAllByProps({ name: 'chevron-forward' })[0];
         expect(chevronIcon?.props?.size).toBe(15);
         uiItemDensitySetting = 'comfortable';
+    });
+
+    it('suppresses the chevron when a rightElement is present (default)', async () => {
+        const { Item } = await import('../Item');
+        const screen = await renderScreen(
+            <Item title="Badged" onPress={() => {}} rightElement={React.createElement('Text', null, 'badge')} />,
+        );
+        expect(screen.findAllByProps({ name: 'chevron-forward' })).toHaveLength(0);
+    });
+
+    it('keeps the chevron alongside a rightElement when keepChevronWithRightElement is set', async () => {
+        const { Item } = await import('../Item');
+        const screen = await renderScreen(
+            <Item
+                title="Badged + navigates"
+                onPress={() => {}}
+                rightElement={React.createElement('Text', null, 'badge')}
+                keepChevronWithRightElement
+            />,
+        );
+        expect(screen.findAllByProps({ name: 'chevron-forward' }).length).toBeGreaterThan(0);
+    });
+
+    it('renders interactive rightElement controls outside the row Pressable when requested', async () => {
+        const rowPressSpy = vi.fn();
+        const rightPressSpy = vi.fn();
+        const { Item } = await import('../Item');
+        const { Pressable, Text } = await import('react-native');
+
+        const screen = await renderScreen(
+            <Item
+                title="Plugin row"
+                testID="plugin-row"
+                onPress={rowPressSpy}
+                rightElement={
+                    <Pressable testID="plugin-row-action" onPress={rightPressSpy}>
+                        <Text>Reload</Text>
+                    </Pressable>
+                }
+                rightElementOutsidePressable
+            />,
+        );
+
+        const row = findHostNodeByTestID(screen, 'plugin-row');
+        const action = findHostNodeByTestID(screen, 'plugin-row-action');
+        if (!row || !action) {
+            throw new Error('Expected row and action host nodes to render');
+        }
+
+        expect(row.type).toBe('Pressable');
+        expect(action.type).toBe('Pressable');
+        expect(hasAncestor(action, row)).toBe(false);
+
+        await act(async () => {
+            row.props.onPress();
+            action.props.onPress();
+        });
+
+        expect(rowPressSpy).toHaveBeenCalledTimes(1);
+        expect(rightPressSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders requested interactive rightElement controls as row siblings on native', async () => {
+        const reactNative = await import('react-native');
+        const previousPlatform = reactNative.Platform.OS;
+        reactNative.Platform.OS = 'ios';
+
+        try {
+            const { Item } = await import('../Item');
+            const screen = await renderScreen(
+                <Item
+                    title="Model"
+                    testID="native-model-row"
+                    onPress={() => {}}
+                    rightElement={(
+                        <reactNative.Pressable testID="native-model-action" onPress={() => {}} />
+                    )}
+                    rightElementOutsidePressable
+                />,
+            );
+
+            const row = findHostNodeByTestID(screen, 'native-model-row');
+            const action = findHostNodeByTestID(screen, 'native-model-action');
+            if (!row || !action) {
+                throw new Error('Expected native row and action host nodes to render');
+            }
+
+            expect(row.type).toBe('Pressable');
+            expect(action.type).toBe('Pressable');
+            expect(hasAncestor(action, row)).toBe(false);
+        } finally {
+            reactNative.Platform.OS = previousPlatform;
+        }
     });
 
     it('applies a hover background on web for interactive items', async () => {
@@ -237,5 +339,41 @@ describe('Item mode prop', () => {
 
         expect(hoverInSpy).toHaveBeenCalledTimes(1);
         expect(hoverOutSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps option semantics and activates the row once from Space or Enter without stopping propagation', async () => {
+        const onPress = vi.fn();
+        const { Item } = await import('../Item');
+        const screen = await renderScreen(
+            <Item
+                title="Shared model"
+                testID="model-option"
+                onPress={onPress}
+                accessibilityRole="button"
+                webRole="option"
+                accessibilityLabel="Gateway, Work, Shared model"
+                selected
+            />,
+        );
+
+        const row = findHostNodeByTestID(screen, 'model-option');
+        if (!row) throw new Error('Expected model option host node');
+        expect(row.props.role).toBe('option');
+        expect(row.props.accessibilityLabel).toBe('Gateway, Work, Shared model');
+        expect(row.props['aria-selected']).toBe(true);
+        expect(row.props.tabIndex).toBe(0);
+
+        for (const key of [' ', 'Enter']) {
+            const event = {
+                key,
+                nativeEvent: { key },
+                preventDefault: vi.fn(),
+                stopPropagation: vi.fn(),
+            };
+            await act(async () => row.props.onKeyDown(event));
+            expect(event.preventDefault).toHaveBeenCalledOnce();
+            expect(event.stopPropagation).not.toHaveBeenCalled();
+        }
+        expect(onPress).toHaveBeenCalledTimes(2);
     });
 });

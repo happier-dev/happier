@@ -186,7 +186,7 @@ export const voiceHooks = {
     if (resolvePolicy(sessionId).level === 'none') return;
 
     reportSession(sessionId);
-    const contextUpdate = formatSessionOnline(sessionId, metadata);
+    const contextUpdate = formatSessionOnline(sessionId, metadata, getVoiceContextPrefs(sessionId));
     reportContextualUpdate(sessionId, contextUpdate);
   },
 
@@ -195,7 +195,7 @@ export const voiceHooks = {
     if (resolvePolicy(sessionId).level === 'none') return;
 
     reportSession(sessionId);
-    const contextUpdate = formatSessionOffline(sessionId, metadata);
+    const contextUpdate = formatSessionOffline(sessionId, metadata, getVoiceContextPrefs(sessionId));
     reportContextualUpdate(sessionId, contextUpdate);
   },
 
@@ -206,7 +206,7 @@ export const voiceHooks = {
     // This is used as an activity signal; it does not override the active target.
     if (resolvePolicy(sessionId).level === 'none') return;
     reportSession(sessionId);
-    reportContextualUpdate(sessionId, formatSessionFocus(sessionId, metadata));
+    reportContextualUpdate(sessionId, formatSessionFocus(sessionId, metadata, getVoiceContextPrefs(sessionId)));
   },
 
   onAgentRequest(sessionId: string, requestId: string, requestKind: AgentRequestKind, toolName: string, toolArgs: any) {
@@ -308,7 +308,14 @@ export const voiceHooks = {
     const recentMessages = Array.isArray(messages) && messages.length > 0
       ? messages
       : readStoredSessionMessages(storage.getState(), sessionId);
-    reportInterruptingUpdate(sessionId, formatReadyEvent(sessionId, recentMessages, getVoiceContextPrefs(sessionId)));
+    const formatterPrefs = getVoiceContextPrefs(sessionId);
+    const privacy = readVoicePrivacySettings(storage.getState().settings);
+    reportInterruptingUpdate(sessionId, formatReadyEvent(sessionId, recentMessages, {
+      ...formatterPrefs,
+      // Ready announcements are not snippet serialization. Preserve the raw
+      // provider-bound privacy decision instead of the update-level projection.
+      voiceShareRecentMessages: privacy.shareRecentMessages,
+    }));
   },
 
   onVoiceStopped() {

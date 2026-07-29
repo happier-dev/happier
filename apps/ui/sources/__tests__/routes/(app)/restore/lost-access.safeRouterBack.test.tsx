@@ -19,7 +19,6 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('@/encryption/libsodium.lib', () => ({
     default: {},

@@ -1,6 +1,10 @@
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+
 export type LastViewedSessionSeqInput = Readonly<{
     lastViewedSessionSeq?: number | null;
     metadata?: unknown;
+    metadataLayoutVersion?: number;
+    ownerMetadataView?: unknown;
 }>;
 
 export function resolveLastViewedSessionSeq(session: LastViewedSessionSeqInput): number | undefined {
@@ -8,7 +12,11 @@ export function resolveLastViewedSessionSeq(session: LastViewedSessionSeqInput):
         return Math.max(0, Math.trunc(session.lastViewedSessionSeq));
     }
 
-    const metadata = session.metadata;
+    const metadata = readSessionOwnerMetadataView({
+        metadataLayoutVersion: session.metadataLayoutVersion,
+        metadata: session.metadata ?? null,
+        ownerMetadataView: session.ownerMetadataView,
+    });
     if (!metadata || typeof metadata !== 'object') {
         return undefined;
     }

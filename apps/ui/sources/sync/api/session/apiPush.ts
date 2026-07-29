@@ -179,7 +179,6 @@ export async function deletePushToken(
         method: 'DELETE',
         headers: {
             'Authorization': `Bearer ${credentials.token}`,
-            'Content-Type': 'application/json',
         },
     });
 

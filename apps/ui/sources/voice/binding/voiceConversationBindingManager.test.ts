@@ -113,7 +113,7 @@ describe('createVoiceSessionBindingManager', () => {
       requestedTargetSessionId: 's1',
     });
 
-    const next = manager.syncTargetSession({
+    const next = await manager.syncTargetSession({
       controlSessionId: 'voice-global',
       targetSessionId: 's2',
     });
@@ -223,6 +223,39 @@ describe('createVoiceSessionBindingManager', () => {
   });
 
   describe('ensureBoundForOpenConversation', () => {
+    it('keeps a bound-conversation attachment fixed when the visible route drifts', async () => {
+      const { createVoiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+      const { createVoiceSessionBindingManager } = await import('@/voice/binding/voiceConversationBindingManager');
+
+      const store = createVoiceSessionBindingStore();
+      const resolveBinding = vi.fn(async () => null);
+      const manager = createVoiceSessionBindingManager({
+        store,
+        nowMs: () => 1,
+        resolveBinding,
+        resolveExistingBindingByConversationSessionId: () => ({
+          adapterId: 'realtime_codex',
+          controlSessionId: 'voice-global',
+          conversationSessionId: 'hidden-codex-voice-a',
+          transcriptMode: 'native_session',
+          targetSessionId: null,
+          updatedAt: 1,
+        }),
+        resolveConversationTargeting: () => 'bound_conversation',
+      });
+
+      const result = await manager.ensureBoundForOpenConversation({
+        openConversationSessionId: 'hidden-codex-voice-a',
+        fallbackControlSessionId: 'voice-global',
+        activeAdapterId: 'realtime_codex',
+        providerId: 'realtime_codex',
+        requestedTargetSessionId: 'visible-session-b',
+      });
+
+      expect(resolveBinding).not.toHaveBeenCalled();
+      expect(result).toEqual({ conversationSessionId: 'hidden-codex-voice-a' });
+    });
+
     it('routes to the existing conversation session without rebinding when the target already matches', async () => {
       const { createVoiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
       const { createVoiceSessionBindingManager } = await import('@/voice/binding/voiceConversationBindingManager');

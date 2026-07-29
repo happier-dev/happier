@@ -132,6 +132,7 @@ describe('wizardSelectors', () => {
         })).toEqual([
             'setup_chooser',
             'host_relay_local',
+            'providers_optional',
             'done',
         ]);
 
@@ -147,6 +148,7 @@ describe('wizardSelectors', () => {
             'host_relay_local',
             'relay_access',
             'confirm_switch_relay',
+            'providers_optional',
             'done',
         ]);
 
@@ -164,6 +166,7 @@ describe('wizardSelectors', () => {
             'relay_access',
             'relay_access_prereqs',
             'confirm_switch_relay',
+            'providers_optional',
             'done',
         ]);
 
@@ -181,6 +184,7 @@ describe('wizardSelectors', () => {
             'relay_access',
             'relay_access_prereqs',
             'confirm_switch_relay',
+            'providers_optional',
             'done',
         ]);
 
@@ -198,6 +202,7 @@ describe('wizardSelectors', () => {
             'relay_access',
             'relay_access_prereqs',
             'confirm_switch_relay',
+            'providers_optional',
             'done',
         ]);
 
@@ -247,7 +252,7 @@ describe('wizardSelectors', () => {
     });
 
     it('reports skip and progress metadata', () => {
-        expect(canSkipWizardStep(onboardingContext, 'auth')).toBe(true);
+        expect(canSkipWizardStep(onboardingContext, 'auth')).toBe(false);
         expect(canSkipWizardStep(setupContext, 'confirm_switch_relay')).toBe(false);
         expect(getNextWizardStepId(onboardingContext, 'auth')).toBe('auth_restore');
         expect(getPreviousWizardStepId({

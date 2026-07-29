@@ -19,14 +19,31 @@ export function VoicePrivacySection(props: { voice: VoiceSettings; setVoice: (ne
   };
 
   return (
-    <ItemGroup title={t('settingsVoice.privacy.title')}>
+    <ItemGroup
+      title={t('settingsVoice.privacy.title')}
+      footer={t('settingsVoice.privacy.footer')}
+    >
       <Item
         title={t('settingsVoice.privacy.shareSessionSummary')}
-        rightElement={<Switch value={privacy.shareSessionSummary} onValueChange={(v) => setPrivacy({ shareSessionSummary: v })} />}
+        subtitle={t('settingsVoice.privacy.shareSessionSummarySubtitle')}
+        rightElement={(
+          <Switch
+            accessibilityLabel={t('settingsVoice.privacy.shareSessionSummary')}
+            value={privacy.shareSessionSummary}
+            onValueChange={(v) => setPrivacy({ shareSessionSummary: v })}
+          />
+        )}
       />
       <Item
         title={t('settingsVoice.privacy.shareRecentMessages')}
-        rightElement={<Switch value={privacy.shareRecentMessages} onValueChange={(v) => setPrivacy({ shareRecentMessages: v })} />}
+        subtitle={t('settingsVoice.privacy.shareRecentMessagesSubtitle')}
+        rightElement={(
+          <Switch
+            accessibilityLabel={t('settingsVoice.privacy.shareRecentMessages')}
+            value={privacy.shareRecentMessages}
+            onValueChange={(v) => setPrivacy({ shareRecentMessages: v })}
+          />
+        )}
       />
       {privacy.shareRecentMessages ? (
         <Item
@@ -50,20 +67,36 @@ export function VoicePrivacySection(props: { voice: VoiceSettings; setVoice: (ne
       ) : null}
       <Item
         title={t('settingsVoice.privacy.shareToolNames')}
-        rightElement={<Switch value={privacy.shareToolNames} onValueChange={(v) => setPrivacy({ shareToolNames: v })} />}
+        subtitle={t('settingsVoice.privacy.shareToolNamesSubtitle')}
+        rightElement={(
+          <Switch
+            accessibilityLabel={t('settingsVoice.privacy.shareToolNames')}
+            value={privacy.shareToolNames}
+            onValueChange={(v) => setPrivacy({ shareToolNames: v })}
+          />
+        )}
       />
       <Item
         title={t('settingsVoice.privacy.shareDeviceInventory')}
         subtitle={t('settingsVoice.privacy.shareDeviceInventorySubtitle')}
-        rightElement={
-          <Switch value={privacy.shareDeviceInventory} onValueChange={(v) => setPrivacy({ shareDeviceInventory: v })} />
-        }
+        rightElement={(
+          <Switch
+            accessibilityLabel={t('settingsVoice.privacy.shareDeviceInventory')}
+            value={privacy.shareDeviceInventory}
+            onValueChange={(v) => setPrivacy({ shareDeviceInventory: v })}
+          />
+        )}
       />
       <Item
         title={t('settingsVoice.privacy.sharePermissionRequests')}
-        rightElement={
-          <Switch value={privacy.sharePermissionRequests} onValueChange={(v) => setPrivacy({ sharePermissionRequests: v })} />
-        }
+        subtitle={t('settingsVoice.privacy.sharePermissionRequestsSubtitle')}
+        rightElement={(
+          <Switch
+            accessibilityLabel={t('settingsVoice.privacy.sharePermissionRequests')}
+            value={privacy.sharePermissionRequests}
+            onValueChange={(v) => setPrivacy({ sharePermissionRequests: v })}
+          />
+        )}
       />
     </ItemGroup>
   );

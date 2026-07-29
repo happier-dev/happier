@@ -13,7 +13,6 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 
 type SessionItemProps = ModelBackedSessionItemTestProps;
 
-vi.mock('react-native-reanimated', () => ({}));
 installSessionShellCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -48,6 +47,9 @@ installSessionShellCommonModuleMocks({
                     linkedProviders: [],
                     connectedServices: [],
                     connectedServicesV2: [],
+                    connectedServiceCredentialRevisionsV1: [],
+                    connectedAccountsV4: [],
+                    connectedAccountGroupsV4: [],
                 }),
                 useSession: () => null,
                 useSessionListMeaningfulActivityAt: () => null,

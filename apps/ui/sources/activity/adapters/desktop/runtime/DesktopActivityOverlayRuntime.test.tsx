@@ -12,13 +12,39 @@ const sessionsState = vi.hoisted(() => ({
     value: [
         {
             id: 'session-1',
+            serverId: 'server-1',
+            createdAt: 1,
+            updatedAt: 1_000,
             seq: 4,
             lastViewedSessionSeq: 2,
             active: true,
+            activeAt: 950,
+            archivedAt: null,
             presence: 'online',
             thinking: false,
+            thinkingAt: null,
+            latestTurnStatus: null,
+            latestTurnStatusObservedAt: null,
+            meaningfulActivityAt: 1_000,
+            lastRuntimeIssue: null,
+            lastTurnCompletedAt: null,
+            pendingVersion: 1,
+            pendingCount: 1,
             pendingPermissionRequestCount: 1,
             pendingUserActionRequestCount: 0,
+            pendingRequestObservedAt: 950,
+            agentStateVersion: 1,
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    'permission-1': {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: {},
+                        createdAt: 950,
+                    },
+                },
+            },
             metadata: {
                 summary: { text: 'Primary session', updatedAt: 1 },
                 path: '/Users/tester/project',
@@ -94,8 +120,9 @@ vi.mock('@/sync/domains/state/storage', async () => {
         sessions: Object.fromEntries(
             sessionsState.value.map((session) => [session.id, session]),
         ),
-        sessionListIndexByServerId: sessionListIndexState.value,
+        sessionMessages: {},
         sessionListRenderables: {},
+        sessionListIndexByServerId: sessionListIndexState.value,
         concurrentSessionListCacheByServerId: {},
         localSettings: localSettingsState.value,
         settings: settingsState.value,
@@ -120,6 +147,45 @@ vi.mock('@/sync/domains/state/storage', async () => {
         useSettings: () => settingsState.value,
     });
 });
+
+vi.mock('./useDesktopActivityOverlaySource', () => ({
+    useDesktopActivityOverlaySource: () => ({
+        isDataReady: true,
+        sessionsById: Object.fromEntries(
+            sessionsState.value.map((session) => [session.id, session]),
+        ),
+        sessionListRenderablesById: {},
+        sessionListIndexByServerId: sessionListIndexState.value,
+        concurrentSessionListCacheByServerId: {},
+        sessionMessagesById: {},
+        serverProfilesById: {
+            'server-1': {
+                id: 'server-1',
+                name: 'Server 1',
+                serverUrl: 'https://server.example.test',
+                createdAt: 1,
+                updatedAt: 1,
+                lastUsedAt: 1,
+                source: 'manual',
+            },
+            'server-2': {
+                id: 'server-2',
+                name: 'Server 2',
+                serverUrl: 'https://server-two.example.test',
+                createdAt: 1,
+                updatedAt: 1,
+                lastUsedAt: 1,
+                source: 'manual',
+            },
+        },
+        activeServer: {
+            serverId: 'server-1',
+            serverUrl: 'https://server.example.test',
+            generation: 1,
+        },
+        quotaSummaries: [],
+    }),
+}));
 
 vi.mock('./desktopActivityOverlayBridge', async () => {
     const actual = await vi.importActual<typeof import('./desktopActivityOverlayBridge')>('./desktopActivityOverlayBridge');
@@ -152,6 +218,7 @@ vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries', ()
 
 describe('DesktopActivityOverlayRuntime', () => {
     beforeEach(() => {
+        const now = Date.now();
         isTauriDesktopMock.mockReturnValue(true);
         isDesktopOverlayWindowContextMock.mockReturnValue(false);
         syncDesktopActivityOverlayMock.mockImplementation(async () => {});
@@ -165,13 +232,38 @@ describe('DesktopActivityOverlayRuntime', () => {
             {
                 id: 'session-1',
                 serverId: 'server-1',
+                createdAt: 1,
+                updatedAt: now,
                 seq: 4,
                 lastViewedSessionSeq: 2,
                 active: true,
+                activeAt: now - 50,
+                archivedAt: null,
                 presence: 'online',
                 thinking: false,
+                thinkingAt: null,
+                latestTurnStatus: null,
+                latestTurnStatusObservedAt: null,
+                meaningfulActivityAt: now,
+                lastRuntimeIssue: null,
+                lastTurnCompletedAt: null,
+                pendingVersion: 1,
+                pendingCount: 1,
                 pendingPermissionRequestCount: 1,
                 pendingUserActionRequestCount: 0,
+                pendingRequestObservedAt: now - 50,
+                agentStateVersion: 1,
+                agentState: {
+                    controlledByUser: null,
+                    requests: {
+                        'permission-1': {
+                            tool: 'Bash',
+                            kind: 'permission',
+                            arguments: {},
+                            createdAt: now - 50,
+                        },
+                    },
+                },
                 metadata: {
                     summary: { text: 'Primary session', updatedAt: 1 },
                     path: '/Users/tester/project',
@@ -533,47 +625,50 @@ describe('DesktopActivityOverlayRuntime', () => {
             });
         });
 
-        expect(actionExecutorExecuteMock).toHaveBeenCalledWith(
-            'session.permission.respond',
-            expect.objectContaining({
-                sessionId: 'session-1',
-                serverId: 'server-1',
-                requestId: 'permission-1',
-                decision: 'allow',
-            }),
+        const permissionCall = actionExecutorExecuteMock.mock.calls.find(([actionId]) => actionId === 'session.permission.respond');
+        expect(permissionCall?.[1]).toEqual(expect.objectContaining({
+            sessionId: 'session-1',
+            requestId: 'permission-1',
+            decision: 'allow',
+        }));
+        expect(permissionCall?.[1]).not.toHaveProperty('serverId');
+        expect(permissionCall?.[2]).toEqual(
             expect.objectContaining({
                 surface: 'ui',
                 defaultSessionId: 'session-1',
+                serverId: 'server-1',
             }),
         );
-        expect(actionExecutorExecuteMock).toHaveBeenCalledWith(
-            'session.user_action.answer',
-            expect.objectContaining({
-                sessionId: 'session-1',
-                serverId: 'server-1',
-                requestId: 'question-1',
-                answers: [
-                    {
-                        question: 'Which deployment target?',
-                        answer: 'Production',
-                    },
-                ],
-            }),
+        const userActionCall = actionExecutorExecuteMock.mock.calls.find(([actionId]) => actionId === 'session.user_action.answer');
+        expect(userActionCall?.[1]).toEqual(expect.objectContaining({
+            sessionId: 'session-1',
+            requestId: 'question-1',
+            answers: [
+                {
+                    question: 'Which deployment target?',
+                    answer: 'Production',
+                },
+            ],
+        }));
+        expect(userActionCall?.[1]).not.toHaveProperty('serverId');
+        expect(userActionCall?.[2]).toEqual(
             expect.objectContaining({
                 surface: 'ui',
                 defaultSessionId: 'session-1',
+                serverId: 'server-1',
             }),
         );
-        expect(actionExecutorExecuteMock).toHaveBeenCalledWith(
-            'session.message.send',
-            expect.objectContaining({
-                sessionId: 'session-1',
-                serverId: 'server-1',
-                message: 'Continue',
-            }),
+        const quickReplyCall = actionExecutorExecuteMock.mock.calls.find(([actionId]) => actionId === 'session.message.send');
+        expect(quickReplyCall?.[1]).toEqual(expect.objectContaining({
+            sessionId: 'session-1',
+            message: 'Continue',
+        }));
+        expect(quickReplyCall?.[1]).not.toHaveProperty('serverId');
+        expect(quickReplyCall?.[2]).toEqual(
             expect.objectContaining({
                 surface: 'ui',
                 defaultSessionId: 'session-1',
+                serverId: 'server-1',
             }),
         );
         expect(routerPushMock).not.toHaveBeenCalled();
@@ -661,14 +756,15 @@ describe('DesktopActivityOverlayRuntime', () => {
             'session.message.send',
             expect.objectContaining({
                 sessionId: 'session-1',
-                serverId: 'server-1',
                 message: 'Continue',
             }),
             expect.objectContaining({
                 surface: 'ui',
                 defaultSessionId: 'session-1',
+                serverId: 'server-1',
             }),
         );
+        expect(actionExecutorExecuteMock.mock.calls[0]?.[1]).not.toHaveProperty('serverId');
         expect(emitDesktopActivityOverlayInteractionResultMock).toHaveBeenCalledWith({
             requestId: 'quick-reply-request-1',
             ok: false,
@@ -739,18 +835,44 @@ describe('DesktopActivityOverlayRuntime', () => {
     it('validates direct actions against the latest selected session server scope after mount', async () => {
         const { DesktopActivityOverlayRuntime } = await import('./DesktopActivityOverlayRuntime');
         const screen = await renderScreen(React.createElement(DesktopActivityOverlayRuntime));
+        const now = Date.now();
 
         sessionsState.value = [
             {
                 id: 'session-1',
                 serverId: 'server-2',
+                createdAt: 1,
+                updatedAt: now,
                 seq: 5,
                 lastViewedSessionSeq: 2,
                 active: true,
+                activeAt: now - 50,
+                archivedAt: null,
                 presence: 'online',
                 thinking: false,
+                thinkingAt: null,
+                latestTurnStatus: null,
+                latestTurnStatusObservedAt: null,
+                meaningfulActivityAt: now,
+                lastRuntimeIssue: null,
+                lastTurnCompletedAt: null,
+                pendingVersion: 1,
+                pendingCount: 1,
                 pendingPermissionRequestCount: 1,
                 pendingUserActionRequestCount: 0,
+                pendingRequestObservedAt: now - 50,
+                agentStateVersion: 1,
+                agentState: {
+                    controlledByUser: null,
+                    requests: {
+                        'permission-1': {
+                            tool: 'Bash',
+                            kind: 'permission',
+                            arguments: {},
+                            createdAt: now - 50,
+                        },
+                    },
+                },
                 metadata: {
                     summary: { text: 'Primary session', updatedAt: 2 },
                     path: '/Users/tester/project',
@@ -796,21 +918,33 @@ describe('DesktopActivityOverlayRuntime', () => {
             'session.message.send',
             expect.objectContaining({
                 sessionId: 'session-1',
-                serverId: 'server-2',
                 message: 'Continue',
             }),
             expect.objectContaining({
                 surface: 'ui',
                 defaultSessionId: 'session-1',
+                serverId: 'server-2',
             }),
         );
+        expect(actionExecutorExecuteMock.mock.calls[0]?.[1]).not.toHaveProperty('serverId');
         expect(routerPushMock).not.toHaveBeenCalled();
     });
 
     it('auto-collapses the overlay after the configured auto-hide delay', async () => {
         vi.useFakeTimers();
+        sessionsState.value = sessionsState.value.map((session) => ({
+            ...session,
+            seq: 4,
+            latestReadyEventSeq: 4,
+            lastViewedSessionSeq: 4,
+            pendingCount: 0,
+            pendingPermissionRequestCount: 0,
+            pendingRequestObservedAt: null,
+            agentState: null,
+        }));
         localSettingsState.value = {
             ...localSettingsState.value,
+            desktopOverlayVisibilityMode: 'active_sessions',
             desktopOverlayAutoHideEnabled: true,
             desktopOverlayAutoHideDelayMs: 1200,
         };
@@ -843,8 +977,19 @@ describe('DesktopActivityOverlayRuntime', () => {
 
     it('pauses runtime auto-collapse while the overlay window reports input locked', async () => {
         vi.useFakeTimers();
+        sessionsState.value = sessionsState.value.map((session) => ({
+            ...session,
+            seq: 4,
+            latestReadyEventSeq: 4,
+            lastViewedSessionSeq: 4,
+            pendingCount: 0,
+            pendingPermissionRequestCount: 0,
+            pendingRequestObservedAt: null,
+            agentState: null,
+        }));
         localSettingsState.value = {
             ...localSettingsState.value,
+            desktopOverlayVisibilityMode: 'active_sessions',
             desktopOverlayAutoHideEnabled: true,
             desktopOverlayAutoHideDelayMs: 1200,
         };
@@ -887,8 +1032,19 @@ describe('DesktopActivityOverlayRuntime', () => {
 
     it('pauses runtime auto-collapse while the expanded surface reports pointer engagement', async () => {
         vi.useFakeTimers();
+        sessionsState.value = sessionsState.value.map((session) => ({
+            ...session,
+            seq: 4,
+            latestReadyEventSeq: 4,
+            lastViewedSessionSeq: 4,
+            pendingCount: 0,
+            pendingPermissionRequestCount: 0,
+            pendingRequestObservedAt: null,
+            agentState: null,
+        }));
         localSettingsState.value = {
             ...localSettingsState.value,
+            desktopOverlayVisibilityMode: 'active_sessions',
             desktopOverlayAutoHideEnabled: true,
             desktopOverlayAutoHideDelayMs: 1200,
         };

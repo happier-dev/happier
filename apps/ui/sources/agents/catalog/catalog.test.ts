@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest';
 
 import { AGENT_IDS as SHARED_AGENT_IDS } from '@happier-dev/agents';
 
-import { AGENT_IDS, DEFAULT_AGENT_ID, getAgentCore } from './catalog';
+import {
+    AGENT_IDS,
+    DEFAULT_AGENT_ID,
+    getAgentCore,
+    resolveBundledAgentIdFromContributionIdentity,
+} from './catalog';
 
 describe('agents/catalog', () => {
     it('re-exports the UI-supported subset of shared agent ids', () => {
@@ -31,6 +36,21 @@ describe('agents/catalog', () => {
         for (const id of AGENT_IDS) {
             expect(getAgentCore(id)).toBe(getAgentCore(id));
         }
+    });
+
+    it('resolves exact generated contribution identities without deriving the Agent id from localId', () => {
+        expect(resolveBundledAgentIdFromContributionIdentity({
+            pluginId: 'happier.agent.codex',
+            localId: 'codex',
+        })).toBe('codex');
+        expect(resolveBundledAgentIdFromContributionIdentity({
+            pluginId: 'happier.agent.ohmypi',
+            localId: 'ohmypi',
+        })).toBe('ohMyPi');
+        expect(resolveBundledAgentIdFromContributionIdentity({
+            pluginId: 'acme.colliding-agent',
+            localId: 'codex',
+        })).toBeNull();
     });
 
     it('writes vendor resume ids through the catalog metadata helper', async () => {

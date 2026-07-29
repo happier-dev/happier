@@ -5,6 +5,7 @@ import { downloadInChunks, uploadInChunks } from './chunkTransferClient';
 import {
     createEncryptedTransferChunkEnvelope,
     createTransferRecipientKeyPair,
+    decryptEncryptedTransferChunkEnvelope,
 } from './transferChunkEncryption';
 
 // This suite intentionally lives alongside the transferRuntime plumbing internals so feature code
@@ -67,6 +68,51 @@ describe('chunkTransferClient', () => {
             { uploadedBytes: 4, totalBytes: 5 },
             { uploadedBytes: 5, totalBytes: 5 },
         ]);
+    });
+
+    it('resumes uploads at a global chunk index without duplicating or skipping bytes', async () => {
+        const bytes = new TextEncoder().encode('hello');
+        const recipientKeyPair = createTransferRecipientKeyPair({
+            randomBytes: (length) => new Uint8Array(length).fill(7),
+        });
+        const readBytes = vi.fn(async (offset: number, length: number) => bytes.slice(offset, offset + length));
+        const sendChunk = vi.fn(async (_request: {
+            uploadId: string;
+            index: number;
+            payloadBase64: string;
+            encryptedDataKeyEnvelopeBase64: string;
+        }) => ({ success: true as const }));
+        const onProgress = vi.fn();
+
+        await expect(uploadInChunks({
+            totalBytes: bytes.byteLength,
+            initialChunkIndex: 1,
+            readBytes,
+            init: async () => ({
+                success: true as const,
+                uploadId: 'resume-upload',
+                chunkSizeBytes: 2,
+                recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
+            }),
+            sendChunk,
+            finalize: async () => ({ success: true as const }),
+            onProgress,
+        })).resolves.toEqual({ success: true });
+
+        expect(readBytes.mock.calls).toEqual([[2, 2], [4, 1]]);
+        expect(sendChunk.mock.calls.map(([request]) => request.index)).toEqual([1, 2]);
+        expect(onProgress.mock.calls.map(([progress]) => progress)).toEqual([
+            { uploadedBytes: 4, totalBytes: 5 },
+            { uploadedBytes: 5, totalBytes: 5 },
+        ]);
+        const firstRequest = sendChunk.mock.calls[0]![0];
+        await expect(decryptEncryptedTransferChunkEnvelope({
+            transferId: firstRequest.uploadId,
+            sequence: firstRequest.index,
+            payloadBase64: firstRequest.payloadBase64,
+            encryptedDataKeyEnvelopeBase64: firstRequest.encryptedDataKeyEnvelopeBase64,
+            recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
+        })).resolves.toEqual(new TextEncoder().encode('ll'));
     });
 
     it('aborts uploads when the signal is canceled', async () => {

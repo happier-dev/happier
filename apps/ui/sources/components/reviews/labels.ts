@@ -2,8 +2,6 @@ import type { ReviewCommentStateV1 } from '@happier-dev/protocol';
 
 export type ReviewCommentLabels = Readonly<{
     empty: string;
-    directWriteGranted: string;
-    directWriteMissing: string;
     engine: string;
     stale: string;
     outdated: string;

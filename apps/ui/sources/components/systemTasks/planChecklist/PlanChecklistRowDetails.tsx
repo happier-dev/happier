@@ -3,6 +3,8 @@ import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { CodeBlockViewFrame } from '@/components/ui/code/blocks/CodeBlockViewFrame';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -126,11 +128,12 @@ export type PlanChecklistRowDetailsProps = Readonly<{
     childrenContent?: React.ReactNode;
     error?: PlanChecklistExecutionError;
     logs?: readonly PlanChecklistLogEntry[];
-    onCopyDiagnostics?: () => void | Promise<void>;
+    onCopyDiagnostics?: () => boolean | void | Promise<boolean | void>;
 }>;
 
 export const PlanChecklistRowDetails = React.memo(function PlanChecklistRowDetails(props: PlanChecklistRowDetailsProps) {
     const styles = stylesheet;
+    const copyFeedback = useTemporaryCopyFeedback();
     const logText = React.useMemo(() => formatLogs(props.logs ?? []), [props.logs]);
     const hasLogs = Boolean(logText.trim().length > 0);
     const hasDetails = typeof props.renderDetails === 'function';
@@ -144,6 +147,14 @@ export const PlanChecklistRowDetails = React.memo(function PlanChecklistRowDetai
     if (!hasDetails && !hasLogs && !hasError && !hasChildrenContent) {
         return null;
     }
+
+    const handleCopyDiagnostics = React.useCallback(() => {
+        void Promise.resolve(props.onCopyDiagnostics?.()).then((copied) => {
+            if (copied === true) {
+                copyFeedback.markCopied('diagnostics');
+            }
+        });
+    }, [copyFeedback, props.onCopyDiagnostics]);
 
     return (
         <View testID={props.testID} style={styles.root}>
@@ -200,15 +211,19 @@ export const PlanChecklistRowDetails = React.memo(function PlanChecklistRowDetai
                     <Pressable
                         testID={props.testID ? `${props.testID}-copy-diagnostics` : undefined}
                         accessibilityRole="button"
-                        onPress={() => void props.onCopyDiagnostics?.()}
+                        onPress={handleCopyDiagnostics}
                         style={({ pressed }) => [
                             styles.copyButton,
                             pressed ? styles.copyButtonPressed : null,
                         ]}
                     >
-                        <Text style={styles.copyButtonText}>
-                            {t('common.copyWithLabel', { label: t('common.details') })}
-                        </Text>
+                        {copyFeedback.isCopied('diagnostics') ? (
+                            <CopiedPill visible testID={props.testID ? `${props.testID}-copy-diagnostics-feedback` : undefined} />
+                        ) : (
+                            <Text style={styles.copyButtonText}>
+                                {t('common.copyWithLabel', { label: t('common.details') })}
+                            </Text>
+                        )}
                     </Pressable>
                 </View>
             ) : null}

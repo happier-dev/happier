@@ -8,8 +8,14 @@ import { resolveScopedSessionCryptoContext } from '@/sync/runtime/orchestration/
 import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
 import type { ResolvedServerSessionRpcContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import {
+  areServerAccountScopesEqual,
+  createServerAccountScope,
+  type ServerAccountScope,
+} from '@/sync/domains/scope/serverAccountScope';
 
 import type { SocketRpcResult } from './serverScopedRpcTypes';
+import { scopedSocketEmitWithAck } from './scopedSocketEmitWithAck';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -28,6 +34,7 @@ async function callScopedSessionRpc<R, A>(params: Readonly<{
   method: string;
   payload: A;
   context: Extract<ResolvedServerSessionRpcContext, { scope: 'scoped' }>;
+  onIssued?: () => void;
 }>): Promise<R> {
   const cryptoContext = await resolveScopedSessionCryptoContext({
     serverId: params.context.targetServerId,
@@ -45,13 +52,17 @@ async function callScopedSessionRpc<R, A>(params: Readonly<{
   });
   try {
     if (cryptoContext.encryptionMode === 'plain') {
-      const result = (await socket
-        .timeout(params.context.timeoutMs)
-        .emitWithAck(SOCKET_RPC_EVENTS.CALL, {
+      const result = await scopedSocketEmitWithAck<SocketRpcResult>({
+        socket,
+        event: SOCKET_RPC_EVENTS.CALL,
+        timeoutMs: params.context.timeoutMs,
+        payload: {
           method: `${params.sessionId}:${params.method}`,
           params: params.payload,
           timeoutMs: params.context.timeoutMs,
-        })) as SocketRpcResult;
+        },
+        onIssued: params.onIssued,
+      });
 
       if (result.ok) return result.result as R;
 
@@ -77,13 +88,17 @@ async function callScopedSessionRpc<R, A>(params: Readonly<{
       });
     }
 
-    const result = (await socket
-      .timeout(params.context.timeoutMs)
-      .emitWithAck(SOCKET_RPC_EVENTS.CALL, {
+    const result = await scopedSocketEmitWithAck<SocketRpcResult>({
+      socket,
+      event: SOCKET_RPC_EVENTS.CALL,
+      timeoutMs: params.context.timeoutMs,
+      payload: {
         method: `${params.sessionId}:${params.method}`,
         params: await sessionEncryption.encryptRaw(params.payload),
         timeoutMs: params.context.timeoutMs,
-      })) as SocketRpcResult;
+      },
+      onIssued: params.onIssued,
+    });
 
     if (result.ok) {
       return (await sessionEncryption.decryptRaw(result.result)) as R;
@@ -104,16 +119,26 @@ export async function sessionRpcWithServerScope<R, A>(params: Readonly<{
   method: string;
   payload: A;
   timeoutMs?: number;
+  onIssued?: () => void;
 }>): Promise<R> {
   const sessionId = normalizeId(params.sessionId);
   const context = await resolveServerScopedSessionContext({ serverId: params.serverId, timeoutMs: params.timeoutMs });
+  let exactIssuanceAttempted = false;
+  const onIssued = params.onIssued
+    ? () => {
+        exactIssuanceAttempted = true;
+        params.onIssued?.();
+      }
+    : undefined;
 
   if (context.scope === 'active') {
     try {
       return await apiSocket.sessionRPC<R, A>(sessionId, params.method, params.payload, {
         timeoutMs: context.timeoutMs,
+        ...(onIssued ? { onIssued } : {}),
       });
     } catch (error) {
+      if (exactIssuanceAttempted) throw error;
       if (!shouldRetryWithScopedSessionContext(error)) throw error;
       const retryContext = await resolveServerScopedSessionContext({
         serverId: params.serverId,
@@ -126,6 +151,7 @@ export async function sessionRpcWithServerScope<R, A>(params: Readonly<{
         method: params.method,
         payload: params.payload,
         context: retryContext,
+        onIssued,
       });
     }
   }
@@ -134,5 +160,35 @@ export async function sessionRpcWithServerScope<R, A>(params: Readonly<{
     method: params.method,
     payload: params.payload,
     context,
+    onIssued,
+  });
+}
+
+export async function sessionRpcWithServerAccountScope<R, A>(params: Readonly<{
+  sessionId: string;
+  scope: ServerAccountScope;
+  method: string;
+  payload: A;
+  timeoutMs?: number;
+  onIssued?: () => void;
+}>): Promise<R> {
+  const context = await resolveServerScopedSessionContext({
+    serverId: params.scope.serverId,
+    timeoutMs: params.timeoutMs,
+    preferScoped: true,
+  });
+  if (context.scope !== 'scoped') {
+    throw new Error('Exact pending dispatch scope did not resolve to scoped credentials');
+  }
+  const resolvedScope = createServerAccountScope(context.targetServerId, context.targetAccountId);
+  if (!areServerAccountScopesEqual(resolvedScope, params.scope)) {
+    throw new Error('Exact pending dispatch authenticated account does not match persisted scope');
+  }
+  return await callScopedSessionRpc({
+    sessionId: normalizeId(params.sessionId),
+    method: params.method,
+    payload: params.payload,
+    context,
+    onIssued: params.onIssued,
   });
 }

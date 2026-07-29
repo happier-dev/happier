@@ -1,11 +1,20 @@
 import { getVoiceAdapterRegistry } from './voiceAdapterRegistry';
 import { getVoiceSessionSnapshot } from './voiceSessionStore';
 import type { VoiceAdapterController, VoiceAdapterId, VoiceSessionSnapshot } from './types';
+import {
+    VoiceCaptureBusyError,
+    voiceCaptureAdmissionController,
+    type VoiceCaptureAdmissionController,
+    type VoiceCaptureAdmissionLease,
+} from '@/voice/runtime/input/VoiceCaptureAdmissionController';
 
 export type VoiceSessionLifecycleController = Readonly<{
-    dispose: () => void;
+    bargeIn: (sessionId: string) => Promise<void>;
+    dispose: () => Promise<void>;
+    getConfiguredProviderId: () => VoiceAdapterId | 'off' | null;
     getSnapshot: () => VoiceSessionSnapshot;
     interrupt: (sessionId: string) => Promise<void>;
+    rearmAfterCredentialAuthorityChange: (options?: Readonly<{ fenceActive?: boolean }>) => void;
     sendContextUpdate: (sessionId: string, update: string) => void;
     setConfiguredProviderId: (providerId: VoiceAdapterId | 'off' | null) => void;
     setMuted: (sessionId: string, muted: boolean) => Promise<void>;
@@ -42,16 +51,130 @@ function matchesCurrentOwner(current: VoiceSessionSnapshot, candidate: VoiceSess
     return true;
 }
 
+function isTerminalProviderAuthFailure(snapshot: VoiceSessionSnapshot): boolean {
+    return snapshot.status === 'disconnected'
+        && snapshot.canStop === false
+        && snapshot.errorCode === 'provider_auth_invalid';
+}
+
 export function createVoiceSessionLifecycleController(deps?: Readonly<{
+    captureAdmission?: VoiceCaptureAdmissionController;
     getRegistry?: () => ReturnType<typeof getVoiceAdapterRegistry>;
 }>): VoiceSessionLifecycleController {
     const getRegistry = deps?.getRegistry ?? getVoiceAdapterRegistry;
+    const captureAdmissionOwner =
+        deps?.captureAdmission ?? voiceCaptureAdmissionController;
     let configuredProviderId: VoiceAdapterId | 'off' | null = null;
     let publishedSnapshot = getVoiceSessionSnapshot();
     let pendingAdapterSwitch: PendingAdapterSwitch | null = null;
+    let suppressedProviderAuthFailureAdapterId: string | null = null;
+    let startingAdapter: Readonly<{
+        adapter: VoiceAdapterController;
+        sessionId: string;
+    }> | null = null;
+    let realtimeCaptureAdmission: Readonly<{
+        adapterId: string;
+        sessionId: string;
+        lease: VoiceCaptureAdmissionLease;
+    }> | null = null;
     let disposed = false;
+    let disposePromise: Promise<void> | null = null;
     const listeners = new Set<() => void>();
-    const adapterUnsubs: Array<() => void> = [];
+    const adapterUnsubs = new Map<string, () => void>();
+    const adapterStopPromises = new Map<string, Promise<void>>();
+
+    const releaseRealtimeCaptureAdmission = (match?: Readonly<{
+        adapterId?: string;
+        sessionId?: string;
+    }>): void => {
+        const admission = realtimeCaptureAdmission;
+        if (!admission) return;
+        if (match?.adapterId && match.adapterId !== admission.adapterId) return;
+        if (match?.sessionId && match.sessionId !== admission.sessionId) return;
+        realtimeCaptureAdmission = null;
+        admission.lease.release();
+    };
+
+    const startAdapter = async (
+        adapter: VoiceAdapterController,
+        sessionId: string,
+    ): Promise<void> => {
+        if (adapter.engineKind !== 'realtime') {
+            const starting = { adapter, sessionId };
+            startingAdapter = starting;
+            try {
+                await adapter.start({ sessionId });
+            } finally {
+                if (startingAdapter === starting) {
+                    startingAdapter = null;
+                }
+            }
+            return;
+        }
+        if (realtimeCaptureAdmission) {
+            throw new VoiceCaptureBusyError('conversation');
+        }
+        const admission = captureAdmissionOwner.acquire('conversation');
+        if (admission.status === 'busy') {
+            throw new VoiceCaptureBusyError(admission.activeOwner);
+        }
+        realtimeCaptureAdmission = {
+            adapterId: adapter.id,
+            sessionId,
+            lease: admission.lease,
+        };
+        const starting = { adapter, sessionId };
+        startingAdapter = starting;
+        try {
+            await adapter.start({ sessionId });
+            if (adapter.getSnapshot().status === 'disconnected') {
+                releaseRealtimeCaptureAdmission({
+                    adapterId: adapter.id,
+                    sessionId,
+                });
+            }
+        } catch (error) {
+            releaseRealtimeCaptureAdmission({
+                adapterId: adapter.id,
+                sessionId,
+            });
+            throw error;
+        } finally {
+            if (startingAdapter === starting) {
+                startingAdapter = null;
+            }
+        }
+    };
+
+    const stopAdapter = async (
+        adapter: VoiceAdapterController,
+        sessionId: string,
+    ): Promise<void> => {
+        const stopKey = `${adapter.id}\u0000${sessionId}`;
+        const existingStop = adapterStopPromises.get(stopKey);
+        if (existingStop) {
+            await existingStop;
+            return;
+        }
+        const stop = (async () => {
+            try {
+                await adapter.stop({ sessionId });
+            } finally {
+                releaseRealtimeCaptureAdmission({
+                    adapterId: adapter.id,
+                    sessionId,
+                });
+            }
+        })();
+        adapterStopPromises.set(stopKey, stop);
+        try {
+            await stop;
+        } finally {
+            if (adapterStopPromises.get(stopKey) === stop) {
+                adapterStopPromises.delete(stopKey);
+            }
+        }
+    };
 
     const emitChange = () => {
         if (disposed) {
@@ -80,7 +203,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             return null;
         }
         const snapshot = publishedSnapshot;
-        if (snapshot.status === 'disconnected' || !snapshot.adapterId) {
+        if (snapshot.status === 'disconnected' || snapshot.canStop !== true || !snapshot.adapterId) {
             return null;
         }
 
@@ -102,10 +225,6 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         const registry = getRegistry();
         const adapters = registry.list();
         const snapshots = adapters.map((adapter) => adapter.getSnapshot());
-        if (configuredProviderId === null) {
-            return createDisconnectedSnapshot();
-        }
-
         const pending = pendingAdapterSwitch;
         if (pending) {
             const sourceSnapshot = snapshots.find((snapshot) => snapshot.adapterId === pending.sourceAdapterId) ?? null;
@@ -139,17 +258,24 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             return owned;
         }
 
-        if (configuredProviderId === 'off') {
+        if (configuredProviderId === null || configuredProviderId === 'off') {
             return createDisconnectedSnapshot();
         }
 
-        // Only the configured provider may surface as active. The machine now
+        // Only the configured provider may surface as active or terminal. The machine now
         // carries its owning adapterId, so non-owning adapters already project a
         // disconnected snapshot; a blind `find(status !== 'disconnected')`
         // fallback would let a stale/non-configured adapter snapshot (or a
-        // lingering error) hijack the published session — so it is removed.
+        // lingering error) hijack the published session. Keep the configured
+        // provider's error-bearing disconnected projection so recoverable
+        // failures such as microphone denial remain visible after teardown.
         const preferred = snapshots.find(
-            (snapshot) => snapshot.adapterId === configuredProviderId && snapshot.status !== 'disconnected',
+            (snapshot) => snapshot.adapterId === configuredProviderId
+                && (snapshot.status !== 'disconnected' || Boolean(snapshot.errorCode?.trim()))
+                && !(
+                    snapshot.adapterId === suppressedProviderAuthFailureAdapterId
+                    && isTerminalProviderAuthFailure(snapshot)
+                ),
         );
         return preferred ?? createDisconnectedSnapshot();
     };
@@ -199,8 +325,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 startRequested: true,
             };
             pendingAdapterSwitch = startedSwitch;
-            void targetAdapter
-                .start({ sessionId: pending.sessionId })
+            void startAdapter(targetAdapter, pending.sessionId)
                 .catch(() => {
                     // A failed target start must not leave a dangling pending
                     // switch pinning the published snapshot to `disconnected`
@@ -225,8 +350,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         }
 
         if (
-            configuredProviderId === null
-            || publishedSnapshot.status === 'disconnected'
+            publishedSnapshot.status === 'disconnected'
             || !publishedSnapshot.adapterId
             || publishedSnapshot.adapterId === configuredProviderId
             || !publishedSnapshot.sessionId
@@ -247,7 +371,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             sourceDisconnectObserved: false,
         };
 
-        void sourceAdapter.stop({ sessionId: publishedSnapshot.sessionId }).finally(() => {
+        void stopAdapter(sourceAdapter, publishedSnapshot.sessionId).finally(() => {
             publishSnapshot();
         });
     };
@@ -257,39 +381,153 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             return publishedSnapshot;
         }
         publishedSnapshot = computeSnapshot();
+        const admission = realtimeCaptureAdmission;
+        if (admission) {
+            const adapter = getRegistry().get(admission.adapterId);
+            const snapshot = adapter?.getSnapshot();
+            if (!adapter || snapshot?.status === 'disconnected' || snapshot?.canStop !== true) {
+                releaseRealtimeCaptureAdmission({
+                    adapterId: admission.adapterId,
+                    sessionId: admission.sessionId,
+                });
+            }
+        }
         emitChange();
         reconcilePendingSwitch();
         return publishedSnapshot;
     };
 
-    for (const adapter of getRegistry().list()) {
-        const unsub = adapter.subscribe?.(() => {
-            publishSnapshot();
-        });
-        if (typeof unsub === 'function') {
-            adapterUnsubs.push(unsub);
+    const refreshAdapterSubscriptions = () => {
+        const adapters = getRegistry().list();
+        const currentIds = new Set(adapters.map((adapter) => adapter.id));
+        for (const [adapterId, unsubscribe] of adapterUnsubs) {
+            if (currentIds.has(adapterId)) continue;
+            adapterUnsubs.delete(adapterId);
+            try { unsubscribe(); } catch { /* ignore teardown failures */ }
         }
-    }
+        for (const adapter of adapters) {
+            if (adapterUnsubs.has(adapter.id)) continue;
+            const unsubscribe = adapter.subscribe?.(() => publishSnapshot());
+            if (typeof unsubscribe === 'function') adapterUnsubs.set(adapter.id, unsubscribe);
+        }
+    };
+    refreshAdapterSubscriptions();
+    const unsubscribeRegistry = getRegistry().subscribe?.(() => {
+        refreshAdapterSubscriptions();
+        publishSnapshot();
+    });
 
     return {
+        bargeIn: async (sessionId) => {
+            if (disposed) return;
+            const owned = resolveOwnedAdapter();
+            if (!owned?.adapter.bargeIn) return;
+            await owned.adapter.bargeIn({ sessionId: owned.snapshot.sessionId ?? sessionId });
+        },
         dispose: () => {
+            if (disposePromise) return disposePromise;
+            const owned = resolveOwnedAdapter();
+            const disposalTargets = new Map<string, Readonly<{
+                adapter: VoiceAdapterController;
+                sessionId: string;
+            }>>();
+            if (owned) {
+                const sessionId = owned.snapshot.sessionId ?? publishedSnapshot.sessionId ?? '';
+                disposalTargets.set(`${owned.adapter.id}\u0000${sessionId}`, {
+                    adapter: owned.adapter,
+                    sessionId,
+                });
+            }
+            if (startingAdapter) {
+                disposalTargets.set(
+                    `${startingAdapter.adapter.id}\u0000${startingAdapter.sessionId}`,
+                    startingAdapter,
+                );
+            }
+            const admission = realtimeCaptureAdmission;
+            if (admission) {
+                const adapter = getRegistry().get(admission.adapterId);
+                if (adapter) {
+                    disposalTargets.set(`${adapter.id}\u0000${admission.sessionId}`, {
+                        adapter,
+                        sessionId: admission.sessionId,
+                    });
+                }
+            }
             disposed = true;
             pendingAdapterSwitch = null;
-            for (const unsub of adapterUnsubs.splice(0)) {
+            unsubscribeRegistry?.();
+            for (const unsub of adapterUnsubs.values()) {
                 try {
                     unsub();
                 } catch {
                     // ignore unsubscribe failures during teardown
                 }
             }
+            adapterUnsubs.clear();
             listeners.clear();
+            const disposal = (async () => {
+                if (disposalTargets.size === 0) {
+                    releaseRealtimeCaptureAdmission();
+                    return;
+                }
+                await Promise.allSettled(
+                    [...disposalTargets.values()].map(
+                        async (target) => await stopAdapter(target.adapter, target.sessionId),
+                    ),
+                );
+                releaseRealtimeCaptureAdmission();
+            })();
+            disposePromise = disposal;
+            return disposal;
         },
         getSnapshot: () => publishedSnapshot,
+        getConfiguredProviderId: () => configuredProviderId,
         interrupt: async (sessionId) => {
             if (disposed) return;
             const owned = resolveOwnedAdapter();
             if (!owned) return;
             await owned.adapter.interrupt({ sessionId: owned.snapshot.sessionId ?? sessionId });
+        },
+        rearmAfterCredentialAuthorityChange: (options) => {
+            if (disposed) return;
+            const owned = resolveOwnedAdapter();
+            const stopTargets = new Map<string, Readonly<{
+                adapter: VoiceAdapterController;
+                sessionId: string;
+            }>>();
+            if (startingAdapter) {
+                stopTargets.set(
+                    `${startingAdapter.adapter.id}\u0000${startingAdapter.sessionId}`,
+                    startingAdapter,
+                );
+            }
+            if (
+                owned
+                && (
+                    owned.snapshot.status === 'connecting'
+                    || options?.fenceActive === true
+                )
+            ) {
+                const sessionId = owned.snapshot.sessionId ?? publishedSnapshot.sessionId ?? '';
+                stopTargets.set(`${owned.adapter.id}\u0000${sessionId}`, {
+                    adapter: owned.adapter,
+                    sessionId,
+                });
+            }
+            if (stopTargets.size > 0) {
+                void Promise.allSettled(
+                    [...stopTargets.values()].map(
+                        async (target) => await stopAdapter(target.adapter, target.sessionId),
+                    ),
+                ).then(() => {
+                    publishSnapshot();
+                });
+                return;
+            }
+            if (!isTerminalProviderAuthFailure(publishedSnapshot)) return;
+            suppressedProviderAuthFailureAdapterId = publishedSnapshot.adapterId;
+            publishSnapshot();
         },
         sendContextUpdate: (sessionId, update) => {
             if (disposed) return;
@@ -305,6 +543,9 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         },
         setConfiguredProviderId: (providerId) => {
             if (disposed) return;
+            if (providerId !== configuredProviderId) {
+                suppressedProviderAuthFailureAdapterId = null;
+            }
             configuredProviderId = providerId;
             publishSnapshot();
         },
@@ -318,7 +559,8 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             if (disposed) return;
             const owned = resolveOwnedAdapter();
             if (!owned) return;
-            await owned.adapter.stop({ sessionId: owned.snapshot.sessionId ?? sessionId });
+            const ownedSessionId = owned.snapshot.sessionId ?? sessionId;
+            await stopAdapter(owned.adapter, ownedSessionId);
         },
         subscribe: (listener) => {
             listeners.add(listener);
@@ -330,13 +572,19 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             if (disposed) return;
             const owned = resolveOwnedAdapter();
             if (owned) {
-                await owned.adapter.stop({ sessionId: owned.snapshot.sessionId ?? sessionId });
+                await stopAdapter(
+                    owned.adapter,
+                    owned.snapshot.sessionId ?? sessionId,
+                );
                 return;
             }
 
             const adapter = resolveConfiguredAdapter();
             if (!adapter) return;
-            await adapter.start({ sessionId });
+            if (suppressedProviderAuthFailureAdapterId === adapter.id) {
+                suppressedProviderAuthFailureAdapterId = null;
+            }
+            await startAdapter(adapter, sessionId);
         },
     };
 }

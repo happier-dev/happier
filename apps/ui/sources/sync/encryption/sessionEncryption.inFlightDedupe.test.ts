@@ -21,6 +21,23 @@ function createBase64Decryptor(
 }
 
 describe('SessionEncryption metadata in-flight dedupe', () => {
+    it('returns the exact raw metadata envelope for layout-aware strict parsing', async () => {
+        const sharedMetadata = {
+            v: 1,
+            summary: { text: 'Safe title', updatedAt: 10 },
+        };
+        const decryptBase64 = vi.fn<Base64DecryptFn>(async () => [sharedMetadata]);
+        const sessionEncryption = new SessionEncryption(
+            'session-1',
+            createBase64Decryptor(decryptBase64),
+            new EncryptionCache(),
+        );
+
+        await expect(
+            sessionEncryption.decryptMetadataPayload(1, 'ciphertext-layout-v1'),
+        ).resolves.toEqual(sharedMetadata);
+    });
+
     it('shares concurrent metadata decrypts for the same session version and ciphertext', async () => {
         const metadata = { path: '/repo', host: 'machine' };
         let releaseDecrypt: () => void = () => {};

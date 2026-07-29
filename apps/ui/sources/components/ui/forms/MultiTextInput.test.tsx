@@ -13,12 +13,17 @@ import { TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT } from './largeTextInputPolicy
 const localSettingState = vi.hoisted(() => ({
     uiFontScale: 1,
 }));
+const recordLargeTextInputDiagnosticMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: (key: string) => {
         if (key === 'uiFontScale') return localSettingState.uiFontScale;
         return undefined;
     },
+}));
+
+vi.mock('@/utils/system/userInteractionDiagnostics', () => ({
+    recordLargeTextInputDiagnostic: (...args: unknown[]) => recordLargeTextInputDiagnosticMock(...args),
 }));
 
 installFormsCommonModuleMocks({
@@ -51,6 +56,7 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 describe('MultiTextInput', () => {
     afterEach(() => {
         localSettingState.uiFontScale = 1;
+        recordLargeTextInputDiagnosticMock.mockReset();
     });
 
     it('forwards testID to the TextInput', async () => {
@@ -128,6 +134,59 @@ describe('MultiTextInput', () => {
         expect(input.props.scrollEnabled).toBe(true);
     });
 
+    it('records native large-text changes with selection metadata only', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const screen = await renderScreen(<MultiTextInput
+            testID="composer-input"
+            value=""
+            onChangeText={() => {}}
+        />);
+        const input = screen.tree.findByType('TextInput' as any);
+        const largeText = 'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
+
+        await act(async () => {
+            input.props.onChangeText(largeText);
+        });
+
+        expect(recordLargeTextInputDiagnosticMock).toHaveBeenCalledWith({
+            phase: 'native-change',
+            platform: 'web',
+            surface: 'agentInput',
+            textLength: largeText.length,
+            selection: { start: largeText.length, end: largeText.length },
+            valueLength: 0,
+        });
+    });
+
+    it('records native large-text content-size changes with height metadata only', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const largeText = 'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
+        const screen = await renderScreen(<MultiTextInput
+            testID="composer-input"
+            value={largeText}
+            maxHeight={144}
+            onChangeText={() => {}}
+        />);
+        const input = screen.tree.findByType('TextInput' as any);
+
+        await act(async () => {
+            input.props.onContentSizeChange({
+                nativeEvent: {
+                    contentSize: { height: 220.4 },
+                },
+            });
+        });
+
+        expect(recordLargeTextInputDiagnosticMock).toHaveBeenCalledWith({
+            phase: 'native-content-size',
+            platform: 'web',
+            surface: 'agentInput',
+            textLength: largeText.length,
+            contentHeight: 221,
+            maxHeight: 144,
+        });
+    });
+
     it('keeps native autogrow as the layout owner after content-size reports', async () => {
         const { MultiTextInput } = await import('./MultiTextInput');
         const onContentHeightChange = vi.fn();
@@ -199,6 +258,183 @@ describe('MultiTextInput', () => {
         expect(onContentHeightChange).toHaveBeenCalledWith(88);
     });
 
+    it('reports the post-paste cursor after inserted native text instead of forcing document end', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const onStateChange = vi.fn();
+        const prefix = 'before ';
+        const suffix = ' after';
+        const initialText = `${prefix}${suffix}`;
+        const insertedText = `${'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1)} /r`;
+        const pastedText = `${prefix}${insertedText}${suffix}`;
+        const screen = await renderScreen(<MultiTextInput
+            testID="composer-input"
+            value={initialText}
+            onChangeText={() => {}}
+            onStateChange={onStateChange}
+        />);
+        const input = screen.tree.findByType('TextInput' as any);
+
+        await act(async () => {
+            input.props.onSelectionChange({
+                nativeEvent: { selection: { start: prefix.length, end: prefix.length } },
+            });
+            input.props.onChangeText(pastedText);
+        });
+
+        expect(onStateChange).toHaveBeenLastCalledWith({
+            text: pastedText,
+            selection: {
+                start: prefix.length + insertedText.length,
+                end: prefix.length + insertedText.length,
+            },
+        });
+    });
+
+    it('keeps initially oversized native text as the full editable TextInput value', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const ref = React.createRef<NativeMultiTextInputHandle>();
+        const largeText = `${'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1)}TAIL`;
+
+        const screen = await renderScreen(<MultiTextInput
+            ref={ref}
+            testID="composer-input"
+            value={largeText}
+            onChangeText={() => {}}
+        />);
+        const input = screen.tree.findByType('TextInput' as any);
+
+        expect(input.props.value).toBe(largeText);
+        expect(input.props.defaultValue).toBeUndefined();
+        expect(input.props.maxLength).toBeUndefined();
+        expect(ref.current?.getText()).toBe(largeText);
+    });
+
+    it('propagates oversized native text changes immediately without capping the native value', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const ref = React.createRef<NativeMultiTextInputHandle>();
+        const onChangeText = vi.fn();
+        const onStateChange = vi.fn();
+        const largeText = 'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
+
+        const screen = await renderScreen(<MultiTextInput
+            ref={ref}
+            testID="composer-input"
+            value=""
+            onChangeText={onChangeText}
+            onStateChange={onStateChange}
+        />);
+        const input = screen.tree.findByType('TextInput' as any);
+        expect(input.props.maxLength).toBeUndefined();
+
+        await act(async () => {
+            input.props.onChangeText(largeText);
+        });
+
+        expect(ref.current?.getText()).toBe(largeText);
+        expect(onChangeText).toHaveBeenCalledWith(largeText);
+        expect(onStateChange).toHaveBeenLastCalledWith({
+            text: largeText,
+            selection: { start: largeText.length, end: largeText.length },
+        });
+    });
+
+    it('applies externally controlled oversized native text as the full native value', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const nativeInputNode = {
+            setNativeProps: vi.fn(),
+            measureInWindow: vi.fn(),
+            focus: vi.fn(),
+            blur: vi.fn(),
+        };
+        const largeText = 'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
+
+        const screen = await renderScreen(<MultiTextInput
+            testID="composer-input"
+            value="short"
+            onChangeText={() => {}}
+        />, {
+            createNodeMock: (element) => (element.type === 'TextInput' ? nativeInputNode : null),
+        });
+
+        await screen.update(<MultiTextInput
+            testID="composer-input"
+            value={largeText}
+            onChangeText={() => {}}
+        />);
+
+        const input = screen.tree.findByType('TextInput' as any);
+        expect(input.props.value).toBe(largeText);
+        expect(input.props.defaultValue).toBeUndefined();
+        expect(input.props.maxLength).toBeUndefined();
+        expect(nativeInputNode.setNativeProps).not.toHaveBeenCalledWith(expect.objectContaining({
+            text: expect.any(String),
+        }));
+    });
+
+    it('infers the cursor at the end when native appends to a large input after stale selection state', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const onStateChange = vi.fn();
+        const initialText = Array.from(
+            { length: TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1 },
+            (_, index) => String.fromCharCode(97 + (index % 26)),
+        ).join('');
+        const nextText = `${initialText} /r`;
+        const screen = await renderScreen(<MultiTextInput
+            testID="composer-input"
+            value={initialText}
+            onChangeText={() => {}}
+            onStateChange={onStateChange}
+        />);
+        const input = screen.tree.findByType('TextInput' as any);
+
+        await act(async () => {
+            input.props.onSelectionChange({
+                nativeEvent: { selection: { start: 0, end: 0 } },
+            });
+            input.props.onChangeText(nextText);
+        });
+
+        expect(onStateChange).toHaveBeenLastCalledWith({
+            text: nextText,
+            selection: {
+                start: nextText.length,
+                end: nextText.length,
+            },
+        });
+    });
+
+    it('accepts native selection updates for the latest native text before controlled value catches up', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const onStateChange = vi.fn();
+        const initialText = 'hello';
+        const nextText = `${initialText} /r`;
+        const screen = await renderScreen(<MultiTextInput
+            testID="composer-input"
+            value={initialText}
+            onChangeText={() => {}}
+            onStateChange={onStateChange}
+        />);
+        const input = screen.tree.findByType('TextInput' as any);
+
+        await act(async () => {
+            input.props.onSelectionChange({
+                nativeEvent: { selection: { start: 0, end: 0 } },
+            });
+            input.props.onChangeText(nextText);
+            input.props.onSelectionChange({
+                nativeEvent: { selection: { start: nextText.length, end: nextText.length } },
+            });
+        });
+
+        expect(onStateChange).toHaveBeenLastCalledWith({
+            text: nextText,
+            selection: {
+                start: nextText.length,
+                end: nextText.length,
+            },
+        });
+    });
+
     it('forwards testID as data-testid on web textarea', async () => {
         const { MultiTextInput } = await import('./MultiTextInput.web');
         let tree!: renderer.ReactTestRenderer;
@@ -268,6 +504,108 @@ describe('MultiTextInput', () => {
         expect(input.props.style.color).not.toBe('transparent');
         expect(input.props.style.overflowY).toBe('auto');
         expect(() => tree.findByProps({ 'data-testid': 'composer-input-large-value-preview' })).toThrow();
+    });
+
+    it('dedupes web content height reports before notifying callers', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const onContentHeightChange = vi.fn();
+        const mockTextarea = {
+            value: 'line',
+            selectionStart: 4,
+            selectionEnd: 4,
+            scrollTop: 0,
+            scrollHeight: 88,
+            style: {} as Record<string, string>,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+            focus: vi.fn(),
+            blur: vi.fn(),
+            getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <MultiTextInput
+                    testID="composer-input"
+                    value="line"
+                    maxHeight={144}
+                    onChangeText={() => {}}
+                    onContentHeightChange={onContentHeightChange}
+                />,
+                {
+                    createNodeMock: (element) => {
+                        if (element.type === 'textarea') return mockTextarea;
+                        return null;
+                    },
+                },
+            );
+        });
+
+        expect(onContentHeightChange).toHaveBeenCalledTimes(1);
+        expect(onContentHeightChange).toHaveBeenCalledWith(88);
+
+        await act(async () => {
+            tree!.update(
+                <MultiTextInput
+                    testID="composer-input"
+                    value="line"
+                    maxHeight={144}
+                    onChangeText={() => {}}
+                    onContentHeightChange={onContentHeightChange}
+                    textStyle={{ fontSize: 15 }}
+                />,
+            );
+        });
+
+        expect(onContentHeightChange).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports true web content height for oversized text so the expand toggle can appear', async () => {
+        // The oversized branch skips the collapse-to-measure autosize pass and
+        // used to report the CLAMPED max height as the content height. The
+        // expand toggle only shows when reported content height exceeds the
+        // collapsed max height, so for >50k-char messages the toggle silently
+        // disappeared. A plain scrollHeight read (no style mutation, no
+        // collapse reflow) gives the true content height.
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const onContentHeightChange = vi.fn();
+        const largeValue = 'a'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
+        const mockTextarea = {
+            value: largeValue,
+            selectionStart: largeValue.length,
+            selectionEnd: largeValue.length,
+            scrollTop: 0,
+            scrollHeight: 8000,
+            style: {} as Record<string, string>,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+            focus: vi.fn(),
+            blur: vi.fn(),
+            getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
+        };
+
+        await act(async () => {
+            renderer.create(
+                <MultiTextInput
+                    testID="composer-input-large"
+                    value={largeValue}
+                    maxHeight={144}
+                    onChangeText={() => {}}
+                    onContentHeightChange={onContentHeightChange}
+                />,
+                {
+                    createNodeMock: (element) => {
+                        if (element.type === 'textarea') return mockTextarea;
+                        return null;
+                    },
+                },
+            );
+        });
+
+        expect(onContentHeightChange).toHaveBeenCalledWith(8000);
+        // The rendered box itself stays clamped to the max height.
+        expect(mockTextarea.style.height).toBe('144px');
     });
 
     it('does not collapse textarea paint before an oversized text paste reaches the DOM when attachments are unavailable', async () => {
@@ -380,6 +718,243 @@ describe('MultiTextInput', () => {
 
         expect(flushed).toBe(largeText);
         expect(onChangeText).toHaveBeenCalledWith(largeText);
+    });
+
+    it('does not overwrite a newer pending oversized web edit with a stale controlled value replay', async () => {
+        vi.useFakeTimers();
+        try {
+            const { MultiTextInput } = await import('./MultiTextInput.web');
+            const onChangeText = vi.fn();
+            const baseText = 'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
+            const firstEdit = `${baseText}\nQRST`;
+            const secondEdit = `${firstEdit}UV`;
+            const mockTextarea = {
+                value: baseText,
+                selectionStart: baseText.length,
+                selectionEnd: baseText.length,
+                scrollTop: 0,
+                scrollHeight: 120,
+                style: {} as Record<string, string>,
+                setSelectionRange: vi.fn((start: number, end: number) => {
+                    mockTextarea.selectionStart = start;
+                    mockTextarea.selectionEnd = end;
+                }),
+                dispatchEvent: vi.fn(),
+                focus: vi.fn(),
+                blur: vi.fn(),
+                getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
+            };
+
+            let tree: renderer.ReactTestRenderer | null = null;
+            await act(async () => {
+                tree = renderer.create(
+                    <MultiTextInput
+                        testID="composer-input"
+                        value={baseText}
+                        onChangeText={onChangeText}
+                    />,
+                    {
+                        createNodeMock: (element) => {
+                            if (element.type === 'textarea') return mockTextarea;
+                            return null;
+                        },
+                    },
+                );
+            });
+            const input = tree!.root.findByType('textarea' as any);
+
+            mockTextarea.value = firstEdit;
+            mockTextarea.selectionStart = firstEdit.length;
+            mockTextarea.selectionEnd = firstEdit.length;
+            await act(async () => {
+                input.props.onChange({
+                    target: mockTextarea,
+                    currentTarget: mockTextarea,
+                });
+                await vi.advanceTimersByTimeAsync(500);
+            });
+            expect(onChangeText).toHaveBeenCalledWith(firstEdit);
+
+            await act(async () => {
+                tree!.update(
+                    <MultiTextInput
+                        testID="composer-input"
+                        value={firstEdit}
+                        onChangeText={onChangeText}
+                    />,
+                );
+            });
+
+            mockTextarea.value = secondEdit;
+            mockTextarea.selectionStart = secondEdit.length;
+            mockTextarea.selectionEnd = secondEdit.length;
+            await act(async () => {
+                input.props.onChange({
+                    target: mockTextarea,
+                    currentTarget: mockTextarea,
+                });
+            });
+
+            await act(async () => {
+                tree!.update(
+                    <MultiTextInput
+                        testID="composer-input"
+                        value={baseText}
+                        onChangeText={onChangeText}
+                    />,
+                );
+            });
+
+            expect(mockTextarea.value).toBe(secondEdit);
+            expect(mockTextarea.selectionStart).toBe(secondEdit.length);
+            expect(mockTextarea.selectionEnd).toBe(secondEdit.length);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('does not roll back flushed oversized web text when a superseded emission replays late', async () => {
+        // The oversized round-trip is double-deferred (input debounce + parent
+        // sync deferral), so an older emission can echo back through props
+        // AFTER the input already emitted a newer one and went idle
+        // (pending === null). Only lastEmitted was checked, so the replay fell
+        // through to reconcile, rewrote node.value to the older text, and
+        // rolled back ~0.5-1.5s of typing with a caret jump. Any value this
+        // input itself emitted must never be adopted as external content.
+        vi.useFakeTimers();
+        try {
+            const { MultiTextInput } = await import('./MultiTextInput.web');
+            const onChangeText = vi.fn();
+            const baseText = 'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
+            const firstEdit = `${baseText}\nQRST`;
+            const secondEdit = `${firstEdit}UV`;
+            const externalText = `${baseText}\nEXTERNAL`;
+            const mockTextarea = {
+                value: baseText,
+                selectionStart: baseText.length,
+                selectionEnd: baseText.length,
+                scrollTop: 0,
+                scrollHeight: 120,
+                style: {} as Record<string, string>,
+                setSelectionRange: vi.fn((start: number, end: number) => {
+                    mockTextarea.selectionStart = start;
+                    mockTextarea.selectionEnd = end;
+                }),
+                dispatchEvent: vi.fn(),
+                focus: vi.fn(),
+                blur: vi.fn(),
+                getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
+            };
+
+            let tree: renderer.ReactTestRenderer | null = null;
+            await act(async () => {
+                tree = renderer.create(
+                    <MultiTextInput
+                        testID="composer-input"
+                        value={baseText}
+                        onChangeText={onChangeText}
+                    />,
+                    {
+                        createNodeMock: (element) => {
+                            if (element.type === 'textarea') return mockTextarea;
+                            return null;
+                        },
+                    },
+                );
+            });
+            const input = tree!.root.findByType('textarea' as any);
+
+            // Two flushed edits while the parent round-trip is still in flight.
+            mockTextarea.value = firstEdit;
+            mockTextarea.selectionStart = firstEdit.length;
+            mockTextarea.selectionEnd = firstEdit.length;
+            await act(async () => {
+                input.props.onChange({
+                    target: mockTextarea,
+                    currentTarget: mockTextarea,
+                });
+                await vi.advanceTimersByTimeAsync(500);
+            });
+            expect(onChangeText).toHaveBeenCalledWith(firstEdit);
+
+            mockTextarea.value = secondEdit;
+            mockTextarea.selectionStart = secondEdit.length;
+            mockTextarea.selectionEnd = secondEdit.length;
+            await act(async () => {
+                input.props.onChange({
+                    target: mockTextarea,
+                    currentTarget: mockTextarea,
+                });
+                await vi.advanceTimersByTimeAsync(500);
+            });
+            expect(onChangeText).toHaveBeenCalledWith(secondEdit);
+
+            // The delayed parent render replays the superseded first emission.
+            await act(async () => {
+                tree!.update(
+                    <MultiTextInput
+                        testID="composer-input"
+                        value={firstEdit}
+                        onChangeText={onChangeText}
+                    />,
+                );
+            });
+
+            expect(mockTextarea.value).toBe(secondEdit);
+            expect(mockTextarea.selectionStart).toBe(secondEdit.length);
+            expect(mockTextarea.selectionEnd).toBe(secondEdit.length);
+
+            // A genuinely external value (never emitted by this input) must
+            // still be adopted.
+            await act(async () => {
+                tree!.update(
+                    <MultiTextInput
+                        testID="composer-input"
+                        value={externalText}
+                        onChangeText={onChangeText}
+                    />,
+                );
+            });
+            expect(mockTextarea.value).toBe(externalText);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('records web large-text changes with live value metadata only', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const tree = (await renderScreen(React.createElement(MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>, {
+            testID: 'composer-input',
+            value: '',
+            onChangeText: () => {},
+        }))).tree;
+        const input = tree.findByType('textarea' as any);
+        const largeText = 'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
+        const currentTarget = {
+            value: largeText,
+            selectionStart: largeText.length,
+            selectionEnd: largeText.length,
+            scrollHeight: 120,
+            style: {} as Record<string, string>,
+        };
+
+        await act(async () => {
+            input.props.onChange({
+                target: currentTarget,
+                currentTarget,
+            });
+        });
+
+        expect(recordLargeTextInputDiagnosticMock).toHaveBeenCalledWith({
+            phase: 'web-change',
+            platform: 'web',
+            surface: 'agentInput',
+            textLength: largeText.length,
+            selection: { start: largeText.length, end: largeText.length },
+            valueLength: 0,
+            liveTextLength: largeText.length,
+            pendingTextLength: largeText.length,
+        });
     });
 
     it('drops pending oversized web text changes on unmount instead of emitting stale text', async () => {
@@ -650,49 +1225,172 @@ describe('MultiTextInput', () => {
         expect(mockTextarea.scrollTop).toBe(0);
     });
 
-    it('does not reapply web scroll restore on controlled value changes without a new restore token', async () => {
+    // "does not reapply web scroll restore on controlled value changes without
+    // a new restore token" was consolidated into "re-applies a consumed web
+    // scroll restore after adopting an external value, but never after
+    // self-edit confirms": it simulated typing by mutating the controlled
+    // value without firing onChange, which at this seam is an external
+    // adoption — and adoptions now correctly re-apply the restore because the
+    // node.value write resets the browser scroll position.
+
+    it('preserves the composer scroll position across the autosize measurement while typing', async () => {
+        // Autosize measures by collapsing the box to `height: auto`. With the
+        // box grown to fit its content the maximum scroll offset is 0, so the
+        // browser clamps the textarea's own scrollTop and the visible text
+        // jumps to the top on every keystroke once the draft overflows. This
+        // used to be masked: the restore token churned on every persist write,
+        // so the scroll-restore effect re-pinned scrollTop right after each
+        // measurement. The measurement must preserve it itself.
         const { MultiTextInput } = await import('./MultiTextInput.web');
-        const mockTextarea = {
-            value: 'hello',
+        const initialValue = 'a'.repeat(600);
+        let backingValue = initialValue;
+        const styleValues: Record<string, string> = {};
+        const style = {} as Record<string, string>;
+        const mockTextareaBase = {
+            selectionStart: 0,
+            selectionEnd: 0,
             scrollTop: 0,
-            scrollHeight: 30,
+            scrollHeight: 2000,
+            style,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+            focus: vi.fn(),
+            blur: vi.fn(),
+            getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
+        };
+        Object.defineProperty(style, 'height', {
+            get: () => styleValues.height ?? '',
+            set: (next: string) => {
+                styleValues.height = next;
+                // Browser semantics: once the box fits its own content the
+                // maximum scroll offset is 0, so scrollTop is clamped away.
+                if (next === 'auto') mockTextareaBase.scrollTop = 0;
+            },
+            enumerable: true,
+            configurable: true,
+        });
+        Object.defineProperty(mockTextareaBase, 'value', {
+            get: () => backingValue,
+            set: (next: string) => {
+                backingValue = next;
+                mockTextareaBase.scrollTop = 0;
+            },
+        });
+        const mockTextarea = mockTextareaBase as typeof mockTextareaBase & { value: string };
+
+        const renderInput = (value: string) => (
+            <MultiTextInput
+                testID="composer-input"
+                value={value}
+                maxHeight={144}
+                onChangeText={() => {}}
+            />
+        );
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(renderInput(initialValue), {
+                createNodeMock: (element) => {
+                    if (element.type === 'textarea') return mockTextarea;
+                    return null;
+                },
+            });
+        });
+
+        // The user scrolls up inside the composer to reread an earlier line.
+        mockTextarea.scrollTop = 250;
+
+        const input = tree.root.findByType('textarea' as any);
+        const editedValue = `${initialValue}x`;
+        await act(async () => {
+            backingValue = editedValue;
+            input.props.onChange({ target: mockTextarea, currentTarget: mockTextarea });
+        });
+        expect(mockTextarea.scrollTop).toBe(250);
+
+        // The parent confirm of that same edit re-runs the measurement pass.
+        await act(async () => {
+            tree.update(renderInput(editedValue));
+        });
+        expect(mockTextarea.scrollTop).toBe(250);
+    });
+
+    it('re-applies a consumed web scroll restore after adopting an external value, but never after self-edit confirms', async () => {
+        // Adopting an external value assigns node.value, which resets the
+        // browser's scrollTop. A scroll restore consumed before the adoption
+        // (session open applies it before the async draft text lands) must be
+        // re-applied against the adopted content — while parent confirms of
+        // the input's own edits must never re-apply it (that re-application
+        // was the 2026-07-22 caret/scroll drag).
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const initialValue = 'a'.repeat(600);
+        const adoptedValue = 'b'.repeat(600);
+        let backingValue = initialValue;
+        const mockTextareaBase = {
+            selectionStart: 0,
+            selectionEnd: 0,
+            scrollTop: 0,
+            scrollHeight: 2000,
             style: {} as Record<string, string>,
             setSelectionRange: vi.fn(),
             dispatchEvent: vi.fn(),
+            focus: vi.fn(),
+            blur: vi.fn(),
+            getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
         };
+        Object.defineProperty(mockTextareaBase, 'value', {
+            get: () => backingValue,
+            set: (next: string) => {
+                backingValue = next;
+                // Browsers reset the scroll position on programmatic value writes.
+                mockTextareaBase.scrollTop = 0;
+            },
+        });
+        const mockTextarea = mockTextareaBase as typeof mockTextareaBase & { value: string };
 
-        let tree: renderer.ReactTestRenderer | null = null;
+        const renderInput = (value: string) => (
+            <MultiTextInput
+                testID="composer-input"
+                value={value}
+                maxHeight={144}
+                initialScrollY={120}
+                scrollRestoreToken="session-a:scope:0:adopted"
+                onChangeText={() => {}}
+            />
+        );
+
+        let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(
-                React.createElement(MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>, {
-                    testID: 'composer-input',
-                    value: 'hello',
-                    onChangeText: () => {},
-                    initialScrollY: 12,
-                    scrollRestoreToken: 'session:s1:v1',
-                }),
-                {
-                    createNodeMock: (element) => {
-                        if (element.type === 'textarea') return mockTextarea;
-                        return null;
-                    },
+            tree = renderer.create(renderInput(initialValue), {
+                createNodeMock: (element) => {
+                    if (element.type === 'textarea') return mockTextarea;
+                    return null;
                 },
-            );
+            });
         });
-        expect(mockTextarea.scrollTop).toBe(12);
+        expect(mockTextarea.scrollTop).toBe(120);
 
-        mockTextarea.scrollTop = 5;
+        // External adoption (e.g. async draft load) resets scrollTop via the
+        // node.value write; the pending restore must be re-applied.
         await act(async () => {
-            tree!.update(React.createElement(MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>, {
-                testID: 'composer-input',
-                value: 'hello updated by typing',
-                onChangeText: () => {},
-                initialScrollY: 12,
-                scrollRestoreToken: 'session:s1:v1',
-            }));
+            tree.update(renderInput(adoptedValue));
         });
+        expect(mockTextarea.value).toBe(adoptedValue);
+        expect(mockTextarea.scrollTop).toBe(120);
 
-        expect(mockTextarea.scrollTop).toBe(5);
+        // A parent confirm of the input's own edit must NOT re-apply the
+        // restore over the user's live scroll position.
+        const input = tree.root.findByType('textarea' as any);
+        const editedValue = `${adoptedValue}x`;
+        await act(async () => {
+            backingValue = editedValue;
+            input.props.onChange({ target: mockTextarea, currentTarget: mockTextarea });
+        });
+        mockTextarea.scrollTop = 333;
+        await act(async () => {
+            tree.update(renderInput(editedValue));
+        });
+        expect(mockTextarea.scrollTop).toBe(333);
     });
 
     it('reapplies web scroll restore when the restore token changes', async () => {
@@ -770,7 +1468,12 @@ describe('MultiTextInput', () => {
         });
     });
 
-    it('restores web selection against the live DOM text when React carries a projected value', async () => {
+    // Contract updated 2026-07-22: while the live DOM text is ahead of the
+    // controlled value (large-text round-trip in flight), an imperative
+    // selection was computed against a different text basis and must be
+    // DROPPED, matching the native guard. Applying it against the live text
+    // dragged the user's caret backwards mid-typing (web composer incident).
+    it('drops web selection restores while React carries a projected value behind the live DOM text', async () => {
         const { MultiTextInput } = await import('./MultiTextInput.web');
         const onChangeText = vi.fn();
         const onSelectionChange = vi.fn();
@@ -813,12 +1516,9 @@ describe('MultiTextInput', () => {
         });
 
         expect(onChangeText).not.toHaveBeenCalled();
-        expect(mockTextarea.setSelectionRange).toHaveBeenCalledWith(liveText.length, liveText.length);
-        expect(onSelectionChange).toHaveBeenCalledWith({ start: liveText.length, end: liveText.length });
-        expect(onStateChange).toHaveBeenCalledWith({
-            text: liveText,
-            selection: { start: liveText.length, end: liveText.length },
-        });
+        expect(mockTextarea.setSelectionRange).not.toHaveBeenCalled();
+        expect(onSelectionChange).not.toHaveBeenCalled();
+        expect(onStateChange).not.toHaveBeenCalled();
     });
 
     it('does not imperatively restore web selection while IME composition is active', async () => {

@@ -1,5 +1,6 @@
 import React from "react";
 import Color from "color";
+import { act } from "react-test-renderer";
 import { describe, expect, it, vi } from "vitest";
 import { renderScreen } from "@/dev/testkit";
 import { lightTheme } from "@/theme";
@@ -11,35 +12,29 @@ vi.mock("react-native", async () => {
     return createReactNativeWebMock();
 });
 
-vi.mock("@/agents/registry/registryUiBehavior", () => ({
-    resolveAgentUiBehavior: () => ({
-        permissions: {
-            footer: {
-                usePermissionUpdates: false,
-                forceReadOnlyAfterStop: true,
-                supportsExecPolicyAmendment: false,
-                stopHandling: "denyAndAbortRun",
+vi.mock("@/agents/registry/registryUiBehavior", async () => {
+    const { createRegistryUiBehaviorModuleMock } = await import("@/dev/testkit/mocks/registryUiBehavior");
+    return createRegistryUiBehaviorModuleMock({
+        resolveAgentUiBehavior: () => ({
+            permissions: {
+                footer: {
+                    usePermissionUpdates: false,
+                    forceReadOnlyAfterStop: true,
+                    supportsExecPolicyAmendment: false,
+                    stopHandling: "denyAndAbortRun",
+                },
             },
-        },
-        newSession: {
-            supportsTranscriptStorageMode: () => false,
-        },
-    }),
-    resolveAgentUiBehaviorFromFlavor: () => null,
-    getAgentResumeExperimentsFromSettings: () => ({ enabled: true, switches: {} }),
-    buildResumeCapabilityOptionsFromUiState: (opts: { settings: unknown }) => ({ accountSettings: opts.settings }),
-    getNewSessionPreflightIssues: () => [],
-    buildNewSessionOptionsFromUiState: () => null,
-    canSelectAgentWithoutDetectedCli: () => false,
-    getNewSessionAgentInputExtraActionChips: () => undefined,
-    getNewSessionRelevantInstallableDepKeys: () => [],
-    buildSpawnSessionExtrasFromUiState: () => ({}),
-    buildSpawnEnvironmentVariablesFromUiState: (opts: { environmentVariables?: Record<string, string> }) => opts.environmentVariables,
-    buildResumeSessionExtrasFromUiState: () => ({}),
-    buildWakeResumeExtras: () => ({}),
-    supportsDetectedMcpConfigScan: () => false,
-    supportsEditableSessionGoals: () => false,
-}));
+            newSession: {
+                supportsTranscriptStorageMode: () => false,
+            },
+        }),
+        resolveAgentUiBehaviorFromFlavor: () => null,
+        buildResumeCapabilityOptionsFromUiState: (opts) => ({ accountSettings: opts.settings }),
+        buildNewSessionOptionsFromUiState: () => null,
+        getNewSessionAgentInputExtraActionChips: () => undefined,
+        buildSpawnEnvironmentVariablesFromUiState: (opts) => opts.environmentVariables,
+    });
+});
 
 function flattenStyleFromCallback(
     styleProp: unknown,
@@ -88,7 +83,7 @@ describe("AgentInputChipPickerOptionSelector (hover)", () => {
         expect(screen.findByTestId("engine-icon")?.props.size).toBe(AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE);
     });
 
-    it("shows rail option actions only while hovering and keeps action presses from focusing the row", async () => {
+    it("shows rail option actions only while hovering or focused and keeps hidden actions inert", async () => {
         const {
             AgentInputChipPickerOptionSelector,
             shouldShowAgentInputChipPickerRailAction,
@@ -138,11 +133,20 @@ describe("AgentInputChipPickerOptionSelector (hover)", () => {
 
         actionBeforeHover?.props.onPress?.({ stopPropagation: vi.fn() });
 
+        expect(onActionPress).not.toHaveBeenCalled();
+        expect(onFocusOption).not.toHaveBeenCalled();
+
+        await act(async () => {
+            actionBeforeHover?.parent?.props.onMouseEnter?.();
+        });
+        const actionOnHover = screen.findByTestId("engine-favorite-action");
+        expect(actionOnHover?.props.disabled).toBe(false);
+        actionOnHover?.props.onPress?.({ stopPropagation: vi.fn() });
         expect(onActionPress).toHaveBeenCalledTimes(1);
         expect(onFocusOption).not.toHaveBeenCalled();
     });
 
-    it("uses a non-button web row wrapper when an option has a nested rail action", async () => {
+    it("exposes web row button semantics alongside its separate action", async () => {
         const { AgentInputChipPickerOptionSelector } = await import("./AgentInputChipPickerOptionSelector");
         const onFocusOption = vi.fn();
 
@@ -183,7 +187,12 @@ describe("AgentInputChipPickerOptionSelector (hover)", () => {
             throw new Error("Expected option row to render");
         }
         expect(row.type).toBe("View");
-        expect(row.props.accessibilityRole).toBeUndefined();
+        expect(row.props.accessibilityRole).toBe("button");
+        expect(row.props.accessibilityLabel).toBe("Codex");
+        expect(row.props.accessibilityState).toEqual({
+            disabled: false,
+            selected: false,
+        });
         expect(row.props.tabIndex).toBe(0);
 
         await screen.pressByTestIdAsync("agent-input-chip-picker.option:engine:codex");
@@ -228,7 +237,7 @@ describe("AgentInputChipPickerOptionSelector (hover)", () => {
         });
     });
 
-    it("keeps selected rail option actions hidden until the selected row is hovered", async () => {
+    it("reveals selected rail option actions for the focused row without requiring hover", async () => {
         const {
             AgentInputChipPickerOptionSelector,
             shouldShowAgentInputChipPickerRailAction,
@@ -266,13 +275,13 @@ describe("AgentInputChipPickerOptionSelector (hover)", () => {
         );
 
         const selectedActionBeforeHover = screen.findByTestId("engine-favorite-action");
-        expect(selectedActionBeforeHover?.props.disabled).toBe(true);
+        expect(selectedActionBeforeHover?.props.disabled).toBe(false);
 
         expect(shouldShowAgentInputChipPickerRailAction({
             canRender: true,
             hovered: false,
             focused: true,
-        })).toBe(false);
+        })).toBe(true);
         expect(shouldShowAgentInputChipPickerRailAction({
             canRender: true,
             hovered: true,

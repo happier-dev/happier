@@ -3,6 +3,10 @@ import { readFile } from 'node:fs/promises';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import {
+  createRuntimeLimitMeasurementCaptureFromEnv,
+  recordAgentBrowserPerfMeasurements,
+} from '../../../packages/tests/scripts/plugin-platform/runtime-limit-measurement.mjs';
 
 const SYNC_PERF_MARKER = '[sync-perf]';
 const DEFAULT_SORT_KEY = 'maxMs';
@@ -763,6 +767,18 @@ async function main(argv) {
   }
   const logs = await readSyncPerformanceLogs(args.files);
   const report = summarizeSyncPerformanceSummaries(logs.summaries, { sortKey: args.sortKey });
+  const measurement = createRuntimeLimitMeasurementCaptureFromEnv({
+    env: process.env,
+    runnerId: 'sync-performance-report',
+    scenarioId: 'mobile-sync-perf',
+  });
+  if (measurement) {
+    recordAgentBrowserPerfMeasurements(measurement.capture, [{
+      scenario: { id: 'mobile-sync-perf' },
+      syncTopEvents: report.events,
+    }]);
+    await measurement.capture.writeArtifact({ artifactDir: measurement.artifactDir });
+  }
   if (args.json) {
     console.log(JSON.stringify({ ...logs, ...report }, null, 2));
   } else {

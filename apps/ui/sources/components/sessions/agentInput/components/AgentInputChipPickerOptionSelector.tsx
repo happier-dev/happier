@@ -41,6 +41,24 @@ type WebClickableViewProps = React.ComponentPropsWithRef<typeof View> & {
 
 const WebClickableView = View as unknown as React.ComponentType<WebClickableViewProps>;
 
+type WebRailRowContainerProps = React.ComponentPropsWithRef<typeof View> & {
+  onFocus?: (event: { currentTarget?: { contains?: (target: unknown) => boolean } }) => void;
+  onBlur?: (event: {
+    currentTarget?: { contains?: (target: unknown) => boolean };
+    relatedTarget?: unknown;
+  }) => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
+};
+
+const WebRailRowContainer = View as unknown as React.ComponentType<WebRailRowContainerProps>;
+
+type WebPressableProps = React.ComponentPropsWithRef<typeof Pressable> & {
+  "aria-pressed"?: boolean;
+};
+
+const WebPressable = Pressable as unknown as React.ComponentType<WebPressableProps>;
+
 export type AgentInputChipPickerOptionSelectorProps = Readonly<{
   sections: ReadonlyArray<AgentInputChipPickerOptionSection>;
   focusedOptionId: string | null;
@@ -54,7 +72,7 @@ export function shouldShowAgentInputChipPickerRailAction(params: Readonly<{
   hovered: boolean;
   focused: boolean;
 }>): boolean {
-  return params.canRender && params.hovered;
+  return params.canRender && (params.hovered || params.focused);
 }
 
 export function AgentInputChipPickerOptionSelector(
@@ -139,6 +157,7 @@ function AgentInputChipPickerOptionButton(
   const disabled = props.option.disabled === true;
   const normalizedSubtitle = props.option.subtitle?.trim();
   const [hovered, setHovered] = React.useState(false);
+  const [focusWithin, setFocusWithin] = React.useState(false);
   const shouldShowSubtitle =
     !props.compact &&
     Boolean(normalizedSubtitle) &&
@@ -147,8 +166,13 @@ function AgentInputChipPickerOptionButton(
   const shouldShowRailAction = shouldShowAgentInputChipPickerRailAction({
     canRender: shouldRenderRailAction,
     hovered,
-    focused: props.focused,
+    focused: props.focused || focusWithin,
   });
+  const railActionDisabled =
+    !shouldShowRailAction
+    || disabled
+    || props.option.muted === true
+    || props.option.railAction?.disabled === true;
   const buildOptionRowStyle = (state: WebHoverablePressableState) => {
     const { pressed } = state;
     // RN Web exposes `hovered` in the Pressable state callback, but `react-native` types do not model it.
@@ -192,29 +216,7 @@ function AgentInputChipPickerOptionButton(
         </View>
       </View>
       <View style={styles.optionRight}>
-        {shouldRenderRailAction && props.option.railAction ? (
-          <Pressable
-            testID={props.option.railAction.testID}
-            accessibilityRole="button"
-            accessibilityLabel={props.option.railAction.accessibilityLabel}
-            accessibilityState={{
-              disabled: !shouldShowRailAction || props.option.railAction.disabled === true,
-              selected: props.option.railAction.selected === true,
-            }}
-            disabled={!shouldShowRailAction || props.option.railAction.disabled === true}
-            hitSlop={4}
-            onPress={(event) => {
-              event?.stopPropagation?.();
-              props.option.railAction?.onPress();
-            }}
-            style={[
-              styles.railAction,
-              shouldShowRailAction ? null : styles.railActionHidden,
-            ]}
-          >
-            {normalizeNodeForView(props.option.railAction.icon)}
-          </Pressable>
-        ) : null}
+        {shouldRenderRailAction ? <View style={styles.railAction} /> : null}
         <Ionicons
           name="checkmark-outline"
           size={14}
@@ -227,27 +229,67 @@ function AgentInputChipPickerOptionButton(
 
   if (shouldRenderRailAction) {
     return (
-      <WebClickableView
-        testID={testID}
-        accessibilityLabel={props.option.label}
-        accessibilityState={{
-          disabled,
-          selected: props.selected,
-        }}
-        onClick={activateFromWebEvent}
-        onKeyDown={(event) => {
-          const key = String(event?.key ?? "");
-          if (key !== "Enter" && key !== " ") return;
-          event?.preventDefault?.();
-          activateFromWebEvent(event);
+      <WebRailRowContainer
+        style={styles.optionRowContainer}
+        onFocus={() => setFocusWithin(true)}
+        onBlur={(event) => {
+          const relatedTarget = (event as { relatedTarget?: unknown }).relatedTarget;
+          const currentTarget = event.currentTarget as unknown as {
+            contains?: (target: unknown) => boolean;
+          };
+          if (currentTarget?.contains?.(relatedTarget)) return;
+          setFocusWithin(false);
         }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
-        tabIndex={disabled ? -1 : 0}
-        style={buildOptionRowStyle({ pressed: false })}
       >
-        {content}
-      </WebClickableView>
+        <WebClickableView
+          testID={testID}
+          accessibilityRole="button"
+          accessibilityLabel={props.option.label}
+          accessibilityState={{
+            disabled,
+            selected: props.selected,
+          }}
+          onClick={activateFromWebEvent}
+          onKeyDown={(event) => {
+            const key = String(event?.key ?? "");
+            if (key !== "Enter" && key !== " ") return;
+            event?.preventDefault?.();
+            activateFromWebEvent(event);
+          }}
+          tabIndex={disabled ? -1 : 0}
+          style={buildOptionRowStyle({ pressed: false })}
+        >
+          {content}
+        </WebClickableView>
+        {props.option.railAction ? (
+          <WebPressable
+            testID={props.option.railAction.testID}
+            accessibilityRole="button"
+            accessibilityLabel={props.option.railAction.accessibilityLabel}
+            accessibilityState={{
+              disabled: railActionDisabled,
+              selected: props.option.railAction.selected === true,
+            }}
+            aria-pressed={props.option.railAction.selected === true}
+            disabled={railActionDisabled}
+            hitSlop={4}
+            onPress={(event) => {
+              event?.stopPropagation?.();
+              if (railActionDisabled) return;
+              props.option.railAction?.onPress();
+            }}
+            style={[
+              styles.railAction,
+              styles.railActionOverlay,
+              shouldShowRailAction ? null : styles.railActionHidden,
+            ]}
+          >
+            {normalizeNodeForView(props.option.railAction.icon)}
+          </WebPressable>
+        ) : null}
+      </WebRailRowContainer>
     );
   }
 
@@ -308,6 +350,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     gap: 8,
     backgroundColor: "transparent",
   },
+  optionRowContainer: {
+    position: "relative",
+  },
   optionLeft: {
     flex: 1,
     flexDirection: "row",
@@ -329,6 +374,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     height: RAIL_ACTION_SIZE,
     alignItems: "center",
     justifyContent: "center",
+  },
+  railActionOverlay: {
+    position: "absolute",
+    right: 28,
+    top: "50%",
+    transform: [{ translateY: -(RAIL_ACTION_SIZE / 2) }],
   },
   railActionHidden: {
     opacity: 0,

@@ -154,6 +154,34 @@ describe('useNewSessionDraftAutoPersist', () => {
         }
     });
 
+    it('re-arms persistence when draft content changes without changing text length', async () => {
+        const persistDraftNow = vi.fn();
+        let draftChangeKey = 'AAAA';
+
+        vi.useFakeTimers();
+        try {
+            const hook = await renderHook(() =>
+                useNewSessionDraftAutoPersist({
+                    persistDraftNow,
+                    draftTextLength: 4,
+                    draftChangeKey,
+                }),
+            );
+
+            await vi.advanceTimersByTimeAsync(250);
+            expect(persistDraftNow).toHaveBeenCalledTimes(1);
+
+            draftChangeKey = 'BBBB';
+            await hook.rerender();
+            await vi.advanceTimersByTimeAsync(250);
+
+            expect(persistDraftNow).toHaveBeenCalledTimes(2);
+            await hook.unmount();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('defers large pending draft persistence on unmount instead of serializing synchronously', async () => {
         const persistDraftNow = vi.fn();
         const largeDraftTextLength = TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1;
@@ -212,7 +240,8 @@ describe('useNewSessionDraftAutoPersist', () => {
 
         vi.useFakeTimers();
         try {
-            let draftTextLength = TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1;
+            const draftTextLength = TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1;
+            let draftChangeKey = 'large-draft-a';
             const delayMs = resolveNewSessionDraftAutoPersistDelayMs({
                 platformOS: 'web',
                 draftTextLength,
@@ -221,6 +250,7 @@ describe('useNewSessionDraftAutoPersist', () => {
                 useNewSessionDraftAutoPersist({
                     persistDraftNow,
                     draftTextLength,
+                    draftChangeKey,
                 }),
             );
 
@@ -228,7 +258,7 @@ describe('useNewSessionDraftAutoPersist', () => {
             expect(idleCallbacks).toHaveLength(1);
             expect(persistDraftNow).not.toHaveBeenCalled();
 
-            draftTextLength = TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 2;
+            draftChangeKey = 'large-draft-b';
             await hook.rerender();
 
             expect(globalThis.cancelIdleCallback).toHaveBeenCalledWith(1);

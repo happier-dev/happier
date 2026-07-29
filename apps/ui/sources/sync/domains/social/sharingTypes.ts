@@ -170,24 +170,6 @@ export interface PublicShareAccessLog {
     userAgent: string | null;
 }
 
-/**
- * Blocked user for public shares
- *
- * @remarks
- * Represents a user who has been blocked from accessing a specific public share.
- * Even if they have the token, blocked users will receive a 404 error.
- */
-export interface PublicShareBlockedUser {
-    /** Unique identifier for this block entry */
-    id: string;
-    /** User who is blocked */
-    user: ShareUserProfile;
-    /** Optional reason for blocking (displayed to owner) */
-    reason: string | null;
-    /** Timestamp when user was blocked (milliseconds since epoch) */
-    blockedAt: number;
-}
-
 //
 // API Request/Response Types
 //
@@ -316,32 +298,6 @@ export interface AccessPublicShareResponse {
 export interface PublicShareAccessLogsResponse {
     /** List of access log entries */
     logs: PublicShareAccessLog[];
-}
-
-/** Response containing blocked users for a public share */
-export interface PublicShareBlockedUsersResponse {
-    /** List of blocked users */
-    blockedUsers: PublicShareBlockedUser[];
-}
-
-/**
- * Request to block a user from a public share
- *
- * @remarks
- * Prevents a specific user from accessing a public share, even if they
- * have the token. Useful for dealing with abuse.
- */
-export interface BlockPublicShareUserRequest {
-    /** ID of the user to block */
-    userId: string;
-    /**
-     * Optional reason for blocking
-     *
-     * @remarks
-     * This is only visible to the session owner and helps track why
-     * users were blocked.
-     */
-    reason?: string;
 }
 
 //

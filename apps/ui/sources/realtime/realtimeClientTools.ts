@@ -1,6 +1,9 @@
 import { createVoiceToolHandlers } from '@/voice/tools/handlers';
 import { resolveToolSessionId } from '@/voice/tools/resolveToolSessionId';
-import { listVoiceClientToolNames } from '@happier-dev/protocol';
+import {
+  listVoiceClientToolNames,
+  listVoiceSdkSafeToolActionSpecs,
+} from '@happier-dev/protocol';
 
 /**
  * Static client tools for the realtime voice interface.
@@ -20,6 +23,21 @@ export const realtimeClientTools = listVoiceClientToolNames().reduce(
     if (typeof handler === 'function') {
       (acc as any)[toolName] = handler;
     }
+    return acc;
+  },
+  {} as Record<string, (parameters: unknown) => Promise<string>>,
+);
+
+/**
+ * Provider SDKs that do not expose a stable call identity and observable result
+ * delivery cannot safely host mutations across connection loss. Keep their
+ * tool surface useful by projecting only canonical read-only actions.
+ */
+export const realtimeReadOnlyClientTools = listVoiceSdkSafeToolActionSpecs().reduce(
+  (acc, spec) => {
+    const toolName = String(spec.bindings?.voiceClientToolName ?? '').trim();
+    const handler = realtimeClientTools[toolName];
+    if (toolName && typeof handler === 'function') acc[toolName] = handler;
     return acc;
   },
   {} as Record<string, (parameters: unknown) => Promise<string>>,

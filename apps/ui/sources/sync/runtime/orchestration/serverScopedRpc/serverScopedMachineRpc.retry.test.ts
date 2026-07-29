@@ -126,4 +126,46 @@ describe('machineRpcWithServerScope (retry)', () => {
     expect((emitWithAckSpy.mock.calls[0]?.[1] as { timeoutMs: number }).timeoutMs).toBeGreaterThan(0);
     expect((emitWithAckSpy.mock.calls[0]?.[1] as { timeoutMs: number }).timeoutMs).toBeLessThanOrEqual(30_000);
   });
+
+  it('does not retry a scoped exact machine RPC after the real socket emit is issued', async () => {
+    getCredentialsSpy.mockResolvedValue({ token: 'token-a', secret: 'secret-a' });
+    const machineEncryption = {
+      encryptRaw: vi.fn(async () => 'encrypted-payload'),
+      decryptRaw: vi.fn(async () => ({ ok: true })),
+    };
+    createEncryptionSpy.mockResolvedValue({
+      decryptEncryptionKey: vi.fn(async () => null),
+      initializeMachines: vi.fn(async () => {}),
+      getMachineEncryption: vi.fn(() => machineEncryption),
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
+    })));
+    const emitWithAckSpy = vi.fn(async () => ({
+      ok: false,
+      error: 'RPC method not available',
+      errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+    }));
+    const fakeSocket = {
+      timeout: vi.fn(() => ({ emitWithAck: emitWithAckSpy })),
+      emit: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    createEphemeralSocketSpy.mockResolvedValue(fakeSocket);
+    const onIssued = vi.fn();
+
+    const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+    await expect(machineRpcWithServerScope({
+      machineId: 'machine-1',
+      method: 'method-test',
+      payload: { value: 1 },
+      preferScoped: true,
+      onIssued,
+    })).rejects.toThrow('RPC method not available');
+
+    expect(onIssued).toHaveBeenCalledTimes(1);
+    expect(emitWithAckSpy).toHaveBeenCalledTimes(1);
+    expect(createEphemeralSocketSpy).toHaveBeenCalledTimes(1);
+  });
 });

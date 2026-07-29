@@ -6,7 +6,6 @@ import {
     getVoiceConversationRuntimeSnapshot,
     setVoiceConversationRuntimeSnapshot,
 } from './voiceConversationRuntimeStore';
-import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 import { createVoiceMachineError } from './voiceMachineError';
 import type {
     VoiceConversationRuntimeSnapshot,
@@ -47,13 +46,10 @@ export type VoiceConversationRuntimeMachine = Readonly<{
     transitionToThinking: (args: TransitionArgs) => void;
     transitionToSpeaking: (args: TransitionArgs) => void;
     transitionToDisconnected: (args: TransitionArgs & { error?: VoiceMachineError | null }) => void;
+    setReconnecting: (args: TransitionArgs & { reconnecting: boolean }) => void;
     setMuted: (muted: boolean) => void;
     setError: (args: TransitionArgs & { error: VoiceMachineError }) => void;
     reset: () => void;
-}>;
-
-type CreateVoiceConversationRuntimeMachineOptions = Readonly<{
-    listeningStartTimeoutMs?: number;
 }>;
 
 /**
@@ -131,34 +127,38 @@ function isTransitionAllowed(
     return true;
 }
 
-function createSttTimeoutError(): VoiceMachineError {
-    return createVoiceMachineError({
-        kind: 'stt_timeout',
-        reason: 'listening_start_timeout',
-        recoverable: true,
-    });
-}
-
 function createProviderError(reason: string): VoiceMachineError {
     return createVoiceMachineError({
         kind: reason.includes('permission_denied') ? 'mic_permission_denied' : 'provider_error',
         reason,
-        recoverable: true,
     });
 }
 
-export function createVoiceConversationRuntimeMachine(
-    options: CreateVoiceConversationRuntimeMachineOptions = {},
-): VoiceConversationRuntimeMachine {
-    const listeningStartTimeoutMs = Math.max(
-        1,
-        options.listeningStartTimeoutMs ?? VOICE_RUNTIME_CONFIG_DEFAULTS.listeningStartTimeoutMs,
-    );
-
+export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntimeMachine {
     // Latest-wins guard over the rearm lifecycle: a newer rearm (or a `cancel`)
     // invalidates any in-flight start so its late completion can't write a stale
     // `mic_error`/`stt_timeout` onto whatever owns the snapshot now.
     const listeningAttemptGuard = createAttemptGuard();
+    let activeListeningAbortController: AbortController | null = null;
+
+    const cancelActiveListeningAttempt = (): void => {
+        listeningAttemptGuard.cancel();
+        activeListeningAbortController?.abort();
+        activeListeningAbortController = null;
+    };
+
+    const cancelActiveListeningAttemptIfOwned = ({
+        controlSessionId,
+        adapterId,
+    }: TransitionArgs): void => {
+        const current = getVoiceConversationRuntimeSnapshot();
+        if (
+            current.controlSessionId === controlSessionId
+            && current.adapterId === (adapterId ?? null)
+        ) {
+            cancelActiveListeningAttempt();
+        }
+    };
 
     const patchSnapshot = (
         updater: (current: VoiceConversationRuntimeSnapshot) => VoiceConversationRuntimeSnapshot,
@@ -188,7 +188,7 @@ export function createVoiceConversationRuntimeMachine(
             }
 
             const nextAdapterId =
-                transition.toState === 'disconnected'
+                transition.toState === 'disconnected' || ENTRY_STATES.has(transition.toState)
                     ? (transition.adapterId ?? null)
                     : (transition.adapterId ?? current.adapterId);
 
@@ -198,11 +198,24 @@ export function createVoiceConversationRuntimeMachine(
                     ? transition.error
                     : current.error;
 
+            const sameOwner = current.controlSessionId === transition.controlSessionId
+                && current.adapterId === nextAdapterId;
+            const terminalState = transition.toState === 'disconnected'
+                || transition.toState === 'ending'
+                || transition.toState === 'error'
+                || transition.toState === 'mic_error';
+            const nextReconnecting = terminalState
+                ? false
+                : ENTRY_STATES.has(transition.toState) && !sameOwner
+                    ? false
+                    : current.reconnecting;
+
             return {
                 ...current,
                 adapterId: nextAdapterId,
                 controlSessionId: transition.controlSessionId,
                 state: transition.toState,
+                reconnecting: nextReconnecting,
                 error: nextError,
             };
         });
@@ -264,36 +277,23 @@ export function createVoiceConversationRuntimeMachine(
             clearError: true,
         });
 
-        // Thread an abort signal into the capture start so the timeout can cancel
-        // the in-flight capture instead of leaving an orphaned recorder running.
+        // Provider and carrier owners bound their own admission/start phases.
+        // This machine owns lifecycle cancellation and stale completion, not an
+        // overlapping elapsed-time deadline for the whole composed start.
+        activeListeningAbortController?.abort();
         const abortController = new AbortController();
-        let timeoutId: ReturnType<typeof setTimeout> | null = null;
-        let timedOut = false;
+        activeListeningAbortController = abortController;
 
         try {
-            await Promise.race([
-                startListening(abortController.signal),
-                new Promise<void>((resolve) => {
-                    timeoutId = setTimeout(() => {
-                        timedOut = true;
-                        abortController.abort();
-                        resolve();
-                    }, listeningStartTimeoutMs);
-                }),
-            ]);
+            await startListening(abortController.signal);
         } catch (error) {
             const reason = error instanceof Error ? error.message : 'listening_start_failed';
             failRearmIfStillOwner(token, controlSessionId, createProviderError(reason));
             return;
         } finally {
-            if (timeoutId) {
-                clearTimeout(timeoutId);
+            if (activeListeningAbortController === abortController) {
+                activeListeningAbortController = null;
             }
-        }
-
-        if (timedOut) {
-            failRearmIfStillOwner(token, controlSessionId, createSttTimeoutError());
-            return;
         }
 
         if (!listeningAttemptGuard.isCurrent(token)) {
@@ -314,6 +314,7 @@ export function createVoiceConversationRuntimeMachine(
             applyStateTransition({ controlSessionId, toState: 'interrupted', adapterId });
         },
         transitionToEnding: ({ controlSessionId, adapterId }) => {
+            cancelActiveListeningAttemptIfOwned({ controlSessionId, adapterId });
             applyStateTransition({ controlSessionId, toState: 'ending', adapterId });
         },
         rearmListening,
@@ -338,7 +339,22 @@ export function createVoiceConversationRuntimeMachine(
             applyStateTransition({ controlSessionId, toState: 'speaking', clearError: true, adapterId });
         },
         transitionToDisconnected: ({ controlSessionId, adapterId, error = null }) => {
+            cancelActiveListeningAttemptIfOwned({ controlSessionId, adapterId });
             applyStateTransition({ controlSessionId, toState: 'disconnected', error, adapterId: adapterId ?? null });
+        },
+        setReconnecting: ({ controlSessionId, adapterId, reconnecting }) => {
+            patchSnapshot((current) => {
+                const ownsSnapshot = current.controlSessionId === controlSessionId
+                    && current.adapterId === (adapterId ?? null)
+                    && current.state !== 'disconnected'
+                    && current.state !== 'ending'
+                    && current.state !== 'error'
+                    && current.state !== 'mic_error';
+                if (!ownsSnapshot || current.reconnecting === reconnecting) {
+                    return current;
+                }
+                return { ...current, reconnecting };
+            });
         },
         setMuted: (micMuted) => {
             patchSnapshot((current) => ({
@@ -352,7 +368,7 @@ export function createVoiceConversationRuntimeMachine(
         reset: () => {
             // Invalidate any in-flight rearm so a late completion cannot revive a
             // stale listening/error state after the runtime has been reset.
-            listeningAttemptGuard.cancel();
+            cancelActiveListeningAttempt();
             setVoiceConversationRuntimeSnapshot(DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT);
         },
     };

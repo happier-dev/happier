@@ -107,6 +107,7 @@ function pinnedItems(): SessionListIndexItem[] {
             groupKey: PINNED_GROUP_KEY_V1,
             groupKind: 'pinned',
             pinned: true,
+            workspace: workspaceA,
         },
         {
             type: 'session',
@@ -116,6 +117,7 @@ function pinnedItems(): SessionListIndexItem[] {
             groupKey: PINNED_GROUP_KEY_V1,
             groupKind: 'pinned',
             pinned: true,
+            workspace: workspaceA,
         },
     ];
 }
@@ -145,7 +147,7 @@ function buildTree(items = mixedWorkspaceItems()) {
 }
 
 describe('resolveSessionListInstruction', () => {
-    it('blocks direct sessions before resolving a target', () => {
+    it('moves external and persisted sessions through the same folder instruction owner', () => {
         const items = [
             projectHeader('project-a', workspaceA),
             sessionItem({
@@ -174,8 +176,11 @@ describe('resolveSessionListInstruction', () => {
             foldersFeatureEnabled: true,
         });
 
-        expect(result.instruction.kind).toBe('blocked');
-        expect(result.sessionListBlockReason).toBe('direct-session');
+        expect(result.instruction).toMatchObject({
+            kind: 'nest-into',
+            targetId: treeRowId.folder('folder-a'),
+        });
+        expect(result.sessionListBlockReason).toBeUndefined();
     });
 
     it('blocks all folder moves when the sessions.folders feature is disabled', () => {
@@ -190,6 +195,120 @@ describe('resolveSessionListInstruction', () => {
 
         expect(result.instruction.kind).toBe('blocked');
         expect(result.sessionListBlockReason).toBe('feature-disabled');
+    });
+
+    it('keeps same-container custom session reorder available without a durable folder scope', () => {
+        const items: SessionListIndexItem[] = [
+            { type: 'header', title: 'Pinned', headerKind: 'pinned', groupKey: PINNED_GROUP_KEY_V1 },
+            {
+                type: 'session',
+                sessionId: 'unscoped-a',
+                serverId: 'server-a',
+                storageKind: 'persisted',
+                groupKey: PINNED_GROUP_KEY_V1,
+                groupKind: 'pinned',
+                pinned: true,
+            },
+            {
+                type: 'session',
+                sessionId: 'unscoped-b',
+                serverId: 'server-a',
+                storageKind: 'persisted',
+                groupKey: PINNED_GROUP_KEY_V1,
+                groupKind: 'pinned',
+                pinned: true,
+            },
+        ];
+        const tree = buildSessionListTreeRows({
+            items,
+            rowBoundsById: new Map([
+                [treeRowId.session('server-a', 'unscoped-a'), bounds(40)],
+                [treeRowId.session('server-a', 'unscoped-b'), bounds(80)],
+            ]),
+        });
+
+        const result = resolveSessionListInstruction({
+            tree,
+            source: buildSessionListDragSource({
+                tree,
+                sourceRowId: treeRowId.session('server-a', 'unscoped-a'),
+            }),
+            pointer: pointer(90),
+            foldersFeatureEnabled: true,
+        });
+
+        expect(result.instruction).toMatchObject({
+            kind: 'reorder-before',
+            targetId: treeRowId.session('server-a', 'unscoped-b'),
+        });
+        expect(result.sessionListBlockReason).toBeUndefined();
+    });
+
+    it('keeps same-container custom session reorder available when folders are disabled', () => {
+        const tree = buildSessionListTreeRows({
+            items: pinnedItems(),
+            rowBoundsById: new Map([
+                [treeRowId.session('server-a', 'pinned-a'), bounds(40)],
+                [treeRowId.session('server-a', 'pinned-b'), bounds(80)],
+            ]),
+        });
+
+        const result = resolveSessionListInstruction({
+            tree,
+            source: buildSessionListDragSource({
+                tree,
+                sourceRowId: treeRowId.session('server-a', 'pinned-a'),
+            }),
+            pointer: pointer(90),
+            foldersFeatureEnabled: false,
+        });
+
+        expect(result.instruction).toMatchObject({
+            kind: 'reorder-before',
+            targetId: treeRowId.session('server-a', 'pinned-b'),
+        });
+        expect(result.sessionListBlockReason).toBeUndefined();
+    });
+
+    it('blocks folder nesting for a session without a durable workspace scope', () => {
+        const items: SessionListIndexItem[] = [
+            projectHeader('project-a', workspaceA),
+            {
+                type: 'session',
+                sessionId: 'unscoped',
+                serverId: 'server-a',
+                storageKind: 'persisted',
+                groupKey: 'project-a',
+                groupKind: 'project',
+            },
+            folderHeader({
+                id: 'folder-a',
+                groupKey: 'project-a:folder:folder-a',
+                depth: 0,
+                workspace: workspaceA,
+            }),
+        ];
+        const tree = buildSessionListTreeRows({
+            items,
+            rowBoundsById: new Map([
+                [treeRowId.workspaceRoot('project-a'), bounds(0)],
+                [treeRowId.session('server-a', 'unscoped'), bounds(40)],
+                [treeRowId.folder('folder-a'), bounds(80)],
+            ]),
+        });
+
+        const result = resolveSessionListInstruction({
+            tree,
+            source: buildSessionListDragSource({
+                tree,
+                sourceRowId: treeRowId.session('server-a', 'unscoped'),
+            }),
+            pointer: pointer(100),
+            foldersFeatureEnabled: true,
+        });
+
+        expect(result.instruction.kind).toBe('blocked');
+        expect(result.sessionListBlockReason).toBe('scope-unavailable');
     });
 
     it('blocks cross-workspace drops', () => {

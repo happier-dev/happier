@@ -8,8 +8,125 @@ import {
     buildSessionListCacheEntryFromRenderable,
     buildSessionListCacheEntriesFromRenderables,
 } from './warmCacheAdapters';
+import type { SessionListCacheEntryV1 } from './warmCachePersistence';
 
 describe('warmCacheAdapters', () => {
+    it('does not preserve or resurrect legacy private cache fields after the privacy layout contracts', () => {
+        const previousEntry: SessionListCacheEntryV1 = {
+            sessionId: 'privacy-contraction',
+            seq: 7,
+            metadataVersion: 9,
+            agentStateVersion: 8,
+            updatedAt: 10,
+            createdAt: 1,
+            active: true,
+            activeAt: 10,
+            archivedAt: null,
+            name: 'Legacy title',
+            path: '/private/worktree',
+            homeDir: '/private',
+            host: 'private-host',
+            machineId: 'private-machine',
+            flavor: 'codex',
+            externalSessionV1: {
+                v: 1,
+                agentId: 'codex',
+                machineId: 'private-machine',
+                remoteSessionId: 'private-native-id',
+                source: { kind: 'codexHome', home: 'local' },
+            },
+            hasPendingPermissionRequests: true,
+            hasPendingUserActionRequests: true,
+        };
+        const contractedRecipientRenderable = {
+            id: 'privacy-contraction',
+            seq: 8,
+            createdAt: 1,
+            updatedAt: 11,
+            active: true,
+            activeAt: 11,
+            archivedAt: null,
+            metadataLayoutVersion: 1,
+            metadataVersion: 1,
+            agentStateVersion: 1,
+            metadata: null,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online' as const,
+            hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: false,
+        };
+
+        const contractedEntry = buildSessionListCacheEntryFromRenderable(
+            contractedRecipientRenderable as SessionListRenderableSession,
+            previousEntry,
+        );
+        const reloaded = buildSessionListRenderableFromCacheEntry(contractedEntry);
+
+        expect(contractedEntry).toMatchObject({
+            metadataLayoutVersion: 1,
+            metadataVersion: 1,
+            agentStateVersion: 1,
+            name: undefined,
+            path: '',
+            homeDir: null,
+            host: null,
+            machineId: null,
+            flavor: null,
+            externalSessionV1: null,
+            hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: false,
+        });
+        expect(reloaded.metadata).toBeNull();
+        expect(JSON.stringify(reloaded)).not.toContain('private-native-id');
+        expect(JSON.stringify(reloaded)).not.toContain('/private/worktree');
+    });
+
+    it('invalidates and roundtrips the canonical external-session agent identity', () => {
+        const createRenderable = (agentId: string): SessionListRenderableSession => ({
+            id: 'external-agent-change',
+            seq: 1,
+            createdAt: 5,
+            updatedAt: 20,
+            active: true,
+            activeAt: 20,
+            metadataVersion: 2,
+            agentStateVersion: 4,
+            lastViewedSessionSeq: 0,
+            metadata: {
+                path: '/home/u/repo',
+                externalSessionV1: {
+                    v: 1,
+                    agentId,
+                    machineId: 'machine-1',
+                    remoteSessionId: 'remote-1',
+                    source: { kind: 'codexHome', home: 'user' },
+                },
+            },
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+            hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: false,
+            hasUnreadMessages: false,
+        });
+        const previousEntry = buildSessionListCacheEntryFromRenderable(createRenderable('codex'));
+        const nextEntry = buildSessionListCacheEntryFromRenderable(
+            createRenderable('claude'),
+            previousEntry,
+        );
+
+        expect(nextEntry).not.toBe(previousEntry);
+        expect(nextEntry.externalSessionV1).toMatchObject({ v: 1, agentId: 'claude' });
+        expect(buildSessionListRenderableFromCacheEntry(nextEntry).metadata?.externalSessionV1).toEqual({
+            v: 1,
+            agentId: 'claude',
+            machineId: 'machine-1',
+            remoteSessionId: 'remote-1',
+            source: { kind: 'codexHome', home: 'user' },
+        });
+    });
+
     it('preserves previous session cache metadata and agent-state projection while a replacement renderable is still stale', () => {
         const previousEntry = {
             sessionId: 's1',
@@ -321,6 +438,10 @@ describe('warmCacheAdapters', () => {
                 source: 'auth_error',
                 occurredAt: 1_200,
             },
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: 1_250,
+            runtimeActivityRevision: 10_000,
             latestReadyEventSeq: 11,
             latestReadyEventAt: 1_100,
             hasPendingPermissionRequests: true,
@@ -336,6 +457,9 @@ describe('warmCacheAdapters', () => {
             latestTurnStatus: 'failed',
             latestTurnStatusObservedAt: 1_200,
             lastRuntimeIssue: expect.objectContaining({ code: 'auth_error' }),
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: 1_250,
+            runtimeActivityRevision: 10_000,
             latestReadyEventSeq: 11,
             latestReadyEventAt: 1_100,
             pendingRequestObservedAt: 1_000,
@@ -345,6 +469,9 @@ describe('warmCacheAdapters', () => {
             latestTurnStatus: 'failed',
             latestTurnStatusObservedAt: 1_200,
             lastRuntimeIssue: expect.objectContaining({ code: 'auth_error' }),
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: 1_250,
+            runtimeActivityRevision: 10_000,
             latestReadyEventSeq: 11,
             latestReadyEventAt: 1_100,
             pendingRequestObservedAt: 1_000,

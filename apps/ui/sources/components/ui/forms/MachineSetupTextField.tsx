@@ -14,6 +14,15 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         color: theme.colors.text.secondary,
     },
+    support: {
+        ...Typography.default(),
+        color: theme.colors.text.secondary,
+        fontSize: 13,
+        lineHeight: 18,
+    },
+    error: {
+        color: theme.colors.state.danger.foreground,
+    },
     input: {
         backgroundColor: theme.colors.input.background,
         color: theme.colors.input.text,
@@ -26,7 +35,7 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
-export const MachineSetupTextField = React.memo(function MachineSetupTextField(props: Readonly<{
+export type MachineSetupTextFieldProps = Readonly<{
     editable?: boolean;
     inputStyle?: StyleProp<TextStyle>;
     keyboardType?: RNTextInputProps['keyboardType'];
@@ -40,14 +49,30 @@ export const MachineSetupTextField = React.memo(function MachineSetupTextField(p
     autoCorrect?: boolean;
     multiline?: boolean;
     secureTextEntry?: boolean;
+    supportText?: string;
+    errorText?: string;
     onChangeText: (value: string) => void;
-}>) {
+}>;
+
+export const MachineSetupTextField = React.memo(React.forwardRef<React.ElementRef<typeof TextInput>, MachineSetupTextFieldProps>(function MachineSetupTextField(props, ref) {
     const { theme } = useUnistyles();
+    const generatedSupportId = React.useId();
+    const supportId = props.testID ? `${props.testID}-support` : `machine-setup-field-support-${generatedSupportId}`;
+    const supportText = props.errorText ?? props.supportText;
+    const describedByProps = supportText ? { accessibilityDescribedBy: supportId } : {};
     return (
         <View style={[styles.container, props.style]}>
             <Text style={styles.label}>{props.label}</Text>
             <TextInput
+                ref={ref}
                 testID={props.testID}
+                accessibilityLabel={props.label}
+                accessibilityHint={supportText}
+                {...describedByProps}
+                accessibilityState={{
+                    ...(props.editable === false ? { disabled: true } : {}),
+                    ...(props.errorText ? { invalid: true } : {}),
+                }}
                 value={props.value}
                 editable={props.editable}
                 autoCapitalize={props.autoCapitalize}
@@ -60,6 +85,11 @@ export const MachineSetupTextField = React.memo(function MachineSetupTextField(p
                 style={[styles.input, props.inputStyle]}
                 onChangeText={props.onChangeText}
             />
+            {supportText ? (
+                <Text accessibilityLiveRegion="polite" nativeID={supportId} style={[styles.support, props.errorText ? styles.error : null]}>
+                    {supportText}
+                </Text>
+            ) : null}
         </View>
     );
-});
+}));

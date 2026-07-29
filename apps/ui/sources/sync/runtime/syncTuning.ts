@@ -6,12 +6,15 @@ export type SyncTuning = Readonly<{
     messageForceSnapshotOfflineMs: number;
     transcriptForwardPrefetchThresholdPx: number;
     transcriptBackwardPrefetchThresholdPx: number;
-    transcriptFlashListEstimatedItemSize: number;
-    transcriptWebHotTailItemCount: number;
+    /**
+     * Item-space arm threshold for older-page prefetch on native lists (count of loaded
+     * rows between the viewport and the older edge). Estimate-immune companion to the px
+     * threshold: native canonical px offsets are derived from estimated content height,
+     * whose error routinely swallows the px margin.
+     */
+    transcriptBackwardPrefetchThresholdItems: number;
+    transcriptEstimatedItemSizePx: number;
     transcriptMaxTurnEntriesPerListItem: number;
-    transcriptWebInitialPinStabilizeMs: number;
-    transcriptWebInitialPinRetryIntervalMs: number;
-    transcriptWebInitialPinRetryMilestonesMs: readonly number[];
     transcriptOlderLoadSpinnerDelayMs: number;
     transcriptOlderLoadCooldownMs: number;
     transcriptViewportAnchorCaptureDebounceMs: number;
@@ -19,7 +22,6 @@ export type SyncTuning = Readonly<{
     transcriptDerivedItemsCacheMaxSessions: number;
     transcriptItemHeightCacheMaxEntries: number;
     transcriptForkedSnapshotCacheMaxSessions: number;
-    transcriptFlashListDrawDistance: number;
     transcriptMountSettleQuiescentWindowMs: number;
     transcriptMountSettleDimensionNoiseFloorPx: number;
     transcriptMountSettleBottomDistanceNoiseFloorPx: number;
@@ -36,7 +38,14 @@ export type SyncTuning = Readonly<{
     messageCatchUpConcurrencyLimit: number;
     sessionListHydrationConcurrencyLimit: number;
     machineDisplayHydrationConcurrencyLimit: number;
+    machineDisplayHydrationMaxRows: number;
     sidechainDemandHydrationConcurrencyLimit: number;
+    /** Number of most-recently-viewed unprotected sessions whose transcripts stay hydrated. */
+    sessionTranscriptRetentionRecentKeepCount: number;
+    /** Idle grace before an unprotected hydrated transcript may be evicted. */
+    sessionTranscriptRetentionGraceMs: number;
+    /** Debounce window for coalescing transcript retention sweeps. */
+    sessionTranscriptRetentionSweepDebounceMs: number;
     sessionListEagerHydrationCount: number;
     sessionListAppendEagerHydrationCount: number;
     sessionListBackgroundHydrationConcurrencyLimit: number;
@@ -50,6 +59,7 @@ export type SyncTuning = Readonly<{
     messageDecryptBatchSize: number;
     messageDecryptYieldDelayMs: number;
     encryptionAesBatchConcurrencyLimit: number;
+    encryptionCacheMessageByteBudget: number;
     sessionSocketApplyCoalescingEnabled: boolean;
     sessionSocketApplyCoalescingWindowMs: number;
     sessionSocketApplyCoalescingMaxBatchSize: number;
@@ -92,6 +102,9 @@ export type SyncTuning = Readonly<{
     jsThreadLagTelemetrySampleIntervalMs: number;
     jsThreadLagTelemetryThresholdMs: number;
     jsThreadLagTelemetryMaxSamples: number;
+    feedItemsMaxEntries: number;
+    artifactHeadsMaxEntries: number;
+    automationRunsMaxEntriesPerAutomation: number;
 }>;
 
 const WEB_STORAGE_KEY = 'HAPPIER_SYNC_TUNING_JSON';
@@ -152,25 +165,6 @@ function readNumber(obj: Record<string, unknown>, key: keyof SyncTuning, opts: {
     return n;
 }
 
-function readNumberArray(
-    obj: Record<string, unknown>,
-    key: keyof SyncTuning,
-    opts: { min: number; max: number; maxLength: number },
-): readonly number[] | null {
-    const value = obj[key as string];
-    if (!Array.isArray(value)) return null;
-    if (value.length === 0 || value.length > opts.maxLength) return null;
-
-    const normalized = new Set<number>();
-    for (const item of value) {
-        if (typeof item !== 'number' || !Number.isFinite(item)) return null;
-        const n = Math.trunc(item);
-        if (n < opts.min || n > opts.max) return null;
-        normalized.add(n);
-    }
-    return [...normalized].sort((left, right) => left - right);
-}
-
 function readBoolean(obj: Record<string, unknown>, key: keyof SyncTuning): boolean | null {
     const v = obj[key as string];
     return typeof v === 'boolean' ? v : null;
@@ -204,12 +198,9 @@ export function loadSyncTuning(opts?: {
         messageForceSnapshotOfflineMs: 30 * 60 * 1000,
         transcriptForwardPrefetchThresholdPx: 800,
         transcriptBackwardPrefetchThresholdPx: 800,
-        transcriptFlashListEstimatedItemSize: 120,
-        transcriptWebHotTailItemCount: 24,
+        transcriptBackwardPrefetchThresholdItems: 12,
+        transcriptEstimatedItemSizePx: 120,
         transcriptMaxTurnEntriesPerListItem: 8,
-        transcriptWebInitialPinStabilizeMs: 1500,
-        transcriptWebInitialPinRetryIntervalMs: 250,
-        transcriptWebInitialPinRetryMilestonesMs: [16, 50, 100, 200, 400, 800],
         transcriptOlderLoadSpinnerDelayMs: 300,
         transcriptOlderLoadCooldownMs: 2000,
         transcriptViewportAnchorCaptureDebounceMs: 200,
@@ -217,7 +208,6 @@ export function loadSyncTuning(opts?: {
         transcriptDerivedItemsCacheMaxSessions: 16,
         transcriptItemHeightCacheMaxEntries: 1024,
         transcriptForkedSnapshotCacheMaxSessions: 64,
-        transcriptFlashListDrawDistance: 0,
         transcriptMountSettleQuiescentWindowMs: 120,
         transcriptMountSettleDimensionNoiseFloorPx: 1,
         transcriptMountSettleBottomDistanceNoiseFloorPx: 2,
@@ -234,7 +224,11 @@ export function loadSyncTuning(opts?: {
         messageCatchUpConcurrencyLimit: 1,
         sessionListHydrationConcurrencyLimit: 4,
         machineDisplayHydrationConcurrencyLimit: 4,
+        machineDisplayHydrationMaxRows: 64,
         sidechainDemandHydrationConcurrencyLimit: 2,
+        sessionTranscriptRetentionRecentKeepCount: 3,
+        sessionTranscriptRetentionGraceMs: 3 * 60 * 1000,
+        sessionTranscriptRetentionSweepDebounceMs: 1_000,
         sessionListEagerHydrationCount: 4,
         sessionListAppendEagerHydrationCount: 50,
         sessionListBackgroundHydrationConcurrencyLimit: 1,
@@ -248,6 +242,7 @@ export function loadSyncTuning(opts?: {
         messageDecryptBatchSize: 8,
         messageDecryptYieldDelayMs: 0,
         encryptionAesBatchConcurrencyLimit: 4,
+        encryptionCacheMessageByteBudget: 16 * 1024 * 1024,
         sessionSocketApplyCoalescingEnabled: true,
         sessionSocketApplyCoalescingWindowMs: 16,
         sessionSocketApplyCoalescingMaxBatchSize: 64,
@@ -283,6 +278,9 @@ export function loadSyncTuning(opts?: {
         jsThreadLagTelemetrySampleIntervalMs: 50,
         jsThreadLagTelemetryThresholdMs: 50,
         jsThreadLagTelemetryMaxSamples: 512,
+        feedItemsMaxEntries: 500,
+        artifactHeadsMaxEntries: 500,
+        automationRunsMaxEntriesPerAutomation: 200,
     };
 
     const webObj = parseJsonObject(readWebStorageValue(opts?.readWebStorage));
@@ -302,12 +300,9 @@ export function loadSyncTuning(opts?: {
         messageForceSnapshotOfflineMs: readNumber(merged, 'messageForceSnapshotOfflineMs', { min: 0, max: 365 * 24 * 60 * 60 * 1000 }) ?? defaults.messageForceSnapshotOfflineMs,
         transcriptForwardPrefetchThresholdPx: readNumber(merged, 'transcriptForwardPrefetchThresholdPx', { min: 0, max: 50_000 }) ?? defaults.transcriptForwardPrefetchThresholdPx,
         transcriptBackwardPrefetchThresholdPx: readNumber(merged, 'transcriptBackwardPrefetchThresholdPx', { min: 0, max: 50_000 }) ?? defaults.transcriptBackwardPrefetchThresholdPx,
-        transcriptFlashListEstimatedItemSize: readNumber(merged, 'transcriptFlashListEstimatedItemSize', { min: 20, max: 2000 }) ?? defaults.transcriptFlashListEstimatedItemSize,
-        transcriptWebHotTailItemCount: readNumber(merged, 'transcriptWebHotTailItemCount', { min: 1, max: 200 }) ?? defaults.transcriptWebHotTailItemCount,
+        transcriptBackwardPrefetchThresholdItems: readNumber(merged, 'transcriptBackwardPrefetchThresholdItems', { min: 1, max: 500 }) ?? defaults.transcriptBackwardPrefetchThresholdItems,
+        transcriptEstimatedItemSizePx: readNumber(merged, 'transcriptEstimatedItemSizePx', { min: 20, max: 2000 }) ?? defaults.transcriptEstimatedItemSizePx,
         transcriptMaxTurnEntriesPerListItem: readNumber(merged, 'transcriptMaxTurnEntriesPerListItem', { min: 0, max: 200 }) ?? defaults.transcriptMaxTurnEntriesPerListItem,
-        transcriptWebInitialPinStabilizeMs: readNumber(merged, 'transcriptWebInitialPinStabilizeMs', { min: 0, max: 20_000 }) ?? defaults.transcriptWebInitialPinStabilizeMs,
-        transcriptWebInitialPinRetryIntervalMs: readNumber(merged, 'transcriptWebInitialPinRetryIntervalMs', { min: 16, max: 2000 }) ?? defaults.transcriptWebInitialPinRetryIntervalMs,
-        transcriptWebInitialPinRetryMilestonesMs: readNumberArray(merged, 'transcriptWebInitialPinRetryMilestonesMs', { min: 0, max: 20_000, maxLength: 32 }) ?? defaults.transcriptWebInitialPinRetryMilestonesMs,
         transcriptOlderLoadSpinnerDelayMs: readNumber(merged, 'transcriptOlderLoadSpinnerDelayMs', { min: 0, max: 20_000 }) ?? defaults.transcriptOlderLoadSpinnerDelayMs,
         transcriptOlderLoadCooldownMs: readNumber(merged, 'transcriptOlderLoadCooldownMs', { min: 0, max: 20_000 }) ?? defaults.transcriptOlderLoadCooldownMs,
         transcriptViewportAnchorCaptureDebounceMs: readNumber(merged, 'transcriptViewportAnchorCaptureDebounceMs', { min: 0, max: 20_000 }) ?? defaults.transcriptViewportAnchorCaptureDebounceMs,
@@ -315,7 +310,6 @@ export function loadSyncTuning(opts?: {
         transcriptDerivedItemsCacheMaxSessions: readNumber(merged, 'transcriptDerivedItemsCacheMaxSessions', { min: 1, max: 64 }) ?? defaults.transcriptDerivedItemsCacheMaxSessions,
         transcriptItemHeightCacheMaxEntries: readNumber(merged, 'transcriptItemHeightCacheMaxEntries', { min: 1, max: 10_000 }) ?? defaults.transcriptItemHeightCacheMaxEntries,
         transcriptForkedSnapshotCacheMaxSessions: readNumber(merged, 'transcriptForkedSnapshotCacheMaxSessions', { min: 1, max: 256 }) ?? defaults.transcriptForkedSnapshotCacheMaxSessions,
-        transcriptFlashListDrawDistance: readNumber(merged, 'transcriptFlashListDrawDistance', { min: 0, max: 50_000 }) ?? defaults.transcriptFlashListDrawDistance,
         transcriptMountSettleQuiescentWindowMs: readNumber(merged, 'transcriptMountSettleQuiescentWindowMs', { min: 16, max: 1000 }) ?? defaults.transcriptMountSettleQuiescentWindowMs,
         transcriptMountSettleDimensionNoiseFloorPx: readNumber(merged, 'transcriptMountSettleDimensionNoiseFloorPx', { min: 0, max: 64 }) ?? defaults.transcriptMountSettleDimensionNoiseFloorPx,
         transcriptMountSettleBottomDistanceNoiseFloorPx: readNumber(merged, 'transcriptMountSettleBottomDistanceNoiseFloorPx', { min: 0, max: 64 }) ?? defaults.transcriptMountSettleBottomDistanceNoiseFloorPx,
@@ -332,7 +326,11 @@ export function loadSyncTuning(opts?: {
         messageCatchUpConcurrencyLimit: readNumber(merged, 'messageCatchUpConcurrencyLimit', { min: 1, max: 10 }) ?? defaults.messageCatchUpConcurrencyLimit,
         sessionListHydrationConcurrencyLimit: readNumber(merged, 'sessionListHydrationConcurrencyLimit', { min: 1, max: 20 }) ?? defaults.sessionListHydrationConcurrencyLimit,
         machineDisplayHydrationConcurrencyLimit: readNumber(merged, 'machineDisplayHydrationConcurrencyLimit', { min: 1, max: 20 }) ?? defaults.machineDisplayHydrationConcurrencyLimit,
+        machineDisplayHydrationMaxRows: readNumber(merged, 'machineDisplayHydrationMaxRows', { min: 1, max: 10_000 }) ?? defaults.machineDisplayHydrationMaxRows,
         sidechainDemandHydrationConcurrencyLimit: readNumber(merged, 'sidechainDemandHydrationConcurrencyLimit', { min: 1, max: 8 }) ?? defaults.sidechainDemandHydrationConcurrencyLimit,
+        sessionTranscriptRetentionRecentKeepCount: readNumber(merged, 'sessionTranscriptRetentionRecentKeepCount', { min: 0, max: 200 }) ?? defaults.sessionTranscriptRetentionRecentKeepCount,
+        sessionTranscriptRetentionGraceMs: readNumber(merged, 'sessionTranscriptRetentionGraceMs', { min: 0, max: 24 * 60 * 60 * 1000 }) ?? defaults.sessionTranscriptRetentionGraceMs,
+        sessionTranscriptRetentionSweepDebounceMs: readNumber(merged, 'sessionTranscriptRetentionSweepDebounceMs', { min: 0, max: 60_000 }) ?? defaults.sessionTranscriptRetentionSweepDebounceMs,
         sessionListEagerHydrationCount: readNumber(merged, 'sessionListEagerHydrationCount', { min: 0, max: 200 }) ?? defaults.sessionListEagerHydrationCount,
         sessionListAppendEagerHydrationCount: readNumber(merged, 'sessionListAppendEagerHydrationCount', { min: 0, max: 200 }) ?? defaults.sessionListAppendEagerHydrationCount,
         sessionListBackgroundHydrationConcurrencyLimit: readNumber(merged, 'sessionListBackgroundHydrationConcurrencyLimit', { min: 1, max: 20 }) ?? defaults.sessionListBackgroundHydrationConcurrencyLimit,
@@ -346,6 +344,7 @@ export function loadSyncTuning(opts?: {
         messageDecryptBatchSize: readNumber(merged, 'messageDecryptBatchSize', { min: 1, max: 1_000 }) ?? defaults.messageDecryptBatchSize,
         messageDecryptYieldDelayMs: readNumber(merged, 'messageDecryptYieldDelayMs', { min: 0, max: 1_000 }) ?? defaults.messageDecryptYieldDelayMs,
         encryptionAesBatchConcurrencyLimit: readNumber(merged, 'encryptionAesBatchConcurrencyLimit', { min: 1, max: 16 }) ?? defaults.encryptionAesBatchConcurrencyLimit,
+        encryptionCacheMessageByteBudget: readNumber(merged, 'encryptionCacheMessageByteBudget', { min: 1024, max: 512 * 1024 * 1024 }) ?? defaults.encryptionCacheMessageByteBudget,
         sessionSocketApplyCoalescingEnabled: readBoolean(merged, 'sessionSocketApplyCoalescingEnabled') ?? defaults.sessionSocketApplyCoalescingEnabled,
         sessionSocketApplyCoalescingWindowMs: readNumber(merged, 'sessionSocketApplyCoalescingWindowMs', { min: 0, max: 200 }) ?? defaults.sessionSocketApplyCoalescingWindowMs,
         sessionSocketApplyCoalescingMaxBatchSize: readNumber(merged, 'sessionSocketApplyCoalescingMaxBatchSize', { min: 2, max: 1000 }) ?? defaults.sessionSocketApplyCoalescingMaxBatchSize,
@@ -381,6 +380,9 @@ export function loadSyncTuning(opts?: {
         jsThreadLagTelemetrySampleIntervalMs: readNumber(merged, 'jsThreadLagTelemetrySampleIntervalMs', { min: 1, max: 60_000 }) ?? defaults.jsThreadLagTelemetrySampleIntervalMs,
         jsThreadLagTelemetryThresholdMs: readNumber(merged, 'jsThreadLagTelemetryThresholdMs', { min: 1, max: 60_000 }) ?? defaults.jsThreadLagTelemetryThresholdMs,
         jsThreadLagTelemetryMaxSamples: readNumber(merged, 'jsThreadLagTelemetryMaxSamples', { min: 1, max: 100_000 }) ?? defaults.jsThreadLagTelemetryMaxSamples,
+        feedItemsMaxEntries: readNumber(merged, 'feedItemsMaxEntries', { min: 1, max: 100_000 }) ?? defaults.feedItemsMaxEntries,
+        artifactHeadsMaxEntries: readNumber(merged, 'artifactHeadsMaxEntries', { min: 1, max: 100_000 }) ?? defaults.artifactHeadsMaxEntries,
+        automationRunsMaxEntriesPerAutomation: readNumber(merged, 'automationRunsMaxEntriesPerAutomation', { min: 1, max: 100_000 }) ?? defaults.automationRunsMaxEntriesPerAutomation,
     };
 
     // Normalize: max delay must be >= min delay.

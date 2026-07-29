@@ -13,6 +13,8 @@ export function deriveSessionAttentionState(
         presence: input.presence,
         thinking: input.thinking,
         thinkingAt: input.thinkingAt,
+        optimisticThinkingAt: input.optimisticThinkingAt,
+        hasPendingUserMessages: input.hasPendingUserMessages,
         latestTurnStatus: input.latestTurnStatus,
         latestTurnStatusObservedAt: input.latestTurnStatusObservedAt,
         meaningfulActivityAt: input.meaningfulActivityAt,

@@ -7,6 +7,37 @@ import path from 'node:path';
 import { scanUserFacingStrings } from '../../tools/i18n/userFacingTextScan';
 
 describe('tools/i18n/userFacingTextScan', () => {
+    it('does not treat nested test identifiers as user-facing copy', async () => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'happier-ui-i18n-scan-'));
+        try {
+            const filePath = path.join(dir, 'Example.tsx');
+            await fs.writeFile(
+                filePath,
+                [
+                    'export function Example({ code }: { code: string }) {',
+                    '  return (',
+                    '    <Item',
+                    '      title={<Text testID={`diagnostic.${code}.code`}>Translated title</Text>}',
+                    '      subtitle={<Text testID={`diagnostic.${code}.message`}>Translated subtitle</Text>}',
+                    '    />',
+                    '  );',
+                    '}',
+                    '',
+                ].join('\n'),
+                'utf8'
+            );
+
+            const hits = scanUserFacingStrings({ sourcesRootDir: dir });
+
+            expect(hits.map((hit) => hit.text)).not.toEqual(expect.arrayContaining([
+                'diagnostic.${…}.code',
+                'diagnostic.${…}.message',
+            ]));
+        } finally {
+            await fs.rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it('flags nested string literals used as title/subtitle in JSX props', async () => {
         const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'happier-ui-i18n-scan-'));
         try {

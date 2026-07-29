@@ -32,8 +32,8 @@ vi.mock('react-native', async () => {
     });
 });
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
-    FlashList: ({ data, renderItem, keyExtractor, ListHeaderComponent, estimatedItemSize }: any) => {
+vi.mock('@legendapp/list/react-native', () => ({
+    LegendList: ({ data, renderItem, keyExtractor, ListHeaderComponent, estimatedItemSize }: any) => {
         const header = ListHeaderComponent
             ? (React.isValidElement(ListHeaderComponent) ? ListHeaderComponent : React.createElement(ListHeaderComponent))
             : null;
@@ -41,7 +41,7 @@ vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
             const key = keyExtractor ? keyExtractor(item, index) : String(item?.path ?? index);
             return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
         });
-        return React.createElement('FlashList', { estimatedItemSize }, header, ...rows);
+        return React.createElement('LegendList', { estimatedItemSize }, header, ...rows);
     },
 }));
 
@@ -100,7 +100,7 @@ describe('FilesystemBrowserList', () => {
         expect(screen.findAllByType('ActivityIndicator' as any)).toHaveLength(0);
     });
 
-    it('uses FlashList on native file browsers', async () => {
+    it('uses LegendList on native file browsers', async () => {
         platformState.os = 'ios';
         const { FilesystemBrowserList } = await import('./FilesystemBrowserList');
 
@@ -117,9 +117,9 @@ describe('FilesystemBrowserList', () => {
             />,
         );
 
-        const flashLists = screen.findAllByType('FlashList' as any);
-        expect(flashLists).toHaveLength(1);
-        expect(flashLists[0]?.props?.estimatedItemSize).toBeGreaterThan(0);
+        const legendLists = screen.findAllByType('LegendList' as any);
+        expect(legendLists).toHaveLength(1);
+        expect(legendLists[0]?.props?.estimatedItemSize).toBeGreaterThan(0);
         expect(screen.findAllByType('FlatList' as any)).toHaveLength(0);
     });
 });

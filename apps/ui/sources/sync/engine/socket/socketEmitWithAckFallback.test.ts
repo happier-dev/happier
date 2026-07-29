@@ -5,6 +5,35 @@ import { HappyError } from '@/utils/errors/errors';
 import { socketEmitWithAckFallback } from './socketEmitWithAckFallback';
 
 describe('socketEmitWithAckFallback', () => {
+    it('falls back when the Socket.IO ACK promise never settles', async () => {
+        vi.useFakeTimers();
+        try {
+            const emitWithAck = vi.fn(() => new Promise<never>(() => {}));
+            const send = vi.fn();
+            const onNoAck = vi.fn();
+
+            const ackPromise = socketEmitWithAckFallback({
+                emitWithAck,
+                send,
+                event: 'message',
+                payload: { sid: 's1', message: 'enc', localId: 'l1' },
+                timeoutMs: 7_500,
+                onNoAck,
+            });
+
+            await vi.advanceTimersByTimeAsync(7_499);
+            expect(send).not.toHaveBeenCalled();
+            expect(onNoAck).not.toHaveBeenCalled();
+
+            await vi.advanceTimersByTimeAsync(1);
+            expect(send).toHaveBeenCalledWith('message', { sid: 's1', message: 'enc', localId: 'l1' });
+            expect(onNoAck).toHaveBeenCalledTimes(1);
+            await expect(ackPromise).resolves.toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('falls back to send + onNoAck when emitWithAck rejects (old server / missing ACK)', async () => {
         const emitWithAck = vi.fn(async () => {
             throw new Error('timeout');

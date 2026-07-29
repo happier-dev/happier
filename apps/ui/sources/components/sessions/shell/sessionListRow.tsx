@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Platform } from 'react-native';
+import { View, Platform, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 
@@ -37,6 +37,11 @@ export type SessionListRowProps = Readonly<
         overlayShared: TreeDropOverlaySharedValues;
         onRegisterTreeRowBounds: RegisterSessionListTreeRowBounds;
         onUnregisterTreeRowBounds: UnregisterSessionListTreeRowBounds;
+        measurementTarget?: Readonly<{
+            ref: React.Ref<View>;
+            onLayout: NonNullable<ViewProps['onLayout']>;
+            style?: StyleProp<ViewStyle>;
+        }>;
     }
 >;
 
@@ -60,6 +65,7 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         overlayShared,
         onRegisterTreeRowBounds,
         onUnregisterTreeRowBounds,
+        measurementTarget,
         ...itemProps
     } = props;
 
@@ -165,15 +171,26 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         />
     );
 
-    const handleRowLayout = React.useCallback(() => {
+    const handleWrapperRef = React.useCallback((node: View | null) => {
+        wrapperRef.current = node;
+        const measurementRef = measurementTarget?.ref;
+        if (typeof measurementRef === 'function') {
+            measurementRef(node);
+        } else if (measurementRef) {
+            measurementRef.current = node;
+        }
+    }, [measurementTarget?.ref]);
+
+    const handleRowLayout = React.useCallback((event: Parameters<NonNullable<ViewProps['onLayout']>>[0]) => {
         onRegisterTreeRowBounds(treeRowId, wrapperRef.current);
-    }, [onRegisterTreeRowBounds, treeRowId]);
+        measurementTarget?.onLayout(event);
+    }, [measurementTarget, onRegisterTreeRowBounds, treeRowId]);
 
     const rowNode = inlineDragEnabled ? (
         <Animated.View
-            ref={wrapperRef}
+            ref={handleWrapperRef}
             collapsable={false}
-            style={animatedStyle}
+            style={[animatedStyle, measurementTarget?.style]}
             pointerEvents={rowPointerEvents}
             onLayout={handleRowLayout}
         >
@@ -181,8 +198,9 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         </Animated.View>
     ) : (
         <View
-            ref={wrapperRef}
+            ref={handleWrapperRef}
             collapsable={false}
+            style={measurementTarget?.style}
             pointerEvents={rowPointerEvents}
             onLayout={handleRowLayout}
         >

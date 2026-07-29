@@ -55,3 +55,20 @@ export function normalizeSessionListKeyParts(
     NORMALIZED_SESSION_LIST_KEY_PARTS_CACHE.set(cacheKey, normalizedParts);
     return normalizedParts;
 }
+
+export function buildSessionListServerScopedRowKey(
+    serverIdRaw: unknown,
+    sessionIdRaw?: unknown,
+): string | null {
+    const { serverId, sessionId } = normalizeSessionListKeyParts(serverIdRaw, sessionIdRaw);
+    return serverId && sessionId ? `${serverId}\u0000${sessionId}` : null;
+}
+
+export function buildSessionListRowScopeKey(
+    serverIdRaw: unknown,
+    sessionIdRaw?: unknown,
+): string | null {
+    const { serverId, sessionId } = normalizeSessionListKeyParts(serverIdRaw, sessionIdRaw);
+    if (!sessionId) return null;
+    return serverId ? `${serverId}\u0000${sessionId}` : sessionId;
+}

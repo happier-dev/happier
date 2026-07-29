@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
     resolveTranscriptNavigationRailMarkerMotion,
-    resolveTranscriptNavigationRailMotionUpdateIndexes,
-    stepTranscriptNavigationRailMarkerMotion,
+    resolveTranscriptNavigationRailMarkerTransitionStyle,
+    transcriptNavigationRailMarkerMotionEquals,
 } from './resolveTranscriptNavigationRailMotion';
 
 describe('resolveTranscriptNavigationRailMarkerMotion', () => {
@@ -98,89 +98,32 @@ describe('resolveTranscriptNavigationRailMarkerMotion', () => {
         expect(Number.isFinite(style.translateYPx)).toBe(true);
     });
 
-    it('glides toward the target over multiple steps instead of snapping', () => {
-        const rest = { opacity: 0.28, translateYPx: 0, widthPx: 3 } as const;
-        const target = { opacity: 0.7, translateYPx: -1.5, widthPx: 16 } as const;
+    // The bounded update window is a property of the RESOLVER: every marker past
+    // the falloff radius resolves to an identical rest motion, so a focus change
+    // leaves the memo comparison equal and those markers do not re-render. The
+    // imperative rAF writer that used to enforce this is gone.
+    it('resolves an identical rest motion for every marker outside the falloff window', () => {
+        const restInput = { activeIndex: null, markerIndex: 500, reducedMotion: false, visible: false } as const;
+        const before = resolveTranscriptNavigationRailMarkerMotion({ ...restInput, focusIndex: 100 });
+        const after = resolveTranscriptNavigationRailMarkerMotion({ ...restInput, focusIndex: 105 });
 
-        const first = stepTranscriptNavigationRailMarkerMotion(rest, target);
-        expect(first.settled).toBe(false);
-        expect(first.motion.widthPx).toBeGreaterThan(rest.widthPx);
-        expect(first.motion.widthPx).toBeLessThan(target.widthPx);
-        expect(first.motion.opacity).toBeGreaterThan(rest.opacity);
-        expect(first.motion.opacity).toBeLessThan(target.opacity);
-
-        const second = stepTranscriptNavigationRailMarkerMotion(first.motion, target);
-        expect(second.motion.widthPx).toBeGreaterThan(first.motion.widthPx);
-        expect(second.motion.widthPx).toBeLessThan(target.widthPx);
+        expect(transcriptNavigationRailMarkerMotionEquals(before, after)).toBe(true);
+        expect(transcriptNavigationRailMarkerMotionEquals(
+            before,
+            resolveTranscriptNavigationRailMarkerMotion({ ...restInput, focusIndex: null }),
+        )).toBe(true);
     });
 
-    it('settles exactly on the target within a bounded number of steps', () => {
-        const target = { opacity: 0.9, translateYPx: 0, widthPx: 16 } as const;
-        let current = { opacity: 0.28, translateYPx: 2, widthPx: 3 };
-        let settled = false;
-        let steps = 0;
+    it('collapses the marker transition duration to zero under reduced motion', () => {
+        const motion = resolveTranscriptNavigationRailMarkerTransitionStyle(false);
+        const reduced = resolveTranscriptNavigationRailMarkerTransitionStyle(true);
 
-        while (!settled && steps < 120) {
-            const next = stepTranscriptNavigationRailMarkerMotion(current, target);
-            current = { ...next.motion };
-            settled = next.settled;
-            steps += 1;
+        // Native never renders the rail, so it declares no transition at all.
+        if (motion === null) {
+            expect(reduced).toBeNull();
+            return;
         }
-
-        expect(settled).toBe(true);
-        expect(steps).toBeLessThan(60);
-        expect(current).toEqual(target);
-    });
-
-    it('snaps immediately with full smoothing or a missing current value', () => {
-        const target = { opacity: 0.7, translateYPx: -1, widthPx: 16 } as const;
-
-        const snapped = stepTranscriptNavigationRailMarkerMotion(
-            { opacity: 0.28, translateYPx: 0, widthPx: 3 },
-            target,
-            1,
-        );
-        expect(snapped.settled).toBe(true);
-        expect(snapped.motion).toEqual(target);
-
-        const fromNull = stepTranscriptNavigationRailMarkerMotion(null, target);
-        expect(fromNull.settled).toBe(true);
-        expect(fromNull.motion).toEqual(target);
-    });
-
-    it('recovers to the target from non-finite current values and smoothing', () => {
-        const target = { opacity: 0.7, translateYPx: 0, widthPx: 16 } as const;
-
-        const fromBroken = stepTranscriptNavigationRailMarkerMotion(
-            { opacity: Number.NaN, translateYPx: Number.POSITIVE_INFINITY, widthPx: 3 },
-            target,
-        );
-        expect(fromBroken.settled).toBe(true);
-        expect(fromBroken.motion).toEqual(target);
-
-        const brokenSmoothing = stepTranscriptNavigationRailMarkerMotion(
-            { opacity: 0.28, translateYPx: 0, widthPx: 3 },
-            target,
-            Number.NaN,
-        );
-        expect(brokenSmoothing.settled).toBe(true);
-        expect(brokenSmoothing.motion).toEqual(target);
-    });
-
-    it('bounds pointer-focus style updates to the previous and next falloff windows', () => {
-        const indexes = resolveTranscriptNavigationRailMotionUpdateIndexes({
-            markerCount: 1000,
-            nextFocusIndex: 505,
-            previousFocusIndex: 500,
-            radius: 4,
-        });
-
-        expect(indexes).toContain(500);
-        expect(indexes).toContain(505);
-        expect(indexes).toContain(501);
-        expect(indexes).toContain(509);
-        expect(indexes).not.toContain(0);
-        expect(indexes).not.toContain(999);
-        expect(indexes.length).toBeLessThanOrEqual(18);
+        expect((motion as Record<string, unknown>).transitionDuration).toBe('160ms');
+        expect((reduced as Record<string, unknown>)?.transitionDuration).toBe('0ms');
     });
 });

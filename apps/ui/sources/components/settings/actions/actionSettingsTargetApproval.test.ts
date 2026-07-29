@@ -11,7 +11,7 @@ describe('actionSettingsTargetApproval', () => {
     it.each([
         ['review.start', 'mcp', 'mcp'],
         ['review.start', 'cli', 'cli'],
-        ['review.start', 'session_agent', 'session_agent'],
+        ['review.start', 'agent', 'agent'],
         ['review.start', 'voice', 'voice'],
         ['review.start', 'slash_command', 'ui'],
         ['approval.request.decide', 'contextual_ui', 'ui'],

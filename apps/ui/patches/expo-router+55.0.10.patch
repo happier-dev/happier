@@ -1,19 +1,125 @@
-diff --git a/node_modules/expo-router/build/layouts/_web-modal.js b/node_modules/expo-router/build/layouts/_web-modal.js
---- a/node_modules/expo-router/build/layouts/_web-modal.js
-+++ b/node_modules/expo-router/build/layouts/_web-modal.js
-@@ -1,8 +1,8 @@
- "use strict";
- var __importDefault = (this && this.__importDefault) || function (mod) {
-     return (mod && mod.__esModule) ? mod : { "default": mod };
- };
+diff --git a/node_modules/expo-router/build/fork/createMemoryHistory.js b/node_modules/expo-router/build/fork/createMemoryHistory.js
+index 9e67d40..d0d1e91 100644
+--- a/node_modules/expo-router/build/fork/createMemoryHistory.js
++++ b/node_modules/expo-router/build/fork/createMemoryHistory.js
+@@ -2,6 +2,7 @@
  Object.defineProperty(exports, "__esModule", { value: true });
--const BaseStack_1 = __importDefault(require("./BaseStack"));
--exports.default = BaseStack_1.default;
-+const ExperimentalModalStack_1 = __importDefault(require("./ExperimentalModalStack"));
-+exports.default = ExperimentalModalStack_1.default;
- //# sourceMappingURL=_web-modal.js.map
+ exports.createMemoryHistory = createMemoryHistory;
+ const non_secure_1 = require("nanoid/non-secure");
++const getPathWithoutHash = (path) => path.split('#')[0] ?? '';
+ function createMemoryHistory() {
+     let index = 0;
+     let items = [];
+@@ -32,10 +33,14 @@ function createMemoryHistory() {
+             return items[index];
+         },
+         backIndex({ path }) {
++            const pathWithoutHash = getPathWithoutHash(path);
+             // We need to find the index from the element before current to get closest path to go back to
+             for (let i = index - 1; i >= 0; i--) {
+                 const item = items[i];
+-                if (item.path === path) {
++                if (item == null) {
++                    continue;
++                }
++                if (item.path === pathWithoutHash) {
+                     return i;
+                 }
+             }
+@@ -44,10 +49,11 @@ function createMemoryHistory() {
+         push({ path, state }) {
+             interrupt();
+             const id = (0, non_secure_1.nanoid)();
++            const pathWithoutHash = getPathWithoutHash(path);
+             // When a new entry is pushed, all the existing entries after index will be inaccessible
+             // So we remove any existing entries after the current index to clean them up
+             items = items.slice(0, index + 1);
+-            items.push({ path, state, id });
++            items.push({ path: pathWithoutHash, state, id });
+             index = items.length - 1;
+             // We pass empty string for title because it's ignored in all browsers except safari
+             // We don't store state object in history.state because:
+@@ -58,6 +64,7 @@ function createMemoryHistory() {
+         replace({ path, state }) {
+             interrupt();
+             const id = window.history.state?.id ?? (0, non_secure_1.nanoid)();
++            const pathWithoutHash = getPathWithoutHash(path);
+             // Need to keep the hash part of the path if there was no previous history entry
+             // or the previous history entry had the same path
+             let pathWithHash = path;
+@@ -70,14 +77,15 @@ function createMemoryHistory() {
+                 // - This is the first time any state modifications are done
+                 //   So we need to push the entry as there's nothing to replace
+                 pathWithHash = pathWithHash + hash;
+-                items = [{ path: pathWithHash, state, id }];
++                items = [{ path: pathWithoutHash, state, id }];
+                 index = 0;
+             }
+             else {
+-                if (items[index].path === path) {
++                const item = items[index];
++                if (item?.path === pathWithoutHash) {
+                     pathWithHash = pathWithHash + hash;
+                 }
+-                items[index] = { path, state, id };
++                items[index] = { path: pathWithoutHash, state, id };
+             }
+             window.history.replaceState({ id }, '', pathWithHash);
+         },
+@@ -108,6 +116,7 @@ function createMemoryHistory() {
+             if (n === 0) {
+                 return;
+             }
++            const targetId = items[index]?.id;
+             // When we call `history.go`, `popstate` will fire when there's history to go back to
+             // So we need to somehow handle following cases:
+             // - There's history to go back, `history.go` is called, and `popstate` fires
+@@ -116,7 +125,7 @@ function createMemoryHistory() {
+             return new Promise((resolve, reject) => {
+                 const done = (interrupted) => {
+                     clearTimeout(timer);
+-                    if (interrupted) {
++                    if (interrupted || window.history.state?.id !== targetId) {
+                         reject(new Error('History was changed during navigation.'));
+                         return;
+                     }
+@@ -140,18 +149,17 @@ function createMemoryHistory() {
+                 // But on Firefox, it seems to take much longer, around 50ms from our testing
+                 // We're using a hacky timeout since there doesn't seem to be way to know for sure
+                 const timer = setTimeout(() => {
+-                    const index = pending.findIndex((it) => it.ref === done);
+-                    if (index > -1) {
+-                        pending[index].cb();
+-                        pending.splice(index, 1);
++                    const foundIndex = pending.findIndex((it) => it.ref === done);
++                    if (foundIndex > -1) {
++                        pending[foundIndex]?.cb();
++                        pending.splice(foundIndex, 1);
+                     }
++                    index = this.index;
+                 }, 100);
+                 const onPopState = () => {
+-                    const id = window.history.state?.id;
+-                    const currentIndex = items.findIndex((item) => item.id === id);
+                     // Fix createMemoryHistory.index variable's value
+                     // as it may go out of sync when navigating in the browser.
+-                    index = Math.max(currentIndex, 0);
++                    index = this.index;
+                     const last = pending.pop();
+                     window.removeEventListener('popstate', onPopState);
+                     last?.cb();
+@@ -165,6 +173,9 @@ function createMemoryHistory() {
+         // Here we normalize it so that only external changes (e.g. user pressing back/forward) trigger the listener
+         listen(listener) {
+             const onPopState = () => {
++                // Fix createMemoryHistory.index variable's value
++                // as it may go out of sync when navigating in the browser.
++                index = this.index;
+                 if (pending.length) {
+                     // This was triggered by `history.go(n)`, we shouldn't call the listener
+                     return;
 diff --git a/node_modules/expo-router/build/fork/native-stack/createNativeStackNavigator.js b/node_modules/expo-router/build/fork/native-stack/createNativeStackNavigator.js
-index 2ef69a8..b47fa1a 100644
+index 2ef69a8..acd65c5 100644
 --- a/node_modules/expo-router/build/fork/native-stack/createNativeStackNavigator.js
 +++ b/node_modules/expo-router/build/fork/native-stack/createNativeStackNavigator.js
 @@ -36,13 +36,21 @@ Object.defineProperty(exports, "__esModule", { value: true });
@@ -40,8 +146,339 @@ index 2ef69a8..b47fa1a 100644
  function NativeStackNavigator({ id, initialRouteName, children, layout, screenListeners, screenOptions, screenLayout, UNSTABLE_router, ...rest }) {
      const { state, describe, descriptors, navigation, NavigationContent } = (0, native_1.useNavigationBuilder)(native_1.StackRouter, {
          id,
+diff --git a/node_modules/expo-router/build/fork/useLinking.js b/node_modules/expo-router/build/fork/useLinking.js
+index b858a3b..dd1bc1c 100644
+--- a/node_modules/expo-router/build/fork/useLinking.js
++++ b/node_modules/expo-router/build/fork/useLinking.js
+@@ -47,6 +47,11 @@ const getPathFromState_1 = require("./getPathFromState");
+ const serverLocationContext_1 = require("../global-state/serverLocationContext");
+ const storeContext_1 = require("../global-state/storeContext");
+ const utils_1 = require("../global-state/utils");
++const getRoutesUntilIndex = (state) => state.routes.slice(0, state.index + 1);
++/**
++ * Calculate history length from navigator history or active routes.
++ */
++const getHistoryLength = (state) => state.history ? state.history.length : getRoutesUntilIndex(state).length;
+ /**
+  * Find the matching navigation state that changed between 2 navigation states
+  * e.g.: a -> b -> c -> d and a -> b -> c -> e -> f, if history in b changed, b is the matching state
+@@ -55,11 +60,13 @@ const findMatchingState = (a, b) => {
+     if (a === undefined || b === undefined || a.key !== b.key) {
+         return [undefined, undefined];
+     }
+-    // Tab and drawer will have `history` property, but stack will have history in `routes`
+-    const aHistoryLength = a.history ? a.history.length : a.routes.length;
+-    const bHistoryLength = b.history ? b.history.length : b.routes.length;
++    const aHistoryLength = getHistoryLength(a);
++    const bHistoryLength = getHistoryLength(b);
+     const aRoute = a.routes[a.index];
+     const bRoute = b.routes[b.index];
++    if (aRoute == null || bRoute == null) {
++        return [a, b];
++    }
+     const aChildState = aRoute.state;
+     const bChildState = bRoute.state;
+     // Stop here if this is the state object that changed:
+@@ -76,13 +83,37 @@ const findMatchingState = (a, b) => {
+     }
+     return findMatchingState(aChildState, bChildState);
+ };
++/**
++ * Check if the state change is popping the last route or history entry.
++ */
++const isPoppingLastEntry = (current, record) => {
++    const currentRoute = current.routes[current.index];
++    const recordRoute = record.routes[record.index];
++    if (currentRoute == null || recordRoute == null) {
++        return false;
++    }
++    if (current.history && record.history) {
++        return current.history.length === record.history.length + 1;
++    }
++    const currentRoutes = getRoutesUntilIndex(current);
++    const recordRoutes = getRoutesUntilIndex(record);
++    if (currentRoutes.length === recordRoutes.length + 1) {
++        return recordRoutes.every((route, index) => {
++            const currentRoute = currentRoutes[index];
++            return currentRoute != null && route.key === currentRoute.key;
++        });
++    }
++    return false;
++};
+ /**
+  * Run async function in series as it's called.
+  */
+ const series = (cb) => {
+     let queue = Promise.resolve();
+     const callback = () => {
+-        queue = queue.then(cb);
++        queue = queue.then(cb).catch((error) => {
++            console.error(error);
++        });
+     };
+     return callback;
+ };
+@@ -157,7 +188,13 @@ function useLinking(ref, { enabled = true, config, getStateFromPath = native_1.g
+                 ? location.pathname + location.search + (location.hash ?? '')
+                 : undefined;
+             if (path) {
+-                value = getStateFromPathRef.current(path, configRef.current);
++                try {
++                    value = getStateFromPathRef.current(path, configRef.current);
++                }
++                catch (error) {
++                    console.error(error);
++                    value = undefined;
++                }
+             }
+             // If the link were handled, it gets cleared in NavigationContainer
+             onUnhandledLinking(path);
+@@ -175,7 +212,7 @@ function useLinking(ref, { enabled = true, config, getStateFromPath = native_1.g
+     }, []);
+     const previousIndexRef = React.useRef(undefined);
+     const previousStateRef = React.useRef(undefined);
+-    const pendingPopStatePathRef = React.useRef(undefined);
++    const pendingPopStateDeltaRef = React.useRef(undefined);
+     React.useEffect(() => {
+         previousIndexRef.current = history.index;
+         return history.listen(() => {
+@@ -188,16 +225,92 @@ function useLinking(ref, { enabled = true, config, getStateFromPath = native_1.g
+             const index = history.index;
+             const previousIndex = previousIndexRef.current ?? 0;
+             previousIndexRef.current = index;
+-            pendingPopStatePathRef.current = path;
++            const rollbackHistory = () => {
++                const delta = previousIndex - index;
++                if (delta === 0) {
++                    return;
++                }
++                history.go(delta)
++                    // eslint-disable-next-line promise/always-return
++                    ?.then(() => {
++                    previousIndexRef.current = history.index;
++                }).catch(() => {
++                    // The navigation was interrupted
++                });
++            };
++            const rollbackHistoryIfPrevented = (callback, pendingDelta) => {
++                let removePrevented = false;
++                let actionChangedState = false;
++                const unsubscribeEvent = navigation.addListener('__unsafe_event__', (event) => {
++                    if (event.data.type === 'beforeRemove' && event.data.defaultPrevented) {
++                        removePrevented = true;
++                    }
++                });
++                // After preventing remove, user may synchronously continue navigation.
++                // If this action produces an update, don't roll browser history back.
++                const unsubscribeAction = navigation.addListener('__unsafe_action__', (event) => {
++                    if (!event.data.noop) {
++                        actionChangedState = true;
++                    }
++                });
++                try {
++                    callback();
++                }
++                finally {
++                    unsubscribeEvent();
++                    unsubscribeAction();
++                }
++                if (actionChangedState) {
++                    // The change may be committed later, e.g. with transitions.
++                    // Remember the delta so it can be subtracted when syncing the commit.
++                    pendingPopStateDeltaRef.current = pendingDelta;
++                }
++                else if (removePrevented) {
++                    rollbackHistory();
++                }
++            };
++            const dispatch = (action, pendingDelta) => {
++                rollbackHistoryIfPrevented(() => navigation.dispatch(action), pendingDelta);
++            };
++            const resetRoot = (state, pendingDelta) => {
++                rollbackHistoryIfPrevented(() => navigation.resetRoot(state), pendingDelta);
++            };
+             // When browser back/forward is clicked, we first need to check if state object for this index exists
+             // If it does we'll reset to that state object
+             // Otherwise, we'll handle it like a regular deep link
+             const record = history.get(index);
+             if (record?.path === path && record?.state) {
+-                navigation.resetRoot(record.state);
++                // Expo Router records its focused store state in browser history while
++                // the navigation ref exposes an internal-slot root. Compare like with
++                // like so a one-entry pop can dispatch through usePreventRemove.
++                // HAPPIER PATCH(expo-router-root-focused-history-ownership)
++                const currentState = store.state ?? navigation.getRootState();
++                const [currentFocused, recordFocused] = findMatchingState(currentState, record.state);
++                if (previousIndex - index === 1 &&
++                    currentFocused &&
++                    recordFocused &&
++                    isPoppingLastEntry(currentFocused, recordFocused)) {
++                    const pending = pendingPopStateDeltaRef.current;
++                    // Dispatch a back action instead of resetting so changes made since the
++                    // history entry was recorded aren't lost.
++                    dispatch(native_1.CommonActions.goBack(), pending === 'replace' ? 'replace' : (pending ?? 0) - 1);
++                }
++                else {
++                    // The browser already moved from the current state to the record's state.
++                    resetRoot(record.state, currentFocused && recordFocused
++                        ? getHistoryLength(recordFocused) - getHistoryLength(currentFocused)
++                        : 'replace');
++                }
+                 return;
+             }
+-            const state = getStateFromPathRef.current(path, configRef.current);
++            let state;
++            try {
++                state = getStateFromPathRef.current(path, configRef.current);
++            }
++            catch (error) {
++                console.error(error);
++                state = undefined;
++            }
+             // We should only dispatch an action when going forward
+             // Otherwise the action will likely add items to history, which would mess things up
+             if (state) {
+@@ -234,7 +347,7 @@ function useLinking(ref, { enabled = true, config, getStateFromPath = native_1.g
+                     const action = getActionFromStateRef.current(state, configRef.current);
+                     if (action !== undefined) {
+                         try {
+-                            navigation.dispatch(action);
++                            dispatch(action, 'replace');
+                         }
+                         catch (e) {
+                             // Ignore any errors from deep linking.
+@@ -243,16 +356,16 @@ function useLinking(ref, { enabled = true, config, getStateFromPath = native_1.g
+                         }
+                     }
+                     else {
+-                        navigation.resetRoot(state);
++                        resetRoot(state, 'replace');
+                     }
+                 }
+                 else {
+-                    navigation.resetRoot(state);
++                    resetRoot(state, 'replace');
+                 }
+             }
+             else {
+                 // if current path didn't return any state, we should revert to initial state
+-                navigation.resetRoot(state);
++                resetRoot(state, 'replace');
+             }
+         });
+     }, [enabled, history, onUnhandledLinking, ref, validateRoutesNotExistInRootState]);
+@@ -265,7 +378,14 @@ function useLinking(ref, { enabled = true, config, getStateFromPath = native_1.g
+             // If the `route` object contains a `path`, use that path as long as `route.name` and `params` still match
+             // This makes sure that we preserve the original URL for wildcard routes
+             if (route?.path) {
+-                const stateForPath = getStateFromPathRef.current(route.path, configRef.current);
++                let stateForPath;
++                try {
++                    stateForPath = getStateFromPathRef.current(route.path, configRef.current);
++                }
++                catch (error) {
++                    console.error(error);
++                    stateForPath = undefined;
++                }
+                 if (stateForPath) {
+                     const focusedRoute = (0, native_1.findFocusedRoute)(stateForPath);
+                     if (focusedRoute &&
+@@ -317,6 +437,7 @@ function useLinking(ref, { enabled = true, config, getStateFromPath = native_1.g
+                     // END FORK
+                 }
+                 history.replace({ path, state });
++                previousIndexRef.current = history.index;
+             }
+         }
+         const onStateChange = async () => {
+@@ -335,28 +456,31 @@ function useLinking(ref, { enabled = true, config, getStateFromPath = native_1.g
+             if (!state) {
+                 return;
+             }
+-            const pendingPath = pendingPopStatePathRef.current;
++            // Skip if the state hasn't changed since it was last synchronized.
++            if (previousState === rootState) {
++                return;
++            }
+             const route = (0, native_1.findFocusedRoute)(state);
+             const path = getPathForRoute(route, state);
++            const pendingPopStateDelta = pendingPopStateDeltaRef.current;
+             // START FORK
+             // previousStateRef.current = state;
+             previousStateRef.current = rootState;
+             // END FORK
+-            pendingPopStatePathRef.current = undefined;
++            pendingPopStateDeltaRef.current = undefined;
+             // To detect the kind of state change, we need to:
+             // - Find the common focused navigation state in previous and current state
+             // - If only the route keys changed, compare history/routes.length to check if we go back/forward/replace
+             // - If no common focused navigation state found, it's a replace
+-            const [previousFocusedState, focusedState] = findMatchingState(previousState, state);
++            const [previousFocusedState, focusedState] = findMatchingState(previousState, rootState);
+             if (previousFocusedState &&
+                 focusedState &&
+-                // We should only handle push/pop if path changed from what was in last `popstate`
+-                // Otherwise it's likely a change triggered by `popstate`
+-                path !== pendingPath) {
+-                const historyDelta = (focusedState.history ? focusedState.history.length : focusedState.routes.length) -
+-                    (previousFocusedState.history
+-                        ? previousFocusedState.history.length
+-                        : previousFocusedState.routes.length);
++                // If the delta from `popstate` is unknown, we can only replace.
++                pendingPopStateDelta !== 'replace') {
++                const historyDelta = getHistoryLength(focusedState) -
++                    getHistoryLength(previousFocusedState) -
++                    // Subtract the delta already applied by the browser to sync only remaining changes.
++                    (pendingPopStateDelta ?? 0);
+                 if (historyDelta > 0) {
+                     // If history length is increased, we should pushState
+                     // Note that path might not actually change here, for example, drawer open should pushState
+@@ -370,16 +494,14 @@ function useLinking(ref, { enabled = true, config, getStateFromPath = native_1.g
+                         if (nextIndex !== -1 &&
+                             nextIndex < currentIndex &&
+                             // We should only go back if the entry exists and it's less than current index
+-                            history.get(nextIndex - currentIndex)) {
++                            history.get(nextIndex)) {
+                             // An existing entry for this path exists and it's less than current index, go back to that
+                             await history.go(nextIndex - currentIndex);
+                         }
+-                        else {
+-                            // We couldn't find an existing entry to go back to, so we'll go back by the delta
+-                            // This won't be correct if multiple routes were pushed in one go before
+-                            // Usually this shouldn't happen and this is a fallback for that
+-                            await history.go(historyDelta);
+-                        }
++                        // Expo Router's focused store state can collapse routes while moving
++                        // between sibling settings screens. If no matching in-memory entry
++                        // exists, replacing is the only safe option: applying the focused
++                        // delta could traverse an unrelated document-history entry.
+                         // Store the updated state as well as fix the path if incorrect
+                         history.replace({ path, state });
+                     }
+@@ -397,6 +519,7 @@ function useLinking(ref, { enabled = true, config, getStateFromPath = native_1.g
+                 // This would happen if the user did a reset/conditionally changed navigators
+                 history.replace({ path, state });
+             }
++            previousIndexRef.current = history.index;
+         };
+         // We debounce onStateChange coz we don't want multiple state changes to be handled at one time
+         // This could happen since `history.go(n)` is asynchronous
+diff --git a/node_modules/expo-router/build/layouts/_web-modal.js b/node_modules/expo-router/build/layouts/_web-modal.js
+index 523d01b..6427be9 100644
+--- a/node_modules/expo-router/build/layouts/_web-modal.js
++++ b/node_modules/expo-router/build/layouts/_web-modal.js
+@@ -3,6 +3,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
+     return (mod && mod.__esModule) ? mod : { "default": mod };
+ };
+ Object.defineProperty(exports, "__esModule", { value: true });
+-const BaseStack_1 = __importDefault(require("./BaseStack"));
+-exports.default = BaseStack_1.default;
++const ExperimentalModalStack_1 = __importDefault(require("./ExperimentalModalStack"));
++exports.default = ExperimentalModalStack_1.default;
+ //# sourceMappingURL=_web-modal.js.map
+\ No newline at end of file
 diff --git a/node_modules/expo-router/build/modal/web/ModalStack.js b/node_modules/expo-router/build/modal/web/ModalStack.js
-index 1c7dc5f..04a9049 100644
+index 1c7dc5f..2905b25 100644
 --- a/node_modules/expo-router/build/modal/web/ModalStack.js
 +++ b/node_modules/expo-router/build/modal/web/ModalStack.js
 @@ -76,6 +76,7 @@ const ModalStackView = ({ state, navigation, descriptors, describe }) => {
@@ -52,3 +489,106 @@ index 1c7dc5f..04a9049 100644
          routes: filteredRoutes,
          index: nonModalIndex,
      };
+diff --git a/node_modules/expo-router/build/modal/web/ModalStackRouteDrawer.js b/node_modules/expo-router/build/modal/web/ModalStackRouteDrawer.js
+index 04cdab6..b8565e8 100644
+--- a/node_modules/expo-router/build/modal/web/ModalStackRouteDrawer.js
++++ b/node_modules/expo-router/build/modal/web/ModalStackRouteDrawer.js
+@@ -9,6 +9,62 @@ const react_1 = __importDefault(require("react"));
+ const vaul_1 = require("vaul");
+ const modalStyles_1 = __importDefault(require("./modalStyles"));
+ const utils_1 = require("./utils");
++// HAPPIER PATCH(expo-router-web-modal-critical-inline-layout)
++// Metro exports CSS-module class names from Expo Router's CommonJS bundle without
++// injecting the corresponding rules. Keep only the critical route-modal layout
++// inline so the card remains visible and interactive; CSS still owns visual polish.
++const criticalOverlayStyle = {
++    position: 'fixed',
++    inset: 0,
++    backgroundColor: 'var(--expo-router-modal-overlay-background, rgba(0, 0, 0, 0.25))',
++};
++const criticalDrawerContentStyle = {
++    position: 'fixed',
++    display: 'flex',
++    flexDirection: 'column',
++    bottom: 0,
++    left: 0,
++    right: 0,
++    height: '100%',
++    maxHeight: '100%',
++    outline: 'none',
++    pointerEvents: 'none',
++};
++const criticalModalBaseStyle = {
++    display: 'flex',
++    flexDirection: 'column',
++    flex: 1,
++    pointerEvents: 'auto',
++    boxSizing: 'border-box',
++    overflow: 'auto',
++    willChange: 'transform',
++};
++const criticalModalSheetStyle = {
++    position: 'relative',
++    width: '100%',
++    maxWidth: 'none',
++    transform: 'none',
++};
++const criticalModalDesktopStyle = {
++    position: 'fixed',
++    left: '50%',
++    top: '50%',
++    transform: 'translate(-50%, -50%)',
++    width: 'var(--expo-router-modal-width, 83vw)',
++    minWidth: 'var(--expo-router-modal-min-width, auto)',
++    maxWidth: 'var(--expo-router-modal-max-width, min(936px, 83vw))',
++    height: 'var(--expo-router-modal-height, 79dvh)',
++    maxHeight: 'min(var(--expo-router-modal-height, min(586px, 79dvh)), calc(100dvh - 2rem))',
++    minHeight: 'min(var(--expo-router-modal-min-height, var(--expo-router-modal-height, min(586px, 79dvh))), calc(100dvh - 2rem))',
++    borderRadius: 'var(--expo-router-modal-border-radius, 24px)',
++    filter: 'var(--expo-router-modal-shadow, drop-shadow(0px 25px 50px rgba(0, 0, 0, 0.3)))',
++};
++const criticalModalBodyStyle = {
++    display: 'flex',
++    flex: 1,
++    overflow: 'auto',
++    boxSizing: 'border-box',
++};
+ function ModalStackRouteDrawer({ routeKey, options, dismissible, renderScreen, onDismiss, themeColors, }) {
+     const [open, setOpen] = react_1.default.useState(true);
+     // Determine sheet vs. modal with an SSR-safe hook. The first render (during
+@@ -138,22 +194,29 @@ function ModalStackRouteDrawer({ routeKey, options, dismissible, renderScreen, o
+         : {};
+     return (<vaul_1.Drawer.Root key={`${routeKey}-${isSheet ? 'sheet' : 'modal'}`} open={open} dismissible={dismissible ?? options.gestureEnabled ?? true} onAnimationEnd={handleOpenChange} shouldScaleBackground autoFocus onOpenChange={setOpen} {...sheetProps}>
+       <vaul_1.Drawer.Portal>
+-        <vaul_1.Drawer.Overlay className={modalStyles_1.default.overlay} style={options.webModalStyle?.overlayBackground
+-            ? {
++        <vaul_1.Drawer.Overlay className={modalStyles_1.default.overlay} style={{
++            ...criticalOverlayStyle,
++            ...(options.webModalStyle?.overlayBackground
++                ? {
+                 '--expo-router-modal-overlay-background': options.webModalStyle.overlayBackground,
+             }
+-            : undefined}/>
++                : null),
++        }}/>
+         <vaul_1.Drawer.Content aria-describedby="modal-description" className={modalStyles_1.default.drawerContent} style={{
+-            pointerEvents: 'none',
++            ...criticalDrawerContentStyle,
+             // This needs to be limited to sheets, otherwise it will position the modal at the bottom of the screen
+             ...(isSheet && fitToContents ? { height: 'auto' } : null),
+         }}>
+-          <div className={modalStyles_1.default.modal} data-presentation={isSheet ? 'formSheet' : 'modal'} style={modalStyleVars}>
++          <div className={modalStyles_1.default.modal} data-presentation={isSheet ? 'formSheet' : 'modal'} style={{
++            ...criticalModalBaseStyle,
++            ...(isSheet ? criticalModalSheetStyle : criticalModalDesktopStyle),
++            ...modalStyleVars,
++        }}>
+             {/* TODO:(@Hirbod) Figure out how to add title and description to the modal for screen readers in a meaningful way */}
+             <vaul_1.Drawer.Title about="" aria-describedby="" className={modalStyles_1.default.srOnly}/>
+             <vaul_1.Drawer.Description about="" className={modalStyles_1.default.srOnly}/>
+             {/* Render the screen content */}
+-            <div className={modalStyles_1.default.modalBody}>{renderScreen()}</div>
++            <div className={modalStyles_1.default.modalBody} style={criticalModalBodyStyle}>{renderScreen()}</div>
+           </div>
+         </vaul_1.Drawer.Content>
+       </vaul_1.Drawer.Portal>

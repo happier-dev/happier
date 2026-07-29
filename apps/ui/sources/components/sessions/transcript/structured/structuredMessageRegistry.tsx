@@ -24,6 +24,7 @@ import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/in
 import { ParticipantMessageCard } from '@/components/sessions/participants/messages/ParticipantMessageCard';
 import { SubagentLaunchMessageCard } from '@/components/sessions/subagents/messages/SubagentLaunchMessageCard';
 import { SubagentCommandMessageCard } from '@/components/sessions/subagents/messages/SubagentCommandMessageCard';
+import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 
 export type StructuredMessageKind =
     | 'participant_message.v1'
@@ -42,7 +43,8 @@ export type StructuredMessageKind =
 export type StructuredMessageRendererParams = Readonly<{
     sessionId: string;
     message: Message;
-    onJumpToAnchor: (target: { filePath: string; source: ReviewCommentSource; anchor: ReviewCommentAnchor }) => void;
+    interaction: TranscriptInteraction;
+    onJumpToAnchor?: (target: { filePath: string; source: ReviewCommentSource; anchor: ReviewCommentAnchor }) => void;
 }>;
 
 export type StructuredMessageSafeParseResult<T> =
@@ -86,14 +88,22 @@ const structuredMessageRegistryEntries: readonly StructuredMessageRegistryEntry<
         kind: 'review_findings.v1',
         schema: ReviewFindingsV1Schema,
         render: (payload, params) => (
-            <ReviewFindingsMessageCard payload={payload} sessionId={params.sessionId} />
+            <ReviewFindingsMessageCard
+                payload={payload}
+                sessionId={params.sessionId}
+                canSendMessages={params.interaction.canSendMessages === true}
+            />
         ),
     },
     {
         kind: 'review_findings.v2',
         schema: ReviewFindingsV2Schema,
         render: (payload, params) => (
-            <ReviewFindingsMessageCard payload={payload} sessionId={params.sessionId} />
+            <ReviewFindingsMessageCard
+                payload={payload}
+                sessionId={params.sessionId}
+                canSendMessages={params.interaction.canSendMessages === true}
+            />
         ),
     },
     {
@@ -105,7 +115,11 @@ const structuredMessageRegistryEntries: readonly StructuredMessageRegistryEntry<
         kind: 'plan_output.v1',
         schema: PlanOutputV1Schema,
         render: (payload, params) => (
-            <PlanOutputMessageCard payload={payload} sessionId={params.sessionId} />
+            <PlanOutputMessageCard
+                payload={payload}
+                sessionId={params.sessionId}
+                canSendMessages={params.interaction.canSendMessages === true}
+            />
         ),
     },
     {

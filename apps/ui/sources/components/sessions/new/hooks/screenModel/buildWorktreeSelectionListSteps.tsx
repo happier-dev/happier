@@ -523,7 +523,7 @@ function buildCreateWorktreeStep(params: WorktreeSelectionListBuilderParams): Se
             id: 'worktree:branches:local',
             title: t('newSession.worktree.sections.localBranches'),
             // Local branch lists can grow large, so opt into automatic virtualization and
-            // let the orchestrator switch to FlashList past the threshold.
+            // let the orchestrator switch to the virtualized backend past the threshold.
             virtualization: 'auto',
             // The create-worktree drilldown is dynamic-only, so keep loading skeletons
             // visible on an uncached first load instead of collapsing the list body.

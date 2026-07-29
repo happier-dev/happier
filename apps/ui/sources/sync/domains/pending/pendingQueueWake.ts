@@ -1,15 +1,16 @@
 import type { ResumeSessionOptions } from '@/sync/ops';
 import type { Session } from '../state/storageTypes';
-import { isAgentId, resolveAgentIdFromFlavor, buildWakeResumeExtras } from '@/agents/catalog/catalog';
+import { isAgentId, buildWakeResumeExtras } from '@/agents/catalog/catalog';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import type { PermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session/resume/resumeSessionBase';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { deriveSessionRuntimePresentationState } from '@/sync/domains/session/attention/runtimePresentation';
+import { deriveSessionInputReadinessState } from '@/sync/domains/session/control/deriveSessionInputReadinessState';
 import {
     deriveLatestPendingRequestObservedAtFromSession,
 } from '@/sync/domains/session/pending/listPendingSessionRequests';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export type PendingQueueWakeResumeOptions = ResumeSessionOptions;
 
@@ -49,24 +50,21 @@ export function getPendingQueueWakeResumeOptions(opts: {
     if (isSessionActive) {
         const requests = session.agentState?.requests;
         const hasRuntimeRequests = Boolean(requests && Object.keys(requests).length > 0);
-        const runtimePresentation = deriveSessionRuntimePresentationState({
+        const inputReadiness = deriveSessionInputReadinessState({
             active: session.active,
             activeAt: session.activeAt,
             presence: session.presence,
             thinking: session.thinking,
             thinkingAt: session.thinkingAt,
+            optimisticThinkingAt: session.optimisticThinkingAt,
+            hasPendingUserMessages: typeof session.pendingCount === 'number' && session.pendingCount > 0,
             latestTurnStatus: session.latestTurnStatus,
             latestTurnStatusObservedAt: session.latestTurnStatusObservedAt,
-            meaningfulActivityAt: session.meaningfulActivityAt,
             hasPendingPermissionRequests: hasRuntimeRequests,
             hasPendingUserActionRequests: hasRuntimeRequests,
             pendingRequestObservedAt: deriveLatestPendingRequestObservedAtFromSession(session),
-        });
-        if (
-            runtimePresentation.working
-            || runtimePresentation.freshPermissionRequired
-            || runtimePresentation.freshActionRequired
-        ) return null;
+        }, Date.now());
+        if (!inputReadiness.canWakePendingQueue) return null;
     }
 
     const reachableTarget = readMachineControlTargetForSession(sessionId);
@@ -99,8 +97,9 @@ export function getPendingQueueWakeResumeOptions(opts: {
         return baseWithCursor;
     }
 
-    const agentId = resolveAgentIdFromSessionMetadata(session.metadata)
-        ?? resolveAgentIdFromFlavor(session.metadata?.flavor)
+    const agentId = resolveAgentIdFromSessionMetadata(
+        readSessionOwnerMetadataView(session),
+    )
         ?? (typeof backendTarget === 'object' && backendTarget !== null && 'kind' in backendTarget && backendTarget.kind === 'builtInAgent'
             ? backendTarget.agentId
             : null);

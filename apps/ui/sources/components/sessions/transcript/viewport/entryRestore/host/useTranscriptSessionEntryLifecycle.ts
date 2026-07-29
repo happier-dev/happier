@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCommittedTranscriptRef } from '@/components/sessions/transcript/viewport/lifecycle/host/useCommittedTranscriptRef';
 import { Platform } from 'react-native';
 import { sync, type SessionViewportAnchorSnapshot } from '@/sync/sync';
 import { resolveSessionEntryViewportState } from '@/components/sessions/transcript/scroll/resolveSessionEntryBottomFollow';
@@ -15,17 +16,16 @@ import type {
 } from '@/components/sessions/transcript/viewport/lifecycle/lifecycleHost';
 import type { TranscriptMeasurementHost } from '@/components/sessions/transcript/measurement/transcriptMeasurementHost';
 import type { SessionOpenLatch } from '@/components/sessions/transcript/viewport/sessionOpen/sessionOpenLatch';
-import { resolveSessionOpenWebInitialPinRetryPlan } from '@/components/sessions/transcript/viewport/sessionOpen/webInitialPinRetryPlan';
 import type {
     SessionOpenArmResetPlan,
     SessionOpenDisposeResetPlan,
     SessionOpenEntryKind,
-    SessionOpenInitialBottomPositionOwner,
     SessionOpenLatchEffect,
 } from '@/components/sessions/transcript/viewport/sessionOpen/types';
 import type { TranscriptViewportCommandController } from '@/components/sessions/transcript/viewport/createTranscriptViewportCommandController';
 import type { TranscriptViewportTransactionOutcome } from '@/components/sessions/transcript/viewport/transcriptViewportOwnership';
 import type { TranscriptViewportChangeState } from '@/components/sessions/transcript/chatListTypes';
+import type { TranscriptExitEntrySnapshot } from '@/components/sessions/transcript/viewport/lifecycle/transcriptSameSessionHandoff';
 
 type MutableRef<T> = { current: T };
 type SessionEntryRenderResetEffects = TranscriptLifecycleHostSessionEntryPlan['renderResetEffects'];
@@ -68,9 +68,6 @@ export type TranscriptSessionEntryLifecycleDeps = Readonly<{
     anchorLookupExhaustedRef: MutableRef<boolean>;
     anchorLookupInFlightRef: MutableRef<boolean>;
     anchorLookupLoadCountRef: MutableRef<number>;
-    cancelScheduledPinToBottom(): void;
-    clearNativePaintReleaseTimeoutsForSessionEntry(): void;
-    clearWebPrependRestoreWindow(outcome: TranscriptViewportTransactionOutcome): void;
     closeEntryViewportOwnership(outcome: TranscriptViewportTransactionOutcome): void;
     commitBottomFollowModeState(next: TranscriptBottomFollowModeState): void;
     commitJumpToBottomDistanceForVisibility(distanceFromBottom: number): void;
@@ -80,10 +77,8 @@ export type TranscriptSessionEntryLifecycleDeps = Readonly<{
     emitViewportChange(state: TranscriptViewportChangeState): boolean;
     entryRestoreDeadlineTimeoutRef: MutableRef<EntryRestoreDeadlineTimeout>;
     entryRestoreOwner: EntryRestoreOwner;
-    entrySliceWindowRef: MutableRef<{ sessionId: string; anchorRowId: string } | null>;
     flushViewportAnchorCaptureRef: MutableRef<(options?: Readonly<{ deferEmit?: boolean }>) => void>;
     hideOlderLoadSpinner(): void;
-    initialBottomPositionOwner: SessionOpenInitialBottomPositionOwner;
     initialFillAbortRef: MutableRef<AbortController | null>;
     invalidateNativePrependOwner(): void;
     invalidateViewportAnchorCapture(): void;
@@ -91,14 +86,12 @@ export type TranscriptSessionEntryLifecycleDeps = Readonly<{
     isPinnedRef: MutableRef<boolean>;
     getItemCount(): number;
     jumpToSeq: number | null | undefined;
-    lastAutoRepinAtMsRef: MutableRef<number>;
     lastExplicitWebScrollIntentAtMsRef: MutableRef<number>;
     lastNativeRestoreIndexCommandRef: MutableRef<unknown | null>;
     lastPinOffsetForIntentRef: MutableRef<number | null>;
     lastRouteJumpProtectionClearingWebMovementAtMsRef: MutableRef<number>;
     lastScrollOffsetForIntentRef: MutableRef<number | null>;
     lastUserScrollIntentAtMsRef: MutableRef<number>;
-    latestCommittedActivityKey: string | null | undefined;
     lifecycleHost: TranscriptLifecycleHost;
     listContentHeightRef: MutableRef<number>;
     listLayoutHeightRef: MutableRef<number>;
@@ -107,22 +100,24 @@ export type TranscriptSessionEntryLifecycleDeps = Readonly<{
     nativeEntryRestorePaintReleaseTimeoutRef: MutableRef<NativeEntryRestorePaintReleaseTimeout>;
     nativeFirstPaintFallbackReleaseTimeoutRef: MutableRef<NativeFirstPaintFallbackReleaseTimeout>;
     nativeMomentumScrollActiveRef: MutableRef<boolean>;
-    nativeMountSettleAutoPinSuppressedRef: MutableRef<boolean>;
-    pendingNativeMountSettleBottomPinHostRef: MutableRef<MutableRef<boolean> | null>;
-    resetBottomFollowPinRecordsForSessionEntry(latestActivityKey: string | null | undefined): void;
-    resetBottomFollowPinStateForSessionOpenArm(latestActivityKey: string | null | undefined): void;
-    resetInitialFillForSessionEntry(): void;
     resetNativeMountSettleFlagsForSessionEntry(): void;
+    /**
+     * Reset the native first-paint reveal flags (viewport-paint-observed +
+     * entry-restore-paint-released) for the NEW entry. These are per-ENTRY reveal
+     * state: a warm keep-alive re-entry into the same session re-arms and may run a
+     * fresh restore transaction, and stale true flags from the previous entry forced
+     * the placeholder off while that restore's write + post-measure correction ran on
+     * screen (live measured cascade 2026-07-12).
+     */
+    resetNativeFirstPaintRevealStateForSessionEntry(): void;
     resetNativeSessionViewportLifecycle(sessionId: string): void;
     resetOlderPaginationForSessionEntry(): void;
-    resetTransientSessionEntryUiState(): void;
     resetViewportAnchorCaptureForSessionEntry(): void;
-    scheduleFirstSessionOpenWebInitialPinRetryRef: MutableRef<(() => void) | null>;
+    sameSessionHandoffClaimedViewportRef: MutableRef<TranscriptExitEntrySnapshot | null>;
+    sameSessionHandoffViewportForRender: TranscriptExitEntrySnapshot | null;
     sessionEntryViewportRef: MutableRef<SessionEntryViewportRefValue>;
     sessionId: string;
     sessionOpenLatch: SessionOpenLatch;
-    sessionOpenWebInitialPinRetryArmAtMsRef: MutableRef<number>;
-    setEntrySliceWindow(value: { sessionId: string; anchorRowId: string } | null): void;
     setExpandedToolCallsAnchorMessageIds(value: Set<string>): void;
     setListContentHeight(value: number): void;
     viewportCommandController: TranscriptViewportCommandController;
@@ -137,15 +132,59 @@ export type TranscriptSessionEntryLifecycle = Readonly<{
     ): void;
     applySessionOpenArmResetPlan(plan: SessionOpenArmResetPlan): void;
     applySessionOpenDisposeResetPlan(plan: SessionOpenDisposeResetPlan): void;
+    /**
+     * Render-time entry intent from the immutable per-(sessionId,jumpToSeq) snapshot: true when
+     * this session's entry follows the live tail. This is the canonical basis for Legend's
+     * initial tail placement — the live bottom-follow mode ref lags one render behind on
+     * warm-instance session switches.
+     */
+    entryShouldFollowBottomForRender: boolean;
+    entryAnchorForRender: SessionViewportAnchorSnapshot | null;
 }>;
 
 export function useTranscriptSessionEntryLifecycle(
     deps: TranscriptSessionEntryLifecycleDeps,
 ): TranscriptSessionEntryLifecycle {
+    // Capture entry intent during the parent render. Renderer children run their layout effects
+    // before this host's layout effect and can publish provisional at-end facts while their empty
+    // geometry mounts. Those facts may update the live sync viewport, but they must not rewrite
+    // the immutable snapshot that this specific entry transaction was opened to restore.
+    const entryViewportSnapshotForRenderRef = React.useRef<{
+        jumpToSeq: number | null;
+        sessionId: string;
+        snapshot: ReturnType<typeof readSessionViewportForEntry>;
+    } | null>(null);
+    const entryJumpToSeq = deps.jumpToSeq ?? null;
+    const handoffViewportForRender = entryJumpToSeq === null
+        ? deps.sameSessionHandoffViewportForRender
+        : null;
+    const handoffSnapshotForRender = handoffViewportForRender
+        ? {
+            ...handoffViewportForRender,
+            lastUpdatedAt: handoffViewportForRender.capturedAtMs,
+            source: 'observed' as const,
+        }
+        : null;
+    const committedEntryViewportSnapshot = entryViewportSnapshotForRenderRef.current;
+    const entryViewportSnapshotForRender =
+        committedEntryViewportSnapshot?.sessionId === deps.sessionId &&
+        committedEntryViewportSnapshot.jumpToSeq === entryJumpToSeq
+            ? committedEntryViewportSnapshot
+            : {
+            jumpToSeq: entryJumpToSeq,
+            sessionId: deps.sessionId,
+            snapshot: handoffSnapshotForRender ?? readSessionViewportForEntry(deps.sessionId),
+        };
+    useCommittedTranscriptRef(
+        entryViewportSnapshotForRenderRef,
+        entryViewportSnapshotForRender,
+    );
+    const resolvedEntryViewportForRender = resolveSessionEntryViewportState(
+        entryViewportSnapshotForRender.snapshot,
+    );
     const resetTransientSessionEntryUiState = React.useCallback(() => {
-        deps.clearWebPrependRestoreWindow('abandoned-identity');
         deps.setExpandedToolCallsAnchorMessageIds(new Set());
-    }, [deps.clearWebPrependRestoreWindow, deps.setExpandedToolCallsAnchorMessageIds]);
+    }, [deps.setExpandedToolCallsAnchorMessageIds]);
 
     const consumeSessionOpenArmEntryViewportState = React.useCallback(() => {
         const entryViewport = deps.sessionEntryViewportRef.current;
@@ -200,14 +239,12 @@ export function useTranscriptSessionEntryLifecycle(
         deps.webDomObservation.reset();
         deps.nativeBottomFollowRearmedAfterDragRef.current = false;
         deps.nativeMomentumScrollActiveRef.current = false;
-        deps.resetBottomFollowPinRecordsForSessionEntry(deps.latestCommittedActivityKey);
         deps.resetOlderPaginationForSessionEntry();
         if (sessionEntryRenderResetEffects.platform === 'native') {
             deps.resetNativeSessionViewportLifecycle(sessionEntryRenderResetEffects.nativeSessionViewportReset.sessionId);
         }
         deps.disposeEntryRestoreTransactionForExitRef.current();
         deps.applyEntryRestoreOwnerEffectsRef.current(deps.entryRestoreOwner.resetForSession({ sessionId: deps.sessionId }));
-        deps.entrySliceWindowRef.current = null;
         const entryRestoreDeadlineTimeout = deps.entryRestoreDeadlineTimeoutRef.current;
         if (entryRestoreDeadlineTimeout) {
             deps.entryRestoreDeadlineTimeoutRef.current = null;
@@ -235,7 +272,6 @@ export function useTranscriptSessionEntryLifecycle(
         deps.measurementHost.resetForSession({ sessionId: sessionEntryRenderResetEffects.measurementReset.sessionId });
     }, [
         deps.entryRestoreOwner,
-        deps.latestCommittedActivityKey,
         deps.lifecycleHost,
         deps.measurementHost,
         deps.resetNativeSessionViewportLifecycle,
@@ -246,7 +282,16 @@ export function useTranscriptSessionEntryLifecycle(
     ]);
 
     React.useLayoutEffect(() => {
-        const entryViewportSnapshot = readSessionViewportForEntry(deps.sessionId);
+        const claimedHandoffViewport = entryJumpToSeq === null
+            ? deps.sameSessionHandoffClaimedViewportRef.current
+            : null;
+        const entryViewportSnapshot = claimedHandoffViewport
+            ? {
+                ...claimedHandoffViewport,
+                lastUpdatedAt: claimedHandoffViewport.capturedAtMs,
+                source: 'observed' as const,
+            }
+            : entryViewportSnapshotForRender.snapshot;
         const resolvedEntryViewport = resolveSessionEntryViewportState<SessionViewportAnchorSnapshot>(
             entryViewportSnapshot,
         );
@@ -275,14 +320,8 @@ export function useTranscriptSessionEntryLifecycle(
             shouldFollowLiveTail: shouldFollowBottom,
         });
         const tuning = sync.getSyncTuning();
-        const initialBottomPositionOwner = deps.initialBottomPositionOwner ?? 'app';
-        const webInitialPinRetryPlan = initialBottomPositionOwner === 'app'
-            ? resolveSessionOpenWebInitialPinRetryPlan(tuning)
-            : { retryDelaysMs: [], stabilizeMaxMs: 0 };
         const armDecision = deps.sessionOpenLatch.arm({
             entryKind,
-            initialBottomPositionOwner,
-            isNativeFlashListBottomMaintenanceEnabled: Platform.OS !== 'web',
             nativeFirstPaintFallbackDelayMs:
                 tuning.transcriptInitialFillBudgetMs +
                 tuning.transcriptMountSettleQuiescentWindowMs * 2 +
@@ -291,8 +330,9 @@ export function useTranscriptSessionEntryLifecycle(
             platform,
             sessionId: deps.sessionId,
             shouldFollowBottom,
-            webInitialPinRetryDelaysMs: webInitialPinRetryPlan.retryDelaysMs,
-            webInitialPinStabilizeMs: webInitialPinRetryPlan.stabilizeMaxMs,
+            // Matches the fill executor's absolute ceiling: past this, the open
+            // phase is over no matter what.
+            webOpenPhaseDeadlineDelayMs: tuning.transcriptInitialFillBudgetMs * 5,
         });
         deps.sessionEntryViewportRef.current = {
             sessionId: deps.sessionId,
@@ -312,42 +352,59 @@ export function useTranscriptSessionEntryLifecycle(
         deps.lastUserScrollIntentAtMsRef.current = Number.NEGATIVE_INFINITY;
         deps.lastExplicitWebScrollIntentAtMsRef.current = Number.NEGATIVE_INFINITY;
         deps.lastRouteJumpProtectionClearingWebMovementAtMsRef.current = Number.NEGATIVE_INFINITY;
-        deps.lastAutoRepinAtMsRef.current = Number.NEGATIVE_INFINITY;
         deps.lastPinOffsetForIntentRef.current = shouldFollowBottom ? 0 : persistedEntryOffsetY;
         deps.lastScrollOffsetForIntentRef.current = null;
         applySessionEntryRenderResetEffects(lifecycleEntry.renderResetEffects);
         deps.applySessionOpenLatchEffectsRef.current(armDecision.effects);
         deps.applySessionOpenLatchEffectsRef.current(deps.sessionOpenLatch.onHostFacts({
             contentHeight: deps.listContentHeightRef.current,
-            hasEntrySliceWindow: deps.entrySliceWindowRef.current?.sessionId === deps.sessionId,
             isLoaded: deps.isLoaded,
             isScrollable: false,
             itemCount: deps.getItemCount(),
             layoutHeight: deps.listLayoutHeightRef.current,
             nowMs: Date.now(),
             sessionId: deps.sessionId,
-            userWantsPinned: deps.wantsPinnedRef.current,
         }).effects);
     }, [
         applySessionEntryRenderResetEffects,
         deps.commitBottomFollowModeState,
         deps.isLoaded,
-        deps.initialBottomPositionOwner,
+        entryViewportSnapshotForRender.snapshot,
         deps.jumpToSeq,
         deps.lifecycleHost,
         deps.sessionId,
         deps.sessionOpenLatch,
     ]);
 
+    const resetInitialFillForSessionEntry = React.useCallback(() => {
+        deps.initialFillAbortRef.current?.abort();
+        deps.initialFillAbortRef.current = null;
+    }, [deps.initialFillAbortRef]);
+    const clearNativePaintReleaseTimeoutsForSessionEntry = React.useCallback(() => {
+        const nativeFirstPaintFallbackReleaseTimeout = deps.nativeFirstPaintFallbackReleaseTimeoutRef.current;
+        if (nativeFirstPaintFallbackReleaseTimeout) {
+            deps.nativeFirstPaintFallbackReleaseTimeoutRef.current = null;
+            clearTimeout(nativeFirstPaintFallbackReleaseTimeout.timeoutId);
+        }
+        const nativeEntryRestorePaintReleaseTimeout = deps.nativeEntryRestorePaintReleaseTimeoutRef.current;
+        if (nativeEntryRestorePaintReleaseTimeout) {
+            deps.nativeEntryRestorePaintReleaseTimeoutRef.current = null;
+            clearTimeout(nativeEntryRestorePaintReleaseTimeout.timeoutId);
+        }
+    }, [
+        deps.nativeEntryRestorePaintReleaseTimeoutRef,
+        deps.nativeFirstPaintFallbackReleaseTimeoutRef,
+    ]);
+
     const applySessionOpenArmResetPlan = React.useCallback((plan: SessionOpenArmResetPlan): void => {
         if (plan.sessionId !== deps.sessionId) return;
         deps.resetViewportAnchorCaptureForSessionEntry();
-        deps.resetInitialFillForSessionEntry();
+        resetInitialFillForSessionEntry();
         deps.resetNativeMountSettleFlagsForSessionEntry();
+        deps.resetNativeFirstPaintRevealStateForSessionEntry();
         deps.hideOlderLoadSpinner();
-        deps.clearNativePaintReleaseTimeoutsForSessionEntry();
+        clearNativePaintReleaseTimeoutsForSessionEntry();
         deps.resetOlderPaginationForSessionEntry();
-        deps.cancelScheduledPinToBottom();
         resetTransientSessionEntryUiState();
         const {
             entryAnchor,
@@ -358,11 +415,9 @@ export function useTranscriptSessionEntryLifecycle(
         deps.lastUserScrollIntentAtMsRef.current = Number.NEGATIVE_INFINITY;
         deps.lastExplicitWebScrollIntentAtMsRef.current = Number.NEGATIVE_INFINITY;
         deps.lastRouteJumpProtectionClearingWebMovementAtMsRef.current = Number.NEGATIVE_INFINITY;
-        deps.lastAutoRepinAtMsRef.current = Number.NEGATIVE_INFINITY;
         deps.lastPinOffsetForIntentRef.current = shouldFollowBottom ? 0 : entryOffsetY;
         deps.lastScrollOffsetForIntentRef.current = null;
         deps.webDomObservation.reset();
-        deps.resetBottomFollowPinStateForSessionOpenArm(deps.latestCommittedActivityKey);
         deps.resetNativeSessionViewportLifecycle(plan.sessionId);
         deps.invalidateNativePrependOwner();
         deps.lastNativeRestoreIndexCommandRef.current = null;
@@ -370,58 +425,39 @@ export function useTranscriptSessionEntryLifecycle(
             deps.listContentHeightRef.current = 0;
             deps.setListContentHeight(0);
         }
-        const pendingNativeMountSettleBottomPinRef = deps.pendingNativeMountSettleBottomPinHostRef.current;
-        if (pendingNativeMountSettleBottomPinRef) {
-            pendingNativeMountSettleBottomPinRef.current = false;
-        }
-        if ((deps.initialBottomPositionOwner ?? 'app') === 'app') {
-            deps.sessionOpenWebInitialPinRetryArmAtMsRef.current = Date.now();
-        }
         applySessionEntryViewportApplyEffects(entryEffects, entryAnchor);
-        if (
-            (deps.initialBottomPositionOwner ?? 'app') === 'app' &&
-            Platform.OS === 'web' &&
-            shouldFollowBottom
-        ) {
-            deps.scheduleFirstSessionOpenWebInitialPinRetryRef.current?.();
-        }
     }, [
         applySessionEntryViewportApplyEffects,
+        clearNativePaintReleaseTimeoutsForSessionEntry,
         consumeSessionOpenArmEntryViewportState,
-        deps.cancelScheduledPinToBottom,
-        deps.clearNativePaintReleaseTimeoutsForSessionEntry,
         deps.hideOlderLoadSpinner,
-        deps.initialBottomPositionOwner,
-        deps.latestCommittedActivityKey,
-        deps.resetInitialFillForSessionEntry,
         deps.resetNativeMountSettleFlagsForSessionEntry,
         deps.resetNativeSessionViewportLifecycle,
         deps.resetOlderPaginationForSessionEntry,
         deps.resetViewportAnchorCaptureForSessionEntry,
         deps.sessionId,
         deps.webDomObservation,
+        resetInitialFillForSessionEntry,
         resetTransientSessionEntryUiState,
     ]);
 
     const applySessionOpenDisposeResetPlan = React.useCallback((plan: SessionOpenDisposeResetPlan): void => {
         if (plan.reason !== 'session-switch' && plan.reason !== 'disposed') return;
-        deps.resetInitialFillForSessionEntry();
-        deps.clearNativePaintReleaseTimeoutsForSessionEntry();
-        deps.cancelScheduledPinToBottom();
-        const pendingNativeMountSettleBottomPinRef = deps.pendingNativeMountSettleBottomPinHostRef.current;
-        if (pendingNativeMountSettleBottomPinRef) {
-            pendingNativeMountSettleBottomPinRef.current = false;
-        }
+        resetInitialFillForSessionEntry();
+        clearNativePaintReleaseTimeoutsForSessionEntry();
     }, [
-        deps.cancelScheduledPinToBottom,
-        deps.clearNativePaintReleaseTimeoutsForSessionEntry,
-        deps.pendingNativeMountSettleBottomPinHostRef,
-        deps.resetInitialFillForSessionEntry,
+        clearNativePaintReleaseTimeoutsForSessionEntry,
+        resetInitialFillForSessionEntry,
     ]);
 
     return {
         applySessionEntryViewportApplyEffects,
         applySessionOpenArmResetPlan,
         applySessionOpenDisposeResetPlan,
+        entryAnchorForRender:
+            entryJumpToSeq === null && !resolvedEntryViewportForRender.shouldFollowBottom
+                ? resolvedEntryViewportForRender.anchor
+                : null,
+        entryShouldFollowBottomForRender: resolvedEntryViewportForRender.shouldFollowBottom,
     };
 }

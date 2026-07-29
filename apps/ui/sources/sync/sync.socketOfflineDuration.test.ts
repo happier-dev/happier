@@ -36,6 +36,7 @@ vi.mock('react-native', async () => {
 });
 
 const socketStatusHandlers = vi.hoisted(() => new Set<(status: string) => void>());
+const socketReconnectHandlers = vi.hoisted(() => new Set<() => void>());
 const apiSocketDisconnect = vi.hoisted(() => vi.fn());
 const apiSocketConnect = vi.hoisted(() => vi.fn());
 
@@ -43,7 +44,10 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
     apiSocket: {
         onMessage: vi.fn(),
         onError: vi.fn(),
-        onReconnected: vi.fn(),
+        onReconnected: vi.fn((handler: () => void) => {
+            socketReconnectHandlers.add(handler);
+            return () => socketReconnectHandlers.delete(handler);
+        }),
         onStatusChange: vi.fn((handler: (status: string) => void) => {
             socketStatusHandlers.add(handler);
             return () => socketStatusHandlers.delete(handler);
@@ -62,17 +66,19 @@ vi.mock('@/log', () => ({
 
 describe('sync socket offline duration tracking', () => {
     beforeEach(() => {
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+        vi.useRealTimers();
         vi.resetModules();
         kvStore.clear();
         socketStatusHandlers.clear();
+        socketReconnectHandlers.clear();
         apiSocketDisconnect.mockClear();
         apiSocketConnect.mockClear();
     });
 
     it('captures the last offline duration across disconnected→connected transition', async () => {
         const { sync } = await import('./sync');
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
 
         // Wire the socket listeners without forcing a full sync init sequence.
         (sync as unknown as { subscribeToUpdates: () => void }).subscribeToUpdates();
@@ -89,5 +95,26 @@ describe('sync socket offline duration tracking', () => {
         };
         expect(typeof state.lastSocketOfflineDurationMs).toBe('number');
         expect(state.lastSocketOfflineDurationMs).toBeGreaterThanOrEqual(2500);
+    });
+
+    it('invalidates mounted daemon contribution projections on reconnect', async () => {
+        const { sync } = await import('./sync');
+        const projection = await import('./ops/machineContributionRegistryProjection');
+        const scope = { machineId: 'machine-1', serverId: 'server-1' };
+        const invalidated = vi.fn();
+        const unsubscribe =
+            projection.subscribeMachineContributionRegistryProjectionInvalidation(
+                scope,
+                invalidated,
+            );
+        vi.spyOn(sync, 'resumeSync').mockResolvedValue(undefined);
+
+        (sync as unknown as { subscribeToUpdates: () => void }).subscribeToUpdates();
+        expect(socketReconnectHandlers.size).toBeGreaterThan(0);
+        for (const handler of socketReconnectHandlers) handler();
+
+        expect(projection.getMachineContributionRegistryProjectionRevision(scope)).toBe(1);
+        expect(invalidated).toHaveBeenCalledOnce();
+        unsubscribe();
     });
 });

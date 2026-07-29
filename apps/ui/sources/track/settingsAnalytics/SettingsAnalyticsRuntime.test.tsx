@@ -87,7 +87,7 @@ describe('SettingsAnalyticsRuntime', () => {
             uiItemDensity: 'cozy',
             uiFontScale: 1.24,
             embeddedTerminalDockLocation: 'bottom',
-            sessionsListStorageTab: 'persisted',
+            sessionsListStorageFilter: 'all',
         };
         analyticsRuntimeState.mainSelectionSnapshot = {
             status: 'ready',

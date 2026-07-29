@@ -105,6 +105,50 @@ describe('MarkdownView (streaming markdown)', () => {
         expect(visibleText(screen)).toContain('Run command');
     }, 60_000);
 
+    it('keeps option tap and long-press copy handling separate', async () => {
+        const { MarkdownView } = await import('./MarkdownView');
+        const onOptionPress = vi.fn();
+        const onOptionLongPress = vi.fn(async () => true);
+        const markdown = [
+            '<options>',
+            '<option>Run command</option>',
+            '</options>',
+        ].join('\n');
+
+        const screen = await renderScreen(
+            React.createElement(MarkdownView as any, {
+                markdown,
+                onOptionPress,
+                onOptionLongPress,
+                selectable: true,
+                profile: 'transcript',
+            }),
+        );
+
+        const [optionButton] = screen.findAllByType('Pressable');
+        expect(optionButton).toBeTruthy();
+
+        await act(async () => {
+            await optionButton!.props.onLongPress?.();
+        });
+
+        expect(onOptionLongPress).toHaveBeenCalledWith({ title: 'Run command' });
+        expect(onOptionPress).not.toHaveBeenCalled();
+        expect(screen.findByTestId('markdown-option-copy-feedback:0')).toBeTruthy();
+
+        await act(async () => {
+            optionButton!.props.onPress?.();
+        });
+
+        expect(onOptionPress).not.toHaveBeenCalled();
+
+        await act(async () => {
+            optionButton!.props.onPress?.();
+        });
+
+        expect(onOptionPress).toHaveBeenCalledWith({ title: 'Run command' });
+    }, 60_000);
+
     it('passes web streaming animation to enriched prose without legacy outer run wrappers', async () => {
         const screen = await renderStreamingMarkdown('Hello `code` world', { streamingAnimated: true });
 
@@ -116,7 +160,8 @@ describe('MarkdownView (streaming markdown)', () => {
         expect(markdownRevealNodes).toHaveLength(0);
         const enrichedRun = screen.findByType('EnrichedMarkdownText');
         expect(enrichedRun.props.markdown).toBe('Hello `code` world');
-        expect(enrichedRun.props.streamingAnimation).toBe(true);
+        expect(enrichedRun.props.streamingAnimation).toBeUndefined();
+        expect(enrichedRun.props['data-happier-enriched-markdown-reveal']).toBe('text');
     }, 60_000);
 
     it('updates streamed complete code block content without remounting the code block component', async () => {

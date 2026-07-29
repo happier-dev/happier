@@ -35,13 +35,21 @@ describe('loadSyncTuning', () => {
         expect(tuning.enrichedMarkdownRuntimePreloadRetryDelayMs).toBeGreaterThanOrEqual(1_000);
         expect(tuning.enrichedMarkdownRuntimePreloadRetryDelayMs).toBeLessThanOrEqual(300_000);
         expect(tuning.nativeCryptoWorkerMode).toBe('auto');
+        expect(tuning.sessionTranscriptRetentionRecentKeepCount).toBe(3);
+        expect(tuning.sessionTranscriptRetentionGraceMs).toBeGreaterThanOrEqual(2 * 60_000);
+        expect(tuning.sessionTranscriptRetentionGraceMs).toBeLessThanOrEqual(5 * 60_000);
+        expect(tuning.sessionTranscriptRetentionSweepDebounceMs).toBeGreaterThan(0);
+        expect(tuning.sessionTranscriptRetentionSweepDebounceMs).toBeLessThanOrEqual(5_000);
+        expect(tuning.feedItemsMaxEntries).toBeGreaterThan(0);
+        expect(tuning.artifactHeadsMaxEntries).toBeGreaterThan(0);
+        expect(tuning.automationRunsMaxEntriesPerAutomation).toBeGreaterThan(0);
+        expect(tuning.machineDisplayHydrationMaxRows).toBeGreaterThan(0);
+        expect(tuning.encryptionCacheMessageByteBudget).toBeGreaterThan(1024);
     });
 
     it('uses bounded transcript scroll defaults', () => {
         const tuning = loadSyncTuning();
 
-        expect(tuning.transcriptWebInitialPinStabilizeMs).toBe(1500);
-        expect(tuning.transcriptWebInitialPinRetryMilestonesMs).toEqual([16, 50, 100, 200, 400, 800]);
         expect(tuning.transcriptMaxTurnEntriesPerListItem).toBe(8);
         expect(tuning.transcriptOlderLoadSpinnerDelayMs).toBe(300);
         expect(tuning.transcriptOlderLoadCooldownMs).toBe(2000);
@@ -50,7 +58,6 @@ describe('loadSyncTuning', () => {
         expect(tuning.transcriptDerivedItemsCacheMaxSessions).toBe(16);
         expect(tuning.transcriptItemHeightCacheMaxEntries).toBe(1024);
         expect(tuning.transcriptForkedSnapshotCacheMaxSessions).toBe(64);
-        expect(tuning.transcriptFlashListDrawDistance).toBe(0);
         expect(tuning.transcriptMountSettleQuiescentWindowMs).toBe(120);
         expect(tuning.transcriptMountSettleDimensionNoiseFloorPx).toBe(1);
         expect(tuning.transcriptMountSettleBottomDistanceNoiseFloorPx).toBe(2);
@@ -58,6 +65,7 @@ describe('loadSyncTuning', () => {
         expect(tuning.transcriptViewportTelemetryConsoleLog).toBe(false);
         expect(tuning.transcriptViewportTelemetryMaxEvents).toBe(512);
         expect(tuning.transcriptNativeOlderMessagesPageSize).toBe(64);
+        // Native live-tail carve ships DEFAULT-ON (4 = footer carve), matching remote-dev.
     });
 
     it('applies env JSON overrides', () => {
@@ -66,10 +74,8 @@ describe('loadSyncTuning', () => {
                 EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON: JSON.stringify({
                     messageLargeGapSeq: 12,
                     transcriptForwardPrefetchThresholdPx: 34,
-                    transcriptFlashListEstimatedItemSize: 222,
-                    transcriptWebHotTailItemCount: 9,
+                    transcriptEstimatedItemSizePx: 222,
                     transcriptMaxTurnEntriesPerListItem: 6,
-                    transcriptWebInitialPinRetryMilestonesMs: [33, 11, 11, 55.9],
                     transcriptOlderLoadSpinnerDelayMs: 123,
                     transcriptOlderLoadCooldownMs: 321,
                     transcriptViewportAnchorCaptureDebounceMs: 125,
@@ -77,7 +83,6 @@ describe('loadSyncTuning', () => {
                     transcriptDerivedItemsCacheMaxSessions: 3,
                     transcriptItemHeightCacheMaxEntries: 333,
                     transcriptForkedSnapshotCacheMaxSessions: 17,
-                    transcriptFlashListDrawDistance: 1800,
                     transcriptMountSettleQuiescentWindowMs: 240,
                     transcriptMountSettleDimensionNoiseFloorPx: 4,
                     transcriptMountSettleBottomDistanceNoiseFloorPx: 5,
@@ -131,16 +136,19 @@ describe('loadSyncTuning', () => {
                     jsThreadLagTelemetrySampleIntervalMs: 40,
                     jsThreadLagTelemetryThresholdMs: 30,
                     jsThreadLagTelemetryMaxSamples: 128,
+                    feedItemsMaxEntries: 12,
+                    artifactHeadsMaxEntries: 13,
+                    automationRunsMaxEntriesPerAutomation: 14,
+                    machineDisplayHydrationMaxRows: 15,
+                    encryptionCacheMessageByteBudget: 2048,
                 }),
             },
         });
 
         expect(tuning.messageLargeGapSeq).toBe(12);
         expect(tuning.transcriptForwardPrefetchThresholdPx).toBe(34);
-        expect(tuning.transcriptFlashListEstimatedItemSize).toBe(222);
-        expect(tuning.transcriptWebHotTailItemCount).toBe(9);
+        expect(tuning.transcriptEstimatedItemSizePx).toBe(222);
         expect(tuning.transcriptMaxTurnEntriesPerListItem).toBe(6);
-        expect(tuning.transcriptWebInitialPinRetryMilestonesMs).toEqual([11, 33, 55]);
         expect(tuning.transcriptOlderLoadSpinnerDelayMs).toBe(123);
         expect(tuning.transcriptOlderLoadCooldownMs).toBe(321);
         expect(tuning.transcriptViewportAnchorCaptureDebounceMs).toBe(125);
@@ -148,7 +156,6 @@ describe('loadSyncTuning', () => {
         expect(tuning.transcriptDerivedItemsCacheMaxSessions).toBe(3);
         expect(tuning.transcriptItemHeightCacheMaxEntries).toBe(333);
         expect(tuning.transcriptForkedSnapshotCacheMaxSessions).toBe(17);
-        expect(tuning.transcriptFlashListDrawDistance).toBe(1800);
         expect(tuning.transcriptMountSettleQuiescentWindowMs).toBe(240);
         expect(tuning.transcriptMountSettleDimensionNoiseFloorPx).toBe(4);
         expect(tuning.transcriptMountSettleBottomDistanceNoiseFloorPx).toBe(5);
@@ -202,6 +209,11 @@ describe('loadSyncTuning', () => {
         expect(tuning.jsThreadLagTelemetrySampleIntervalMs).toBe(40);
         expect(tuning.jsThreadLagTelemetryThresholdMs).toBe(30);
         expect(tuning.jsThreadLagTelemetryMaxSamples).toBe(128);
+        expect(tuning.feedItemsMaxEntries).toBe(12);
+        expect(tuning.artifactHeadsMaxEntries).toBe(13);
+        expect(tuning.automationRunsMaxEntriesPerAutomation).toBe(14);
+        expect(tuning.machineDisplayHydrationMaxRows).toBe(15);
+        expect(tuning.encryptionCacheMessageByteBudget).toBe(2048);
     });
 
     it('keeps the projection routing rollback switch configurable', () => {
@@ -241,9 +253,7 @@ describe('loadSyncTuning', () => {
             env: {
                 EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON: JSON.stringify({
                     messageLargeGapSeq: -1,
-                    transcriptWebHotTailItemCount: 0,
                     transcriptMaxTurnEntriesPerListItem: -1,
-                    transcriptWebInitialPinRetryMilestonesMs: [0, -1, 25_000, Number.NaN, '100'],
                     transcriptOlderLoadSpinnerDelayMs: -1,
                     transcriptOlderLoadCooldownMs: -1,
                     transcriptViewportAnchorCaptureDebounceMs: -1,
@@ -251,7 +261,6 @@ describe('loadSyncTuning', () => {
                     transcriptDerivedItemsCacheMaxSessions: 0,
                     transcriptItemHeightCacheMaxEntries: 0,
                     transcriptForkedSnapshotCacheMaxSessions: 0,
-                    transcriptFlashListDrawDistance: -1,
                     transcriptMountSettleQuiescentWindowMs: 1,
                     transcriptMountSettleDimensionNoiseFloorPx: -1,
                     transcriptMountSettleBottomDistanceNoiseFloorPx: -1,
@@ -309,9 +318,7 @@ describe('loadSyncTuning', () => {
         });
 
         expect(tuning.messageLargeGapSeq).toBeGreaterThan(0);
-        expect(tuning.transcriptWebHotTailItemCount).toBeGreaterThan(0);
         expect(tuning.transcriptMaxTurnEntriesPerListItem).toBeGreaterThan(0);
-        expect(tuning.transcriptWebInitialPinRetryMilestonesMs).toEqual([16, 50, 100, 200, 400, 800]);
         expect(tuning.transcriptOlderLoadSpinnerDelayMs).toBe(300);
         expect(tuning.transcriptOlderLoadCooldownMs).toBe(2000);
         expect(tuning.transcriptViewportAnchorCaptureDebounceMs).toBe(200);
@@ -319,7 +326,6 @@ describe('loadSyncTuning', () => {
         expect(tuning.transcriptDerivedItemsCacheMaxSessions).toBe(16);
         expect(tuning.transcriptItemHeightCacheMaxEntries).toBe(1024);
         expect(tuning.transcriptForkedSnapshotCacheMaxSessions).toBe(64);
-        expect(tuning.transcriptFlashListDrawDistance).toBe(0);
         expect(tuning.transcriptMountSettleQuiescentWindowMs).toBe(120);
         expect(tuning.transcriptMountSettleDimensionNoiseFloorPx).toBe(1);
         expect(tuning.transcriptMountSettleBottomDistanceNoiseFloorPx).toBe(2);
@@ -378,15 +384,4 @@ describe('loadSyncTuning', () => {
         expect(tuning.jsThreadLagTelemetryMaxSamples).toBe(512);
     });
 
-    it('preserves explicit disabled drawDistance overrides', () => {
-        const tuning = loadSyncTuning({
-            env: {
-                EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON: JSON.stringify({
-                    transcriptFlashListDrawDistance: 0,
-                }),
-            },
-        });
-
-        expect(tuning.transcriptFlashListDrawDistance).toBe(0);
-    });
 });

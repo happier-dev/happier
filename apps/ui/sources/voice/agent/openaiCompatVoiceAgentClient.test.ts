@@ -3,18 +3,20 @@ import { installVoiceAgentCommonModuleMocks } from './voiceAgentTestHelpers';
 
 const settingsState: any = {
   voice: {
-    adapters: {
-      local_conversation: {
+    providers: {
+      local_conversation: { schemaVersion: 1, config: {
         networkTimeoutMs: 5_000,
         agent: {
           openaiCompat: {
             chatBaseUrl: 'http://localhost:8002',
+            insecureLocalOriginConsent: 'http://localhost:8002',
+            insecureLocalConsentMachineId: 'machine-raw',
             chatApiKey: null,
             temperature: 0.4,
             maxTokens: null,
           },
         },
-      },
+      } },
     },
   },
 };
@@ -47,6 +49,26 @@ const getState = vi.fn(() => state);
 const resolveUiVoicePromptStackBlocks = vi.fn(async (_args?: { profileId?: string | null }) => []);
 const resolveUiMemoryRecallGuidanceEnabled = vi.fn(async (_args: any) => false);
 
+vi.mock('@/voice/local/openaiCompat/client', () => ({
+  OpenAiCompatDaemonClient: class {
+    async chat(input: unknown): Promise<string> {
+      const response = await globalThis.fetch('daemon://openai-compat/chat', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+      if (!response.ok) throw new Error('chat_failed');
+      const json = await response.json().catch(() => null) as any;
+      return typeof json?.choices?.[0]?.message?.content === 'string'
+        ? json.choices[0].message.content.trim()
+        : '';
+    }
+
+    async listModels(): Promise<readonly { id: string }[]> {
+      return [];
+    }
+  },
+}));
+
 installVoiceAgentCommonModuleMocks({
   storage: async () => ({
     storage: {
@@ -74,7 +96,9 @@ describe('OpenAiCompatVoiceAgentClient', () => {
 
   beforeEach(() => {
     globalThis.fetch = vi.fn() as any;
-    settingsState.voice.adapters.local_conversation.networkTimeoutMs = 5_000;
+    settingsState.voice.providers.local_conversation.config.networkTimeoutMs = 5_000;
+    settingsState.voice.providers.local_conversation.config.agent.openaiCompat.insecureLocalOriginConsent = 'http://localhost:8002';
+    settingsState.voice.providers.local_conversation.config.agent.openaiCompat.insecureLocalConsentMachineId = 'machine-raw';
     resolveUiVoicePromptStackBlocks.mockClear();
     resolveUiVoicePromptStackBlocks.mockResolvedValue([]);
     resolveUiMemoryRecallGuidanceEnabled.mockClear();
@@ -104,7 +128,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       sessionId: 's1',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
     });
@@ -133,7 +157,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       sessionId: 's1',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
       verbosity: 'balanced',
@@ -162,7 +186,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       sessionId: 's1',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
     });
@@ -187,7 +211,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       profileId: 'work',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
     });
@@ -215,7 +239,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       sessionId: 's1',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
     });
@@ -243,7 +267,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       sessionId: 's1',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
     });
@@ -284,7 +308,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       sessionId: 's1',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
     });
@@ -311,7 +335,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       sessionId: 's1',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
       disabledActionIds: ['review.start', 'machines.list'],
@@ -337,7 +361,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       sessionId: 's1',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
     });
@@ -361,7 +385,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       sessionId: 's1',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
     });
@@ -399,7 +423,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       sessionId: 's1',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
     });
@@ -426,7 +450,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       sessionId: 's1',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
     });
@@ -447,7 +471,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       sessionId: 's1',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
     });
@@ -473,7 +497,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       sessionId: 's1',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
     });
@@ -500,7 +524,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       sessionId: 's1',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
     });
@@ -509,23 +533,12 @@ describe('OpenAiCompatVoiceAgentClient', () => {
     const read = await client.readTurnStream({ sessionId: 's1', voiceAgentId, streamId: stream.streamId, cursor: 0, maxEvents: 64 });
 
     expect(read.done).toBe(true);
-    expect(read.events.some((event) => event.t === 'delta')).toBe(true);
-    expect(read.events.some((event) => event.t === 'done')).toBe(true);
+    expect(read.events.some((event) => event.t === 'voice_output' && event.output.kind === 'speech_segment')).toBe(true);
+    expect(read.events.some((event) => event.t === 'voice_output' && event.output.kind === 'turn_final')).toBe(true);
   });
 
-  it('times out chat requests when fetch exceeds configured timeout', async () => {
-    settingsState.voiceLocalNetworkTimeoutMs = 5;
-    (globalThis.fetch as any).mockImplementation((_url: string, init?: RequestInit) => {
-      return new Promise<Response>((_resolve, reject) => {
-        const signal = init?.signal;
-        if (!signal) return;
-        signal.addEventListener(
-          'abort',
-          () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })),
-          { once: true },
-        );
-      });
-    });
+  it('reports daemon chat failure without a direct browser timeout owner', async () => {
+    (globalThis.fetch as any).mockResolvedValue({ ok: false });
 
     const { OpenAiCompatVoiceAgentClient } = await import('./openaiCompatVoiceAgentClient');
     const client = new OpenAiCompatVoiceAgentClient();
@@ -533,11 +546,39 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       sessionId: 's1',
       chatModelId: 'fast-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'Initial context',
     });
 
-    await expect(client.sendTurn({ sessionId: 's1', voiceAgentId, userText: 'hello' })).rejects.toThrow('chat_timeout');
+    await expect(client.sendTurn({ sessionId: 's1', voiceAgentId, userText: 'hello' })).rejects.toThrow('chat_failed');
+  });
+
+  it('routes chat and model catalog through the selected-daemon client without browser fetch or raw keys', async () => {
+    const chat = vi.fn(async () => 'daemon reply');
+    const listModels = vi.fn(async () => [{ id: 'daemon-model' }]);
+    globalThis.fetch = vi.fn(async () => { throw new Error('browser fetch forbidden'); }) as any;
+    const { OpenAiCompatVoiceAgentClient } = await import('./openaiCompatVoiceAgentClient');
+    const client = new OpenAiCompatVoiceAgentClient({ daemonClient: { chat, listModels } as any });
+    const { voiceAgentId } = await client.start({
+      sessionId: 's1',
+      chatModelId: 'fast-model',
+      commitModelId: 'commit-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 300,
+      initialContext: 'Initial context',
+    });
+    await expect(client.sendTurn({ sessionId: 's1', voiceAgentId, userText: 'hello' }))
+      .resolves.toEqual({ assistantText: 'daemon reply' });
+    await expect(client.getModels({ sessionId: 's1' })).resolves.toMatchObject({
+      availableModels: [{ id: 'daemon-model', name: 'daemon-model' }],
+    });
+    expect(chat).toHaveBeenCalledWith(expect.objectContaining({
+      insecureLocalOriginConsent: 'http://localhost:8002',
+      insecureLocalConsentMachineId: 'machine-raw',
+      credentialKind: 'chat_api_key',
+      messages: expect.any(Array),
+    }));
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });

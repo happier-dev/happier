@@ -1,9 +1,6 @@
 import type { AgentId } from '@/agents/catalog/catalog';
 
-import {
-    addProviderMessageMetaExtras,
-    resolveProviderMessageMetaOverrides,
-} from '@/sync/domains/messages/messageMetaProviders';
+import { resolveProviderMessageMetaOverrides } from '@/sync/domains/messages/messageMetaProviders';
 import { buildOutgoingMessageMeta } from '@/sync/domains/messages/messageMeta';
 import type { MessageMeta } from '@/sync/domains/messages/messageMetaTypes';
 
@@ -28,22 +25,16 @@ export function buildSendMessageMeta(args: {
         displayText: args.displayText,
     });
 
-    const withProviderExtras = addProviderMessageMetaExtras({
-        meta: base,
-        agentId: args.agentId,
-        settings: args.settings,
-        session: args.session,
-    });
-
     const metaOverrides = resolveProviderMessageMetaOverrides({
         agentId: args.agentId,
         session: args.session,
+        settings: args.settings,
         metaOverrides: args.metaOverrides,
     });
 
-    if (!metaOverrides) return withProviderExtras;
+    if (!metaOverrides) return base;
     return {
-        ...withProviderExtras,
+        ...base,
         ...metaOverrides,
     };
 }

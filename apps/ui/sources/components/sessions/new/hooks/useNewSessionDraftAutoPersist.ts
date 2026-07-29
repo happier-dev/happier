@@ -57,6 +57,8 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
     persistDraftNow: () => void;
     persistenceEnabled?: boolean;
     draftTextLength?: number | null;
+    /** Stable semantic identity for the current draft, independent of text length. */
+    draftChangeKey?: string;
     /**
      * Whether the owning screen is currently focused. Only the focused screen instance may
      * auto-persist: an unfocused instance's draft state is stale relative to whichever
@@ -180,6 +182,7 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
     }, [
         cancelPendingIdlePersist,
         focused,
+        params.draftChangeKey,
         params.draftTextLength,
         params.persistenceEnabled,
         persistAfterCurrentPolicy,

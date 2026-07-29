@@ -13,6 +13,10 @@ export class MMKV {
         this.values.delete(key);
     }
 
+    getAllKeys(): string[] {
+        return [...this.values.keys()];
+    }
+
     clearAll(): void {
         this.values.clear();
     }

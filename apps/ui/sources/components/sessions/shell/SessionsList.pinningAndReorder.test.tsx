@@ -9,21 +9,49 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
-import { createCapturingFlatListMock } from '@/dev/testkit/mocks/flashList';
+import { createCapturingFlatListMock } from '@/dev/testkit/mocks/virtualizedList';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import { buildSessionListIndexFromViewData, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListReachabilityRenderable } from '@/sync/domains/state/storage';
 import { buildSessionOrganizationProjectionFromLegacyTestSettings } from './sessionOrganizationProjectionTestFixture';
+import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let capturedRootFlatListProps: any | null = null;
-const capturedRootFlashListCompatProps = vi.hoisted(() => ({ current: null as any }));
+const capturedRootVirtualizedListProps = vi.hoisted(() => ({ current: null as any }));
 const routerPushSpy = vi.fn();
 let hideInactiveSessions = false;
 const setSessionPinOp = vi.hoisted(() => vi.fn(async () => undefined));
 const setSessionTagAssignmentsOp = vi.hoisted(() => vi.fn(async () => undefined));
+type OrganizationMutationScopeResult =
+    | Readonly<{
+        ok: true;
+        scope: {
+            credentials: { token: string };
+            serverId: string;
+            serverIdAliases: readonly string[];
+            serverUrl: string;
+        };
+    }>
+    | Readonly<{
+        ok: false;
+        reason: 'serverIdRequired' | 'serverProfileUnavailable' | 'credentialsUnavailable';
+        requestedServerId: string;
+        serverId?: string;
+    }>;
+const resolveSessionOrganizationMutationScopeOp = vi.hoisted(() => vi.fn(
+    async (serverId: string): Promise<OrganizationMutationScopeResult> => ({
+        ok: true,
+        scope: {
+            credentials: { token: 'test-token' },
+            serverId,
+            serverIdAliases: [],
+            serverUrl: 'https://server-a.example.test',
+        },
+    }),
+));
 
 let pinnedSessionKeysV1: string[] = [];
 const setPinnedSessionKeysV1 = vi.fn();
@@ -39,15 +67,15 @@ const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 const mockMachinesState = vi.hoisted(() => ({ current: [] as any[] }));
 const flatListMock = createCapturingFlatListMock({ renderItems: true });
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () => {
+vi.mock('@legendapp/list/react-native', async () => {
     const ReactModule = await import('react');
     const renderSlot = (slot: any) => {
         if (!slot) return null;
         return ReactModule.isValidElement(slot) ? slot : ReactModule.createElement(slot);
     };
     return {
-        FlashList: ReactModule.forwardRef<any, any>((props, ref) => {
-            capturedRootFlashListCompatProps.current = props;
+        LegendList: ReactModule.forwardRef<any, any>((props, ref) => {
+            capturedRootVirtualizedListProps.current = props;
             if (typeof ref === 'function') {
                 ref({
                     scrollToOffset: () => {},
@@ -60,7 +88,7 @@ vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () => {
                 };
             }
             return ReactModule.createElement(
-                'FlashListCompat',
+                'LegendList',
                 props,
                 renderSlot(props.ListHeaderComponent),
                 ...(props.data ?? []).map((item: any, index: number) => (
@@ -159,14 +187,14 @@ installSessionShellCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'compactSessionView') return false;
                     if (key === 'compactSessionViewMinimal') return false;
                     if (key === 'sessionTagsEnabled') return true;
                     if (key === 'hideInactiveSessions') return hideInactiveSessions;
                     if (key === 'workspacePathDisplayModeV1') return 'path';
                     return null;
-                },
+                } }),
                 useHasUnreadMessages: () => false,
                 useSession: () => null,
                 useProfile: () => ({
@@ -179,18 +207,21 @@ installSessionShellCommonModuleMocks({
                     linkedProviders: [],
                     connectedServices: [],
                     connectedServicesV2: [],
+                    connectedServiceCredentialRevisionsV1: [],
+                    connectedAccountsV4: [],
+                    connectedAccountGroupsV4: [],
                 }),
                 useAllMachines: () => mockMachinesState.current,
                 useMachineDisplayById: () => Object.fromEntries(
                     mockMachinesState.current.map((machine) => [machine.id, machine]),
                 ),
-                useSettingMutable: (key: string) => {
+                useSettingMutable: createUseSettingMutableMockFromReader((key) => {
                     if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
                     if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
                     if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
                     if (key === 'workspaceRefsV1') return [workspaceRefsV1, setWorkspaceRefsV1];
                     return [null, vi.fn()];
-                },
+                }),
                 useSessionOrganizationProjection: () => buildSessionOrganizationProjectionFromLegacyTestSettings({
                     serverId: 'server_a',
                     pinnedSessionKeysV1,
@@ -336,15 +367,16 @@ vi.mock('@/sync/ops', async (importOriginal) => {
 });
 
 vi.mock('@/sync/ops/sessionOrganization', () => ({
-    deleteSessionFolder: vi.fn(async () => undefined),
-    deleteSessionLabel: vi.fn(async () => undefined),
-    moveSessionFolderAssignments: vi.fn(async () => undefined),
-    reorderSessionOrganization: vi.fn(async () => undefined),
-    setSessionFolderAssignment: vi.fn(async () => undefined),
-    setSessionPin: setSessionPinOp,
-    setSessionTagLabels: setSessionTagAssignmentsOp,
-    upsertSessionFolder: vi.fn(async () => undefined),
-    upsertSessionLabel: vi.fn(async () => undefined),
+    resolveSessionOrganizationMutationScope: resolveSessionOrganizationMutationScopeOp,
+    writeSessionOrganizationFolderAssignment: vi.fn(async () => undefined),
+    writeSessionOrganizationFolders: vi.fn(async () => undefined),
+    writeSessionOrganizationGroupOrder: vi.fn(async () => undefined),
+    writeSessionOrganizationPin: setSessionPinOp,
+    writeSessionOrganizationPinForSessionKey: setSessionPinOp,
+    writeSessionOrganizationTagLabels: setSessionTagAssignmentsOp,
+    writeSessionOrganizationTagLabelsForSessionKey: setSessionTagAssignmentsOp,
+    writeSessionOrganizationWorkspaceLabels: vi.fn(async () => undefined),
+    writeSessionOrganizationWorkspaceOrder: vi.fn(async () => undefined),
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
@@ -530,10 +562,20 @@ describe('SessionsList pinning + per-group ordering', () => {
         setWorkspaceRefsV1.mockClear();
         setSessionPinOp.mockClear();
         setSessionTagAssignmentsOp.mockClear();
+        resolveSessionOrganizationMutationScopeOp.mockReset();
+        resolveSessionOrganizationMutationScopeOp.mockImplementation(async (serverId: string) => ({
+            ok: true,
+            scope: {
+                credentials: { token: 'test-token' },
+                serverId,
+                serverIdAliases: [],
+                serverUrl: 'https://server-a.example.test',
+            },
+        }));
         routerPushSpy.mockReset();
         mockAllowedServerIds = ['server_a'];
         capturedRootFlatListProps = null;
-        capturedRootFlashListCompatProps.current = null;
+        capturedRootVirtualizedListProps.current = null;
         hideInactiveSessions = false;
         readMachineTargetForSessionMock.mockReset();
         mockMachinesState.current = [];
@@ -639,7 +681,7 @@ describe('SessionsList pinning + per-group ordering', () => {
         expect(capturedRootFlatListProps?.disableVirtualization).toBe(true);
     });
 
-    it('uses FlashListCompat for large web lists', async () => {
+    it('uses the canonical virtualized list for large web lists', async () => {
         const header = expectPresent(
             mockVisibleSessionListViewData.find((item) => item.type === 'header'),
             'expected header item',
@@ -663,8 +705,8 @@ describe('SessionsList pinning + per-group ordering', () => {
         await renderSessionsList();
 
         expect(capturedRootFlatListProps).toBeNull();
-        expect(capturedRootFlashListCompatProps.current).toBeTruthy();
-        expect(capturedRootFlashListCompatProps.current?.scrollEventThrottle).toBe(32);
+        expect(capturedRootVirtualizedListProps.current).toBeTruthy();
+        expect(capturedRootVirtualizedListProps.current?.scrollEventThrottle).toBe(32);
     });
 
     it('renders the full priority prefix before inactive history on large web lists', async () => {
@@ -722,7 +764,7 @@ describe('SessionsList pinning + per-group ordering', () => {
         await renderSessionsList();
 
         expect(capturedRootFlatListProps).toBeNull();
-        expect(capturedRootFlashListCompatProps.current).toBeTruthy();
+        expect(capturedRootVirtualizedListProps.current).toBeTruthy();
     });
 
     it('passes session tags from organization projection into session items when enabled', async () => {
@@ -783,8 +825,8 @@ describe('SessionsList pinning + per-group ordering', () => {
 
         expect(setSessionTagAssignmentsOp).toHaveBeenCalledTimes(1);
         expect(setSessionTagAssignmentsOp).toHaveBeenCalledWith(expect.objectContaining({
-            serverId: 'server_a',
-            sessionId: 'sess_a',
+            scope: expect.objectContaining({ serverId: 'server_a' }),
+            sessionKey: 'server_a:sess_a',
             tags: ['urgent'],
         }));
     });
@@ -846,10 +888,32 @@ describe('SessionsList pinning + per-group ordering', () => {
 
         expect(setSessionPinOp).toHaveBeenCalledTimes(1);
         expect(setSessionPinOp).toHaveBeenCalledWith(expect.objectContaining({
-            serverId: 'server_a',
-            sessionId: 'sess_a',
+            scope: expect.objectContaining({ serverId: 'server_a' }),
+            sessionKey: 'server_a:sess_a',
             pinned: true,
         }));
+    });
+
+    it('keeps the list action silent when organization mutation scope is unavailable', async () => {
+        resolveSessionOrganizationMutationScopeOp.mockResolvedValueOnce({
+            ok: false,
+            reason: 'credentialsUnavailable',
+            requestedServerId: 'server_a',
+            serverId: 'server_a',
+        });
+        const screen = await renderSessionsList();
+        const row = expectPresent(
+            findSessionItem(screen, 'sess_a'),
+            'expected sess_a session row',
+        );
+
+        await act(async () => {
+            invokeTestInstanceHandler(row, 'onTogglePinned', undefined, 'expected sess_a session row');
+            await Promise.resolve();
+        });
+
+        expect(resolveSessionOrganizationMutationScopeOp).toHaveBeenCalledWith('server_a');
+        expect(setSessionPinOp).not.toHaveBeenCalled();
     });
 
     it('does not render project headers and forces path/machine subtitles into rows', async () => {

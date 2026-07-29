@@ -4,6 +4,37 @@ import { compareToolCalls } from '../../../utils/tools/toolComparison';
 import type { ReducerState } from '../reducer';
 import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
 import { setThinkingMergeCursor } from '../helpers/mergeCursors';
+import { normalizeTranscriptSeq, transcriptBlockIndexFromContentIndex } from '../../domains/messages/transcriptOrdering';
+import { createTranscriptToolCallProjection } from '../helpers/toolCallProjection';
+
+function readRuntimeFullToolSnapshotKind(message: TracedMessage): 'tool-progress' | 'tool-call' | null {
+    const meta = message.meta;
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return null;
+    const record = meta as Record<string, unknown>;
+    if (record.source !== 'runtime') return null;
+    const snapshot = record.runtimeToolSnapshotV1;
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+    const snapshotRecord = snapshot as Record<string, unknown>;
+    if (snapshotRecord.v !== 1 || snapshotRecord.mode !== 'full') return null;
+    return record.runtimeEventKind === 'tool-progress' || record.runtimeEventKind === 'tool-call'
+        ? record.runtimeEventKind
+        : null;
+}
+
+function applyRuntimeTerminalToolSnapshotState(tool: ToolCall, input: unknown, completedAt: number): void {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return;
+    const acp = (input as Record<string, unknown>)._acp;
+    if (!acp || typeof acp !== 'object' || Array.isArray(acp)) return;
+    const status = (acp as Record<string, unknown>).status;
+    if (status === 'completed') {
+        tool.state = 'completed';
+    } else if (status === 'failed' || status === 'cancelled') {
+        tool.state = 'error';
+    } else {
+        return;
+    }
+    tool.completedAt = completedAt;
+}
 
 export function runToolCallsPhase(params: Readonly<{
     state: ReducerState;
@@ -31,8 +62,10 @@ export function runToolCallsPhase(params: Readonly<{
     }
     for (let msg of nonSidechainMessages) {
         if (msg.role === 'agent') {
-            for (let c of msg.content) {
+            for (let contentIndex = 0; contentIndex < msg.content.length; contentIndex += 1) {
+                const c = msg.content[contentIndex]!;
                 if (c.type === 'tool-call') {
+                    const transcriptBlockIndex = transcriptBlockIndexFromContentIndex(contentIndex);
                     // Direct lookup by tool ID (since permission ID = tool ID now)
                     const existingMessageId = state.toolIdToMessageId.get(c.id);
 
@@ -44,6 +77,23 @@ export function runToolCallsPhase(params: Readonly<{
                         const message = state.messages.get(existingMessageId);
                         if (message?.tool) {
                             message.realID = msg.id;
+                            const runtimeSnapshotKind = readRuntimeFullToolSnapshotKind(msg);
+                            const incomingSeq = normalizeTranscriptSeq(msg.seq);
+                            if (
+                                incomingSeq !== null
+                                && (
+                                    message.seq === null
+                                    || (
+                                        runtimeSnapshotKind === 'tool-call'
+                                        && incomingSeq > message.seq
+                                    )
+                                )
+                            ) {
+                                message.seq = incomingSeq;
+                            }
+                            if (message.transcriptBlockIndex == null) {
+                                message.transcriptBlockIndex = transcriptBlockIndex;
+                            }
                             state.messageIds.set(msg.id, existingMessageId);
                             if (!message.tool.id) {
                                 message.tool.id = c.id;
@@ -65,8 +115,9 @@ export function runToolCallsPhase(params: Readonly<{
                                     ? (incomingInput as Record<string, unknown>)
                                     : null;
 
-                                const merged =
-                                    existingObj && incomingObj
+                                const merged = runtimeSnapshotKind !== null
+                                    ? incomingInput
+                                    : existingObj && incomingObj
                                         ? (() => {
                                             // Preserve existing fields (permission args are authoritative), but allow
                                             // ACP metadata (_acp) to update over time.
@@ -109,6 +160,9 @@ export function runToolCallsPhase(params: Readonly<{
                                 message.tool.completedAt = null;
                                 message.tool.result = undefined;
                             }
+                            if (runtimeSnapshotKind === 'tool-call') {
+                                applyRuntimeTerminalToolSnapshotState(message.tool, message.tool.input, msg.createdAt);
+                            }
                             changed.add(existingMessageId);
 
                             // Track TodoWrite tool inputs when updating existing messages
@@ -126,51 +180,27 @@ export function runToolCallsPhase(params: Readonly<{
                         if (enableLogging) {
                             console.log(`[REDUCER] Creating new message for tool ${c.id}`);
                         }
-                        // Check if there's a stored permission for this tool
                         const permission = state.permissions.get(c.id);
-
-                        let toolCall: ToolCall = {
-                            id: c.id,
-                            name: c.name,
-                            state: 'running' as const,
-                            input: permission ? permission.arguments : c.input,  // Use permission args if available
-                            createdAt: permission ? permission.createdAt : msg.createdAt,  // Use permission timestamp if available
-                            startedAt: msg.createdAt,
-                            completedAt: null,
+                        if (permission && enableLogging) {
+                            console.log(`[REDUCER] Found stored permission for tool ${c.id}`);
+                        }
+                        const projection = createTranscriptToolCallProjection({
+                            toolId: c.id,
+                            toolName: c.name,
+                            toolInput: c.input,
                             description: c.description,
-                            result: undefined,
-                        };
-
-                        // Add permission info if found
-                        if (permission) {
-                            if (enableLogging) {
-                                console.log(`[REDUCER] Found stored permission for tool ${c.id}`);
-                            }
-                            toolCall.permission = {
-                                id: c.id,
-                                status: permission.status,
-                                reason: permission.reason,
-                                mode: permission.mode,
-                                allowedTools: permission.allowedTools,
-                                suggestions: permission.suggestions,
-                                decision: permission.decision
-                            };
-
-                            // Update state based on permission status
-                            if (permission.status !== 'approved') {
-                                toolCall.state = 'error';
-                                toolCall.completedAt = permission.completedAt || msg.createdAt;
-                                if (permission.reason) {
-                                    toolCall.result = { error: permission.reason };
-                                }
-                            }
+                            messageCreatedAt: msg.createdAt,
+                            permission,
+                            isPendingPermissionRequest: !permission && isPermissionRequestToolCall(c.id, c.input),
+                        });
+                        const toolCall = projection.toolCall;
+                        if (readRuntimeFullToolSnapshotKind(msg) === 'tool-call') {
+                            applyRuntimeTerminalToolSnapshotState(toolCall, c.input, msg.createdAt);
                         }
 
                         // Some providers persist pending permission requests as tool-call messages (without AgentState).
                         // Treat those tool-call inputs as pending permissions so the UI can render approval controls.
-                        if (!permission && isPermissionRequestToolCall(c.id, c.input)) {
-                            toolCall.startedAt = null;
-                            toolCall.permission = { id: c.id, status: 'pending' };
+                        if (projection.shouldStorePendingPermission) {
                             state.permissions.set(c.id, {
                                 tool: c.name,
                                 arguments: c.input,
@@ -183,7 +213,8 @@ export function runToolCallsPhase(params: Readonly<{
 		                        state.messages.set(mid, {
 		                            id: mid,
 		                            realID: msg.id,
-		                            seq: typeof msg.seq === 'number' ? msg.seq : null,
+		                            seq: normalizeTranscriptSeq(msg.seq),
+		                            transcriptBlockIndex,
 		                            localId: msg.localId ?? null,
 		                            role: 'agent',
 		                            createdAt: msg.createdAt,

@@ -3,32 +3,48 @@ import type { MicSessionFailure } from '@/voice/runtime/mic/MicSession';
 
 import type {
     VoiceMachineError,
+    VoiceMachineErrorPhase,
     VoiceMachineErrorKind,
+    VoiceMachineErrorPresentation,
+    VoiceMachineRecoveryAction,
+    VoiceMachineRetryPolicy,
 } from './voiceConversationRuntimeTypes';
 
 export type { VoiceMachineError, VoiceMachineErrorKind };
 
 /**
- * Single source of truth for whether a given error kind is recoverable.
- *
- * Permission denial is the only non-recoverable boundary by default — the user
- * must re-grant microphone access before another attempt can succeed. Every
- * other boundary is transient and can be retried by re-arming the runtime.
- * Call sites may still pass an explicit `recoverable` to override per case.
+ * Single source of truth for lifecycle, retry, recovery, and presentation
+ * semantics for every machine error kind. Callers provide only identity and a
+ * safe reason; they cannot override one field and create a competing policy.
  */
-const RECOVERABLE_BY_KIND: Readonly<Record<VoiceMachineErrorKind, boolean>> = {
-    mic_permission_denied: false,
-    mic_ended: true,
-    mic_plateau: true,
-    transport_disconnect: true,
-    provider_error: true,
-    audio_context_suspended: true,
-    stt_timeout: true,
-    tts_failed: true,
-    turn_aborted: true,
+type VoiceMachineErrorPolicy = Readonly<{
+    phase: VoiceMachineErrorPhase;
+    retryPolicy: VoiceMachineRetryPolicy;
+    recoveryAction: VoiceMachineRecoveryAction;
+    presentation: VoiceMachineErrorPresentation;
+}>;
+
+const POLICY_BY_KIND: Readonly<Record<VoiceMachineErrorKind, VoiceMachineErrorPolicy>> = {
+    mic_permission_denied: { phase: 'preflight', retryPolicy: 'user_action', recoveryAction: 'open_settings', presentation: 'permission_required' },
+    mic_permission_revoked: { phase: 'active_session', retryPolicy: 'user_action', recoveryAction: 'open_settings_then_reconnect', presentation: 'error' },
+    mic_ended: { phase: 'active_session', retryPolicy: 'immediate_once', recoveryAction: 'reconnect', presentation: 'notice' },
+    mic_plateau: { phase: 'active_session', retryPolicy: 'immediate_once', recoveryAction: 'reconnect', presentation: 'notice' },
+    transport_disconnect: { phase: 'active_session', retryPolicy: 'backoff', recoveryAction: 'reconnect', presentation: 'notice' },
+    provider_error: { phase: 'runtime', retryPolicy: 'user_action', recoveryAction: 'retry', presentation: 'notice' },
+    provider_auth_invalid: { phase: 'preflight', retryPolicy: 'user_action', recoveryAction: 'review_credentials', presentation: 'error' },
+    reconnect_exhausted: { phase: 'active_session', retryPolicy: 'user_action', recoveryAction: 'reconnect', presentation: 'error' },
+    audio_context_suspended: { phase: 'active_session', retryPolicy: 'immediate_once', recoveryAction: 'reconnect', presentation: 'notice' },
+    stt_timeout: { phase: 'turn', retryPolicy: 'user_action', recoveryAction: 'retry', presentation: 'notice' },
+    tts_failed: { phase: 'turn', retryPolicy: 'user_action', recoveryAction: 'retry', presentation: 'notice' },
+    turn_aborted: { phase: 'turn', retryPolicy: 'never', recoveryAction: 'none', presentation: 'interrupted' },
+    authentication_required: { phase: 'preflight', retryPolicy: 'user_action', recoveryAction: 'connect_agent', presentation: 'error' },
+    session_unavailable: { phase: 'preflight', retryPolicy: 'never', recoveryAction: 'none', presentation: 'error' },
+    unsupported_runtime: { phase: 'preflight', retryPolicy: 'user_action', recoveryAction: 'install_agent_runtime', presentation: 'error' },
+    update_required: { phase: 'preflight', retryPolicy: 'user_action', recoveryAction: 'update_agent_runtime', presentation: 'error' },
+    feature_unavailable: { phase: 'preflight', retryPolicy: 'never', recoveryAction: 'none', presentation: 'error' },
 };
 
-const VOICE_MACHINE_ERROR_KINDS = Object.keys(RECOVERABLE_BY_KIND) as ReadonlyArray<VoiceMachineErrorKind>;
+const VOICE_MACHINE_ERROR_KINDS = Object.keys(POLICY_BY_KIND) as ReadonlyArray<VoiceMachineErrorKind>;
 
 export function isVoiceMachineErrorKind(value: unknown): value is VoiceMachineErrorKind {
     return typeof value === 'string' && (VOICE_MACHINE_ERROR_KINDS as ReadonlyArray<string>).includes(value);
@@ -37,19 +53,19 @@ export function isVoiceMachineErrorKind(value: unknown): value is VoiceMachineEr
 /**
  * Canonical factory for {@link VoiceMachineError} values.
  *
- * `recoverable` is optional: when omitted it is resolved from the per-kind
- * {@link RECOVERABLE_BY_KIND} table so every minting site agrees on
- * recoverability without re-deriving it.
+ * Callers supply identity and a safe reason only; policy fields cannot be
+ * overridden outside this owner.
  */
 export function createVoiceMachineError(params: Readonly<{
     kind: VoiceMachineErrorKind;
     reason: string;
-    recoverable?: boolean;
 }>): VoiceMachineError {
+    const policy = POLICY_BY_KIND[params.kind];
     return {
         kind: params.kind,
         reason: params.reason,
-        recoverable: params.recoverable ?? RECOVERABLE_BY_KIND[params.kind],
+        ...policy,
+        recoverable: policy.presentation === 'notice' || policy.presentation === 'permission_required',
     };
 }
 

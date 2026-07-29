@@ -27,8 +27,12 @@ declare module 'react-test-renderer' {
     }
 }
 
+function nodeMatchesTestId(node: ReactTestInstance, testID: string): boolean {
+    return node.props?.testID === testID || node.props?.['data-testid'] === testID;
+}
+
 function findAllByTestId(root: ReactTestInstance, testID: string): ReactTestInstance[] {
-    return root.findAll((node) => node.props?.testID === testID);
+    return root.findAll((node) => nodeMatchesTestId(node, testID));
 }
 
 function resolvePreferredTestIdMatch(root: ReactTestInstance, testID: string): ReactTestInstance | null {

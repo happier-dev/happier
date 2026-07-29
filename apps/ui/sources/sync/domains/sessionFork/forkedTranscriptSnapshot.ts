@@ -2,6 +2,7 @@ import type { StorageState } from '@/sync/store/types';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { LruMap } from '@/utils/cache/lruMap';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export type ForkedTranscriptSegment = Readonly<{
   sessionId: string;
@@ -40,7 +41,7 @@ function normalizeSeq(seq: unknown): number | null {
 
 function readForkV1(state: MinimalState, sessionId: string): any | null {
   const session = state.sessions[sessionId];
-  const fork = session?.metadata?.forkV1 as any;
+  const fork = session ? readSessionOwnerMetadataView(session)?.forkV1 as any : null;
   if (!fork || typeof fork !== 'object') return null;
   if (fork.v !== 1) return null;
   if (typeof fork.parentSessionId !== 'string' || fork.parentSessionId.length === 0) return null;

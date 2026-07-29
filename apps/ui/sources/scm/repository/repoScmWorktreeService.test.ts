@@ -203,6 +203,34 @@ describe('repoScmWorktreeService', () => {
         expect(result.success).toBe(true);
     });
 
+    it('keeps explicit server scope when delegating worktree creation to machine SCM RPCs', async () => {
+        machineScmWorktreeCreateMock.mockResolvedValue({
+            success: true,
+            worktreePath: '/repo/.dev/worktree/feature-auth',
+            branchName: 'feature-auth',
+            repositoryRootPath: '/repo',
+            sourceRootPath: '/repo',
+        });
+
+        const { repoScmWorktreeService } = await import('./repoScmWorktreeService');
+        const result = await repoScmWorktreeService.createWorktreeForMachinePath({
+            machineId: 'machine-1',
+            path: '/repo/packages/app',
+            baseRef: 'feature/auth',
+            serverId: 'server-b',
+        });
+
+        expect(machineScmWorktreeCreateMock).toHaveBeenCalledWith(
+            'machine-1',
+            expect.objectContaining({
+                cwd: '/repo/packages/app',
+                baseRef: 'feature/auth',
+            }),
+            { serverId: 'server-b' },
+        );
+        expect(result.success).toBe(true);
+    });
+
     it('forwards existing-branch worktree creation through the canonical machine SCM worktree RPC', async () => {
         machineScmWorktreeCreateMock.mockResolvedValue({
             success: true,
@@ -272,11 +300,13 @@ describe('repoScmWorktreeService', () => {
 
         const { repoScmWorktreeService } = await import('./repoScmWorktreeService');
         const removeResult = await repoScmWorktreeService.removeWorktreeForMachinePath({
+            serverId: 'server-b',
             machineId: 'machine-1',
             path: '/repo',
             worktreePath: '/repo/.worktrees/feature-auth',
         });
         const pruneResult = await repoScmWorktreeService.pruneWorktreesForMachinePath({
+            serverId: 'server-b',
             machineId: 'machine-1',
             path: '/repo',
         });
@@ -289,12 +319,14 @@ describe('repoScmWorktreeService', () => {
                 confirmed: true,
                 authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
             },
+            { serverId: 'server-b' },
         );
         expect(machineScmWorktreePruneMock).toHaveBeenCalledWith(
             'machine-1',
             {
                 cwd: '/repo',
             },
+            { serverId: 'server-b' },
         );
         expect(removeResult.success).toBe(true);
         expect(pruneResult.success).toBe(true);

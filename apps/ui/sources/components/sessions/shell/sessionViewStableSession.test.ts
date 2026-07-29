@@ -14,6 +14,19 @@ import {
 } from './sessionViewStableSession';
 import { useSessionRuntimeStatusSource } from './useSessionRuntimeStatusSource';
 
+const stableContextSnapshot = {
+    v: 1 as const,
+    modelId: 'gpt-5.6-sol',
+    usedTokens: 8,
+    windowTokens: 258_400,
+    totalProcessedTokens: 3,
+    baselineTokens: null,
+    isAutoCompactEnabled: null,
+    categories: null,
+    observedAtMs: 1,
+    source: 'provider_turn' as const,
+};
+
 vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
     const original = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
     return {
@@ -71,6 +84,8 @@ describe('buildSessionViewShellSessionSignature', () => {
                 cacheCreation: 0,
                 cacheRead: 0,
                 contextSize: 8,
+                contextSnapshot: stableContextSnapshot,
+                contextSnapshotStale: false,
                 timestamp: 100,
             },
         });
@@ -85,6 +100,8 @@ describe('buildSessionViewShellSessionSignature', () => {
                 cacheCreation: 0,
                 cacheRead: 0,
                 contextSize: 8,
+                contextSnapshot: stableContextSnapshot,
+                contextSnapshotStale: false,
                 timestamp: 200,
             },
         });
@@ -106,6 +123,23 @@ describe('buildSessionViewShellSessionSignature', () => {
         expect(buildSessionViewShellSessionSignature(firstRecord)).not.toBe(
             buildSessionViewShellSessionSignature(empty),
         );
+    });
+
+    it('stays stable for value-equivalent rollback eligibility arrays', () => {
+        const base = createSession({ rollbackEligibleTurnStarts: [3, 1] });
+        const refreshed = createSession({ rollbackEligibleTurnStarts: [1, 3, 3] });
+
+        expect(buildSessionViewShellSessionSignature(refreshed)).toBe(
+            buildSessionViewShellSessionSignature(base),
+        );
+    });
+
+    it('changes when rollback eligibility changes', () => {
+        const base = createSession({ rollbackEligibleTurnStarts: [1] });
+        const changedEligibility = createSession({ rollbackEligibleTurnStarts: [1, 3] });
+
+        const baseSignature = buildSessionViewShellSessionSignature(base);
+        expect(buildSessionViewShellSessionSignature(changedEligibility)).not.toBe(baseSignature);
     });
 
     it('changes when pending request details hydrate at the same agent state version', () => {
@@ -241,21 +275,21 @@ describe('buildSessionViewShellSessionSignature', () => {
             summary: { text: 'Summary', updatedAt },
             sessionModesV1: {
                 v: 1,
-                provider: 'codex',
+                agentId: 'codex',
                 updatedAt,
                 currentModeId: 'default',
                 availableModes: [{ id: 'default', name: 'Default' }],
             },
             sessionModelsV1: {
                 v: 1,
-                provider: 'codex',
+                agentId: 'codex',
                 updatedAt,
                 currentModelId: 'model-a',
                 availableModels: [{ id: 'model-a', name: 'Model A' }],
             },
             sessionConfigOptionsV1: {
                 v: 1,
-                provider: 'codex',
+                agentId: 'codex',
                 updatedAt,
                 configOptions: [{ id: 'effort', name: 'Effort', type: 'string', currentValue: 'low' }],
             },
@@ -317,7 +351,7 @@ describe('buildSessionViewShellSessionSignature', () => {
                 flavor: 'codex',
                 sessionModesV1: {
                     v: 1,
-                    provider: 'codex',
+                    agentId: 'codex',
                     updatedAt: 100,
                     currentModeId: 'default',
                     availableModes: [{ id: 'default', name: 'Default' }],
@@ -334,7 +368,7 @@ describe('buildSessionViewShellSessionSignature', () => {
                 flavor: 'codex',
                 sessionModesV1: {
                     v: 1,
-                    provider: 'codex',
+                    agentId: 'codex',
                     updatedAt: 200,
                     currentModeId: 'plan',
                     availableModes: [
@@ -363,9 +397,165 @@ describe('buildSessionViewShellSessionSignature', () => {
 
         expect(buildSessionViewShellSessionSignature(renamed)).not.toBe(buildSessionViewShellSessionSignature(base));
     });
+
+    it('changes when layout-v1 owner metadata changes while shared metadata stays stable', () => {
+        const sharedMetadata = {
+            v: 1,
+            summary: {
+                text: 'Shared title',
+                updatedAt: 1,
+            },
+        } as never;
+        const base = createSession({
+            metadataLayoutVersion: 1,
+            metadata: sharedMetadata,
+            ownerMetadataView: {
+                path: '/private/one',
+                host: 'private-host',
+                machineId: 'private-machine',
+            },
+        });
+        const changedOwnerView = createSession({
+            metadataLayoutVersion: 1,
+            metadata: sharedMetadata,
+            ownerMetadataView: {
+                path: '/private/two',
+                host: 'private-host',
+                machineId: 'private-machine',
+            },
+        });
+
+        expect(buildSessionViewShellSessionSignature(changedOwnerView)).not.toBe(
+            buildSessionViewShellSessionSignature(base),
+        );
+    });
+
+    it('changes when layout-v1 participant shared metadata changes without an owner view', () => {
+        const base = createSession({
+            metadataLayoutVersion: 1,
+            accessLevel: 'view',
+            metadata: {
+                v: 1,
+                summary: {
+                    text: 'Shared title one',
+                    updatedAt: 1,
+                },
+            } as never,
+            ownerMetadataView: null,
+        });
+        const changedSharedMetadata = createSession({
+            metadataLayoutVersion: 1,
+            accessLevel: 'view',
+            metadata: {
+                v: 1,
+                summary: {
+                    text: 'Shared title two',
+                    updatedAt: 2,
+                },
+            } as never,
+            ownerMetadataView: null,
+        });
+
+        expect(buildSessionViewShellSessionSignature(changedSharedMetadata)).not.toBe(
+            buildSessionViewShellSessionSignature(base),
+        );
+    });
+
+    it.each([
+        ['currentStorageState', 'snapshot_complete'],
+        ['acceptedThroughServerSeq', 12],
+        ['publishedThroughServerSeq', 12],
+        ['materializedThroughSourceAt', 1_000],
+    ] as const)('changes when transcript authority fact %s changes', (field, value) => {
+        const base = createSession({
+            currentStorageState: 'machine_only',
+            acceptedThroughServerSeq: null,
+            publishedThroughServerSeq: null,
+            materializedThroughSourceAt: null,
+        });
+        const changed = createSession({
+            currentStorageState: 'machine_only',
+            acceptedThroughServerSeq: null,
+            publishedThroughServerSeq: null,
+            materializedThroughSourceAt: null,
+            [field]: value,
+        });
+
+        expect(buildSessionViewShellSessionSignature(changed)).not.toBe(
+            buildSessionViewShellSessionSignature(base),
+        );
+    });
 });
 
 describe('useSessionViewShellSession', () => {
+    it('replaces the cached shell session only when normalized rollback eligibility changes', () => {
+        const base = createSession({ id: 'session-rollback', rollbackEligibleTurnStarts: [3, 1] });
+        const equivalentRefresh = createSession({
+            id: 'session-rollback',
+            rollbackEligibleTurnStarts: [1, 3, 3],
+        });
+        const changed = createSession({
+            id: 'session-rollback',
+            rollbackEligibleTurnStarts: [1, 3, 5],
+        });
+        const routeState = {
+            sessionListIndexByServerId: {},
+            concurrentSessionListCacheByServerId: {},
+        };
+
+        const first = selectSessionViewShellSessionForRouteState({
+            ...routeState,
+            sessions: { [base.id]: base },
+        }, base.id);
+        const equivalent = selectSessionViewShellSessionForRouteState({
+            ...routeState,
+            sessions: { [equivalentRefresh.id]: equivalentRefresh },
+        }, equivalentRefresh.id);
+        const replacement = selectSessionViewShellSessionForRouteState({
+            ...routeState,
+            sessions: { [changed.id]: changed },
+        }, changed.id);
+
+        expect(first).toBe(base);
+        expect(equivalent).toBe(first);
+        expect(replacement).toBe(changed);
+        expect(replacement).not.toBe(first);
+    });
+
+    it('replaces the cached shell session when transcript authority becomes a published snapshot', () => {
+        const machineOnly = createSession({
+            id: 'session-authority',
+            currentStorageState: 'machine_only',
+            acceptedThroughServerSeq: null,
+            publishedThroughServerSeq: null,
+            materializedThroughSourceAt: null,
+        });
+        const publishedSnapshot = createSession({
+            ...machineOnly,
+            currentStorageState: 'snapshot_complete',
+            acceptedThroughServerSeq: 12,
+            publishedThroughServerSeq: 12,
+            materializedThroughSourceAt: 1_000,
+        });
+        const routeState = {
+            sessionListIndexByServerId: {},
+            concurrentSessionListCacheByServerId: {},
+        };
+
+        const first = selectSessionViewShellSessionForRouteState({
+            ...routeState,
+            sessions: { [machineOnly.id]: machineOnly },
+        }, machineOnly.id);
+        const second = selectSessionViewShellSessionForRouteState({
+            ...routeState,
+            sessions: { [publishedSnapshot.id]: publishedSnapshot },
+        }, publishedSnapshot.id);
+
+        expect(first).toBe(machineOnly);
+        expect(second).toBe(publishedSnapshot);
+        expect(second).not.toBe(first);
+    });
+
     it('does not reuse a stable shell session across different resolved server scopes', () => {
         const serverASession = {
             ...createSession({ id: 'session-1' }),
@@ -462,7 +652,7 @@ describe('useSessionViewShellSession', () => {
         }
     });
 
-    it('keeps the shell session reference stable while runtime status follows fresh activity fields', async () => {
+    it('keeps Stop available for a projected active turn while the shell session reference stays stable', async () => {
         const previousState = storage.getState();
         const base = createSession({
             id: 'session-1',
@@ -491,10 +681,10 @@ describe('useSessionViewShellSession', () => {
                 return { runtimeStatusSource, seq, shellSession };
             });
             const firstShellSession = hook.getCurrent().shellSession;
-            expect(getSessionStatus(hook.getCurrent().runtimeStatusSource!, 1_000_000, 0).state).toBe('waiting');
+            expect(getSessionStatus(hook.getCurrent().runtimeStatusSource!, 1_000_000, 0).state).toBe('thinking');
             expect(shouldShowAbortButtonForSessionState(
                 getSessionStatus(hook.getCurrent().runtimeStatusSource!, 1_000_000, 0).state,
-            )).toBe(false);
+            )).toBe(true);
 
             await act(async () => {
                 storage.setState((state) => ({
@@ -625,6 +815,55 @@ describe('useSessionViewShellSession', () => {
             expect(nextRuntimeStatusSource.latestTurnStatus).toBe('completed');
             expect(nextStatus.state).toBe('waiting');
             expect(shouldShowAbortButtonForSessionState(nextStatus.state)).toBe(false);
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('includes background Activity in the composer status source without exposing foreground Stop', async () => {
+        const previousState = storage.getState();
+        const shellSession = createSession({
+            id: 'session-1',
+            thinking: false,
+            latestTurnStatus: 'completed',
+            runtimeActivityState: 'idle',
+            runtimeActivityActiveCount: 0,
+            runtimeActivityObservedAt: 1_000,
+            runtimeActivityRevision: 1,
+        });
+        try {
+            storage.setState((state) => ({
+                ...state,
+                sessions: {
+                    ...state.sessions,
+                    'session-1': shellSession,
+                },
+            }));
+
+            const hook = await renderHook(() => useSessionRuntimeStatusSource(shellSession));
+            const initial = hook.getCurrent();
+            expect(getSessionStatus(initial!, 1_000, 0).state).toBe('waiting');
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessions: {
+                        ...state.sessions,
+                        'session-1': {
+                            ...shellSession,
+                            runtimeActivityState: 'active',
+                            runtimeActivityActiveCount: 1,
+                            runtimeActivityObservedAt: 2_000,
+                            runtimeActivityRevision: 2,
+                        },
+                    },
+                }));
+            });
+
+            const backgroundStatus = getSessionStatus(hook.getCurrent()!, 2_000, 0);
+            expect(backgroundStatus.state).toBe('background_active');
+            expect(shouldShowAbortButtonForSessionState(backgroundStatus.state)).toBe(false);
             await hook.unmount();
         } finally {
             storage.setState(previousState);

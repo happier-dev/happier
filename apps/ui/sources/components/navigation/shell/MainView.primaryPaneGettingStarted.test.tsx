@@ -15,7 +15,7 @@ const buildPolicyState = vi.hoisted(() => ({
     decision: 'neutral' as 'allow' | 'deny' | 'neutral',
 }));
 
-const setSessionsListStorageTabSpy = vi.hoisted(() => vi.fn());
+const setSessionsListStorageFilterSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -42,15 +42,15 @@ installNavigationShellCommonModuleMocks({
         });
         return expoRouterMock.module;
     },
-    storage: async (importOriginal) => {
-        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createPartialStorageModuleMock(importOriginal, {
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
             useFriendRequests: () => [],
             useSocketStatus: () => ({ status: 'connected' }),
             useRealtimeStatus: () => ({ status: 'idle' }),
             useLocalSettingMutable: (name: string) => {
-                if (name === 'sessionsListStorageTab') {
-                    return ['persisted', setSessionsListStorageTabSpy] as const;
+                if (name === 'sessionsListStorageFilter') {
+                    return ['all', setSessionsListStorageFilterSpy] as const;
                 }
                 throw new Error(`Unexpected local setting: ${name}`);
             },
@@ -71,6 +71,18 @@ vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
     countVisibleSessionListSessions: (data: Array<{ type?: string }> | null) => (
         data?.reduce((count, item) => count + (item.type === 'session' ? 1 : 0), 0) ?? 0
     ),
+}));
+
+vi.mock('@/components/sessions/model/useSessionListStorageKind', () => ({
+    useSessionListStorageKind: () => ({
+        externalSessionsEnabled: false,
+        storageKind: 'persisted',
+        setStorageKind: vi.fn(),
+    }),
+}));
+
+vi.mock('@/hooks/inbox/useInboxAvailable', () => ({
+    useInboxAvailable: () => false,
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -130,6 +142,18 @@ vi.mock('@/components/sessions/shell/SessionsList', () => ({
     SessionsList: 'SessionsList',
 }));
 
+vi.mock('@/components/sessions/shell/SessionsListStorageChrome', () => ({
+    SessionsListStorageChrome: 'SessionsListStorageChrome',
+}));
+
+vi.mock('@/components/sessions/shell/SessionsListPaneContent', () => ({
+    SessionsListPaneContent: 'SessionsListPaneContent',
+}));
+
+vi.mock('@/components/sessions/shell/ExternalSessionsEmptyState', () => ({
+    ExternalSessionsEmptyState: 'ExternalSessionsEmptyState',
+}));
+
 vi.mock('@/components/ui/buttons/FABWide', () => ({
     FABWide: 'FABWide',
 }));
@@ -140,6 +164,14 @@ vi.mock('@/components/ui/navigation/TabBar', () => ({
 
 vi.mock('@/components/navigation/shell/InboxView', () => ({
     InboxView: 'InboxView',
+}));
+
+vi.mock('@/components/navigation/shell/FriendsView', () => ({
+    FriendsView: 'FriendsView',
+}));
+
+vi.mock('@/components/projects/ProjectsListView', () => ({
+    ProjectsListView: 'ProjectsListView',
 }));
 
 vi.mock('@/components/sessions/shell/SessionsListWrapper', () => ({
@@ -184,7 +216,7 @@ describe('MainView (tablet primary pane)', () => {
     beforeEach(() => {
         sessionListState.data = [];
         buildPolicyState.decision = 'neutral';
-        setSessionsListStorageTabSpy.mockReset();
+        setSessionsListStorageFilterSpy.mockReset();
     });
 
     it('shows getting started guidance instead of a blank view', async () => {

@@ -123,6 +123,40 @@ describe('executeSessionComposerResolution', () => {
     expect(setSessionGoal).toHaveBeenCalledWith('s1', { status: 'complete' });
   });
 
+  it('treats a transient unsupported_session_runtime_method as a not-ready (retry) state, not a permanent unsupport', async () => {
+    // A freshly-opened active session can return `unsupported_session_runtime_method` from the live
+    // session RPC before its runtime goal controls have registered. That is a transient load race,
+    // not a genuine backend limitation, so the user must see a retryable "not ready yet" message
+    // rather than the permanent-sounding "does not support goals" message.
+    const executeSessionComposerResolution = await loadSubject();
+    const modalAlert = vi.fn();
+    const setSessionGoal = vi.fn(async () => ({
+      ok: false as const,
+      error: 'unsupported_session_runtime_method:session.goal.set',
+      errorCode: 'unsupported_session_runtime_method',
+    }));
+
+    const handled = await executeSessionComposerResolution({
+      resolved: { kind: 'goal', command: 'set', objective: 'migrate plugin support' },
+      sessionId: 's1',
+      agentId: 'claude',
+      backendTarget: { kind: 'backend', backendId: 'claude' },
+      permissionMode: 'default',
+      actionExecutor: { execute: vi.fn() },
+      previousMessage: '/goal migrate plugin support',
+      setMessage: vi.fn(),
+      clearDraft: vi.fn(),
+      trackMessageSent: vi.fn(),
+      navigateToRuns: vi.fn(),
+      modalAlert,
+      setSessionGoal,
+    });
+
+    expect(handled).toBe(true);
+    expect(modalAlert).toHaveBeenCalledWith('Goal controls not ready yet', 'This session is still starting up. Try setting the goal again in a moment.');
+    expect(modalAlert).not.toHaveBeenCalledWith('Goal unavailable', 'This backend does not support editable session goals yet.');
+  });
+
   it('handles ui.pet.choose locally by clearing the composer and opening pet settings', async () => {
     const executeSessionComposerResolution = await loadSubject();
     const actionExecutor = { execute: vi.fn(async () => ({ ok: true as const, result: { ok: true } })) };

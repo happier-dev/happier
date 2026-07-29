@@ -12,6 +12,14 @@ describe('scmUiBackendRegistry', () => {
         expect(sapling.displayName).toBe('Sapling');
     });
 
+    it('resolves qualified first-party snapshot identities to their leaf UI policies', () => {
+        const git = scmUiBackendRegistry.getPlugin('happier.scm.backend.git/git');
+        const sapling = scmUiBackendRegistry.getPlugin('happier.scm.backend.sapling/sapling');
+
+        expect(git.diffModeConfig(null).availableModes).toEqual(['included', 'pending']);
+        expect(sapling.diffModeConfig(null).availableModes).toEqual(['pending']);
+    });
+
     it('falls back when backend id is unknown', () => {
         const fallback = scmUiBackendRegistry.getPlugin('unknown');
         expect(fallback.displayName).toBe('Source control');

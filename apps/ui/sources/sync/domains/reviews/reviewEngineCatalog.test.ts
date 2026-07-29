@@ -61,4 +61,25 @@ describe('buildAvailableReviewEngineOptions', () => {
       { id: 'acme.review.backend', label: 'agent:acme.review.backend' },
     ]);
   });
+
+  it('falls back to the backend id when a discovered review backend has no canonical agent label', () => {
+    const opts = buildAvailableReviewEngineOptions({
+      enabledAgentIds: ['claude'],
+      resolveAgentLabel: (id) => {
+        if (id === 'customAcp') {
+          throw new Error('Unsupported UI agent core: customAcp');
+        }
+        return `agent:${id}`;
+      },
+      executionRunsBackends: {
+        claude: { available: true, intents: ['review'] },
+        customAcp: { available: true, intents: ['review'] },
+      },
+    });
+
+    expect(opts).toEqual([
+      { id: 'claude', label: 'agent:claude' },
+      { id: 'customAcp', label: 'customAcp' },
+    ]);
+  });
 });

@@ -1,4 +1,5 @@
 import type { VoiceAdapterTranscriptMode } from '@/voice/session/types';
+import { readLocalConversationVoiceSettings, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 
 /**
  * Provider-owned decision for the `local_conversation` adapter: how its voice
@@ -30,9 +31,5 @@ function readLocalConversationConfig(settings: unknown): LocalConversationConfig
     if (typeof settings !== 'object' || settings === null) return null;
     const voice = (settings as { voice?: unknown }).voice;
     if (typeof voice !== 'object' || voice === null) return null;
-    const adapters = (voice as { adapters?: unknown }).adapters;
-    if (typeof adapters !== 'object' || adapters === null) return null;
-    const config = (adapters as { local_conversation?: unknown }).local_conversation;
-    if (typeof config !== 'object' || config === null) return null;
-    return config as LocalConversationConfig;
+    return readLocalConversationVoiceSettings(voiceSettingsParse(voice)) as LocalConversationConfig;
 }

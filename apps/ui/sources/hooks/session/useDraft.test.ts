@@ -10,7 +10,12 @@ import { flushHookEffects, renderScreen } from '@/dev/testkit';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let isFocused = true;
-let sessionsById: Record<string, { draft: string | null; metadata?: any }>;
+let sessionsById: Record<string, {
+  draft: string | null;
+  metadata?: any;
+  metadataLayoutVersion?: number;
+  ownerMetadataView?: any;
+}>;
 const updateSessionDraftSpy = vi.fn();
 const patchSessionMetadataWithRetrySpy = vi.fn();
 const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'ios' | 'android' }));
@@ -357,6 +362,40 @@ describe('useDraft', () => {
       's_child',
       expect.any(Function),
     );
+    harness.unmount();
+  });
+
+  it('hydrates a layout-v1 initial prompt from the owner view without falling back to shared metadata', async () => {
+    sessionsById = {
+      s_child: {
+        draft: null,
+        metadataLayoutVersion: 1,
+        metadata: {
+          v: 1,
+          summary: {
+            text: 'Shared title',
+            updatedAt: 1,
+          },
+          forkInitialPromptV1: {
+            v: 1,
+            text: 'must not be read from shared metadata',
+            createdAtMs: 1,
+          },
+        },
+        ownerMetadataView: {
+          forkInitialPromptV1: {
+            v: 1,
+            text: 'private restored fork prompt',
+            createdAtMs: 2,
+          },
+        },
+      },
+    };
+
+    const harness = await renderHarness({ initialSessionId: 's_child' });
+
+    expect(harness.getCurrent().value).toBe('private restored fork prompt');
+    expect(updateSessionDraftSpy).toHaveBeenCalledWith('s_child', 'private restored fork prompt');
     harness.unmount();
   });
 

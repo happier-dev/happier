@@ -33,12 +33,16 @@ describe('local voice engine local conversation binding', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_conversation: {
-                            ...storage.getState().settings.voice.adapters.local_conversation,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
                             conversationMode: 'agent',
-                        },
+                            agent: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
+                                prewarmOnConnect: false,
+                            },
+                        } },
                     },
                 },
             },

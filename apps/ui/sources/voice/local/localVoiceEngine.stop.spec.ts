@@ -8,7 +8,7 @@ import {
   getStorage,
   loadLocalVoiceEngineWithCompatState,
   registerLocalVoiceEngineHarnessHooks,
-  sendMessage,
+  submitMessage,
   speechRecStart,
   speechRecStop,
 } from './localVoiceEngine.testHarness';
@@ -24,7 +24,7 @@ describe('local voice engine stop', () => {
 
     await stopLocalVoiceSession();
     expect(getLocalVoiceState().status).toBe('idle');
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(submitMessage).not.toHaveBeenCalled();
     expect((globalThis.fetch as any).mock.calls.length).toBe(0);
   });
 
@@ -36,20 +36,20 @@ describe('local voice engine stop', () => {
         voice: {
           ...storage.getState().settings.voice,
           providerId: 'local_direct',
-          adapters: {
-            ...storage.getState().settings.voice.adapters,
-            local_direct: {
-              ...storage.getState().settings.voice.adapters.local_direct,
+          providers: {
+            ...storage.getState().settings.voice.providers,
+            local_direct: { schemaVersion: 1, config: {
+              ...storage.getState().settings.voice.providers.local_direct.config,
               stt: {
-                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                 useDeviceStt: true,
                 baseUrl: null,
               },
               tts: {
-                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                 autoSpeakReplies: false,
               },
-            },
+            } },
           },
         },
       },
@@ -71,7 +71,7 @@ describe('local voice engine stop', () => {
     emitSpeechRecEvent('end', {});
     await stopPromise;
 
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(submitMessage).not.toHaveBeenCalled();
     expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({
       controlSessionId: 's1',
       state: 'disconnected',
@@ -87,16 +87,16 @@ describe('local voice engine stop', () => {
         voice: {
           ...storage.getState().settings.voice,
           providerId: 'local_direct',
-          adapters: {
-            ...storage.getState().settings.voice.adapters,
-            local_direct: {
-              ...storage.getState().settings.voice.adapters.local_direct,
+          providers: {
+            ...storage.getState().settings.voice.providers,
+            local_direct: { schemaVersion: 1, config: {
+              ...storage.getState().settings.voice.providers.local_direct.config,
               tts: {
-                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                 autoSpeakReplies: true,
                 provider: 'device',
               },
-            },
+            } },
           },
         },
       },
@@ -146,28 +146,28 @@ describe('local voice engine stop', () => {
         voice: {
           ...storage.getState().settings.voice,
           providerId: 'local_conversation',
-          adapters: {
-            ...storage.getState().settings.voice.adapters,
-            local_conversation: {
-              ...storage.getState().settings.voice.adapters.local_conversation,
+          providers: {
+            ...storage.getState().settings.voice.providers,
+            local_conversation: { schemaVersion: 1, config: {
+              ...storage.getState().settings.voice.providers.local_conversation.config,
               conversationMode: 'agent',
               tts: {
-                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                 autoSpeakReplies: true,
                 provider: 'device',
               },
               agent: {
-                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
                 backend: 'openai_compat',
                 openaiCompat: {
-                  ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
+                  ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
                   chatBaseUrl: 'http://localhost:8002',
                   chatApiKey: null,
                   chatModel: 'fast-model',
                   commitModel: 'commit-model',
                 },
               },
-            },
+            } },
           },
         },
       },
@@ -176,6 +176,7 @@ describe('local voice engine stop', () => {
     const onStoppedRef: { current: (() => void) | undefined } = { current: undefined };
     expoSpeechSpeak.mockImplementation((_text: string, opts: any) => {
       onStoppedRef.current = typeof opts?.onStopped === 'function' ? (opts.onStopped as () => void) : undefined;
+      opts?.onStart?.();
     });
     expoSpeechStop.mockImplementation(() => {
       onStoppedRef.current?.();
@@ -193,6 +194,8 @@ describe('local voice engine stop', () => {
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       conversationSessionId: 'voice-home',
       text: 'stop this reply',
+      localId: 'voice-local-1',
+      deliveryCommand: 'interrupt_and_send',
     });
 
     if (!sendPromise) {
@@ -226,5 +229,74 @@ describe('local voice engine stop', () => {
       state: 'disconnected',
       error: null,
     });
+  });
+
+  it('allows playback from a newly started turn after an idle session is stopped', async () => {
+    const storage = await getStorage();
+    storage.__setState({
+      settings: {
+        ...storage.getState().settings,
+        voice: {
+          ...storage.getState().settings.voice,
+          providerId: 'local_direct',
+          providers: {
+            ...storage.getState().settings.voice.providers,
+            local_conversation: { schemaVersion: 1, config: {
+              ...storage.getState().settings.voice.providers.local_conversation.config,
+              conversationMode: 'agent',
+              tts: {
+                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
+                autoSpeakReplies: true,
+                provider: 'device',
+              },
+              agent: {
+                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
+                backend: 'openai_compat',
+                openaiCompat: {
+                  ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
+                  chatBaseUrl: 'http://localhost:8002',
+                  chatApiKey: null,
+                  chatModel: 'fast-model',
+                  commitModel: 'commit-model',
+                },
+              },
+            } },
+          },
+        },
+      },
+    });
+    expoSpeechSpeak.mockImplementation((_text: string, opts: any) => {
+      opts?.onStart?.();
+      opts?.onDone?.();
+    });
+    (globalThis.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'Fresh reply' } }] }),
+    });
+
+    const { toggleLocalVoiceTurn, stopLocalVoiceSession } = await loadLocalVoiceEngineWithCompatState();
+    await toggleLocalVoiceTurn('s1');
+    await stopLocalVoiceSession();
+    storage.__setState({
+      settings: {
+        ...storage.getState().settings,
+        voice: {
+          ...storage.getState().settings.voice,
+          providerId: 'local_conversation',
+        },
+      },
+    });
+
+    const { createLocalConversationVoiceAdapter } = await import('@/voice/adapters/localConversation/localConversationAdapter');
+    const adapter = createLocalConversationVoiceAdapter();
+    await adapter.sendTextTurn?.({
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      conversationSessionId: 'voice-home',
+      text: 'start again',
+      localId: 'voice-local-restart',
+      deliveryCommand: 'interrupt_and_send',
+    });
+
+    expect(expoSpeechSpeak).toHaveBeenCalledWith('Fresh reply', expect.any(Object));
   });
 });

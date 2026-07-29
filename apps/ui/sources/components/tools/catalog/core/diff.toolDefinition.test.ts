@@ -14,7 +14,8 @@ vi.mock('@/text', async () => {
     });
 });
 
-vi.mock('@happier-dev/protocol', () => ({
+vi.mock('@happier-dev/protocol', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@happier-dev/protocol')>(),
     DiffInputV2Schema: {},
 }));
 

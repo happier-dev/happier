@@ -53,6 +53,8 @@ export type SelectionListStatusVariant = (typeof SELECTION_LIST_STATUS_VARIANTS)
  */
 type SelectionListOptionBase = Readonly<{
     id: string;
+    /** Optional stable consumer-facing test id for compatibility adapters. */
+    testID?: string;
     label: string;
     /**
      * Optional full-row body. When present, SelectionList still owns row
@@ -61,6 +63,8 @@ type SelectionListOptionBase = Readonly<{
      */
     content?: React.ReactNode;
     subtitle?: string;
+    /** Rich visual subtitle; `subtitle` remains the searchable plain-text value. */
+    subtitleContent?: React.ReactNode;
     /** Optional assistive label for rows whose visible label repeats across sections. */
     accessibilityLabel?: string;
     labelEllipsizeMode?: SelectionListTextEllipsizeMode;
@@ -68,6 +72,30 @@ type SelectionListOptionBase = Readonly<{
     icon?: React.ReactNode;
     /** Right-side accessory (status pill, relative time, key chip, etc.) */
     rightAccessory?: SelectionListAccessory;
+    /**
+     * Keep an interactive accessory (Switch/menu/button) outside the row's
+     * Pressable. This prevents nested-button markup on web while preserving
+     * one accessible row activation target beside the independent control.
+     */
+    rightAccessoryOutsidePressable?: boolean;
+    /**
+     * When `true`, the navigation chevron is kept VISIBLE even though the row
+     * also renders a `rightAccessory`. By default a right accessory suppresses
+     * the chevron (the accessory owns the right slot); set this on rows that
+     * BOTH carry a status badge AND navigate to a sub-step (`openStep`), so the
+     * user still sees there's a further step. No effect without `openStep`.
+     */
+    keepChevronWithAccessory?: boolean;
+    /**
+     * Value-mode affordance: when `true`, activating this row (tap or Enter on a
+     * focused row) does NOT select/commit — instead it asks the SelectionList to
+     * draw attention to the input field (focus + a brief shake). Used by the
+     * "type a name" combobox row while the field is empty, so tapping it prompts
+     * the user to type rather than silently committing a fallback. The row owner
+     * (e.g. `buildInputRow`) sets this only while input is empty and clears it
+     * once a value is typed (at which point its `onSelect` commits normally).
+     */
+    requiresInputValue?: boolean;
     /**
      * Full input value to substitute when the user accepts the autocomplete
      * (Tab anywhere, or → when caret is at end-of-input AND ghost suffix is
@@ -77,6 +105,8 @@ type SelectionListOptionBase = Readonly<{
     autocompleteValue?: string;
     /** Disable the row entirely. */
     disabled?: boolean;
+    /** Show the canonical row-level pending affordance while retaining row identity. */
+    loading?: boolean;
 }>;
 
 /**
@@ -107,9 +137,9 @@ export type SelectionListOption =
 
 /**
  * Per-section virtualization control. `'auto'` (the default) switches to
- * FlashList when the row count exceeds
+ * virtualized list when the row count exceeds
  * `SELECTION_LIST_VIRTUALIZATION_THRESHOLD` (50, per Phase 0.5). `'force'`
- * always uses FlashList; `'never'` always plain-maps rows under `Item`/
+ * always uses virtualized list; `'never'` always plain-maps rows under `Item`/
  * `ItemGroup`. Set at the descriptor level so authors can decide per-section
  * without changing the SelectionList orchestrator.
  */
@@ -243,6 +273,53 @@ export type SelectionListStep = Readonly<{
     backLabel?: string;
     /** Optional placeholder for the input on this step (omit to disable input). */
     inputPlaceholder?: string;
+    /**
+     * Per-step input mode. Defaults to the SelectionList-level `inputMode` prop
+     * (which itself defaults to `'search'`). A step can opt into `'value'` so
+     * the input on THAT step is the candidate value (committed via
+     * `onCommitInputValue` on Enter / soft-keyboard return), while sibling steps
+     * stay in `'search'` (filter) mode. Used by the worktree picker's
+     * "name your worktree" step pushed after a base branch is chosen.
+     */
+    inputMode?: SelectionListInputMode;
+    /**
+     * Per-step commit handler for `inputMode: 'value'` steps. Receives the
+     * current raw input value when the user presses Enter (web) or the
+     * soft-keyboard return key (native) without a focused row. Takes precedence
+     * over the SelectionList-level `onCommitInputValue` prop when present, so a
+     * pushed value step can carry its own commit closure (e.g. the base ref it
+     * was opened for) through the otherwise-stateless step tree.
+     */
+    onCommitInputValue?: (input: string) => void;
+    /**
+     * Synthesize a single "act on the current input" row from the live input
+     * value (combobox-create pattern, e.g. "Create worktree '<typed>'"). When
+     * it returns an option, the orchestrator prepends it as a filter-bypassing,
+     * default-focused row that reflects what the user is typing; return `null`
+     * to omit it (e.g. on empty input). Activating the row runs its `onSelect`
+     * and closes through the normal selection path, so it doubles as the
+     * keyboard-navigable commit affordance for value-mode steps.
+     */
+    buildInputRow?: (input: string) => SelectionListOption | null;
+    /**
+     * When `true`, this step's static + dynamic rows are NOT narrowed by the
+     * input value. Use for value-mode steps where the input is the candidate
+     * VALUE rather than a search query, so fixed choices (e.g. the worktree
+     * "name" step's "Use suggested name" row) stay visible while the user types
+     * a custom value. Default `false` preserves the search-filter behavior.
+     */
+    disableInputFilter?: boolean;
+    /**
+     * Resolve the option that should be focused/selected BY DEFAULT for the
+     * current input value, before the user explicitly navigates rows. Returning
+     * a visible option id makes it the keyboard-focused row; returning `null`
+     * falls back to the SelectionList-level `selectedOptionId`, then to the
+     * first row. Re-evaluated as the input changes, so a value step can move the
+     * default highlight as typing begins (e.g. focus the suggested-name row when
+     * empty, then the live "Create …" row once the user types). Explicit arrow
+     * navigation still overrides this until the input crosses the boundary again.
+     */
+    resolveDefaultFocusedOptionId?: (input: string) => string | null;
     /** Override the empty-state copy for this step. */
     emptyStateLabel?: string;
     /** Ordered array of section descriptors; the array order IS the visual order. */
@@ -317,6 +394,28 @@ export type SelectionListHeightBehavior =
     | 'measuredToMaxHeight';
 
 /**
+ * Cursor-owned pagination state for a SelectionList surface.
+ *
+ * Supplying this contract forces the body through its single flattened
+ * virtualized list owner, even for a small or single-section page. `requestKey`
+ * should be the current opaque source cursor (or another scope-qualified
+ * page identity). SelectionList uses it only to suppress duplicate
+ * `onEndReached` delivery for the same page; the data hook remains the
+ * canonical cursor and request owner.
+ */
+export type SelectionListPagination = Readonly<{
+    hasMore: boolean;
+    loadingMore: boolean;
+    requestKey: string | null;
+    error?: string | null;
+    onEndReached: () => void;
+    onRetry?: () => void;
+    loadingLabel: string;
+    retryLabel: string;
+    endReachedLabel: string;
+}>;
+
+/**
  * Quick-action keyboard shortcut binding. The orchestrator forwards these to
  * `useSelectionListKeyboardNav`, which dispatches the matching shortcut to the
  * targeted option's activation handler. Currently only `'cmd+n'` is wired —
@@ -332,6 +431,8 @@ export type SelectionListQuickActionShortcut = Readonly<{
 export type SelectionListProps = Readonly<{
     /** Root step. Pushes accumulate above this. */
     rootStep: SelectionListStep;
+    /** Accessible name for the owned listbox. */
+    listAccessibilityLabel?: string;
     /** Currently-selected option id (rendered with selected style). Optional. */
     selectedOptionId?: string | null;
     /**
@@ -385,6 +486,8 @@ export type SelectionListProps = Readonly<{
     disableTransitions?: boolean;
     /** Stable testID root (default 'selection-list'). */
     testID?: string;
+    /** Optional stable consumer-facing test id for the editable search/value input. */
+    inputTestID?: string;
     /** Cap container height; defaults to undefined (popover-driven). */
     maxHeight?: number;
     /**
@@ -392,6 +495,10 @@ export type SelectionListProps = Readonly<{
      * indicator. Defaults to false so compact popovers keep their chrome quiet.
      */
     showsVerticalScrollIndicator?: boolean;
+    /** Optional cursor pagination state. Forces one virtualized scroll owner. */
+    pagination?: SelectionListPagination;
+    /** Replaces the rows with an owner-supplied loading/error/offline state. */
+    contentState?: React.ReactNode;
     /**
      * Height policy for the outer list container.
      *
@@ -408,6 +515,8 @@ export type SelectionListProps = Readonly<{
      *   measurement exists, and later shrink updates are debounced.
      */
     heightBehavior?: SelectionListHeightBehavior;
+    /** Fill the parent's flex viewport while keeping SelectionList as the sole scroll owner. */
+    fillAvailableSpace?: boolean;
     /**
      * Optional keyboard shortcuts that activate a specific option by id (e.g.
      * Cmd+N → "Create new worktree"). Forwarded to

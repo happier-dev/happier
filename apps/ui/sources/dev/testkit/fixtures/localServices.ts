@@ -62,6 +62,7 @@ export function buildManagedLocalServiceRow(
         inventoryId: 'inventory-1',
         port: 5173,
         url: 'http://127.0.0.1:5173',
+        supportedActions: [],
         diagnostics: [],
         updatedAt: 1_000,
         ...overrides,

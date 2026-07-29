@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { View, Pressable, Platform, useWindowDimensions } from 'react-native';
 import { useAuth } from '@/auth/context/AuthContext';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
-import * as Clipboard from 'expo-clipboard';
 import { Typography } from '@/constants/Typography';
 import { formatSecretKeyForBackup } from '@/auth/recovery/secretKeyBackup';
 import { Item } from '@/components/ui/lists/Item';
@@ -18,7 +17,6 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { useConnectAccount } from '@/hooks/auth/useConnectAccount';
 import { getDisplayName } from '@/sync/domains/profiles/profile';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
-import { disconnectVendorToken } from '@/sync/api/account/apiVendorTokens';
 import { HappyError } from '@/utils/errors/errors';
 import { setAccountUsername } from '@/sync/api/account/apiUsername';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -28,6 +26,8 @@ import { ProviderIdentityItems } from '@/components/account/ProviderIdentityItem
 import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { migrateAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMigrate';
 import { Text } from '@/components/ui/text/Text';
 import { useRouter } from 'expo-router';
@@ -40,10 +40,15 @@ import { authChallenge } from '@/auth/flows/challenge';
 import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
 import { buildAccountEncryptionMigrateToE2eeRequest } from '@/sync/ops/account/buildAccountEncryptionMigrateToE2eeRequest';
 import { getConnectedServiceCredentialPlain } from '@/sync/api/account/apiConnectedServicesV3';
+import {
+    getQualifiedConnectedAccountConfigurationV4,
+    getQualifiedConnectedAccountCredentialV4,
+} from '@/sync/api/account/apiQualifiedConnectedAccountsV4';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
-import { AccountEncryptionMigrateInvalidParamsReasonSchema } from '@happier-dev/protocol';
-import { resolveConnectedServiceDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
+import {
+    AccountEncryptionMigrateInvalidParamsReasonSchema,
+} from '@happier-dev/protocol';
 
 
 export default React.memo(() => {
@@ -136,43 +141,19 @@ export default React.memo(() => {
         }
     });
 
-    // Service disconnection
-    const [disconnectingService, setDisconnectingService] = useState<string | null>(null);
-    const handleDisconnectService = async (service: string, displayName: string) => {
-        if (!auth.credentials) return;
-        const confirmed = await Modal.confirm(
-            t('modals.disconnectService', { service: displayName }),
-            t('modals.disconnectServiceConfirm', { service: displayName }),
-            { confirmText: t('modals.disconnect'), destructive: true }
-        );
-        if (confirmed) {
-            setDisconnectingService(service);
-            try {
-                await disconnectVendorToken(auth.credentials, service);
-                await sync.refreshProfile();
-                // The profile will be updated via sync
-            } catch (error) {
-                Modal.alert(t('common.error'), t('errors.disconnectServiceFailed', { service: displayName }));
-            } finally {
-                setDisconnectingService(null);
-            }
-        }
-    };
-
     const handleShowSecret = () => {
         setShowSecret(!showSecret);
     };
 
     const handleCopySecret = async () => {
         if (!formattedSecret) return;
-        try {
-            await Clipboard.setStringAsync(formattedSecret);
-            setCopiedRecently(true);
-            setTimeout(() => setCopiedRecently(false), 2000);
-            Modal.alert(t('common.success'), t('settingsAccount.secretKeyCopied'));
-        } catch (error) {
+        const copied = await setClipboardStringSafe(formattedSecret);
+        if (!copied) {
             Modal.alert(t('common.error'), t('settingsAccount.secretKeyCopyFailed'));
+            return;
         }
+        setCopiedRecently(true);
+        setTimeout(() => setCopiedRecently(false), 2000);
     };
 
     const handleLogout = async () => {
@@ -191,8 +172,6 @@ export default React.memo(() => {
     const showAddYourPhone = isRunningOnMac() || (Platform.OS === 'web' && !isPhoneSizedWeb);
     const showLinkNewDevice = canUseCurrentDeviceQrScanner();
     const showAccountAccessGroup = showAddYourPhone || showLinkNewDevice;
-    const connectedServices = profile.connectedServicesV2.filter((service) => service.profiles.length > 0);
-
     return (
         <>
             <ItemList>
@@ -275,32 +254,6 @@ export default React.memo(() => {
                         />
                 </ItemGroup>
 
-                {/* Connected Services Section */}
-                {connectedServices.length > 0 ? (
-                    <ItemGroup title={t('settings.connectedAccounts')}>
-                        {connectedServices.map((service) => {
-                            const isDisconnecting = disconnectingService === service.serviceId;
-                            const connectedProfileCount = service.profiles.filter((profile) => profile.status === 'connected').length;
-                            const serviceName = resolveConnectedServiceDisplayName(service.serviceId, t);
-                            return (
-                                <Item
-                                    key={service.serviceId}
-                                    title={serviceName}
-                                    detail={connectedProfileCount > 0 ? t('settingsAccount.statusActive') : t('connectedServices.list.needsReauth')}
-                                    subtitle={t('settingsAccount.tapToDisconnect')}
-                                    onPress={() => handleDisconnectService(service.serviceId, serviceName)}
-                                    loading={isDisconnecting}
-                                    disabled={isDisconnecting}
-                                    showChevron={false}
-                                    icon={
-                                        <SafeIonicons name="key-outline" size={29} color={theme.colors.text.secondary} />
-                                    }
-                                />
-                            );
-                        })}
-                    </ItemGroup>
-                ) : null}
-
                 {/* Backup Section */}
                 {formattedSecret ? (
                     <ItemGroup title={t('settingsAccount.backup')} footer={t('settingsAccount.backupDescription')}>
@@ -317,13 +270,17 @@ export default React.memo(() => {
                             }
                             onPress={handleShowSecret}
                             rightElement={
-                                <Pressable testID="settings-account-secret-key-copy" onPress={handleCopySecret} hitSlop={12}>
-                                    <SafeIonicons
-                                        name="copy-outline"
-                                        size={18}
-                                        color={theme.colors.text.secondary}
-                                    />
-                                </Pressable>
+                                copiedRecently ? (
+                                    <CopiedPill visible testID="settings-account-secret-key-copy-feedback" />
+                                ) : (
+                                    <Pressable testID="settings-account-secret-key-copy" onPress={handleCopySecret} hitSlop={12}>
+                                        <SafeIonicons
+                                            name="copy-outline"
+                                            size={18}
+                                            color={theme.colors.text.secondary}
+                                        />
+                                    </Pressable>
+                                )
                             }
                             showChevron={false}
                         />
@@ -406,7 +363,6 @@ export default React.memo(() => {
                                                 id: a.id,
                                                 templateCiphertext: a.templateCiphertext,
                                             }));
-
                                             let generatedSecret: string | null = null;
                                             const legacyCredentialsForE2ee = nextMode === 'e2ee'
                                                 ? (() => {
@@ -415,29 +371,6 @@ export default React.memo(() => {
                                                     return { token: credentials.token, secret: generatedSecret };
                                                 })()
                                                 : null;
-
-                                            const request = nextMode === 'plain'
-                                                ? await buildAccountEncryptionMigrateToPlainRequest({
-                                                    credentials,
-                                                    expectedSettingsVersion,
-                                                    settings: storage.getState().settings,
-                                                    connectedServiceProfiles,
-                                                    automations,
-                                                    fetchConnectedServiceCredentialSealed: async ({ serviceId, profileId }) =>
-                                                        await getConnectedServiceCredentialSealed(credentials, { serviceId, profileId }),
-                                                    decryptAutomationTemplateRaw: async (payloadCiphertext: string) =>
-                                                        await sync.encryption.decryptAutomationTemplateRaw(payloadCiphertext),
-                                                })
-                                                : await buildAccountEncryptionMigrateToE2eeRequest({
-                                                    credentials: legacyCredentialsForE2ee!,
-                                                    expectedSettingsVersion,
-                                                    settings: storage.getState().settings,
-                                                    connectedServiceProfiles,
-                                                    automations,
-                                                    fetchConnectedServiceCredentialPlain: async ({ serviceId, profileId }) =>
-                                                        await getConnectedServiceCredentialPlain(credentials, { serviceId, profileId }),
-                                                });
-
                                             const keyProof = nextMode === 'e2ee'
                                                 ? (() => {
                                                     try {
@@ -462,15 +395,53 @@ export default React.memo(() => {
                                             }
 
                                             const contentBinding = nextMode === 'e2ee'
-                                                ? await buildContentKeyBinding(keyProof!.seed).catch(() => null)
+                                                ? await buildContentKeyBinding(keyProof!.seed)
                                                 : null;
+                                            const migrationKeyProof = nextMode === 'e2ee'
+                                                ? {
+                                                    publicKey: keyProof!.publicKey,
+                                                    challenge: keyProof!.challenge,
+                                                    signature: keyProof!.signature,
+                                                    ...contentBinding!,
+                                                }
+                                                : null;
+                                            const request = nextMode === 'plain'
+                                                ? await buildAccountEncryptionMigrateToPlainRequest({
+                                                    credentials,
+                                                    expectedSettingsVersion,
+                                                    settings: storage.getState().settings,
+                                                    connectedServiceProfiles,
+                                                    qualifiedConnectedAccounts:
+                                                        profile.connectedAccountsV4,
+                                                    automations,
+                                                    fetchConnectedServiceCredentialSealed: async ({ serviceId, profileId }) =>
+                                                        await getConnectedServiceCredentialSealed(credentials, { serviceId, profileId }),
+                                                    fetchQualifiedConnectedAccountCredential: async (ref) =>
+                                                        await getQualifiedConnectedAccountCredentialV4(credentials, ref),
+                                                    fetchQualifiedConnectedAccountConfiguration: async (ref) =>
+                                                        await getQualifiedConnectedAccountConfigurationV4(credentials, ref),
+                                                    decryptAutomationTemplateRaw: async (payloadCiphertext: string) =>
+                                                        await sync.encryption.decryptAutomationTemplateRaw(payloadCiphertext),
+                                                })
+                                                : await buildAccountEncryptionMigrateToE2eeRequest({
+                                                    credentials: legacyCredentialsForE2ee!,
+                                                    expectedSettingsVersion,
+                                                    settings: storage.getState().settings,
+                                                    connectedServiceProfiles,
+                                                    qualifiedConnectedAccounts:
+                                                        profile.connectedAccountsV4,
+                                                    automations,
+                                                    keyProof:
+                                                        migrationKeyProof!,
+                                                    fetchConnectedServiceCredentialPlain: async ({ serviceId, profileId }) =>
+                                                        await getConnectedServiceCredentialPlain(credentials, { serviceId, profileId }),
+                                                    fetchQualifiedConnectedAccountCredential: async (ref) =>
+                                                        await getQualifiedConnectedAccountCredentialV4(credentials, ref),
+                                                    fetchQualifiedConnectedAccountConfiguration: async (ref) =>
+                                                        await getQualifiedConnectedAccountConfigurationV4(credentials, ref),
+                                                });
 
-                                            const result = await migrateAccountEncryptionMode(auth.credentials, {
-                                                ...request,
-                                                ...(nextMode === 'e2ee'
-                                                    ? { keyProof: { publicKey: keyProof!.publicKey, challenge: keyProof!.challenge, signature: keyProof!.signature, ...(contentBinding ? contentBinding : {}) } }
-                                                    : {}),
-                                            });
+                                            const result = await migrateAccountEncryptionMode(auth.credentials, request);
                                             setAccountEncryptionMode(result.mode);
 
                                             if (generatedSecret) {

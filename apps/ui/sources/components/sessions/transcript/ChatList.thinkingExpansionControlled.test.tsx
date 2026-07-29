@@ -3,11 +3,11 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit';
 import {
-  flashListChatListHarnessState,
-  renderFlashListChatListSession,
-  resetFlashListChatListHarness,
+  chatListHarnessState,
+  renderChatListHarnessSession,
+  resetChatListHarness,
 } from '@/dev/testkit/harness/chatListHarness';
-import { installFlashListChatListCommonModuleMocks } from '@/dev/testkit/harness/chatListHarnessModuleMocks';
+import { installChatListHarnessCommonModuleMocks } from '@/dev/testkit/harness/chatListHarnessModuleMocks';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,14 +15,14 @@ const buildChatListItemsMock = vi.fn((..._args: any[]): any[] => []);
 
 let renderedMessageViewProps: any[] = [];
 
-installFlashListChatListCommonModuleMocks();
+installChatListHarnessCommonModuleMocks();
 
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
   useReducedMotionPreference: () => false,
 }));
 
 vi.mock('@/components/sessions/chatListItems', async () => (
-  (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListItemsModuleMock(buildChatListItemsMock)
+  (await import('@/dev/testkit/harness/chatListHarness')).createChatListHarnessItemsModuleMock(buildChatListItemsMock)
 ));
 
 vi.mock('@/components/sessions/transcript/motion/TranscriptMotionProvider', () => ({
@@ -73,20 +73,9 @@ vi.mock('@/utils/system/fireAndForget', () => ({
   fireAndForget: (p: any) => p,
 }));
 
-vi.mock('@/sync/sync', () => ({
-  sync: {
-    loadOlderMessages: vi.fn(),
-    loadNewerMessages: vi.fn(),
-    hasDeferredNewerMessages: () => false,
-    getSyncTuning: () => ({
-      transcriptWebInitialPinStabilizeMs: 0,
-      transcriptWebInitialPinRetryIntervalMs: 250,
-      transcriptForwardPrefetchThresholdPx: 800,
-      transcriptBackwardPrefetchThresholdPx: 0,
-      transcriptFlashListEstimatedItemSize: 48,
-    }),
-  },
-}));
+vi.mock('@/sync/sync', async () => (
+  (await import('@/dev/testkit/harness/chatListHarness')).createChatListHarnessSyncModuleMock()
+));
 
 describe('ChatList (thinking expansion controlled)', () => {
   afterEach(() => {
@@ -94,20 +83,24 @@ describe('ChatList (thinking expansion controlled)', () => {
   });
 
   beforeEach(() => {
-    resetFlashListChatListHarness();
+    resetChatListHarness({
+      syncTuningState: {
+        transcriptForwardPrefetchThresholdPx: 800,
+        transcriptEstimatedItemSizePx: 48,
+      },
+    });
     buildChatListItemsMock.mockReset();
     renderedMessageViewProps = [];
   });
 
   it('controls inline thinking expansion via list-owned state (no per-row state)', async () => {
-    flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
-    flashListChatListHarnessState.settingValues.transcriptListImplementation = 'flash_v2';
-    flashListChatListHarnessState.settingValues.sessionThinkingDisplayMode = 'inline';
-    flashListChatListHarnessState.settingValues.sessionThinkingInlinePresentation = 'summary';
+    chatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
+    chatListHarnessState.settingValues.sessionThinkingDisplayMode = 'inline';
+    chatListHarnessState.settingValues.sessionThinkingInlinePresentation = 'summary';
 
     const thinkingMessage = { kind: 'agent-text', id: 't1', localId: null, createdAt: 1, text: 'think', isThinking: true };
     const normalMessage = { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'answer', isThinking: false };
-    flashListChatListHarnessState.sessionMessagesState = {
+    chatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [thinkingMessage, normalMessage],
     };
@@ -116,7 +109,7 @@ describe('ChatList (thinking expansion controlled)', () => {
       { kind: 'message', id: normalMessage.id, messageId: normalMessage.id, createdAt: normalMessage.createdAt, seq: null },
     ]);
 
-    const screen = await renderFlashListChatListSession();
+    const screen = await renderChatListHarnessSession();
 
     const firstThinkingProps = renderedMessageViewProps.find((p) => p?.message?.id === 't1');
     const firstNormalProps = renderedMessageViewProps.find((p) => p?.message?.id === 'a1');

@@ -11,6 +11,7 @@ import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { SessionContextChips } from '@/components/sessions/context/SessionContextChips';
 import { readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export const ApprovalSessionContextCard = React.memo(function ApprovalSessionContextCard(props: Readonly<{
     session: Session | null;
@@ -21,14 +22,15 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
     const router = useRouter();
     const { theme } = useUnistyles();
     const sessionTitle = props.session ? getSessionName(props.session) : null;
+    const ownerMetadata = props.session ? readSessionOwnerMetadataView(props.session) : null;
     const displayPath = props.session
         ? readDisplayPathForSession({
             sessionId: props.session.id,
-            metadata: props.session.metadata ?? null,
+            metadata: ownerMetadata,
         })
         : '';
     const pathLabel = displayPath
-        ? formatPathRelativeToHome(displayPath, props.session?.metadata?.homeDir ?? undefined)
+        ? formatPathRelativeToHome(displayPath, ownerMetadata?.homeDir)
         : null;
     const machineLabel = getMachineDisplayName(props.machine);
 

@@ -54,7 +54,8 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => deviceTypeMock,
 }));
 
-vi.mock('@react-navigation/native', () => ({
+vi.mock('@react-navigation/native', async () => ({
+    ...(await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock(),
     useNavigation: () => ({
         canGoBack: () => true,
     }),

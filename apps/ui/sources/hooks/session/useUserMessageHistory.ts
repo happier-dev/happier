@@ -2,7 +2,12 @@ import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
 import type { FeaturesResponse } from '@happier-dev/protocol';
-import { USER_MESSAGE_HISTORY_REMOTE_PAGE_SIZE, type UserMessageHistoryRemoteEntry } from '@/sync/engine/sessions/fetchUserMessageHistoryPage';
+import {
+    SESSION_MESSAGE_HISTORY_REMOTE_ROLES_QUERY,
+    USER_MESSAGE_HISTORY_REMOTE_PAGE_SIZE,
+    type FetchUserMessageHistoryPageResult,
+    type SessionMessageHistoryRemoteRow,
+} from '@/sync/engine/sessions/fetchUserMessageHistoryPage';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { readStoredSessionMessagesFromStateLike } from '@/sync/domains/messages/readStoredSessionMessages';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -74,15 +79,21 @@ function useAllSessionMessages(enabled: boolean): Record<string, ReadonlyArray<M
 }
 
 type RemoteHistoryState = Readonly<{
-    entries: UserMessageHistoryRemoteEntry[];
+    rows: SessionMessageHistoryRemoteRow[];
     hasMore: boolean;
+    /** Paging cursor lives with the accumulated rows so paging the transcript older never resets it. */
     nextBeforeSeq: number | null;
+    pagesLoaded: number;
+    /** The last attempt could not decrypt yet; a readiness change re-drives the same cursor. */
+    pendingEncryption: boolean;
 }>;
 
 const EMPTY_REMOTE_HISTORY_STATE: RemoteHistoryState = Object.freeze({
-    entries: [],
+    rows: [],
     hasMore: true,
     nextBeforeSeq: null,
+    pagesLoaded: 0,
+    pendingEncryption: false,
 });
 
 export type UserMessageHistoryRemoteEntriesSnapshot = RemoteHistoryState & Readonly<{
@@ -93,8 +104,18 @@ type RemoteHistoryStoreRecord = {
     state: RemoteHistoryState;
 };
 
+/**
+ * A transport failure leaves the cursor, `hasMore` and `pagesLoaded` untouched, so every caller
+ * that re-drives history — the transcript-navigation continuation effect on each transcript store
+ * update, composer prefetch on each ArrowUp — would otherwise re-issue the same request against an
+ * already failing (possibly rate-limiting) endpoint. The floor keeps the failing cursor retryable
+ * without letting it be retried faster than this.
+ */
+export const USER_MESSAGE_HISTORY_REMOTE_RETRY_COOLDOWN_MS = 30_000;
+
 const remoteHistoryRecordsByKey = new Map<string, RemoteHistoryStoreRecord>();
 const remoteHistoryInFlightCursorKeys = new Set<string>();
+const remoteHistoryRetryFloorMsByCursorKey = new Map<string, number>();
 const remoteHistoryListeners = new Set<() => void>();
 
 function normalizeRemoteHistoryBeforeSeq(value: unknown): number | null {
@@ -109,9 +130,11 @@ function remoteHistoryCursorKey(beforeSeq: number | null): string {
 
 function remoteHistoryInitialState(initialBeforeSeq: number | null): RemoteHistoryState {
     return {
-        entries: [],
+        rows: [],
         hasMore: true,
         nextBeforeSeq: initialBeforeSeq,
+        pagesLoaded: 0,
+        pendingEncryption: false,
     };
 }
 
@@ -152,7 +175,6 @@ function readRemoteHistoryState(
 function buildRemoteHistoryCacheKey(params: Readonly<{
     accountId: string | null;
     enabled: boolean;
-    initialBeforeSeq: number | null;
     roleQuerySupported: boolean;
     serverId: string | null;
     sessionId: string | null;
@@ -160,13 +182,12 @@ function buildRemoteHistoryCacheKey(params: Readonly<{
     if (params.enabled !== true || params.roleQuerySupported !== true || !params.sessionId || !params.serverId) {
         return null;
     }
-    const accountId = params.accountId ?? 'local';
     return [
-        'user-message-history',
+        'session-message-history',
         `server:${params.serverId}`,
-        `account:${accountId}`,
+        `account:${params.accountId ?? 'local'}`,
         `session:${params.sessionId}`,
-        `initial:${remoteHistoryCursorKey(params.initialBeforeSeq)}`,
+        `roles:${SESSION_MESSAGE_HISTORY_REMOTE_ROLES_QUERY}`,
     ].join('|');
 }
 
@@ -191,30 +212,54 @@ function requestRemoteHistoryPage(params: Readonly<{
     const beforeSeq = record.state.nextBeforeSeq;
     const cursorKey = `${params.cacheKey}:cursor:${remoteHistoryCursorKey(beforeSeq)}`;
     if (remoteHistoryInFlightCursorKeys.has(cursorKey)) return;
+    const retryFloorMs = remoteHistoryRetryFloorMsByCursorKey.get(cursorKey);
+    if (retryFloorMs !== undefined && Date.now() < retryFloorMs) return;
 
+    const cacheKey = params.cacheKey;
     remoteHistoryInFlightCursorKeys.add(cursorKey);
     void sync.fetchUserMessageHistoryPage(params.sessionId, {
         limit: USER_MESSAGE_HISTORY_REMOTE_PAGE_SIZE,
         ...(beforeSeq !== null ? { beforeSeq } : {}),
-    }).then((result) => {
+    // A rejected call (unresolvable server scope, transport throw) is the same transport failure
+    // the page fetcher already reports as `error`, and gets the same retry floor.
+    }).catch((): FetchUserMessageHistoryPageResult => ({ status: 'error' })).then((result) => {
+        if (result.status === 'error') {
+            remoteHistoryRetryFloorMsByCursorKey.set(
+                cursorKey,
+                Date.now() + USER_MESSAGE_HISTORY_REMOTE_RETRY_COOLDOWN_MS,
+            );
+            return;
+        }
+        remoteHistoryRetryFloorMsByCursorKey.delete(cursorKey);
+
         if (result.status === 'loaded') {
-            updateRemoteHistoryState(params.cacheKey!, (previous) => ({
-                entries: mergeRemoteHistoryEntries(previous.entries, result.entries),
+            updateRemoteHistoryState(cacheKey, (previous) => ({
+                rows: mergeRemoteHistoryRows(previous.rows, result.rows),
                 hasMore: result.hasMore === true && result.nextBeforeSeq !== null,
                 nextBeforeSeq: result.nextBeforeSeq,
+                pagesLoaded: previous.pagesLoaded + 1,
+                pendingEncryption: false,
             }));
             return;
         }
 
         if (result.status === 'unsupported') {
-            updateRemoteHistoryState(params.cacheKey!, (previous) => ({
+            updateRemoteHistoryState(cacheKey, (previous) => ({
                 ...previous,
                 hasMore: false,
                 nextBeforeSeq: null,
+                pendingEncryption: false,
             }));
             return;
         }
 
+        if (result.status === 'not_ready') {
+            // Session keys are not available yet. Keep the cursor so the next readiness change
+            // re-drives this exact page; never latch `hasMore` off for a decryptable session.
+            updateRemoteHistoryState(cacheKey, (previous) => (
+                previous.pendingEncryption ? previous : { ...previous, pendingEncryption: true }
+            ));
+        }
     }).finally(() => {
         remoteHistoryInFlightCursorKeys.delete(cursorKey);
     });
@@ -223,6 +268,7 @@ function requestRemoteHistoryPage(params: Readonly<{
 export function resetUserMessageHistoryRemoteEntriesForTests(): void {
     remoteHistoryRecordsByKey.clear();
     remoteHistoryInFlightCursorKeys.clear();
+    remoteHistoryRetryFloorMsByCursorKey.clear();
     emitRemoteHistoryChange();
 }
 
@@ -232,7 +278,7 @@ function isSessionMessageRoleQuerySupported(features: FeaturesResponse | null | 
 
 function mergeHistoryEntries(params: Readonly<{
     localEntries: ReadonlyArray<string>;
-    remoteEntries: ReadonlyArray<UserMessageHistoryRemoteEntry>;
+    remoteRows: ReadonlyArray<SessionMessageHistoryRemoteRow>;
     maxEntries: number;
 }>): string[] {
     const out: string[] = [];
@@ -249,34 +295,37 @@ function mergeHistoryEntries(params: Readonly<{
         if (out.length >= params.maxEntries) return out;
     }
 
-    for (const entry of params.remoteEntries) {
-        push(entry.text);
+    // Remote rows arrive newest-first from `fetchUserMessageHistoryPage` and pages accumulate
+    // strictly older, so appending them in array order keeps ArrowUp walking backwards in time.
+    for (const row of params.remoteRows) {
+        // Composer history replays prompts; agent rows share the page but never the input.
+        if (row.role !== 'user') continue;
+        push(row.text);
         if (out.length >= params.maxEntries) return out;
     }
 
     return out;
 }
 
-function mergeRemoteHistoryEntries(
-    current: ReadonlyArray<UserMessageHistoryRemoteEntry>,
-    incoming: ReadonlyArray<UserMessageHistoryRemoteEntry>,
-): UserMessageHistoryRemoteEntry[] {
+function mergeRemoteHistoryRows(
+    current: ReadonlyArray<SessionMessageHistoryRemoteRow>,
+    incoming: ReadonlyArray<SessionMessageHistoryRemoteRow>,
+): SessionMessageHistoryRemoteRow[] {
     const out = [...current];
-    const seenSeqs = new Set(out.map((entry) => entry.seq));
+    const seenMessageIds = new Set(out.map((row) => row.messageId));
 
-    for (const entry of incoming) {
-        const text = entry.text.trim();
+    for (const row of incoming) {
+        const text = row.text.trim();
         if (!text) continue;
-        if (seenSeqs.has(entry.seq)) continue;
-        seenSeqs.add(entry.seq);
-        out.push({ ...entry, text });
+        if (seenMessageIds.has(row.messageId)) continue;
+        seenMessageIds.add(row.messageId);
+        out.push({ ...row, text });
     }
 
     return out;
 }
 
 export function useUserMessageHistoryRemoteEntries(opts: Readonly<{
-    autoLoad?: boolean;
     enabled?: boolean;
     initialBeforeSeq?: number | null;
     sessionId: string | null;
@@ -295,7 +344,6 @@ export function useUserMessageHistoryRemoteEntries(opts: Readonly<{
     const cacheKey = buildRemoteHistoryCacheKey({
         accountId: activeScope?.accountId ?? null,
         enabled: opts.enabled !== false,
-        initialBeforeSeq,
         roleQuerySupported,
         serverId: activeScope?.serverId ?? preferredServerId ?? null,
         sessionId: normalizedSessionId,
@@ -312,12 +360,6 @@ export function useUserMessageHistoryRemoteEntries(opts: Readonly<{
             sessionId: normalizedSessionId,
         });
     }, [cacheKey, initialBeforeSeq, normalizedSessionId]);
-
-    React.useEffect(() => {
-        if (opts.autoLoad === true) {
-            requestNextPage();
-        }
-    }, [opts.autoLoad, requestNextPage]);
 
     return React.useMemo(() => ({
         ...state,
@@ -348,7 +390,7 @@ export function useUserMessageHistory(opts: {
         initialBeforeSeq: null,
         sessionId: normalizedSessionId,
     });
-    const remoteHistoryEntriesLengthRef = React.useRef(remoteHistoryState.entries.length);
+    const remoteHistoryRowsLengthRef = React.useRef(remoteHistoryState.rows.length);
     const remoteHistoryRequestNextPageRef = React.useRef(remoteHistoryState.requestNextPage);
     const localEntriesRef = React.useRef<ReadonlyArray<string>>([]);
     const combinedEntriesRef = React.useRef<ReadonlyArray<string>>([]);
@@ -390,13 +432,13 @@ export function useUserMessageHistory(opts: {
 
     const entries = React.useMemo(() => mergeHistoryEntries({
         localEntries,
-        remoteEntries: opts.scope === 'perSession' ? remoteHistoryState.entries : [],
+        remoteRows: opts.scope === 'perSession' ? remoteHistoryState.rows : [],
         maxEntries: opts.maxEntries ?? DEFAULT_USER_MESSAGE_HISTORY_MAX_ENTRIES,
-    }), [localEntries, opts.maxEntries, opts.scope, remoteHistoryState.entries]);
+    }), [localEntries, opts.maxEntries, opts.scope, remoteHistoryState.rows]);
 
     localEntriesRef.current = localEntries;
     combinedEntriesRef.current = entries;
-    remoteHistoryEntriesLengthRef.current = remoteHistoryState.entries.length;
+    remoteHistoryRowsLengthRef.current = remoteHistoryState.rows.length;
     remoteHistoryRequestNextPageRef.current = remoteHistoryState.requestNextPage;
     requestContextRef.current = {
         scope: opts.scope,
@@ -413,7 +455,7 @@ export function useUserMessageHistory(opts: {
 
     const warmup = React.useCallback(() => {
         if (localEntriesRef.current.length > 0) return;
-        if (remoteHistoryEntriesLengthRef.current > 0) return;
+        if (remoteHistoryRowsLengthRef.current > 0) return;
         requestRemoteHistoryPage();
     }, [requestRemoteHistoryPage]);
 

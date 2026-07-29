@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     renderScreen,
     standardCleanup,
@@ -27,6 +27,9 @@ const stackOptionsCapture = vi.hoisted(() => {
         },
     };
 });
+const newSessionPresentationModeState = vi.hoisted(() => ({
+    value: 'auto' as 'auto' | 'screen' | 'modal',
+}));
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -65,7 +68,10 @@ installServerPickerRouteCommonModuleMocks({
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            useSetting: () => null,
+            useSetting: (name: string) => {
+                if (name === 'newSessionPresentationModeV1') return newSessionPresentationModeState.value;
+                return null;
+            },
         });
     },
     unistyles: async () => {
@@ -87,6 +93,7 @@ vi.mock('@react-navigation/native', () => ({
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: (props: any) => React.createElement('ItemList', props, props.children),
+    ItemListStatic: (props: any) => React.createElement('ItemListStatic', props, props.children),
 }));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
@@ -104,14 +111,33 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 }));
 
 describe('ServerPickerScreen header options', () => {
+    beforeEach(() => {
+        newSessionPresentationModeState.value = 'auto';
+        stackOptionsCapture.reset();
+    });
+
     it('does not provide a headerTitle function that returns a raw string (RN Web text node error)', async () => {
         const { default: ServerPickerScreen } = await import('@/app/(app)/new/pick/server');
-        stackOptionsCapture.reset();
         await renderScreen(React.createElement(ServerPickerScreen));
 
         const resolvedOptions = stackOptionsCapture.getResolved();
         expect(resolvedOptions).toBeTruthy();
         expect(resolvedOptions?.headerTitle === undefined || typeof resolvedOptions?.headerTitle === 'string').toBe(true);
+        standardCleanup();
+    });
+
+    it('presents as a modal on web by default and as a regular screen when requested', async () => {
+        const { default: ServerPickerScreen } = await import('@/app/(app)/new/pick/server');
+
+        await renderScreen(React.createElement(ServerPickerScreen));
+        expect(stackOptionsCapture.getResolved()?.presentation).toBe('modal');
+        standardCleanup();
+
+        stackOptionsCapture.reset();
+        newSessionPresentationModeState.value = 'screen';
+
+        await renderScreen(React.createElement(ServerPickerScreen));
+        expect(stackOptionsCapture.getResolved()?.presentation).toBeUndefined();
         standardCleanup();
     });
 });

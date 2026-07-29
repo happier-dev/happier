@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
     createInitialOlderPaginationState,
+    isOlderPaginationBusyNearEdge,
     reduceOlderPagination,
+    resolveItemsToOlderEdge,
     shouldLoadNow,
     type OlderPaginationEvent,
     type OlderPaginationState,
@@ -16,7 +18,7 @@ function scrollObserved(params: Partial<{
     offsetY: number;
     thresholdPx: number;
     scrollable: boolean;
-    trigger: 'scroll' | 'edge-reached';
+    trigger: 'scroll' | 'edge-reached' | 'layout-committed';
 }>): OlderPaginationEvent {
     return {
         type: 'scrollObserved',
@@ -150,6 +152,27 @@ describe('olderPaginationMachine', () => {
         expect(shouldLoadNow(afterLoad)).toBe(true);
     });
 
+    it('does not initiate a load from a non-edge committed layout inside the prefetch threshold', () => {
+        const afterLayout = reduceOlderPagination(
+            createInitialOlderPaginationState(),
+            scrollObserved({ offsetY: 100, trigger: 'layout-committed' }),
+        );
+
+        expect(afterLayout.insideThreshold).toBe(true);
+        expect(afterLayout.phase).toBe('idle');
+        expect(shouldLoadNow(afterLayout)).toBe(false);
+    });
+
+    it('allows an exact committed layout to initiate a load when no earlier edge callback arrived', () => {
+        const afterLayout = reduceOlderPagination(
+            createInitialOlderPaginationState(),
+            scrollObserved({ offsetY: 0, trigger: 'layout-committed' }),
+        );
+
+        expect(afterLayout.phase).toBe('armed');
+        expect(shouldLoadNow(afterLayout)).toBe(true);
+    });
+
     it('keeps passive scroll observations within the near-top band suspended so parked-at-top scrolls cannot burst', () => {
         const atTop = run(createInitialOlderPaginationState(), [scrollObserved({ offsetY: 0 })]);
         expect(atTop.suspendedReasons.has('negative-offset')).toBe(true);
@@ -181,6 +204,97 @@ describe('olderPaginationMachine', () => {
         const recovered = reduceOlderPagination(negative, scrollObserved({ offsetY: 50 }));
         expect(recovered.suspendedReasons.has('negative-offset')).toBe(false);
         expect(shouldLoadNow(recovered)).toBe(true);
+    });
+
+    it('continues a successful exact-edge load when its committed layout remains at the edge', () => {
+        const afterLoad = run(createInitialOlderPaginationState(), [
+            scrollObserved({ offsetY: 0, trigger: 'edge-reached' }),
+            { type: 'loadStarted' },
+            scrollObserved({ offsetY: 0, trigger: 'layout-committed' }),
+            { type: 'loadFinished', loaded: 10, hasMore: true },
+            { type: 'cooldownElapsed' },
+        ]);
+
+        expect(afterLoad.phase).toBe('armed');
+        expect(shouldLoadNow(afterLoad)).toBe(true);
+    });
+
+    it('continues a successful exact-edge load when its committed layout arrives after the load result', () => {
+        const afterLoad = run(createInitialOlderPaginationState(), [
+            scrollObserved({ offsetY: 0, trigger: 'edge-reached' }),
+            { type: 'loadStarted' },
+            { type: 'loadFinished', loaded: 10, hasMore: true },
+            scrollObserved({ offsetY: 0, trigger: 'layout-committed' }),
+            { type: 'cooldownElapsed' },
+        ]);
+
+        expect(afterLoad.phase).toBe('armed');
+        expect(shouldLoadNow(afterLoad)).toBe(true);
+    });
+
+    it.each([
+        ['only the initiating edge callback was observed', [
+            scrollObserved({ offsetY: 0, trigger: 'edge-reached' }),
+            { type: 'loadStarted' } as const,
+            { type: 'loadFinished', loaded: 10, hasMore: true } as const,
+            { type: 'cooldownElapsed' } as const,
+        ]],
+        ['the viewport leaves the exact edge', [
+            scrollObserved({ offsetY: 0, trigger: 'edge-reached' }),
+            { type: 'loadStarted' } as const,
+            scrollObserved({ offsetY: 300, trigger: 'layout-committed' }),
+            { type: 'loadFinished', loaded: 10, hasMore: true } as const,
+            { type: 'cooldownElapsed' } as const,
+        ]],
+        ['a spinner commit is followed by a settled off-edge layout', [
+            scrollObserved({ offsetY: 0, trigger: 'edge-reached' }),
+            { type: 'loadStarted' } as const,
+            scrollObserved({ offsetY: 0, trigger: 'layout-committed' }),
+            { type: 'loadFinished', loaded: 10, hasMore: true } as const,
+            scrollObserved({ offsetY: 300, trigger: 'layout-committed' }),
+            { type: 'cooldownElapsed' } as const,
+        ]],
+        ['a late spinner commit is followed by a settled off-edge layout', [
+            scrollObserved({ offsetY: 0, trigger: 'edge-reached' }),
+            { type: 'loadStarted' } as const,
+            { type: 'loadFinished', loaded: 10, hasMore: true } as const,
+            scrollObserved({ offsetY: 0, trigger: 'layout-committed' }),
+            scrollObserved({ offsetY: 300, trigger: 'layout-committed' }),
+            { type: 'cooldownElapsed' } as const,
+        ]],
+        ['the load fails', [
+            scrollObserved({ offsetY: 0, trigger: 'edge-reached' }),
+            { type: 'loadStarted' } as const,
+            scrollObserved({ offsetY: 0, trigger: 'layout-committed' }),
+            { type: 'loadFinished', loaded: 0, hasMore: true, error: true } as const,
+            { type: 'cooldownElapsed' } as const,
+        ]],
+        ['the load makes no progress', [
+            scrollObserved({ offsetY: 0, trigger: 'edge-reached' }),
+            { type: 'loadStarted' } as const,
+            scrollObserved({ offsetY: 0, trigger: 'layout-committed' }),
+            { type: 'loadFinished', loaded: 0, hasMore: true } as const,
+            { type: 'cooldownElapsed' } as const,
+        ]],
+        ['a late exact layout follows a failed load', [
+            scrollObserved({ offsetY: 0, trigger: 'edge-reached' }),
+            { type: 'loadStarted' } as const,
+            { type: 'loadFinished', loaded: 0, hasMore: true, error: true } as const,
+            scrollObserved({ offsetY: 0, trigger: 'layout-committed' }),
+            { type: 'cooldownElapsed' } as const,
+        ]],
+        ['a late exact layout follows a zero-progress load', [
+            scrollObserved({ offsetY: 0, trigger: 'edge-reached' }),
+            { type: 'loadStarted' } as const,
+            { type: 'loadFinished', loaded: 0, hasMore: true } as const,
+            scrollObserved({ offsetY: 0, trigger: 'layout-committed' }),
+            { type: 'cooldownElapsed' } as const,
+        ]],
+    ])('does not continue an exact-edge load when %s', (_reason, events) => {
+        const afterCooldown = run(createInitialOlderPaginationState(), events);
+
+        expect(afterCooldown.phase).toBe('idle');
+        expect(shouldLoadNow(afterCooldown)).toBe(false);
     });
 
     it('suspends while a viewport transaction is open and resumes on resume()', () => {
@@ -306,5 +420,222 @@ describe('olderPaginationMachine', () => {
             { type: 'resume', reason: 'transaction-open' },
         ]);
         expect(resumedTwice.suspendedReasons.size).toBe(0);
+    });
+});
+
+// Item-space proximity (native virtualized lists): the canonical px offset on native is
+// derived from ESTIMATED content height, so its error routinely swallows the px threshold
+// (live defect 2026-07-12: older pages only loaded at the literal top; under-estimated
+// content produced a NEGATIVE canonical offset that silently suspended loads entirely).
+// When the observation carries a valid item-space proximity, it is the authoritative
+// edge-proximity truth and the px-derived guards do not apply.
+function itemScrollObserved(params: Partial<{
+    offsetY: number;
+    thresholdPx: number;
+    scrollable: boolean;
+    trigger: 'scroll' | 'edge-reached' | 'layout-committed';
+    itemsToOlderEdge: number | null;
+    thresholdItems: number | null;
+}>): OlderPaginationEvent {
+    return {
+        type: 'scrollObserved',
+        offsetY: params.offsetY ?? 5000,
+        thresholdPx: params.thresholdPx ?? 400,
+        scrollable: params.scrollable ?? true,
+        trigger: params.trigger ?? 'scroll',
+        itemsToOlderEdge: params.itemsToOlderEdge === undefined ? 4 : params.itemsToOlderEdge,
+        thresholdItems: params.thresholdItems === undefined ? 12 : params.thresholdItems,
+    };
+}
+
+describe('olderPaginationMachine item-space proximity', () => {
+    it('arms via item proximity even when the estimated px offset is far outside the px threshold', () => {
+        const state = run(createInitialOlderPaginationState(), [
+            itemScrollObserved({ offsetY: 20_000, itemsToOlderEdge: 40 }),
+            itemScrollObserved({ offsetY: 20_000, itemsToOlderEdge: 6 }),
+        ]);
+        expect(state.phase).toBe('armed');
+        expect(shouldLoadNow(state)).toBe(true);
+    });
+
+    it('does not suspend on a negative estimated px offset while the item signal is valid', () => {
+        const state = run(createInitialOlderPaginationState(), [
+            itemScrollObserved({ offsetY: -900, itemsToOlderEdge: 30 }),
+            itemScrollObserved({ offsetY: -900, itemsToOlderEdge: 3 }),
+        ]);
+        expect(state.suspendedReasons.size).toBe(0);
+        expect(shouldLoadNow(state)).toBe(true);
+    });
+
+    it('does not apply the parked-at-top passive suspension while the item signal is valid', () => {
+        const state = run(createInitialOlderPaginationState(), [
+            itemScrollObserved({ offsetY: 40, itemsToOlderEdge: 25 }),
+            itemScrollObserved({ offsetY: 0.5, itemsToOlderEdge: 2 }),
+        ]);
+        expect(state.suspendedReasons.size).toBe(0);
+        expect(shouldLoadNow(state)).toBe(true);
+    });
+
+    it('re-arms through item-space EXIT then ENTER across a prepend (anti-burst preserved)', () => {
+        let state = run(createInitialOlderPaginationState(), [
+            itemScrollObserved({ itemsToOlderEdge: 40 }),
+            itemScrollObserved({ itemsToOlderEdge: 5 }),
+            { type: 'loadStarted' },
+            { type: 'loadFinished', loaded: 50, hasMore: true },
+        ]);
+        // Parked inside the threshold: cooldown elapses, no re-arm (anti-burst).
+        state = run(state, [
+            itemScrollObserved({ itemsToOlderEdge: 5 }),
+            { type: 'cooldownElapsed' },
+        ]);
+        expect(state.phase).toBe('idle');
+        expect(shouldLoadNow(state)).toBe(false);
+        // The prepend pushed the older edge 50 items away (EXIT), scrolling up re-enters.
+        state = run(state, [
+            itemScrollObserved({ itemsToOlderEdge: 55 }),
+            itemScrollObserved({ itemsToOlderEdge: 8 }),
+        ]);
+        expect(state.phase).toBe('armed');
+        expect(shouldLoadNow(state)).toBe(true);
+    });
+
+    it('accepts an explicit edge-reached retry at item distance zero after cooldown without an exit', () => {
+        let state = run(createInitialOlderPaginationState(), [
+            itemScrollObserved({ itemsToOlderEdge: 40 }),
+            itemScrollObserved({ itemsToOlderEdge: 0 }),
+            { type: 'loadStarted' },
+            { type: 'loadFinished', loaded: 3, hasMore: true },
+            { type: 'cooldownElapsed' },
+        ]);
+        expect(state.phase).toBe('idle');
+        state = reduceOlderPagination(
+            state,
+            itemScrollObserved({ itemsToOlderEdge: 0, trigger: 'edge-reached' }),
+        );
+        expect(state.phase).toBe('armed');
+        expect(shouldLoadNow(state)).toBe(true);
+    });
+
+    it('continues only when the committed native item fact remains at the edge despite poisoned px offsets', () => {
+        const initialOffEdgeCommit = reduceOlderPagination(
+            createInitialOlderPaginationState(),
+            itemScrollObserved({
+                itemsToOlderEdge: 64,
+                offsetY: 0,
+                trigger: 'layout-committed',
+            }),
+        );
+        expect(initialOffEdgeCommit.phase).toBe('idle');
+        expect(shouldLoadNow(initialOffEdgeCommit)).toBe(false);
+
+        const exactCommit = run(createInitialOlderPaginationState(), [
+            itemScrollObserved({ itemsToOlderEdge: 0, offsetY: -5000, trigger: 'edge-reached' }),
+            { type: 'loadStarted' },
+            itemScrollObserved({ itemsToOlderEdge: 0, offsetY: -5000, trigger: 'layout-committed' }),
+            { type: 'loadFinished', loaded: 64, hasMore: true },
+            { type: 'cooldownElapsed' },
+        ]);
+        expect(exactCommit.phase).toBe('armed');
+        expect(shouldLoadNow(exactCommit)).toBe(true);
+
+        const offEdgeCommit = run(createInitialOlderPaginationState(), [
+            itemScrollObserved({ itemsToOlderEdge: 0, offsetY: -5000, trigger: 'edge-reached' }),
+            { type: 'loadStarted' },
+            itemScrollObserved({ itemsToOlderEdge: 64, offsetY: 0, trigger: 'layout-committed' }),
+            { type: 'loadFinished', loaded: 64, hasMore: true },
+            { type: 'cooldownElapsed' },
+        ]);
+        expect(offEdgeCommit.phase).toBe('idle');
+        expect(shouldLoadNow(offEdgeCommit)).toBe(false);
+    });
+
+    it('falls back to px semantics when the item signal is missing or invalid', () => {
+        const nullItems = run(createInitialOlderPaginationState(), [
+            itemScrollObserved({ offsetY: -5, itemsToOlderEdge: null }),
+        ]);
+        expect(nullItems.suspendedReasons.has('negative-offset')).toBe(true);
+        const invalidThreshold = run(createInitialOlderPaginationState(), [
+            itemScrollObserved({ offsetY: 5000, itemsToOlderEdge: 3, thresholdItems: null }),
+        ]);
+        expect(invalidThreshold.insideThreshold).toBe(false);
+    });
+});
+
+describe('isOlderPaginationBusyNearEdge', () => {
+    it('is busy while loading and across the between-pages gap when a follow-up load is coming', () => {
+        let state = run(createInitialOlderPaginationState(), [
+            enterInsideThreshold,
+            { type: 'loadStarted' },
+        ]);
+        expect(isOlderPaginationBusyNearEdge(state)).toBe(true);
+        // The prepend pushed the threshold out (EXIT) and the user scrolled back in
+        // (ENTER) while the page was landing: a follow-up load fires at cooldown end —
+        // the indicator must span the gap instead of flickering off between pages.
+        state = run(state, [
+            exitOutsideThreshold,
+            enterInsideThreshold,
+            { type: 'loadFinished', loaded: 50, hasMore: true },
+        ]);
+        expect(state.phase).toBe('cooldown');
+        expect(isOlderPaginationBusyNearEdge(state)).toBe(true);
+        // The imminent armed hop at cooldown end stays busy (no off/on blink).
+        state = reduceOlderPagination(state, { type: 'cooldownElapsed' });
+        expect(state.phase).toBe('armed');
+        expect(isOlderPaginationBusyNearEdge(state)).toBe(true);
+
+        const awaitingLateCommit = run(createInitialOlderPaginationState(), [
+            scrollObserved({ offsetY: 0, trigger: 'edge-reached' }),
+            { type: 'loadStarted' },
+            { type: 'loadFinished', loaded: 50, hasMore: true },
+        ]);
+        expect(awaitingLateCommit.phase).toBe('cooldown');
+        expect(isOlderPaginationBusyNearEdge(awaitingLateCommit)).toBe(true);
+    });
+
+    it('is not busy when parked after a single page, exhausted, exited, or idle', () => {
+        expect(isOlderPaginationBusyNearEdge(createInitialOlderPaginationState())).toBe(false);
+        // The committed page placed the viewport away from the exact edge without an
+        // EXIT/ENTER cycle: no follow-up load is coming, so the indicator settles.
+        const parked = run(createInitialOlderPaginationState(), [
+            scrollObserved({ offsetY: 0, trigger: 'edge-reached' }),
+            { type: 'loadStarted' },
+            { type: 'loadFinished', loaded: 50, hasMore: true },
+            scrollObserved({ offsetY: 300, trigger: 'layout-committed' }),
+        ]);
+        expect(parked.phase).toBe('cooldown');
+        expect(isOlderPaginationBusyNearEdge(parked)).toBe(false);
+        const exhausted = run(createInitialOlderPaginationState(), [
+            enterInsideThreshold,
+            { type: 'loadStarted' },
+            { type: 'loadFinished', loaded: 2, hasMore: false },
+        ]);
+        expect(isOlderPaginationBusyNearEdge(exhausted)).toBe(false);
+        const exited = run(createInitialOlderPaginationState(), [
+            enterInsideThreshold,
+            { type: 'loadStarted' },
+            { type: 'loadFinished', loaded: 50, hasMore: true },
+            exitOutsideThreshold,
+        ]);
+        expect(isOlderPaginationBusyNearEdge(exited)).toBe(false);
+    });
+});
+
+describe('resolveItemsToOlderEdge', () => {
+    it('returns the first source index for a genuine visible subset', () => {
+        expect(resolveItemsToOlderEdge({ firstSourceIndex: 40, lastSourceIndex: 48 }, 200)).toBe(40);
+        expect(resolveItemsToOlderEdge({ firstSourceIndex: 0, lastSourceIndex: 8 }, 200)).toBe(0);
+    });
+
+    it('returns null for a whole-range read (degenerate/unsettled virtualization report)', () => {
+        expect(resolveItemsToOlderEdge({ firstSourceIndex: 0, lastSourceIndex: 199 }, 200)).toBeNull();
+        expect(resolveItemsToOlderEdge({ firstSourceIndex: 0, lastSourceIndex: 0 }, 1)).toBeNull();
+    });
+
+    it('returns null for missing or invalid inputs', () => {
+        expect(resolveItemsToOlderEdge(null, 200)).toBeNull();
+        expect(resolveItemsToOlderEdge(undefined, 200)).toBeNull();
+        expect(resolveItemsToOlderEdge({ firstSourceIndex: -1, lastSourceIndex: 5 }, 200)).toBeNull();
+        expect(resolveItemsToOlderEdge({ firstSourceIndex: 6, lastSourceIndex: 5 }, 200)).toBeNull();
+        expect(resolveItemsToOlderEdge({ firstSourceIndex: 2, lastSourceIndex: 5 }, 0)).toBeNull();
     });
 });

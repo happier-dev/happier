@@ -7,8 +7,10 @@ import type { SessionMetadataLike } from '@/sync/domains/session/listing/session
 import { normalizeNonEmptyString } from './shared';
 import {
   resolveVoiceSessionLocationLabelFromMetadata,
+  resolveVoiceSessionSharedTitleFromMetadata,
   resolveVoiceSessionTitleFromMetadata,
 } from './sessionMetadata';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
 export type VoiceSessionRow = Readonly<{
   id: string;
@@ -35,14 +37,6 @@ type VoiceSessionRowDraft = {
   serverSourcePriority: number;
   statusSourcePriority: number;
 };
-
-function resolveVoiceSessionLocationLabel(session: unknown): string | null {
-  const record = session && typeof session === 'object' ? (session as Record<string, unknown>) : null;
-  const metadata = record?.metadata && typeof record.metadata === 'object'
-    ? (record.metadata as Record<string, unknown>)
-    : null;
-  return resolveVoiceSessionLocationLabelFromMetadata(metadata);
-}
 
 function mergeVoiceSessionRow(
   existing: VoiceSessionRowDraft | undefined,
@@ -117,6 +111,7 @@ function mergeVoiceSessionRow(
 }
 
 function toVoiceSessionRowDraft(
+  state: unknown,
   session: unknown,
   sourcePriority: number,
   options?: Readonly<{ serverId?: string | null; serverName?: string | null }>,
@@ -124,10 +119,12 @@ function toVoiceSessionRowDraft(
   const record = session && typeof session === 'object' ? (session as Record<string, unknown>) : null;
   const id = normalizeNonEmptyString(record?.id);
   if (!id) return null;
-  const locationLabel = resolveVoiceSessionLocationLabel(record);
+  const ownerMetadata = readVoiceSessionOwnerMetadataFromState(state, id);
+  const locationLabel = resolveVoiceSessionLocationLabelFromMetadata(ownerMetadata);
   return {
     id,
-    title: resolveVoiceSessionTitleFromMetadata(record?.metadata as SessionMetadataLike),
+    title: resolveVoiceSessionSharedTitleFromMetadata(record?.metadata as SessionMetadataLike)
+      ?? resolveVoiceSessionTitleFromMetadata(ownerMetadata),
     ...(locationLabel ? { locationLabel } : {}),
     updatedAt: typeof record?.updatedAt === 'number' ? record.updatedAt : 0,
     active: Boolean(record?.active),
@@ -149,7 +146,7 @@ export function collectVoiceSessionRows(state: unknown): readonly VoiceSessionRo
   const rows = new Map<string, VoiceSessionRowDraft>();
 
   const pushRow = (session: unknown, sourcePriority: number, options?: Readonly<{ serverId?: string | null; serverName?: string | null }>) => {
-    const next = toVoiceSessionRowDraft(session, sourcePriority, options);
+    const next = toVoiceSessionRowDraft(state, session, sourcePriority, options);
     if (!next) return;
     rows.set(next.id, mergeVoiceSessionRow(rows.get(next.id), next));
   };

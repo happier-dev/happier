@@ -1,14 +1,27 @@
+import type {
+    PluginHostedWebBridgeEnvelopeV1,
+    PluginHostedWebBridgeResponseEnvelopeV1,
+    PluginHostedWebSecurityPolicyV1,
+} from '@happier-dev/protocol';
 import * as React from 'react';
-import { WebView } from 'react-native-webview';
+
+import type {
+    BrowserDiagnosticsEngineBridgeConfig,
+    BrowserFrameNavigationCommand,
+} from '@/components/browser/frame/types';
+import { HostedPluginTarget } from '@/components/browser/adapters/HostedPluginTarget.native';
 
 import type { PluginHostedWebSandboxPolicy } from './sandbox';
-import type { PluginHostedWebBridgeEnvelopeV1 } from '@happier-dev/protocol';
 
 export function PluginHostedWebFrame(props: Readonly<{
     title: string;
     url: string;
     sandbox: PluginHostedWebSandboxPolicy;
+    security: PluginHostedWebSecurityPolicyV1;
     testID: string;
+    navigationKey?: string;
+    navigationCommand?: BrowserFrameNavigationCommand;
+    diagnostics?: BrowserDiagnosticsEngineBridgeConfig;
     bridge?: Readonly<{
         expectedOrigin: string;
         expectedPluginId: string;
@@ -17,18 +30,21 @@ export function PluginHostedWebFrame(props: Readonly<{
         expectedNonce: string;
         expectedSessionId?: string | null;
         allowedMessageKinds: ReadonlySet<string>;
-        onMessage: (envelope: PluginHostedWebBridgeEnvelopeV1) => void;
+        onMessage: (
+            envelope: PluginHostedWebBridgeEnvelopeV1,
+        ) => void | PluginHostedWebBridgeResponseEnvelopeV1 | Promise<PluginHostedWebBridgeResponseEnvelopeV1 | void>;
     }> | null;
 }>): React.ReactElement {
-    const origin = new URL(props.url).origin;
     return (
-        <WebView
-            accessibilityLabel={props.title}
-            javaScriptEnabled={props.sandbox.scripts}
-            mixedContentMode={props.sandbox.mixedContent ? 'compatibility' : 'never'}
-            originWhitelist={[origin]}
-            source={{ uri: props.url }}
+        <HostedPluginTarget
+            title={props.title}
+            url={props.url}
+            sandbox={props.sandbox}
+            security={props.security}
             testID={props.testID}
+            navigationCommand={props.navigationCommand}
+            diagnostics={props.diagnostics}
+            bridge={props.bridge}
         />
     );
 }

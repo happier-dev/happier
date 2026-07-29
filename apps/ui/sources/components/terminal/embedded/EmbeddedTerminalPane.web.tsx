@@ -14,6 +14,7 @@ export type EmbeddedTerminalPaneProps = Readonly<{
     onRequestClose?: (() => void) | null;
     toolbarActionsStart?: React.ReactNode;
     testIdPrefix?: string | null;
+    nativeSurfaceKey?: string | null;
     showQuickKeys?: boolean;
 }>;
 
@@ -36,8 +37,11 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneWeb(
                     ref={xtermRef}
                     fontSize={fontMetrics.fontSize}
                     onInput={props.controller.onInput}
+                    onPaste={props.controller.onPaste}
+                    onLink={props.controller.onLink}
                     onResize={props.controller.onResize}
                     onReady={props.controller.onReady}
+                    onWriteComplete={props.controller.onWriteComplete}
                 />
             )}
         />

@@ -5,6 +5,7 @@ import { useSettingMutable } from '@/sync/domains/state/storage';
 type UseContextBarSelectionArgs = Readonly<{
     selectionKey: string;
     defaultMachineId: string | null;
+    initialMachineId?: string | null;
     defaultWorkspacePath?: string | null;
 }>;
 
@@ -28,16 +29,19 @@ export function useContextBarSelection(args: UseContextBarSelectionArgs) {
     const storedMachineId = storedSelection?.machineId ?? null;
     const storedWorkspacePath = storedSelection?.workspacePath ?? null;
     const defaultWorkspacePath = args.defaultWorkspacePath ?? '';
+    const initialMachineIdRef = React.useRef(args.initialMachineId ?? null);
 
     const [machineId, setMachineIdState] = React.useState<string | null>(
-        () => storedMachineId ?? args.defaultMachineId ?? null,
+        () => initialMachineIdRef.current ?? storedMachineId ?? args.defaultMachineId ?? null,
     );
     const [workspacePath, setWorkspacePathState] = React.useState<string>(
         () => storedWorkspacePath ?? defaultWorkspacePath,
     );
 
     React.useEffect(() => {
-        setMachineIdState(storedMachineId ?? args.defaultMachineId ?? null);
+        const initialMachineId = initialMachineIdRef.current;
+        initialMachineIdRef.current = null;
+        setMachineIdState(initialMachineId ?? storedMachineId ?? args.defaultMachineId ?? null);
     }, [args.defaultMachineId, storedMachineId]);
 
     React.useEffect(() => {

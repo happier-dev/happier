@@ -1,8 +1,12 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { ChartTooltip } from '@/components/ui/charts';
+import { INSTRUMENT_SPRINGS, useMotionPreferences } from '@/components/instrument';
+import { usageMeterFill } from './usageAccent';
+import { useEntrancesEnabled } from './sections/EntranceView';
 
 interface UsageBarProps {
     label: string;
@@ -36,6 +40,7 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 14,
         color: theme.colors.text.secondary,
         fontWeight: '600',
+        fontVariant: ['tabular-nums'],
     },
     barContainer: {
         height: 8,
@@ -62,6 +67,43 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
+/**
+ * Bar fill that springs to its width ONCE on mount (motion-gated; minimal /
+ * reduce-motion renders the final width statically). Later value changes spring
+ * to the new width — a response to the user's filter gesture, not an idle loop.
+ */
+const AnimatedFillWidth: React.FC<Readonly<{
+    widthPct: number;
+    animateEntrance: boolean;
+    children: React.ReactNode;
+    style?: StyleProp<ViewStyle>;
+    testID?: string;
+}>> = ({ widthPct, animateEntrance, children, style, testID }) => {
+    const width = useSharedValue(animateEntrance ? 0 : widthPct);
+
+    React.useEffect(() => {
+        width.value = withSpring(widthPct, INSTRUMENT_SPRINGS.standard);
+    }, [width, widthPct]);
+
+    const animatedStyle = useAnimatedStyle(() => ({
+        width: `${width.value}%`,
+    }));
+
+    if (!animateEntrance) {
+        return (
+            <View testID={testID} style={[style, { width: `${widthPct}%` }]}>
+                {children}
+            </View>
+        );
+    }
+
+    return (
+        <Animated.View testID={testID} style={[style, animatedStyle]}>
+            {children}
+        </Animated.View>
+    );
+};
+
 export const UsageBar: React.FC<UsageBarProps> = ({
     label,
     value,
@@ -77,10 +119,18 @@ export const UsageBar: React.FC<UsageBarProps> = ({
     tooltipValue,
 }) => {
     const { theme } = useUnistyles();
+    const motion = useMotionPreferences();
+    // Single guard source (R-L6 F1): when the surrounding section's entrance
+    // already played this session, render the final width immediately.
+    const entrancesEnabled = useEntrancesEnabled();
     const percentage = maxValue > 0 ? (value / maxValue) * 100 : 0;
-    const fillColor = color || theme.colors.accent.blue;
-    
-    const displayValue = showPercentage 
+    // ONE-accent system (D-1): unspecified fills default to the monochrome
+    // neutral; callers pass the signature accent only for the row that means
+    // something (leader / selection / threshold).
+    const fillColor = color || usageMeterFill(theme, false);
+    const animateEntrance = motion.entrance.kind === 'travel' && entrancesEnabled;
+
+    const displayValue = showPercentage
         ? `${percentage.toFixed(1)}%`
         : value.toLocaleString();
 
@@ -99,14 +149,11 @@ export const UsageBar: React.FC<UsageBarProps> = ({
                         value={tooltipValue}
                         accentColor={fillColor}
                     >
-                        <View
+                        <AnimatedFillWidth
                             testID={testID ? `${testID}-anchor` : undefined}
-                            style={[
-                                styles.barTooltipAnchor,
-                                {
-                                    width: `${Math.max(8, Math.min(percentage, 100))}%`,
-                                },
-                            ]}
+                            widthPct={Math.max(8, Math.min(percentage, 100))}
+                            animateEntrance={animateEntrance}
+                            style={styles.barTooltipAnchor}
                         >
                             <View
                                 style={[
@@ -117,18 +164,24 @@ export const UsageBar: React.FC<UsageBarProps> = ({
                                     },
                                 ]}
                             />
-                        </View>
+                        </AnimatedFillWidth>
                     </ChartTooltip>
                 ) : (
-                    <View
-                        style={[
-                            styles.barFill,
-                            {
-                                width: `${Math.min(percentage, 100)}%`,
-                                backgroundColor: fillColor,
-                            },
-                        ]}
-                    />
+                    <AnimatedFillWidth
+                        widthPct={Math.min(percentage, 100)}
+                        animateEntrance={animateEntrance}
+                        style={styles.barFill}
+                    >
+                        <View
+                            style={[
+                                styles.barFill,
+                                {
+                                    width: '100%',
+                                    backgroundColor: fillColor,
+                                },
+                            ]}
+                        />
+                    </AnimatedFillWidth>
                 )}
             </View>
         </>
@@ -142,6 +195,9 @@ export const UsageBar: React.FC<UsageBarProps> = ({
                 testID={testID}
                 style={containerStyle}
                 onPress={onPress}
+                accessibilityRole="button"
+                accessibilityLabel={`${label} · ${displayValue}`}
+                accessibilityState={{ selected: active }}
             >
                 {content}
             </Pressable>

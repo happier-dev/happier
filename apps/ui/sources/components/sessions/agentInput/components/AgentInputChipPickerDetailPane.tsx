@@ -80,7 +80,7 @@ export function AgentInputChipPickerDetailPane(
     !shouldDeferDetailContent ||
     deferredDetailContentOptionId === props.option.id;
   const detailContent = canRenderDetailContent && props.option.renderDetailContent
-    ? props.option.renderDetailContent()
+    ? props.option.renderDetailContent({ onRequestClose: props.onRequestClose })
     : props.option.detailContent;
   const detailSelectOptions = props.option.detailSelectOptions ?? [];
 
@@ -179,6 +179,7 @@ export function AgentInputChipPickerDetailPane(
 const stylesheet = StyleSheet.create((theme) => ({
   detailPane: {
     flex: 1,
+    minHeight: 0,
     gap: 10,
     backgroundColor: theme.colors.surface.base,
   },
@@ -200,6 +201,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.text.primary,
   },
   detailCustomContent: {
+    flex: 1,
+    minHeight: 0,
     gap: 10,
   },
   detailDeferredPlaceholder: {

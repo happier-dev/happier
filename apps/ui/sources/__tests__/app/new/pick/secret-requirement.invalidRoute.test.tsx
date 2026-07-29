@@ -14,6 +14,7 @@ import {
     PICKER_THEME_COLORS,
 } from './testHarness';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 enableReactActEnvironment();
 
@@ -47,14 +48,14 @@ installPickerCommonModuleMocks({
         (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'profiles') return [];
                     return undefined;
-                },
-                useSettingMutable: (key: string) => {
+                } }),
+                useSettingMutable: createUseSettingMutableMockFromReader((key) => {
                     if (key === 'secrets') return [[], vi.fn()];
                     return [{}, vi.fn()];
-                },
+                }),
                 useSettings: () => settingsDefaults,
             },
         }),

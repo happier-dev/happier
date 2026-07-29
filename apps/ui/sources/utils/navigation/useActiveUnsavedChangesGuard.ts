@@ -43,7 +43,7 @@ export function useActiveUnsavedChangesGuard(params: Readonly<{
     React.useEffect(() => {
         if (!enabled) return;
 
-        const nav = params.navigation as NavigationLike;
+        const nav = params.navigation as NavigationLike | null;
         const guard = params.guard;
         if (!guard) return;
 
@@ -69,7 +69,7 @@ export function useActiveUnsavedChangesGuard(params: Readonly<{
             }
         }
 
-        const addListener = nav.addListener;
+        const addListener = nav?.addListener;
         if (typeof addListener !== 'function') {
             // Fall back to mount/unmount only.
             maybeSet();

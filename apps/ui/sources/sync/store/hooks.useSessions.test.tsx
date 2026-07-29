@@ -4,16 +4,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 
 import {
+    buildSessionListReachabilityRenderableKey,
     useAllSessionListAttentionRows,
     useAllSessionListRenderables,
     usePersistProjectLastMobileSurface,
     usePersistSessionLastMobileSurface,
     useProjectLastMobileSurface,
     useSessionLastMobileSurface,
+    useSessionFolderAssignment,
+    useSessionFolderAssignmentsBySessionKey,
     useSessionListRenderableWithServerScope,
     useSessionListIndexByServerId,
+    useSessionListReachabilityRenderablesForItems,
     useSessionListRowRenderablesForItems,
+    useSessionListRowStateByServerId,
     useSessionServerId,
+    useMachine,
     useSessions,
 } from '@/sync/domains/state/storage';
 import { setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
@@ -188,6 +194,30 @@ describe('useAllSessionListAttentionRows', () => {
 });
 
 describe('useSessionServerId', () => {
+    it('does not subscribe to storage while disabled', async () => {
+        const subscribeSpy = vi.spyOn(storage, 'subscribe');
+        try {
+            const hook = await renderHook(
+                (enabled: boolean) => useSessionServerId('session-1', enabled),
+                { initialProps: false },
+            );
+
+            expect(hook.getCurrent()).toBeNull();
+            expect(subscribeSpy).not.toHaveBeenCalled();
+
+            await hook.rerender(true);
+            expect(subscribeSpy).toHaveBeenCalledTimes(1);
+
+            await hook.rerender(false);
+            expect(hook.getCurrent()).toBeNull();
+
+            await hook.unmount();
+            expect(subscribeSpy).toHaveBeenCalledTimes(1);
+        } finally {
+            subscribeSpy.mockRestore();
+        }
+    });
+
     it('falls back to the active-list cache when the canonical sessions map has not hydrated yet', async () => {
         const previousState = storage.getState();
         try {
@@ -265,6 +295,65 @@ describe('useSessionServerId', () => {
     });
 });
 
+describe('useMachine', () => {
+    it('subscribes only when its consumer enables the machine target', async () => {
+        const subscribeSpy = vi.spyOn(storage, 'subscribe');
+        try {
+            const hook = await renderHook(
+                (enabled: boolean) => useMachine('machine-1', enabled),
+                { initialProps: false },
+            );
+
+            expect(hook.getCurrent()).toBeNull();
+            expect(subscribeSpy).not.toHaveBeenCalled();
+
+            await hook.rerender(true);
+            expect(subscribeSpy).toHaveBeenCalledTimes(1);
+
+            await hook.rerender(false);
+            expect(hook.getCurrent()).toBeNull();
+
+            await hook.unmount();
+            expect(subscribeSpy).toHaveBeenCalledTimes(1);
+        } finally {
+            subscribeSpy.mockRestore();
+        }
+    });
+});
+
+describe('session folder assignment selectors', () => {
+    it('read from the canonical session organization assignment map', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                sessionOrganizationFolderAssignmentsBySessionKey: {
+                    'server-a:session-1': 'folder-canonical',
+                },
+                sessionFolderAssignmentsBySessionKey: {
+                    'server-a:session-1': 'folder-stale',
+                },
+            }));
+
+            const hook = await renderHook(() => ({
+                assignment: useSessionFolderAssignment('server-a', 'session-1'),
+                assignments: useSessionFolderAssignmentsBySessionKey(),
+            }), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent().assignment).toBe('folder-canonical');
+            expect(hook.getCurrent().assignments).toEqual({
+                'server-a:session-1': 'folder-canonical',
+            });
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+});
+
 describe('useSessionListIndexByServerId', () => {
     it('returns canonical index rows when requested by an equivalent server identity alias', async () => {
         const previousState = storage.getState();
@@ -295,6 +384,58 @@ describe('useSessionListIndexByServerId', () => {
             expect(hook.getCurrent()).toEqual({
                 [profile.id]: [indexItem],
             });
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('updates mounted server-scoped index and row selectors when a socket-created row is merged', async () => {
+        const previousState = storage.getState();
+        try {
+            const olderRenderable = makeRenderable('older-session');
+            const socketRenderable = {
+                ...makeRenderable('socket-created-session'),
+                active: true,
+                activeAt: 10,
+                createdAt: 10,
+                updatedAt: 20,
+                metadata: { path: '/tmp/socket-created-session', host: 'localhost' },
+                presence: 'online',
+            } satisfies SessionListRenderableSession;
+
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                sessions: {},
+                sessionListRenderables: {},
+                sessionListRowStateByServerId: {},
+                sessionListIndexByServerId: {},
+                concurrentSessionListCacheByServerId: {},
+            }));
+            storage.getState().replaceSessionListRenderables([olderRenderable]);
+
+            const hook = await renderHook(() => ({
+                indexByServerId: useSessionListIndexByServerId(['active-server']),
+                rowsByServerId: useSessionListRowStateByServerId(),
+            }), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent().indexByServerId['active-server']?.some((item) => (
+                item.type === 'session' && item.sessionId === 'socket-created-session'
+            ))).toBe(false);
+            expect(hook.getCurrent().rowsByServerId['active-server']?.['socket-created-session']).toBeUndefined();
+
+            await act(async () => {
+                storage.getState().mergeSessionListRenderables([socketRenderable]);
+            });
+
+            expect(hook.getCurrent().indexByServerId['active-server']?.some((item) => (
+                item.type === 'session' && item.sessionId === 'socket-created-session'
+            ))).toBe(true);
+            expect(hook.getCurrent().rowsByServerId['active-server']?.['socket-created-session']).toBe(socketRenderable);
 
             await hook.unmount();
         } finally {
@@ -774,8 +915,10 @@ describe('useSessionListRenderableWithServerScope', () => {
                 },
                 { flushOptions: { cycles: 1, turns: 4 } },
             );
+            const rowKey = buildSessionListReachabilityRenderableKey('server-1', 'session-1');
+            expect(rowKey).toBeTruthy();
             const initial = hook.getCurrent();
-            const initialRenderable = initial.get('server-1:session-1');
+            const initialRenderable = initial.get(rowKey!);
 
             await act(async () => {
                 storage.setState((state) => ({
@@ -794,7 +937,7 @@ describe('useSessionListRenderableWithServerScope', () => {
             });
 
             expect(hook.getCurrent()).toBe(initial);
-            expect(hook.getCurrent().get('server-1:session-1')).toBe(initialRenderable);
+            expect(hook.getCurrent().get(rowKey!)).toBe(initialRenderable);
             expect(renderCount).toBe(1);
 
             await act(async () => {
@@ -814,7 +957,7 @@ describe('useSessionListRenderableWithServerScope', () => {
             });
 
             expect(hook.getCurrent()).not.toBe(initial);
-            expect(hook.getCurrent().get('server-1:session-1')).not.toBe(initialRenderable);
+            expect(hook.getCurrent().get(rowKey!)).not.toBe(initialRenderable);
 
             await hook.unmount();
         } finally {
@@ -886,9 +1029,13 @@ describe('useSessionListRenderableWithServerScope', () => {
                 },
                 { flushOptions: { cycles: 1, turns: 4 } },
             );
+            const serverOneKey = buildSessionListReachabilityRenderableKey('server-1', 'session-1');
+            const serverTwoKey = buildSessionListReachabilityRenderableKey('server-2', 'session-1');
+            expect(serverOneKey).toBeTruthy();
+            expect(serverTwoKey).toBeTruthy();
             const initial = hook.getCurrent();
-            const initialServerOneRenderable = initial.get('server-1:session-1');
-            const initialServerTwoRenderable = initial.get('server-2:session-1');
+            const initialServerOneRenderable = initial.get(serverOneKey!);
+            const initialServerTwoRenderable = initial.get(serverTwoKey!);
 
             await act(async () => {
                 storage.setState((state) => ({
@@ -910,13 +1057,79 @@ describe('useSessionListRenderableWithServerScope', () => {
             });
 
             expect(hook.getCurrent()).toBe(initial);
-            expect(hook.getCurrent().get('server-1:session-1')).toBe(initialServerOneRenderable);
-            expect(hook.getCurrent().get('server-2:session-1')).toBe(initialServerTwoRenderable);
+            expect(hook.getCurrent().get(serverOneKey!)).toBe(initialServerOneRenderable);
+            expect(hook.getCurrent().get(serverTwoKey!)).toBe(initialServerTwoRenderable);
             expect(renderCount).toBe(1);
 
             await hook.unmount();
         } finally {
             vi.useRealTimers();
+            storage.setState(previousState);
+        }
+    });
+
+    it('resolves row renderables through equivalent server identity aliases', async () => {
+        const previousState = storage.getState();
+        try {
+            const profile = upsertServerProfile({
+                serverUrl: 'https://row-alias.example.test',
+                name: 'Row Alias',
+                source: 'manual',
+            });
+            setServerProfileIdentityForUrl(profile.serverUrl, 'srv_row_alias');
+            const rowItems: SessionListIndexItem[] = [{
+                type: 'session',
+                sessionId: 'session-1',
+                serverId: 'srv_row_alias',
+                groupKey: 'group-1',
+                groupKind: 'date',
+            }];
+            const renderable: SessionListRenderableSession = {
+                ...makeRenderable('session-1'),
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 2,
+                active: true,
+                activeAt: 2,
+                metadata: { path: '/repo', machineId: 'm-1', host: 'localhost' },
+                metadataVersion: 1,
+                presence: 'online',
+            };
+
+            storage.setState((state) => ({
+                ...state,
+                sessionListRenderables: {},
+                sessionListRowStateByServerId: {
+                    [profile.id]: {
+                        'session-1': renderable,
+                    },
+                },
+            }));
+
+            const rowHook = await renderHook(
+                () => useSessionListRowRenderablesForItems(rowItems),
+                { flushOptions: { cycles: 1, turns: 4 } },
+            );
+            const reachabilityHook = await renderHook(
+                () => useSessionListReachabilityRenderablesForItems(rowItems),
+                { flushOptions: { cycles: 1, turns: 4 } },
+            );
+
+            const rowKey = buildSessionListReachabilityRenderableKey('srv_row_alias', 'session-1');
+            expect(rowKey).toBeTruthy();
+
+            expect(rowHook.getCurrent().get(rowKey!)).toEqual(expect.objectContaining({
+                id: 'session-1',
+                metadata: renderable.metadata,
+            }));
+            expect(reachabilityHook.getCurrent().get('srv_row_alias\u0000session-1')).toEqual(expect.objectContaining({
+                id: 'session-1',
+                metadata: renderable.metadata,
+            }));
+
+            await rowHook.unmount();
+            await reachabilityHook.unmount();
+        } finally {
             storage.setState(previousState);
         }
     });

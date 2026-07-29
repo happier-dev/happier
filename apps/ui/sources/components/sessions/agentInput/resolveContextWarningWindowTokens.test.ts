@@ -35,7 +35,7 @@ describe('resolveContextWarningWindowTokens', () => {
             host: 'localhost',
             sessionModelsV1: {
                 v: 1,
-                provider: 'codex',
+                agentId: 'codex',
                 updatedAt: 1,
                 currentModelId: 'gpt-5',
                 availableModels: [
@@ -63,7 +63,7 @@ describe('resolveContextWarningWindowTokens', () => {
             host: 'localhost',
             sessionModelsV1: {
                 v: 1,
-                provider: 'codex',
+                agentId: 'codex',
                 updatedAt: 1,
                 currentModelId: 'gpt-5',
                 availableModels: [
@@ -95,7 +95,7 @@ describe('resolveContextWarningWindowTokens', () => {
             host: 'localhost',
             sessionModelsV1: {
                 v: 1,
-                provider: 'claude',
+                agentId: 'claude',
                 updatedAt: 1,
                 currentModelId: 'claude-opus-4-7',
                 availableModels: [
@@ -125,7 +125,7 @@ describe('resolveContextWarningWindowTokens', () => {
             },
             sessionModelsV1: {
                 v: 1,
-                provider: 'claude',
+                agentId: 'claude',
                 updatedAt: 1,
                 currentModelId: 'claude-opus-4-7',
                 availableModels: [
@@ -144,13 +144,52 @@ describe('resolveContextWarningWindowTokens', () => {
         } as any)).toBe(190000);
     });
 
+    it('uses the canonical provider-bound selection instead of a stale session current-model id', () => {
+        const metadata = MetadataSchema.parse({
+            path: '/tmp/project',
+            host: 'localhost',
+            modelSelectionIntentV1: {
+                v: 1,
+                updatedAt: 2,
+                selection: {
+                    agentTargetKey: 'backend:claude',
+                    providerConnectionId: 'pc_01J00000000000000000000000',
+                    modelId: 'claude-opus-4-7',
+                },
+            },
+            sessionModelsV1: {
+                v: 1,
+                agentId: 'claude',
+                updatedAt: 1,
+                currentModelId: 'claude-sonnet-4-5',
+                availableModels: [
+                    {
+                        id: 'claude-sonnet-4-5',
+                        name: 'Sonnet',
+                        contextWindowTokens: 200000,
+                    },
+                    {
+                        id: 'claude-opus-4-7',
+                        name: 'Opus 4.7',
+                        contextWindowTokens: 1000000,
+                    },
+                ],
+            },
+        } as any);
+
+        expect(resolveContextWarningWindowTokens({
+            agentId: 'claude',
+            metadata,
+        } as any)).toBe(950000);
+    });
+
     it('returns null when the provider metadata does not expose a valid context window', () => {
         const metadata = MetadataSchema.parse({
             path: '/tmp/project',
             host: 'localhost',
             sessionModelsV1: {
                 v: 1,
-                provider: 'claude',
+                agentId: 'claude',
                 updatedAt: 1,
                 currentModelId: 'sonnet',
                 availableModels: [
@@ -164,6 +203,101 @@ describe('resolveContextWarningWindowTokens', () => {
 
         expect(resolveContextWarningWindowTokens({
             agentId: 'opencode',
+            metadata,
+        } as any)).toBeNull();
+    });
+
+    it('uses exact Provider context facts without Claude id inference', () => {
+        const metadata = MetadataSchema.parse({
+            path: '/tmp/project',
+            host: 'localhost',
+            providerBindingV1: {
+                v: 1,
+                connectionId: 'pc_deepseek',
+                contributionKey: 'happier.provider.deepseek/deepseek',
+                connectionRevision: 1,
+                protocol: 'anthropic',
+                materialization: 'spawnEnv',
+                compatibilityFingerprint: 'compatibility-v1',
+                bindingSecurityFingerprint: 'security-v1',
+                displaySnapshot: {
+                    providerName: 'DeepSeek',
+                    connectionName: 'DeepSeek',
+                    connectionRole: 'default',
+                    connectionDisplayNameMode: 'automatic',
+                },
+            },
+            modelSelectionIntentV1: {
+                v: 1,
+                updatedAt: 2,
+                selection: {
+                    agentTargetKey: 'backend:claude',
+                    providerConnectionId: 'pc_deepseek',
+                    modelId: 'deepseek-ai/DeepSeek-V3.1',
+                },
+            },
+            sessionModelsV1: {
+                v: 1,
+                agentId: 'claude',
+                updatedAt: 2,
+                currentModelId: 'deepseek-ai/DeepSeek-V3.1',
+                availableModels: [{
+                    id: 'deepseek-ai/DeepSeek-V3.1',
+                    name: 'DeepSeek V3.1',
+                    contextWindowTokens: 128_000,
+                }],
+            },
+        } as any);
+
+        expect(resolveContextWindowTokens({
+            agentId: 'claude',
+            metadata,
+        } as any)).toBe(128_000);
+    });
+
+    it('keeps Provider-bound context unknown instead of applying Claude defaults', () => {
+        const metadata = MetadataSchema.parse({
+            path: '/tmp/project',
+            host: 'localhost',
+            providerBindingV1: {
+                v: 1,
+                connectionId: 'pc_deepseek',
+                contributionKey: 'happier.provider.deepseek/deepseek',
+                connectionRevision: 1,
+                protocol: 'anthropic',
+                materialization: 'spawnEnv',
+                compatibilityFingerprint: 'compatibility-v1',
+                bindingSecurityFingerprint: 'security-v1',
+                displaySnapshot: {
+                    providerName: 'DeepSeek',
+                    connectionName: 'DeepSeek',
+                    connectionRole: 'default',
+                    connectionDisplayNameMode: 'automatic',
+                },
+            },
+            modelSelectionIntentV1: {
+                v: 1,
+                updatedAt: 2,
+                selection: {
+                    agentTargetKey: 'backend:claude',
+                    providerConnectionId: 'pc_deepseek',
+                    modelId: 'deepseek-ai/DeepSeek-V3.1',
+                },
+            },
+            sessionModelsV1: {
+                v: 1,
+                agentId: 'claude',
+                updatedAt: 2,
+                currentModelId: 'deepseek-ai/DeepSeek-V3.1',
+                availableModels: [{
+                    id: 'deepseek-ai/DeepSeek-V3.1',
+                    name: 'DeepSeek V3.1',
+                }],
+            },
+        } as any);
+
+        expect(resolveContextWindowTokens({
+            agentId: 'claude',
             metadata,
         } as any)).toBeNull();
     });
@@ -192,7 +326,7 @@ describe('resolveContextWindowTokens observed-usage evidence bump (Claude)', () 
             host: 'localhost',
             sessionModelsV1: {
                 v: 1,
-                provider: 'claude',
+                agentId: 'claude',
                 updatedAt: 1,
                 currentModelId: 'claude-sonnet-4-6',
                 availableModels: [

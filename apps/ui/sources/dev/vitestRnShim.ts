@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 import expoConstantsStub from './expoConstantsStub';
 import expoModulesCoreStub from './expoModulesCoreStub';
+import * as expoNotificationsStub from './expoNotificationsStub';
+import * as expoTaskManagerStub from './expoTaskManagerStub';
 import * as posthogReactNativeStub from './posthogReactNativeStub';
 import * as reactNativeRootStub from './reactNativeStub';
 import reactNativeInternalProxy from './reactNativeInternalStub';
@@ -82,6 +84,8 @@ export function installVitestRnShim(options: VitestRnShimOptions = {}): void {
                 if (request.startsWith('react-native/')) return reactNativeInternalProxy;
                 if (request === 'expo-constants' || request.startsWith('expo-constants/')) return expoConstantsStub;
                 if (request === 'expo-modules-core' || request.startsWith('expo-modules-core/')) return expoModulesCoreStub;
+                if (request === 'expo-notifications') return expoNotificationsStub;
+                if (request === 'expo-task-manager') return expoTaskManagerStub;
                 if (request === 'posthog-react-native' || request.startsWith('posthog-react-native/')) {
                     return posthogReactNativeStub;
                 }

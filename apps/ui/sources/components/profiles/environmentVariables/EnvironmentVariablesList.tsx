@@ -27,6 +27,7 @@ export interface EnvironmentVariablesListProps {
     ) => void;
     getDefaultSecretNameForSourceVar: (sourceVarName: string) => string | null;
     onPickDefaultSecretForSourceVar: (sourceVarName: string) => void;
+    allowSourceRequirements?: boolean;
 }
 
 const SECRET_NAME_REGEX = /TOKEN|KEY|SECRET|AUTH|PASS|PASSWORD|COOKIE/i;
@@ -46,6 +47,7 @@ export function EnvironmentVariablesList({
     onUpdateSourceRequirement,
     getDefaultSecretNameForSourceVar,
     onPickDefaultSecretForSourceVar,
+    allowSourceRequirements = true,
 }: EnvironmentVariablesListProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -257,6 +259,7 @@ export function EnvironmentVariablesList({
                                 onUpdate={handleUpdateVariable}
                                 onDelete={handleDeleteVariable}
                                 onDuplicate={handleDuplicateVariable}
+                                showSourceRequirements={allowSourceRequirements}
                             />
                         );
                     })}

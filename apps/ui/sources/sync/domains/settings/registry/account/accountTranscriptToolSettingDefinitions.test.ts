@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { settingsDefaults, settingsParse } from '../../settings';
 import { ACCOUNT_TRANSCRIPT_TOOL_SETTING_DEFINITIONS } from './accountTranscriptToolSettingDefinitions';
 
 describe('ACCOUNT_TRANSCRIPT_TOOL_SETTING_DEFINITIONS message actions', () => {
@@ -31,5 +32,18 @@ describe('ACCOUNT_TRANSCRIPT_TOOL_SETTING_DEFINITIONS message actions', () => {
         expect(definition.schema.safeParse('plain').success).toBe(true);
         expect(definition.schema.safeParse('html').success).toBe(false);
         expect(definition.analytics?.valueKind).toBe('enum');
+    });
+
+    it('keeps predecessor renderer values opaque without exposing an active setting', () => {
+        expect(ACCOUNT_TRANSCRIPT_TOOL_SETTING_DEFINITIONS).not.toHaveProperty('transcriptListImplementation');
+        expect(settingsDefaults).not.toHaveProperty('transcriptListImplementation');
+
+        for (const legacyValue of ['flash_v2', 'flatlist_legacy']) {
+            const parsed = settingsParse({
+                transcriptListImplementation: legacyValue,
+            }) as typeof settingsDefaults & { transcriptListImplementation?: unknown };
+
+            expect(parsed.transcriptListImplementation).toBe(legacyValue);
+        }
     });
 });

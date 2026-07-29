@@ -9,7 +9,6 @@ function artifact(params: Readonly<{
     pluginId: string;
     artifactId: string;
     digest: string;
-    revokedAt?: string;
 }>): PluginUiArtifactProjection {
     return Object.freeze({
         id: params.id,
@@ -17,14 +16,13 @@ function artifact(params: Readonly<{
         contributionKind: 'uiArtifact',
         artifactId: params.artifactId,
         integrity: { digest: params.digest },
-        ...(params.revokedAt ? { revokedAt: params.revokedAt } : {}),
     });
 }
 
-function model(artifacts: readonly PluginUiArtifactProjection[]): PluginUiProjectionModel {
+function model(artifacts: readonly PluginUiArtifactProjection[], generation = 1): PluginUiProjectionModel {
     return Object.freeze({
         ...EMPTY_PLUGIN_UI_PROJECTION,
-        generation: 1,
+        generation,
         uiArtifactsById: Object.freeze(Object.fromEntries(artifacts.map((entry) => [entry.id, entry]))),
     });
 }
@@ -61,14 +59,14 @@ describe('plugin UI artifact invalidation', () => {
         ]);
 
         expect(resolvePluginUiArtifactInvalidation(previous, next)).toEqual({
+            projectionGenerationChanged: false,
             changedArtifactIds: ['uiArtifact:acme.preview:native-ios'],
             changedPluginIds: ['acme.preview'],
             removedArtifactIds: [],
-            revokedArtifactIds: [],
         });
     });
 
-    it('reports removed and revoked artifacts without blanking unrelated plugins', () => {
+    it('reports removed artifacts without blanking unrelated plugins', () => {
         const previous = model([
             artifact({
                 id: 'uiArtifact:acme.preview:native-ios',
@@ -89,15 +87,33 @@ describe('plugin UI artifact invalidation', () => {
                 pluginId: 'acme.preview',
                 artifactId: 'native-ios',
                 digest: 'sha256:old',
-                revokedAt: '2026-06-09T19:00:00.000Z',
             }),
         ]);
 
         expect(resolvePluginUiArtifactInvalidation(previous, next)).toEqual({
-            changedArtifactIds: ['uiArtifact:acme.preview:native-ios'],
-            changedPluginIds: ['acme.preview', 'gone.preview'],
+            projectionGenerationChanged: false,
+            changedArtifactIds: [],
+            changedPluginIds: ['gone.preview'],
             removedArtifactIds: ['uiArtifact:gone.preview:native-ios'],
-            revokedArtifactIds: ['uiArtifact:acme.preview:native-ios'],
+        });
+    });
+
+    it('marks every executable artifact owner stale when the projection generation is replaced', () => {
+        const stableArtifact = artifact({
+            id: 'uiArtifact:acme.preview:native-web',
+            pluginId: 'acme.preview',
+            artifactId: 'native-web',
+            digest: 'sha256:stable',
+        });
+
+        expect(resolvePluginUiArtifactInvalidation(
+            model([stableArtifact], 12),
+            model([stableArtifact], 13),
+        )).toEqual({
+            changedArtifactIds: [],
+            changedPluginIds: ['acme.preview'],
+            projectionGenerationChanged: true,
+            removedArtifactIds: [],
         });
     });
 });

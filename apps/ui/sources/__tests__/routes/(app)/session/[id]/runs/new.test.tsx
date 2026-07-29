@@ -297,8 +297,8 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
     useSessionExecutionRunsSupported: () => sessionExecutionRunsSupportedMock,
 }));
-vi.mock('@/components/sessions/model/useExternalSessionRuntime', () => ({
-    useExternalSessionRuntime: () => externalSessionRuntimeMock,
+vi.mock('@/components/sessions/model/useSessionExternalSessionRuntime', () => ({
+    useSessionExternalSessionRuntime: () => externalSessionRuntimeMock,
 }));
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => sessionMachineReachabilityMock,
@@ -536,6 +536,7 @@ describe('Session New Run Screen', () => {
                 machineId: 'machine-1',
                 path: '/workspace/repo',
                 claudeSessionId: 'claude-resume-id',
+                claudeTranscriptPath: '/workspace/repo/.claude/sessions/claude-resume-id.jsonl',
             },
         };
         executionRunsBackendsMock = {
@@ -651,7 +652,7 @@ describe('Session New Run Screen', () => {
                 permissionMode: 'default',
                 externalSessionV1: {
                     v: 1,
-                    providerId: 'claude',
+                    agentId: 'claude',
                     machineId: 'machine-1',
                     remoteSessionId: 'remote-session-1',
                     source: 'provider',
@@ -661,7 +662,7 @@ describe('Session New Run Screen', () => {
         externalSessionRuntimeMock = {
             externalSessionLink: {
                 v: 1,
-                providerId: 'claude',
+                agentId: 'claude',
                 machineId: 'machine-1',
                 remoteSessionId: 'remote-session-1',
                 source: 'provider',
@@ -904,16 +905,16 @@ describe('Session New Run Screen', () => {
             mergedBackendProjectionById: {
                 'coderabbit.review.backend': {
                     backendId: 'coderabbit.review.backend',
-                    providerId: 'coderabbit.review.provider',
+                    agentId: 'coderabbit.review.provider',
                     title: 'CodeRabbit Review',
                     subtitle: 'Plugin-backed review engine',
-                    providerAgentId: null,
+                    catalogAgentId: null,
                     iconAgentId: null,
                 },
             },
             mergedProviderProjectionById: {
                 'coderabbit.review.provider': {
-                    providerId: 'coderabbit.review.provider',
+                    agentId: 'coderabbit.review.provider',
                     title: 'CodeRabbit Provider',
                     subtitle: 'Plugin-backed review provider',
                     channel: 'plugin',
@@ -923,6 +924,7 @@ describe('Session New Run Screen', () => {
             },
             discoveredBackendIds: ['coderabbit.review.backend'],
             pluginProjectionById: {},
+            pluginProjectionV2: null,
             registryDiagnostics: [],
         };
 

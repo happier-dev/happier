@@ -1,11 +1,13 @@
 import * as React from 'react';
-import { View, Pressable, StyleProp, ViewStyle, TextStyle, Platform, type AccessibilityRole, type TextProps } from 'react-native';
+import { View, Pressable, StyleProp, ViewStyle, TextStyle, Platform, type AccessibilityRole, type TextProps, type ViewProps } from 'react-native';
 import { Typography } from '@/constants/Typography';
-import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { ItemGroupSelectionContext } from '@/components/ui/lists/ItemGroup';
+import {
+    ItemGroupSelectionContext,
+    type ItemGroupRadioFocusable,
+} from '@/components/ui/lists/ItemGroup';
 import { useItemGroupRowPosition } from '@/components/ui/lists/ItemGroupRowPosition';
 import { getItemGroupRowCornerRadii } from '@/components/ui/lists/itemGroupRowCorners';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
@@ -16,6 +18,8 @@ import {
 } from '@/components/ui/text/webStartEllipsisTextStyles';
 import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import {
     ITEM_CHEVRON_SIZE,
     ITEM_ICON_BOX_SIZE,
@@ -24,6 +28,8 @@ import {
     ITEM_TITLE_TEXT_METRICS,
 } from '@/components/ui/lists/itemDensityMetrics';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { buildActionRowAccessibilityLabel } from './actionRowAccessibility';
 
 function resizeItemIconForDensity(icon: React.ReactNode, iconSize: number): React.ReactNode {
     if (!React.isValidElement(icon) || icon.type === React.Fragment) {
@@ -49,6 +55,12 @@ export interface ItemProps {
     icon?: React.ReactNode;
     leftElement?: React.ReactNode;
     leftElementWhenHovered?: React.ReactNode;
+    /**
+     * Override the leading-element box size (width/height). Use when a custom
+     * `leftElement` (e.g. a capacity gauge) is larger than the default icon box,
+     * so the fixed slot doesn't clip its left edge or eat the title gap.
+     */
+    iconBoxSize?: number;
     rightElement?: React.ReactNode;
     onPress?: () => void;
     onDoublePress?: () => void;
@@ -58,10 +70,18 @@ export interface ItemProps {
     onHoverIn?: () => void;
     onHoverOut?: () => void;
     accessibilityRole?: AccessibilityRole;
-    webRole?: React.AriaRole;
+    accessibilityLabel?: string;
+    webRole?: ViewProps['role'];
+    /** Web DOM id used by composite widgets such as listbox/aria-activedescendant. */
+    webId?: string;
+    /** Web ARIA position metadata for option-like rows. */
+    accessibilityPositionInSet?: number;
+    accessibilitySetSize?: number;
     disabled?: boolean;
     loading?: boolean;
     selected?: boolean;
+    /** Visual keyboard focus state, intentionally separate from selected semantics. */
+    focused?: boolean;
     destructive?: boolean;
     density?: 'comfortable' | 'cozy' | 'compact' | 'tight';
     /** Display mode: 'interactive' (default) enables press/hover feedback and chevron;
@@ -75,10 +95,27 @@ export interface ItemProps {
     subtitleEllipsizeMode?: ItemTextEllipsizeMode;
     detailStyle?: StyleProp<TextStyle>;
     showChevron?: boolean;
+    /**
+     * Keep the navigation chevron visible even when `rightElement` is present.
+     * By default a `rightElement` suppresses the chevron (the accessory owns the
+     * right slot). Opt in for rows that BOTH carry a status accessory AND
+     * navigate (e.g. a branch row with a "Worktree" badge that drills into a
+     * reuse-or-create step), so the further-step affordance stays visible.
+     */
+    keepChevronWithRightElement?: boolean;
+    /**
+     * Render `rightElement` as a sibling of the row Pressable. Use this
+     * when the right accessory contains its own Pressable/Switch/menu controls;
+     * this keeps one activation owner per control on every platform and avoids
+     * invalid nested-button markup on React Native Web.
+     */
+    rightElementOutsidePressable?: boolean;
     showDivider?: boolean;
     dividerInset?: number;
     pressableStyle?: StyleProp<ViewStyle>;
     copy?: boolean | string;
+    /** @internal Assigned by ItemGroup for named radio-group keyboard navigation. */
+    itemGroupRadioIndex?: number;
 }
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
@@ -198,6 +235,16 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         alignItems: 'center',
         marginLeft: 8,
     },
+    splitPressable: {
+        flex: 1,
+        alignSelf: 'stretch',
+        justifyContent: 'center',
+    },
+    splitPressableInner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+    },
     detail: {
         ...Typography.default('regular'),
         color: theme.colors.text.secondary,
@@ -232,9 +279,7 @@ export const Item = React.memo<ItemProps>((props) => {
     const isAndroid = Platform.OS === 'android';
     const isWeb = Platform.OS === 'web';
     const hoverBackgroundColor = theme.colors.surface.pressed;
-    
-    // Timer ref for long press copy functionality
-    const longPressTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const copyFeedback = useTemporaryCopyFeedback();
     
     const {
         testID,
@@ -248,6 +293,7 @@ export const Item = React.memo<ItemProps>((props) => {
         icon,
         leftElement,
         leftElementWhenHovered,
+        iconBoxSize,
         rightElement,
         onPress,
         onDoublePress,
@@ -257,10 +303,15 @@ export const Item = React.memo<ItemProps>((props) => {
         onHoverIn,
         onHoverOut,
         accessibilityRole,
+        accessibilityLabel,
         webRole,
+        webId,
+        accessibilityPositionInSet,
+        accessibilitySetSize,
         disabled,
         loading,
         selected,
+        focused,
         destructive,
         density,
         mode,
@@ -271,10 +322,13 @@ export const Item = React.memo<ItemProps>((props) => {
         subtitleEllipsizeMode,
         detailStyle,
         showChevron = true,
+        keepChevronWithRightElement = false,
+        rightElementOutsidePressable = false,
         showDivider = true,
         dividerInset = isIOS ? 15 : 16,
         pressableStyle,
-        copy
+        copy,
+        itemGroupRadioIndex,
     } = props;
     const webTestIdProps = isWeb && testID
         ? ({ 'data-testid': testID } as const)
@@ -283,7 +337,7 @@ export const Item = React.memo<ItemProps>((props) => {
 
     // Handle copy functionality
     const handleCopy = React.useCallback(async () => {
-        if (!copy || isWeb) return;
+        if (!copy) return false;
         
         let textToCopy: string;
         const subtitleText = typeof subtitle === 'string' ? subtitle : null;
@@ -297,40 +351,20 @@ export const Item = React.memo<ItemProps>((props) => {
             textToCopy = detail || subtitleText || titleLabel;
         }
         
-        try {
-            await Clipboard.setStringAsync(textToCopy);
-            Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: titleLabel }));
-        } catch (error) {
+        const copied = await setClipboardStringSafe(textToCopy);
+        if (!copied) {
             Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
+            return false;
         }
-    }, [copy, detail, isWeb, subtitle, titleLabel]);
+        copyFeedback.markCopied();
+        return true;
+    }, [copy, copyFeedback, detail, subtitle, titleLabel]);
     
     const longPressConsumedRef = React.useRef(false);
 
     // Handle long press for copy functionality
     const handlePressIn = React.useCallback(() => {
         longPressConsumedRef.current = false;
-        if (copy && !isWeb && !onPress) {
-            longPressTimer.current = setTimeout(() => {
-                handleCopy();
-            }, 500); // 500ms delay for long press
-        }
-    }, [copy, isWeb, onPress, handleCopy]);
-    
-    const handlePressOut = React.useCallback(() => {
-        if (longPressTimer.current) {
-            clearTimeout(longPressTimer.current);
-            longPressTimer.current = null;
-        }
-    }, []);
-    
-    // Clean up timer on unmount
-    React.useEffect(() => {
-        return () => {
-            if (longPressTimer.current) {
-                clearTimeout(longPressTimer.current);
-            }
-        };
     }, []);
     
     const webDoublePressHandledAtMsRef = React.useRef<number>(0);
@@ -370,23 +404,71 @@ export const Item = React.memo<ItemProps>((props) => {
                 return;
             }
         }
+        if (copy && isWeb && !onPress) {
+            void handleCopy();
+            return;
+        }
+
         onPress?.();
-    }, [isWeb, onDoublePress, onPress]);
+    }, [copy, handleCopy, isWeb, onDoublePress, onPress]);
 
     const handleLongPress = React.useCallback(() => {
         longPressConsumedRef.current = true;
-        onLongPress?.();
-    }, [onLongPress]);
+        if (onLongPress) {
+            onLongPress();
+            return;
+        }
+        void handleCopy();
+    }, [handleCopy, onLongPress]);
 
     const isInfoMode = mode === 'info';
     const hasPrimaryPressAction = Boolean(onPress || onDoublePress || onLongPress);
     const hasCopyLongPress = Boolean(copy && !isWeb && !onPress);
-    const isInteractive = !isInfoMode && (hasPrimaryPressAction || hasCopyLongPress);
+    const hasCopyPress = Boolean(copy && isWeb && !onPress);
+    const isInteractive = !isInfoMode && (hasPrimaryPressAction || hasCopyLongPress || hasCopyPress);
+    const isRadioRole = accessibilityRole === 'radio' || webRole === 'radio';
+    const radioGroup = selectionContext?.radioGroup ?? null;
+    const isGroupedRadio = isRadioRole && typeof itemGroupRadioIndex === 'number' && radioGroup !== null;
+    const groupedRadioTargetRef = React.useRef<ItemGroupRadioFocusable | null>(null);
+    React.useEffect(() => {
+        if (!isGroupedRadio) return;
+        return radioGroup.register(itemGroupRadioIndex, groupedRadioTargetRef.current);
+    }, [isGroupedRadio, itemGroupRadioIndex, radioGroup]);
+    const isKeyboardActivatableRole = isRadioRole || webRole === 'option';
+    const handleSemanticKeyDown = React.useCallback((event: any) => {
+        if (!isWeb || !isKeyboardActivatableRole || disabled || loading) return;
+        const key = event?.nativeEvent?.key ?? event?.key;
+        if (isGroupedRadio && radioGroup.move(itemGroupRadioIndex, key)) {
+            event?.preventDefault?.();
+            event?.stopPropagation?.();
+            return;
+        }
+        if (isGroupedRadio && key === 'Enter') return;
+        if (key !== ' ' && key !== 'Spacebar' && key !== 'Enter') return;
+        event?.preventDefault?.();
+        handlePress(event);
+    }, [
+        disabled,
+        handlePress,
+        isGroupedRadio,
+        isKeyboardActivatableRole,
+        isWeb,
+        itemGroupRadioIndex,
+        loading,
+        radioGroup,
+    ]);
 
     // Only show the navigation chevron when the row has an actual "tap to do something" affordance.
     // Long-press copy rows (mobile) and long-press-only rows should not look like navigation.
-    const showAccessory = Boolean(!isInfoMode && showChevron && !rightElement && (onPress || onDoublePress));
-    const showSelectedBackground = !!selected && ((selectionContext?.selectableItemCount ?? 2) > 1);
+    // A `rightElement` normally claims the right slot and hides the chevron, UNLESS the row opts
+    // into `keepChevronWithRightElement` (badge + chevron together).
+    const showAccessory = Boolean(
+        !isInfoMode
+        && showChevron
+        && (keepChevronWithRightElement || !rightElement)
+        && (onPress || onDoublePress),
+    );
+    const showSelectedBackground = !!(selected || focused) && ((selectionContext?.selectableItemCount ?? 2) > 1);
     const groupCornerRadius = Platform.select({ ios: 10, default: 16 });
 
     const resolvedDensity = useResolvedItemDensity(density);
@@ -405,13 +487,16 @@ export const Item = React.memo<ItemProps>((props) => {
             : isCozy
                 ? [styles.container, styles.containerCozy]
             : styles.container;
+    const iconBoxSizeOverride = iconBoxSize != null
+        ? { width: iconBoxSize, height: iconBoxSize }
+        : null;
     const iconContainerStyle = isTight
-        ? [styles.iconContainer, styles.iconContainerTight]
+        ? [styles.iconContainer, styles.iconContainerTight, iconBoxSizeOverride]
         : isCompact
-            ? [styles.iconContainer, styles.iconContainerCompact]
+            ? [styles.iconContainer, styles.iconContainerCompact, iconBoxSizeOverride]
             : isCozy
-                ? [styles.iconContainer, styles.iconContainerCozy]
-            : styles.iconContainer;
+                ? [styles.iconContainer, styles.iconContainerCozy, iconBoxSizeOverride]
+            : [styles.iconContainer, iconBoxSizeOverride];
     const resolvedIconDensity = isTight ? 'tight' : isCompact ? 'compact' : isCozy ? 'cozy' : 'comfortable';
     const chevronSize = ITEM_CHEVRON_SIZE[resolvedIconDensity];
     const resolvedIconBoxSize = ITEM_ICON_BOX_SIZE[resolvedIconDensity];
@@ -452,7 +537,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 {
                     marginLeft: (isAndroid || isWeb)
                         ? 0
-                        : (dividerInset + (icon || leftElement ? (16 + resolvedIconBoxSize + resolvedIconMarginRight) : 16))
+                        : (dividerInset + (icon || leftElement ? (16 + (iconBoxSize ?? resolvedIconBoxSize) + resolvedIconMarginRight) : 16))
                 }
             ]}
         />
@@ -484,7 +569,9 @@ export const Item = React.memo<ItemProps>((props) => {
         );
     }, [isWeb]);
 
-    const renderRowContent = React.useCallback(() => (
+    const renderRowContent = React.useCallback((options?: Readonly<{ includeRightAccessory?: boolean }>) => {
+        const includeRightAccessory = options?.includeRightAccessory ?? true;
+        return (
         <>
             {/* Left Section */}
             {leftAccessory ? (
@@ -564,7 +651,9 @@ export const Item = React.memo<ItemProps>((props) => {
 
             {/* Right Section */}
             <View style={styles.rightSection}>
-                {detail && (
+                {copyFeedback.isCopied() ? (
+                    <CopiedPill visible testID="item-copy-feedback" />
+                ) : detail ? (
                     <Text
                         testID={detailTestID}
                         style={[
@@ -577,7 +666,7 @@ export const Item = React.memo<ItemProps>((props) => {
                     >
                         {detail}
                     </Text>
-                )}
+                ) : null}
                 {loading && (
                     <ActivitySpinner
                         size="small"
@@ -585,12 +674,14 @@ export const Item = React.memo<ItemProps>((props) => {
                         style={{ marginRight: showAccessory ? 6 : 0 }}
                     />
                 )}
-                {rightAccessory}
+                {includeRightAccessory ? rightAccessory : null}
                 {chevronAccessory}
             </View>
         </>
-    ), [
+    );
+    }, [
         chevronAccessory,
+        copyFeedback,
         detail,
         detailTestID,
         detailSizeStyle,
@@ -634,6 +725,11 @@ export const Item = React.memo<ItemProps>((props) => {
         renderRowContent,
         style,
     ]);
+    const splitRightElementOutsidePressable = Boolean(
+        isInteractive
+        && rightElementOutsidePressable
+        && rightAccessory,
+    );
 
     const resolveInteractiveRowStyle = React.useCallback((pressed: boolean) => {
         const backgroundColor = (() => {
@@ -672,10 +768,25 @@ export const Item = React.memo<ItemProps>((props) => {
     ]);
 
     const interactiveAccessibilityRole = isWeb ? undefined : (accessibilityRole ?? 'button');
-    const interactiveTabIndex = isWeb && !disabled && !loading ? 0 : undefined;
-    const interactiveAccessibilityState = (selected !== undefined || disabled || loading)
+    const interactiveWebRole = isWeb
+        ? (webRole ?? (!rightElement || splitRightElementOutsidePressable ? 'button' : undefined))
+        : undefined;
+    const generatedAccessibilityLabel = React.useMemo(() => (
+        buildActionRowAccessibilityLabel([title, subtitle, detail])
+    ), [detail, subtitle, title]);
+    const resolvedAccessibilityLabel = accessibilityLabel ?? (
+        interactiveWebRole ? generatedAccessibilityLabel : undefined
+    );
+    const interactiveTabIndex = isWeb
+        ? disabled || loading
+            ? -1
+            : isGroupedRadio
+                ? radioGroup.tabStopIndex === itemGroupRadioIndex ? 0 : -1
+                : 0
+        : undefined;
+    const interactiveAccessibilityState = (isRadioRole || selected !== undefined || disabled || loading)
         ? {
-            ...(selected !== undefined ? { selected } : {}),
+            ...(isRadioRole ? { checked: selected === true } : selected !== undefined ? { selected } : {}),
             ...(disabled || loading ? { disabled: true } : {}),
         }
         : undefined;
@@ -684,13 +795,91 @@ export const Item = React.memo<ItemProps>((props) => {
             'data-disabled': 'true',
         } as const)
         : null;
+    const webOptionIdentityProps = isWeb
+        ? {
+            ...(webId ? { id: webId } : {}),
+            ...(accessibilityPositionInSet !== undefined
+                ? { 'aria-posinset': accessibilityPositionInSet }
+                : {}),
+            ...(accessibilitySetSize !== undefined
+                ? { 'aria-setsize': accessibilitySetSize }
+                : {}),
+        }
+        : null;
+
+    if (splitRightElementOutsidePressable) {
+        return (
+            <>
+                <View style={[containerCore, style]}>
+                    <Pressable
+                        ref={isGroupedRadio ? groupedRadioTargetRef as any : undefined}
+                        testID={testID}
+                        {...webTestIdProps}
+                        {...webDisabledProps}
+                        {...webOptionIdentityProps}
+                        onPress={handlePress}
+                        onLongPress={handleLongPress}
+                        // @ts-expect-error - react-native types do not model web-only double click props; RN Web supports onDoubleClick.
+                        onDoubleClick={isWeb && onDoublePress ? (event: any) => {
+                            if (Date.now() - webDoublePressHandledAtMsRef.current < 600) {
+                                return;
+                            }
+                            webDoublePressHandledAtMsRef.current = Date.now();
+                            webLastPressAtMsRef.current = null;
+                            event?.preventDefault?.();
+                            event?.stopPropagation?.();
+                            onDoublePress();
+                        } : undefined}
+                        onPressIn={handlePressIn}
+                        onHoverIn={isWeb && !disabled && !loading ? () => {
+                            setIsHovered(true);
+                            onHoverIn?.();
+                        } : undefined}
+                        onHoverOut={isWeb ? () => {
+                            setIsHovered(false);
+                            onHoverOut?.();
+                        } : undefined}
+                        onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
+                        onContextMenu={isWeb ? (onContextMenu as any) : undefined}
+                        onKeyDown={isWeb && isKeyboardActivatableRole ? handleSemanticKeyDown : undefined}
+                        {...(interactiveWebRole ? { role: interactiveWebRole } : undefined)}
+                        accessibilityRole={interactiveAccessibilityRole}
+                        accessibilityLabel={resolvedAccessibilityLabel}
+                        aria-label={resolvedAccessibilityLabel}
+                        accessibilityState={interactiveAccessibilityState}
+                        aria-selected={!isRadioRole && selected !== undefined ? selected : undefined}
+                        aria-checked={isRadioRole ? selected === true : undefined}
+                        aria-disabled={disabled || loading ? true : undefined}
+                        tabIndex={interactiveTabIndex as 0 | -1 | undefined}
+                        disabled={disabled || loading}
+                        style={({ pressed }) => [styles.splitPressable, resolveInteractiveRowStyle(pressed)]}
+                        android_ripple={(isAndroid || isWeb) ? {
+                            color: theme.colors.surface.ripple,
+                            borderless: false,
+                            foreground: true
+                        } : undefined}
+                    >
+                        <View style={[styles.splitPressableInner, containerPadding]}>
+                            {renderRowContent({ includeRightAccessory: false })}
+                        </View>
+                    </Pressable>
+                    <View style={styles.rightSection}>
+                        {rightAccessory}
+                    </View>
+                </View>
+                {dividerNode}
+            </>
+        );
+    }
 
     if (isInteractive) {
         return (
             <Pressable
+                ref={isGroupedRadio ? groupedRadioTargetRef as any : undefined}
                 testID={testID}
                 {...webTestIdProps}
                 {...webDisabledProps}
+                {...webOptionIdentityProps}
                 onPress={handlePress}
                 onLongPress={handleLongPress}
                 // @ts-expect-error - react-native types do not model web-only double click props; RN Web supports onDoubleClick.
@@ -705,7 +894,6 @@ export const Item = React.memo<ItemProps>((props) => {
                     onDoublePress();
                 } : undefined}
                 onPressIn={handlePressIn}
-                onPressOut={handlePressOut}
                 onHoverIn={isWeb && !disabled && !loading ? () => {
                     setIsHovered(true);
                     onHoverIn?.();
@@ -716,11 +904,16 @@ export const Item = React.memo<ItemProps>((props) => {
                 } : undefined}
                 onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
                 onContextMenu={isWeb ? (onContextMenu as any) : undefined}
-                {...(isWeb && webRole ? { role: webRole } : undefined)}
+                onKeyDown={isWeb && isKeyboardActivatableRole ? handleSemanticKeyDown : undefined}
+                {...(interactiveWebRole ? { role: interactiveWebRole } : undefined)}
                 accessibilityRole={interactiveAccessibilityRole}
+                accessibilityLabel={resolvedAccessibilityLabel}
+                aria-label={resolvedAccessibilityLabel}
                 accessibilityState={interactiveAccessibilityState}
-                aria-selected={selected !== undefined ? selected : undefined}
-                tabIndex={interactiveTabIndex as 0 | undefined}
+                aria-selected={!isRadioRole && selected !== undefined ? selected : undefined}
+                aria-checked={isRadioRole ? selected === true : undefined}
+                aria-disabled={disabled || loading ? true : undefined}
+                tabIndex={interactiveTabIndex as 0 | -1 | undefined}
                 disabled={disabled || loading}
                 style={({ pressed }) => resolveInteractiveRowStyle(pressed)}
                 android_ripple={(isAndroid || isWeb) ? {
@@ -738,6 +931,16 @@ export const Item = React.memo<ItemProps>((props) => {
         <View
             testID={testID}
             {...webTestIdProps}
+            {...webOptionIdentityProps}
+            {...(isWeb && webRole ? { role: webRole } : undefined)}
+            accessibilityRole={isWeb ? undefined : accessibilityRole}
+            accessibilityLabel={accessibilityLabel ?? (webRole ? generatedAccessibilityLabel : undefined)}
+            aria-label={accessibilityLabel ?? (webRole ? generatedAccessibilityLabel : undefined)}
+            accessibilityState={interactiveAccessibilityState}
+            aria-selected={!isRadioRole && selected !== undefined ? selected : undefined}
+            aria-checked={isRadioRole ? selected === true : undefined}
+            aria-disabled={disabled || loading ? true : undefined}
+            tabIndex={isWeb && webRole && (disabled || loading) ? -1 : undefined}
             style={[{ opacity: disabled ? 0.5 : 1 }, pressableStyle]}
         >
             {content}

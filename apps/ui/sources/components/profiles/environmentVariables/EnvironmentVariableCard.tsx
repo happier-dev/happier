@@ -37,6 +37,7 @@ export interface EnvironmentVariableCardProps {
     onUpdate: (index: number, newValue: string) => void;
     onDelete: (index: number) => void;
     onDuplicate: (index: number) => void;
+    showSourceRequirements?: boolean;
 }
 
 /**
@@ -93,6 +94,7 @@ export function EnvironmentVariableCard({
     onUpdate,
     onDelete,
     onDuplicate,
+    showSourceRequirements = true,
 }: EnvironmentVariableCardProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -445,7 +447,7 @@ export function EnvironmentVariableCard({
                 )}
             />
 
-            {hasRequirementVarName ? (
+            {showSourceRequirements && hasRequirementVarName ? (
                 <>
                     <Item
                         title={t('profiles.environmentVariables.card.requirementRequiredLabel')}

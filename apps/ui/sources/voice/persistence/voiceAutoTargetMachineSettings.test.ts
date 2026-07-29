@@ -23,13 +23,9 @@ describe('voiceAutoTargetMachineSettings', () => {
     state = {
       settings: {
         voice: {
-          adapters: {
-            local_conversation: {
-              agent: {
-                machineTargetMode: ' auto ',
-                autoTargetMachineId: '  machine-1  ',
-              },
-            },
+          executionMachine: {
+            mode: ' auto ',
+            autoMachineId: '  machine-1  ',
           },
         },
       },
@@ -49,16 +45,13 @@ describe('voiceAutoTargetMachineSettings', () => {
     persistVoiceAutoTargetMachineId('  machine-2  ');
 
     expect(applySettingsLocal).toHaveBeenCalledWith({
-      voice: {
-        adapters: {
-          local_conversation: {
-            agent: {
-              machineTargetMode: ' auto ',
-              autoTargetMachineId: 'machine-2',
-            },
-          },
+      voice: expect.objectContaining({
+        executionMachine: {
+          mode: 'auto',
+          machineId: null,
+          autoMachineId: 'machine-2',
         },
-      },
+      }),
     });
   });
 });

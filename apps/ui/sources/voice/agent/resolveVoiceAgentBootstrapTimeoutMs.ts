@@ -1,4 +1,4 @@
-import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
+import { readLocalConversationVoiceSettings, voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
 
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 60_000;
 
@@ -13,7 +13,7 @@ export function resolveVoiceAgentBootstrapTimeoutMs(localConversationSettings: a
   if (configuredBootstrapTimeoutMs) return configuredBootstrapTimeoutMs;
 
   const configuredNetworkTimeoutMs = normalizePositiveInteger(localConversationSettings?.networkTimeoutMs);
-  const defaultNetworkTimeoutMs = normalizePositiveInteger(voiceSettingsDefaults.adapters.local_conversation.networkTimeoutMs);
+  const defaultNetworkTimeoutMs = normalizePositiveInteger(readLocalConversationVoiceSettings(voiceSettingsDefaults).networkTimeoutMs);
 
   return Math.max(
     DEFAULT_BOOTSTRAP_TIMEOUT_MS,

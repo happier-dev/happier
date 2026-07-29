@@ -13,6 +13,21 @@ describe('agents/resolve', () => {
         expect(resolveAgentIdForPermissionUi({ flavor: 'gemini', toolName: 'CodexBash' })).toBe('gemini');
     });
 
+    it('prefers canonical session runtime metadata over stale flavor and tool prefix hints', () => {
+        expect(resolveAgentIdForPermissionUi({
+            metadata: {
+                flavor: 'claude',
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'codex',
+                    provider: {},
+                },
+            },
+            flavor: 'claude',
+            toolName: 'OpenCodeBash',
+        })).toBe('codex');
+    });
+
     it('prefers Codex tool prefix hints for permission UI', () => {
         expect(resolveAgentIdForPermissionUi({ flavor: null, toolName: 'CodexBash' })).toBe('codex');
         expect(resolveAgentIdForPermissionUi({ flavor: '', toolName: 'CodexBash' })).toBe('codex');

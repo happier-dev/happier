@@ -12,7 +12,6 @@ const useProfileSpy = vi.hoisted(() => vi.fn(() => ({ id: 'u1' })));
 const useSessionListRenderableWithServerScopeSpy = vi.hoisted(() => vi.fn(() => null));
 const useHasUnreadMessagesSpy = vi.hoisted(() => vi.fn(() => false));
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: 'Swipeable',

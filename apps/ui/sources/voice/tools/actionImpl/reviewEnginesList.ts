@@ -11,6 +11,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveSessionListPreferredServerIdFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { resolveVoiceContextSessionFromState } from '@/voice/context/resolveVoiceContextSession';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -24,7 +25,8 @@ export async function listReviewEnginesForVoiceTool(params: Readonly<{ sessionId
 
   const state: any = storage.getState();
   const session = resolveVoiceContextSessionFromState(sessionId, state);
-  const machineId = normalizeId(readMachineTargetForSession(sessionId)?.machineId) || normalizeId(session?.metadata?.machineId);
+  const machineId = normalizeId(readMachineTargetForSession(sessionId)?.machineId)
+    || normalizeId(session ? readSessionOwnerMetadataView(session)?.machineId : null);
   const serverId = (
     resolveSessionListPreferredServerIdFromState(state, sessionId)
     ?? normalizeId(getActiveServerSnapshot()?.serverId)

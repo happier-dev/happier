@@ -16,6 +16,8 @@ export type SessionSurfaceVisibilitySnapshot = Readonly<{
 
 type MutableSessionSurfaceVisibilityState = {
     listeners: Set<() => void>;
+    resetListeners: Set<() => void>;
+    resetVersion: number;
     visibleSessionRefCount: Map<string, number>;
     visibleSessionScopedRefCount: Map<string, number>;
     visibleScopedSessionKeysBySessionId: Map<string, Set<string>>;
@@ -31,6 +33,8 @@ const sessionSurfaceVisibilityStateKey = '__HAPPIER_SESSION_SURFACE_VISIBILITY_S
 function createSessionSurfaceVisibilityState(): MutableSessionSurfaceVisibilityState {
     return {
         listeners: new Set<() => void>(),
+        resetListeners: new Set<() => void>(),
+        resetVersion: 0,
         visibleSessionRefCount: new Map<string, number>(),
         visibleSessionScopedRefCount: new Map<string, number>(),
         visibleScopedSessionKeysBySessionId: new Map<string, Set<string>>(),
@@ -49,7 +53,10 @@ function createSessionSurfaceVisibilityState(): MutableSessionSurfaceVisibilityS
 function getSessionSurfaceVisibilityState(): MutableSessionSurfaceVisibilityState {
     const host = globalThis as typeof globalThis & { [sessionSurfaceVisibilityStateKey]?: MutableSessionSurfaceVisibilityState };
     host[sessionSurfaceVisibilityStateKey] ??= createSessionSurfaceVisibilityState();
-    return host[sessionSurfaceVisibilityStateKey];
+    const state = host[sessionSurfaceVisibilityStateKey];
+    state.resetListeners ??= new Set<() => void>();
+    state.resetVersion ??= 0;
+    return state;
 }
 
 const sessionSurfaceVisibilityState = getSessionSurfaceVisibilityState();
@@ -153,6 +160,12 @@ function emitChange(): void {
     }
 }
 
+function emitReset(): void {
+    for (const listener of sessionSurfaceVisibilityState.resetListeners) {
+        listener();
+    }
+}
+
 function refreshSnapshot(): void {
     sessionSurfaceVisibilityState.snapshot = {
         focusedSessionId: sessionSurfaceVisibilityState.focusedSessionId,
@@ -169,6 +182,17 @@ export function subscribeSessionSurfaceVisibility(listener: () => void): () => v
     listeners.add(listener);
     return () => {
         listeners.delete(listener);
+    };
+}
+
+export function getSessionSurfaceVisibilityResetVersion(): number {
+    return sessionSurfaceVisibilityState.resetVersion;
+}
+
+export function subscribeSessionSurfaceVisibilityReset(listener: () => void): () => void {
+    sessionSurfaceVisibilityState.resetListeners.add(listener);
+    return () => {
+        sessionSurfaceVisibilityState.resetListeners.delete(listener);
     };
 }
 
@@ -298,7 +322,7 @@ export function isSessionSurfaceVisible(sessionId: string, serverId?: string | n
     return visibleSessionRefCount.has(normalizedSessionId);
 }
 
-export function clearSessionSurfaceVisibilityForServerScopeReset(): void {
+function clearSessionSurfaceVisibility(options: Readonly<{ notifyMountedSurfaces: boolean }>): void {
     visibleSessionRefCount.clear();
     visibleSessionScopedRefCount.clear();
     visibleScopedSessionKeysBySessionId.clear();
@@ -308,6 +332,14 @@ export function clearSessionSurfaceVisibilityForServerScopeReset(): void {
     sessionSurfaceVisibilityState.routeAnchorSessionId = null;
     refreshSnapshot();
     emitChange();
+    if (options.notifyMountedSurfaces) {
+        sessionSurfaceVisibilityState.resetVersion += 1;
+        emitReset();
+    }
+}
+
+export function clearSessionSurfaceVisibilityForServerScopeReset(): void {
+    clearSessionSurfaceVisibility({ notifyMountedSurfaces: true });
 }
 
 function isSessionRoutePathname(pathname: string | null | undefined): boolean {
@@ -326,7 +358,7 @@ export function clearSessionSurfaceVisibilityForNonSessionRoute(pathname: string
         || sessionSurfaceVisibilityState.focusedSessionId !== null
         || sessionSurfaceVisibilityState.routeAnchorSessionId !== null;
     if (!hadVisibilityState) return false;
-    clearSessionSurfaceVisibilityForServerScopeReset();
+    clearSessionSurfaceVisibility({ notifyMountedSurfaces: false });
     return true;
 }
 

@@ -12,7 +12,7 @@ describe('applyVoiceSessionTargetSelection', () => {
 
         const syncTargetSessionSpy = vi.spyOn(voiceSessionBindingManager, 'syncTargetSession');
 
-        applyVoiceSessionTargetSelection({
+        await applyVoiceSessionTargetSelection({
             controlSessionId: '  voice-global  ',
             targetSessionId: '  s1  ',
             updateLastFocused: true,
@@ -25,4 +25,5 @@ describe('applyVoiceSessionTargetSelection', () => {
             targetSessionId: 's1',
         });
     });
+
 });

@@ -4,7 +4,6 @@ import { areAccountSettingsJsonValuesEqual } from './accountSettingsStructuralEq
 const SESSION_PRESENTATION_KEYS = [
     'pinnedSessionKeysV1',
     'workspaceLabelsV1',
-    'collapsedGroupKeysV1',
     'sessionTagsV1',
     'sessionListGroupOrderV1',
     'sessionWorkspaceOrderV1',
@@ -105,12 +104,6 @@ function mergeUnknownArrays(existing: unknown, incoming: unknown): unknown {
     return dedupeUnknownArray([...existing, ...incoming]);
 }
 
-function mergeCollapsedGroupKeyValues(existing: unknown, incoming: unknown): unknown {
-    if (existing === false || incoming === false) return false;
-    if (existing === true || incoming === true) return true;
-    return incoming;
-}
-
 function rewriteStringArray(
     value: unknown,
     rewriteValue: (item: unknown) => unknown,
@@ -178,13 +171,6 @@ function migrateSettingValue(
     switch (key) {
         case 'pinnedSessionKeysV1':
             return rewriteStringArray(value, (item) => rewriteSessionKey(item, policy));
-        case 'collapsedGroupKeysV1':
-            return rewriteRecordKeys(
-                value,
-                (entryKey) => rewriteServerGroupKey(entryKey, policy),
-                (entryValue) => entryValue,
-                mergeCollapsedGroupKeyValues,
-            );
         case 'sessionTagsV1':
             return rewriteRecordKeys(
                 value,

@@ -32,23 +32,21 @@ import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
 import { ToolError } from '@/components/tools/shell/presentation/ToolError';
 import { resolveToolPermissionTerminalErrorMessage } from '../permissions/resolveToolPermissionTerminalErrorMessage';
+import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 
 
 interface ToolFullViewProps {
     tool: ToolCall;
+    owningMessageId: string;
     sessionId?: string;
     metadata?: Metadata | null;
     messages?: Message[];
     jumpChildId?: string | null;
     forcePermissionFooterInTranscript?: boolean;
-    interaction?: {
-        canSendMessages: boolean;
-        canApprovePermissions: boolean;
-        permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
-    };
+    interaction?: TranscriptInteraction;
 }
 
-export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChildId, forcePermissionFooterInTranscript = false, interaction }: ToolFullViewProps) {
+export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messages = [], jumpChildId, forcePermissionFooterInTranscript = false, interaction }: ToolFullViewProps) {
     const { theme } = useUnistyles();
     const toolForRendering = React.useMemo<ToolCall>(() => {
         return resolveInactiveSessionToolCallFailure({
@@ -119,6 +117,15 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
 
     const normalizedSessionId = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : null;
     const sidechainId = transcriptSidechainId;
+    const normalizedOwningMessageId = owningMessageId.trim();
+    if (normalizedOwningMessageId.length === 0) {
+        throw new Error('ToolFullView requires a non-empty owningMessageId');
+    }
+    const transcriptDatasetIdentity = sidechainId ?? normalizedOwningMessageId;
+    const sidechainDatasetKey = React.useMemo(
+        () => JSON.stringify([normalizedSessionId, transcriptDatasetIdentity]),
+        [normalizedSessionId, transcriptDatasetIdentity],
+    );
     const canRenderTaskTranscript =
         normalizedSessionId !== null &&
         isSubAgentTranscriptTool &&
@@ -128,14 +135,19 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
             ? 'transcript'
             : resolvePermissionPromptSurface(permissionPromptSurface);
 
-    const transcriptInteraction = React.useMemo(() => {
+    // The sidechain transcript is a transcript surface and must receive the *whole* interaction
+    // contract. Reconstructing it field-by-field silently drops every grant this file does not know
+    // about (`canFork`, `canOpenFiles`, `canPreviewMedia`), and those are read with exact-`true`
+    // checks downstream — so a dropped grant removes a valid affordance. Only tool navigation is
+    // owned here: the full view already *is* the tool detail surface.
+    const transcriptInteraction = React.useMemo<TranscriptInteraction>(() => {
         return {
-            canSendMessages: interaction?.canSendMessages ?? true,
-            canApprovePermissions: interaction?.canApprovePermissions ?? true,
-            permissionDisabledReason: interaction?.permissionDisabledReason,
+            canSendMessages: true,
+            canApprovePermissions: true,
+            ...interaction,
             disableToolNavigation: true,
         };
-    }, [interaction?.canApprovePermissions, interaction?.canSendMessages, interaction?.permissionDisabledReason]);
+    }, [interaction]);
 
     const loadOlderSidechain = React.useCallback(async () => {
         if (!normalizedSessionId || !sidechainId) {
@@ -226,7 +238,9 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
                 <View style={[styles.contentWrapper, { flex: 1, minHeight: 0 }]}>
                     <View style={styles.transcriptSection}>
                         <ChainTranscriptList
+                            key={sidechainDatasetKey}
                             sessionId={normalizedSessionId}
+                            datasetKey={sidechainDatasetKey}
                             messages={messages}
                             metadata={metadata || null}
                             interaction={transcriptInteraction}

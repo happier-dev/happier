@@ -2,7 +2,8 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { createCapturingFlashListMock } from '@/dev/testkit/mocks/flashList';
+import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
+import { Pressable } from 'react-native';
 
 import type { SelectionListOption, SelectionListSection } from '../_types';
 
@@ -11,15 +12,12 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
-const { module: capturedFlashList, state: flashListState } = createCapturingFlashListMock({
-    componentName: 'FlashListMock',
-    itemWrapperName: 'FlashListItemMock',
+const { module: capturedLegendList, state: legendListState } = createCapturingLegendListMock({
     renderItems: true,
 });
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
-    FlashList: capturedFlashList.FlashList,
-    flashListRuntime: { usingFallback: true },
+vi.mock('@legendapp/list/react-native', () => ({
+    LegendList: capturedLegendList.LegendList,
 }));
 
 function makeOptions(count: number, prefix = 'opt'): ReadonlyArray<SelectionListOption> {
@@ -37,9 +35,18 @@ function makeSection(count: number): SelectionListSection {
     };
 }
 
+function hasAncestor(node: any, possibleAncestor: any): boolean {
+    let current = node?.parent;
+    while (current) {
+        if (current === possibleAncestor) return true;
+        current = current.parent;
+    }
+    return false;
+}
+
 describe('SelectionListVirtualizedSection', () => {
     it('renders FlashList path when row count exceeds the threshold (auto mode)', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
         const section = makeSection(60);
         await renderScreen(
@@ -51,15 +58,16 @@ describe('SelectionListVirtualizedSection', () => {
                 onSelectOption={() => {}}
             />,
         );
-        expect(flashListState.props).not.toBeNull();
-        expect(Array.isArray(flashListState.props.data)).toBe(true);
-        expect(flashListState.props.data.length).toBe(60);
-        expect(typeof flashListState.props.renderItem).toBe('function');
-        expect(typeof flashListState.props.keyExtractor).toBe('function');
+        expect(legendListState.props).not.toBeNull();
+        expect(legendListState.props?.recycleItems).toBe(false);
+        expect(Array.isArray(legendListState.props.data)).toBe(true);
+        expect(legendListState.props.data.length).toBe(60);
+        expect(typeof legendListState.props.renderItem).toBe('function');
+        expect(typeof legendListState.props.keyExtractor).toBe('function');
     });
 
     it('renders plain mapped rows when row count is at or below the threshold (auto mode)', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
         const section = makeSection(50);
         await renderScreen(
@@ -72,11 +80,11 @@ describe('SelectionListVirtualizedSection', () => {
             />,
         );
         // FlashList must NOT be mounted in auto mode at exactly threshold.
-        expect(flashListState.props).toBeNull();
+        expect(legendListState.props).toBeNull();
     });
 
     it('renders FlashList when virtualization is forced regardless of count', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
         const section = { ...makeSection(3), id: 'force' };
         await renderScreen(
@@ -89,12 +97,45 @@ describe('SelectionListVirtualizedSection', () => {
                 virtualization="force"
             />,
         );
-        expect(flashListState.props).not.toBeNull();
-        expect(flashListState.props.data.length).toBe(3);
+        expect(legendListState.props).not.toBeNull();
+        expect(legendListState.props.data.length).toBe(3);
+    });
+
+    it('keeps an interactive accessory outside the virtualized row pressable', async () => {
+        legendListState.reset();
+        const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
+        const section: SelectionListSection = {
+            ...makeSection(60),
+            options: [
+                {
+                    id: 'interactive',
+                    label: 'Interactive option',
+                    rightAccessory: <Pressable testID="virtualized-row-action" onPress={() => {}} />,
+                    rightAccessoryOutsidePressable: true,
+                },
+                ...makeOptions(59, 'remaining'),
+            ],
+        };
+        const screen = await renderScreen(
+            <SelectionListVirtualizedSection
+                section={section}
+                stepId="root"
+                rootTestID="sl"
+                selectedOptionId={null}
+                onSelectOption={() => {}}
+            />,
+        );
+
+        expect(legendListState.props?.data).toHaveLength(60);
+        const row = screen.findByTestId('sl:root:option:interactive');
+        const action = screen.findByTestId('virtualized-row-action');
+        expect(row).toBeTruthy();
+        expect(action).toBeTruthy();
+        expect(hasAncestor(action, row)).toBe(false);
     });
 
     it('never renders FlashList when virtualization is never, even with large counts', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
         const section = { ...makeSection(500), id: 'never' };
         const screen = await renderScreen(
@@ -107,13 +148,13 @@ describe('SelectionListVirtualizedSection', () => {
                 virtualization="never"
             />,
         );
-        expect(flashListState.props).toBeNull();
+        expect(legendListState.props).toBeNull();
         // The first row should still render via plain mapping.
         expect(screen.findByTestId('sl:root:option:opt-0')).not.toBeNull();
     });
 
     it('passes a stable keyExtractor that produces option ids', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
         const section = makeSection(60);
         await renderScreen(
@@ -125,14 +166,14 @@ describe('SelectionListVirtualizedSection', () => {
                 onSelectOption={() => {}}
             />,
         );
-        expect(flashListState.props).not.toBeNull();
-        const ke = flashListState.props.keyExtractor as (option: SelectionListOption, i: number) => string;
+        expect(legendListState.props).not.toBeNull();
+        const ke = legendListState.props.keyExtractor as (option: SelectionListOption, i: number) => string;
         expect(ke(section.options[0], 0)).toBe(section.options[0].id);
         expect(ke(section.options[5], 5)).toBe(section.options[5].id);
     });
 
     it('passes a sensible estimatedItemSize to FlashList', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
         const section = makeSection(60);
         await renderScreen(
@@ -144,13 +185,13 @@ describe('SelectionListVirtualizedSection', () => {
                 onSelectOption={() => {}}
             />,
         );
-        expect(flashListState.props).not.toBeNull();
-        expect(typeof flashListState.props.estimatedItemSize).toBe('number');
-        expect(flashListState.props.estimatedItemSize).toBeGreaterThan(0);
+        expect(legendListState.props).not.toBeNull();
+        expect(typeof legendListState.props.estimatedItemSize).toBe('number');
+        expect(legendListState.props.estimatedItemSize).toBeGreaterThan(0);
     });
 
     it('handles 500-row synthetic dataset without errors and exposes all option ids via data prop', async () => {
-        flashListState.props = null;
+        legendListState.reset();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
         const options = makeOptions(500);
         const section: SelectionListSection = {
@@ -167,7 +208,7 @@ describe('SelectionListVirtualizedSection', () => {
                 onSelectOption={() => {}}
             />,
         );
-        expect(flashListState.props).not.toBeNull();
-        expect(flashListState.props.data.length).toBe(500);
+        expect(legendListState.props).not.toBeNull();
+        expect(legendListState.props.data.length).toBe(500);
     });
 });

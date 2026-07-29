@@ -28,18 +28,25 @@ vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}) },
 }));
 
+vi.mock('@/components/ui/text/Text', async () => {
+    const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
+    return createUiTextModuleMock();
+});
+
 describe('SelectableRow (web cursor)', () => {
-  it('does not render the root row as a web <button> (avoids nested button semantics)', async () => {
+  it('exposes simple web action rows as buttons with clean labels', async () => {
     const { SelectableRow } = await import('./SelectableRow');
 
     const screen = await renderScreen(
-        <SelectableRow testID="selectable-row-role" title="Row" onPress={() => {}} />,
+        <SelectableRow testID="selectable-row-role" title="Row" subtitle="More context" onPress={() => {}} />,
     );
     const root = screen.findAll((node) => (
         node.props?.testID === 'selectable-row-role' && typeof node.props?.style === 'function'
     ))[0];
     expect(root).toBeTruthy();
     expect(root?.props?.accessibilityRole).toBeUndefined();
+    expect(root?.props?.role).toBe('button');
+    expect(root?.props?.accessibilityLabel).toBe('Row. More context');
   });
 
   it('uses a not-allowed cursor when disabled', async () => {

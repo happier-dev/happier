@@ -39,32 +39,6 @@ export type EntryRestoreTarget =
     | Readonly<{ kind: 'distance-oneshot'; targetOffsetY: number }>
     | Readonly<{ kind: 'none'; reason: EntryRestoreNoneReason }>;
 
-/**
- * Slice capability (N2b): the host can build the INITIAL data window starting
- * at/around the anchor message, so an anchored entry needs ZERO scroll writes.
- * Only hosts at the initial-window decision point opt in; after the sliced
- * window commits they re-resolve WITHOUT the capability and the anchor
- * resolves to an in-window observation target.
- */
-export type EntryRestoreSliceCapability = Readonly<{
-    hostCanBuildAnchorWindow: true;
-}>;
-
-/**
- * A slice outcome is a DATA-LAYER act, deliberately kept out of
- * `EntryRestoreTarget` so the entry transaction's writable target space
- * (`EntryRestoreTransactionTarget` = a subset of `EntryRestoreTarget`) can
- * never carry it — same exclusion convention as the wait `none` verdicts.
- * Identity is orientation-free (messageId + seq + intra-item offset); only
- * the window builder differs per orientation.
- */
-export type EntryRestoreSliceTarget = Readonly<{
-    kind: 'slice';
-    anchorMessageId: string;
-    anchorSeq: number | null;
-    anchorItemOffsetPx: number;
-}>;
-
 export type ResolveEntryRestoreTargetParams<TItem> = Readonly<{
     snapshot: EntryRestoreSnapshot;
     items: readonly TItem[];
@@ -79,37 +53,9 @@ export type ResolveEntryRestoreTargetParams<TItem> = Readonly<{
     anchorSeqResolver?: (anchor: EntryRestoreAnchorSnapshot) => number | null;
 }>;
 
-type ResolveEntryRestoreTargetParamsWithSlice<TItem> = ResolveEntryRestoreTargetParams<TItem> & Readonly<{
-    slice: EntryRestoreSliceCapability;
-}>;
-
-export function resolveEntryRestoreTarget<TItem>(
-    params: ResolveEntryRestoreTargetParamsWithSlice<TItem>,
-): EntryRestoreTarget | EntryRestoreSliceTarget;
 export function resolveEntryRestoreTarget<TItem>(
     params: ResolveEntryRestoreTargetParams<TItem>,
-): EntryRestoreTarget;
-export function resolveEntryRestoreTarget<TItem>(
-    params: ResolveEntryRestoreTargetParams<TItem> & Readonly<{ slice?: EntryRestoreSliceCapability }>,
-): EntryRestoreTarget | EntryRestoreSliceTarget {
-    if (params.slice?.hostCanBuildAnchorWindow === true && !params.snapshot.shouldFollowBottom) {
-        // Slice precedes the fill barrier: it decides WHAT to fill, so empty,
-        // unmeasured, unsettled, and under-filled states are all legitimate here.
-        const anchor = params.snapshot.anchor;
-        const anchorMessageId = anchor?.messageId?.trim() ?? '';
-        if (anchor && anchorMessageId) {
-            return {
-                kind: 'slice',
-                anchorMessageId,
-                anchorSeq: anchor.seq ?? params.anchorSeqResolver?.(anchor) ?? null,
-                anchorItemOffsetPx: Number.isFinite(anchor.itemOffsetPx) ? anchor.itemOffsetPx : 0,
-            };
-        }
-        if (anchor) {
-            return { kind: 'none', reason: 'missing-durable-anchor' };
-        }
-    }
-
+): EntryRestoreTarget {
     if (params.items.length === 0) {
         return { kind: 'none', reason: 'empty-transcript' };
     }
@@ -118,8 +64,7 @@ export function resolveEntryRestoreTarget<TItem>(
     const layoutHeight = normalizeDimension(params.contentMeasured.layoutHeight);
     const contentMeasured = contentHeight > 0 && layoutHeight > 0;
     if (params.fillSettled && contentMeasured && contentHeight <= layoutHeight) {
-        // Under-filled settled content fits the viewport: nothing to scroll, and
-        // FlashList MVCP misbehaves on under-filled lists (upstream #2050).
+        // Under-filled settled content already fits the viewport: there is no restore write.
         return { kind: 'none', reason: 'content-fits-viewport' };
     }
 

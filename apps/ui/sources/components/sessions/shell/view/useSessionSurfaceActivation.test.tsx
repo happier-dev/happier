@@ -3,6 +3,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { renderHook, renderScreen } from '@/dev/testkit';
 import {
+    clearSessionSurfaceVisibilityForNonSessionRoute,
+    clearSessionSurfaceVisibilityForServerScopeReset,
     getSessionSurfaceVisibilitySnapshot,
     isSessionSurfaceVisible,
     setFocusedSessionId,
@@ -217,6 +219,60 @@ describe('useSessionSurfaceActivation', () => {
 
         await hook.unmount();
         expect(isSessionSurfaceVisible('shared-session', 'server-b')).toBe(false);
+    });
+
+    it('re-registers and reactivates a still-mounted visible session after a server-scope reset', async () => {
+        const { useSessionSurfaceActivation } = await import('./useSessionSurfaceActivation');
+        const onSessionVisible = vi.fn();
+        const hook = await renderHook(() => useSessionSurfaceActivation({
+            sessionId: 'session-1',
+            serverId: 'server-a',
+            onSessionVisible,
+            surfaceFocused: true,
+            surfaceVisible: true,
+            routeAnchor: true,
+        }));
+
+        expect(isSessionSurfaceVisible('session-1', 'server-a')).toBe(true);
+        expect(onSessionVisible).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            clearSessionSurfaceVisibilityForServerScopeReset();
+        });
+
+        expect(isSessionSurfaceVisible('session-1', 'server-a')).toBe(true);
+        expect(getSessionSurfaceVisibilitySnapshot()).toEqual({
+            focusedSessionId: 'session-1',
+            routeAnchorSessionId: 'session-1',
+            visibleSessionIds: ['session-1'],
+        });
+        expect(onSessionVisible).toHaveBeenCalledTimes(2);
+        expect(onSessionVisible).toHaveBeenLastCalledWith('session-1');
+
+        await hook.unmount();
+    });
+
+    it('does not reactivate a retained session when navigation explicitly clears visibility for a non-session route', async () => {
+        const { useSessionSurfaceActivation } = await import('./useSessionSurfaceActivation');
+        const onSessionVisible = vi.fn();
+        const hook = await renderHook(() => useSessionSurfaceActivation({
+            sessionId: 'retained-session',
+            serverId: 'server-a',
+            onSessionVisible,
+            surfaceFocused: true,
+            surfaceVisible: true,
+            routeAnchor: true,
+        }));
+
+        expect(onSessionVisible).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            expect(clearSessionSurfaceVisibilityForNonSessionRoute('/settings')).toBe(true);
+        });
+
+        expect(isSessionSurfaceVisible('retained-session', 'server-a')).toBe(false);
+        expect(onSessionVisible).toHaveBeenCalledTimes(1);
+        await hook.unmount();
     });
 
     it('clears visible participation for retained surfaces that become hidden without unmounting', async () => {

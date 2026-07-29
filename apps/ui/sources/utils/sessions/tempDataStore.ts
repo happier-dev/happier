@@ -1,8 +1,8 @@
 import { randomUUID } from '@/platform/randomUUID';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
-import type { AcpConfigOptionOverridesV1, BackendTargetRefV2, SessionMcpSelectionV1 } from '@happier-dev/protocol';
-import type { CodexBackendMode } from '@happier-dev/agents';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV2, SessionMcpSelectionV1, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { CodexBackendMode } from '@happier-dev/protocol';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
@@ -24,6 +24,8 @@ export interface NewSessionData {
     selectedProfileId?: string | null;
     transcriptStorage?: 'persisted' | 'direct';
     permissionMode?: PermissionMode;
+    modelSelection?: SessionModelSelectionV1 | null;
+    /** Read-only compatibility input. New temp-data writers use `modelSelection`. */
     modelMode?: ModelMode;
     acpSessionModeId?: string | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;

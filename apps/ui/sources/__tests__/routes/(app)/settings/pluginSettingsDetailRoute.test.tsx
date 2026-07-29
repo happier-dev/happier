@@ -13,7 +13,6 @@ const localSearchParamsState = {
     pluginId: 'installed-plugin' as string | string[] | undefined,
 };
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');

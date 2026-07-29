@@ -1,8 +1,10 @@
+import { getEventListeners } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
+
+import { DaemonTtsController } from './DaemonTtsController';
 
 vi.mock('@/voice/runtime/voiceRuntimeConfigDefaults', () => ({
     VOICE_RUNTIME_CONFIG_DEFAULTS: {
-        listeningStartTimeoutMs: 5_000,
         realtimeWatchdogPollMs: 3_000,
         realtimeWatchdogPlateauMs: 10_000,
         daemonInference: {
@@ -12,8 +14,8 @@ vi.mock('@/voice/runtime/voiceRuntimeConfigDefaults', () => ({
             statusPollMs: 750,
             tts: {
                 defaultCodec: {
-                    codec: 'mp3',
-                    mimeType: 'audio/mpeg',
+                    codec: 'wav',
+                    mimeType: 'audio/wav',
                 },
                 latencyBudgetMs: 2_000,
                 consecutiveSlowCallsBeforeDemotion: 2,
@@ -24,6 +26,12 @@ vi.mock('@/voice/runtime/voiceRuntimeConfigDefaults', () => ({
             },
         },
     },
+}));
+
+// This suite exercises daemon TTS. Keep the unrelated OpenAI-compatible daemon
+// client boundary out of the module graph pulled in by the shared queue owner.
+vi.mock('@/voice/local/openaiCompat/client', () => ({
+    OpenAiCompatDaemonClient: class {},
 }));
 
 vi.mock('./DaemonVoiceInferenceClient', () => ({
@@ -40,7 +48,7 @@ describe('DaemonTtsController', () => {
     it('synthesizes with the daemon client and plays the returned audio bytes', async () => {
         const synthesizeText = vi.fn().mockResolvedValue({
             bytes: new Uint8Array(Buffer.from('voice-audio')),
-            output: { codec: 'mp3', mimeType: 'audio/mpeg' },
+            output: { codec: 'wav', mimeType: 'audio/wav' },
         });
         const onSpeaking = vi.fn();
         const playAudioBytesWithStopper = vi.fn(async (opts: any) => {
@@ -50,7 +58,6 @@ describe('DaemonTtsController', () => {
         });
         const registerPlaybackStopper = vi.fn((_stopper: () => void) => () => {});
 
-        const { DaemonTtsController } = await import('./DaemonTtsController');
         const controller = new DaemonTtsController({
             client: { synthesizeText } as any,
             playAudioBytesWithStopper,
@@ -59,7 +66,7 @@ describe('DaemonTtsController', () => {
         await controller.speak({
             sessionId: 'session-1',
             text: 'hello daemon',
-            packId: 'kokoro-tts-en-v1',
+            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
             voiceId: 'af_heart',
             speed: 1,
             registerPlaybackStopper,
@@ -70,12 +77,12 @@ describe('DaemonTtsController', () => {
         expect(synthesizeText).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'session-1',
             text: 'hello daemon',
-            packId: 'kokoro-tts-en-v1',
+            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
             voiceId: 'af_heart',
-            output: { codec: 'mp3', mimeType: 'audio/mpeg' },
+            output: { codec: 'wav', mimeType: 'audio/wav' },
         }));
         expect(playAudioBytesWithStopper).toHaveBeenCalledWith(expect.objectContaining({
-            format: 'mp3',
+            format: 'wav',
             onPlaybackStarted: expect.any(Function),
         }));
     });
@@ -86,7 +93,6 @@ describe('DaemonTtsController', () => {
         }));
         const onSpeaking = vi.fn();
 
-        const { DaemonTtsController } = await import('./DaemonTtsController');
         const controller = new DaemonTtsController({
             client: { synthesizeText } as any,
             playAudioBytesWithStopper: vi.fn(),
@@ -95,7 +101,7 @@ describe('DaemonTtsController', () => {
         await expect(controller.speak({
             sessionId: 'session-1',
             text: 'hello daemon',
-            packId: 'kokoro-tts-en-v1',
+            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
             voiceId: 'af_heart',
             speed: 1,
             registerPlaybackStopper: (_stopper: () => void) => () => {},
@@ -108,11 +114,10 @@ describe('DaemonTtsController', () => {
     it('does not enter speaking when batch playback fails before start', async () => {
         const synthesizeText = vi.fn().mockResolvedValue({
             bytes: new Uint8Array(Buffer.from('voice-audio')),
-            output: { codec: 'mp3', mimeType: 'audio/mpeg' },
+            output: { codec: 'wav', mimeType: 'audio/wav' },
         });
         const onSpeaking = vi.fn();
 
-        const { DaemonTtsController } = await import('./DaemonTtsController');
         const controller = new DaemonTtsController({
             client: { synthesizeText } as any,
             playAudioBytesWithStopper: vi.fn(async () => {
@@ -123,7 +128,7 @@ describe('DaemonTtsController', () => {
         await expect(controller.speak({
             sessionId: 'session-1',
             text: 'hello daemon',
-            packId: 'kokoro-tts-en-v1',
+            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
             voiceId: 'af_heart',
             speed: 1,
             registerPlaybackStopper: (_stopper: () => void) => () => {},
@@ -152,7 +157,7 @@ describe('DaemonTtsController', () => {
                 segmentIndex: 0,
                 segmentCount: 2,
                 bytes: new Uint8Array(Buffer.from('audio-0')),
-                output: { codec: 'mp3', mimeType: 'audio/mpeg' },
+                output: { codec: 'wav', mimeType: 'audio/wav' },
                 isLastSegment: false,
             })
             .mockReturnValueOnce(secondSegment.promise);
@@ -174,7 +179,6 @@ describe('DaemonTtsController', () => {
             opts.onPlaybackStarted?.();
         });
 
-        const { DaemonTtsController } = await import('./DaemonTtsController');
         const controller = new DaemonTtsController({
             client: { synthesizeText: vi.fn(), startSegmentedTts } as any,
             playAudioBytesWithStopper,
@@ -183,7 +187,7 @@ describe('DaemonTtsController', () => {
         const speaking = controller.speak({
             sessionId: 'session-1',
             text: 'Hello. Still synthesizing.',
-            packId: 'kokoro-tts-en-v1',
+            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
             voiceId: 'af_heart',
             speed: 1,
             registerPlaybackStopper: (_stopper: () => void) => () => {},
@@ -208,7 +212,7 @@ describe('DaemonTtsController', () => {
             segmentIndex: 1,
             segmentCount: 2,
             bytes: new Uint8Array(Buffer.from('audio-1')),
-            output: { codec: 'mp3', mimeType: 'audio/mpeg' },
+            output: { codec: 'wav', mimeType: 'audio/wav' },
             isLastSegment: true,
         });
         await speaking;
@@ -219,6 +223,211 @@ describe('DaemonTtsController', () => {
             segmentIndex: 1,
         }));
         expect(cancel).not.toHaveBeenCalled();
+    });
+
+    it('keeps segmented audio residency bounded while remote confirmations remain asynchronous', async () => {
+        let releaseFirstPlayback!: () => void;
+        const firstPlayback = new Promise<void>((resolve) => { releaseFirstPlayback = resolve; });
+        let markSecondSegmentReturned!: () => void;
+        const secondSegmentReturned = new Promise<void>((resolve) => { markSecondSegmentReturned = resolve; });
+        const segments = Array.from({ length: 4 }, (_, segmentIndex) => ({
+            type: 'segment' as const,
+            streamId: 'tts-stream-bounded',
+            generation: 0,
+            segmentId: `tts-stream-bounded:${segmentIndex}`,
+            segmentIndex,
+            segmentCount: 4,
+            bytes: new Uint8Array(256).fill(segmentIndex),
+            output: { codec: 'wav' as const, mimeType: 'audio/wav' as const },
+            isLastSegment: segmentIndex === 3,
+        }));
+        const next = vi.fn(async () => {
+            const segment = segments.shift()!;
+            if (segment.segmentIndex === 1) {
+                markSecondSegmentReturned();
+            }
+            return segment;
+        });
+        const ackSegment = vi.fn(async () => {});
+        let streamSignal: AbortSignal | null = null;
+        const startSegmentedTts = vi.fn(async (params: { signal: AbortSignal }) => {
+            streamSignal = params.signal;
+            return ({
+            streamId: 'tts-stream-bounded',
+            generation: 0,
+            segmentCount: 4,
+            next,
+            ackSegment,
+            cancel: vi.fn(async () => {}),
+            });
+        });
+        let playbackCalls = 0;
+        const playAudioBytesWithStopper = vi.fn(async (opts: any) => {
+            playbackCalls += 1;
+            opts.onPlaybackStarted?.();
+            if (playbackCalls === 1) await firstPlayback;
+        });
+        const controller = new DaemonTtsController({
+            client: { synthesizeText: vi.fn(), startSegmentedTts } as any,
+            playAudioBytesWithStopper,
+        });
+        const speaking = controller.speak({
+            text: 'One. Two. Three. Four.',
+            packId: 'pack-1',
+            voiceId: 'voice-1',
+            speed: 1,
+            registerPlaybackStopper: () => () => {},
+            onSpeaking: vi.fn(),
+        });
+
+        await secondSegmentReturned;
+        expect(next).toHaveBeenCalledTimes(2);
+        expect(playAudioBytesWithStopper).toHaveBeenCalledTimes(1);
+        releaseFirstPlayback();
+        await speaking;
+        expect(next).toHaveBeenCalledTimes(4);
+        expect(playAudioBytesWithStopper).toHaveBeenCalledTimes(4);
+        expect(ackSegment).toHaveBeenCalledTimes(4);
+        expect(streamSignal).not.toBeNull();
+        expect(getEventListeners(streamSignal!, 'abort')).toHaveLength(0);
+    });
+
+    it('stops the segmented producer when playback fails with later segments still available', async () => {
+        const segments = Array.from({ length: 2 }, (_, segmentIndex) => ({
+            type: 'segment' as const,
+            streamId: 'tts-stream-playback-failure',
+            generation: 0,
+            segmentId: `tts-stream-playback-failure:${segmentIndex}`,
+            segmentIndex,
+            segmentCount: 4,
+            bytes: new Uint8Array(256).fill(segmentIndex),
+            output: { codec: 'wav' as const, mimeType: 'audio/wav' as const },
+            isLastSegment: false,
+        }));
+        let markSecondSegmentReturned!: () => void;
+        const secondSegmentReturned = new Promise<void>((resolve) => { markSecondSegmentReturned = resolve; });
+        let markThirdNextStarted!: () => void;
+        const thirdNextStarted = new Promise<void>((resolve) => { markThirdNextStarted = resolve; });
+        const pendingThirdNext = new Promise<never>(() => {});
+        const next = vi.fn(async () => {
+            const segment = segments.shift();
+            if (segment) {
+                if (segment.segmentIndex === 1) {
+                    markSecondSegmentReturned();
+                }
+                return segment;
+            }
+            markThirdNextStarted();
+            return pendingThirdNext;
+        });
+        const ackSegment = vi.fn(async () => {});
+        const cancel = vi.fn(async () => {});
+        const startSegmentedTts = vi.fn(async () => ({
+            streamId: 'tts-stream-playback-failure',
+            generation: 0,
+            segmentCount: 4,
+            next,
+            ackSegment,
+            cancel,
+        }));
+        let failFirstPlayback!: () => void;
+        const firstPlaybackFailure = new Promise<void>((_resolve, reject) => {
+            failFirstPlayback = () => reject(new Error('playback failed'));
+        });
+        const playAudioBytesWithStopper = vi.fn(async () => {
+            await firstPlaybackFailure;
+        });
+        const controller = new DaemonTtsController({
+            client: { synthesizeText: vi.fn(), startSegmentedTts } as any,
+            playAudioBytesWithStopper,
+        });
+        const speaking = controller.speak({
+            text: 'One. Two. Three. Four.',
+            packId: 'pack-1',
+            voiceId: 'voice-1',
+            speed: 1,
+            registerPlaybackStopper: () => () => {},
+            onSpeaking: vi.fn(),
+        });
+        await secondSegmentReturned;
+        expect(next).toHaveBeenCalledTimes(2);
+        expect(playAudioBytesWithStopper).toHaveBeenCalledTimes(1);
+        failFirstPlayback();
+        await thirdNextStarted;
+        await speaking;
+        expect(next).toHaveBeenCalledTimes(3);
+        expect(cancel).toHaveBeenCalledTimes(1);
+        expect(playAudioBytesWithStopper).toHaveBeenCalledTimes(1);
+        expect(ackSegment).not.toHaveBeenCalled();
+    });
+
+    it('stops active local playback when an asynchronous confirmation fails', async () => {
+        const segments = Array.from({ length: 2 }, (_, segmentIndex) => ({
+            type: 'segment' as const,
+            streamId: 'tts-stream-confirmation-failure',
+            generation: 0,
+            segmentId: `tts-stream-confirmation-failure:${segmentIndex}`,
+            segmentIndex,
+            segmentCount: 2,
+            bytes: new Uint8Array(16).fill(segmentIndex),
+            output: { codec: 'wav' as const, mimeType: 'audio/wav' as const },
+            isLastSegment: segmentIndex === 1,
+        }));
+        let rejectFirstConfirmation!: () => void;
+        const firstConfirmation = new Promise<void>((_resolve, reject) => {
+            rejectFirstConfirmation = () => reject(new Error('confirmation failed'));
+        });
+        const ackSegment = vi.fn(async () => await firstConfirmation);
+        const cancel = vi.fn(async () => {});
+        const startSegmentedTts = vi.fn(async () => ({
+            streamId: 'tts-stream-confirmation-failure',
+            generation: 0,
+            segmentCount: 2,
+            next: vi.fn(async () => segments.shift()!),
+            ackSegment,
+            cancel,
+        }));
+        let releaseSecondPlayback!: () => void;
+        const secondPlayback = new Promise<void>((resolve) => { releaseSecondPlayback = resolve; });
+        let markSecondPlaybackStarted!: () => void;
+        const secondPlaybackStarted = new Promise<void>((resolve) => { markSecondPlaybackStarted = resolve; });
+        const stopActivePlayback = vi.fn(() => releaseSecondPlayback());
+        let playbackCalls = 0;
+        const playAudioBytesWithStopper = vi.fn(async (opts: any) => {
+            playbackCalls += 1;
+            opts.onPlaybackStarted?.();
+            if (playbackCalls !== 2) {
+                return;
+            }
+            const clearStopper = opts.registerPlaybackStopper(stopActivePlayback);
+            markSecondPlaybackStarted();
+            try {
+                await secondPlayback;
+            } finally {
+                clearStopper();
+            }
+        });
+        const controller = new DaemonTtsController({
+            client: { synthesizeText: vi.fn(), startSegmentedTts } as any,
+            playAudioBytesWithStopper,
+        });
+
+        const speaking = controller.speak({
+            text: 'One. Two.',
+            packId: 'pack-1',
+            voiceId: 'voice-1',
+            speed: 1,
+            registerPlaybackStopper: () => () => {},
+            onSpeaking: vi.fn(),
+        });
+        await secondPlaybackStarted;
+        rejectFirstConfirmation();
+        await speaking;
+
+        expect(playAudioBytesWithStopper).toHaveBeenCalledTimes(2);
+        expect(ackSegment).toHaveBeenCalledTimes(1);
+        expect(stopActivePlayback).toHaveBeenCalledTimes(1);
+        expect(cancel).toHaveBeenCalledTimes(1);
     });
 
     it('does not enter speaking before the first daemon segment is available', async () => {
@@ -242,7 +451,6 @@ describe('DaemonTtsController', () => {
         });
         const onSpeaking = vi.fn();
 
-        const { DaemonTtsController } = await import('./DaemonTtsController');
         const controller = new DaemonTtsController({
             client: { synthesizeText: vi.fn(), startSegmentedTts } as any,
             playAudioBytesWithStopper,
@@ -251,7 +459,7 @@ describe('DaemonTtsController', () => {
         const speaking = controller.speak({
             sessionId: 'session-1',
             text: 'Still synthesizing.',
-            packId: 'kokoro-tts-en-v1',
+            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
             voiceId: 'af_heart',
             speed: 1,
             registerPlaybackStopper: (_stopper: () => void) => () => {},
@@ -271,7 +479,7 @@ describe('DaemonTtsController', () => {
             segmentIndex: 0,
             segmentCount: 1,
             bytes: new Uint8Array(Buffer.from('audio-0')),
-            output: { codec: 'mp3', mimeType: 'audio/mpeg' },
+            output: { codec: 'wav', mimeType: 'audio/wav' },
             isLastSegment: true,
         });
 
@@ -295,7 +503,7 @@ describe('DaemonTtsController', () => {
                 segmentIndex: 0,
                 segmentCount: 1,
                 bytes: new Uint8Array(Buffer.from('audio-0')),
-                output: { codec: 'mp3', mimeType: 'audio/mpeg' },
+                output: { codec: 'wav', mimeType: 'audio/wav' },
                 isLastSegment: true,
             })),
             ackSegment,
@@ -303,7 +511,6 @@ describe('DaemonTtsController', () => {
         }));
         const onSpeaking = vi.fn();
 
-        const { DaemonTtsController } = await import('./DaemonTtsController');
         const controller = new DaemonTtsController({
             client: { synthesizeText: vi.fn(), startSegmentedTts } as any,
             playAudioBytesWithStopper: vi.fn(async () => {
@@ -314,7 +521,7 @@ describe('DaemonTtsController', () => {
         await controller.speak({
             sessionId: 'session-1',
             text: 'hello daemon',
-            packId: 'kokoro-tts-en-v1',
+            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
             voiceId: 'af_heart',
             speed: 1,
             registerPlaybackStopper: (_stopper: () => void) => () => {},
@@ -338,7 +545,7 @@ describe('DaemonTtsController', () => {
                 segmentIndex: 0,
                 segmentCount: 2,
                 bytes: new Uint8Array(Buffer.from('audio-0')),
-                output: { codec: 'mp3', mimeType: 'audio/mpeg' },
+                output: { codec: 'wav', mimeType: 'audio/wav' },
                 isLastSegment: false,
             })
             .mockResolvedValueOnce({
@@ -349,7 +556,7 @@ describe('DaemonTtsController', () => {
                 segmentIndex: 1,
                 segmentCount: 2,
                 bytes: new Uint8Array(Buffer.from('audio-1')),
-                output: { codec: 'mp3', mimeType: 'audio/mpeg' },
+                output: { codec: 'wav', mimeType: 'audio/wav' },
                 isLastSegment: true,
             });
         const startSegmentedTts = vi.fn(async () => ({
@@ -364,7 +571,6 @@ describe('DaemonTtsController', () => {
             throw new Error('playback failed');
         });
 
-        const { DaemonTtsController } = await import('./DaemonTtsController');
         const controller = new DaemonTtsController({
             client: { synthesizeText: vi.fn(), startSegmentedTts } as any,
             playAudioBytesWithStopper,
@@ -373,7 +579,7 @@ describe('DaemonTtsController', () => {
         await controller.speak({
             sessionId: 'session-1',
             text: 'hello daemon',
-            packId: 'kokoro-tts-en-v1',
+            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
             voiceId: 'af_heart',
             speed: 1,
             registerPlaybackStopper: (_stopper: () => void) => () => {},
@@ -391,7 +597,6 @@ describe('DaemonTtsController', () => {
         }));
         const onSpeaking = vi.fn();
 
-        const { DaemonTtsController } = await import('./DaemonTtsController');
         const controller = new DaemonTtsController({
             client: { synthesizeText: vi.fn(), startSegmentedTts } as any,
             playAudioBytesWithStopper: vi.fn(),
@@ -400,7 +605,7 @@ describe('DaemonTtsController', () => {
         await expect(controller.speak({
             sessionId: 'session-1',
             text: 'hello daemon',
-            packId: 'kokoro-tts-en-v1',
+            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
             voiceId: 'af_heart',
             speed: 1,
             registerPlaybackStopper: (_stopper: () => void) => () => {},
@@ -430,7 +635,6 @@ describe('DaemonTtsController', () => {
         }));
         const playAudioBytesWithStopper = vi.fn().mockResolvedValue(undefined);
 
-        const { DaemonTtsController } = await import('./DaemonTtsController');
         const controller = new DaemonTtsController({
             client: { synthesizeText: vi.fn(), startSegmentedTts } as any,
             playAudioBytesWithStopper,
@@ -438,7 +642,7 @@ describe('DaemonTtsController', () => {
 
         const speaking = controller.speak({
             text: 'Abort before audio arrives.',
-            packId: 'kokoro-tts-en-v1',
+            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
             voiceId: null,
             speed: null,
             registerPlaybackStopper: (_stopper: () => void) => () => {},
@@ -457,7 +661,7 @@ describe('DaemonTtsController', () => {
             segmentIndex: 0,
             segmentCount: 1,
             bytes: new Uint8Array(Buffer.from('stale')),
-            output: { codec: 'mp3', mimeType: 'audio/mpeg' },
+            output: { codec: 'wav', mimeType: 'audio/wav' },
             isLastSegment: true,
         });
 
@@ -473,7 +677,6 @@ describe('DaemonTtsController', () => {
         });
         const playAudioBytesWithStopper = vi.fn().mockResolvedValue(undefined);
 
-        const { DaemonTtsController } = await import('./DaemonTtsController');
         const controller = new DaemonTtsController({
             client: { synthesizeText } as any,
             playAudioBytesWithStopper,
@@ -482,7 +685,7 @@ describe('DaemonTtsController', () => {
         await controller.speak({
             sessionId: 'session-override',
             text: 'hello daemon',
-            packId: 'kokoro-tts-en-v1',
+            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
             voiceId: 'af_heart',
             speed: 1,
             registerPlaybackStopper: (_stopper: () => void) => () => {},
@@ -504,7 +707,6 @@ describe('DaemonTtsController', () => {
             output: { codec: 'opus', mimeType: 'audio/opus' },
         });
 
-        const { DaemonTtsController } = await import('./DaemonTtsController');
         const controller = new DaemonTtsController({
             client: { synthesizeText } as any,
             playAudioBytesWithStopper: vi.fn(),
@@ -512,7 +714,7 @@ describe('DaemonTtsController', () => {
 
         await expect(controller.speak({
             text: 'hello daemon',
-            packId: 'kokoro-tts-en-v1',
+            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
             voiceId: 'af_heart',
             speed: 1,
             registerPlaybackStopper: (_stopper) => () => {},
@@ -528,7 +730,6 @@ describe('DaemonTtsController', () => {
             output: { codec: 'mp3', mimeType: 'audio/wav' },
         });
 
-        const { DaemonTtsController } = await import('./DaemonTtsController');
         const controller = new DaemonTtsController({
             client: { synthesizeText } as any,
             playAudioBytesWithStopper: vi.fn(),
@@ -536,7 +737,7 @@ describe('DaemonTtsController', () => {
 
         await expect(controller.speak({
             text: 'hello daemon',
-            packId: 'kokoro-tts-en-v1',
+            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
             voiceId: 'af_heart',
             speed: 1,
             registerPlaybackStopper: (_stopper) => () => {},

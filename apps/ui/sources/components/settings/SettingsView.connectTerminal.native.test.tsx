@@ -153,10 +153,6 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (fn: any) => [false, fn],
 }));
 
-vi.mock('@/sync/api/account/apiVendorTokens', () => ({
-    disconnectVendorToken: vi.fn(async () => {}),
-}));
-
 vi.mock('@/sync/domains/profiles/profile', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/profiles/profile')>();
     return {
@@ -178,7 +174,7 @@ vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'gemini'],
     DEFAULT_AGENT_ID: 'agent_default',
-    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', label: 'Anthropic', connectRoute: null } }),
+    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', labelKey: 'agentInput.agent.claude', connectRoute: null } }),
     getAgentIconSource: () => null,
     getAgentIconTintColor: () => null,
     resolveAgentIdFromConnectedServiceId: () => null,
@@ -301,14 +297,14 @@ describe('SettingsView (native connect terminal)', () => {
             await flushDeferredSettingsDelay(1000);
 
             expect(interactionManagerMockState.runAfterInteractions).toHaveBeenCalledTimes(1);
-            expect(Boolean(findItemByTitle(screen.tree, 'settingsProviders.title'))).toBe(false);
+            expect(Boolean(findItemByTitle(screen.tree, 'settingsAgents.title'))).toBe(false);
 
             await act(async () => {
                 releaseInteractions?.();
             });
             await flushDeferredSettingsDelay();
 
-            expect(findItemByTitle(screen.tree, 'settingsProviders.title')).toBeTruthy();
+            expect(findItemByTitle(screen.tree, 'settingsAgents.title')).toBeTruthy();
         } finally {
             vi.useRealTimers();
         }
@@ -324,12 +320,12 @@ describe('SettingsView (native connect terminal)', () => {
 
             expect(findItemByTitle(screen.tree, 'settings.account')).toBeTruthy();
             expect(findItemByTitle(screen.tree, 'settings.appearance')).toBeTruthy();
-            expect(Boolean(findItemByTitle(screen.tree, 'settingsProviders.title'))).toBe(false);
+            expect(Boolean(findItemByTitle(screen.tree, 'settingsAgents.title'))).toBe(false);
             expect(Boolean(findItemByTitle(screen.tree, 'settings.sessions'))).toBe(false);
 
             await flushDeferredSettingsDelay();
 
-            expect(findItemByTitle(screen.tree, 'settingsProviders.title')).toBeTruthy();
+            expect(findItemByTitle(screen.tree, 'settingsAgents.title')).toBeTruthy();
             expect(Boolean(findItemByTitle(screen.tree, 'settings.sessions'))).toBe(false);
             expect(Boolean(findItemByTitle(screen.tree, 'settings.servers'))).toBe(false);
             expect(Boolean(findItemByTitle(screen.tree, 'settings.github'))).toBe(false);
@@ -367,7 +363,7 @@ describe('SettingsView (native connect terminal)', () => {
         const stableRowTitles = [
             'settings.account',
             'settings.appearance',
-            'settingsProviders.title',
+            'settingsAgents.title',
             'settings.sessions',
             'settings.servers',
         ];

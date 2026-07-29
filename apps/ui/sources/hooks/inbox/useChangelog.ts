@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { FeatureId } from '@happier-dev/protocol';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import {
@@ -20,16 +20,32 @@ export function useChangelog() {
             return false;
         }
         const lastViewedReleaseId = getLastViewedReleaseId();
-
-        // On first install, mark as read so user doesn't see old entries
         if (lastViewedReleaseId === null) {
-            setLegacyChangelogAutoSeenBaseline(latestReleaseId);
-            setLastViewedReleaseId(latestReleaseId);
             return false;
         }
 
         return latestReleaseId !== lastViewedReleaseId;
     });
+
+    useEffect(() => {
+        if (!enabled || !latestReleaseId) {
+            setHasUnread(false);
+            return;
+        }
+
+        const lastViewedReleaseId = getLastViewedReleaseId();
+        if (lastViewedReleaseId === null) {
+            // On first install, mark as read so users don't see old entries. This must run after
+            // commit; writing MMKV during render can synchronously notify other update-status
+            // consumers while the pre-auth shell is still rendering.
+            setLegacyChangelogAutoSeenBaseline(latestReleaseId);
+            setLastViewedReleaseId(latestReleaseId);
+            setHasUnread(false);
+            return;
+        }
+
+        setHasUnread(latestReleaseId !== lastViewedReleaseId);
+    }, [enabled, latestReleaseId]);
 
     const markAsRead = useCallback(() => {
         if (!enabled || !latestReleaseId) {

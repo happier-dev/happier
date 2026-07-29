@@ -17,6 +17,7 @@ const setSessionListIdentityDisplay = vi.fn();
 const setSessionListActiveColorMode = vi.fn();
 const setSessionListAttentionPromotionMode = vi.fn();
 const setSessionListWorkingPlacementMode = vi.fn();
+const setSessionListSeparateBackgroundWork = vi.fn();
 const setSessionListSectionMode = vi.fn();
 let translationPrefix = 'en';
 let sessionListOrderingModeSetting: 'custom' | 'created' | 'updated' = 'custom';
@@ -43,6 +44,7 @@ installSessionSettingsEntryModuleMocks({
                     if (key === 'sessionListActiveColorModeV1') return ['activityAndAttention', setSessionListActiveColorMode];
                     if (key === 'sessionListAttentionPromotionModeV1') return ['global', setSessionListAttentionPromotionMode];
                     if (key === 'sessionListWorkingPlacementModeV1') return ['off', setSessionListWorkingPlacementMode];
+                    if (key === 'sessionListSeparateBackgroundWorkV1') return [false, setSessionListSeparateBackgroundWork];
                     if (key === 'sessionListOrderingModeV1') return [sessionListOrderingModeSetting, setSessionListOrderingMode];
                     if (key === 'sessionListFolderSortModeV1') return [sessionListFolderSortModeSetting, setSessionListFolderSortMode];
                     if (key === 'workspacePathDisplayModeV1') return ['name', setWorkspacePathDisplayMode];
@@ -96,6 +98,7 @@ afterEach(() => {
     setSessionListActiveColorMode.mockClear();
     setSessionListAttentionPromotionMode.mockClear();
     setSessionListWorkingPlacementMode.mockClear();
+    setSessionListSeparateBackgroundWork.mockClear();
     setSessionListSectionMode.mockClear();
     resetSessionSettingsEntryState();
     translationPrefix = 'en';

@@ -1,4 +1,3 @@
-import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 import { deletePushToken as deletePushTokenApi, registerPushToken as registerPushTokenApi } from '@/sync/api/session/apiPush';
@@ -13,10 +12,10 @@ import { HappyError } from '@/utils/errors/errors';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { serverFetch } from '@/sync/http/client';
-import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import { isExpoPushNotificationChannelEnabled, openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 import { deriveSettingsSecretsKey, sealSecretsDeep } from '@/sync/encryption/secretSettings';
 import { loadLastRegisteredExpoPushToken, saveLastRegisteredExpoPushToken } from '@/sync/domains/state/pushTokenRegistration';
-import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
+import { readExpoPushToken, readPushPermission } from '@/activity/notifications/permission/pushNotificationAccess';
 
 export async function handleUpdateAccountSocketUpdate(params: {
     accountUpdate: any;
@@ -92,7 +91,10 @@ export async function handleUpdateAccountSocketUpdate(params: {
                     material: { type: 'dataKey', machineKey },
                     ciphertext: content.c,
                 });
-                decryptedSettings = opened?.value ?? (await encryption.decryptRaw(content.c));
+                if (!opened) {
+                    throw new Error('Account settings ciphertext has no authenticated settings domain');
+                }
+                decryptedSettings = opened.value;
             }
 
             const parsedSettings = decryptedSettings ? settingsParse(decryptedSettings) : settingsParse({});
@@ -120,7 +122,10 @@ export async function handleUpdateAccountSocketUpdate(params: {
                 material: { type: 'dataKey', machineKey },
                 ciphertext: accountUpdate.settings.value,
             });
-            const decryptedSettings = opened?.value ?? (await encryption.decryptRaw(accountUpdate.settings.value));
+            if (!opened) {
+                throw new Error('Account settings ciphertext has no authenticated settings domain');
+            }
+            const decryptedSettings = opened.value;
             const parsedSettings = settingsParse(decryptedSettings);
 
             // Version compatibility check
@@ -183,9 +188,28 @@ export async function fetchAndApplyProfile(params: {
     applyProfile(parsedProfile);
 }
 
+/**
+ * Read the live account settings without giving this sync-engine module a load-time dependency on
+ * the store graph. An unreadable store (early boot, isolated test) must not silently disable push,
+ * so it degrades to the schema default rather than to "disabled".
+ */
+function readAccountSettingsFromStore(): unknown {
+    try {
+        const { storage } = require('@/sync/domains/state/storage') as typeof import('@/sync/domains/state/storage');
+        return storage.getState().settings;
+    } catch {
+        return null;
+    }
+}
+
 export async function registerPushTokenIfAvailable(params: {
     credentials: AuthCredentials;
     log: { log: (message: string) => void };
+    /**
+     * Account settings source. Defaults to the live store; injected by tests and by callers that
+     * already hold a settings snapshot.
+     */
+    getAccountSettings?: () => unknown;
 }): Promise<void> {
     const { credentials, log } = params;
 
@@ -194,45 +218,39 @@ export async function registerPushTokenIfAvailable(params: {
         return;
     }
 
-    let Notifications: ExpoNotificationsModule;
-    try {
-        Notifications = await loadExpoNotifications();
-    } catch (error) {
-        const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
-        log.log('Push notifications unavailable: ' + message);
+    // The account-level push setting governs registration and prompting, not just delivery.
+    // Registering a token for an account that disabled push would leave a live delivery target
+    // contradicting the setting the user can see.
+    const readAccountSettings = params.getAccountSettings ?? readAccountSettingsFromStore;
+    if (!isExpoPushNotificationChannelEnabled(readAccountSettings())) {
+        log.log('Push notifications disabled for this account; skipping push token registration');
         return;
     }
 
-    // Request permission
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
-    let finalStatus = existingStatus;
-
-    if (existingStatus !== 'granted') {
-        const { status } = await Notifications.requestPermissionsAsync();
-        finalStatus = status;
-    }
-
-    if (finalStatus !== 'granted') {
+    const permission = await readPushPermission();
+    if (!permission.ok) {
+        log.log(`Push notification runtime unavailable (${permission.reason}); skipping push token registration`);
         return;
     }
 
-    // Get push token (avoid logging token contents)
-    const projectId = Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
-    let tokenData: { data: string };
-    try {
-        tokenData = projectId
-            ? await Notifications.getExpoPushTokenAsync({ projectId })
-            : await Notifications.getExpoPushTokenAsync();
-    } catch (error) {
-        const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
-        log.log('Failed to get Expo push token: ' + message);
+    // Background registration never prompts. iOS grants exactly one system prompt per install, and
+    // spending it from a sync task gives the user no context to decide. The primed permission flow
+    // owns the ask; registration only consumes an already-granted permission.
+    if (!permission.permission.granted) {
+        log.log(`Push notification permission not granted (${permission.permission.status}); skipping push token registration`);
+        return;
+    }
+
+    const tokenOutcome = await readExpoPushToken();
+    if (!tokenOutcome.ok) {
+        log.log(`Unable to read an Expo push token (${tokenOutcome.reason}); skipping push token registration`);
         return;
     }
 
     // Register with server
     try {
         const profiles = listServerProfiles();
-        const token = tokenData.data;
+        const token = tokenOutcome.token;
         const previousToken = loadLastRegisteredExpoPushToken();
         const normalizeServerUrl = (serverUrl: string) => serverUrl.replace(/\/+$/, '');
         let activeServerUrl: string | null = null;

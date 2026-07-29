@@ -32,7 +32,7 @@ export const FileDownloadButton = React.memo((props: Readonly<{
                 event?.stopPropagation?.();
                 void (async () => {
                     const res = await transfers.startDownload({ path: props.path, asZip: props.asZip === true });
-                    if (!res.ok) {
+                    if (!res.ok && res.canceled !== true) {
                         try {
                             const { Modal } = await import('@/modal');
                             Modal.alert(t('common.error'), res.error);

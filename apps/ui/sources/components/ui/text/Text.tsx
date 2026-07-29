@@ -7,13 +7,6 @@ import { useLocalSetting } from '@/sync/store/hooks';
 import { scaleTextStyle } from './uiFontScale';
 
 const TextSelectabilityContext = React.createContext<boolean>(false);
-const WEB_TEXT_INPUT_NO_OUTLINE_STYLE = {
-    outline: 'none',
-    outlineStyle: 'none',
-    outlineWidth: 0,
-    outlineColor: 'transparent',
-    boxShadow: 'none',
-} as unknown as TextStyle;
 
 function isIosWeb(): boolean {
     if (Platform.OS !== 'web') return false;
@@ -49,6 +42,8 @@ export function TextSelectabilityScope(props: Readonly<{ selectable: boolean; ch
 }
 
 export type AppTextProps = RNTextProps & Readonly<{
+    /** Web focus-order override forwarded to the underlying React Native Web text element. */
+    tabIndex?: 0 | -1;
     /**
      * Whether to use the default typography. Set to false to skip the default font.
      * Useful when you want to control typography via `style` (e.g. `Typography.mono()`).
@@ -121,9 +116,6 @@ export const TextInput = React.memo(
             if (defaultStyle) out.push(defaultStyle);
             if (Array.isArray(scaledStyle)) out.push(...scaledStyle);
             else if (scaledStyle) out.push(scaledStyle);
-            if (Platform.OS === 'web') {
-                out.push(WEB_TEXT_INPUT_NO_OUTLINE_STYLE);
-            }
             if (isIosWeb()) {
                 const resolvedFontSize = resolveFontSizeFromStyle(out);
                 if (typeof resolvedFontSize === 'number' && resolvedFontSize > 0 && resolvedFontSize < 16) {

@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { Platform, Pressable, View, StyleProp, ViewStyle, TextStyle } from 'react-native';
+import { Platform, Pressable, View, StyleProp, ViewStyle, TextStyle, StyleSheet as RNStyleSheet } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
+import { buildActionRowAccessibilityLabel } from './actionRowAccessibility';
 
 
 export type SelectableRowVariant = 'slim' | 'default' | 'selectable';
@@ -31,6 +32,8 @@ export type SelectableRowProps = Readonly<{
     onPress?: () => void;
     onHover?: () => void;
     onMouseDownCapture?: (event: unknown) => void;
+    accessibilityLabel?: string;
+    webRole?: React.AriaRole;
 
     containerStyle?: StyleProp<ViewStyle>;
     titleStyle?: StyleProp<TextStyle>;
@@ -43,6 +46,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         borderRadius: 10,
         backgroundColor: 'transparent',
+        borderWidth: RNStyleSheet.hairlineWidth || 1,
+        borderColor: 'transparent',
     },
     rowSlim: {
         paddingHorizontal: 16,
@@ -60,8 +65,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginHorizontal: 8,
         marginVertical: 2,
         borderRadius: 8,
-        borderWidth: 2,
-        borderColor: 'transparent',
     },
     rowPressed: {
         backgroundColor: theme.colors.surface.pressed,
@@ -71,7 +74,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     rowSelected: {
         backgroundColor: theme.colors.surface.pressedOverlay,
-        borderColor: theme.colors.border.default,
+        borderColor: theme.colors.border.strong,
     },
     // Palette variant states (match old CommandPaletteItem styles exactly)
     rowSelectablePressed: {
@@ -79,10 +82,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     rowSelectableHovered: {
         backgroundColor: theme.dark ? theme.colors.surface.elevated : theme.colors.surface.inset,
-    },
-    rowSelectableSelected: {
-        backgroundColor: theme.colors.surface.selected,
-        borderColor: theme.colors.accent.blue,
     },
     rowDisabled: {
         opacity: 0.5,
@@ -187,6 +186,12 @@ export function SelectableRow(props: SelectableRowProps) {
     const rightAccessory = React.useMemo(() => normalizeNodeForView(props.right ?? null), [props.right]);
     const titleAccessory = React.useMemo(() => normalizeNodeForView(props.titleAccessory ?? null), [props.titleAccessory]);
     const accessoryTitleAlignmentStyle = props.subtitle ? styles.accessoryTitleAligned : null;
+    const webRole = Platform.OS === 'web' && props.onPress && !disabled
+        ? (props.webRole ?? 'button')
+        : undefined;
+    const accessibilityLabel = props.accessibilityLabel ?? (
+        webRole ? buildActionRowAccessibilityLabel([props.title, props.subtitle]) : undefined
+    );
 
     return (
         <Pressable
@@ -194,6 +199,8 @@ export function SelectableRow(props: SelectableRowProps) {
             onPress={disabled ? undefined : props.onPress}
             accessibilityState={disabled ? ({ disabled: true } as const) : undefined}
             accessibilityRole={Platform.OS === 'web' ? undefined : (props.onPress ? 'button' : undefined)}
+            accessibilityLabel={accessibilityLabel}
+            {...(webRole ? { role: webRole } : undefined)}
             pointerEvents={disabled && allowChildInteractionWhenDisabled ? 'box-none' : 'auto'}
             style={({ pressed }) => ([
                 styles.row,
@@ -206,7 +213,7 @@ export function SelectableRow(props: SelectableRowProps) {
                     ? (variant === 'selectable' ? styles.rowSelectableHovered : styles.rowHovered)
                     : null,
                 selected
-                    ? (variant === 'selectable' ? styles.rowSelectableSelected : styles.rowSelected)
+                    ? styles.rowSelected
                     : null,
                 disabled ? styles.rowDisabled : null,
                 props.containerStyle,

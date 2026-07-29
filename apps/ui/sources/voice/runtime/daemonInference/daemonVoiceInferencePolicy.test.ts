@@ -21,9 +21,9 @@ describe('resolveDaemonVoiceInferenceExecution', () => {
 
         expect(resolveLocalNeuralExecutionPolicy({ requestedExecution: 'device' })).toEqual({
             allowDeviceSelection: false,
-            preferredExecution: 'daemon',
+            preferredExecution: 'device',
             requestedExecution: 'device',
-            selectableExecution: 'daemon',
+            selectableExecution: 'device',
         });
 
         expect(resolveLocalNeuralExecutionPolicy({ requestedExecution: 'auto' })).toEqual({
@@ -45,7 +45,7 @@ describe('resolveDaemonVoiceInferenceExecution', () => {
         await expect(resolveDaemonVoiceInferenceExecution({ requestedExecution: 'auto' })).resolves.toBe('daemon');
     });
 
-    it('clamps explicit device execution to daemon on web when daemon inference is enabled', async () => {
+    it('keeps explicit device execution on web instead of changing execution authority', async () => {
         vi.doMock('react-native', () => ({
             Platform: { OS: 'web' },
         }));
@@ -53,10 +53,11 @@ describe('resolveDaemonVoiceInferenceExecution', () => {
 
         const { resolveDaemonVoiceInferenceExecution } = await import('./daemonVoiceInferencePolicy');
 
-        await expect(resolveDaemonVoiceInferenceExecution({ requestedExecution: 'device' })).resolves.toBe('daemon');
+        await expect(resolveDaemonVoiceInferenceExecution({ requestedExecution: 'device' })).resolves.toBe('device');
+        expect(isRuntimeFeatureEnabledMock).not.toHaveBeenCalled();
     });
 
-    it('falls back to device execution when daemon inference is disabled', async () => {
+    it('returns a typed unavailable error for explicit daemon execution when daemon inference is disabled', async () => {
         vi.doMock('react-native', () => ({
             Platform: { OS: 'web' },
         }));
@@ -64,10 +65,13 @@ describe('resolveDaemonVoiceInferenceExecution', () => {
 
         const { resolveDaemonVoiceInferenceExecution } = await import('./daemonVoiceInferencePolicy');
 
-        await expect(resolveDaemonVoiceInferenceExecution({ requestedExecution: 'daemon' })).resolves.toBe('device');
+        await expect(resolveDaemonVoiceInferenceExecution({ requestedExecution: 'daemon' })).rejects.toMatchObject({
+            code: 'feature_disabled',
+            message: 'daemon_voice_inference_feature_disabled',
+        });
     });
 
-    it('fails closed to device execution when the daemon-inference feature probe errors', async () => {
+    it('returns a typed error for explicit daemon execution when the feature probe errors', async () => {
         vi.doMock('react-native', () => ({
             Platform: { OS: 'web' },
         }));
@@ -75,7 +79,10 @@ describe('resolveDaemonVoiceInferenceExecution', () => {
 
         const { resolveDaemonVoiceInferenceExecution } = await import('./daemonVoiceInferencePolicy');
 
-        await expect(resolveDaemonVoiceInferenceExecution({ requestedExecution: 'daemon' })).resolves.toBe('device');
+        await expect(resolveDaemonVoiceInferenceExecution({ requestedExecution: 'daemon' })).rejects.toMatchObject({
+            code: 'internal_error',
+            message: 'daemon_voice_inference_feature_probe_failed',
+        });
     });
 
     it('keeps explicit device execution on native', async () => {
@@ -100,7 +107,7 @@ describe('resolveDaemonVoiceInferenceExecution', () => {
         await expect(resolveDaemonVoiceInferenceExecution({ requestedExecution: 'auto' })).resolves.toBe('device');
     });
 
-    it('demotes a conversation to device execution after two consecutive over-budget daemon synthesis samples', async () => {
+    it('does not demote web auto execution to an unavailable device location after over-budget samples', async () => {
         vi.doMock('react-native', () => ({
             Platform: { OS: 'web' },
         }));
@@ -116,9 +123,32 @@ describe('resolveDaemonVoiceInferenceExecution', () => {
         await expect(resolveDaemonVoiceInferenceExecution({ requestedExecution: 'auto', sessionId: 'session-1' })).resolves.toBe('daemon');
 
         recordDaemonVoiceInferenceTtsLatencySample({ sessionId: 'session-1', elapsedMs: 3_000 });
-        await expect(resolveDaemonVoiceInferenceExecution({ requestedExecution: 'auto', sessionId: 'session-1' })).resolves.toBe('device');
+        await expect(resolveDaemonVoiceInferenceExecution({ requestedExecution: 'auto', sessionId: 'session-1' })).resolves.toBe('daemon');
 
         clearDaemonVoiceInferenceLatencyState('session-1');
+    });
+
+    it('does not demote an explicit daemon selection after over-budget synthesis samples', async () => {
+        vi.doMock('react-native', () => ({
+            Platform: { OS: 'web' },
+        }));
+        isRuntimeFeatureEnabledMock.mockResolvedValue(true);
+
+        const {
+            resolveDaemonVoiceInferenceExecution,
+            recordDaemonVoiceInferenceTtsLatencySample,
+            clearDaemonVoiceInferenceLatencyState,
+        } = await import('./daemonVoiceInferencePolicy');
+
+        recordDaemonVoiceInferenceTtsLatencySample({ sessionId: 'session-explicit', elapsedMs: 3_000 });
+        recordDaemonVoiceInferenceTtsLatencySample({ sessionId: 'session-explicit', elapsedMs: 3_000 });
+
+        await expect(resolveDaemonVoiceInferenceExecution({
+            requestedExecution: 'daemon',
+            sessionId: 'session-explicit',
+        })).resolves.toBe('daemon');
+
+        clearDaemonVoiceInferenceLatencyState('session-explicit');
     });
 
     it('resets daemon latency demotion tracking after an in-budget synthesis sample', async () => {
@@ -158,7 +188,7 @@ describe('resolveDaemonVoiceInferenceExecution', () => {
         recordDaemonVoiceInferenceTtsLatencySample({ sessionId: 'session-3', elapsedMs: 3_000 });
         recordDaemonVoiceInferenceTtsLatencySample({ sessionId: 'session-3', elapsedMs: 3_000 });
 
-        await expect(resolveDaemonVoiceInferenceExecution({ requestedExecution: 'auto', sessionId: 'session-3' })).resolves.toBe('device');
+        await expect(resolveDaemonVoiceInferenceExecution({ requestedExecution: 'auto', sessionId: 'session-3' })).resolves.toBe('daemon');
 
         setVoiceSessionSnapshot({
             adapterId: 'local_conversation',

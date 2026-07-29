@@ -26,7 +26,11 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 
 import { buildProjectsListGroups } from './projectsListGrouping';
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
-import { buildProjectRouteHref, resolveProjectRouteSegment } from './detail/projectRouteState';
+import {
+    buildProjectRouteHref,
+    resolveProjectRouteSegment,
+    resolveProjectRouteSelectionQuery,
+} from './detail/projectRouteState';
 import { ProjectsListItemMenu } from './ProjectsListItemMenu';
 import { resolveWorkspaceRefDisplayName } from './resolveWorkspaceRefDisplayName';
 import { resolveProjectMobileSurfaceIntent, resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
@@ -85,7 +89,11 @@ export const ProjectsListView = React.memo(() => {
             router.push(resolveProjectRoutePathForSurface({
                 workspaceRefId: workspaceRef.id,
                 surface,
-                rawWorktreeId: activeRootPath === workspaceRef.rootPath ? '@root' : activeWorktreeId,
+                ...resolveProjectRouteSelectionQuery({
+                    activeRootPath,
+                    defaultRootPath: workspaceRef.rootPath,
+                    activeWorktreeId,
+                }),
             }));
             return;
         }

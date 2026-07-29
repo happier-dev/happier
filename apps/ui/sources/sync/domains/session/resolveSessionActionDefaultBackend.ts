@@ -1,8 +1,16 @@
-import { readAcpConfiguredBackendV1FromMetadata, type BackendTargetRefV2 } from '@happier-dev/protocol';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import {
+    readAcpConfiguredBackendV1FromMetadata,
+    type BackendTargetRefV2,
+} from '@happier-dev/protocol';
 
-import { isAgentId, resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog/catalog';
+import {
+    isAgentId,
+    type AgentId,
+} from '@/agents/catalog/catalog';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export type ResolvedSessionActionDefaultBackend = Readonly<{
   backendTarget: BackendTargetRefV2;
@@ -35,9 +43,9 @@ function resolveDefaultBuiltInAgentId(params: Readonly<{
   const metadata = params.metadata && typeof params.metadata === 'object' && !Array.isArray(params.metadata)
     ? (params.metadata as Record<string, unknown>)
     : null;
-  const flavorAgentId = resolveAgentIdFromFlavor(typeof metadata?.flavor === 'string' ? metadata.flavor : null);
-  if (flavorAgentId && (params.enabledAgentIds.length === 0 || params.enabledAgentIds.includes(flavorAgentId))) {
-    return flavorAgentId;
+  const metadataAgentId = resolveAgentIdFromSessionMetadata(metadata);
+  if (metadataAgentId && (params.enabledAgentIds.length === 0 || params.enabledAgentIds.includes(metadataAgentId))) {
+    return metadataAgentId;
   }
 
   const fallbackAgentId = typeof params.fallbackAgentId === 'string' && params.fallbackAgentId.trim().length > 0
@@ -47,7 +55,7 @@ function resolveDefaultBuiltInAgentId(params: Readonly<{
     return fallbackAgentId;
   }
 
-  return params.enabledAgentIds[0] ?? flavorAgentId ?? fallbackAgentId ?? null;
+  return params.enabledAgentIds[0] ?? metadataAgentId ?? fallbackAgentId ?? null;
 }
 
 function resolveDefaultBackendId(params: Readonly<{
@@ -73,7 +81,9 @@ export function resolveSessionActionDefaultBackend(params: Readonly<{
   enabledAgentIds?: readonly AgentId[] | null;
   fallbackAgentId?: AgentId | null;
 }>): ResolvedSessionActionDefaultBackend | null {
-  const metadata = params.session?.metadata ?? null;
+  const metadata = params.session
+    ? readSessionOwnerMetadataView(params.session)
+    : null;
   const enabledAgentIds = normalizeEnabledAgentIds(params.enabledAgentIds);
   const configuredBackend = readAcpConfiguredBackendV1FromMetadata(metadata);
   const defaultBuiltInAgentId = resolveDefaultBuiltInAgentId({

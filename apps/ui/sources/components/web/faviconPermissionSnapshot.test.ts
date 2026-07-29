@@ -213,7 +213,7 @@ describe('createFaviconPermissionSnapshotSelector', () => {
         expect(second.hasFreshPermission).toBe(true);
     });
 
-    it('expires agent-state permission freshness without a storage update', () => {
+    it('keeps an unresolved agent-state permission after transient freshness expires', () => {
         vi.setSystemTime(new Date(1_000));
         const selector = createFaviconPermissionSnapshotSelector();
         const state = createState({
@@ -249,10 +249,10 @@ describe('createFaviconPermissionSnapshotSelector', () => {
 
         expect(freshSnapshot.hasFreshPermission).toBe(true);
         expect(staleSnapshot).not.toBe(freshSnapshot);
-        expect(staleSnapshot.hasFreshPermission).toBe(false);
+        expect(staleSnapshot.hasFreshPermission).toBe(true);
     });
 
-    it('expires transcript permission freshness without a storage update', () => {
+    it('keeps an unresolved transcript permission after transient freshness expires', () => {
         vi.setSystemTime(new Date(1_000));
         const selector = createFaviconPermissionSnapshotSelector();
         const state = createState({
@@ -290,7 +290,7 @@ describe('createFaviconPermissionSnapshotSelector', () => {
 
         expect(freshSnapshot.hasFreshPermission).toBe(true);
         expect(staleSnapshot).not.toBe(freshSnapshot);
-        expect(staleSnapshot.hasFreshPermission).toBe(false);
+        expect(staleSnapshot.hasFreshPermission).toBe(true);
     });
 
     it('reuses derived transcript permission freshness for unrelated session updates', () => {
@@ -345,5 +345,65 @@ describe('createFaviconPermissionSnapshotSelector', () => {
         expect(first.hasFreshPermission).toBe(true);
         expect(second).toBe(first);
         expect(transcriptMessageReads).toBe(readsAfterFirstSelection);
+    });
+
+    it('invalidates permission freshness when same-id request coverage changes through arguments only', () => {
+        vi.setSystemTime(new Date(10_000));
+        const selector = createFaviconPermissionSnapshotSelector();
+        const coveredSession = createSession({
+            id: 'session1',
+            active: true,
+            activeAt: 0,
+            thinking: false,
+            thinkingAt: 0,
+            latestTurnStatusObservedAt: 0,
+            presence: 'online',
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    approve: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: { command: 'git status' },
+                        createdAt: 9_000,
+                    },
+                },
+                completedRequests: {
+                    approve: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: { command: 'git status' },
+                        completedAt: 9_100,
+                        status: 'approved',
+                    },
+                },
+            },
+        });
+        const uncoveredSession = createSession({
+            ...coveredSession,
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    approve: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: { command: 'git diff' },
+                        createdAt: 9_000,
+                    },
+                },
+                completedRequests: coveredSession.agentState?.completedRequests,
+            },
+        });
+
+        const first = selector(createState({
+            sessions: { session1: coveredSession },
+        }));
+        const second = selector(createState({
+            sessions: { session1: uncoveredSession },
+        }));
+
+        expect(first.hasFreshPermission).toBe(false);
+        expect(second).not.toBe(first);
+        expect(second.hasFreshPermission).toBe(true);
     });
 });

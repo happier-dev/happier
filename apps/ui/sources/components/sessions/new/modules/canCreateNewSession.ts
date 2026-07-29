@@ -16,7 +16,6 @@ export function canCreateNewSession(params: Readonly<{
     const readiness = params.spawnReadiness ?? resolveMachineSpawnReadiness({
         selectedMachineId: params.selectedMachineId,
         machine: params.selectedMachine,
-        requireExactSpawnReadiness: true,
     });
     if (readiness.status === 'ready') return true;
     if (readiness.status === 'unknown' || readiness.status === 'probing') {

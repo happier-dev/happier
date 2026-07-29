@@ -1,17 +1,17 @@
 import { DaemonVoiceAgentClient } from '@/voice/agent/daemonVoiceAgentClient';
 import { initializeVoiceAgentHandle } from '@/voice/agent/initializeVoiceAgentHandle';
 import { OpenAiCompatVoiceAgentClient } from '@/voice/agent/openaiCompatVoiceAgentClient';
-import type { VoiceAgentHandle } from '@/voice/agent/types';
+import type { VoiceAgentHandle, VoiceAgentSendTurnOptions } from '@/voice/agent/types';
 import type { VoiceAssistantAction } from '@happier-dev/protocol';
+import { clearRetainedLocalVoiceEffectOutcomes } from '@/voice/tools/localVoiceEffectOutcomeCustody';
 
 import { createVoiceRunRecovery } from './voiceRunRecovery';
 import { createVoiceTurnStreaming } from './voiceTurnStreaming';
 import { createVoiceWelcomePolicy } from './voiceWelcomePolicy';
 
-type SendTurnOptions = Readonly<{ onTextDelta?: (textDelta: string) => void | Promise<void>; signal?: AbortSignal }>;
-
 export type VoiceExecutionTransport = Readonly<{
     appendContextUpdate: (sessionId: string, update: string) => void;
+    commitUserTranscript: (sessionId: string, text: string, localId: string) => Promise<void>;
     commit: (sessionId: string) => Promise<string>;
     ensureRunning: (sessionId: string) => Promise<void>;
     ensureRunningAndMaybeWelcome: (sessionId: string) => Promise<string | null>;
@@ -19,7 +19,7 @@ export type VoiceExecutionTransport = Readonly<{
     sendInterruptingTextUpdate: (
         sessionId: string,
         update: string,
-        options?: SendTurnOptions,
+        options?: VoiceAgentSendTurnOptions,
     ) => Promise<Readonly<{ assistantText: string; actions: VoiceAssistantAction[] }>>;
     sendTextUpdate: (
         sessionId: string,
@@ -28,7 +28,7 @@ export type VoiceExecutionTransport = Readonly<{
     sendTurn: (
         sessionId: string,
         userText: string,
-        options?: SendTurnOptions,
+        options?: VoiceAgentSendTurnOptions,
     ) => Promise<Readonly<{ assistantText: string; actions: VoiceAssistantAction[] }>>;
     stop: (sessionId: string) => Promise<void>;
 }>;
@@ -92,7 +92,6 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         voiceAgentBySessionId,
         voiceAgentInitBySessionId,
         voiceAgentPendingContextBySessionId,
-        voiceAgentTurnBarrierBySessionId,
     });
 
     const welcomePolicy = createVoiceWelcomePolicy({
@@ -110,8 +109,33 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         voiceAgentTurnAbortControllerBySessionId,
     });
 
+    const stop = async (sessionId: string): Promise<void> => {
+        interruptActiveTurn(sessionId);
+        await runSerializedTurn(sessionId, async () => {
+            try {
+                await recovery.stop(sessionId);
+            } finally {
+                clearRetainedLocalVoiceEffectOutcomes(sessionId);
+            }
+        });
+    };
+
+    const commitUserTranscript = async (sessionId: string, text: string, localId: string): Promise<void> => {
+        const handle = await recovery.getVoiceAgentHandle(sessionId);
+        if (!handle.client.commitUserTranscript) {
+            throw new Error('voice_user_transcript_commit_required');
+        }
+        await handle.client.commitUserTranscript({
+            sessionId: handle.rpcSessionId,
+            voiceAgentId: handle.voiceAgentId,
+            text,
+            localId,
+        });
+    };
+
     return {
         appendContextUpdate: recovery.appendContextUpdate,
+        commitUserTranscript,
         commit: recovery.commit,
         ensureRunning: recovery.ensureRunning,
         ensureRunningAndMaybeWelcome: welcomePolicy.ensureRunningAndMaybeWelcome,
@@ -119,6 +143,6 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         sendInterruptingTextUpdate: turnStreaming.sendInterruptingTextUpdate,
         sendTextUpdate: turnStreaming.sendTextUpdate,
         sendTurn: turnStreaming.sendTurn,
-        stop: recovery.stop,
+        stop,
     };
 }

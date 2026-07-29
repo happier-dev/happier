@@ -12,7 +12,6 @@ import { installAccountSettingsRouteModuleMocks } from './accountSettingsRouteTe
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('expo-camera', () => ({
     useCameraPermissions: () => [{ granted: true }, async () => ({ granted: true })],
@@ -90,6 +89,8 @@ describe('Settings → Account (secret key copy)', () => {
 
         const expected = formatSecretKeyForBackup('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
         expect(clipboardMocks.setStringAsync).toHaveBeenCalledWith(expected);
+        expect(modalMocks.alert).not.toHaveBeenCalled();
+        expect(screen.findByTestId('settings-account-secret-key-copy-feedback')).toBeTruthy();
     });
 
     it('reveals the formatted secret key when the backup item is pressed', async () => {

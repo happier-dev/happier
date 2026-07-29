@@ -4,17 +4,20 @@ import { Pressable, View } from 'react-native';
 
 import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHeaderActionMenu';
 import { SessionHeaderBrowserButton } from '@/components/sessions/actions/SessionHeaderBrowserButton';
+import { SessionHeaderInfoButton } from '@/components/sessions/actions/SessionHeaderInfoButton';
+import { SessionHeaderRightSidebarButton } from '@/components/sessions/actions/SessionHeaderRightSidebarButton';
+import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
 import { SessionHeaderSubagentsButton } from '@/components/sessions/actions/SessionHeaderSubagentsButton';
 import { SessionHeaderTerminalButton } from '@/components/sessions/actions/SessionHeaderTerminalButton';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
-import { getAgentCore } from '@/agents/catalog/catalog';
 import { t } from '@/text';
 import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 import { isSessionRouteHydrationPending } from '@/sync/domains/session/sessionRouteHydrationState';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
-import { formatPathRelativeToHome, getSessionAvatarId, getSessionName } from '@/utils/sessions/sessionUtils';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
+import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, getSessionStatus } from '@/utils/sessions/sessionUtils';
 import { LruMap } from '@/utils/cache/lruMap';
 
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -22,6 +25,11 @@ import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projecti
 import { resolveSessionViewBadges } from './resolveSessionViewBadges';
 import { resolveSessionViewHeaderActionItems } from './resolveSessionViewHeaderActionItems';
 import { readSessionListShellCacheMaxEntriesFromEnv } from '../sessionListShellCacheConfig';
+import {
+    resolveExternalSessionIdentityPresentation,
+} from '../../presentation/externalSessionIdentityPresentation';
+import type { ExternalSessionRuntimePresentation } from '../../presentation/externalSessionRuntimePresentation';
+import { SessionRowAttentionIndicator } from '../row/SessionRowAttentionIndicator';
 
 export type SessionViewHeaderProps = Readonly<{
     title: string;
@@ -29,9 +37,10 @@ export type SessionViewHeaderProps = Readonly<{
     subtitleEllipsizeMode?: 'head' | 'tail';
     badges?: ReadonlyArray<string>;
     onBackPress?: () => void;
-    onAvatarPress?: () => void;
     avatarId?: string;
     rightElement?: React.ReactNode;
+    /** The right-sidebar toggle. The header decides whether it fits the margin or joins the icons. */
+    gutterElement?: React.ReactNode;
     backgroundColor?: string;
     tintColor?: string;
     isConnected?: boolean;
@@ -66,6 +75,7 @@ type ResolveSessionViewHeaderPropsInput = Readonly<{
     statusErrorColor: string;
     workspaceSubtitle?: string | null;
     workspaceSubtitleEllipsizeMode?: 'head' | 'tail';
+    externalSessionRuntime: ExternalSessionRuntimePresentation | null;
     /**
      * Plugin-UI projection + open handler for the session header-action menu
      * (Phase 2.2 / finding #11). When provided, plugin-contributed header actions
@@ -81,7 +91,6 @@ const LOADING_HEADER_PROPS: SessionViewHeaderProps = {
     title: '',
     subtitle: undefined,
     avatarId: undefined,
-    onAvatarPress: undefined,
     rightElement: undefined,
     isConnected: false,
     flavor: null,
@@ -91,7 +100,6 @@ const DELETED_HEADER_PROPS: SessionViewHeaderProps = {
     title: t('errors.sessionDeleted'),
     subtitle: undefined,
     avatarId: undefined,
-    onAvatarPress: undefined,
     rightElement: undefined,
     isConnected: false,
     flavor: null,
@@ -129,6 +137,8 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
     headerMenuExtraItemIdsKey: string;
     pluginUiProjectionGeneration: number | null;
     pluginUiLocale: string | null;
+    backgroundActivityStatusText: string | null;
+    externalAgentState: ExternalSessionRuntimePresentation['externalAgent']['state'] | null;
 }>): string {
     return JSON.stringify([
         input.sessionId,
@@ -158,6 +168,8 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
         input.headerMenuExtraItemIdsKey,
         input.pluginUiProjectionGeneration ?? '',
         input.pluginUiLocale ?? '',
+        input.backgroundActivityStatusText ?? '',
+        input.externalAgentState ?? '',
     ]);
 }
 
@@ -175,11 +187,14 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
     }
 
     const session = input.session;
-    const externalSessionLink = readExternalSessionLink(session.metadata);
+    const ownerMetadata = readSessionOwnerMetadataView(session);
+    const externalSessionIdentity = resolveExternalSessionIdentityPresentation(ownerMetadata);
     const shouldFoldHeaderIconActions = input.windowWidth < 520;
     const badgeLabel = input.sessionAutomationsEnabledCount > 99 ? '99+' : String(input.sessionAutomationsEnabledCount);
     const title = getSessionName(session);
-    const fallbackSubtitle = session.metadata?.path ? formatPathRelativeToHome(session.metadata.path, session.metadata?.homeDir) : undefined;
+    const fallbackSubtitle = ownerMetadata?.path
+        ? formatPathRelativeToHome(ownerMetadata.path, ownerMetadata.homeDir)
+        : undefined;
     const workspaceSubtitle = typeof input.workspaceSubtitle === 'string' && input.workspaceSubtitle.length > 0
         ? input.workspaceSubtitle
         : undefined;
@@ -189,20 +204,17 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         : undefined;
     const avatarId = getSessionAvatarId(session);
     const isConnected = session.presence === 'online';
-    const flavor = session.metadata?.flavor || null;
-    const resolvedStorageBadge = externalSessionLink ? t('sessionsList.storageDirectTab') : t('sessionsList.storagePersistedTab');
-    const resolvedProviderBadge = externalSessionLink
-        ? [
-            t(getAgentCore(externalSessionLink.providerId).displayNameKey),
-            typeof session.metadata?.host === 'string' && session.metadata.host.trim()
-                ? session.metadata.host.trim()
-                : externalSessionLink.machineId,
-        ].join(' · ')
+    const flavor = readSessionPresentationAgentId(session) ?? ownerMetadata?.flavor ?? null;
+    const resolvedStorageBadge = externalSessionIdentity.storageLabel;
+    const resolvedProviderBadge = externalSessionIdentity.headerBadgeLabel;
+    const sessionStatus = getSessionStatus(session, Date.now(), { workingTextMode: 'static' });
+    const backgroundActivityStatusText = sessionStatus.state === 'background_active'
+        ? sessionStatus.statusText
         : null;
     const cacheKey = buildSessionViewHeaderPropsCacheKey({
         sessionId: session.id,
         sessionServerId: session.serverId,
-        sessionMachineId: session.metadata?.machineId ?? null,
+        sessionMachineId: ownerMetadata?.machineId ?? null,
         title,
         subtitle,
         subtitleEllipsizeMode,
@@ -227,6 +239,8 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         headerMenuExtraItemIdsKey: (input.headerMenuExtraItems ?? []).map((item) => item.id).join('|'),
         pluginUiProjectionGeneration: input.pluginUiProjection?.generation ?? null,
         pluginUiLocale: input.pluginUiLocale ?? null,
+        backgroundActivityStatusText,
+        externalAgentState: input.externalSessionRuntime?.externalAgent.state ?? null,
     });
 
     const cached = SESSION_VIEW_HEADER_PROPS_CACHE.get(cacheKey);
@@ -251,18 +265,91 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         ...(input.headerMenuExtraItems ?? []),
     ];
 
+    // Keeps dev's web-blur wrapper: navigating away from a focused web control without blurring it
+    // leaves the caret behind on the outgoing screen.
+    const openSessionInfo = () => input.navigateWithBlurOnWeb(() => input.router.navigate(input.sessionInfoHref as any, {
+        dangerouslySingular() {
+            return 'session-info';
+        },
+    } as any));
+
     const next: SessionViewHeaderProps = {
         title,
         subtitle,
         subtitleEllipsizeMode,
         avatarId,
-        onAvatarPress: () => input.navigateWithBlurOnWeb(() => input.router.navigate(input.sessionInfoHref as any, {
-            dangerouslySingular() {
-                return 'session-info';
-            },
-        } as any)),
+        gutterElement: shouldFoldHeaderIconActions
+            ? undefined
+            : <SessionHeaderRightSidebarButton scopeId={input.paneScopeId} />,
         rightElement: (
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                {input.externalSessionRuntime ? (
+                    <View
+                        testID={`session-header-external-agent-status-${input.externalSessionRuntime.externalAgent.state}`}
+                        accessibilityLabel={t(input.externalSessionRuntime.externalAgent.labelKey)}
+                        style={{
+                            maxWidth: 160,
+                            marginRight: 4,
+                            paddingHorizontal: 6,
+                            paddingVertical: 4,
+                            borderRadius: 999,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 3,
+                        }}
+                    >
+                        <SessionRowAttentionIndicator
+                            indicator={input.externalSessionRuntime.externalAgent.indicator}
+                            sessionId={`${input.sessionId}-header-external`}
+                            attentionState={
+                                input.externalSessionRuntime.externalAgent.indicator === 'working'
+                                    ? 'working'
+                                    : input.externalSessionRuntime.externalAgent.indicator === 'action'
+                                        ? 'action_required'
+                                        : input.externalSessionRuntime.externalAgent.indicator === 'ready'
+                                            ? 'ready'
+                                            : 'quiet'
+                            }
+                            accessibilityLabel={t(input.externalSessionRuntime.externalAgent.labelKey)}
+                            workingMode="spinner"
+                        />
+                        <Text
+                            numberOfLines={1}
+                            style={{
+                                color: input.actionIconColor,
+                                fontSize: 12,
+                                lineHeight: 16,
+                                fontWeight: '600',
+                            }}
+                        >
+                            {t(input.externalSessionRuntime.externalAgent.labelKey)}
+                        </Text>
+                    </View>
+                ) : null}
+                {backgroundActivityStatusText ? (
+                    <View
+                        testID="session-header-background-activity-status"
+                        style={{
+                            maxWidth: 132,
+                            marginRight: 4,
+                            paddingHorizontal: 8,
+                            paddingVertical: 4,
+                            borderRadius: 999,
+                        }}
+                    >
+                        <Text
+                            numberOfLines={1}
+                            style={{
+                                color: input.actionIconColor,
+                                fontSize: 12,
+                                lineHeight: 16,
+                                fontWeight: '600',
+                            }}
+                        >
+                            {backgroundActivityStatusText}
+                        </Text>
+                    </View>
+                ) : null}
                 <SessionHeaderActionMenu
                     sessionId={input.sessionId}
                     session={session}
@@ -276,29 +363,14 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                     <SessionHeaderSubagentsButton
                         scopeId={input.paneScopeId}
                         activeCount={input.subagentActiveCount}
-                        hasAnySubagents={input.shouldShowSubagentsButton}
                     />
                 ) : null}
                 <SessionHeaderTerminalButton sessionId={input.sessionId} scopeId={input.paneScopeId} />
                 <SessionHeaderBrowserButton sessionId={input.sessionId} scopeId={input.paneScopeId} />
-                {!shouldFoldHeaderIconActions && input.sessionExecutionRunsSupported ? (
-                    <Pressable
-                        onPress={() => input.router.push(input.sessionRunsHref as any)}
-                        hitSlop={15}
-                        style={({ pressed }) => ({
-                            width: 44,
-                            height: 44,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            opacity: pressed ? 0.7 : 1,
-                        })}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('session.openRuns')}
-                    >
-                        <Ionicons name="play-outline" size={22} color={input.headerTintColor} />
-                    </Pressable>
+                {!shouldFoldHeaderIconActions ? (
+                    <SessionHeaderInfoButton onPress={openSessionInfo} />
                 ) : null}
-                {!shouldFoldHeaderIconActions && input.showAutomations ? (
+                {!shouldFoldHeaderIconActions && input.showAutomations && input.sessionAutomationsEnabledCount > 0 ? (
                     <Pressable
                         onPress={() => input.navigateWithBlurOnWeb(() => input.router.push(input.sessionAutomationsHref as any))}
                         hitSlop={15}
@@ -313,7 +385,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                         accessibilityLabel={t('session.openAutomations')}
                     >
                         <View style={{ position: 'relative', width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                            <Ionicons name="timer-outline" size={22} color={input.headerTintColor} />
+                            <Ionicons name="timer-outline" size={SESSION_HEADER_ICON_SIZE_PX} color={input.headerTintColor} />
                             {input.sessionAutomationsEnabledCount > 0 ? (
                                 <View style={{
                                     position: 'absolute',

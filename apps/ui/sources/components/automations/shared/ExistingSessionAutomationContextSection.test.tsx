@@ -35,9 +35,9 @@ installAutomationComponentCommonModuleMocks({
                     'sessionsList.storagePersistedTab': 'Happier',
                     'settingsActions.targets.mcp.title': 'MCP',
                     'connectedServices.title': 'Connected services',
-                    'settingsProviders.resumeSupportTitle': 'Resume support',
-                    'settingsProviders.resumeSupportSupported': 'Supported',
-                    'settingsProviders.resumeSupportSupportedExperimental': 'Supported (experimental)',
+                    'settingsAgents.resumeSupportTitle': 'Resume support',
+                    'settingsAgents.resumeSupportSupported': 'Supported',
+                    'settingsAgents.resumeSupportSupportedExperimental': 'Supported (experimental)',
                 };
                 return labels[key] ?? key;
             },

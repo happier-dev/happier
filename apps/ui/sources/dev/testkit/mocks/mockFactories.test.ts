@@ -1,8 +1,25 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import * as registryUiBehavior from '@/agents/registry/registryUiBehavior';
+import { createSessionFixture } from '../fixtures/sessionFixtures';
+import { createRegistryUiBehaviorModuleMock } from './registryUiBehavior';
 
 describe('UI testkit mock factories', () => {
+    it('creates a complete registry UI behavior module mock with caller overrides', () => {
+        const supportsEditableSessionGoals = vi.fn(() => true);
+
+        const moduleMock = createRegistryUiBehaviorModuleMock({
+            supportsEditableSessionGoals,
+        });
+
+        expect(Object.keys(moduleMock).sort()).toEqual(Object.keys(registryUiBehavior).sort());
+        expect(moduleMock.isAttachedSessionTerminalAvailableForSession).toBeTypeOf('function');
+        expect(moduleMock.isAttachedSessionTerminalAvailableForSession(createSessionFixture())).toBe(false);
+        expect(moduleMock.supportsEditableSessionGoals).toBeTypeOf('function');
+        expect(moduleMock.supportsEditableSessionGoals).toBe(supportsEditableSessionGoals);
+    });
+
     it('creates a ToolSectionView mock that preserves sibling exports', async () => {
         const { createToolSectionViewModuleMock } = await import('./toolSectionView');
         const ToolSectionSpacingProvider = ({ children }: { children?: React.ReactNode }) =>
@@ -63,6 +80,23 @@ describe('UI testkit mock factories', () => {
         expect(platform.select({ web: 'web', ios: 'ios', default: 'default' })).toBe('web');
         expect(appState.currentState).toBe('background');
         expect(typeof appState.addEventListener).toBe('function');
+    });
+
+    it('creates a removable React Native AppState change emitter', async () => {
+        const { createReactNativeAppStateEmitter } = await import('./reactNative');
+        const boundary = createReactNativeAppStateEmitter();
+        const listener = vi.fn();
+        const subscription = boundary.appState.addEventListener('change', listener);
+
+        boundary.emit('inactive');
+        expect(boundary.appState.currentState).toBe('inactive');
+        expect(listener).toHaveBeenCalledExactlyOnceWith('inactive');
+        expect(boundary.getListenerCount()).toBe(1);
+
+        subscription.remove();
+        boundary.emit('background');
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(boundary.getListenerCount()).toBe(0);
     });
 
     it('preserves nested stub exports when overriding React Native module objects like Animated', async () => {
@@ -476,8 +510,17 @@ describe('UI testkit mock factories', () => {
         expect(alertAsyncSpy).toHaveBeenCalledWith('Alert title', 'Alert body');
     });
 
+    it('creates paired ItemList pass-through exports when either list component is requested', async () => {
+        const { createPassThroughModule } = await import('./components');
+
+        const moduleMock = createPassThroughModule(['ItemList']);
+
+        expect(moduleMock.ItemList).toBeTypeOf('function');
+        expect(moduleMock.ItemListStatic).toBeTypeOf('function');
+    });
+
     it('creates a storage module mock by merging overrides onto the original module', async () => {
-        const { createStorageModuleMock } = await import('./storage');
+        const { createStorageModuleMock, createUseSettingMock } = await import('./storage');
 
         const mock = await createStorageModuleMock({
             importOriginal: async () =>
@@ -486,24 +529,52 @@ describe('UI testkit mock factories', () => {
                     useAllMachines: () => ['machine-a'],
                 }) as any,
             overrides: {
-                useSetting: () => 'mock-setting',
+                useSetting: createUseSettingMock({
+                    values: { agentInputEnterToSend: false },
+                }),
             },
         });
 
-        expect(mock.useSetting('agentInputEnterToSend')).toBe('mock-setting');
+        expect(mock.useSetting('agentInputEnterToSend')).toBe(false);
         expect(mock.useAllMachines()).toEqual(['machine-a']);
+    });
+
+    it('preserves explicit getStorage overrides in storage module mocks', async () => {
+        const { createStorageModuleMock } = await import('./storage');
+        const storageOverride = {
+            getState: () => ({ marker: 'override' }),
+        };
+
+        const mock = await createStorageModuleMock({
+            importOriginal: async () =>
+                ({
+                    storage: { getState: () => ({ marker: 'actual-storage' }) },
+                    getStorage: () => ({ getState: () => ({ marker: 'actual-getStorage' }) }),
+                }) as any,
+            overrides: {
+                getStorage: () => storageOverride as any,
+            },
+        });
+
+        expect(mock.getStorage()).toBe(storageOverride);
+        expect(mock.getStorage().getState()).toEqual({ marker: 'override' });
     });
 
     it('creates a storage module stub without importing the original module', async () => {
         const { createStorageModuleStub } = await import('./storage');
 
         const mock = createStorageModuleStub({
-            useSettingMutable: () => ['stub-value', vi.fn()],
+            useSettingMutable: () => [false, vi.fn()],
         });
 
-        expect(mock.useSettingMutable('activeServerId')).toEqual(['stub-value', expect.any(Function)]);
+        expect(mock.useSettingMutable('agentInputEnterToSend')).toEqual([false, expect.any(Function)]);
         expect(mock.useLocalSettingMutable('uiMultiPanePanelsEnabled')).toEqual([expect.anything(), expect.any(Function)]);
+        expect(mock.useActiveServerAccountScope()).toBeNull();
+        expect(mock.useSessionLastMobileSurface('session-a')).toBeNull();
+        expect(mock.useProjectLastMobileSurface('workspace-a')).toBeNull();
         expect(mock.useArtifacts()).toEqual([]);
+        expect(mock.useOpenApprovalArtifactsForSession('session-a')).toEqual([]);
+        expect(mock.useEnabledAutomationsCountForSession('session-a')).toBe(0);
         const reducerState = mock.useSessionMessagesReducerState('session-a');
         expect(reducerState.messages).toBeInstanceOf(Map);
         expect(mock.useSessionMessagesReducerState('session-a')).toBe(reducerState);
@@ -542,6 +613,7 @@ describe('UI testkit mock factories', () => {
 
         expect(mockStore((state) => state.sessionMessages['session-1']?.messagesById ?? null)).toEqual({});
         expect(mockStore.getState().sessionMessages['session-1']?.messagesMap).toEqual({});
+        expect(mockStore.getState().sessionTailContiguousFloorSeq).toEqual({});
         expect(mockStore.getState().settings.mobileWorkspaceExperienceV1).toBeDefined();
     });
 
@@ -655,17 +727,43 @@ describe('UI testkit mock factories', () => {
         expect(resolvePreferredModule.resolvePreferredServerIdForSessionId('session-1')).toBe('server-owned');
     });
 
-    it('creates a capturing FlashList mock that stores props, renders rows, and assigns ref handles', async () => {
-        const React = await import('react');
-        const { createCapturingFlashListMock } = await import('./flashList');
+    it('creates a partial serverProfiles module mock that preserves sibling exports', async () => {
+        const { createPartialServerProfilesModuleMock } = await import('./serverProfiles');
 
-        const flashListMock = createCapturingFlashListMock({
-            renderItems: true,
-            refHandle: { scrollToOffset: vi.fn(), scrollToIndex: vi.fn() },
-        });
+        const moduleMock = await createPartialServerProfilesModuleMock(
+            async <T,>() => ({
+                HAPPIER_CLOUD_SERVER_URL: 'https://cloud.example.test',
+                getActiveServerUrl: () => 'https://actual.example.test',
+            }) as T,
+            {
+                profiles: [{
+                    id: 'server-a',
+                    serverUrl: 'https://server-a.example.test',
+                    serverIdentityId: 'identity-a',
+                    legacyServerIds: ['legacy-a'],
+                }],
+                overrides: {
+                    getActiveServerUrl: () => 'https://override.example.test',
+                },
+            },
+        );
+
+        expect(moduleMock.HAPPIER_CLOUD_SERVER_URL).toBe('https://cloud.example.test');
+        expect(moduleMock.getActiveServerUrl()).toBe('https://override.example.test');
+        const scopedProfile = { id: 'server-a', serverIdentityId: 'identity-a' } satisfies Parameters<typeof moduleMock.resolveServerProfileScopeId>[0];
+        expect(moduleMock.resolveServerProfileScopeId(scopedProfile)).toBe('identity-a');
+        expect(moduleMock.resolveServerProfileScopeIdForIdentifier('legacy-a')).toBe('identity-a');
+        expect(moduleMock.areServerProfileIdentifiersEquivalent('legacy-a', 'identity-a')).toBe(true);
+    });
+
+    it('creates a capturing LegendList mock that stores props, renders rows, and assigns ref handles', async () => {
+        const React = await import('react');
+        const { createCapturingLegendListMock } = await import('./legendList');
+
+        const legendListMock = createCapturingLegendListMock({ renderItems: true });
         const ref = React.createRef<any>();
 
-        const element = (flashListMock.module.FlashList as any).render({
+        const element = (legendListMock.module.LegendList as any).render({
             ref,
             data: [{ id: 'row-1' }, { id: 'row-2' }],
             keyExtractor: (item: { id: string }) => item.id,
@@ -674,16 +772,16 @@ describe('UI testkit mock factories', () => {
             ListFooterComponent: React.createElement('Footer'),
         }, ref);
 
-        expect(flashListMock.state.props?.data).toEqual([{ id: 'row-1' }, { id: 'row-2' }]);
-        expect(ref.current).toBe(flashListMock.state.refHandle);
-        expect(element.type).toBe('FlashList');
+        expect(legendListMock.state.props?.data).toEqual([{ id: 'row-1' }, { id: 'row-2' }]);
+        expect(ref.current).toBe(legendListMock.state.refHandle);
+        expect(element.type).toBe('LegendList');
         expect(Array.isArray(element.props.children)).toBe(true);
         expect(element.props.children).toHaveLength(4);
     });
 
     it('creates a capturing FlatList mock that stores props and renders rows with headers and footers', async () => {
         const React = await import('react');
-        const { createCapturingFlatListMock } = await import('./flashList');
+        const { createCapturingFlatListMock } = await import('./virtualizedList');
 
         const flatListMock = createCapturingFlatListMock({ renderItems: true });
 
@@ -733,6 +831,9 @@ describe('UI testkit mock factories', () => {
             Octicons: 'Octicons',
             AntDesign: 'AntDesign',
             MaterialIcons: 'MaterialIcons',
+            FontAwesome: 'FontAwesome',
+            FontAwesome5: 'FontAwesome5',
+            Feather: 'Feather',
         });
     });
 });

@@ -21,6 +21,12 @@ describe('resolveMobileBottomChromeModel', () => {
         expect(resolveMobileBottomChromeModel(createChromeInput({}))).toEqual({ kind: 'mainAppTabs' });
     });
 
+    it('returns main app tabs for route-owned settings routes', () => {
+        expect(resolveMobileBottomChromeModel(createChromeInput({
+            pathname: '/settings/session',
+        }))).toEqual({ kind: 'mainAppTabs' });
+    });
+
     it('returns a session cockpit model for session routes in cockpit mode', () => {
         expect(resolveMobileBottomChromeModel(createChromeInput({
             pathname: '/session/session-1/files',

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    flattenRenderPlanForFlashList,
-    planHasMultipleVirtualizedSections,
+    flattenRenderPlanForVirtualizedList,
+    planRequiresFlatVirtualizedList,
     planHasVirtualizedSection,
 } from '../SelectionListBody';
 import type { SectionRenderPlan } from '../SelectionListRenderPlan';
@@ -77,22 +77,22 @@ describe('SelectionListBody.planHasVirtualizedSection (R14 extracted)', () => {
     });
 });
 
-describe('SelectionListBody.planHasMultipleVirtualizedSections (RV-9)', () => {
+describe('SelectionListBody.planRequiresFlatVirtualizedList (RV-9)', () => {
     function makeOptions(count: number): ReadonlyArray<SelectionListOption> {
         return Array.from({ length: count }, (_, i) => ({ id: `opt-${i}`, label: `Option ${i}` }));
     }
 
     it('returns false when zero sections are eligible', () => {
         const plan: ReadonlyArray<SectionRenderPlan> = [{ id: 's', options: makeOptions(5) }];
-        expect(planHasMultipleVirtualizedSections(plan)).toBe(false);
+        expect(planRequiresFlatVirtualizedList(plan)).toBe(false);
     });
 
-    it('returns false when exactly one section is eligible', () => {
+    it('returns true when one eligible section has a neighboring plain section', () => {
         const plan: ReadonlyArray<SectionRenderPlan> = [
             { id: 'a', options: makeOptions(60), virtualization: 'force' },
             { id: 'b', options: makeOptions(5) },
         ];
-        expect(planHasMultipleVirtualizedSections(plan)).toBe(false);
+        expect(planRequiresFlatVirtualizedList(plan)).toBe(true);
     });
 
     it('returns true when two or more sections are eligible', () => {
@@ -100,11 +100,18 @@ describe('SelectionListBody.planHasMultipleVirtualizedSections (RV-9)', () => {
             { id: 'a', options: makeOptions(60), virtualization: 'force' },
             { id: 'b', options: makeOptions(60), virtualization: 'force' },
         ];
-        expect(planHasMultipleVirtualizedSections(plan)).toBe(true);
+        expect(planRequiresFlatVirtualizedList(plan)).toBe(true);
+    });
+
+    it('returns false for one eligible section with no neighboring section', () => {
+        const plan: ReadonlyArray<SectionRenderPlan> = [
+            { id: 'a', options: makeOptions(60), virtualization: 'force' },
+        ];
+        expect(planRequiresFlatVirtualizedList(plan)).toBe(false);
     });
 });
 
-describe('SelectionListBody.flattenRenderPlanForFlashList (RV-9)', () => {
+describe('SelectionListBody.flattenRenderPlanForVirtualizedList (RV-9)', () => {
     function makeOptions(count: number, prefix: string): ReadonlyArray<SelectionListOption> {
         return Array.from({ length: count }, (_, i) => ({
             id: `${prefix}-${i}`,
@@ -117,7 +124,7 @@ describe('SelectionListBody.flattenRenderPlanForFlashList (RV-9)', () => {
             { id: 'first', title: 'FIRST', options: makeOptions(2, 'a'), virtualization: 'force' },
             { id: 'second', title: 'SECOND', options: makeOptions(3, 'b'), virtualization: 'force' },
         ];
-        const flat = flattenRenderPlanForFlashList(plan);
+        const flat = flattenRenderPlanForVirtualizedList(plan);
         // [header(first), a-0, a-1, header(second), b-0, b-1, b-2]
         expect(flat.length).toBe(2 + 2 + 3);
         expect(flat[0].kind).toBe('section-header');
@@ -131,7 +138,7 @@ describe('SelectionListBody.flattenRenderPlanForFlashList (RV-9)', () => {
         const plan: ReadonlyArray<SectionRenderPlan> = [
             { id: 'l', options: [], dynamicState: 'loading', skeletonRowCount: 4, title: 'L' },
         ];
-        const flat = flattenRenderPlanForFlashList(plan);
+        const flat = flattenRenderPlanForVirtualizedList(plan);
         expect(flat[0].kind).toBe('section-header');
         const skeletons = flat.filter((row) => row.kind === 'loading-skeleton');
         expect(skeletons.length).toBe(4);
@@ -142,7 +149,7 @@ describe('SelectionListBody.flattenRenderPlanForFlashList (RV-9)', () => {
             { id: 'e', options: [], dynamicState: 'error', hint: 'oops', title: 'E' },
             { id: 'h', options: [], dynamicState: 'empty', hint: 'no matches', title: 'H' },
         ];
-        const flat = flattenRenderPlanForFlashList(plan);
+        const flat = flattenRenderPlanForVirtualizedList(plan);
         const kinds = flat.map((row) => row.kind);
         expect(kinds).toContain('error');
         expect(kinds).toContain('empty-hint');
@@ -153,7 +160,7 @@ describe('SelectionListBody.flattenRenderPlanForFlashList (RV-9)', () => {
             { id: 'h1', options: [], dynamicState: 'empty', hint: undefined },
             { id: 'h2', options: [], dynamicState: 'empty', hint: '' },
         ];
-        const flat = flattenRenderPlanForFlashList(plan);
+        const flat = flattenRenderPlanForVirtualizedList(plan);
         expect(flat.length).toBe(0);
     });
 });

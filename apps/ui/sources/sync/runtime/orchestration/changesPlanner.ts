@@ -6,6 +6,19 @@ export type PlannedKvAction =
     | { type: 'refresh-feature'; feature: 'todos' }
     | { type: 'bulk-keys'; feature: 'todos'; keys: string[] };
 
+export type PlannedSessionOrganizationAction =
+    | { mode: 'none' }
+    | {
+        mode: 'snapshot';
+        assignmentSessionIds: string[];
+        folderIds: string[];
+        tagIds: string[];
+        orderScopes: Array<{ scopeKind: 'pinned' | 'folder' | 'tag' | 'workspace' | 'group'; scopeKey: string }>;
+        includeFolders: boolean;
+        includeTags: boolean;
+        includeLabels: boolean;
+    };
+
 export type UnsupportedChangeMarker = {
     cursor: string;
     kind: string;
@@ -14,7 +27,6 @@ export type UnsupportedChangeMarker = {
 
 export type ChangeCheckpointDecision =
     | 'critical'
-    | 'intentionally-skipped-by-explicit-policy'
     | 'unsupported';
 
 export type ChangeCheckpointBlockedReason =
@@ -61,6 +73,7 @@ export type PlannedChangeActions = {
     changes: ApiChangeEntry[];
     sessionIdsToCatchUp: string[];
     sessionFolderAssignmentSessionIds: string[];
+    sessionOrganization: PlannedSessionOrganizationAction;
     unsupportedChanges: UnsupportedChangeMarker[];
     invalidate: {
         sessions: boolean;
@@ -103,6 +116,39 @@ function hasSessionFolderAssignmentHint(change: ApiChangeEntry): boolean {
     );
 }
 
+function hasSessionOrganizationHint(change: ApiChangeEntry): boolean {
+    const hint = change.hint;
+    return isRecord(hint) && hint.sessionOrganization === true;
+}
+
+function readHintStringArray(change: ApiChangeEntry, key: string): string[] {
+    const hint = change.hint;
+    if (!isRecord(hint)) return [];
+    const value = hint[key];
+    if (!Array.isArray(value)) return [];
+    return value
+        .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+        .filter(Boolean);
+}
+
+function readOrganizationOrderScopes(change: ApiChangeEntry): Array<{ scopeKind: 'pinned' | 'folder' | 'tag' | 'workspace' | 'group'; scopeKey: string }> {
+    const hint = change.hint;
+    if (!isRecord(hint) || !Array.isArray(hint.orderScopes)) return [];
+    const out: Array<{ scopeKind: 'pinned' | 'folder' | 'tag' | 'workspace' | 'group'; scopeKey: string }> = [];
+    for (const scope of hint.orderScopes) {
+        if (!isRecord(scope)) continue;
+        const scopeKind = typeof scope.scopeKind === 'string' ? scope.scopeKind : '';
+        const scopeKey = typeof scope.scopeKey === 'string' ? scope.scopeKey.trim() : '';
+        if (
+            (scopeKind === 'pinned' || scopeKind === 'folder' || scopeKind === 'tag' || scopeKind === 'workspace' || scopeKind === 'group')
+            && scopeKey
+        ) {
+            out.push({ scopeKind, scopeKey });
+        }
+    }
+    return out.sort((left, right) => `${left.scopeKind}:${left.scopeKey}`.localeCompare(`${right.scopeKind}:${right.scopeKey}`));
+}
+
 export function getChangeTargetMessageSeq(change: ApiChangeEntry): number | null {
     const hint = change.hint;
     if (!isRecord(hint)) return null;
@@ -113,7 +159,7 @@ export function getChangeTargetMessageSeq(change: ApiChangeEntry): number | null
 
 export function classifyChangeForCheckpoint(
     change: ApiChangeEntry,
-    clientState: ChangeCheckpointClientState,
+    _clientState: ChangeCheckpointClientState,
 ): ChangeCheckpointClassification {
     const kind = String(change.kind);
     const cursor = String(change.cursor);
@@ -133,6 +179,18 @@ export function classifyChangeForCheckpoint(
     }
 
     const coverage = CHANGE_CHECKPOINT_COVERAGE[kind];
+
+    if ((kind === 'account' || kind === 'session') && hasSessionOrganizationHint(change)) {
+        return {
+            kind,
+            cursor,
+            entityId,
+            decision: 'critical',
+            plannerOwner: 'session-organization',
+            snapshotDomain: 'session-organization',
+            materializationProof: 'session-organization',
+        };
+    }
 
     if (kind === 'session' || kind === 'share') {
         if (kind === 'session' && hasSessionFolderAssignmentHint(change)) {
@@ -159,17 +217,18 @@ export function classifyChangeForCheckpoint(
             };
         }
 
-        if (!clientState.isSessionMessagesLoaded(entityId)) {
-            return {
-                kind,
-                cursor,
-                entityId,
-                decision: 'intentionally-skipped-by-explicit-policy',
-                plannerOwner: coverage.plannerOwner,
-                snapshotDomain: coverage.snapshotDomain,
-                materializationProof: 'session-open-catch-up',
-            };
-        }
+    }
+
+    if (kind === 'account' && hasSessionFolderAssignmentHint(change)) {
+        return {
+            kind,
+            cursor,
+            entityId,
+            decision: 'critical',
+            plannerOwner: 'sessions',
+            snapshotDomain: 'session-folder-assignments',
+            materializationProof: 'session-folder-assignment-refresh',
+        };
     }
 
     return {
@@ -186,9 +245,17 @@ export function classifyChangeForCheckpoint(
 export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedChangeActions {
     const sessionIds = new Set<string>();
     const sessionFolderAssignmentSessionIds = new Set<string>();
+    const organizationAssignmentSessionIds = new Set<string>();
+    const organizationFolderIds = new Set<string>();
+    const organizationTagIds = new Set<string>();
+    const organizationOrderScopes = new Map<string, { scopeKind: 'pinned' | 'folder' | 'tag' | 'workspace' | 'group'; scopeKey: string }>();
     const unsupportedChanges: UnsupportedChangeMarker[] = [];
     let invalidateSessions = false;
     let invalidateSessionFolderAssignments = false;
+    let organizationRefresh = false;
+    let organizationIncludeFolders = false;
+    let organizationIncludeTags = false;
+    let organizationIncludeLabels = false;
     let invalidateMachines = false;
     let invalidateArtifacts = false;
     let invalidateSettings = false;
@@ -216,8 +283,29 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
             if (kind === 'session' && hasSessionFolderAssignmentHint(change)) {
                 if (typeof change.entityId === 'string' && change.entityId.length > 0) {
                     sessionFolderAssignmentSessionIds.add(change.entityId);
+                    organizationAssignmentSessionIds.add(change.entityId);
                 }
+                for (const folderId of readHintStringArray(change, 'folderIds')) organizationFolderIds.add(folderId);
                 invalidateSessionFolderAssignments = true;
+                organizationRefresh = true;
+                continue;
+            }
+            if (kind === 'session' && hasSessionOrganizationHint(change)) {
+                organizationRefresh = true;
+                if (typeof change.entityId === 'string' && change.entityId.length > 0) {
+                    organizationAssignmentSessionIds.add(change.entityId);
+                }
+                for (const sessionId of readHintStringArray(change, 'sessionIds')) organizationAssignmentSessionIds.add(sessionId);
+                for (const folderId of readHintStringArray(change, 'folderIds')) organizationFolderIds.add(folderId);
+                for (const tagId of readHintStringArray(change, 'tagIds')) organizationTagIds.add(tagId);
+                for (const scope of readOrganizationOrderScopes(change)) organizationOrderScopes.set(`${scope.scopeKind}:${scope.scopeKey}`, scope);
+                const hintScope = isRecord(change.hint) && typeof change.hint.scope === 'string' ? change.hint.scope : '';
+                if (hintScope === 'pins') {
+                    invalidateSessions = true;
+                }
+                organizationIncludeFolders = organizationIncludeFolders || hintScope === 'folders' || hintScope === 'folderAssignments';
+                organizationIncludeTags = organizationIncludeTags || hintScope === 'tags' || hintScope === 'tagAssignments';
+                organizationIncludeLabels = organizationIncludeLabels || hintScope === 'labels';
                 continue;
             }
             invalidateSessions = true;
@@ -233,6 +321,23 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
                 || hasSessionFolderAssignmentHint(change)
             ) {
                 invalidateSessionFolderAssignments = true;
+                organizationRefresh = true;
+                for (const folderId of readHintStringArray(change, 'folderIds')) organizationFolderIds.add(folderId);
+                continue;
+            }
+            if (hasSessionOrganizationHint(change)) {
+                organizationRefresh = true;
+                for (const sessionId of readHintStringArray(change, 'sessionIds')) organizationAssignmentSessionIds.add(sessionId);
+                for (const folderId of readHintStringArray(change, 'folderIds')) organizationFolderIds.add(folderId);
+                for (const tagId of readHintStringArray(change, 'tagIds')) organizationTagIds.add(tagId);
+                for (const scope of readOrganizationOrderScopes(change)) organizationOrderScopes.set(`${scope.scopeKind}:${scope.scopeKey}`, scope);
+                const hintScope = isRecord(change.hint) && typeof change.hint.scope === 'string' ? change.hint.scope : '';
+                if (hintScope === 'pins') {
+                    invalidateSessions = true;
+                }
+                organizationIncludeFolders = organizationIncludeFolders || hintScope === 'folders' || hintScope === 'folderAssignments';
+                organizationIncludeTags = organizationIncludeTags || hintScope === 'tags' || hintScope === 'tagAssignments';
+                organizationIncludeLabels = organizationIncludeLabels || hintScope === 'labels';
                 continue;
             }
             invalidateSettings = true;
@@ -304,6 +409,18 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
         changes: [...changes],
         sessionIdsToCatchUp: Array.from(sessionIds).sort(),
         sessionFolderAssignmentSessionIds: Array.from(sessionFolderAssignmentSessionIds).sort(),
+        sessionOrganization: organizationRefresh
+            ? {
+                mode: 'snapshot',
+                assignmentSessionIds: Array.from(organizationAssignmentSessionIds).sort(),
+                folderIds: Array.from(organizationFolderIds).sort(),
+                tagIds: Array.from(organizationTagIds).sort(),
+                orderScopes: Array.from(organizationOrderScopes.values()),
+                includeFolders: organizationIncludeFolders,
+                includeTags: organizationIncludeTags,
+                includeLabels: organizationIncludeLabels,
+            }
+            : { mode: 'none' },
         unsupportedChanges,
         invalidate: {
             sessions: invalidateSessions,

@@ -9,6 +9,20 @@ import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol';
 import type { UsageDataPoint } from '@/sync/api/account/apiUsage';
 import { DropdownMenu, type DropdownMenuProps } from '@/components/ui/forms/dropdown/DropdownMenu';
 
+const setClipboardStringSafeMock = vi.hoisted(() => vi.fn(async () => true));
+const modalAlertMock = vi.hoisted(() => vi.fn());
+
+vi.mock('@/utils/ui/clipboard', () => ({
+    setClipboardStringSafe: setClipboardStringSafeMock,
+}));
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: { alert: modalAlertMock },
+    }).module;
+});
+
 function getNodeTextContent(node: unknown): string {
     if (node == null) {
         return '';
@@ -64,7 +78,7 @@ const response: UsageAnalyticsQueryResponse = {
         },
     ],
     breakdowns: {
-        provider: [{ key: 'anthropic', label: 'Anthropic', eventCount: 3, tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 }, cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' } }],
+        agent: [{ key: 'anthropic', label: 'Anthropic', eventCount: 3, tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 }, cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' } }],
         model: [{ key: 'claude-3.7-sonnet', label: 'Claude 3.7 Sonnet', eventCount: 2, tokens: { input: 80, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 125 }, cost: { reportedUsd: 11, estimatedUsd: 7, currency: 'USD' } }],
         session: [{ key: 'session-a', label: 'Session A', eventCount: 2, tokens: { input: 40, output: 20, reasoning: 5, cacheRead: 0, cacheWrite: 0, total: 65 }, cost: { reportedUsd: 6, estimatedUsd: 4, currency: 'USD' } }],
         project: [{ key: 'project-a', label: 'Project A', eventCount: 2, tokens: { input: 40, output: 20, reasoning: 5, cacheRead: 0, cacheWrite: 0, total: 65 }, cost: { reportedUsd: 6, estimatedUsd: 4, currency: 'USD' } }],
@@ -95,7 +109,7 @@ const response: UsageAnalyticsQueryResponse = {
         ],
     },
     leaders: {
-        providers: [{ key: 'anthropic', label: 'Anthropic', eventCount: 3 }],
+        agents: [{ key: 'anthropic', label: 'Anthropic', eventCount: 3 }],
         models: [{ key: 'claude-3.7-sonnet', label: 'Claude 3.7 Sonnet', eventCount: 2 }],
         sessions: [{ key: 'session-a', label: 'Session A', eventCount: 2 }],
         projects: [{ key: 'project-a', label: 'Project A', eventCount: 2 }],
@@ -173,20 +187,13 @@ describe('UsageAnalyticsDashboard', () => {
         } satisfies React.ComponentProps<typeof UsageAnalyticsDashboard>;
 
         const screen = await renderScreen(React.createElement(UsageAnalyticsDashboard, props));
+        // The refresh indicator is anchored to the top command-bar controls (D-R2-5),
+        // never inserted as a loading row below the actions.
         const overlay = screen.findByTestId('usage-refresh-overlay');
         expect(overlay).toBeTruthy();
         if (!overlay) {
             throw new Error('Expected usage refresh overlay');
         }
-
-        const style = Array.isArray(overlay.props.style) ? overlay.props.style : [overlay.props.style];
-        expect(style).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                position: 'absolute',
-                top: 16,
-                right: 16,
-            }),
-        ]));
         expect(screen.findAllByTestId('usage-refresh-inline-badge')).toHaveLength(0);
     });
 
@@ -224,31 +231,28 @@ describe('UsageAnalyticsDashboard', () => {
             onCostModeChange,
         }));
 
-        expect(screen.getTextContent()).toContain('Usage summary');
         expect(screen.getTextContent()).toContain('$12');
         expect(screen.findByTestId('usage-filter-cost-mode')).toBeTruthy();
+        expect(screen.findByTestId('usage-dashboard-surface')).toBeTruthy();
         expect(screen.findByTestId('usage-insights-section')).toBeTruthy();
         expect(screen.findByTestId('usage-activity-section')).toBeTruthy();
-        expect(screen.findByTestId('usage-leaders-section')).toBeTruthy();
-        expect(screen.findByTestId('usage-leader-models')).toBeTruthy();
-        expect(screen.findByTestId('usage-timeline-section')).toBeTruthy();
+        expect(screen.findByTestId('usage-pivot-section')).toBeTruthy();
+        expect(screen.findByTestId('usage-composition-strip')).toBeTruthy();
+        // Export/share lives in the footer now (D-R2-2).
         expect(screen.findByTestId('usage-export-copy-summary')).toBeTruthy();
         expect(screen.findByTestId('usage-export-json')).toBeTruthy();
-        expect(screen.findByTestId('usage-filter-period')).toBeTruthy();
-        expect(screen.findByTestId('usage-filter-metric')).toBeTruthy();
-        expect(screen.findByTestId('usage-breakdown-row-provider-anthropic')).toBeTruthy();
-        expect(screen.findByTestId('usage-breakdown-row-model-claude-3.7-sonnet')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('Session Alpha');
+        // Period is a segmented command-bar control (D-R2-5); metric toggles at the chart (D-R2-4).
+        expect(screen.findByTestId('usage-filter-period:7days')).toBeTruthy();
+        expect(screen.findByTestId('usage-trend-metric:tokens')).toBeTruthy();
+        expect(screen.findByTestId('usage-pivot-row-model-claude-3.7-sonnet')).toBeTruthy();
 
-        const periodDropdown = findUsageFilterDropdown(screen, 'usage-filter-period');
-        const metricDropdown = findUsageFilterDropdown(screen, 'usage-filter-metric');
         const costModeDropdown = findUsageFilterDropdown(screen, 'usage-filter-cost-mode');
 
-        periodDropdown.props.onSelect('year');
-        periodDropdown.props.onSelect('today');
-        metricDropdown.props.onSelect('cost');
+        screen.pressByTestId('usage-filter-period:year');
+        screen.pressByTestId('usage-filter-period:today');
+        screen.pressByTestId('usage-trend-metric:cost');
         costModeDropdown.props.onSelect('reported');
-        screen.pressByTestId('usage-breakdown-row-model-claude-3.7-sonnet');
+        screen.pressByTestId('usage-pivot-row-model-claude-3.7-sonnet');
 
         expect(onPeriodChange).toHaveBeenCalledWith('year');
         expect(onPeriodChange).toHaveBeenCalledWith('today');
@@ -329,13 +333,17 @@ describe('UsageAnalyticsDashboard', () => {
         expect(costModeDropdown.props.items.map((item) => item.id)).toEqual(['auto']);
     });
 
-    it('renders a real timeline section for model and engine timelines', async () => {
+    it('derives per-leader trends the "What" band consumes from the model timeline', async () => {
         const viewModel = buildUsageAnalyticsViewModel(response, {
             period: '30days',
             metric: 'tokens',
             focus: null,
             costMode: 'auto',
         });
+
+        // The model timeline now feeds the per-leader sparklines rather than a
+        // standalone timeline band (DASHBOARD-VISION Band 5).
+        expect(Object.keys(viewModel.leaderTrends.models).length).toBeGreaterThan(0);
 
         const screen = await renderScreen(React.createElement(UsageAnalyticsDashboard, {
             viewModel,
@@ -351,12 +359,11 @@ describe('UsageAnalyticsDashboard', () => {
             onCostModeChange: vi.fn(),
         }));
 
-        expect(screen.findByTestId('usage-timeline-section')).toBeTruthy();
-        expect(screen.findByTestId('usage-model-timeline-card')).toBeTruthy();
-        expect(screen.findByTestId('usage-engine-timeline-card')).toBeTruthy();
+        expect(screen.findByTestId('usage-pivot-section')).toBeTruthy();
+        expect(screen.findByTestId('usage-composition-strip')).toBeTruthy();
     });
 
-    it('renders a four-card recap grid from the existing analytics view model', async () => {
+    it('renders the footer with the Play recap entry and updated caption (recap deck removed from the page — D-R2-2)', async () => {
         const viewModel = buildUsageAnalyticsViewModel(response, {
             period: '30days',
             metric: 'tokens',
@@ -378,20 +385,14 @@ describe('UsageAnalyticsDashboard', () => {
             onCostModeChange: vi.fn(),
         }));
 
-        expect(screen.findByTestId('usage-recap-section')).toBeTruthy();
-        expect(screen.findByTestId('usage-recap-streak-card')).toBeTruthy();
-        expect(screen.findByTestId('usage-recap-usage-card')).toBeTruthy();
-        expect(screen.findByTestId('usage-recap-model-card')).toBeTruthy();
-        expect(screen.findByTestId('usage-recap-rhythm-card')).toBeTruthy();
-        expect(screen.findByTestId('usage-recap-share-streak')).toBeTruthy();
-        expect(screen.findByTestId('usage-recap-share-usage')).toBeTruthy();
-        expect(screen.findByTestId('usage-recap-share-model')).toBeTruthy();
-        expect(screen.findByTestId('usage-recap-share-rhythm')).toBeTruthy();
-        expect(screen.getTextContent()).not.toContain('undefined');
-        expect(screen.getTextContent()).toContain(viewModel.leaders.engines[0]?.label ?? '');
+        expect(screen.findByTestId('usage-footer-section')).toBeTruthy();
+        expect(screen.findByTestId('usage-recap-play')).toBeTruthy();
+        // The ALL-CAPS recap-card deck no longer renders on the page surface.
+        expect(screen.findByTestId('usage-recap-model-card')).toBeNull();
+        expect(screen.findByTestId('usage-recap-streak-card')).toBeNull();
     });
 
-    it('preserves translated casing in summary and recap subtitles', async () => {
+    it('renders the hero stat row with capitalized Events label and day-unit streak (D-R2-6)', async () => {
         const viewModel = buildUsageAnalyticsViewModel(response, {
             period: '30days',
             metric: 'tokens',
@@ -413,13 +414,16 @@ describe('UsageAnalyticsDashboard', () => {
             onCostModeChange: vi.fn(),
         }));
 
-        const totalCard = screen.findByTestId('usage-summary-total-card');
-        const recapModelCard = screen.findByTestId('usage-recap-model-card');
-
-        expect(getNodeTextContent(totalCard)).toContain('2 Active days');
-        expect(getNodeTextContent(totalCard)).toContain('1 Models tried');
-        expect(screen.getTextContent()).toContain('2 Sessions');
-        expect(getNodeTextContent(recapModelCard)).toContain('Favorite model changes');
+        // Hero (section 1) carries the oversized total plus the compact stat row.
+        // AnimatedNumber exposes the formatted value via accessibilityLabel in both
+        // the animated (glyph cells) and minimal (plain text) render paths.
+        expect(screen.findByTestId('usage-hero-total')?.props.accessibilityLabel).toBe('135');
+        expect(getNodeTextContent(screen.findByTestId('usage-hero-stat-cost'))).toContain('$12');
+        expect(getNodeTextContent(screen.findByTestId('usage-hero-stat-sessions'))).toContain('2');
+        // Longest streak now carries the day unit (D-R2-6): "2d".
+        expect(getNodeTextContent(screen.findByTestId('usage-hero-stat-streak'))).toContain('2d');
+        // Events stat uses the capitalized label (D-R2-6).
+        expect(getNodeTextContent(screen.findByTestId('usage-hero-stat-events'))).toContain('Events');
     });
 
     it('uses the selected period label in yearly streak subtitles instead of hardcoded last-30 copy', async () => {
@@ -448,102 +452,13 @@ describe('UsageAnalyticsDashboard', () => {
         expect(screen.getTextContent()).not.toContain('active days in the last 30');
     });
 
-    it('falls back to the top provider label when engine metadata is unknown in recap cards', async () => {
-        const responseWithUnknownEngine: UsageAnalyticsQueryResponse = {
-            ...response,
-            breakdowns: {
-                ...response.breakdowns,
-                backendMode: [
-                    {
-                        key: 'unknown',
-                        label: 'unknown',
-                        eventCount: 3,
-                        tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 },
-                        cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' },
-                    },
-                ],
-            },
-            leaders: {
-                ...response.leaders,
-                engines: [
-                    { key: 'unknown', label: 'unknown', eventCount: 3 },
-                ],
-                providers: [
-                    { key: 'opencode', label: 'opencode', eventCount: 3 },
-                ],
-            },
-        };
-        const viewModel = buildUsageAnalyticsViewModel(responseWithUnknownEngine, {
-            period: '30days',
-            metric: 'tokens',
-            focus: null,
-            costMode: 'auto',
-        });
-
-        const screen = await renderScreen(React.createElement(UsageAnalyticsDashboard, {
-            viewModel,
-            filters: {
-                period: '30days',
-                metric: 'tokens',
-                focus: null,
-                costMode: 'auto',
-            },
-            onPeriodChange: vi.fn(),
-            onMetricChange: vi.fn(),
-            onFocusChange: vi.fn(),
-            onCostModeChange: vi.fn(),
-        }));
-
-        expect(screen.getTextContent()).toContain('opencode');
-        expect(screen.getTextContent()).not.toContain('favorite model changes · unknown');
-    });
-
-    it('prefers the engine leader label when backend breakdown rows are unknown', async () => {
-        const responseWithUnknownBackendBreakdown: UsageAnalyticsQueryResponse = {
-            ...response,
-            breakdowns: {
-                ...response.breakdowns,
-                backendMode: [{
-                    key: 'unknown',
-                    label: 'unknown',
-                    eventCount: 3,
-                    tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 },
-                    cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' },
-                }],
-            },
-            leaders: {
-                ...response.leaders,
-                engines: [{ key: 'opencode', label: 'opencode', eventCount: 3 }],
-            },
-        };
-        const viewModel = buildUsageAnalyticsViewModel(responseWithUnknownBackendBreakdown, {
-            period: '30days',
-            metric: 'tokens',
-            focus: null,
-            costMode: 'auto',
-        });
-
-        const screen = await renderScreen(React.createElement(UsageAnalyticsDashboard, {
-            viewModel,
-            filters: {
-                period: '30days',
-                metric: 'tokens',
-                focus: null,
-                costMode: 'auto',
-            },
-            onPeriodChange: vi.fn(),
-            onMetricChange: vi.fn(),
-            onFocusChange: vi.fn(),
-            onCostModeChange: vi.fn(),
-        }));
-
-        const modelCard = screen.findByTestId('usage-recap-model-card');
-        const modelCardText = getNodeTextContent(modelCard);
-        expect(modelCardText).toContain('opencode');
-        expect(modelCardText).not.toContain('unknown');
-    });
+    // Recap-card label-resolution (opencode fallback / unknown-engine handling)
+    // is covered at its owner in buildUsageRecapCardModels.test.ts now that the
+    // recap deck renders only inside story mode (D-R2-2).
 
     it('exposes copy and JSON export actions for the filtered usage dashboard', async () => {
+        setClipboardStringSafeMock.mockClear();
+        modalAlertMock.mockClear();
         const viewModel = buildUsageAnalyticsViewModel(response, {
             period: '30days',
             metric: 'cost',
@@ -567,6 +482,12 @@ describe('UsageAnalyticsDashboard', () => {
 
         expect(screen.findByTestId('usage-export-copy-summary')).toBeTruthy();
         expect(screen.findByTestId('usage-export-json')).toBeTruthy();
+
+        await screen.pressByTestIdAsync('usage-export-copy-summary');
+
+        expect(setClipboardStringSafeMock).toHaveBeenCalledTimes(1);
+        expect(modalAlertMock).not.toHaveBeenCalled();
+        expect(screen.findByTestId('usage-export-copy-summary-feedback')).toBeTruthy();
     });
 
     it('does not render legacy bucket fallback rows when only compatibility bucket data is present', async () => {
@@ -592,7 +513,7 @@ describe('UsageAnalyticsDashboard', () => {
         const bucketOnlyViewModel = {
             ...viewModel,
             breakdowns: {
-                providers: [],
+                agents: [],
                 models: [],
                 sessions: [],
                 projects: [],
@@ -600,6 +521,7 @@ describe('UsageAnalyticsDashboard', () => {
                 backendModes: [],
                 sources: [],
                 buckets: viewModel.breakdowns.buckets,
+                weeks: [],
             },
         };
 
@@ -632,7 +554,7 @@ describe('UsageAnalyticsDashboard', () => {
             ...viewModel,
             trend: [],
             breakdowns: {
-                providers: [],
+                agents: [],
                 models: [],
                 sessions: [],
                 projects: [],
@@ -640,6 +562,7 @@ describe('UsageAnalyticsDashboard', () => {
                 backendModes: [],
                 sources: viewModel.breakdowns.sources,
                 buckets: viewModel.breakdowns.buckets,
+                weeks: [],
             },
         };
 
@@ -657,7 +580,11 @@ describe('UsageAnalyticsDashboard', () => {
             onCostModeChange: vi.fn(),
         }));
 
-        expect(screen.findByTestId('usage-empty-state')).toBeTruthy();
+        // Sources are now a first-class pivot dimension (E-1), so the What band
+        // renders the pivot; the default (Models) lens is empty here, so the
+        // source label never leaks until the Sources segment is selected.
+        expect(screen.findByTestId('usage-dashboard-surface')).toBeTruthy();
+        expect(screen.findByTestId('usage-pivot-section')).toBeTruthy();
         expect(screen.getTextContent()).not.toContain('Claude SDK');
     });
 
@@ -680,7 +607,7 @@ describe('UsageAnalyticsDashboard', () => {
             })),
             breakdowns: {
                 ...response.breakdowns,
-                provider: response.breakdowns?.provider?.map((entry) => ({
+                agent: response.breakdowns?.agent?.map((entry) => ({
                     ...entry,
                     cost: {
                         ...entry.cost,

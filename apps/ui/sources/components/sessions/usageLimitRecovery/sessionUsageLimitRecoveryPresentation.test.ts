@@ -5,7 +5,10 @@ import {
     isSessionUsageLimitRecoveryCheckNowAction,
     isSessionUsageLimitRecoveryCheckingOperationAction,
     readSessionUsageLimitRecoveryFromMetadata,
+    type SessionUsageLimitRecoveryTranslate,
 } from './sessionUsageLimitRecoveryPresentation';
+
+const translateUsageLimitRecoveryKeyForTest: SessionUsageLimitRecoveryTranslate = (key, ..._params) => key;
 
 const usageLimitIssue = {
     v: 1,
@@ -42,7 +45,7 @@ const temporaryThrottleIssue = {
     scope: 'primary_session',
     status: 'failed',
     code: 'provider_temporary_throttle',
-    source: 'provider_status_error',
+    source: 'agent_status_error',
     occurredAt: 1_700_000_000_000,
     provider: 'codex',
     temporaryThrottle: {
@@ -133,7 +136,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
                 latestTurnStatus: 'failed',
                 recoveryState,
                 settings: { v: 1, mode: 'auto_wait' },
-                translate: (key) => key,
+                translate: translateUsageLimitRecoveryKeyForTest,
             });
 
             expect(presentation?.banner.actionTestID).toBe('session-usageLimit-recovery-cancel');
@@ -148,7 +151,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             latestTurnStatus: 'failed',
             recoveryState: null,
             settings: { v: 1, mode: 'ask' },
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         });
 
         expect(presentation?.banner).toEqual(expect.objectContaining({
@@ -185,11 +188,75 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             latestTurnStatus: 'failed',
             recoveryState,
             settings: { v: 1, mode: 'auto_wait' },
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         });
 
         expect(presentation?.banner.actionTestID).toBe('session-usageLimit-recovery-cancel');
         expect(presentation?.statusBadge.tone).toBe('active');
+    });
+
+    it('labels reset-backed waiting recovery as waiting for quota reset', () => {
+        const recoveryState = readSessionUsageLimitRecoveryFromMetadata({
+            sessionUsageLimitRecoveryV1: {
+                v: 1,
+                status: 'waiting',
+                issueFingerprint: 'usage-limit:s1:1',
+                armedAtMs: 1,
+                resetAtMs: 1_700_000_060_000,
+                nextCheckAtMs: 1_700_000_070_000,
+                attemptCount: 1,
+                maxAttempts: 5,
+                lastProbeError: null,
+                selectedAuth: { kind: 'native' },
+            },
+        });
+
+        const presentation = buildSessionUsageLimitRecoveryPresentation({
+            featureEnabled: true,
+            lastRuntimeIssue: usageLimitIssue,
+            latestTurnStatus: 'failed',
+            recoveryState,
+            settings: { v: 1, mode: 'auto_wait' },
+            translate: translateUsageLimitRecoveryKeyForTest,
+            nowMs: 1_700_000_000_000,
+        });
+
+        expect(presentation?.statusBadge.label).toBe('session.usageLimitRecovery.status.waitingForQuotaReset');
+    });
+
+    it('labels group waiting recovery without reset time as account rotation pending', () => {
+        const recoveryState = readSessionUsageLimitRecoveryFromMetadata({
+            sessionUsageLimitRecoveryV1: {
+                v: 1,
+                status: 'waiting',
+                issueFingerprint: 'usage-limit:s1:1',
+                armedAtMs: 1,
+                resetAtMs: null,
+                nextCheckAtMs: 1_700_000_070_000,
+                attemptCount: 1,
+                maxAttempts: 5,
+                lastProbeError: null,
+                selectedAuth: { kind: 'group', serviceId: 'openai-codex', groupId: 'team', profileId: null },
+            },
+        });
+
+        const presentation = buildSessionUsageLimitRecoveryPresentation({
+            featureEnabled: true,
+            lastRuntimeIssue: {
+                ...switchAccountUsageLimitIssue,
+                usageLimit: {
+                    ...switchAccountUsageLimitIssue.usageLimit,
+                    resetAtMs: null,
+                },
+            },
+            latestTurnStatus: 'failed',
+            recoveryState,
+            settings: { v: 1, mode: 'auto_wait' },
+            translate: translateUsageLimitRecoveryKeyForTest,
+            nowMs: 1_700_000_000_000,
+        });
+
+        expect(presentation?.statusBadge.label).toBe('session.usageLimitRecovery.status.accountRotationPending');
     });
 
     it('adds check-now and remember controls beside the primary recovery action', () => {
@@ -200,7 +267,91 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             recoveryState: null,
             checkNowSupported: true,
             settings: { v: 1, mode: 'ask' },
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
+        });
+
+        expect(presentation?.banner.secondaryActions).toEqual([
+            expect.objectContaining({
+                kind: 'check_now',
+                testID: 'session-usageLimit-recovery-checkNow',
+            }),
+            expect.objectContaining({
+                kind: 'remember',
+                testID: 'session-usageLimit-recovery-remember',
+            }),
+        ]);
+    });
+
+    it('adds a reset-credit control when recovery credits are available', () => {
+        const presentation = buildSessionUsageLimitRecoveryPresentation({
+            featureEnabled: true,
+            lastRuntimeIssue: usageLimitIssue,
+            latestTurnStatus: 'failed',
+            recoveryState: readSessionUsageLimitRecoveryFromMetadata({
+                sessionUsageLimitRecoveryV1: {
+                    v: 1,
+                    status: 'exhausted',
+                    issueFingerprint: 'usage-limit:s1:1',
+                    armedAtMs: 1,
+                    resetAtMs: 1_700_000_060_000,
+                    nextCheckAtMs: null,
+                    attemptCount: 1,
+                    maxAttempts: 1,
+                    lastProbeError: null,
+                    selectedAuth: { kind: 'native' },
+                    recoveryCredits: {
+                        availableCount: 1,
+                        credits: [{
+                            id: 'reset-credit-1',
+                            kind: 'usage_limit_reset',
+                            status: 'available',
+                            expiresAtMs: 1_700_000_120_000,
+                        }],
+                    },
+                },
+            }),
+            checkNowSupported: true,
+            settings: { v: 1, mode: 'ask' },
+            nowMs: 1_700_000_060_000,
+            translate: translateUsageLimitRecoveryKeyForTest,
+        });
+
+        expect(presentation?.banner.secondaryActions).toEqual([
+            expect.objectContaining({
+                kind: 'consume_reset_credit',
+                label: 'session.usageLimitRecovery.actions.consumeResetCredit',
+                testID: 'session-usageLimit-recovery-consumeResetCredit',
+            }),
+            expect.objectContaining({
+                kind: 'check_now',
+                testID: 'session-usageLimit-recovery-checkNow',
+            }),
+            expect.objectContaining({
+                kind: 'remember',
+                testID: 'session-usageLimit-recovery-remember',
+            }),
+        ]);
+    });
+
+    it('ignores expired reset-credit details when no available summary count remains', () => {
+        const presentation = buildSessionUsageLimitRecoveryPresentation({
+            featureEnabled: true,
+            lastRuntimeIssue: usageLimitIssue,
+            latestTurnStatus: 'failed',
+            recoveryState: null,
+            recoveryCredits: {
+                availableCount: 0,
+                credits: [{
+                    id: 'reset-credit-1',
+                    kind: 'usage_limit_reset',
+                    status: 'available',
+                    expiresAtMs: 1_700_000_010_000,
+                }],
+            },
+            checkNowSupported: true,
+            settings: { v: 1, mode: 'ask' },
+            nowMs: 1_700_000_060_000,
+            translate: translateUsageLimitRecoveryKeyForTest,
         });
 
         expect(presentation?.banner.secondaryActions).toEqual([
@@ -223,7 +374,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             recoveryState: null,
             checkNowSupported: true,
             settings: { v: 1, mode: 'ask' },
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         });
 
         expect(presentation?.banner).toEqual(expect.objectContaining({
@@ -265,7 +416,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             }),
             checkNowSupported: true,
             settings: { v: 1, mode: 'ask' },
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         });
 
         expect(presentation?.banner).toEqual(expect.objectContaining({
@@ -301,7 +452,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             }),
             checkNowSupported: true,
             settings: { v: 1, mode: 'ask' },
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         });
 
         expect(presentation?.banner?.mode).toBe('switch_fallback_now');
@@ -315,7 +466,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             recoveryState: null,
             checkNowSupported: false,
             settings: { v: 1, mode: 'ask' },
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         });
 
         expect(presentation?.banner).toEqual(expect.objectContaining({
@@ -348,7 +499,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             recoveryState: null,
             checkNowSupported: true,
             settings: { v: 1, mode: 'ask' },
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         });
 
         expect(presentation?.banner).toEqual(expect.objectContaining({
@@ -372,7 +523,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             recoveryState: null,
             checkNowSupported: true,
             settings: { v: 1, mode: 'ask' },
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         });
 
         expect(presentation?.banner).toEqual(expect.objectContaining({
@@ -393,6 +544,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
         expect(isSessionUsageLimitRecoveryCheckNowAction('switch_fallback_now')).toBe(true);
         expect(isSessionUsageLimitRecoveryCheckNowAction('switch_account_now')).toBe(true);
         expect(isSessionUsageLimitRecoveryCheckNowAction('retry_temporary_throttle')).toBe(true);
+        expect(isSessionUsageLimitRecoveryCheckNowAction('consume_reset_credit')).toBe(true);
         expect(isSessionUsageLimitRecoveryCheckNowAction('check_now')).toBe(true);
         expect(isSessionUsageLimitRecoveryCheckNowAction('enable')).toBe(false);
     });
@@ -400,6 +552,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
     it('classifies centralized recovery actions as checking operations while their RPC is pending', () => {
         expect(isSessionUsageLimitRecoveryCheckingOperationAction('resume_now')).toBe(true);
         expect(isSessionUsageLimitRecoveryCheckingOperationAction('check_now')).toBe(true);
+        expect(isSessionUsageLimitRecoveryCheckingOperationAction('consume_reset_credit')).toBe(true);
         expect(isSessionUsageLimitRecoveryCheckingOperationAction('switch_account_now')).toBe(true);
         expect(isSessionUsageLimitRecoveryCheckingOperationAction('switch_fallback_now')).toBe(true);
         expect(isSessionUsageLimitRecoveryCheckingOperationAction('retry_temporary_throttle')).toBe(true);
@@ -413,7 +566,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             recoveryState: null,
             checkNowSupported: false,
             settings: { v: 1, mode: 'ask' },
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         });
 
         expect(presentation?.banner.secondaryActions).toEqual([
@@ -432,7 +585,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             recoveryState: null,
             operationStatus: 'ready',
             settings: { v: 1, mode: 'ask' },
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         });
 
         expect(presentation?.banner).toEqual(expect.objectContaining({
@@ -461,7 +614,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
                 operationStatus: 'checking',
                 checkNowSupported: true,
                 settings: { v: 1, mode: 'ask' },
-                translate: (key) => key,
+                translate: translateUsageLimitRecoveryKeyForTest,
             });
 
             expect(presentation?.waiting).toBe(true);
@@ -482,7 +635,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             hasInterruptedWorkToResume: false,
             settings: { v: 1, mode: 'auto_wait' },
             nowMs: 1_700_000_060_000,
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         });
 
         expect(presentation?.banner).toEqual(expect.objectContaining({
@@ -504,7 +657,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             hasInterruptedWorkToResume: true,
             settings: { v: 1, mode: 'auto_wait' },
             nowMs: 1_700_000_060_000,
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         });
 
         expect(presentation?.banner).toEqual(expect.objectContaining({
@@ -529,7 +682,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             latestTurnStatus: 'failed',
             recoveryState: null,
             settings: { v: 1, mode: 'ask' },
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         })).toBeNull();
     });
 
@@ -540,7 +693,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             latestTurnStatus: 'completed',
             recoveryState: null,
             settings: { v: 1, mode: 'ask' },
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         })).toBeNull();
     });
 
@@ -554,7 +707,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             runtimeWorking: true,
             recoveryState: null,
             settings: { v: 1, mode: 'ask' },
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         })).not.toBeNull();
     });
 
@@ -566,7 +719,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             hasActivityAfterRuntimeIssue: true,
             recoveryState: null,
             settings: { v: 1, mode: 'ask' },
-            translate: (key) => key,
+            translate: translateUsageLimitRecoveryKeyForTest,
         })).toBeNull();
     });
 });

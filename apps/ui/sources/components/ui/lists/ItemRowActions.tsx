@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Pressable, useWindowDimensions, type GestureResponderEvent, InteractionManager, Platform } from 'react-native';
+import { View, Pressable, useWindowDimensions, type GestureResponderEvent, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { type ItemAction } from '@/components/ui/lists/itemActions';
@@ -9,6 +9,8 @@ import { resolveWebBlurTintColor } from '@/components/ui/overlays/resolveWebBlur
 import { ActionListSection, type ActionListItem } from '@/components/ui/lists/ActionListSection';
 import { t } from '@/text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
 export interface ItemRowActionsProps {
     title: string;
@@ -57,6 +59,8 @@ export interface ItemRowActionsProps {
     popoverBoundaryRef?: React.RefObject<any> | null;
 }
 
+const DEFAULT_ACTION_CONTROL_SIZE = 28;
+
 export function ItemRowActions(props: ItemRowActionsProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -100,24 +104,9 @@ export function ItemRowActions(props: ItemRowActionsProps) {
 
     const closeThen = React.useCallback((fn: () => void) => {
         setShowOverflow(false);
-        let didRun = false;
-        const runOnce = () => {
-            if (didRun) return;
-            didRun = true;
-            fn();
-        };
-
         // InteractionManager can be delayed by long/continuous interactions (scroll, gestures).
-        // Use a fast timeout fallback so the action still runs promptly.
-        const fallback = setTimeout(runOnce, 0);
-        try {
-            InteractionManager.runAfterInteractions(() => {
-                clearTimeout(fallback);
-                runOnce();
-            });
-        } catch {
-            // If InteractionManager isn't available, rely on the fallback.
-        }
+        // Use an immediate fallback so the action still runs promptly.
+        runAfterInteractionsWithFallback(fn, { fallbackDelayMs: 0 });
     }, []);
 
     const overflowActionItems = React.useMemo((): ActionListItem[] => {
@@ -141,6 +130,14 @@ export function ItemRowActions(props: ItemRowActionsProps) {
     }, [closeThen, overflowActions, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
 
     const iconSize = props.iconSize ?? 20;
+    const minimumActionTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
+    const actionControlSize = Math.max(
+        Platform.OS === 'web' || Platform.OS === 'android'
+            ? minimumActionTargetSize
+            : DEFAULT_ACTION_CONTROL_SIZE,
+        iconSize,
+    );
+    const actionHitSlop = Math.max(0, (minimumActionTargetSize - actionControlSize) / 2);
     const gap = props.gap ?? 16;
     const overflowPlacement = props.overflowPlacement ?? 'left';
     const overflowPortal = React.useMemo<PopoverPortalOptions>(() => ({
@@ -181,11 +178,23 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 key={action.id}
                 testID={action.inlineTestID}
                 disabled={action.disabled || !action.onPress}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                hitSlop={actionHitSlop}
                 onPressIn={() => props.onActionPressIn?.()}
                 onPress={(e: GestureResponderEvent) => {
                     e?.stopPropagation?.();
                     action.onPress?.();
+                }}
+                style={(interactionState) => {
+                    const webState = interactionState as typeof interactionState & { focused?: boolean };
+                    return [
+                        styles.actionControl,
+                        {
+                            width: actionControlSize,
+                            height: actionControlSize,
+                            borderRadius: actionControlSize / 2,
+                        },
+                        webState.focused === true ? styles.actionControlFocused : null,
+                    ];
                 }}
                 accessibilityRole="button"
                 accessibilityLabel={action.title}
@@ -195,7 +204,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 )}
             </Pressable>
         );
-    }, [iconSize, props, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
+    }, [actionControlSize, actionHitSlop, iconSize, props, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
 
     const renderOverflow = React.useCallback(() => {
         const accessibilityLabel = t('common.moreActions');
@@ -216,8 +225,20 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                         : (
                             <Pressable
                                 testID={props.overflowTriggerTestID}
-                                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                                style={showOverflow ? { opacity: 0 } : undefined}
+                                hitSlop={actionHitSlop}
+                                style={(interactionState) => {
+                                    const webState = interactionState as typeof interactionState & { focused?: boolean };
+                                    return [
+                                        styles.actionControl,
+                                        {
+                                            width: actionControlSize,
+                                            height: actionControlSize,
+                                            borderRadius: actionControlSize / 2,
+                                        },
+                                        showOverflow ? { opacity: 0 } : null,
+                                        webState.focused === true ? styles.actionControlFocused : null,
+                                    ];
+                                }}
                                 onPressIn={() => props.onActionPressIn?.()}
                                 onPress={(e: GestureResponderEvent) => {
                                     e?.stopPropagation?.();
@@ -226,6 +247,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                                 accessibilityRole="button"
                                 accessibilityLabel={accessibilityLabel}
                                 accessibilityHint={accessibilityHint}
+                                accessibilityState={{ expanded: showOverflow }}
                                 // @ts-expect-error - react-native types do not model the web-only `title` attribute; RN Web forwards it.
                                 title={accessibilityLabel}
                             >
@@ -277,7 +299,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 ) : null}
             </View>
         );
-    }, [blurTintOnWeb, overflowActionItems, overflowAnchorOverlay, overflowPlacement, overflowPortal, props, showOverflow]);
+    }, [actionControlSize, actionHitSlop, blurTintOnWeb, overflowActionItems, overflowAnchorOverlay, overflowPlacement, overflowPortal, props, showOverflow]);
 
     return (
         <View style={[styles.container, { gap }]}>
@@ -306,9 +328,24 @@ export function ItemRowActions(props: ItemRowActionsProps) {
     );
 }
 
-const stylesheet = StyleSheet.create(() => ({
+const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flexDirection: 'row',
         alignItems: 'center',
+    },
+    actionControl: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    actionControlFocused: {
+        ...(Platform.select({
+            web: {
+                outlineStyle: 'solid',
+                outlineWidth: 2,
+                outlineColor: theme.colors.border.strong,
+                outlineOffset: -2,
+            },
+            default: {},
+        }) as object),
     },
 }));

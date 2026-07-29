@@ -6,12 +6,20 @@ export type LocalServiceInventoryRow = Readonly<{
         host: string;
         family: 'ipv4' | 'ipv6' | 'unknown';
     }>;
+    endpoint?: Readonly<{
+        scheme: 'http' | 'https' | 'unknown';
+        host: string;
+        port: number;
+        probeState: 'ready' | 'unknown';
+        probedAt: number;
+        reasonCode?: string;
+    }>;
     port: number;
     protocol: 'tcp';
     detectedAt: number;
     lastSeenAt: number;
     state: 'listening' | 'stale' | 'gone' | 'unknown';
-    source: 'detected' | 'managed' | 'registered' | 'system';
+    source: 'detected';
     labels: readonly unknown[];
     confidence: 'high' | 'medium' | 'low';
     processOwnershipConfidence: 'high' | 'medium' | 'low';
@@ -104,6 +112,24 @@ export function applyLocalServiceInventorySnapshot(
     };
 }
 
+/**
+ * Dev-only invariant (L0-4): `rowsById` must be a real `Map` produced by
+ * `createLocalServiceInventoryState` / `applyLocalServiceInventorySnapshot`. A rehydrated or
+ * injected plain-object state would make `state.rowsById.get` throw mid-render and crash the
+ * Local Services tab. We assert the contract instead of silently coercing, so the wrong
+ * constructor is caught at its source rather than masked.
+ */
+function assertInventoryStateShape(state: LocalServiceInventoryState): void {
+    if (typeof state.rowsById?.get === 'function') return;
+    throw new TypeError(
+        'LocalServiceInventoryState.rowsById must be a Map built by createLocalServiceInventoryState; '
+        + `received ${Object.prototype.toString.call(state.rowsById)}`,
+    );
+}
+
 export function selectLocalServiceInventoryRows(state: LocalServiceInventoryState): readonly LocalServiceInventoryRow[] {
-    return state.rowIds.map((id) => state.rowsById.get(id)).filter((row): row is LocalServiceInventoryRow => Boolean(row));
+    assertInventoryStateShape(state);
+    return state.rowIds
+        .map((id) => state.rowsById.get(id))
+        .filter((row): row is LocalServiceInventoryRow => Boolean(row));
 }

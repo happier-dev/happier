@@ -8,7 +8,7 @@ import { installNavigationShellCommonModuleMocks } from './navigationShellTestHe
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.hoisted(() => vi.fn());
-const setSessionsListStorageTabSpy = vi.hoisted(() => vi.fn());
+const setSessionsListStorageFilterSpy = vi.hoisted(() => vi.fn());
 
 const sessionListState = vi.hoisted(() => ({
     data: [] as any[] | null,
@@ -27,7 +27,7 @@ const mainAppTabStateMock = vi.hoisted(() => ({
 }));
 
 const localSettingsState = vi.hoisted(() => ({
-    sessionsListStorageTab: 'persisted' as 'persisted' | 'direct',
+    sessionsListStorageFilter: 'all' as 'all' | 'persisted' | 'direct',
 }));
 const gettingStartedState = vi.hoisted(() => ({
     kind: 'create_session' as 'create_session' | 'connect_machine' | 'start_daemon' | 'select_session' | 'loading',
@@ -47,15 +47,15 @@ installNavigationShellCommonModuleMocks({
         });
         return expoRouterMock.module;
     },
-    storage: async (importOriginal) => {
-        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createPartialStorageModuleMock(importOriginal, {
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
             useFriendRequests: () => [],
             useSocketStatus: () => ({ status: 'connected' }),
             useRealtimeStatus: () => ({ status: 'idle' }),
             useLocalSettingMutable: (name: string) => {
-                if (name === 'sessionsListStorageTab') {
-                    return [localSettingsState.sessionsListStorageTab, setSessionsListStorageTabSpy] as const;
+                if (name === 'sessionsListStorageFilter') {
+                    return [localSettingsState.sessionsListStorageFilter, setSessionsListStorageFilterSpy] as const;
                 }
                 throw new Error(`Unexpected local setting: ${name}`);
             },
@@ -101,6 +101,20 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
+}));
+
+vi.mock('@/hooks/inbox/useInboxAvailable', () => ({
+    useInboxAvailable: () => false,
+}));
+
+vi.mock('@/components/sessions/model/useSessionListStorageKind', () => ({
+    useSessionListStorageKind: () => ({
+        externalSessionsEnabled: externalSessionsFeatureState.enabled,
+        storageKind: externalSessionsFeatureState.enabled
+            ? localSettingsState.sessionsListStorageFilter
+            : 'persisted',
+        setStorageKind: setSessionsListStorageFilterSpy,
+    }),
 }));
 
 vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', () => ({
@@ -152,6 +166,10 @@ vi.mock('@/components/navigation/shell/InboxView', () => ({
     InboxView: 'InboxView',
 }));
 
+vi.mock('@/components/navigation/shell/FriendsView', () => ({
+    FriendsView: 'FriendsView',
+}));
+
 vi.mock('@/components/settings/shell/SettingsViewWrapper', () => ({
     SettingsViewWrapper: 'SettingsViewWrapper',
 }));
@@ -162,6 +180,10 @@ vi.mock('@/components/projects/ProjectsListView', () => ({
 
 vi.mock('@/components/sessions/shell/SessionsListWrapper', () => ({
     SessionsListWrapper: 'SessionsListWrapper',
+}));
+
+vi.mock('@/components/sessions/shell/ExternalSessionsEmptyState', () => ({
+    ExternalSessionsEmptyState: 'ExternalSessionsEmptyState',
 }));
 
 vi.mock('@/components/sessions/shell/SessionsListPaneContent', () => ({
@@ -205,10 +227,10 @@ describe('MainView sidebar actions', () => {
 
     beforeEach(() => {
         routerPushSpy.mockReset();
-        setSessionsListStorageTabSpy.mockReset();
+        setSessionsListStorageFilterSpy.mockReset();
         sessionListState.data = [];
         externalSessionsFeatureState.enabled = false;
-        localSettingsState.sessionsListStorageTab = 'persisted';
+        localSettingsState.sessionsListStorageFilter = 'all';
         gettingStartedState.kind = 'create_session';
         mainAppTabStateMock.shouldThrow = false;
         mainAppTabStateMock.activeTab = 'sessions';
@@ -302,23 +324,24 @@ describe('MainView sidebar actions', () => {
         expect(() => tree!.findByType('SessionGettingStartedGuidance')).toThrow();
     });
 
-    it('renders direct session storage tabs in the sidebar empty state when direct sessions are enabled', async () => {
+    it('renders the unified external browse action without the retired storage tabs', async () => {
         externalSessionsFeatureState.enabled = true;
-        localSettingsState.sessionsListStorageTab = 'direct';
+        localSettingsState.sessionsListStorageFilter = 'direct';
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
 
-        expect(() => tree!.findByProps({ testID: 'sessions-list-storage-tab:direct' })).not.toThrow();
+        expect(() => tree!.findByProps({ testID: 'external-sessions-browse-button' })).not.toThrow();
+        expect(() => tree!.findByProps({ testID: 'sessions-list-storage-tab:direct' })).toThrow();
     });
 
-    it('renders the browse direct sessions action in the sidebar empty state when the direct tab is active', async () => {
+    it('keeps the external browse action visible when the unified list shows all sessions', async () => {
         externalSessionsFeatureState.enabled = true;
-        localSettingsState.sessionsListStorageTab = 'direct';
+        localSettingsState.sessionsListStorageFilter = 'all';
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
 
-        expect(() => tree!.findByProps({ testID: 'direct-sessions-browse-button' })).not.toThrow();
+        expect(() => tree!.findByProps({ testID: 'external-sessions-browse-button' })).not.toThrow();
     });
 });

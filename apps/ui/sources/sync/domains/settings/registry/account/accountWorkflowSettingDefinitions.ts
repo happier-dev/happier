@@ -4,6 +4,7 @@ import {
     DEFAULT_NOTIFICATIONS_SETTINGS_V1,
     DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
     AttentionDeliveryPolicyV1Schema,
+    ExternalSessionsSettingsV1Schema,
     NotificationsSettingsV1Schema,
     buildSettingArtifacts,
     defineSettingDefinitions,
@@ -16,6 +17,27 @@ import {
 } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
 
 export const ACCOUNT_WORKFLOW_SETTING_DEFINITIONS = defineSettingDefinitions({
+    externalSessionsSettingsV1: {
+        schema: ExternalSessionsSettingsV1Schema,
+        default: ExternalSessionsSettingsV1Schema.parse({}),
+        description: 'External-session passive follow and automatic-link preferences',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'enum',
+            privacy: 'count_only',
+            identityScope: 'person',
+            currentPropertyValueKinds: {
+                keepPassivelyFollowingAfterRestart: 'boolean',
+                autoLinkSourcePolicyEnabledCount: 'count',
+            },
+            serializeCurrentProperties: (value: z.infer<typeof ExternalSessionsSettingsV1Schema>) => ({
+                keepPassivelyFollowingAfterRestart: value.keepPassivelyFollowingAfterRestart,
+                autoLinkSourcePolicyEnabledCount: value.autoLinkSourcePolicies.length,
+            }),
+        },
+    },
     preferredLanguage: {
         schema: z.string().nullable(),
         default: null,

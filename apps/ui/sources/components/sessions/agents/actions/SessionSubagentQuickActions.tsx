@@ -69,6 +69,7 @@ export const SessionSubagentQuickActions = React.memo((props: Readonly<{
                 });
                 await sync.submitMessage(props.sessionId, structured.text, structured.displayText, structured.metaOverrides, {
                     callerSurface: 'subagent_command',
+                    forceImmediate: true,
                 });
             } catch (error) {
                 Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.requestFailed'));

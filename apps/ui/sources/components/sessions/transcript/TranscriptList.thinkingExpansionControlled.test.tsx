@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { createCapturingLegendListMock, renderScreen } from '@/dev/testkit';
 import {
     installTranscriptCommonModuleMocks,
     resetTranscriptCommonModuleMockState,
@@ -10,13 +10,64 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+// The Legend renderer (default transcript renderer) schedules landing verification through
+// requestAnimationFrame; this suite's bare environment does not provide one.
+if (typeof (globalThis as any).requestAnimationFrame !== 'function') {
+    (globalThis as any).requestAnimationFrame = (callback: (time: number) => void) => (
+        setTimeout(() => callback(Date.now()), 0) as unknown as number
+    );
+    (globalThis as any).cancelAnimationFrame = (handle: number) => {
+        clearTimeout(handle as unknown as ReturnType<typeof setTimeout>);
+    };
+}
+
 const settingValues: Record<string, any> = {};
 let renderedMessageViewProps: any[] = [];
 let renderedMessageViewWithCommonProps: any[] = [];
+let nestedToolSetExpanded: ((expanded: boolean) => void) | null = null;
+let transcriptCollapsibleComponent: React.ComponentType<any> | null = null;
+let rowMutationEvents: string[] = [];
+let legendListDetached = false;
+const capturingLegendListMock = createCapturingLegendListMock({
+    resolveState: () => {
+        rowMutationEvents.push('anchor-read');
+        return {
+            contentLength: 360,
+            end: 1,
+            isAtEnd: !legendListDetached,
+            isNearEnd: !legendListDetached,
+            isWithinMaintainScrollAtEndThreshold: !legendListDetached,
+            positionAtIndex: (index: number) => index * 120,
+            scroll: 20,
+            scrollLength: 240,
+            sizeAtIndex: () => 120,
+            start: 0,
+        };
+    },
+});
 
-vi.mock('@shopify/flash-list', () => ({
-  FlashList: () => null,
-}));
+vi.mock('@legendapp/list/react-native', () => capturingLegendListMock.module);
+
+function VisibleNestedToolContent() {
+    rowMutationEvents.push('tool-visible');
+    return React.createElement('VisibleNestedToolContent');
+}
+
+function NestedToolMessage(props: { messageId: string; createdAt: number }) {
+    const [expanded, setExpanded] = React.useState(false);
+    nestedToolSetExpanded = setExpanded;
+    const TranscriptCollapsible = transcriptCollapsibleComponent;
+    if (!TranscriptCollapsible) return null;
+    return (
+        <TranscriptCollapsible
+            id={props.messageId}
+            createdAt={props.createdAt}
+            expanded={expanded}
+        >
+            <VisibleNestedToolContent />
+        </TranscriptCollapsible>
+    );
+}
 
 installTranscriptCommonModuleMocks({
     reactNative: async () => {
@@ -74,6 +125,15 @@ vi.mock('@/components/sessions/transcript/MessageView', () => ({
   },
   MessageViewWithSessionCommon: (props: any) => {
     renderedMessageViewWithCommonProps.push(props);
+    if (props.thinkingExpanded === true) {
+      rowMutationEvents.push('thinking-visible');
+    }
+    if (props.message?.kind === 'tool-call') {
+      return React.createElement(NestedToolMessage, {
+        messageId: props.message.id,
+        createdAt: props.message.createdAt,
+      });
+    }
     return React.createElement('MessageViewWithSessionCommon', props);
   },
 }));
@@ -88,10 +148,14 @@ describe('TranscriptList (thinking expansion controlled)', () => {
     for (const k of Object.keys(settingValues)) delete settingValues[k];
     renderedMessageViewProps = [];
     renderedMessageViewWithCommonProps = [];
+    nestedToolSetExpanded = null;
+    transcriptCollapsibleComponent = null;
+    rowMutationEvents = [];
+    legendListDetached = false;
+    capturingLegendListMock.state.reset();
   });
 
   it('controls inline thinking expansion via list-owned state', async () => {
-    settingValues.transcriptListImplementation = 'flatlist_legacy';
     settingValues.sessionThinkingDisplayMode = 'inline';
     settingValues.sessionThinkingInlinePresentation = 'summary';
 
@@ -101,6 +165,7 @@ describe('TranscriptList (thinking expansion controlled)', () => {
     const { TranscriptList } = await import('./TranscriptList');
     await renderScreen(<TranscriptList
           sessionId="s1"
+          datasetKey="public:s1:1"
           metadata={null}
           messages={[thinkingMessage as any, normalMessage as any]}
           interaction={{ canSendMessages: false, canApprovePermissions: false }}
@@ -119,7 +184,6 @@ describe('TranscriptList (thinking expansion controlled)', () => {
   });
 
   it('renders messages through parent-provided transcript session common', async () => {
-    settingValues.transcriptListImplementation = 'flatlist_legacy';
     settingValues.sessionThinkingDisplayMode = 'inline';
     settingValues.sessionThinkingInlinePresentation = 'summary';
     settingValues.sessionThinkingInlineChrome = 'plain';
@@ -141,6 +205,7 @@ describe('TranscriptList (thinking expansion controlled)', () => {
     const { TranscriptList } = await import('./TranscriptList');
     await renderScreen(<TranscriptList
       sessionId="s1"
+      datasetKey="public:s1:1"
       metadata={null}
       messages={[message as any]}
       interaction={{ canSendMessages: false, canApprovePermissions: false }}
@@ -172,5 +237,109 @@ describe('TranscriptList (thinking expansion controlled)', () => {
         }),
       ]),
     );
+  });
+
+  it('resets public row state when the logical dataset changes for the same session', async () => {
+    settingValues.sessionThinkingDisplayMode = 'inline';
+    settingValues.sessionThinkingInlinePresentation = 'summary';
+    const thinkingMessage = {
+      kind: 'agent-text',
+      id: 't1',
+      localId: null,
+      createdAt: 1,
+      text: 'think',
+      isThinking: true,
+    };
+
+    const { TranscriptList } = await import('./TranscriptList');
+    const screen = await renderScreen(<TranscriptList
+      sessionId="same-session"
+      datasetKey="public:same-session:1"
+      metadata={null}
+      messages={[thinkingMessage as any]}
+      interaction={{ canSendMessages: false, canApprovePermissions: false }}
+    />);
+    const firstThinkingProps = getRenderedMessageProps().find((props) => props?.message?.id === 't1');
+    await act(async () => {
+      firstThinkingProps.onThinkingExpandedChange(true);
+    });
+    expect([...getRenderedMessageProps()].reverse().find((props) => props?.message?.id === 't1')?.thinkingExpanded).toBe(true);
+
+    await screen.update(<TranscriptList
+      sessionId="same-session"
+      datasetKey="public:same-session:2"
+      metadata={null}
+      messages={[thinkingMessage as any]}
+      interaction={{ canSendMessages: false, canApprovePermissions: false }}
+    />);
+
+    expect([...getRenderedMessageProps()].reverse().find((props) => props?.message?.id === 't1')?.thinkingExpanded).toBe(false);
+    expect(capturingLegendListMock.state.props?.dataKey).toBe('public:same-session:2');
+  });
+
+  it('arms the renderer anchor before public thinking and nested tool rows become visible', async () => {
+    settingValues.sessionThinkingDisplayMode = 'inline';
+    settingValues.sessionThinkingInlinePresentation = 'summary';
+    const thinkingMessage = {
+      kind: 'agent-text',
+      id: 'thinking-message',
+      localId: null,
+      createdAt: 1,
+      text: 'think',
+      isThinking: true,
+    };
+    const toolMessage = {
+      kind: 'tool-call',
+      id: 'tool-message',
+      localId: null,
+      createdAt: 2,
+      tool: {
+        name: 'Read',
+        state: 'completed',
+        input: {},
+        createdAt: 2,
+        startedAt: 2,
+        completedAt: 3,
+        description: null,
+      },
+      children: [],
+    };
+    transcriptCollapsibleComponent = (await import('./motion/TranscriptCollapsible')).TranscriptCollapsible;
+
+    const { TranscriptList } = await import('./TranscriptList');
+    await renderScreen(<TranscriptList
+      sessionId="same-session"
+      datasetKey="public:same-session:1"
+      metadata={null}
+      messages={[thinkingMessage as any, toolMessage as any]}
+      interaction={{ canSendMessages: false, canApprovePermissions: false }}
+    />);
+
+    const detachFromTail = async () => {
+      legendListDetached = true;
+      await act(async () => {
+        capturingLegendListMock.state.props?.onWheel?.({ deltaY: -1 });
+      });
+    };
+
+    await detachFromTail();
+    rowMutationEvents = [];
+    const thinkingProps = [...getRenderedMessageProps()]
+      .reverse()
+      .find((props) => props?.message?.id === 'thinking-message');
+    await act(async () => {
+      thinkingProps.onThinkingExpandedChange(true);
+    });
+    expect(rowMutationEvents.indexOf('anchor-read')).toBeGreaterThanOrEqual(0);
+    expect(rowMutationEvents.indexOf('anchor-read')).toBeLessThan(rowMutationEvents.indexOf('thinking-visible'));
+
+    await detachFromTail();
+    rowMutationEvents = [];
+    expect(nestedToolSetExpanded).not.toBeNull();
+    await act(async () => {
+      nestedToolSetExpanded?.(true);
+    });
+    expect(rowMutationEvents.indexOf('anchor-read')).toBeGreaterThanOrEqual(0);
+    expect(rowMutationEvents.indexOf('anchor-read')).toBeLessThan(rowMutationEvents.indexOf('tool-visible'));
   });
 });

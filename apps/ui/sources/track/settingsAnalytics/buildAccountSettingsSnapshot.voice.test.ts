@@ -1,17 +1,36 @@
 import { describe, expect, it } from 'vitest';
 
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import {
+    readLocalConversationVoiceSettings,
+    readLocalDirectVoiceSettings,
+    voiceSettingsDefaults,
+    voiceSettingsParse,
+} from '@/sync/domains/settings/voiceSettings';
 
 import { buildAccountSettingsSnapshot } from './buildAccountSettingsSnapshot';
 import { buildSecretValue } from './settingsAnalytics.testkit';
 
 describe('buildAccountSettingsSnapshot', () => {
     it('tracks voice settings through canonical structured analytics serializers', () => {
+        const localDirectDefaults = readLocalDirectVoiceSettings(voiceSettingsDefaults);
+        const localConversationDefaults = readLocalConversationVoiceSettings(voiceSettingsDefaults);
         const snapshot = buildAccountSettingsSnapshot({
             ...settingsDefaults,
-            voice: {
+            voice: voiceSettingsParse({
                 ...settingsDefaults.voice,
                 providerId: 'local_conversation',
+                assistantLanguage: 'fr',
+                welcome: {
+                    enabled: true,
+                    mode: 'on_first_turn',
+                    templateId: 'welcome-template',
+                },
+                executionMachine: {
+                    mode: 'fixed',
+                    machineId: 'machine-1',
+                    autoMachineId: null,
+                },
                 ui: {
                     ...settingsDefaults.voice.ui,
                     scopeDefault: 'session',
@@ -36,37 +55,27 @@ describe('buildAccountSettingsSnapshot', () => {
                     sharePermissionRequests: false,
                     shareDeviceInventory: false,
                 },
-                adapters: {
-                    ...settingsDefaults.voice.adapters,
-                    realtime_elevenlabs: {
-                        ...settingsDefaults.voice.adapters.realtime_elevenlabs,
-                        assistantLanguage: 'fr',
+                providers: {
+                    ...voiceSettingsDefaults.providers,
+                    realtime_elevenlabs: { schemaVersion: 2, config: {
                         billingMode: 'byo',
-                        welcome: {
-                            enabled: true,
-                            mode: 'on_first_turn',
-                            templateId: 'welcome-template',
-                        },
                         tts: {
-                            ...settingsDefaults.voice.adapters.realtime_elevenlabs.tts,
                             voiceId: 'custom-voice',
                             modelId: 'eleven_turbo_v2',
                             voiceSettings: {
-                                ...settingsDefaults.voice.adapters.realtime_elevenlabs.tts.voiceSettings,
                                 stability: 0.2,
                                 similarityBoost: 0.85,
                                 style: 0.6,
                                 useSpeakerBoost: true,
-                                speed: 1.5,
+                                speed: 1.1,
                             },
                         },
                         byo: {
                             agentId: 'byo-agent',
-                            apiKey: buildSecretValue('secret-value'),
                         },
-                    },
-                    local_direct: {
-                        ...settingsDefaults.voice.adapters.local_direct,
+                    } },
+                    local_direct: { schemaVersion: 1, config: {
+                        ...localDirectDefaults,
                         networkTimeoutMs: 25_000,
                         handsFree: {
                             enabled: true,
@@ -75,9 +84,9 @@ describe('buildAccountSettingsSnapshot', () => {
                                 minSpeechMs: 250,
                             },
                         },
-                    },
-                    local_conversation: {
-                        ...settingsDefaults.voice.adapters.local_conversation,
+                    } },
+                    local_conversation: { schemaVersion: 1, config: {
+                        ...localConversationDefaults,
                         conversationMode: 'agent',
                         networkTimeoutMs: 30_000,
                         handsFree: {
@@ -88,17 +97,15 @@ describe('buildAccountSettingsSnapshot', () => {
                             },
                         },
                         agent: {
-                            ...settingsDefaults.voice.adapters.local_conversation.agent,
+                            ...localConversationDefaults.agent,
                             backend: 'openai_compat',
                             agentSource: 'agent',
-                            machineTargetMode: 'fixed',
-                            machineTargetId: 'machine-1',
                             stayInVoiceHome: true,
                             teleportEnabled: false,
                             rootSessionPolicy: 'keep_warm',
                             maxWarmRoots: 5,
                             voiceHomeSubdirName: 'custom-home',
-                            permissionPolicy: 'no_tools',
+                            permissionIntent: 'read-only',
                             idleTtlSeconds: 7_200,
                             prewarmOnConnect: false,
                             resumabilityMode: 'provider_resume',
@@ -108,11 +115,6 @@ describe('buildAccountSettingsSnapshot', () => {
                             replay: {
                                 strategy: 'summary_plus_recent',
                                 recentMessagesCount: 32,
-                            },
-                            welcome: {
-                                enabled: true,
-                                mode: 'on_first_turn',
-                                templateId: 'voice-welcome',
                             },
                             commitIsolation: true,
                             transcript: {
@@ -141,9 +143,9 @@ describe('buildAccountSettingsSnapshot', () => {
                             turnReadMaxEvents: 128,
                             turnStreamTimeoutMs: 600_000,
                         },
-                    },
+                    } },
                 },
-            },
+            }),
         });
 
         expect(snapshot.properties.acct_setting__voice__providerId).toBe('local_conversation');
@@ -155,10 +157,14 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__voice__privacyShareDeviceInventory).toBe(false);
         expect(snapshot.properties.acct_setting__voice__privacyRecentMessagesCountBucket).toBe('large');
         expect(snapshot.properties.acct_setting__voice__realtimeElevenLabsBillingMode).toBe('byo');
-        expect(snapshot.properties.acct_setting__voice__realtimeElevenLabsAssistantLanguageConfigured).toBe(true);
-        expect(snapshot.properties.acct_setting__voice__realtimeElevenLabsWelcomeTemplateConfigured).toBe(true);
+        expect(snapshot.properties.acct_setting__voice__assistantLanguageConfigured).toBe(true);
+        expect(snapshot.properties.acct_setting__voice__welcomeEnabled).toBe(true);
+        expect(snapshot.properties.acct_setting__voice__welcomeMode).toBe('on_first_turn');
+        expect(snapshot.properties.acct_setting__voice__welcomeTemplateConfigured).toBe(true);
+        expect(snapshot.properties).not.toHaveProperty('acct_setting__voice__realtimeElevenLabsWelcomeEnabled');
+        expect(snapshot.properties).not.toHaveProperty('acct_setting__voice__localConversationAgentWelcomeEnabled');
         expect(snapshot.properties.acct_setting__voice__realtimeElevenLabsTtsVoiceIdKind).toBe('custom');
-        expect(snapshot.properties.acct_setting__voice__realtimeElevenLabsByoApiKeyConfigured).toBe(true);
+        expect(snapshot.properties.acct_setting__voice__realtimeElevenLabsByoAgentConfigured).toBe(true);
         expect(snapshot.properties.acct_setting__voice__localDirectHandsFreeEnabled).toBe(true);
         expect(snapshot.properties.acct_setting__voice__localDirectNetworkTimeoutBucket).toBe('large');
         expect(snapshot.properties.acct_setting__voice__localConversationConversationMode).toBe('agent');
@@ -170,5 +176,23 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__voice__localConversationAgentOpenaiCompatTemperatureBucket).toBe('high');
         expect(snapshot.properties.acct_setting__voice__localConversationStreamingTurnStreamTimeoutBucket).toBe('large');
     });
-});
 
+    it('never serializes unknown provider config into generic analytics properties', () => {
+        const secretSentinel = 'do-not-export-open-provider-config';
+        const snapshot = buildAccountSettingsSnapshot({
+            ...settingsDefaults,
+            voice: voiceSettingsParse({
+                providerId: 'future_vendor',
+                providers: {
+                    future_vendor: {
+                        schemaVersion: 9,
+                        config: { nested: { secretSentinel } },
+                    },
+                },
+            }),
+        });
+
+        expect(snapshot.properties.acct_setting__voice__providerId).toBe('future_vendor');
+        expect(JSON.stringify(snapshot.properties)).not.toContain(secretSentinel);
+    });
+});

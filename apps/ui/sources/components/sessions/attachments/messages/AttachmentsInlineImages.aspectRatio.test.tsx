@@ -26,7 +26,6 @@ vi.mock('@/components/sessions/files/content/imagePreview/useSessionImagePreview
     useSessionImagePreview: () => ({
         status: 'loaded',
         uri: 'blob:preview',
-        svgXml: null,
         error: null,
     }),
 }));
@@ -56,6 +55,8 @@ describe('AttachmentsInlineImages aspect ratios', () => {
                 sessionId="s1"
                 attachments={[attachment]}
                 onOpenPath={() => {}}
+                fileOpenEnabled
+                mediaPreviewEnabled
             />,
         );
 
@@ -69,8 +70,12 @@ describe('AttachmentsInlineImages aspect ratios', () => {
 
         await act(async () => {
             invokeTestInstanceHandler(screen.findByTestId(previewTestID), 'onLoad', {
-                nativeEvent: {
-                    source: { width: 1600, height: 900 },
+                cacheType: 'none',
+                source: {
+                    url: 'blob:preview',
+                    width: 1600,
+                    height: 900,
+                    mediaType: 'image/png',
                 },
             });
         });
@@ -79,6 +84,6 @@ describe('AttachmentsInlineImages aspect ratios', () => {
             width: 220,
             height: 124,
         });
-        expect(screen.findByTestId(previewTestID)?.props.resizeMode).toBe('contain');
+        expect(screen.findByTestId(previewTestID)?.props.contentFit).toBe('contain');
     });
 });

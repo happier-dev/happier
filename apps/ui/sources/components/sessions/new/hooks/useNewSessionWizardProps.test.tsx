@@ -1,6 +1,7 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol';
 
 import { useNewSessionWizardProps } from './useNewSessionWizardProps';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
@@ -17,10 +18,14 @@ installNewSessionScreenModelCommonModuleMocks({
 });
 
 describe('useNewSessionWizardProps', () => {
-    it('updates the wizard agent label when the configured ACP backend label changes', async () => {
+    it('updates memoized agent and typed Provider launch recovery fields', async () => {
         let observed: ReturnType<typeof useNewSessionWizardProps> | null = null;
 
-        function Probe({ agentLabel }: Readonly<{ agentLabel: string }>) {
+        function Probe(props: Readonly<{
+            agentLabel: string;
+            providerLaunchError: ProviderErrorV1;
+            retryProviderLaunch: () => void;
+        }>) {
             observed = useNewSessionWizardProps({
                 theme: {},
                 styles: {},
@@ -60,7 +65,7 @@ describe('useNewSessionWizardProps', () => {
                 isCliBannerDismissed: () => false,
                 dismissCliBanner: () => {},
                 agentType: 'customAcp',
-                agentLabel,
+                agentLabel: props.agentLabel,
                 setAgentType: () => {},
                 modelOptions: [],
                 modelMode: 'default',
@@ -91,6 +96,8 @@ describe('useNewSessionWizardProps', () => {
                 handleCreateSession: () => {},
                 canCreate: false,
                 isCreating: false,
+                providerLaunchError: props.providerLaunchError,
+                retryProviderLaunch: props.retryProviderLaunch,
                 emptyAutocompletePrefixes: [],
                 emptyAutocompleteSuggestions: vi.fn(),
                 resumeSessionId: '',
@@ -100,15 +107,32 @@ describe('useNewSessionWizardProps', () => {
             return null;
         }
 
+        const providerLaunchError = createProviderErrorV1('provider_not_enabled_on_machine', {
+            connectionId: 'pc_provider',
+            machineId: 'machine-1',
+        });
+        const firstRetry = vi.fn();
+        const secondRetry = vi.fn();
         let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(Probe, { agentLabel: 'Preset A' }))).tree;
+        tree = (await renderScreen(React.createElement(Probe, {
+            agentLabel: 'Preset A',
+            providerLaunchError,
+            retryProviderLaunch: firstRetry,
+        }))).tree;
 
         expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.agent.agentLabel).toBe('Preset A');
+        expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.footer.providerLaunchError).toBe(providerLaunchError);
+        expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.footer.retryProviderLaunch).toBe(firstRetry);
 
         act(() => {
-            tree?.update(React.createElement(Probe, { agentLabel: 'Preset B' }));
+            tree?.update(React.createElement(Probe, {
+                agentLabel: 'Preset B',
+                providerLaunchError,
+                retryProviderLaunch: secondRetry,
+            }));
         });
 
         expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.agent.agentLabel).toBe('Preset B');
+        expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.footer.retryProviderLaunch).toBe(secondRetry);
     });
 });

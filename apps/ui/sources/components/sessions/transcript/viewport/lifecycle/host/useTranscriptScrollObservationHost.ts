@@ -2,10 +2,11 @@ import * as React from 'react';
 import { Platform, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 
 import { sync } from '@/sync/sync';
+import { resolveDetachedInputAnchorCaptureState } from '@/components/sessions/transcript/viewport/prepend/host/useTranscriptViewportAnchorCaptureHost';
 import {
     type TranscriptViewportTelemetryObservationReason,
     type TranscriptViewportTelemetryEvent,
-    type TranscriptViewportTelemetryScrollReason,
+    type TranscriptViewportTelemetryWebTrigger,
 } from '@/components/sessions/transcript/scroll/transcriptViewportTelemetry';
 import type {
     ChatTranscriptListItem,
@@ -17,6 +18,7 @@ import {
     type WebTranscriptScrollMetrics,
 } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
 import type { TranscriptListShellPlatformInteractionProps } from '@/components/sessions/transcript/viewport/shell/TranscriptListShell';
+import type { WebScrollMovementFact } from '@/components/sessions/transcript/scroll/resolveWebGenuineScrollMovement';
 import {
     applyTranscriptLifecycleScrollObservationPlan,
     type TranscriptLifecycleScrollObservationPlanContinuationInput,
@@ -32,9 +34,6 @@ import {
     type TranscriptContentSizeObservationApplierEffects,
     type TranscriptLayoutObservationApplierEffects,
 } from '@/components/sessions/transcript/viewport/lifecycle/layoutContentSizeObservationApplier';
-import {
-    resolveWebViewportResizeObservation,
-} from '@/components/sessions/transcript/viewport/lifecycle/webViewportResizeObservation';
 import type {
     TranscriptViewportLifecycle,
     TranscriptViewportLifecycleEffect,
@@ -44,7 +43,6 @@ import type {
     TranscriptLifecycleHost,
     TranscriptLifecycleHostLocalInteractionPlan,
     TranscriptLifecycleHostNativeGestureTakeoverPlan,
-    TranscriptLifecycleHostNativeOffsetEscapeReleasePlan,
     TranscriptLifecycleHostNativeTouchIntentPlan,
     TranscriptLifecycleHostNativeTouchReleasePlan,
     TranscriptLifecycleHostScrollObservationPlan,
@@ -97,35 +95,43 @@ import type { TranscriptBottomFollowModeState, TranscriptScrollPinEvent, Transcr
 import type { TranscriptViewportMode, TranscriptViewportOwner } from '@/components/sessions/transcript/viewport/transcriptViewportTypes';
 import type { EntryRestoreOwner, EntryRestoreOwnerEffect } from '@/components/sessions/transcript/viewport/entryRestore/entryRestoreOwner';
 import type { TranscriptPrependHost } from '@/components/sessions/transcript/viewport/prepend/host/useTranscriptPrependHost';
-import type { TranscriptOlderPaginationSnapshot } from '@/components/sessions/transcript/pagination/useTranscriptOlderPagination';
+import type {
+    TranscriptOlderPaginationScrollMetrics,
+    TranscriptOlderPaginationSnapshot,
+} from '@/components/sessions/transcript/pagination/useTranscriptOlderPagination';
 import type { TranscriptMeasurementHost } from '@/components/sessions/transcript/measurement/transcriptMeasurementHost';
 import type { TranscriptJumpTarget } from '@/components/sessions/transcript/viewport/jump/transcriptJumpTargetTypes';
+import type { TranscriptTargetWindowState } from '@/components/sessions/transcript/viewport/window/transcriptTargetWindowTypes';
 import type { TranscriptBlankRecoveryEffect } from '@/components/sessions/transcript/viewport/visibility/blankRecoveryOwner';
 import type { ScrollObservedTelemetryParams } from '@/components/sessions/transcript/viewport/telemetryHost/viewportEvents';
+import {
+    registerWebTranscriptKeyboardOwner,
+    type WebTranscriptKeyboardVerticalDirection,
+} from '@/components/sessions/transcript/viewport/lifecycle/webTranscriptKeyboardOwner';
+import { useTranscriptTargetWindowContinuationOwner } from '@/components/sessions/transcript/viewport/window/useTranscriptTargetWindowContinuationOwner';
 
 type MutableRef<T> = { current: T };
 type ScrollObservationPlan = TranscriptLifecycleHostScrollObservationPlan;
-type WebPassiveLiveTailCorrectionEffect = NonNullable<ScrollObservationPlan['webPassiveLiveTailCorrectionEffect']>;
 type NativeScrollAcceptedViewportPaintEffect = ScrollObservationPlan['acceptedViewportPaintEffects'][number];
 type GenericScrollObservationViewportStateEffect = Extract<TranscriptViewportLifecycleEffect, { type: 'apply-generic-observed-viewport-state' }>;
 type GenericScrollObservationReadOnlyVisibleBottomEffect = Extract<TranscriptViewportLifecycleEffect, { type: 'apply-generic-read-only-visible-bottom-state' }>;
 type GenericScrollObservationSuppressionEffect = Extract<TranscriptViewportLifecycleEffect, { type: 'suppress-generic-scroll-observation' }>;
 type GenericScrollObservationAnchorCaptureCancellationEffect = Extract<TranscriptViewportLifecycleEffect, { type: 'cancel-scheduled-viewport-anchor-capture' }>;
-type NativeOffsetReleaseLiveTailStateEffect = TranscriptLifecycleHostNativeOffsetEscapeReleasePlan['nativeOffsetReleaseLiveTailStateEffects'][number];
 type NativeGestureTakeoverPlan = TranscriptLifecycleHostNativeGestureTakeoverPlan;
+
 type NativeTouchIntentApplyEffect = TranscriptLifecycleHostNativeTouchIntentPlan['nativeTouchIntentEffects'][number];
 type NativeTouchReleaseLiveTailStateEffect = TranscriptLifecycleHostNativeTouchReleasePlan['nativeTouchReleaseStateEffects'][number];
-type LocalTranscriptInteractionAutoPinDeferralApplyEffect = TranscriptLifecycleHostLocalInteractionPlan['localInteractionAutoPinDeferralEffects'][number];
+type LocalTranscriptInteractionIntentApplyEffect = TranscriptLifecycleHostLocalInteractionPlan['localInteractionIntentEffects'][number];
 type ViewportLifecycleTransition = ReturnType<TranscriptViewportLifecycle['dispatch']>;
 type WebViewportTelemetryDiagnosticsInput = Readonly<{
-    flashListContentHeight?: number;
-    flashListLayoutHeight?: number;
+    listContentHeight?: number;
+    listLayoutHeight?: number;
     metrics?: WebTranscriptScrollMetrics | null;
     paginationPhase?: TranscriptOlderPaginationSnapshot['phase'];
     paginationSuspendedReasons?: TranscriptOlderPaginationSnapshot['suspendedReasons'];
     programmaticWebWrite: boolean;
     scrollable?: boolean;
-    trigger: 'scroll' | 'edge-reached' | 'restore' | 'prepend-restore' | 'jump';
+    trigger: TranscriptViewportTelemetryWebTrigger;
 }>;
 
 export type TranscriptScrollObservationHostDeps = Readonly<{
@@ -133,19 +139,13 @@ export type TranscriptScrollObservationHostDeps = Readonly<{
     applyBlankRecoveryEffects: (effects: readonly TranscriptBlankRecoveryEffect[]) => void;
     applyNativeBottomFollowCompletionHostEffects: (effects: ScrollObservationPlan['nativeBottomFollowCompletionEffects']) => void;
     applyNativeDragActiveMirrorEffectsRef: MutableRef<(effects: readonly NativeDragActiveMirrorApplyEffect[]) => void>;
-    applyNativeMountSettlePassiveDriftRepinObservation: TranscriptScrollIngressCallbacks['applyNativeMountSettlePassiveDriftRepinObservation'];
     applyNativeUserScrollTakeoverHostEffects: (effects: ScrollObservationPlan['nativeUserScrollTakeoverEffects']) => void;
-    applyWebPassiveLiveTailCorrectionEffectRef: MutableRef<(effect: WebPassiveLiveTailCorrectionEffect) => boolean>;
     applyEntryRestoreOwnerEffects: (effects: readonly EntryRestoreOwnerEffect[]) => void;
     bottomFollowModeStateRef: MutableRef<TranscriptBottomFollowModeState>;
-    cancelScheduledPinToBottom: () => void;
-    captureNativeBottomFollowPreviousFollow: () => boolean;
-    captureWebBottomFollowPreviousMetrics: () => WebTranscriptScrollMetrics | null;
     commitBottomFollowModeState: (state: TranscriptBottomFollowModeState) => void;
     commitJumpToBottomDistanceForVisibility: (distanceFromBottom: number) => void;
     commitScrollPinEvent: (event: TranscriptScrollPinEvent) => void;
     commitScrollPinState: (state: TranscriptScrollPinState) => void;
-    continuousFollowOwner: 'app' | 'renderer';
     currentSessionIdRef: MutableRef<string>;
     dispatchViewportLifecycleEvent: (event: TranscriptViewportLifecycleEvent) => ViewportLifecycleTransition;
     emitViewportChange: ((nextState: TranscriptViewportChangeState) => void) | undefined;
@@ -156,9 +156,10 @@ export type TranscriptScrollObservationHostDeps = Readonly<{
     hasNativeInitialViewportAppliedForCurrentSession: () => boolean;
     isLoaded: boolean;
     isWarmKeepAliveInstance: boolean;
+    /** Re-debounces (never destroys) a pending viewport anchor capture on external movement. */
+    deferViewportAnchorCapture: () => void;
     invalidateViewportAnchorCapture: () => void;
     lastExplicitWebScrollIntentAtMsRef: MutableRef<number>;
-    lastNativePinOffsetRef: MutableRef<number | null>;
     lastPinOffsetForIntentRef: MutableRef<number | null>;
     lastRouteJumpProtectionClearingWebMovementAtMsRef: MutableRef<number>;
     lastScrollOffsetForIntentRef: MutableRef<number | null>;
@@ -175,7 +176,6 @@ export type TranscriptScrollObservationHostDeps = Readonly<{
     nativeBottomFollowRearmedAfterDragRef: MutableRef<boolean>;
     nativeListDragActiveRef: MutableRef<boolean>;
     nativeMomentumScrollActiveRef: MutableRef<boolean>;
-    nativeMountSettleAutoPinSuppressedRef: MutableRef<boolean>;
     nativeMountSettleDeadlineReachedRef: MutableRef<boolean>;
     nativeMountSettleStable: boolean;
     nativePrependTelemetryStateRef: MutableRef<(sessionId?: string) => ReturnType<TranscriptPrependHost['nativeTelemetryState']>>;
@@ -185,28 +185,30 @@ export type TranscriptScrollObservationHostDeps = Readonly<{
     observeNativeEntryRestoreHostFacts: TranscriptScrollIngressCallbacks['observeNativeEntryRestoreHostFacts'];
     observeNativePrependOwner: () => void;
     observeMountSettleMetrics: TranscriptScrollIngressCallbacks['observeMountSettleMetrics'];
-    observeWebGenuineScrollMovement: TranscriptScrollIngressCallbacks['observeWebGenuineScrollMovement'];
-    observeWebTranscriptNavigationVisibilityForSession: TranscriptScrollIngressCallbacks['observeWebTranscriptNavigationVisibility'];
+    observeTranscriptNavigationVisibility: TranscriptScrollIngressCallbacks['observeTranscriptNavigationVisibility'];
     olderPagination: Readonly<{
         getSnapshot(): TranscriptOlderPaginationSnapshot;
+        isReadyForLoad(): boolean;
+        isNearOlderEdge(input: Readonly<{
+            offsetY: number;
+            scrollable: boolean;
+            trigger?: TranscriptOlderPaginationScrollMetrics['trigger'];
+            itemsToOlderEdge?: number | null;
+        }>): boolean;
         onScrollObservation(input: Readonly<{
             offsetY: number;
             scrollable: boolean;
-            trigger?: 'scroll' | 'edge-reached';
+            trigger?: TranscriptOlderPaginationScrollMetrics['trigger'];
+            itemsToOlderEdge?: number | null;
         }>): void;
     }>;
     pendingJumpSeqViewportPromotionRef: MutableRef<unknown | null>;
-    pendingNativeMountSettleBottomPinRef: MutableRef<boolean>;
     pinEnabled: boolean;
     pinEnabledRef: MutableRef<boolean>;
-    pinNativeInitialFollowBottomViewportIfReady(
-        reason: Extract<TranscriptViewportTelemetryScrollReason, 'layout-change' | 'content-size-change' | 'stream-append'>,
-    ): void;
     pinThresholdPx: number;
     pinThresholdPxRef: MutableRef<number>;
     platformOS: typeof Platform.OS;
     preemptEntryRestoreTransaction: () => void;
-    prepareNativeContentMaterializationAutoPin: TranscriptContentSizeObservationApplierEffects<WebTranscriptScrollMetrics>['prepareNativeContentMaterializationAutoPin'];
     prependHost: TranscriptPrependHost;
     promotedJumpSeqViewportProtectionRef: MutableRef<{ promotedAtMs: number; seq: number; sessionId: string } | null>;
     promotePendingJumpSeqViewportSnapshot: TranscriptScrollIngressCallbacks['promotePendingJumpSeqViewportSnapshot'];
@@ -225,6 +227,14 @@ export type TranscriptScrollObservationHostDeps = Readonly<{
     ) => void;
     resolveEffectiveListPaintMetrics: () => { contentHeight: number; distanceFromBottom: number; layoutHeight: number } | null;
     resolveNativeObservedScrollOffset: (rawOffsetY: number, metrics: Readonly<{ contentHeight: number; layoutHeight: number }>) => { canonicalOffsetY: number; distanceFromLiveTailPx: number } | null;
+    /**
+     * Estimate-immune item-space edge proximity for the older-pagination machine
+     * (`resolveItemsToOlderEdge` over the driver fact seam's visible source range).
+     * Native only; undefined/null on web or when the list cannot report a reliable
+     * genuine-subset visible range yet.
+     */
+    readItemsToOlderEdge?: () => number | null;
+    readItemsToNewerEdge?: () => number | null;
     resolveTranscriptMountSettleBottomDistanceNoiseFloorPx: () => number | null;
     resolveViewportReachedEdge: (edge: 'start' | 'end') => 'older' | 'newer';
     resolveViewportTelemetryMode: (mode?: TranscriptViewportMode) => TranscriptViewportMode;
@@ -238,26 +248,16 @@ export type TranscriptScrollObservationHostDeps = Readonly<{
     shouldSuppressGenericViewportStateForProtectedJumpSeq: () => boolean;
     showFirstPaintPlaceholder: boolean;
     targetWindowActiveRef: MutableRef<boolean>;
-    targetWindowEdgeLoadInFlightRef: MutableRef<{ newer: boolean; older: boolean }>;
+    targetWindowEdgeLoadInFlightRef: MutableRef<'newer' | 'older' | null>;
     targetWindowHostFacts: Readonly<{
-        activeWindowState: null | Readonly<{
-            hasMoreNewer: boolean | null;
-            hasMoreOlder: boolean | null;
-            targetSeq: number | null;
-        }>;
+        activeWindowState: TranscriptTargetWindowState | null;
     }>;
     updateNativeInitialViewportPendingObservation: (value: boolean) => void;
     updateNativeViewportPaintObserved: (value: boolean) => void;
-    usesNativeFlashListBottomMaintenance: boolean;
     viewportCommandController: Readonly<{ activeOwner(): TranscriptViewportOwner }>;
     wantsPinnedRef: MutableRef<boolean>;
     composerInsetHeightRef: MutableRef<number>;
     routeJumpSeq: number | null;
-    requestAutomaticLiveTailPin(
-        previousWebMetrics: WebTranscriptScrollMetrics | null,
-        reason: Extract<TranscriptViewportTelemetryScrollReason, 'layout-change' | 'content-size-change' | 'stream-append' | 'viewport-resized'>,
-        nativePrevFollowAtBottom: boolean,
-    ): void;
     runEntryRestoreAttempt: () => void;
     scheduleViewportAnchorCaptureRef: MutableRef<(state: TranscriptViewportChangeState, options?: Readonly<{ suppressAnchorCapture?: boolean }>) => void>;
     scrollPinRef: MutableRef<TranscriptScrollPinState>;
@@ -265,20 +265,21 @@ export type TranscriptScrollObservationHostDeps = Readonly<{
     verifyWebEntryRestoreTransaction: () => void;
     setListContentHeight: (height: number) => void;
     setListLayoutHeight: (height: number) => void;
-    verifyNativeSliceEntryRestoreTransaction: () => void;
 }>;
 
 export type TranscriptScrollObservationHost = Readonly<{
     adoptNativeFollowingForTrustedBottomArrival: (distanceFromBottom: number | null) => void;
-    deferAutoPinAfterLocalTranscriptInteraction: () => void;
-    nativeFlashListScrollOverrideProps: Record<string, unknown> | undefined;
-    observeNativeStreamAppendOffsetEscape: (params: { contentHeight: number; layoutHeight: number }) => boolean;
+    recordLocalTranscriptInteractionIntent: () => void;
+    observeCommittedProjectionLayout: () => void;
     onContentSizeChange: (_: number, h: number) => void;
     onEndReached: () => void;
     onLayout: (e: LayoutChangeEvent) => void;
     onMomentumScrollBegin: () => void;
     onMomentumScrollEnd: () => void;
-    onScroll: (e: NativeSyntheticEvent<NativeScrollEvent>) => void;
+    onScroll: (
+        e: NativeSyntheticEvent<NativeScrollEvent>,
+        webMovementFact?: WebScrollMovementFact,
+    ) => void;
     onScrollBeginDrag: () => void;
     onScrollEndDrag: () => void;
     onStartReached: () => void;
@@ -288,7 +289,6 @@ export type TranscriptScrollObservationHost = Readonly<{
 export function useTranscriptScrollObservationHost(
     deps: TranscriptScrollObservationHostDeps,
 ): TranscriptScrollObservationHost {
-    const continuousFollowOwner = deps.continuousFollowOwner ?? 'app';
     const applyImmediateWebReleaseApplyEffects = React.useCallback((
         effects: readonly WebImmediateReleaseLiveTailApplyEffect[],
     ) => {
@@ -395,23 +395,6 @@ export function useTranscriptScrollObservationHost(
         deps.sessionId,
         deps.wantsPinnedRef,
     ]);
-    const applyNativeOffsetReleaseLiveTailStateEffects = React.useCallback((
-        effects: readonly NativeOffsetReleaseLiveTailStateEffect[],
-    ): boolean => {
-        let appliedRelease = false;
-        for (const effect of effects) {
-            if (effect.sessionId !== deps.sessionId) continue;
-            if (effect.type !== 'apply-native-offset-release-live-tail-state') continue;
-            deps.commitBottomFollowModeState(effect.bottomFollowState);
-            deps.wantsPinnedRef.current = false;
-            appliedRelease = true;
-        }
-        return appliedRelease;
-    }, [
-        deps.commitBottomFollowModeState,
-        deps.sessionId,
-        deps.wantsPinnedRef,
-    ]);
     const releaseLiveTailForImmediateWebUserIntent = React.useCallback(() => {
         const transition = deps.dispatchViewportLifecycleEvent({
             sessionId: deps.sessionId,
@@ -466,10 +449,29 @@ export function useTranscriptScrollObservationHost(
         deps.sessionId,
     ]);
 
+    const scheduleDetachedInputAnchorCapture = React.useCallback(() => {
+        // Unforgeable input while measurably detached schedules the debounced anchor capture
+        // directly and corrects a stale want-pin bit: the generic observation effect that
+        // maintains both can starve for a whole detach when giant-row layout churn defeats
+        // scroll-frame genuineness classification (live A->B->A RED 2026-07-11).
+        const captureState = resolveDetachedInputAnchorCaptureState(
+            deps.resolveWebScrollMetrics(),
+            deps.pinThresholdPxRef.current,
+        );
+        if (!captureState) return;
+        deps.wantsPinnedRef.current = false;
+        deps.scheduleViewportAnchorCaptureRef.current(captureState);
+    }, [
+        deps.pinThresholdPxRef,
+        deps.resolveWebScrollMetrics,
+        deps.scheduleViewportAnchorCaptureRef,
+        deps.wantsPinnedRef,
+    ]);
     const stopScrollEventPropagationOnWeb = React.useCallback((event: unknown) => {
         if (deps.platformOS !== 'web') return;
         const nowMs = Date.now();
         deps.lastExplicitWebScrollIntentAtMsRef.current = nowMs;
+        scheduleDetachedInputAnchorCapture();
         const transition = deps.dispatchViewportLifecycleEvent({
             sessionId: deps.sessionId,
             type: 'web-user-scroll-takeover',
@@ -497,11 +499,13 @@ export function useTranscriptScrollObservationHost(
         deps.platformOS,
         deps.sessionId,
         releaseLiveTailForImmediateWebUserIntent,
+        scheduleDetachedInputAnchorCapture,
     ]);
     const markUserScrollIntentOnWeb = React.useCallback(() => {
         if (deps.platformOS !== 'web') return;
         const nowMs = Date.now();
         deps.lastExplicitWebScrollIntentAtMsRef.current = nowMs;
+        scheduleDetachedInputAnchorCapture();
         const transition = deps.dispatchViewportLifecycleEvent({
             sessionId: deps.sessionId,
             type: 'web-user-scroll-takeover',
@@ -520,13 +524,34 @@ export function useTranscriptScrollObservationHost(
         deps.lastExplicitWebScrollIntentAtMsRef,
         deps.platformOS,
         deps.sessionId,
+        scheduleDetachedInputAnchorCapture,
+    ]);
+    const recordWebKeyboardViewportInput = React.useCallback((
+        verticalDirection: WebTranscriptKeyboardVerticalDirection,
+    ): void => {
+        if (deps.platformOS !== 'web') return;
+        // Keyboard is first-class movement evidence. Record it before browser default
+        // scrolling; the renderer preserves only follow-affirming movement toward a held end.
+        markUserScrollIntentOnWeb();
+        deps.listRef.current?.notifyViewportInput?.({ kind: 'keyboard', verticalDirection });
+    }, [deps.listRef, deps.platformOS, markUserScrollIntentOnWeb]);
+    React.useEffect(() => {
+        if (deps.platformOS !== 'web' || typeof document === 'undefined') return;
+        return registerWebTranscriptKeyboardOwner({
+            document,
+            onViewportKeyboardInput: recordWebKeyboardViewportInput,
+            resolveScroller: () => deps.resolveWebScrollMetrics()?.element ?? null,
+        });
+    }, [
+        deps.platformOS,
+        deps.resolveWebScrollMetrics,
+        recordWebKeyboardViewportInput,
     ]);
     const applyNativeGestureTakeoverPlan = React.useCallback((plan: NativeGestureTakeoverPlan) => {
         if (deps.platformOS === 'web') return;
         deps.commitBottomFollowModeState(plan.state.bottomFollowState);
         deps.applyNativeUserScrollTakeoverHostEffects(plan.nativeUserScrollTakeoverEffects);
         deps.markNativeInitialViewportAppliedForCurrentSession();
-        deps.cancelScheduledPinToBottom();
         applyNativeBottomFollowRearmResetEffects(plan.nativeBottomFollowRearmResetEffects);
         applyNativeDragActiveMirrorApplyEffects(plan.nativeDragActiveMirrorEffects);
         applyNativeMomentumActiveMirrorApplyEffects(plan.nativeMomentumActiveMirrorEffects);
@@ -535,7 +560,6 @@ export function useTranscriptScrollObservationHost(
         applyNativeDragActiveMirrorApplyEffects,
         applyNativeMomentumActiveMirrorApplyEffects,
         deps.applyNativeUserScrollTakeoverHostEffects,
-        deps.cancelScheduledPinToBottom,
         deps.commitBottomFollowModeState,
         deps.markNativeInitialViewportAppliedForCurrentSession,
         deps.platformOS,
@@ -570,22 +594,10 @@ export function useTranscriptScrollObservationHost(
                 case 'native-touch-record-intent-timestamp':
                     deps.lastUserScrollIntentAtMsRef.current = effect.timestampMs;
                     break;
-                case 'native-touch-suppress-native-mount-settle-auto-pin':
-                    deps.nativeMountSettleAutoPinSuppressedRef.current = true;
-                    break;
-                case 'native-touch-cancel-native-mount-settle-bottom-pin':
-                    deps.pendingNativeMountSettleBottomPinRef.current = false;
-                    break;
-                case 'native-touch-cancel-scheduled-pin':
-                    deps.cancelScheduledPinToBottom();
-                    break;
             }
         }
     }, [
-        deps.cancelScheduledPinToBottom,
         deps.lastUserScrollIntentAtMsRef,
-        deps.nativeMountSettleAutoPinSuppressedRef,
-        deps.pendingNativeMountSettleBottomPinRef,
         deps.sessionId,
     ]);
     const recordNativeTranscriptTouchStartIntent = React.useCallback((event?: unknown) => {
@@ -646,32 +658,6 @@ export function useTranscriptScrollObservationHost(
     const recordNativeListDragEscapeIntent = React.useCallback(() => {
         recordNativeGestureTakeover();
     }, [recordNativeGestureTakeover]);
-    const recordNativeTranscriptResponderStartIntent = React.useCallback((event?: unknown) => {
-        recordNativeTranscriptTouchStartIntent(event);
-        return false;
-    }, [recordNativeTranscriptTouchStartIntent]);
-    const recordNativeTranscriptResponderMoveIntent = React.useCallback((event?: unknown) => {
-        recordNativeTranscriptTouchIntent(event);
-        return false;
-    }, [recordNativeTranscriptTouchIntent]);
-    const nativeFlashListScrollOverrideProps = React.useMemo(() => {
-        if (deps.platformOS === 'web') return undefined;
-        return {
-            onMoveShouldSetResponderCapture: recordNativeTranscriptResponderMoveIntent,
-            onStartShouldSetResponderCapture: recordNativeTranscriptResponderStartIntent,
-            onTouchCancel: recordNativeTranscriptTouchEndIntent,
-            onTouchEnd: recordNativeTranscriptTouchEndIntent,
-            onTouchMove: recordNativeTranscriptTouchIntent,
-            onTouchStart: recordNativeTranscriptTouchStartIntent,
-        };
-    }, [
-        deps.platformOS,
-        recordNativeTranscriptResponderMoveIntent,
-        recordNativeTranscriptResponderStartIntent,
-        recordNativeTranscriptTouchEndIntent,
-        recordNativeTranscriptTouchIntent,
-        recordNativeTranscriptTouchStartIntent,
-    ]);
     const platformInteractionProps = React.useMemo<TranscriptListShellPlatformInteractionProps>(() => {
         if (deps.platformOS === 'web') {
             return {
@@ -695,8 +681,8 @@ export function useTranscriptScrollObservationHost(
         recordNativeTranscriptTouchStartIntent,
         stopScrollEventPropagationOnWeb,
     ]);
-    const applyLocalTranscriptInteractionAutoPinDeferralApplyEffects = React.useCallback((
-        effects: readonly LocalTranscriptInteractionAutoPinDeferralApplyEffect[],
+    const applyLocalTranscriptInteractionIntentApplyEffects = React.useCallback((
+        effects: readonly LocalTranscriptInteractionIntentApplyEffect[],
     ) => {
         for (const effect of effects) {
             if (effect.sessionId !== deps.sessionId) continue;
@@ -704,77 +690,29 @@ export function useTranscriptScrollObservationHost(
                 case 'local-interaction-record-intent-timestamp':
                     deps.lastUserScrollIntentAtMsRef.current = effect.timestampMs;
                     break;
-                case 'local-interaction-suppress-native-mount-settle-auto-pin':
-                    deps.nativeMountSettleAutoPinSuppressedRef.current = true;
-                    break;
-                case 'local-interaction-cancel-scheduled-pin':
-                    deps.cancelScheduledPinToBottom();
-                    break;
             }
         }
     }, [
-        deps.cancelScheduledPinToBottom,
         deps.lastUserScrollIntentAtMsRef,
-        deps.nativeMountSettleAutoPinSuppressedRef,
         deps.sessionId,
     ]);
-    const deferAutoPinAfterLocalTranscriptInteraction = React.useCallback(() => {
+    const recordLocalTranscriptInteractionIntent = React.useCallback(() => {
         const nowMs = Date.now();
-        const plan = deps.lifecycleHost.planLocalInteractionAutoPinDeferral({
+        const plan = deps.lifecycleHost.planLocalInteractionIntent({
             sessionId: deps.sessionId,
             timestampMs: nowMs,
         });
         deps.commitBottomFollowModeState(plan.state.bottomFollowState);
-        applyLocalTranscriptInteractionAutoPinDeferralApplyEffects(
-            plan.localInteractionAutoPinDeferralEffects,
+        applyLocalTranscriptInteractionIntentApplyEffects(
+            plan.localInteractionIntentEffects,
         );
     }, [
-        applyLocalTranscriptInteractionAutoPinDeferralApplyEffects,
+        applyLocalTranscriptInteractionIntentApplyEffects,
         deps.commitBottomFollowModeState,
         deps.lifecycleHost,
         deps.sessionId,
     ]);
 
-    const observeNativeStreamAppendOffsetEscape = React.useCallback((params: {
-        contentHeight: number;
-        layoutHeight: number;
-    }): boolean => {
-        const distanceFromBottom = deps.platformOS === 'web'
-            ? null
-            : deps.readCurrentNativeDistanceFromBottom(params);
-        const plan = deps.lifecycleHost.planNativeOffsetEscapeRelease({
-            bottomFollowState: deps.bottomFollowModeStateRef.current,
-            distanceFromLiveTailPx: distanceFromBottom,
-            hasActiveNativeViewportRestore: hasActiveNativeViewportRestore(),
-            hasNativeTouchStart: deps.nativeTranscriptTouchStartYRef.current != null,
-            hasRearmedNativeBottomFollow: deps.nativeBottomFollowRearmedAfterDragRef.current,
-            isNative: deps.platformOS !== 'web',
-            nativeMomentumScrollActive: deps.nativeMomentumScrollActiveRef.current,
-            pinThresholdPx: deps.pinThresholdPx,
-            sessionId: deps.sessionId,
-            timestampMs: Date.now(),
-            wantsPinned: deps.wantsPinnedRef.current,
-        });
-        if (plan.decision.type !== 'release') return false;
-        if (plan.nativeGestureTakeoverPlan) {
-            applyNativeGestureTakeoverPlan(plan.nativeGestureTakeoverPlan);
-        }
-        return applyNativeOffsetReleaseLiveTailStateEffects(plan.nativeOffsetReleaseLiveTailStateEffects);
-    }, [
-        applyNativeGestureTakeoverPlan,
-        applyNativeOffsetReleaseLiveTailStateEffects,
-        deps.bottomFollowModeStateRef,
-        deps.lifecycleHost,
-        deps.nativeBottomFollowRearmedAfterDragRef,
-        deps.nativeMomentumScrollActiveRef,
-        deps.nativeTranscriptTouchStartYRef,
-        deps.pinThresholdPx,
-        deps.platformOS,
-        deps.readCurrentNativeDistanceFromBottom,
-        deps.sessionId,
-        deps.wantsPinnedRef,
-        hasActiveNativeViewportRestore,
-    ]);
     const applyNativeTrustedBottomArrivalEffects = React.useCallback((
         effects: readonly NativeTrustedBottomArrivalEffect[],
     ) => {
@@ -782,7 +720,6 @@ export function useTranscriptScrollObservationHost(
             if (effect.sessionId !== deps.sessionId) continue;
             if (effect.type === 'adopt-native-trusted-bottom-arrival') {
                 deps.lastUserScrollIntentAtMsRef.current = Number.NEGATIVE_INFINITY;
-                deps.nativeMountSettleAutoPinSuppressedRef.current = false;
                 deps.nativeBottomFollowRearmedAfterDragRef.current = true;
                 deps.wantsPinnedRef.current = true;
                 deps.lastPinOffsetForIntentRef.current = effect.distanceFromLiveTailPx;
@@ -798,7 +735,6 @@ export function useTranscriptScrollObservationHost(
         deps.lastPinOffsetForIntentRef,
         deps.lastUserScrollIntentAtMsRef,
         deps.nativeBottomFollowRearmedAfterDragRef,
-        deps.nativeMountSettleAutoPinSuppressedRef,
         deps.sessionId,
         deps.wantsPinnedRef,
     ]);
@@ -982,9 +918,15 @@ export function useTranscriptScrollObservationHost(
             effect.sessionId === deps.sessionId &&
             effect.type === 'cancel-scheduled-viewport-anchor-capture'
         ));
-        if (applied) deps.invalidateViewportAnchorCapture();
+        // Untrusted/passive movement must re-debounce the pending capture, not destroy it:
+        // hard invalidation here let a trailing Legend estimate-correction scroll inside the
+        // debounce window permanently drop shallow-detach anchor persistence, so re-entry
+        // restored the live tail instead of the detached position (live A->B->A RED
+        // 2026-07-11). The capture reads fresh geometry at fire time, so deferring until
+        // movement quiesces captures the settled truth.
+        if (applied) deps.deferViewportAnchorCapture();
         return applied;
-    }, [deps.invalidateViewportAnchorCapture, deps.sessionId]);
+    }, [deps.deferViewportAnchorCapture, deps.sessionId]);
     const applyNativeMomentumSettleAwayReleaseStateEffects = React.useCallback((
         effects: readonly NativeMomentumSettleAwayReleaseStateEffect[],
     ): boolean => {
@@ -993,7 +935,6 @@ export function useTranscriptScrollObservationHost(
             if (effect.sessionId !== deps.sessionId) continue;
             if (effect.type !== 'apply-native-momentum-settle-away-release-state') continue;
             deps.wantsPinnedRef.current = false;
-            deps.cancelScheduledPinToBottom();
             deps.lastPinOffsetForIntentRef.current = effect.distanceFromLiveTailPx;
             deps.commitJumpToBottomDistanceForVisibility(effect.distanceFromLiveTailPx);
             deps.commitScrollPinEvent(effect.scrollPinEvent);
@@ -1003,7 +944,6 @@ export function useTranscriptScrollObservationHost(
         }
         return appliedRelease;
     }, [
-        deps.cancelScheduledPinToBottom,
         deps.commitJumpToBottomDistanceForVisibility,
         deps.commitScrollPinEvent,
         deps.emitViewportChange,
@@ -1189,9 +1129,6 @@ export function useTranscriptScrollObservationHost(
             applyNativeSettledReturnToLiveTailDrainEffects,
             applyNativeSettledReturnToLiveTailReturnEffects,
             applyNativeUserScrollTakeoverEffects: deps.applyNativeUserScrollTakeoverHostEffects,
-            applyWebPassiveLiveTailCorrectionEffect: (effect) =>
-                continuousFollowOwner === 'app' &&
-                deps.applyWebPassiveLiveTailCorrectionEffectRef.current(effect),
             applyWebUserScrollIntentTimestampLifecycleEffects,
             applyWebUserScrollTakeoverLifecycleEffects,
             commitBottomFollowModeState: deps.commitBottomFollowModeState,
@@ -1211,19 +1148,27 @@ export function useTranscriptScrollObservationHost(
         applyWebUserScrollTakeoverLifecycleEffects,
         deps.applyNativeBottomFollowCompletionHostEffects,
         deps.applyNativeUserScrollTakeoverHostEffects,
-        deps.applyWebPassiveLiveTailCorrectionEffectRef,
         deps.commitBottomFollowModeState,
-        continuousFollowOwner,
         deps.markNativeInitialViewportAppliedForCurrentSession,
     ]);
 
+    const targetWindowContinuationOwner = useTranscriptTargetWindowContinuationOwner({
+        activeTargetWindowTargetRef: deps.activeTargetWindowTargetRef,
+        activeWindowState: deps.targetWindowHostFacts.activeWindowState,
+        isReadyForLoad: deps.olderPagination.isReadyForLoad,
+        isWarmKeepAliveInstance: deps.isWarmKeepAliveInstance,
+        sessionActive: deps.sessionActive,
+        sessionId: deps.sessionId,
+        targetWindowEdgeLoadInFlightRef: deps.targetWindowEdgeLoadInFlightRef,
+    });
     const observeOlderPaginationScroll = React.useCallback((params: Readonly<{
         offsetY: number;
         layoutHeight: number;
         contentHeight: number;
         distanceFromBottom: number;
+        itemsToOlderEdgeOverride?: number;
         webMetrics?: WebTranscriptScrollMetrics | null;
-        trigger?: 'scroll' | 'edge-reached';
+        trigger?: TranscriptOlderPaginationScrollMetrics['trigger'];
     }>) => {
         const usesWebDomMetrics = deps.platformOS === 'web' && params.webMetrics != null;
         const layoutHeight = usesWebDomMetrics ? params.webMetrics!.clientHeight : params.layoutHeight;
@@ -1238,11 +1183,38 @@ export function useTranscriptScrollObservationHost(
         const followGateOpen = deps.platformOS === 'web'
             ? !(deps.wantsPinnedRef.current && distanceFromBottom <= deps.pinThresholdPx)
             : deps.bottomFollowModeStateRef.current.mode !== 'following' && !deps.wantsPinnedRef.current;
-        deps.olderPagination.onScrollObservation({
+        // Native px offsets above are estimate-derived; attach the estimate-immune
+        // item-space proximity from the driver fact seam so the pagination machine can
+        // arm before the literal top (single attach point for scroll + edge-reached).
+        const itemsToOlderEdge = deps.platformOS === 'web'
+            ? null
+            : params.itemsToOlderEdgeOverride ?? deps.readItemsToOlderEdge?.() ?? null;
+        const itemsToNewerEdge = deps.platformOS === 'web'
+            ? null
+            : deps.readItemsToNewerEdge?.() ?? null;
+        const paginationObservation = {
             offsetY,
             scrollable: scrollable && followGateOpen,
             trigger: params.trigger,
-        });
+            itemsToOlderEdge,
+        };
+        if (deps.targetWindowActiveRef.current) {
+            const underfilled = layoutHeight > 0 && contentHeight <= layoutHeight + 16;
+            targetWindowContinuationOwner.observeProximity({
+                older: underfilled || deps.olderPagination.isNearOlderEdge({
+                    ...paginationObservation,
+                    scrollable,
+                }),
+                newer: underfilled || deps.olderPagination.isNearOlderEdge({
+                    itemsToOlderEdge: itemsToNewerEdge,
+                    offsetY: distanceFromBottom,
+                    scrollable,
+                    trigger: params.trigger,
+                }),
+            });
+            return deps.targetWindowEdgeLoadInFlightRef.current !== null;
+        }
+        deps.olderPagination.onScrollObservation(paginationObservation);
         const loadOlderInFlightAfterObservation = deps.loadOlderInFlightRef.current;
         if (deps.platformOS === 'web') {
             const snapshot = deps.olderPagination.getSnapshot();
@@ -1256,8 +1228,8 @@ export function useTranscriptScrollObservationHost(
                 distanceFromBottom,
                 ...deps.resolveWebViewportTelemetryDiagnostics({
                     metrics: params.webMetrics,
-                    flashListContentHeight: params.contentHeight,
-                    flashListLayoutHeight: params.layoutHeight,
+                    listContentHeight: params.contentHeight,
+                    listLayoutHeight: params.layoutHeight,
                     paginationPhase: snapshot.phase,
                     paginationSuspendedReasons: snapshot.suspendedReasons,
                     programmaticWebWrite: false,
@@ -1277,72 +1249,16 @@ export function useTranscriptScrollObservationHost(
         deps.resolveViewportTelemetryMode,
         deps.resolveWebViewportTelemetryDiagnostics,
         deps.wantsPinnedRef,
+        deps.readItemsToOlderEdge,
+        deps.readItemsToNewerEdge,
+        deps.targetWindowActiveRef,
+        deps.targetWindowEdgeLoadInFlightRef,
+        targetWindowContinuationOwner,
     ]);
 
-    const resolveActiveTargetWindowContinuationTarget = React.useCallback((): TranscriptJumpTarget | null => {
-        const activeWindowState = deps.targetWindowHostFacts.activeWindowState;
-        const targetSeq = activeWindowState?.targetSeq;
-        if (typeof targetSeq !== 'number' || !Number.isFinite(targetSeq)) return null;
-        const normalizedTargetSeq = Math.trunc(targetSeq);
-        const rememberedTarget = deps.activeTargetWindowTargetRef.current;
-        const rememberedTargetSeq = rememberedTarget?.kind === 'seq'
-            ? rememberedTarget.seq
-            : rememberedTarget?.seqHint;
-        if (
-            typeof rememberedTargetSeq === 'number' &&
-            Number.isFinite(rememberedTargetSeq) &&
-            Math.trunc(rememberedTargetSeq) === normalizedTargetSeq
-        ) {
-            return rememberedTarget;
-        }
-        return { kind: 'seq', seq: normalizedTargetSeq };
-    }, [deps.activeTargetWindowTargetRef, deps.targetWindowHostFacts.activeWindowState]);
-    const loadTargetWindowPageAtEdge = React.useCallback(async (direction: 'older' | 'newer') => {
-        const activeWindowState = deps.targetWindowHostFacts.activeWindowState;
-        if (!activeWindowState || !deps.sessionId) return;
-        if (direction === 'older' && activeWindowState.hasMoreOlder !== true) return;
-        if (direction === 'newer' && activeWindowState.hasMoreNewer !== true) {
-            if (activeWindowState.hasMoreNewer === false) {
-                sync.markSessionLiveTailIntent(deps.sessionId);
-                deps.activeTargetWindowTargetRef.current = null;
-            }
-            return;
-        }
-        if (deps.targetWindowEdgeLoadInFlightRef.current[direction]) return;
-        const target = resolveActiveTargetWindowContinuationTarget();
-        if (!target) return;
-        deps.targetWindowEdgeLoadInFlightRef.current[direction] = true;
-        try {
-            const routeSeqHint = target.kind === 'route-message-id' && typeof target.seqHint === 'number' && Number.isFinite(target.seqHint)
-                ? Math.trunc(target.seqHint)
-                : null;
-            const loadTarget = target.kind === 'seq'
-                ? { kind: 'seq' as const, seq: Math.trunc(target.seq) }
-                : routeSeqHint != null
-                    ? {
-                        kind: 'route-message-id' as const,
-                        routeMessageId: target.routeMessageId,
-                        seqHint: routeSeqHint,
-                    }
-                    : null;
-            if (!loadTarget) return;
-            const result = await sync.loadTargetWindowMessages(deps.sessionId, loadTarget, { direction });
-            if (result?.status === 'loaded' && result.targetPresent) {
-                deps.activeTargetWindowTargetRef.current = target;
-            }
-        } finally {
-            deps.targetWindowEdgeLoadInFlightRef.current[direction] = false;
-        }
-    }, [
-        deps.activeTargetWindowTargetRef,
-        deps.sessionId,
-        deps.targetWindowEdgeLoadInFlightRef,
-        deps.targetWindowHostFacts.activeWindowState,
-        resolveActiveTargetWindowContinuationTarget,
-    ]);
     const observePaginationEdgeReachedNudge = React.useCallback((visualEdge: 'older' | 'newer') => {
         if (deps.targetWindowActiveRef.current) {
-            void loadTargetWindowPageAtEdge(visualEdge);
+            targetWindowContinuationOwner.observeReachedEdge(visualEdge);
             return;
         }
         if (visualEdge !== 'older') return;
@@ -1376,7 +1292,67 @@ export function useTranscriptScrollObservationHost(
         deps.resolveNativeObservedScrollOffset,
         deps.resolveWebScrollMetrics,
         deps.targetWindowActiveRef,
-        loadTargetWindowPageAtEdge,
+        observeOlderPaginationScroll,
+        targetWindowContinuationOwner,
+    ]);
+    const observeCommittedProjectionLayout = React.useCallback(() => {
+        if (!deps.sessionActive || deps.isWarmKeepAliveInstance) return;
+        const liveWebMetrics = deps.platformOS === 'web' ? deps.resolveWebScrollMetrics() : null;
+        const layoutHeight = liveWebMetrics?.clientHeight ?? deps.listLayoutHeightRef.current;
+        const contentHeight = liveWebMetrics?.scrollHeight ?? deps.listContentHeightRef.current;
+        const rawOffsetY = liveWebMetrics
+            ? liveWebMetrics.scrollTop
+            : readNativeAbsoluteScrollOffset(deps.listRef.current);
+        const nativeObservedOffset = liveWebMetrics || typeof rawOffsetY !== 'number'
+            ? null
+            : deps.resolveNativeObservedScrollOffset(rawOffsetY, {
+                contentHeight,
+                layoutHeight,
+            });
+        if (!deps.targetWindowActiveRef.current) {
+            const committedItemsToOlderEdge = deps.platformOS === 'web'
+                ? null
+                : deps.readItemsToOlderEdge?.() ?? null;
+            if (deps.platformOS !== 'web' && committedItemsToOlderEdge == null) return;
+            observeOlderPaginationScroll({
+                contentHeight,
+                distanceFromBottom: liveWebMetrics
+                    ? getWebTranscriptDistanceFromBottom(liveWebMetrics)
+                    : nativeObservedOffset?.distanceFromLiveTailPx ?? Number.MAX_SAFE_INTEGER,
+                itemsToOlderEdgeOverride: committedItemsToOlderEdge ?? undefined,
+                layoutHeight,
+                offsetY: liveWebMetrics
+                    ? liveWebMetrics.scrollTop
+                    : nativeObservedOffset?.canonicalOffsetY ?? Number.MAX_SAFE_INTEGER,
+                trigger: 'layout-committed',
+                webMetrics: liveWebMetrics,
+            });
+            return;
+        }
+        observeOlderPaginationScroll({
+            contentHeight,
+            distanceFromBottom: liveWebMetrics
+                ? getWebTranscriptDistanceFromBottom(liveWebMetrics)
+                : nativeObservedOffset?.distanceFromLiveTailPx ?? Number.MAX_SAFE_INTEGER,
+            layoutHeight,
+            offsetY: liveWebMetrics
+                ? liveWebMetrics.scrollTop
+                : nativeObservedOffset?.canonicalOffsetY ?? Number.MAX_SAFE_INTEGER,
+            trigger: 'scroll',
+            webMetrics: liveWebMetrics,
+        });
+    }, [
+        deps.isWarmKeepAliveInstance,
+        deps.listContentHeightRef,
+        deps.listLayoutHeightRef,
+        deps.listRef,
+        deps.platformOS,
+        deps.readItemsToNewerEdge,
+        deps.readItemsToOlderEdge,
+        deps.resolveNativeObservedScrollOffset,
+        deps.resolveWebScrollMetrics,
+        deps.sessionActive,
+        deps.targetWindowActiveRef,
         observeOlderPaginationScroll,
     ]);
 
@@ -1385,7 +1361,6 @@ export function useTranscriptScrollObservationHost(
     const transcriptScrollIngressCallbacks = React.useMemo<TranscriptScrollIngressCallbacks>(() => ({
         activeViewportCommandOwner: () => deps.viewportCommandController.activeOwner(),
         applyEntryRestoreOwnerEffects: deps.applyEntryRestoreOwnerEffects,
-        applyNativeMountSettlePassiveDriftRepinObservation: deps.applyNativeMountSettlePassiveDriftRepinObservation,
         applyNativePrependOwnerEffects: deps.prependHost.applyNativeEffects,
         applyScrollObservationPlan: applyLifecycleHostScrollObservationPlan,
         commitOpenNativeEntryRestoreVisibleState(distanceFromLiveTailPx) {
@@ -1422,8 +1397,7 @@ export function useTranscriptScrollObservationHost(
         observeNativeBlankRecovery: deps.observeNativeBlankRecovery,
         observeNativePrependOwner: deps.observeNativePrependOwner,
         observeOlderPaginationScroll,
-        observeWebGenuineScrollMovement: deps.observeWebGenuineScrollMovement,
-        observeWebTranscriptNavigationVisibility: deps.observeWebTranscriptNavigationVisibilityForSession,
+        observeTranscriptNavigationVisibility: deps.observeTranscriptNavigationVisibility,
         preemptEntryRestoreTransaction: deps.preemptEntryRestoreTransaction,
         promotePendingJumpSeqViewportSnapshot: deps.promotePendingJumpSeqViewportSnapshot,
         recordNativeScrollObservation(input) {
@@ -1441,9 +1415,7 @@ export function useTranscriptScrollObservationHost(
             deps.lastRouteJumpProtectionClearingWebMovementAtMsRef.current = timestampMs;
         },
         recordNativeVisibleWindowTelemetry: deps.recordNativeVisibleWindowTelemetry,
-        refreshInFlightWebPrependAnchor: deps.prependHost.refreshInFlightWebAnchor,
         resolveWebScrollMetrics: deps.resolveWebScrollMetrics,
-        retargetPendingWebPrependAnchorForUserScroll: deps.prependHost.retargetPendingWebAnchorForUserScroll,
         shouldIgnoreNativeInvalidScrollObservation: deps.shouldIgnoreNativeInvalidScrollObservation,
         trustedNativePrependScroll: deps.prependHost.trustedNativeScroll,
         updateNativeViewportPaintObserved: deps.updateNativeViewportPaintObserved,
@@ -1451,7 +1423,6 @@ export function useTranscriptScrollObservationHost(
     }), [
         applyLifecycleHostScrollObservationPlan,
         deps.applyEntryRestoreOwnerEffects,
-        deps.applyNativeMountSettlePassiveDriftRepinObservation,
         deps.commitJumpToBottomDistanceForVisibility,
         deps.commitScrollPinEvent,
         deps.entryRestoreOwner,
@@ -1466,8 +1437,7 @@ export function useTranscriptScrollObservationHost(
         deps.observeNativeConfirmation,
         deps.observeNativeEntryRestoreHostFacts,
         deps.observeNativePrependOwner,
-        deps.observeWebGenuineScrollMovement,
-        deps.observeWebTranscriptNavigationVisibilityForSession,
+        deps.observeTranscriptNavigationVisibility,
         deps.pinEnabled,
         deps.pinThresholdPx,
         deps.preemptEntryRestoreTransaction,
@@ -1486,9 +1456,7 @@ export function useTranscriptScrollObservationHost(
         observeOlderPaginationScroll,
     ]);
 
-    const layoutObservationApplierEffects = React.useMemo<TranscriptLayoutObservationApplierEffects<WebTranscriptScrollMetrics>>(() => ({
-        captureNativeBottomFollowPreviousFollow: deps.captureNativeBottomFollowPreviousFollow,
-        captureWebBottomFollowPreviousMetrics: deps.captureWebBottomFollowPreviousMetrics,
+    const layoutObservationApplierEffects = React.useMemo<TranscriptLayoutObservationApplierEffects>(() => ({
         commitLayoutHeight: (height: number) => {
             deps.listLayoutHeightRef.current = height;
             deps.setListLayoutHeight(height);
@@ -1499,9 +1467,6 @@ export function useTranscriptScrollObservationHost(
                 nowMs: Date.now(),
             });
         },
-        observeNativePrependOwner: deps.observeNativePrependOwner,
-        observeWebPrependOwner: deps.prependHost.observeWeb,
-        pinNativeInitialFollowBottomViewportIfReady: deps.pinNativeInitialFollowBottomViewportIfReady,
         recordLayoutMeasuredTelemetry: ({ contentHeight, layoutHeight }) => {
             deps.recordViewportTelemetryEvent({
                 type: 'layout-measured',
@@ -1512,29 +1477,18 @@ export function useTranscriptScrollObservationHost(
             });
         },
         recordNativeVisibleWindowTelemetry: deps.recordNativeVisibleWindowTelemetry,
-        requestAutomaticLiveTailPin: deps.requestAutomaticLiveTailPin,
         runEntryRestoreAttempt: deps.runEntryRestoreAttempt,
-        verifyNativeSliceEntryRestoreTransaction: deps.verifyNativeSliceEntryRestoreTransaction,
     }), [
-        deps.captureNativeBottomFollowPreviousFollow,
-        deps.captureWebBottomFollowPreviousMetrics,
         deps.listLayoutHeightRef,
         deps.lastPinOffsetForIntentRef,
         deps.observeMountSettleMetrics,
-        deps.observeNativePrependOwner,
-        deps.pinNativeInitialFollowBottomViewportIfReady,
-        deps.prependHost.observeWeb,
         deps.recordNativeVisibleWindowTelemetry,
         deps.recordViewportTelemetryEvent,
-        deps.requestAutomaticLiveTailPin,
         deps.resolveViewportTelemetryMode,
         deps.runEntryRestoreAttempt,
         deps.setListLayoutHeight,
-        deps.verifyNativeSliceEntryRestoreTransaction,
     ]);
-    const contentSizeObservationApplierEffects = React.useMemo<TranscriptContentSizeObservationApplierEffects<WebTranscriptScrollMetrics>>(() => ({
-        captureNativeBottomFollowPreviousFollow: deps.captureNativeBottomFollowPreviousFollow,
-        captureWebBottomFollowPreviousMetrics: deps.captureWebBottomFollowPreviousMetrics,
+    const contentSizeObservationApplierEffects = React.useMemo<TranscriptContentSizeObservationApplierEffects>(() => ({
         commitContentHeight: (measuredContentHeight: number) => {
             deps.listContentHeightRef.current = measuredContentHeight;
             if (deps.shouldCommitContentHeightState(measuredContentHeight)) {
@@ -1547,11 +1501,6 @@ export function useTranscriptScrollObservationHost(
                 nowMs: Date.now(),
             });
         },
-        observeNativePrependOwner: deps.observeNativePrependOwner,
-        observeNativeStreamAppendOffsetEscape,
-        observeWebPrependOwner: deps.prependHost.observeWeb,
-        pinNativeInitialFollowBottomViewportIfReady: deps.pinNativeInitialFollowBottomViewportIfReady,
-        prepareNativeContentMaterializationAutoPin: deps.prepareNativeContentMaterializationAutoPin,
         recordContentMeasuredTelemetry: ({ contentHeight, layoutHeight, reason }) => {
             deps.recordViewportTelemetryEvent({
                 type: 'content-measured',
@@ -1562,116 +1511,17 @@ export function useTranscriptScrollObservationHost(
             });
         },
         recordNativeVisibleWindowTelemetry: deps.recordNativeVisibleWindowTelemetry,
-        requestAutomaticLiveTailPin: deps.requestAutomaticLiveTailPin,
         runEntryRestoreAttempt: deps.runEntryRestoreAttempt,
-        verifyNativeSliceEntryRestoreTransaction: deps.verifyNativeSliceEntryRestoreTransaction,
     }), [
-        deps.captureNativeBottomFollowPreviousFollow,
-        deps.captureWebBottomFollowPreviousMetrics,
         deps.listContentHeightRef,
         deps.lastPinOffsetForIntentRef,
         deps.observeMountSettleMetrics,
-        deps.observeNativePrependOwner,
-        deps.pinNativeInitialFollowBottomViewportIfReady,
-        deps.prepareNativeContentMaterializationAutoPin,
-        deps.prependHost.observeWeb,
         deps.recordNativeVisibleWindowTelemetry,
         deps.recordViewportTelemetryEvent,
-        deps.requestAutomaticLiveTailPin,
         deps.resolveViewportTelemetryMode,
         deps.runEntryRestoreAttempt,
         deps.setListContentHeight,
         deps.shouldCommitContentHeightState,
-        deps.verifyNativeSliceEntryRestoreTransaction,
-        observeNativeStreamAppendOffsetEscape,
-    ]);
-    const lastWebViewportResizeMetricsRef = React.useRef<WebTranscriptScrollMetrics | null>(null);
-    React.useEffect(() => {
-        const resizeObserverCtor = (globalThis as Readonly<{ ResizeObserver?: typeof ResizeObserver }>).ResizeObserver;
-        if (typeof resizeObserverCtor !== 'function') return;
-        let disposed = false;
-        let retryId: ReturnType<typeof setTimeout> | null = null;
-        let pollId: ReturnType<typeof setInterval> | null = null;
-        let observer: ResizeObserver | null = null;
-        const readObservedMetrics = (element: HTMLElement): WebTranscriptScrollMetrics => ({
-            clientHeight: element.clientHeight,
-            element,
-            scrollHeight: element.scrollHeight,
-            scrollTop: element.scrollTop,
-        });
-        const observeResize = (element: HTMLElement) => {
-            const previousMetrics = lastWebViewportResizeMetricsRef.current;
-            const nextMetrics = readObservedMetrics(element);
-            lastWebViewportResizeMetricsRef.current = nextMetrics;
-            const previousDistanceFromBottom = previousMetrics
-                ? getWebTranscriptDistanceFromBottom(previousMetrics)
-                : Number.POSITIVE_INFINITY;
-            const nextDistanceFromBottom = getWebTranscriptDistanceFromBottom(nextMetrics);
-            const observation = resolveWebViewportResizeObservation({
-                nextMetrics,
-                previousMetrics,
-            });
-            if (continuousFollowOwner === 'renderer') return;
-            if (!observation) {
-                const activeElement = typeof document === 'undefined' ? null : document.activeElement;
-                const textInputFocused =
-                    activeElement instanceof HTMLElement &&
-                    (
-                        activeElement.matches('textarea, [contenteditable="true"], [role="textbox"]') ||
-                        activeElement.closest('textarea, [contenteditable="true"], [role="textbox"]') !== null
-                    );
-                if (
-                    textInputFocused &&
-                    deps.wantsPinnedRef.current &&
-                    previousDistanceFromBottom <= deps.pinThresholdPx &&
-                    nextDistanceFromBottom > 0
-                ) {
-                    nextMetrics.element.scrollTop = nextMetrics.element.scrollHeight;
-                }
-                return;
-            }
-            if (
-                deps.wantsPinnedRef.current &&
-                previousDistanceFromBottom <= deps.pinThresholdPx
-            ) {
-                observation.previousWebMetrics.element.scrollTop = observation.previousWebMetrics.element.scrollHeight;
-            }
-            deps.requestAutomaticLiveTailPin(
-                observation.previousWebMetrics,
-                observation.reason,
-                false,
-            );
-        };
-        const attach = () => {
-            if (disposed) return;
-            const initialMetrics = deps.resolveWebScrollMetrics();
-            lastWebViewportResizeMetricsRef.current = initialMetrics;
-            const element = initialMetrics?.element;
-            if (!element) {
-                retryId = setTimeout(attach, 100);
-                return;
-            }
-            lastWebViewportResizeMetricsRef.current = readObservedMetrics(element);
-            observer = new resizeObserverCtor(() => observeResize(element));
-            observer.observe(element);
-            pollId = setInterval(() => observeResize(element), 250);
-        };
-        attach();
-        return () => {
-            disposed = true;
-            if (retryId !== null) {
-                clearTimeout(retryId);
-            }
-            if (pollId !== null) {
-                clearInterval(pollId);
-            }
-            observer?.disconnect();
-        };
-    }, [
-        deps.requestAutomaticLiveTailPin,
-        continuousFollowOwner,
-        deps.resolveWebScrollMetrics,
-        deps.sessionId,
     ]);
 
     const onLayout = React.useCallback((e: LayoutChangeEvent) => {
@@ -1680,7 +1530,6 @@ export function useTranscriptScrollObservationHost(
         const h = layout?.height;
         applyTranscriptLayoutObservation({
             contentHeight: deps.listContentHeightRef.current,
-            continuousFollowOwner: deps.continuousFollowOwner ?? 'app',
             layoutHeight: typeof h === 'number' ? h : Number.NaN,
             layoutHeightChanged: deps.listLayoutHeightRef.current !== h,
             platformOS: deps.platformOS,
@@ -1688,7 +1537,6 @@ export function useTranscriptScrollObservationHost(
         }, layoutObservationApplierEffects);
     }, [
         deps.listContentHeightRef,
-        continuousFollowOwner,
         deps.listLayoutHeightRef,
         deps.platformOS,
         deps.recordListLayoutWidth,
@@ -1706,7 +1554,6 @@ export function useTranscriptScrollObservationHost(
             sessionId: deps.sessionId,
         });
         applyTranscriptContentSizeObservation({
-            continuousFollowOwner: deps.continuousFollowOwner ?? 'app',
             layoutHeight: deps.listLayoutHeightRef.current,
             observation: contentSizeObservation,
             platformOS: deps.platformOS,
@@ -1714,7 +1561,6 @@ export function useTranscriptScrollObservationHost(
         }, contentSizeObservationApplierEffects);
     }, [
         deps.composerInsetHeightRef,
-        continuousFollowOwner,
         deps.latestCommittedActivityKey,
         deps.listContentHeightRef,
         deps.listLayoutHeightRef,
@@ -1725,7 +1571,10 @@ export function useTranscriptScrollObservationHost(
         deps.sessionId,
         contentSizeObservationApplierEffects,
     ]);
-    const onScroll = React.useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const onScroll = React.useCallback((
+        e: NativeSyntheticEvent<NativeScrollEvent>,
+        webMovementFact?: WebScrollMovementFact,
+    ) => {
         observeTranscriptScrollIngress({
             bottomFollowModeState: deps.bottomFollowModeStateRef.current,
             configuredBottomDistanceNoiseFloorPx:
@@ -1736,22 +1585,16 @@ export function useTranscriptScrollObservationHost(
             hasRenderedItems: deps.listDataRef.current.length > 0,
             isLoaded: deps.isLoaded,
             isWarmKeepAliveInstance: deps.isWarmKeepAliveInstance,
-            lastNativePinOffset: deps.lastNativePinOffsetRef.current,
             lastScrollOffsetForIntent: deps.lastScrollOffsetForIntentRef.current,
             lastUserScrollIntentAtMs: deps.lastUserScrollIntentAtMsRef.current,
             loadOlderInFlight: deps.loadOlderInFlightRef.current,
             measuredContentHeight: deps.listContentHeightRef.current,
             measuredLayoutHeight: deps.listLayoutHeightRef.current,
-            nativeCommandSpace: deps.listRef.current?.transcriptViewportCommandSpace === 'standard'
-                ? 'standard'
-                : 'inverted',
             nativeListDragActive: deps.nativeListDragActiveRef.current,
             nativeMomentumScrollActive: deps.nativeMomentumScrollActiveRef.current,
-            nativeMountSettleDeadlineReached:
-                deps.nativeMountSettleDeadlineReachedRef.current,
+            nativeMountSettleDeadlineReached: deps.nativeMountSettleDeadlineReachedRef.current,
             nativeMountSettleStable: deps.nativeMountSettleStable,
             nowMs: Date.now(),
-            pendingBottomPin: deps.pendingNativeMountSettleBottomPinRef.current,
             pinEnabled: deps.pinEnabled,
             pinThresholdPx: deps.pinThresholdPx,
             platform: transcriptScrollIngressPlatform,
@@ -1762,8 +1605,8 @@ export function useTranscriptScrollObservationHost(
             },
             sessionId: deps.sessionId,
             userIntentRecentMs: deps.userIntentRecentMs,
-            usesNativeFlashListBottomMaintenance: deps.usesNativeFlashListBottomMaintenance,
             wantsPinned: deps.wantsPinnedRef.current,
+            ...(webMovementFact ? { webMovementFact } : {}),
         }, transcriptScrollIngressCallbacks);
     }, [
         deps.bottomFollowModeStateRef,
@@ -1771,7 +1614,6 @@ export function useTranscriptScrollObservationHost(
         deps.hasNativeInitialViewportAppliedForCurrentSession,
         deps.isLoaded,
         deps.isWarmKeepAliveInstance,
-        deps.lastNativePinOffsetRef,
         deps.lastScrollOffsetForIntentRef,
         deps.lastUserScrollIntentAtMsRef,
         deps.listContentHeightRef,
@@ -1782,14 +1624,12 @@ export function useTranscriptScrollObservationHost(
         deps.nativeMomentumScrollActiveRef,
         deps.nativeMountSettleDeadlineReachedRef,
         deps.nativeMountSettleStable,
-        deps.pendingNativeMountSettleBottomPinRef,
         deps.pinEnabled,
         deps.pinThresholdPx,
         deps.resolveTranscriptMountSettleBottomDistanceNoiseFloorPx,
         deps.sessionEntryViewportRef,
         deps.sessionId,
         deps.userIntentRecentMs,
-        deps.usesNativeFlashListBottomMaintenance,
         deps.wantsPinnedRef,
         transcriptScrollIngressCallbacks,
         transcriptScrollIngressPlatform,
@@ -1803,9 +1643,8 @@ export function useTranscriptScrollObservationHost(
 
     return React.useMemo(() => ({
         adoptNativeFollowingForTrustedBottomArrival,
-        deferAutoPinAfterLocalTranscriptInteraction,
-        nativeFlashListScrollOverrideProps,
-        observeNativeStreamAppendOffsetEscape,
+        recordLocalTranscriptInteractionIntent,
+        observeCommittedProjectionLayout,
         onContentSizeChange,
         onEndReached,
         onLayout,
@@ -1818,9 +1657,8 @@ export function useTranscriptScrollObservationHost(
         platformInteractionProps,
     }), [
         adoptNativeFollowingForTrustedBottomArrival,
-        deferAutoPinAfterLocalTranscriptInteraction,
-        nativeFlashListScrollOverrideProps,
-        observeNativeStreamAppendOffsetEscape,
+        recordLocalTranscriptInteractionIntent,
+        observeCommittedProjectionLayout,
         onContentSizeChange,
         onEndReached,
         onLayout,

@@ -1,6 +1,8 @@
 import {
     deriveLatestPendingRequestObservedAtFromSession,
     derivePendingRequestFlagsFromSession,
+    readPendingAgentStateCompletedRequestSignature,
+    readPendingAgentStateRequestSignature,
 } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import {
     deriveSessionRuntimePresentationState,
@@ -51,37 +53,6 @@ function readFreshnessRefreshDelayMs(timestamp: number | null | undefined, nowMs
     );
 }
 
-function readRequestSignature(value: unknown): string {
-    if (!value || typeof value !== 'object') return '';
-    const requests = value as Record<string, {
-        tool?: unknown;
-        kind?: unknown;
-        createdAt?: unknown;
-    }>;
-    return collectRecordIds(requests).sort().map((requestId) => {
-        const request = requests[requestId];
-        return [
-            requestId,
-            typeof request?.tool === 'string' ? request.tool : '',
-            typeof request?.kind === 'string' ? request.kind : '',
-            readNumber(request?.createdAt) ?? '',
-        ].join(':');
-    }).join('|');
-}
-
-function readCompletedRequestSignature(value: unknown): string {
-    if (!value || typeof value !== 'object') return '';
-    const completed = value as Record<string, { completedAt?: unknown; createdAt?: unknown }>;
-    return collectRecordIds(completed).sort().map((requestId) => {
-        const request = completed[requestId];
-        return [
-            requestId,
-            readNumber(request?.completedAt) ?? '',
-            readNumber(request?.createdAt) ?? '',
-        ].join(':');
-    }).join('|');
-}
-
 function buildSessionPermissionSignature(session: Session): string {
     const agentState = session.agentState;
     return [
@@ -97,8 +68,8 @@ function buildSessionPermissionSignature(session: Session): string {
         readNumber(session.pendingPermissionRequestCount) ?? '',
         readNumber(session.pendingUserActionRequestCount) ?? '',
         readNumber(session.pendingRequestObservedAt) ?? '',
-        readRequestSignature(agentState?.requests),
-        readCompletedRequestSignature(agentState?.completedRequests),
+        readPendingAgentStateRequestSignature(agentState?.requests),
+        readPendingAgentStateCompletedRequestSignature(agentState?.completedRequests),
     ].join('\u001f');
 }
 

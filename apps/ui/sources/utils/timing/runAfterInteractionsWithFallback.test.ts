@@ -100,3 +100,33 @@ describe('runAfterInteractionsWithFallback', () => {
         expect(fn).toHaveBeenCalledTimes(1);
     });
 });
+
+describe('runAfterInteractionsWithFallback fallbackDelayMs option', () => {
+    it('lets call sites shorten the fallback below the env default', async () => {
+        const scheduledTimeouts: Array<{ callback: () => void; delay: number | undefined }> = [];
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: () => void, delay?: number) => {
+            scheduledTimeouts.push({ callback, delay });
+            return 0 as any;
+        }) as typeof setTimeout);
+
+        vi.doMock('react-native', async () => {
+            const stub = await import('@/dev/reactNativeStub');
+            return {
+                ...stub,
+                Platform: { ...stub.Platform, OS: 'ios' },
+                InteractionManager: {
+                    runAfterInteractions: () => ({ cancel: vi.fn() }),
+                },
+            };
+        });
+
+        const fn = vi.fn();
+        const { runAfterInteractionsWithFallback } = await import('./runAfterInteractionsWithFallback');
+        runAfterInteractionsWithFallback(fn, { fallbackDelayMs: 0 });
+
+        expect(scheduledTimeouts).toHaveLength(1);
+        expect(scheduledTimeouts[0]!.delay).toBe(0);
+        scheduledTimeouts[0]!.callback();
+        expect(fn).toHaveBeenCalledTimes(1);
+    });
+});

@@ -2,9 +2,26 @@ import { describe, expect, it } from 'vitest';
 
 import { formatPermissionRequest, summarizeAgentRequestForVoiceHuman } from './contextFormatters';
 
-describe('formatPermissionRequest (opt-out defaults)', () => {
-  it('includes tool args by default', () => {
-    const result = formatPermissionRequest('sess_1', 'req_1', 'execute', { secret: 'shh', path: '/tmp/a' });
+const SHARE_ALL = {
+  voiceShareSessionSummary: true,
+  voiceShareRecentMessages: true,
+  voiceRecentMessagesCount: 10,
+  voiceShareToolNames: true,
+  voiceShareToolArgs: true,
+  voiceShareFilePaths: true,
+  voiceSharePermissionRequests: true,
+  voiceShareDeviceInventory: true,
+} as const;
+
+describe('formatPermissionRequest privacy', () => {
+  it('includes tool args when sharing is explicitly enabled', () => {
+    const result = formatPermissionRequest(
+      'sess_1',
+      'req_1',
+      'execute',
+      { secret: 'shh', path: '/tmp/a' },
+      SHARE_ALL,
+    );
     expect(result).toContain('<tool_name>execute</tool_name>');
     expect(result).toContain('<request_id>req_1</request_id>');
     expect(result).not.toContain('sess_1');
@@ -21,7 +38,13 @@ describe('formatPermissionRequest (opt-out defaults)', () => {
     { label: 'array args', args: ['token=abc', '/Users/alice/project'], leakedText: '/Users/alice/project' },
     { label: 'nested object args', args: { auth: { apiKey: 'sk-live' } }, leakedText: 'sk-live' },
   ])('redacts args when voiceShareToolArgs is false for $label', ({ args, leakedText }) => {
-    const result = formatPermissionRequest('sess_2', 'req_2', 'read', args, { voiceShareToolArgs: false });
+    const result = formatPermissionRequest(
+      'sess_2',
+      'req_2',
+      'read',
+      args,
+      { ...SHARE_ALL, voiceShareToolArgs: false },
+    );
     expect(result).toContain('<tool_args_redacted>true</tool_args_redacted>');
     expect(result).not.toContain('<tool_args>');
     expect(result).not.toContain(leakedText);
@@ -33,7 +56,7 @@ describe('formatPermissionRequest (opt-out defaults)', () => {
       'req_3',
       'read',
       { path: '/Users/alice/SecretRepo/README.md' },
-      { voiceShareToolArgs: true, voiceShareFilePaths: false },
+      { ...SHARE_ALL, voiceShareFilePaths: false },
     );
     expect(result).toContain('<tool_args>');
     expect(result).toContain('<path_redacted>');
@@ -41,19 +64,33 @@ describe('formatPermissionRequest (opt-out defaults)', () => {
   });
 
   it('explicitly tells the voice agent to interrupt and wait for the user before using more tools', () => {
-    const result = formatPermissionRequest('sess_4', 'req_4', 'Bash', { command: 'rm -rf /tmp/x' });
+    const result = formatPermissionRequest(
+      'sess_4',
+      'req_4',
+      'Bash',
+      { command: 'rm -rf /tmp/x' },
+      SHARE_ALL,
+    );
 
     expect(result).toContain('Interrupt your previous plan and tell the human about this request now.');
-    expect(result).toContain('Do not call any tools or send new coding-session work until the human answers approve or deny.');
-    expect(result).toContain('Ask the human to say approve or deny.');
+    expect(result).toContain('Do not call any tools or send new coding-session work while this permission remains pending.');
+    expect(result).toContain('Tell the human to use the canonical session UI to approve or deny it.');
+    expect(result).toContain('A spoken answer does not decide this permission request.');
+    expect(result).toContain('Never claim it was settled until canonical session updates show the result.');
   });
 
   it('creates a short human-facing permission summary for deterministic voice announcements', () => {
-    const result = summarizeAgentRequestForVoiceHuman('permission', 'req_4', 'Bash', { command: 'rm -rf /tmp/x' });
+    const result = summarizeAgentRequestForVoiceHuman(
+      'permission',
+      'req_4',
+      'Bash',
+      { command: 'rm -rf /tmp/x' },
+      SHARE_ALL,
+    );
 
     expect(result).toContain('needs permission');
     expect(result).toContain('Run:');
-    expect(result).toContain('approve or deny');
+    expect(result).toContain('Review it in the session UI to approve or deny.');
     expect(result).toContain('rm -rf /tmp/x');
     expect(result).not.toContain('req_4');
   });
@@ -64,7 +101,7 @@ describe('formatPermissionRequest (opt-out defaults)', () => {
       'req_5',
       'write',
       { filepath: '/Users/alice/SecretRepo/src/private.ts' },
-      { voiceShareFilePaths: false },
+      { ...SHARE_ALL, voiceShareFilePaths: false },
     );
 
     expect(result).toContain('needs permission');

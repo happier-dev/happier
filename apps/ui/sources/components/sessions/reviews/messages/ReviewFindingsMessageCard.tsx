@@ -107,6 +107,7 @@ function serializeReviewTriageOverlayState(value: ReviewFindingsV2['triage'] | u
 export function ReviewFindingsMessageCard(props: {
     payload: ReviewFindingsCardPayload;
     sessionId: string;
+    canSendMessages: boolean;
 }) {
     const normalized = React.useMemo(() => normalizePayload(props.payload), [props.payload]);
     const { messages: sessionMessages } = useSessionMessages(props.sessionId);
@@ -131,6 +132,11 @@ export function ReviewFindingsMessageCard(props: {
     const [isApplying, setIsApplying] = React.useState(false);
     const [followUpError, setFollowUpError] = React.useState<string | null>(null);
     const [isSendingFollowUp, setIsSendingFollowUp] = React.useState(false);
+    const canSendMessagesRef = React.useRef(props.canSendMessages === true);
+
+    React.useLayoutEffect(() => {
+        canSendMessagesRef.current = props.canSendMessages === true;
+    }, [props.canSendMessages]);
 
     React.useEffect(() => {
         const next: Record<string, ReviewTriageStatus> = {};
@@ -207,6 +213,7 @@ export function ReviewFindingsMessageCard(props: {
         replyToQuestionId?: string | null;
         seedMessage?: string | null;
     }>) => {
+        if (!canSendMessagesRef.current) return;
         setComposerFindingIds(params.findingIds ?? []);
         setComposerReplyToQuestionId(params.replyToQuestionId ?? null);
         setFollowUpMessage((current) => current.length > 0 ? current : (params.seedMessage ?? ''));
@@ -220,6 +227,7 @@ export function ReviewFindingsMessageCard(props: {
     }, []);
 
     const handleApplyTriage = React.useCallback(() => {
+        if (!canSendMessagesRef.current) return;
         fireAndForget((async () => {
             setSaveError(null);
             setIsSaving(true);
@@ -245,6 +253,7 @@ export function ReviewFindingsMessageCard(props: {
     }, [normalized.runRef.runId, props.sessionId, triageOverlay]);
 
     const handleSendFollowUp = React.useCallback(() => {
+        if (!canSendMessagesRef.current) return;
         const messageMarkdown = followUpMessage.trim();
         if (messageMarkdown.length === 0) return;
         fireAndForget((async () => {
@@ -283,6 +292,7 @@ export function ReviewFindingsMessageCard(props: {
     ]);
 
     const handlePublishAcceptedFindings = React.useCallback(() => {
+        if (!canSendMessagesRef.current) return;
         fireAndForget((async () => {
             if (acceptedFindingIds.length === 0) return;
             setApplyError(null);
@@ -340,7 +350,7 @@ export function ReviewFindingsMessageCard(props: {
                     {normalized.questions.map((question) => (
                         <View key={question.id} style={styles.questionRow}>
                             <Text style={styles.questionText}>{question.text}</Text>
-                            {supportsReviewFollowUp ? (
+                            {props.canSendMessages === true && supportsReviewFollowUp ? (
                                 <Pressable
                                     style={styles.secondaryButton}
                                     onPress={() =>
@@ -407,36 +417,40 @@ export function ReviewFindingsMessageCard(props: {
                                 {finding.suggestion ? (
                                     <Text style={styles.findingSuggestionText}>{finding.suggestion}</Text>
                                 ) : null}
-                                <View style={styles.triageRow}>
-                                    {REVIEW_FINDING_ACTION_STATUSES.map((status) => {
-                                        const selected = draftStatusByFindingId[finding.id] === status;
-                                        return (
-                                            <Pressable
-                                                key={status}
-                                                style={[styles.triageChip, selected && styles.triageChipSelected]}
-                                                onPress={() =>
-                                                    setDraftStatusByFindingId((prev) => ({ ...prev, [finding.id]: status }))
-                                                }
-                                            >
-                                                <Text style={[styles.triageChipText, selected && styles.triageChipTextSelected]}>
-                                                    {statusLabel(status)}
-                                                </Text>
-                                            </Pressable>
-                                        );
-                                    })}
-                                </View>
-                                {draftStatusByFindingId[finding.id] === 'needs_refinement' ? (
+                                {props.canSendMessages === true ? (
+                                    <View style={styles.triageRow}>
+                                        {REVIEW_FINDING_ACTION_STATUSES.map((status) => {
+                                            const selected = draftStatusByFindingId[finding.id] === status;
+                                            return (
+                                                <Pressable
+                                                    key={status}
+                                                    style={[styles.triageChip, selected && styles.triageChipSelected]}
+                                                    onPress={() => {
+                                                        if (!canSendMessagesRef.current) return;
+                                                        setDraftStatusByFindingId((prev) => ({ ...prev, [finding.id]: status }));
+                                                    }}
+                                                >
+                                                    <Text style={[styles.triageChipText, selected && styles.triageChipTextSelected]}>
+                                                        {statusLabel(status)}
+                                                    </Text>
+                                                </Pressable>
+                                            );
+                                        })}
+                                    </View>
+                                ) : null}
+                                {props.canSendMessages === true && draftStatusByFindingId[finding.id] === 'needs_refinement' ? (
                                     <TextInput
                                         value={draftCommentByFindingId[finding.id] ?? ''}
-                                        onChangeText={(text) =>
-                                            setDraftCommentByFindingId((prev) => ({ ...prev, [finding.id]: String(text ?? '') }))
-                                        }
+                                        onChangeText={(text) => {
+                                            if (!canSendMessagesRef.current) return;
+                                            setDraftCommentByFindingId((prev) => ({ ...prev, [finding.id]: String(text ?? '') }));
+                                        }}
                                         placeholder={t('session.reviewFindings.refinementPlaceholder')}
                                         multiline
                                         style={styles.refinementInput as any}
                                     />
                                 ) : null}
-                                {supportsReviewFollowUp ? (
+                                {props.canSendMessages === true && supportsReviewFollowUp ? (
                                     <Pressable
                                         style={styles.secondaryButton}
                                         onPress={() => openFollowUpComposer({ findingIds: [finding.id] })}
@@ -450,7 +464,7 @@ export function ReviewFindingsMessageCard(props: {
                 );
             })}
 
-            {supportsReviewFollowUp ? (
+            {props.canSendMessages === true && supportsReviewFollowUp ? (
                 <View style={styles.section}>
                     <Pressable
                         style={styles.secondaryButton}
@@ -462,7 +476,10 @@ export function ReviewFindingsMessageCard(props: {
                         <View style={styles.followUpComposer}>
                             <TextInput
                                 value={followUpMessage}
-                                onChangeText={(text) => setFollowUpMessage(String(text ?? ''))}
+                                onChangeText={(text) => {
+                                    if (!canSendMessagesRef.current) return;
+                                    setFollowUpMessage(String(text ?? ''));
+                                }}
                                 placeholder={t('session.reviewFindings.refinementPlaceholder')}
                                 multiline
                                 style={styles.refinementInput as any}
@@ -487,33 +504,37 @@ export function ReviewFindingsMessageCard(props: {
             {followUpError ? <Text style={styles.errorText}>{followUpError}</Text> : null}
             {applyError ? <Text style={styles.errorText}>{applyError}</Text> : null}
 
-            <Pressable
-                testID="review-findings-apply-triage"
-                accessibilityRole="button"
-                onPress={handleApplyTriage}
-                style={[styles.applyButton, (!hasUnsavedTriageChanges || isSaving) && styles.applyButtonDisabled]}
-                disabled={!hasUnsavedTriageChanges || isSaving}
-            >
-                <Text style={styles.applyButtonText}>
-                    {isSaving
-                        ? t('session.reviewFindings.actions.applying')
-                        : triageApplied
-                            ? t('common.applied')
-                            : t('session.reviewFindings.actions.applyTriage')}
-                </Text>
-            </Pressable>
+            {props.canSendMessages === true ? (
+                <>
+                    <Pressable
+                        testID="review-findings-apply-triage"
+                        accessibilityRole="button"
+                        onPress={handleApplyTriage}
+                        style={[styles.applyButton, (!hasUnsavedTriageChanges || isSaving) && styles.applyButtonDisabled]}
+                        disabled={!hasUnsavedTriageChanges || isSaving}
+                    >
+                        <Text style={styles.applyButtonText}>
+                            {isSaving
+                                ? t('session.reviewFindings.actions.applying')
+                                : triageApplied
+                                    ? t('common.applied')
+                                    : t('session.reviewFindings.actions.applyTriage')}
+                        </Text>
+                    </Pressable>
 
-            <Pressable
-                testID="review-findings-publish-accepted"
-                accessibilityRole="button"
-                onPress={handlePublishAcceptedFindings}
-                style={[styles.applyButton, (acceptedFindingIds.length === 0 || isApplying) && styles.applyButtonDisabled]}
-                disabled={acceptedFindingIds.length === 0 || isApplying}
-            >
-                <Text style={styles.applyButtonText}>
-                    {isApplying ? t('session.reviewFindings.actions.sending') : t('session.reviewFindings.actions.applyAcceptedFindings')}
-                </Text>
-            </Pressable>
+                    <Pressable
+                        testID="review-findings-publish-accepted"
+                        accessibilityRole="button"
+                        onPress={handlePublishAcceptedFindings}
+                        style={[styles.applyButton, (acceptedFindingIds.length === 0 || isApplying) && styles.applyButtonDisabled]}
+                        disabled={acceptedFindingIds.length === 0 || isApplying}
+                    >
+                        <Text style={styles.applyButtonText}>
+                            {isApplying ? t('session.reviewFindings.actions.sending') : t('session.reviewFindings.actions.applyAcceptedFindings')}
+                        </Text>
+                    </Pressable>
+                </>
+            ) : null}
         </View>
     );
 }

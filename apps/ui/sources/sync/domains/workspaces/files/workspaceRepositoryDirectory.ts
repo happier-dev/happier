@@ -5,6 +5,7 @@ import {
     type RepositoryDirectoryEntry,
 } from '@/sync/domains/input/repositoryDirectoryEntries';
 import { warmInFlight } from '@/sync/domains/input/warmInFlight';
+import { markWorkspaceRepositoryDirectoryChanged } from './workspaceRepositoryDirectoryRevision';
 
 function joinPathAbsolute(rootPath: string, directoryPath: string): string {
     const root = rootPath.trim().replace(/\/+$/g, '');
@@ -49,6 +50,7 @@ export function clearCachedWorkspaceRepositoryDirectoryEntries(input: Readonly<{
         const key = getCacheKey(input.workspaceCacheKey, directoryPath);
         workspaceRepositoryDirectoryCache.delete(key);
         workspaceRepositoryDirectoryWarmInFlight.delete(key);
+        markWorkspaceRepositoryDirectoryChanged(input.workspaceCacheKey);
         return;
     }
 
@@ -62,6 +64,7 @@ export function clearCachedWorkspaceRepositoryDirectoryEntries(input: Readonly<{
             workspaceRepositoryDirectoryWarmInFlight.delete(key);
         }
     }
+    markWorkspaceRepositoryDirectoryChanged(input.workspaceCacheKey);
 }
 
 export async function warmWorkspaceRepositoryDirectoryCache(input: Readonly<{

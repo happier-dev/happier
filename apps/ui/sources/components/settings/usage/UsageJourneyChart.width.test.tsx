@@ -31,7 +31,10 @@ describe('UsageJourneyChart width', () => {
             />,
         );
 
-        const svg = screen.findByType(Svg);
-        expect(Number(svg.props.width)).toBeLessThan(700);
+        // The chart canvas Svg renders first; DrawnLinePath fallbacks may add
+        // their own overlay Svgs after it.
+        const svg = screen.findAllByType(Svg)[0];
+        expect(svg).toBeTruthy();
+        expect(Number(svg?.props.width)).toBeLessThan(700);
     });
 });

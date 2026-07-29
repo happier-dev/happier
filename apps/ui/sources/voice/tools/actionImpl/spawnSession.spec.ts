@@ -1,4 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import {
+  primeServerFeaturesSnapshot,
+  resetServerFeaturesClientForTests,
+  type ServerFeaturesSnapshot,
+} from '@/sync/api/capabilities/serverFeaturesClient';
 import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 
 type MachineContributionRegistryProjectionDescribeFn =
@@ -14,8 +20,9 @@ const {
 
 type MachineSpawnNewSessionMockResult = {
   type: string;
-  sessionId: string;
-  usedInitialPrompt?: boolean;
+  sessionId?: string;
+  errorCode?: string;
+  errorMessage?: string;
 };
 
 const machineSpawnNewSession = vi.fn(async (_params: unknown): Promise<MachineSpawnNewSessionMockResult> => ({
@@ -43,7 +50,6 @@ function createBaseState(): any {
         id: 'm1',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Leeroy MacBook Pro', host: 'leeroy-mbp' },
       },
     },
@@ -59,6 +65,32 @@ function createBaseState(): any {
 }
 
 let state: any = createBaseState();
+
+type ProvidersFeatureSnapshotMode = 'enabled' | 'disabled' | 'missing' | 'malformed' | 'unknown';
+
+function primeProvidersFeatureSnapshot(
+  mode: ProvidersFeatureSnapshotMode,
+  serverId = 'server-a',
+): void {
+  if (serverId === 'server-a') {
+    resetServerFeaturesClientForTests();
+  }
+  let snapshot: ServerFeaturesSnapshot;
+  if (mode === 'malformed') {
+    snapshot = { status: 'unsupported', reason: 'invalid_payload' };
+  } else if (mode === 'unknown') {
+    snapshot = { status: 'error', reason: 'network' };
+  } else {
+    snapshot = {
+      status: 'ready',
+      features: FeaturesResponseSchema.parse({
+        features: mode === 'missing' ? {} : { providers: { enabled: mode === 'enabled' } },
+        capabilities: {},
+      }),
+    };
+  }
+  primeServerFeaturesSnapshot({ serverId, snapshot });
+}
 
 installVoiceToolActionImplCommonModuleMocks({
   storage: async () => {
@@ -96,13 +128,13 @@ vi.mock('@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode', () => ({
 
 vi.mock('./spawnSessionPostProcess', () => ({
   postprocessSpawnedSession: (params: any) => postprocessSpawnedSession(params),
-  didSpawnUseDaemonInitialPrompt: (spawned: unknown) =>
-    !!spawned && typeof spawned === 'object' && !Array.isArray(spawned)
-    && (spawned as { usedInitialPrompt?: unknown }).usedInitialPrompt === true,
+  resolveVoiceSpawnedFirstTurnLocalId: ({ requestedSpawnNonce }: { requestedSpawnNonce: string }) =>
+    `spawn-first-turn:${requestedSpawnNonce}`,
 }));
 
 describe('spawnSessionForVoiceTool', () => {
   beforeEach(() => {
+    primeProvidersFeatureSnapshot('enabled');
     state = createBaseState();
     machineSpawnNewSession.mockClear();
     postprocessSpawnedSession.mockClear();
@@ -112,6 +144,10 @@ describe('spawnSessionForVoiceTool', () => {
     machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' });
     voiceTargetState.primaryActionSessionId = null;
     voiceTargetState.lastFocusedSessionId = null;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('spawns from the explicit path and returns human-readable target and session labels', async () => {
@@ -139,6 +175,29 @@ describe('spawnSessionForVoiceTool', () => {
     });
   });
 
+  it('lets the spawn operation decide exact readiness for a structurally ready machine and propagates its error', async () => {
+    machineSpawnNewSession.mockResolvedValueOnce({
+      type: 'error',
+      errorCode: 'daemon_unavailable',
+      errorMessage: 'daemon unavailable',
+    });
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    const result = await spawnSessionForVoiceTool({
+      path: '/Users/leeroy/projects/happier',
+    });
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'm1',
+      directory: '/Users/leeroy/projects/happier',
+    }));
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: 'daemon_unavailable',
+      errorMessage: 'daemon unavailable',
+    });
+  });
+
   it('uses the same spawn attempt key when retrying the same voice spawn request', async () => {
     const { spawnSessionForVoiceTool } = await import('./spawnSession');
 
@@ -153,17 +212,14 @@ describe('spawnSessionForVoiceTool', () => {
       initialMessage: 'Start here',
     });
 
-    const firstSpawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as { spawnAttemptKey?: string };
-    const secondSpawnOptions = machineSpawnNewSession.mock.calls[1]?.[0] as { spawnAttemptKey?: string };
-    expect(firstSpawnOptions.spawnAttemptKey).toEqual(expect.stringMatching(/^voice\.tool\.spawn-session:/));
-    expect(secondSpawnOptions.spawnAttemptKey).toBe(firstSpawnOptions.spawnAttemptKey);
+    expect(machineSpawnNewSession.mock.calls[0]?.[0]).not.toHaveProperty('spawnAttemptKey');
+    expect(machineSpawnNewSession.mock.calls[1]?.[0]).not.toHaveProperty('spawnAttemptKey');
   });
 
-  it('confirms a voice daemon initialPrompt through the post-spawn send path', async () => {
+  it('routes a voice first turn through the post-spawn Pending path', async () => {
     machineSpawnNewSession.mockResolvedValueOnce({
       type: 'success',
       sessionId: 's_new',
-      usedInitialPrompt: true,
     });
     const { spawnSessionForVoiceTool } = await import('./spawnSession');
 
@@ -172,16 +228,15 @@ describe('spawnSessionForVoiceTool', () => {
       initialMessage: '  Start here  ',
     });
 
-    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
-      initialPrompt: 'Start here',
-    }));
+    const spawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(spawnOptions).not.toHaveProperty('initialPrompt');
     expect(postprocessSpawnedSession).toHaveBeenCalledWith({
       sessionId: 's_new',
       serverId: 'server-a',
       tag: null,
       initialMessage: 'Start here',
       initialMessageMetaOverrides: null,
-      daemonInitialPromptUsed: true,
+      firstTurnLocalId: `spawn-first-turn:${String(spawnOptions.spawnNonce)}`,
     });
   });
 
@@ -201,7 +256,7 @@ describe('spawnSessionForVoiceTool', () => {
       tag: null,
       initialMessage: '/h.runs',
       initialMessageMetaOverrides: null,
-      daemonInitialPromptUsed: false,
+      firstTurnLocalId: `spawn-first-turn:${String(spawnOptions.spawnNonce)}`,
     });
   });
 
@@ -217,8 +272,15 @@ describe('spawnSessionForVoiceTool', () => {
 
     const spawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(spawnOptions).toMatchObject({
-      modelId: 'gpt-5',
-      modelUpdatedAt: expect.any(Number),
+      modelSelection: {
+        v: 1,
+        ref: {
+          agentTargetKey: 'backend:opencode',
+          providerConnectionId: null,
+          modelId: 'gpt-5',
+        },
+        updatedAt: expect.any(Number),
+      },
     });
     expect(spawnOptions).not.toHaveProperty('initialPrompt');
     expect(postprocessSpawnedSession).toHaveBeenCalledWith({
@@ -227,15 +289,14 @@ describe('spawnSessionForVoiceTool', () => {
       tag: null,
       initialMessage: 'Use the selected model for this first turn',
       initialMessageMetaOverrides: { model: 'gpt-5' },
-      daemonInitialPromptUsed: false,
+      firstTurnLocalId: `spawn-first-turn:${String(spawnOptions.spawnNonce)}`,
     });
   });
 
-  it('keeps selected model in the spawn payload while daemon owns the initial prompt', async () => {
+  it('keeps selected model in the spawn payload while Pending owns the first turn', async () => {
     machineSpawnNewSession.mockResolvedValueOnce({
       type: 'success',
       sessionId: 's_new',
-      usedInitialPrompt: true,
     });
     const { spawnSessionForVoiceTool } = await import('./spawnSession');
 
@@ -247,18 +308,181 @@ describe('spawnSessionForVoiceTool', () => {
     });
 
     expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
-      initialPrompt: 'Use the selected model for this first turn',
-      modelId: 'gpt-5.4',
-      modelUpdatedAt: expect.any(Number),
+      modelSelection: {
+        v: 1,
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: null,
+          modelId: 'gpt-5.4',
+        },
+        updatedAt: expect.any(Number),
+      },
     }));
+    const spawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(spawnOptions).not.toHaveProperty('initialPrompt');
     expect(postprocessSpawnedSession).toHaveBeenCalledWith({
       sessionId: 's_new',
       serverId: 'server-a',
       tag: null,
       initialMessage: 'Use the selected model for this first turn',
       initialMessageMetaOverrides: null,
-      daemonInitialPromptUsed: true,
+      firstTurnLocalId: `spawn-first-turn:${String(spawnOptions.spawnNonce)}`,
     });
+  });
+
+  it('preserves provider connection identity for a provider model literally named default', async () => {
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({
+      agentId: 'codex',
+      path: '/Users/leeroy/projects/happier',
+      providerConnectionId: 'pc_openrouter',
+      modelId: 'default',
+    });
+
+    const spawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(spawnOptions).toMatchObject({
+      modelSelection: {
+        v: 1,
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: 'pc_openrouter',
+          modelId: 'default',
+        },
+        updatedAt: expect.any(Number),
+      },
+    });
+    expect(spawnOptions).not.toHaveProperty('modelId');
+    expect(spawnOptions).not.toHaveProperty('modelUpdatedAt');
+  });
+
+  it.each([
+    'disabled',
+    'missing',
+    'malformed',
+    'unknown',
+  ] as const)('refuses a Provider-bound direct spawn without invoking the machine when the feature snapshot is %s', async (mode) => {
+    primeProvidersFeatureSnapshot(mode);
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    const result = await spawnSessionForVoiceTool({
+      agentId: 'codex',
+      path: '/Users/leeroy/projects/happier',
+      providerConnectionId: 'pc_openrouter',
+      modelId: 'gpt-5',
+    });
+
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
+    expect(machineContributionRegistryProjectionDescribe).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: false,
+      type: 'error',
+      errorCode: 'provider_feature_disabled',
+      errorMessage: 'provider_feature_disabled',
+      errorDetail: {
+        kind: 'provider_error',
+        providerError: {
+          v: 1,
+          code: 'provider_feature_disabled',
+          connectionId: 'pc_openrouter',
+          machineId: 'm1',
+          retryable: false,
+          action: 'review_features',
+        },
+      },
+    });
+  });
+
+  it('uses the requested spawn server feature decision instead of the active runtime server', async () => {
+    primeProvidersFeatureSnapshot('disabled', 'server-b');
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    const result = await spawnSessionForVoiceTool({
+      agentId: 'codex',
+      path: '/Users/leeroy/projects/happier',
+      providerConnectionId: 'pc_openrouter',
+      modelId: 'gpt-5',
+      serverId: 'server-b',
+    } as any);
+
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: 'provider_feature_disabled',
+      errorDetail: {
+        kind: 'provider_error',
+        providerError: {
+          code: 'provider_feature_disabled',
+          connectionId: 'pc_openrouter',
+          machineId: 'm1',
+        },
+      },
+    });
+  });
+
+  it('does no projection or spawn work while the Provider decision is loading and returns a typed refusal on network error', async () => {
+    resetServerFeaturesClientForTests();
+    let rejectFeatureFetch: (reason?: unknown) => void = () => undefined;
+    const featureFetch = new Promise<Response>((_resolve, reject) => {
+      rejectFeatureFetch = reject;
+    });
+    const fetchSpy = vi.fn(async () => await featureFetch);
+    vi.stubGlobal('fetch', fetchSpy);
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    const resultPromise = spawnSessionForVoiceTool({
+      agentId: 'codex',
+      path: '/Users/leeroy/projects/happier',
+      providerConnectionId: 'pc_openrouter',
+      modelId: 'gpt-5',
+    });
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+
+    expect(machineContributionRegistryProjectionDescribe).not.toHaveBeenCalled();
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
+
+    rejectFeatureFetch(new Error('network unavailable'));
+    const result = await resultPromise;
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: 'provider_feature_disabled',
+      errorDetail: {
+        kind: 'provider_error',
+        providerError: {
+          code: 'provider_feature_disabled',
+          connectionId: 'pc_openrouter',
+          machineId: 'm1',
+        },
+      },
+    });
+    expect(machineContributionRegistryProjectionDescribe).not.toHaveBeenCalled();
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps native direct spawns unchanged when the Provider feature decision is unknown', async () => {
+    resetServerFeaturesClientForTests();
+    const fetchSpy = vi.fn(async () => {
+      throw new Error('native spawn must not probe Provider feature state');
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({
+      agentId: 'codex',
+      path: '/Users/leeroy/projects/happier',
+      modelId: 'gpt-5',
+    });
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      modelSelection: expect.objectContaining({
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: null,
+          modelId: 'gpt-5',
+        },
+      }),
+    }));
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('falls back to the freshest recent target when no explicit path is provided', async () => {
@@ -311,10 +535,9 @@ describe('spawnSessionForVoiceTool', () => {
       supported: true,
       projection: {
         v: 1,
-        providersById: {
+        agentsById: {
           'acme.review.provider': {
             id: 'acme.review.provider',
-            providerId: 'acme.review.provider',
             title: 'Acme Review Provider',
             channel: 'plugin',
             isBuiltIn: false,
@@ -325,7 +548,7 @@ describe('spawnSessionForVoiceTool', () => {
           'acme.review.backend': {
             id: 'acme.review.backend',
             backendId: 'acme.review.backend',
-            providerId: 'acme.review.provider',
+            agentId: 'acme.review.provider',
             title: 'Acme Review Backend',
           },
         },
@@ -523,7 +746,6 @@ describe('spawnSessionForVoiceTool', () => {
         id: 'm_target',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Target Mac', host: 'target.local' },
       },
     };
@@ -566,14 +788,12 @@ describe('spawnSessionForVoiceTool', () => {
         id: 'm_old',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Old', host: 'leeroy-mbp' },
       },
       m_current: {
         id: 'm_current',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Current', host: 'leeroy-mbp' },
       },
     };
@@ -603,7 +823,6 @@ describe('spawnSessionForVoiceTool', () => {
         id: 'm_voice',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Voice Host', host: 'voice-host' },
       },
     };
@@ -626,7 +845,184 @@ describe('spawnSessionForVoiceTool', () => {
     });
   });
 
-  it('does not spawn when the only matching machine is online but exact readiness is unknown', async () => {
+  it('uses an explicit machine for its default path, Provider projection, and final spawn', async () => {
+    const explicitMachine = {
+      id: 'm_explicit',
+      active: true,
+      activeAt: Date.now(),
+      metadata: { displayName: 'Explicit Mac', host: 'explicit-mac' },
+    };
+    state.machines = {
+      ...state.machines,
+      [explicitMachine.id]: explicitMachine,
+    };
+    state.machineListByServerId = {
+      'server-a': Object.values(state.machines),
+    };
+    state.settings.recentMachinePaths = [
+      { machineId: 'm1', path: '/Users/leeroy/projects/fallback' },
+      { machineId: 'm_explicit', path: '/Users/leeroy/projects/explicit' },
+    ];
+
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    const result = await spawnSessionForVoiceTool({
+      machineId: 'm_explicit',
+      host: 'EXPLICIT-MAC.local',
+    });
+
+    expect(machineContributionRegistryProjectionDescribe).toHaveBeenCalledWith('m_explicit', expect.objectContaining({
+      serverId: 'server-a',
+    }));
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'm_explicit',
+      directory: '/Users/leeroy/projects/explicit',
+      serverId: 'server-a',
+    }));
+    expect(result).toMatchObject({
+      type: 'success',
+      target: { label: 'explicit — Explicit Mac' },
+    });
+  });
+
+  it('uses the explicit machine identity in Provider refusal context before projection or spawn', async () => {
+    const explicitMachine = {
+      id: 'm_explicit',
+      active: true,
+      activeAt: Date.now(),
+      metadata: { displayName: 'Explicit Mac', host: 'explicit-mac' },
+    };
+    state.machines = { ...state.machines, [explicitMachine.id]: explicitMachine };
+    state.machineListByServerId = { 'server-a': Object.values(state.machines) };
+    primeProvidersFeatureSnapshot('disabled');
+
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    const result = await spawnSessionForVoiceTool({
+      machineId: 'm_explicit',
+      path: '/Users/leeroy/projects/explicit',
+      providerConnectionId: 'pc_openrouter',
+      modelId: 'gpt-5',
+    });
+
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: 'provider_feature_disabled',
+      errorDetail: {
+        providerError: { machineId: 'm_explicit' },
+      },
+    });
+    expect(machineContributionRegistryProjectionDescribe).not.toHaveBeenCalled();
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'unknown',
+      machineId: 'm_missing',
+      prepare: () => {},
+    },
+    {
+      name: 'revoked',
+      machineId: 'm_revoked',
+      prepare: () => {
+        state.machines.m_revoked = {
+          id: 'm_revoked',
+          active: true,
+          activeAt: Date.now(),
+          revokedAt: Date.now(),
+          metadata: { host: 'revoked-mac' },
+        };
+      },
+    },
+    {
+      name: 'replaced',
+      machineId: 'm_replaced',
+      prepare: () => {
+        state.machines.m_replaced = {
+          id: 'm_replaced',
+          active: false,
+          activeAt: 1,
+          replacedByMachineId: 'm1',
+          metadata: { host: 'replaced-mac' },
+        };
+      },
+    },
+    {
+      name: 'stale',
+      machineId: 'm_stale',
+      prepare: () => {
+        state.machines.m_stale = {
+          id: 'm_stale',
+          active: false,
+          activeAt: 1,
+          metadata: { host: 'stale-mac' },
+        };
+      },
+    },
+  ])('never falls back from an $name explicit machine', async ({ machineId, prepare }) => {
+    prepare();
+    state.machineListByServerId = { 'server-a': Object.values(state.machines) };
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    const result = await spawnSessionForVoiceTool({
+      machineId,
+      path: '/Users/leeroy/projects/explicit',
+    });
+
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: machineId === 'm_missing' ? 'invalid_parameters' : 'spawn_target_unavailable',
+    });
+    expect(machineContributionRegistryProjectionDescribe).not.toHaveBeenCalled();
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
+  });
+
+  it('fails an explicit machine host assertion with invalid_parameters before Provider work', async () => {
+    state.machineListByServerId = { 'server-a': Object.values(state.machines) };
+    primeProvidersFeatureSnapshot('disabled');
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    const result = await spawnSessionForVoiceTool({
+      machineId: 'm1',
+      host: 'another-host',
+      path: '/Users/leeroy/projects/happier',
+      providerConnectionId: 'pc_openrouter',
+      modelId: 'gpt-5',
+    });
+
+    expect(result).toEqual({
+      type: 'error',
+      errorCode: 'invalid_parameters',
+      errorMessage: 'invalid_parameters',
+    });
+    expect(machineContributionRegistryProjectionDescribe).not.toHaveBeenCalled();
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
+  });
+
+  it('refuses an explicit machine outside the requested server scope', async () => {
+    state.machineListByServerId = {
+      'server-a': Object.values(state.machines),
+      'server-b': [],
+    };
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    const result = await spawnSessionForVoiceTool({
+      machineId: 'm1',
+      serverId: 'server-b',
+      path: '/Users/leeroy/projects/happier',
+    });
+
+    expect(result).toEqual({
+      type: 'error',
+      errorCode: 'invalid_parameters',
+      errorMessage: 'invalid_parameters',
+    });
+    expect(machineContributionRegistryProjectionDescribe).not.toHaveBeenCalled();
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
+  });
+
+  it('lets a raw online host match reach the spawn operation without synthetic readiness', async () => {
     state.machines = {
       m_unknown: {
         id: 'm_unknown',
@@ -646,13 +1042,10 @@ describe('spawnSessionForVoiceTool', () => {
       path: '/Users/leeroy/projects/voice',
     });
 
-    expect(machineSpawnNewSession).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      type: 'error',
-      errorCode: 'spawn_target_unavailable',
-      errorMessage: 'spawn_target_unavailable',
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'm_unknown',
-      readinessStatus: 'unknown',
-    });
+      directory: '/Users/leeroy/projects/voice',
+    }));
+    expect(result).toMatchObject({ type: 'success' });
   });
 });

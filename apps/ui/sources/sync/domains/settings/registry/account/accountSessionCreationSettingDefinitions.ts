@@ -1,9 +1,11 @@
 import {
+    BackendTargetKeyV2InputSchema,
     BackendTargetKeyV2Schema,
     BackendTargetRefV2InputSchema,
     buildSettingArtifacts,
     defineSettingDefinitions,
     readBackendTargetRefV2,
+    writePersistedBackendTargetRefV2,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
 
@@ -34,11 +36,19 @@ export const NEW_SESSION_WIZARD_SECTION_PRESENTATIONS = [
     'dropdown',
 ] as const;
 
+export const NEW_SESSION_PRESENTATION_MODES = [
+    'auto',
+    'screen',
+    'modal',
+] as const;
+
 export type NewSessionWizardSelectionSectionId = typeof NEW_SESSION_WIZARD_SELECTION_SECTION_IDS[number];
 export type NewSessionWizardSectionPresentation = typeof NEW_SESSION_WIZARD_SECTION_PRESENTATIONS[number];
+export type NewSessionPresentationModeV1 = typeof NEW_SESSION_PRESENTATION_MODES[number];
 
 const NewSessionWizardSelectionSectionIdSchema = z.enum(NEW_SESSION_WIZARD_SELECTION_SECTION_IDS);
 const NewSessionWizardSectionPresentationSchema = z.enum(NEW_SESSION_WIZARD_SECTION_PRESENTATIONS);
+const NewSessionPresentationModeV1Schema = z.enum(NEW_SESSION_PRESENTATION_MODES).catch('auto').default('auto');
 
 const NewSessionAgentPickerViewV1BackendSchema = z.object({
     kind: z.literal('backend'),
@@ -97,7 +107,6 @@ const SessionTranscriptStorageModeByTargetKeySchema = z.preprocess((value) => {
 
     const filtered = Object.fromEntries(
         Object.entries(record).flatMap(([targetKey, raw]) => {
-            if (!BackendTargetKeyV2Schema.safeParse(targetKey).success) return [];
             return raw === 'direct' || raw === 'persisted'
                 ? [[targetKey, raw]]
                 : [];
@@ -105,14 +114,14 @@ const SessionTranscriptStorageModeByTargetKeySchema = z.preprocess((value) => {
     ) as Record<string, SessionTranscriptStorageMode>;
 
     return filtered;
-}, z.record(BackendTargetKeyV2Schema, SessionTranscriptStorageModeSchema).default({}));
+}, z.record(BackendTargetKeyV2InputSchema, SessionTranscriptStorageModeSchema).default({}));
 
 const LastUsedBackendTargetSchema = z.union([
     BackendTargetRefV2InputSchema,
     z.null(),
 ]).transform((value) => {
     if (value === null) return null;
-    return readBackendTargetRefV2(value);
+    return writePersistedBackendTargetRefV2(readBackendTargetRefV2(value));
 });
 
 export const ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS = defineSettingDefinitions({
@@ -204,6 +213,12 @@ export const ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS = defineSettingDefinit
                     : 0,
             }),
         },
+    },
+    newSessionPresentationModeV1: {
+        schema: NewSessionPresentationModeV1Schema,
+        default: 'auto' as NewSessionPresentationModeV1,
+        description: 'Route presentation used for the new-session surface',
+        storageScope: 'account',
     },
     newSessionWizardSectionPresentationV1: {
         schema: NewSessionWizardSectionPresentationByIdSchema,

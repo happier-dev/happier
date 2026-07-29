@@ -6,19 +6,23 @@ import {
     type BottomFollowWriteSchedulerState,
 } from '@/components/sessions/transcript/viewport/bottomFollow/writeScheduler';
 
-export function useExplicitJumpWriteBarrier<PreviousWebMetrics>(params: Readonly<{
-    applyEffects: (effects: readonly BottomFollowWriteSchedulerEffect<PreviousWebMetrics>[]) => void;
-    schedulerStateRef: React.MutableRefObject<BottomFollowWriteSchedulerState<PreviousWebMetrics>>;
+export function useExplicitJumpWriteBarrier(params: Readonly<{
+    applyEffects: (effects: readonly BottomFollowWriteSchedulerEffect[]) => void;
+    schedulerStateRef: React.MutableRefObject<BottomFollowWriteSchedulerState>;
 }>): readonly [begin: () => void, end: () => void] {
+    const {
+        applyEffects,
+        schedulerStateRef,
+    } = params;
     const depthRef = React.useRef(0);
     const setActive = React.useCallback((active: boolean) => {
-        const plan = planBottomFollowWriteSchedulerEvent(params.schedulerStateRef.current, {
+        const plan = planBottomFollowWriteSchedulerEvent(schedulerStateRef.current, {
             active,
             type: 'set-explicit-jump-active',
         });
-        params.schedulerStateRef.current = plan.state;
-        params.applyEffects(plan.effects);
-    }, [params]);
+        schedulerStateRef.current = plan.state;
+        applyEffects(plan.effects);
+    }, [applyEffects, schedulerStateRef]);
     const begin = React.useCallback(() => {
         depthRef.current += 1;
         if (depthRef.current === 1) setActive(true);

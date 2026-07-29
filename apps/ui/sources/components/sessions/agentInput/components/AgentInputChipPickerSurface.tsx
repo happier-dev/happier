@@ -19,6 +19,12 @@ export type AgentInputChipPickerSurfaceProps = Readonly<{
     railWidth?: number;
     railMaxWidth?: number | `${number}%`;
     detailPaneHeaderAccessory?: React.ReactNode;
+    /**
+     * The detail composition contains its own bounded scroll owner (for
+     * example, a virtualized SelectionList), so the surface must not add a
+     * competing outer ScrollView.
+     */
+    detailContentOwnsScroll?: boolean;
     maxHeight?: number | null;
     testID?: string;
 }>;
@@ -38,6 +44,7 @@ export function AgentInputChipPickerSurface(props: AgentInputChipPickerSurfacePr
                 railMaxWidth={props.railMaxWidth}
                 detailPaneHeaderAccessory={props.detailPaneHeaderAccessory}
                 maxHeight={props.maxHeight}
+                detailContentOwnsScroll={props.detailContentOwnsScroll}
             />
         </PopoverScope>
     );
@@ -50,7 +57,7 @@ export function AgentInputChipPickerSurface(props: AgentInputChipPickerSurfacePr
         <AgentInputPopoverSurface
             testID={props.testID}
             maxHeight={props.maxHeight}
-            scrollEnabled
+            scrollEnabled={props.detailContentOwnsScroll !== true}
             keyboardShouldPersistTaps="handled"
         >
             {panel}

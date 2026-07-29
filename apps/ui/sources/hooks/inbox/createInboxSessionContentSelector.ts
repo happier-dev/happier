@@ -2,6 +2,7 @@ import { deriveExternalSessionAttentionHasUnread } from '@/sync/domains/session/
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import {
+    buildPendingSessionRequestsSourceSignature,
     deriveLatestPendingRequestObservedAtFromSession,
     derivePendingRequestFlagsFromSession,
 } from '@/sync/domains/session/pending/listPendingSessionRequests';
@@ -15,8 +16,10 @@ import {
 } from '@/sync/domains/session/attention/runtimePresentation';
 import type { SessionListAttentionRow } from '@/sync/domains/state/storage';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
-import type { Session } from '@/sync/domains/state/storageTypes';
+import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import type { StorageState } from '@/sync/store/types';
+import { isVoiceConversationCustodySessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 import { buildInboxSessionState, type InboxSessionState } from './buildInboxSessionState';
 
@@ -79,40 +82,9 @@ function readFreshnessBit(value: unknown, nowMs: number): 0 | 1 {
     return isFreshTimestamp(timestamp, nowMs, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS) ? 1 : 0;
 }
 
-function readSessionExternalUnreadBit(session: Pick<Session, 'metadata'>): '' | 0 | 1 {
-    const hasUnread = deriveExternalSessionAttentionHasUnread(session.metadata);
+function readSessionExternalUnreadBit(metadata: Metadata | null | undefined): '' | 0 | 1 {
+    const hasUnread = deriveExternalSessionAttentionHasUnread(metadata);
     return hasUnread === null ? '' : readBooleanBit(hasUnread);
-}
-
-function readRequestSignature(value: unknown): string {
-    if (!value || typeof value !== 'object') return '';
-    const requests = value as Record<string, {
-        createdAt?: unknown;
-        kind?: unknown;
-        tool?: unknown;
-    }>;
-    return Object.keys(requests).sort().map((requestId) => {
-        const request = requests[requestId];
-        return [
-            requestId,
-            typeof request?.tool === 'string' ? request.tool : '',
-            typeof request?.kind === 'string' ? request.kind : '',
-            readNumber(request?.createdAt) ?? '',
-        ].join(FIELD_SEPARATOR);
-    }).join(ITEM_SEPARATOR);
-}
-
-function readCompletedRequestSignature(value: unknown): string {
-    if (!value || typeof value !== 'object') return '';
-    const completed = value as Record<string, { completedAt?: unknown; createdAt?: unknown }>;
-    return Object.keys(completed).sort().map((requestId) => {
-        const request = completed[requestId];
-        return [
-            requestId,
-            readNumber(request?.completedAt) ?? '',
-            readNumber(request?.createdAt) ?? '',
-        ].join(FIELD_SEPARATOR);
-    }).join(ITEM_SEPARATOR);
 }
 
 function readSessionScopeKey(session: Session): string {
@@ -147,18 +119,9 @@ function readReadStateSignature(
 }
 
 function buildPendingRequestSessionSignature(session: Session): string {
-    const agentState = session.agentState;
-    const hasProjectedPendingRequestCounts =
-        typeof session.pendingPermissionRequestCount === 'number'
-        || typeof session.pendingUserActionRequestCount === 'number';
     return [
         session.active === true ? 1 : 0,
-        hasProjectedPendingRequestCounts ? readNumber(session.updatedAt) ?? '' : '',
-        readNumber(session.pendingPermissionRequestCount) ?? '',
-        readNumber(session.pendingUserActionRequestCount) ?? '',
-        readNumber(session.pendingRequestObservedAt) ?? '',
-        readRequestSignature(agentState?.requests),
-        readCompletedRequestSignature(agentState?.completedRequests),
+        buildPendingSessionRequestsSourceSignature(session),
     ].join(FIELD_SEPARATOR);
 }
 
@@ -225,13 +188,20 @@ function buildCanonicalSessionSignature(
     nowMs: number,
     pendingProjection: PendingRequestProjection,
 ): string {
+    const ownerMetadata = readSessionOwnerMetadataView(session);
+    const metadataUnavailable = session.metadataLayoutVersion === 1 && ownerMetadata == null;
     return [
-        isUserFacingSession(session) ? 1 : 0,
+        metadataUnavailable ? 1 : 0,
+        isUserFacingSession({
+            metadata: ownerMetadata,
+            metadataUnavailable,
+        }) ? 1 : 0,
+        isVoiceConversationCustodySessionMetadata(ownerMetadata) ? 1 : 0,
         readNumber(session.seq) ?? '',
         readNumber(session.latestReadyEventSeq) ?? '',
         readNumber(session.lastViewedSessionSeq) ?? '',
-        readReadStateSignature(session.metadata),
-        readSessionExternalUnreadBit(session),
+        readReadStateSignature(ownerMetadata),
+        readSessionExternalUnreadBit(ownerMetadata),
         session.latestTurnStatus ?? '',
         session.lastRuntimeIssue != null ? 1 : 0,
         session.active === true ? 1 : 0,
@@ -246,17 +216,21 @@ function buildCanonicalSessionSignature(
     ].join(FIELD_SEPARATOR);
 }
 
-function buildAttentionRowSignature(row: SessionListAttentionRow): string {
+function buildAttentionRowSignature(row: SessionListAttentionRow, nowMs: number): string {
     const session = row.session;
     return [
         isUserFacingSession(session) ? 1 : 0,
         readTriStateBooleanBit(session.hasUnreadMessages),
         readNumber(session.seq) ?? '',
+        readNumber(session.agentStateVersion) ?? '',
         readNumber(session.latestReadyEventSeq) ?? '',
         readNumber(session.lastViewedSessionSeq) ?? '',
         readReadStateSignature(session.metadata),
         session.latestTurnStatus ?? '',
         session.lastRuntimeIssue != null ? 1 : 0,
+        readTriStateBooleanBit(session.hasPendingPermissionRequests),
+        readTriStateBooleanBit(session.hasPendingUserActionRequests),
+        readFreshnessBit(session.pendingRequestObservedAt, nowMs),
     ].join(FIELD_SEPARATOR);
 }
 
@@ -297,8 +271,8 @@ function buildInboxSessionContentSignature(
     input: InboxSessionContentInput,
     nowMs: number,
     pendingProjectionCache: Map<string, PendingRequestProjectionCacheEntry>,
+    storageState: StorageState | null,
 ): string {
-    const storageState = readRegisteredStorageState();
     const storageScopeSignature = readStorageScopeSignature(storageState);
     prunePendingRequestProjectionCache(pendingProjectionCache, input.sessions);
     return [
@@ -315,8 +289,35 @@ function buildInboxSessionContentSignature(
             });
             return buildCanonicalSessionSignature(session, nowMs, pendingProjection);
         }),
-        buildCollectionSignature(input.sessionRows, readAttentionRowScopeKey, buildAttentionRowSignature),
+        buildCollectionSignature(
+            input.sessionRows,
+            readAttentionRowScopeKey,
+            (row) => buildAttentionRowSignature(row, nowMs),
+        ),
     ].join(COLLECTION_SEPARATOR);
+}
+
+function areSameReferenceItems<T>(
+    previous: readonly T[] | null,
+    next: readonly T[],
+): boolean {
+    if (previous === null || previous.length !== next.length) return false;
+    for (let index = 0; index < next.length; index += 1) {
+        if (previous[index] !== next[index]) return false;
+    }
+    return true;
+}
+
+function buildRelevantSessionMessagesSignature(
+    sessions: readonly Session[],
+    sessionMessagesById: StorageState['sessionMessages'] | undefined,
+): string {
+    if (!sessionMessagesById) return '';
+    return buildCollectionSignature(
+        sessions,
+        readSessionScopeKey,
+        (session) => buildSessionMessagesPendingSignature(sessionMessagesById[session.id]),
+    );
 }
 
 export function createInboxSessionContentSelector(
@@ -325,18 +326,59 @@ export function createInboxSessionContentSelector(
     const pendingProjectionCache = new Map<string, PendingRequestProjectionCacheEntry>();
     let previousSignature: string | null = null;
     let previousResult = false;
+    let previousDeltaRevision: number | null = null;
+    let previousNowMs: number | null = null;
+    let previousSessions: readonly Session[] | null = null;
+    let previousSessionRows: readonly SessionListAttentionRow[] | null = null;
+    let previousStorageScopeSignature: string | null = null;
+    let previousRelevantSessionMessagesSignature: string | null = null;
 
     return (input: InboxSessionContentInput): boolean => {
         const nowMs = typeof input.nowMs === 'number' && Number.isFinite(input.nowMs)
             ? Math.trunc(input.nowMs)
             : Date.now();
-        const signature = buildInboxSessionContentSignature(input, nowMs, pendingProjectionCache);
+        const storageState = readRegisteredStorageState();
+        const renderableDelta = storageState?.sessionListRenderableDelta;
+        const storageScopeSignature = readStorageScopeSignature(storageState);
+        const relevantSessionMessagesSignature = buildRelevantSessionMessagesSignature(
+            input.sessions,
+            input.sessionMessagesById ?? storageState?.sessionMessages,
+        );
+        if (
+            previousSignature !== null
+            && renderableDelta
+            && previousDeltaRevision !== null
+            && renderableDelta.revision !== previousDeltaRevision
+            && renderableDelta.rebuiltSessionListIndex !== true
+            && renderableDelta.changedSessionIds.length === 0
+            && renderableDelta.removedSessionIds.length === 0
+            && previousNowMs === nowMs
+            && areSameReferenceItems(previousSessions, input.sessions)
+            && areSameReferenceItems(previousSessionRows, input.sessionRows)
+            && previousStorageScopeSignature === storageScopeSignature
+            && previousRelevantSessionMessagesSignature === relevantSessionMessagesSignature
+        ) {
+            previousDeltaRevision = renderableDelta.revision;
+            return previousResult;
+        }
+        const signature = buildInboxSessionContentSignature(input, nowMs, pendingProjectionCache, storageState);
         if (signature === previousSignature) {
+            previousDeltaRevision = renderableDelta?.revision ?? null;
+            previousNowMs = nowMs;
+            previousSessions = input.sessions;
+            previousSessionRows = input.sessionRows;
+            previousStorageScopeSignature = storageScopeSignature;
+            previousRelevantSessionMessagesSignature = relevantSessionMessagesSignature;
             return previousResult;
         }
 
         previousSignature = signature;
-        const storageState = readRegisteredStorageState();
+        previousDeltaRevision = renderableDelta?.revision ?? null;
+        previousNowMs = nowMs;
+        previousSessions = input.sessions;
+        previousSessionRows = input.sessionRows;
+        previousStorageScopeSignature = storageScopeSignature;
+        previousRelevantSessionMessagesSignature = relevantSessionMessagesSignature;
         const state = evaluateInboxSessionContent({
             sessions: input.sessions,
             sessionRows: input.sessionRows,

@@ -16,6 +16,7 @@ import { resolveSessionMachineId } from '@/sync/domains/session/external/resolve
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useSettings } from '@/sync/domains/state/storage';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export type UseSessionExecutionRunLaunchabilityResult = Readonly<{
     canLaunchExecutionRuns: boolean;
@@ -36,25 +37,26 @@ export function useSessionExecutionRunLaunchability(
     const executionRunsBackends = useExecutionRunsBackendsForSession(sessionId, sessionTargetServerId);
     const { machineReachable } = useSessionMachineReachability(sessionId);
     const machineTarget = useSessionMachineTarget(sessionId);
+    const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
     const externalSessionRuntime = useSessionExternalSessionRuntime({
         sessionId,
-        metadata: session?.metadata,
+        metadata: ownerMetadata,
     });
     const agentId = React.useMemo(
-        () => resolveAgentIdFromSessionMetadata(session?.metadata) ?? DEFAULT_AGENT_ID,
-        [session?.metadata],
+        () => resolveAgentIdFromSessionMetadata(ownerMetadata) ?? DEFAULT_AGENT_ID,
+        [ownerMetadata],
     );
     const { resumeCapabilityOptions } = useResumeCapabilityOptions({
         agentId,
-        machineId: machineTarget?.machineId ?? resolveSessionMachineId(session?.metadata),
+        machineId: machineTarget?.machineId ?? resolveSessionMachineId(ownerMetadata),
         settings,
         enabled: session?.active === false,
     });
     const allowWhileInactive = React.useMemo(() => {
         if (session?.active !== false) return false;
         if (!machineReachable) return false;
-        return canResumeSessionWithOptions(session?.metadata, resumeCapabilityOptions);
-    }, [machineReachable, resumeCapabilityOptions, session?.active, session?.metadata]);
+        return canResumeSessionWithOptions(ownerMetadata, resumeCapabilityOptions);
+    }, [machineReachable, ownerMetadata, resumeCapabilityOptions, session?.active]);
 
     const canShowExecutionRunLauncher = React.useMemo(() => {
         if (executionRunsEnabled !== true) {

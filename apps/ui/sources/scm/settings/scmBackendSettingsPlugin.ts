@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import type { ScmBackendId } from '@happier-dev/protocol';
+import type { PluginContributionIdentityV1, ScmBackendId } from '@happier-dev/protocol';
 
 export type ScmBackendSettingsIconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -16,4 +16,13 @@ export type ScmBackendSettingsPlugin = Readonly<{
     title: string;
     description: string;
     infoItems: readonly ScmBackendSettingsInfoItem[];
+}>;
+
+export type ScmHostingProviderSettingsPlugin = Readonly<{
+    providerId: string;
+    serviceId: string | null;
+    title: string;
+    description: string;
+    kind: string | null;
+    authService: PluginContributionIdentityV1 | null;
 }>;

@@ -4,8 +4,19 @@ export const DEPRECATED_SESSION_ONLY_SETTINGS_KEYS = new Set<string>([
     'toolViewCardDensity',
 ]);
 
+export const MIGRATED_SESSION_ORGANIZATION_ACCOUNT_SETTING_KEYS = new Set<string>([
+    'pinnedSessionKeysV1',
+    'workspaceLabelsV1',
+    'collapsedGroupKeysV1',
+    'sessionTagsV1',
+    'sessionListGroupOrderV1',
+    'sessionWorkspaceOrderV1',
+    'sessionFoldersV1',
+]);
+
 export const DROPPED_ACCOUNT_SETTINGS_KEYS = new Set<string>([
     ...DEPRECATED_SESSION_ONLY_SETTINGS_KEYS,
+    ...MIGRATED_SESSION_ORGANIZATION_ACCOUNT_SETTING_KEYS,
     'defaultPermissionModeClaude',
     'defaultPermissionModeCodex',
     'defaultPermissionModeGemini',
@@ -37,6 +48,16 @@ export function isDroppedLegacyServerSelectionKey(key: string): boolean {
 export function stripDeprecatedSessionOnlyKeys<TSettings extends Record<string, unknown>>(settings: TSettings): TSettings {
     const next = { ...settings };
     for (const key of DEPRECATED_SESSION_ONLY_SETTINGS_KEYS) {
+        if (key in next) {
+            delete next[key];
+        }
+    }
+    return next;
+}
+
+export function stripMigratedSessionOrganizationSettings<TSettings extends Record<string, unknown>>(settings: TSettings): TSettings {
+    const next = { ...settings };
+    for (const key of MIGRATED_SESSION_ORGANIZATION_ACCOUNT_SETTING_KEYS) {
         if (key in next) {
             delete next[key];
         }

@@ -13,6 +13,7 @@ import {
     decodePeerTcpTunnelFrameForEncoding,
     decodePeerTcpTunnelSubstreamFrameV2,
     encodePeerTcpTunnelFrameForEncoding,
+    encodePeerTcpTunnelSubstreamDataFrameV2,
     encodePeerTcpTunnelSubstreamFrameV2,
     encodePeerTcpTunnelSubstreamOpenFrameV2,
 } from './frameEncoding';
@@ -24,13 +25,14 @@ type SendPeerTcpTunnelRelayEnvelope = (
 
 function userToMachineEnvelope(input: Readonly<{
     scopeUserId: string;
+    relaySocketId: string;
     open: PeerTcpTunnelOpenV1;
     frame: PeerTcpTunnelFrameV1;
 }>): PeerTcpTunnelRelayEnvelope {
     return {
         v: 1,
         scopeUserId: input.scopeUserId,
-        sender: { kind: 'user' },
+        sender: { kind: 'user', socketId: input.relaySocketId },
         recipient: { kind: 'machine', machineId: input.open.targetMachineId },
         frame: input.frame,
     };
@@ -38,12 +40,13 @@ function userToMachineEnvelope(input: Readonly<{
 
 export async function openPeerTcpTunnelRelayStream(input: Readonly<{
     scopeUserId: string;
+    relaySocketId: string;
     open: PeerTcpTunnelOpenV1;
     send: SendPeerTcpTunnelRelayEnvelope;
     onEnvelope: (handler: (envelope: PeerTcpTunnelRelayEnvelope) => void) => () => void;
 }>): Promise<PeerTcpTunnelClientStream> {
     const encoding = input.open.selectedEncoding ?? PEER_TCP_TUNNEL_JSON_BASE64_ENCODING_V1;
-    const handlers = new Set<(frame: PeerTcpTunnelFrameV1) => void>();
+    const handlers = new Set<(frame: Exclude<PeerTcpTunnelFrameV1, { kind: 'open' }>) => void>();
     const substreamHandlers = new Set<(event: Readonly<{
         substreamId: string;
         frame: Exclude<PeerTcpTunnelFrameV1, { kind: 'open' }>;
@@ -55,13 +58,14 @@ export async function openPeerTcpTunnelRelayStream(input: Readonly<{
             ? {
                 v: 2,
                 scopeUserId: input.scopeUserId,
-                sender: { kind: 'user' },
+                sender: { kind: 'user', socketId: input.relaySocketId },
                 recipient: { kind: 'machine', machineId: input.open.targetMachineId },
                 encoding,
                 frame: encodePeerTcpTunnelFrameForEncoding({ encoding, frame }) as Uint8Array,
             }
             : userToMachineEnvelope({
                 scopeUserId: input.scopeUserId,
+                relaySocketId: input.relaySocketId,
                 open: input.open,
                 frame,
             });
@@ -72,7 +76,7 @@ export async function openPeerTcpTunnelRelayStream(input: Readonly<{
         input.send(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, {
             v: 2,
             scopeUserId: input.scopeUserId,
-            sender: { kind: 'user' },
+            sender: { kind: 'user', socketId: input.relaySocketId },
             recipient: { kind: 'machine', machineId: input.open.targetMachineId },
             encoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
             frame,
@@ -115,6 +119,7 @@ export async function openPeerTcpTunnelRelayStream(input: Readonly<{
 
     input.send(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, userToMachineEnvelope({
         scopeUserId: input.scopeUserId,
+        relaySocketId: input.relaySocketId,
         open: input.open,
         frame: { v: 1, kind: 'open', open: input.open },
     }));
@@ -122,7 +127,6 @@ export async function openPeerTcpTunnelRelayStream(input: Readonly<{
     return {
         sendFrame: (frame) => {
             if (closed) return;
-            if (frame.kind === 'open') return;
             sendRelayFrame(frame);
         },
         onFrame: (handler) => {
@@ -136,6 +140,13 @@ export async function openPeerTcpTunnelRelayStream(input: Readonly<{
             sendRelayBinaryFrame(encodePeerTcpTunnelSubstreamOpenFrameV2({
                 tunnelId: input.open.tunnelId,
                 substreamId,
+            }));
+        },
+        sendSubstreamDataFrame: (substreamId, frame) => {
+            if (closed || encoding !== PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2) return;
+            sendRelayBinaryFrame(encodePeerTcpTunnelSubstreamDataFrameV2({
+                substreamId,
+                frame,
             }));
         },
         sendSubstreamFrame: (substreamId, frame) => {

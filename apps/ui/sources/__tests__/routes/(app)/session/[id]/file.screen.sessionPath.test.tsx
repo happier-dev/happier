@@ -11,6 +11,12 @@ import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers'
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let mockFilePathParam = 'a.txt';
+const fileRouteParams = {
+    id: 'session-1',
+    get path() {
+        return mockFilePathParam;
+    },
+};
 const routerReplaceSpy = vi.fn();
 const openDetailsTabSpy = vi.fn();
 const openRightSpy = vi.fn();
@@ -51,10 +57,7 @@ installSessionRouteCommonModuleMocks({
 
         return {
             ...routerMock.module,
-            useLocalSearchParams: () => ({
-                id: 'session-1',
-                path: mockFilePathParam,
-            }),
+            useLocalSearchParams: () => fileRouteParams,
         };
     },
     storageModule: async (importOriginal) => {
@@ -75,6 +78,10 @@ vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
         ...props,
         testID: 'session-file-details-view',
     }),
+}));
+
+vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
+    useHydrateSessionForRoute: (sessionId: string) => ({ kind: 'available', sessionId }),
 }));
 
 vi.mock('@/hooks/session/files/useFileScmStageActions', () => ({

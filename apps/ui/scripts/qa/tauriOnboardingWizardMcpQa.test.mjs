@@ -492,13 +492,13 @@ test('tauri onboarding wizard QA only accepts a driver session that resolves to 
   );
 });
 
-test('tauri onboarding wizard QA builds the debug relay selection deep-link', async () => {
-  const scriptsDir = dirname(fileURLToPath(import.meta.url));
-  const scriptPath = join(scriptsDir, 'tauriOnboardingWizardMcpQa.mjs');
-  const module = await import(pathToFileURL(scriptPath).href);
+test('tauri onboarding wizard QA builds the onboarding root path', async () => {
+    const scriptsDir = dirname(fileURLToPath(import.meta.url));
+    const scriptPath = join(scriptsDir, 'tauriOnboardingWizardMcpQa.mjs');
+    const module = await import(pathToFileURL(scriptPath).href);
 
-  assert.equal(module.buildOnboardingWizardPath(), '/?happier_hmr=0');
-  assert.equal(module.buildOnboardingWizardPath('relay_select'), '/?happier_wizard_step=relay_select&happier_hmr=0');
+    assert.equal(module.buildOnboardingWizardPath(), '/?happier_hmr=0');
+    assert.equal(module.buildOnboardingWizardPath('relay_select'), '/?happier_hmr=0');
 });
 
 test('tauri onboarding wizard QA resolves relative outdir against repo root', async () => {

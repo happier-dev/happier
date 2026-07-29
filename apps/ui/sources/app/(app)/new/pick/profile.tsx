@@ -14,7 +14,13 @@ import { machinePreviewEnv } from '@/sync/ops';
 import { getRequiredSecretEnvVarNames } from '@/sync/domains/profiles/profileSecrets';
 import { getTempData, storeTempData } from '@/utils/sessions/tempDataStore';
 import { ProfilesList } from '@/components/profiles/ProfilesList';
+import {
+    projectAiLaunchProfileForLegacyUi,
+    readUiAiLaunchProfiles,
+    removeAiLaunchProfile,
+} from '@/sync/domains/profiles/aiLaunchProfileCollection';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
+import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
@@ -28,6 +34,7 @@ import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } fro
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 
 export default React.memo(function ProfilePickerScreen() {
     const { theme } = useUnistyles();
@@ -45,9 +52,13 @@ export default React.memo(function ProfilePickerScreen() {
         spawnServerId?: string;
     }>();
     const useProfiles = useSetting('useProfiles');
-    const [secrets, setSecrets] = useSettingMutable('secrets');
+    const [secrets, setSecrets] = useSavedSecretsMutable();
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
-    const [profiles, setProfiles] = useSettingMutable('profiles');
+    const [rawProfiles, setRawProfiles] = useSettingMutable('profiles');
+    const profiles = React.useMemo(
+        () => readUiAiLaunchProfiles(rawProfiles).map(projectAiLaunchProfileForLegacyUi),
+        [rawProfiles],
+    );
     const [favoriteProfileIds, setFavoriteProfileIds] = useSettingMutable('favoriteProfiles');
     const settings = useSettings() ?? settingsDefaults;
 
@@ -403,14 +414,13 @@ export default React.memo(function ProfilePickerScreen() {
                     style: 'destructive',
                     onPress: () => {
                         // Only custom profiles live in `profiles` setting.
-                        const updatedProfiles = profiles.filter((p: AIBackendProfile) => p.id !== profile.id);
-                        setProfiles(updatedProfiles);
+                        setRawProfiles(removeAiLaunchProfile(rawProfiles, profile.id) as AIBackendProfile[]);
                         if (selectedId === profile.id) setParamsOnPreviousAndClose({ profileId: '' });
                     },
                 },
             ],
         );
-    }, [profiles, selectedId, setParamsOnPreviousAndClose, setProfiles]);
+    }, [rawProfiles, selectedId, setParamsOnPreviousAndClose, setRawProfiles]);
 
     const handleBackPress = React.useCallback(() => {
         navigation.goBack();
@@ -429,6 +439,7 @@ export default React.memo(function ProfilePickerScreen() {
             </Pressable>
         );
     }, [handleBackPress, theme.colors.chrome.header.foreground]);
+    const presentation = useNewSessionPickerRoutePresentation();
 
     const screenOptions = React.useCallback(() => {
         return {
@@ -436,12 +447,10 @@ export default React.memo(function ProfilePickerScreen() {
             title: t('profiles.title'),
             headerTitle: t('profiles.title'),
             headerBackTitle: t('common.back'),
-            // /new is presented as `containedModal` on iOS. Ensure picker screens are too,
-            // otherwise they can be pushed "behind" the modal (invisible but on the back stack).
-            presentation: Platform.OS === 'ios' ? 'containedModal' : undefined,
+            presentation,
             headerLeft,
         } as const;
-    }, [headerLeft]);
+    }, [headerLeft, presentation]);
 
     return (
         <PopoverScope>

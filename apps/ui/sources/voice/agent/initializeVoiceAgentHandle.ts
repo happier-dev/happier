@@ -1,23 +1,30 @@
-import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import {
-    storage } from '@/sync/domains/state/storage';
+    resolveAgentIdFromSessionMetadata,
+    type PermissionIntent,
+} from '@happier-dev/agents';
+import {
+    storage,
+} from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import { resolveDaemonVoiceAgentModelIds } from '@/voice/agent/resolveDaemonVoiceAgentModels';
 import { ensureVoiceAgentInstallablesBackground } from '@/voice/agent/ensureVoiceAgentInstallablesBackground';
 import { resolveVoiceAgentInitialContexts } from '@/voice/agent/resolveVoiceAgentInitialContexts';
-import type { VoiceAgentClient,
+import type {
+    VoiceAgentClient,
     VoiceAgentHandle,
-    VoiceAgentStartParams } from '@/voice/agent/types';
+    VoiceAgentStartParams,
+} from '@/voice/agent/types';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { ensureVoiceConversationSessionId } from '@/voice/persistence/voiceConversationSession';
 import {
     doesVoiceAgentRunMetadataMatchBackendTarget,
     readVoiceAgentRunMetadataFromSession,
-    } from '@/voice/persistence/voiceAgentRunMetadata';
+} from '@/voice/persistence/voiceAgentRunMetadata';
 import { backendTargetsMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { resolveDisabledVoiceActionIdsFromState } from '@/voice/tools/resolveDisabledVoiceActionIds';
-import { DEFAULT_AGENT_ID,
+import {
+    DEFAULT_AGENT_ID,
 } from '@/agents/catalog/catalog';
 import { sessionExecutionRunGet, sessionExecutionRunList, sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
 import { resolveVoiceAgentBootstrapTimeoutMs } from '@/voice/agent/resolveVoiceAgentBootstrapTimeoutMs';
@@ -41,6 +48,9 @@ import {
     resolveVoiceRunMetadataSessionId,
 } from '@/voice/agent/voiceAgentRunState';
 import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
+import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
+import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 type InitializeVoiceAgentHandleParams = Readonly<{
     sessionId: string;
@@ -52,10 +62,12 @@ type InitializeVoiceAgentHandleParams = Readonly<{
 type VoiceAgentSessionLike = Readonly<{
     id: string;
     modelMode?: unknown;
-    metadata?: Readonly<{
+    metadataLayoutVersion?: number;
+    metadata: Readonly<{
         flavor?: unknown;
         profileId?: unknown;
     }> | null;
+    ownerMetadataView?: unknown;
 }> | null;
 
 type VoiceAgentBootstrapConfig = Readonly<{
@@ -66,12 +78,14 @@ type VoiceAgentBootstrapConfig = Readonly<{
 }>;
 
 function shouldUseImmediateVoiceWelcome(settings: any, agentCfg: any): boolean {
+    const localConversation = readLocalConversationSettingsFromAccountSettings(settings);
+    const welcome = voiceSettingsParse(settings?.voice).welcome;
     const canAutoSpeakLocalVoiceReplies =
-        settings?.voice?.adapters?.local_conversation?.tts?.autoSpeakReplies !== false;
+        localConversation.tts.autoSpeakReplies !== false;
     return (
         canAutoSpeakLocalVoiceReplies
-        && agentCfg?.welcome?.enabled === true
-        && agentCfg?.welcome?.mode !== 'on_first_turn'
+        && welcome.enabled === true
+        && welcome.mode !== 'on_first_turn'
     );
 }
 
@@ -88,7 +102,7 @@ function resolveVoiceAgentBootstrapConfig(args: Readonly<{
             && !shouldUseImmediateVoiceWelcome(args.settings, args.agentCfg)
                 ? 'ready_handshake'
                 : 'none',
-        bootstrapTimeoutMs: resolveVoiceAgentBootstrapTimeoutMs(args.settings?.voice?.adapters?.local_conversation),
+        bootstrapTimeoutMs: resolveVoiceAgentBootstrapTimeoutMs(readLocalConversationSettingsFromAccountSettings(args.settings)),
         disabledActionIds: resolveDisabledVoiceActionIdsFromState(storage.getState() as any),
         initialContext: args.initialContext,
     };
@@ -98,7 +112,7 @@ function buildVoiceAgentStartArgsBase(args: Readonly<{
     agentSource: 'session' | 'agent';
     profileId: string | null;
     verbosity: 'short' | 'balanced';
-    permissionPolicy: 'no_tools' | 'read_only';
+    permissionIntent: PermissionIntent;
     idleTtlSeconds: number;
     bootstrap: VoiceAgentBootstrapConfig;
 }>): Omit<
@@ -117,7 +131,7 @@ function buildVoiceAgentStartArgsBase(args: Readonly<{
         agentSource: args.agentSource,
         profileId: args.profileId,
         verbosity: args.verbosity,
-        permissionPolicy: args.permissionPolicy,
+        permissionIntent: args.permissionIntent,
         idleTtlSeconds: args.idleTtlSeconds,
         initialContext: args.bootstrap.initialContext,
         bootstrapMode: args.bootstrap.bootstrapMode,
@@ -133,10 +147,10 @@ export async function initializeVoiceAgentHandle({
     enqueuePendingContextUpdate,
 }: InitializeVoiceAgentHandleParams): Promise<VoiceAgentHandle> {
     const settings: any = storage.getState().settings;
-    const voiceCfg = settings?.voice?.adapters?.local_conversation ?? null;
-    const agentCfg = voiceCfg?.agent ?? null;
+    const voiceCfg = readLocalConversationSettingsFromAccountSettings(settings);
+    const agentCfg = voiceCfg.agent;
     const requestedBackend = (agentCfg?.backend ?? 'daemon') as 'daemon' | 'openai_compat';
-    const permissionPolicy = (agentCfg?.permissionPolicy ?? 'read_only') as 'no_tools' | 'read_only';
+    const permissionIntent = (agentCfg?.permissionIntent ?? 'read-only') as PermissionIntent;
     const idleTtlSeconds = Number(agentCfg?.idleTtlSeconds ?? 300);
     const verbosity = (agentCfg?.verbosity ?? 'short') as 'short' | 'balanced';
     const agentSource = (agentCfg?.agentSource ?? 'session') as 'session' | 'agent';
@@ -159,9 +173,14 @@ export async function initializeVoiceAgentHandle({
     };
 
     const resolveDaemonSessionFromState = (daemonSessionId: string): VoiceAgentSessionLike => {
-        const lookupSession = findSessionListLookupSession(storage.getState() as any, daemonSessionId)?.session ?? null;
+        const state = storage.getState() as any;
+        const directSession = state?.sessions?.[daemonSessionId] ?? null;
+        if (directSession && (directSession.metadataLayoutVersion ?? 0) !== 0) {
+            return directSession;
+        }
+        const lookupSession = findSessionListLookupSession(state, daemonSessionId)?.session ?? null;
         if (lookupSession) return lookupSession as VoiceAgentSessionLike;
-        return (storage.getState() as any)?.sessions?.[daemonSessionId] ?? null;
+        return directSession;
     };
 
     const hydratedSessionIds = new Set<string>();
@@ -236,7 +255,7 @@ export async function initializeVoiceAgentHandle({
         await assertDaemonVoiceAgentRuntimeSupported();
     }
 
-    let backend: 'daemon' | 'openai_compat' = requestedBackend;
+    const backend: 'daemon' | 'openai_compat' = requestedBackend;
     const globalConversationSessionId =
         requestedBackend === 'daemon' ? resolvePersistedDaemonConversationSessionId() : null;
     const isGlobalVoiceAgent =
@@ -262,11 +281,7 @@ export async function initializeVoiceAgentHandle({
     }
 
     if (backend === 'daemon' && isGlobalVoiceAgent && !daemonConversationSessionId) {
-        const baseUrl = String(agentCfg?.openaiCompat?.chatBaseUrl ?? '').trim();
-        if (!baseUrl) {
-            throw Object.assign(new Error('voice_agent_requires_session'), { code: 'VOICE_AGENT_REQUIRES_SESSION' });
-        }
-        backend = 'openai_compat';
+        throw Object.assign(new Error('voice_agent_requires_session'), { code: 'VOICE_AGENT_REQUIRES_SESSION' });
     }
 
     if (backend === 'daemon') {
@@ -323,7 +338,9 @@ export async function initializeVoiceAgentHandle({
             return explicit.length > 0 ? explicit : DEFAULT_AGENT_ID;
         }
         const session = resolveDaemonSessionFromState(daemonSessionId);
-        return resolveAgentIdFromSessionMetadata(session?.metadata) ?? DEFAULT_AGENT_ID;
+        return resolveAgentIdFromSessionMetadata(
+            session ? readSessionOwnerMetadataView(session) : null,
+        ) ?? DEFAULT_AGENT_ID;
     };
     let chatModelId = '';
     let commitModelId = '';
@@ -379,7 +396,6 @@ export async function initializeVoiceAgentHandle({
     };
 
     const refreshStartState = (nextBackend: 'daemon' | 'openai_compat', nextRpcSessionId: string) => {
-        backend = nextBackend;
         rpcSessionId = nextRpcSessionId;
         ({ chatModelId, commitModelId } = resolveModelIds(nextBackend, nextRpcSessionId));
         if (nextBackend !== 'daemon') {
@@ -413,16 +429,21 @@ export async function initializeVoiceAgentHandle({
         initialContext: effectiveInitialContext,
     });
 
-    let client: VoiceAgentClient =
+    const client: VoiceAgentClient =
         backend === 'openai_compat'
             ? getOpenAiCompatVoiceAgentClient()
             : getDaemonVoiceAgentClient();
 
     const startArgsBase = buildVoiceAgentStartArgsBase({
         agentSource,
-        profileId: normalizeNonEmptyString((resolveDaemonSessionFromState(rpcSessionId)?.metadata as any)?.profileId),
+        profileId: normalizeNonEmptyString(
+            (() => {
+                const session = resolveDaemonSessionFromState(rpcSessionId);
+                return session ? readSessionOwnerMetadataView(session)?.profileId : null;
+            })(),
+        ),
         verbosity,
-        permissionPolicy,
+        permissionIntent,
         idleTtlSeconds,
         bootstrap,
     });
@@ -589,14 +610,7 @@ export async function initializeVoiceAgentHandle({
                     return await startDaemonForCurrentSession();
                 }
             }
-            if (!shouldFallbackFromDaemon(error)) throw error;
-
-            const baseUrl = String(agentCfg?.openaiCompat?.chatBaseUrl ?? '').trim();
-            if (!baseUrl) throw error;
-
-            refreshStartState('openai_compat', sessionId);
-            client = getOpenAiCompatVoiceAgentClient();
-            return await startOnce();
+            throw error;
         }
     })();
 

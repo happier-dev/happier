@@ -1,6 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import {
+  primeServerFeaturesSnapshot,
+  resetServerFeaturesClientForTests,
+  type ServerFeaturesSnapshot,
+} from '@/sync/api/capabilities/serverFeaturesClient';
 import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
+
+type MachineContributionRegistryProjectionDescribeFn =
+  typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe;
 
 const modalShow = vi.fn();
 const machineSpawnNewSession = vi.fn();
@@ -8,12 +17,36 @@ const refreshSessions = vi.fn(async () => {});
 const patchSessionMetadataWithRetry = vi.fn(async (_sessionId: string, _patcher: unknown) => {});
 const sendMessage = vi.fn(async (..._args: unknown[]) => {});
 const followUpSpawnedSessionWithServerScope = vi.fn(async (_params: unknown) => {});
+const machineContributionRegistryProjectionDescribe = vi.fn<MachineContributionRegistryProjectionDescribeFn>(
+  async () => ({ supported: false, reason: 'not-supported' }),
+);
 const state: any = {
   settings: {
     ...settingsDefaults,
     lastUsedAgent: 'claude',
   },
 };
+
+type ProvidersFeatureSnapshotMode = 'enabled' | 'disabled' | 'missing' | 'malformed' | 'unknown';
+
+function primeProvidersFeatureSnapshot(mode: ProvidersFeatureSnapshotMode): void {
+  resetServerFeaturesClientForTests();
+  let snapshot: ServerFeaturesSnapshot;
+  if (mode === 'malformed') {
+    snapshot = { status: 'unsupported', reason: 'invalid_payload' };
+  } else if (mode === 'unknown') {
+    snapshot = { status: 'error', reason: 'network' };
+  } else {
+    snapshot = {
+      status: 'ready',
+      features: FeaturesResponseSchema.parse({
+        features: mode === 'missing' ? {} : { providers: { enabled: mode === 'enabled' } },
+        capabilities: {},
+      }),
+    };
+  }
+  primeServerFeaturesSnapshot({ serverId: 'server-a', snapshot });
+}
 
 installVoiceToolActionImplCommonModuleMocks({
     modal: async () => {
@@ -47,6 +80,11 @@ vi.mock('@/sync/ops/machines', () => ({
   machineSpawnNewSession: (opts: any) => machineSpawnNewSession(opts),
 }));
 
+vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+  machineContributionRegistryProjectionDescribe: (...args: Parameters<MachineContributionRegistryProjectionDescribeFn>) =>
+    machineContributionRegistryProjectionDescribe(...args),
+}));
+
 vi.mock('@/agents/catalog/catalog', () => ({
   isAgentId: (agentId: unknown) => typeof agentId === 'string' && ['claude', 'codex', 'opencode'].includes(agentId),
   getAgentCore: (agentId: string) => ({
@@ -72,6 +110,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', (
 
 describe('spawnSessionWithPickerForVoiceTool', () => {
   beforeEach(() => {
+    primeProvidersFeatureSnapshot('enabled');
     state.settings = {
       ...settingsDefaults,
       lastUsedAgent: 'claude',
@@ -81,7 +120,6 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
         id: 'm2',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: null,
       },
     };
@@ -91,6 +129,11 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
     patchSessionMetadataWithRetry.mockClear();
     sendMessage.mockClear();
     followUpSpawnedSessionWithServerScope.mockClear();
+    machineContributionRegistryProjectionDescribe.mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('opens a picker and spawns a session from the user-selected machine + directory', async () => {
@@ -101,7 +144,6 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
     machineSpawnNewSession.mockResolvedValue({
       type: 'success',
       sessionId: 's_new',
-      usedInitialPrompt: true,
     });
 
     const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
@@ -113,11 +155,36 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
       directory: '/tmp/s2',
       backendTarget: { kind: 'backend', backendId: 'claude' },
       serverId: 'server-a',
-      initialPrompt: 'Hi',
     }));
+    expect(machineSpawnNewSession.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
     expect(refreshSessions).toHaveBeenCalled();
     expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s_new', expect.any(Function));
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('lets the spawn operation decide exact readiness for a structurally ready picked machine and propagates its error', async () => {
+    modalShow.mockImplementationOnce((cfg: any) => {
+      cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
+      return 'modal_1';
+    });
+    machineSpawnNewSession.mockResolvedValue({
+      type: 'error',
+      errorCode: 'daemon_unavailable',
+      errorMessage: 'daemon unavailable',
+    });
+
+    const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
+    const result = await spawnSessionWithPickerForVoiceTool({});
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'm2',
+      directory: '/tmp/s2',
+    }));
+    expect(result).toEqual({
+      type: 'error',
+      errorCode: 'daemon_unavailable',
+      errorMessage: 'daemon unavailable',
+    });
   });
 
   it('uses the same spawn attempt key when retrying the same picker spawn request', async () => {
@@ -134,13 +201,11 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
     await spawnSessionWithPickerForVoiceTool({ tag: 'T', initialMessage: 'Hi' });
     await spawnSessionWithPickerForVoiceTool({ tag: 'T', initialMessage: 'Hi' });
 
-    const firstSpawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as { spawnAttemptKey?: string };
-    const secondSpawnOptions = machineSpawnNewSession.mock.calls[1]?.[0] as { spawnAttemptKey?: string };
-    expect(firstSpawnOptions.spawnAttemptKey).toEqual(expect.stringMatching(/^voice\.tool\.spawn-session-picker:/));
-    expect(secondSpawnOptions.spawnAttemptKey).toBe(firstSpawnOptions.spawnAttemptKey);
+    expect(machineSpawnNewSession.mock.calls[0]?.[0]).not.toHaveProperty('spawnAttemptKey');
+    expect(machineSpawnNewSession.mock.calls[1]?.[0]).not.toHaveProperty('spawnAttemptKey');
   });
 
-  it('confirms daemon initialPrompt custody through the post-spawn send path', async () => {
+  it('routes the picked first turn through the post-spawn Pending path', async () => {
     modalShow.mockImplementationOnce((cfg: any) => {
       cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
       return 'modal_1';
@@ -148,15 +213,13 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
     machineSpawnNewSession.mockResolvedValue({
       type: 'success',
       sessionId: 's_new',
-      usedInitialPrompt: true,
     });
 
     const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
     await spawnSessionWithPickerForVoiceTool({ initialMessage: 'Hi' });
 
-    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
-      initialPrompt: 'Hi',
-    }));
+    const spawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(spawnOptions).not.toHaveProperty('initialPrompt');
     expect(refreshSessions).not.toHaveBeenCalled();
     expect(patchSessionMetadataWithRetry).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
@@ -164,15 +227,12 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
       sessionId: 's_new',
       targetServerId: 'server-a',
       initialMessageText: 'Hi',
-      metaOverrides: {
-        source: 'daemon-initial-prompt',
-        sentFrom: 'ui',
-      },
-      messageLocalId: 'daemon-initial-prompt:s_new',
+      metaOverrides: undefined,
+      messageLocalId: `spawn-first-turn:${String(spawnOptions.spawnNonce)}`,
     });
   });
 
-  it('keeps the post-spawn first message when daemon initialPrompt custody is not confirmed', async () => {
+  it('keeps the post-spawn first message on the canonical Pending path', async () => {
     modalShow.mockImplementationOnce((cfg: any) => {
       cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
       return 'modal_1';
@@ -185,9 +245,8 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
     const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
     await spawnSessionWithPickerForVoiceTool({ initialMessage: 'Hi' });
 
-    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
-      initialPrompt: 'Hi',
-    }));
+    const spawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(spawnOptions).not.toHaveProperty('initialPrompt');
     expect(refreshSessions).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
     expect(followUpSpawnedSessionWithServerScope).toHaveBeenCalledWith({
@@ -195,6 +254,7 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
       targetServerId: 'server-a',
       initialMessageText: 'Hi',
       metaOverrides: undefined,
+      messageLocalId: `spawn-first-turn:${String(spawnOptions.spawnNonce)}`,
     });
   });
 
@@ -217,8 +277,15 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
 
     const spawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(spawnOptions).toMatchObject({
-      modelId: 'gpt-5',
-      modelUpdatedAt: expect.any(Number),
+      modelSelection: {
+        v: 1,
+        ref: {
+          agentTargetKey: 'backend:opencode',
+          providerConnectionId: null,
+          modelId: 'gpt-5',
+        },
+        updatedAt: expect.any(Number),
+      },
     });
     expect(spawnOptions).not.toHaveProperty('initialPrompt');
     expect(sendMessage).not.toHaveBeenCalled();
@@ -227,7 +294,108 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
       targetServerId: 'server-a',
       initialMessageText: 'Use the selected model for this first turn',
       metaOverrides: { model: 'gpt-5' },
+      messageLocalId: `spawn-first-turn:${String(spawnOptions.spawnNonce)}`,
     });
+  });
+
+  it('preserves provider connection identity through the picker spawn path', async () => {
+    modalShow.mockImplementationOnce((cfg: any) => {
+      cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
+      return 'modal_1';
+    });
+    machineSpawnNewSession.mockResolvedValue({ type: 'success', sessionId: 's_new' });
+
+    const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
+    await spawnSessionWithPickerForVoiceTool({
+      agentId: 'codex',
+      providerConnectionId: 'pc_openrouter',
+      modelId: 'default',
+    });
+
+    const spawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(spawnOptions).toMatchObject({
+      modelSelection: {
+        v: 1,
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: 'pc_openrouter',
+          modelId: 'default',
+        },
+        updatedAt: expect.any(Number),
+      },
+    });
+    expect(spawnOptions).not.toHaveProperty('modelId');
+    expect(spawnOptions).not.toHaveProperty('modelUpdatedAt');
+  });
+
+  it.each([
+    'disabled',
+    'missing',
+    'malformed',
+    'unknown',
+  ] as const)('refuses a Provider-bound picker spawn without invoking the machine when the feature snapshot is %s', async (mode) => {
+    primeProvidersFeatureSnapshot(mode);
+    modalShow.mockImplementationOnce((cfg: any) => {
+      cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
+      return 'modal_1';
+    });
+    const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
+
+    const result = await spawnSessionWithPickerForVoiceTool({
+      agentId: 'codex',
+      providerConnectionId: 'pc_openrouter',
+      modelId: 'gpt-5',
+    });
+
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
+    expect(machineContributionRegistryProjectionDescribe).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: false,
+      type: 'error',
+      errorCode: 'provider_feature_disabled',
+      errorMessage: 'provider_feature_disabled',
+      errorDetail: {
+        kind: 'provider_error',
+        providerError: {
+          v: 1,
+          code: 'provider_feature_disabled',
+          connectionId: 'pc_openrouter',
+          machineId: 'm2',
+          retryable: false,
+          action: 'review_features',
+        },
+      },
+    });
+  });
+
+  it('keeps native picker spawns unchanged when the Provider feature decision is unknown', async () => {
+    resetServerFeaturesClientForTests();
+    const fetchSpy = vi.fn(async () => {
+      throw new Error('native picker spawn must not probe Provider feature state');
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    modalShow.mockImplementationOnce((cfg: any) => {
+      cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
+      return 'modal_1';
+    });
+    machineSpawnNewSession.mockResolvedValue({ type: 'success', sessionId: 's_new' });
+    const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
+
+    await spawnSessionWithPickerForVoiceTool({
+      agentId: 'codex',
+      modelId: 'gpt-5',
+    });
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      modelSelection: expect.objectContaining({
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: null,
+          modelId: 'gpt-5',
+        },
+      }),
+    }));
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('uses the configured last-used backend target when there is no explicit voice tool agent override', async () => {

@@ -41,7 +41,11 @@ export function mergePendingSettingsIntoRawBaseline(params: {
     comparisonChanged: boolean;
 } {
     const safeBaseline = toSafeRawRecord(params.rawBaseline);
-    const pendingRaw = params.normalizeForPersistedStorage(toSafePendingRecord(params.pendingSettings)).value;
+    // Pending account settings are sparse top-level deltas. Normalize only
+    // after overlaying them on the raw server baseline: parsing a nested
+    // compatibility value (notably legacy `voice`) in isolation can synthesize
+    // defaults that would overwrite canonical sibling roots.
+    const pendingRaw = toSafePendingRecord(params.pendingSettings);
     const merged = { ...safeBaseline, ...pendingRaw };
     const comparison = params.normalizeForPersistedStorage(safeBaseline);
     const outgoing = params.normalizeForPersistedStorage(merged);

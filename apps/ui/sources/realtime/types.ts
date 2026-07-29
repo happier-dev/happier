@@ -1,6 +1,8 @@
 export interface VoiceSessionConfig {
     sessionId: string;
     initialContext?: string;
+    leaseId?: string;
+    bindingNonce?: string;
     token?: string;
     signedUrl?: string;
     textOnly?: boolean;

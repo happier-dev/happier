@@ -1,20 +1,21 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 type TestImagePreviewState =
-    | Readonly<{ status: 'loaded'; uri: string; svgXml: string | null; error: null }>
+    | Readonly<{ status: 'loaded'; uri: string; error: null }>
     | Readonly<{ status: 'error'; uri: null; error: string }>;
 
 const previewState = vi.hoisted((): { current: TestImagePreviewState } => ({
     current: {
         status: 'loaded',
         uri: 'blob:preview',
-        svgXml: null,
         error: null,
     },
 }));
+const useSessionImagePreviewSpy = vi.hoisted(() => vi.fn(() => previewState.current));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -30,6 +31,10 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
+vi.mock('expo-image', () => ({
+    Image: 'ExpoImage',
+}));
+
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock().module;
@@ -40,20 +45,50 @@ vi.mock('@/components/sessions/attachments/preview/AttachmentImagePreviewModal',
 }));
 
 vi.mock('@/components/sessions/files/content/imagePreview/useSessionImagePreview', () => ({
-    useSessionImagePreview: () => previewState.current,
+    useSessionImagePreview: useSessionImagePreviewSpy,
 }));
 
 afterEach(() => {
+    useSessionImagePreviewSpy.mockClear();
     previewState.current = {
         status: 'loaded',
         uri: 'blob:preview',
-        svgXml: null,
         error: null,
     };
     standardCleanup();
 });
 
 describe('SessionMediaInlineImages', () => {
+    it('renders public media as inert metadata without invoking a preview resolver', async () => {
+        const { SessionMediaInlineImages } = await import('./SessionMediaInlineImages');
+        const path = '.happier/uploads/generated/public.png';
+        const screen = await renderScreen(
+            <SessionMediaInlineImages
+                sessionId="public"
+                media={[{
+                    id: 'public-image',
+                    status: 'available',
+                    name: 'public.png',
+                    path,
+                    mimeType: 'image/png',
+                    sizeBytes: 42,
+                    category: 'generated',
+                    role: 'output',
+                }]}
+                onOpenPath={() => {
+                    throw new Error('public media must not open a file');
+                }}
+                fileOpenEnabled={false}
+                mediaPreviewEnabled={false}
+            />,
+        );
+
+        const tile = screen.findByTestId(`message-session-media-inline-image:${path}`);
+        expect(tile?.type).toBe('View');
+        expect(tile?.props.onPress).toBeUndefined();
+        expect(useSessionImagePreviewSpy).not.toHaveBeenCalled();
+    });
+
     it('renders available video references as accessible file-opening media tiles', async () => {
         const { SessionMediaInlineImages } = await import('./SessionMediaInlineImages');
         const { t } = await import('@/text');
@@ -74,6 +109,8 @@ describe('SessionMediaInlineImages', () => {
                     role: 'output',
                 } as any]}
                 onOpenPath={onOpenPath}
+                fileOpenEnabled
+                mediaPreviewEnabled
             />,
         );
 
@@ -103,6 +140,8 @@ describe('SessionMediaInlineImages', () => {
                     failureCode: 'invalid_source_file',
                 }]}
                 onOpenPath={() => {}}
+                fileOpenEnabled
+                mediaPreviewEnabled
             />,
         );
 
@@ -130,6 +169,8 @@ describe('SessionMediaInlineImages', () => {
                     role: 'output',
                 }]}
                 onOpenPath={() => {}}
+                fileOpenEnabled
+                mediaPreviewEnabled
             />,
         );
 
@@ -137,6 +178,54 @@ describe('SessionMediaInlineImages', () => {
 
         expect(tile?.props.accessibilityRole).toBe('button');
         expect(tile?.props.accessibilityLabel).toBe(t('files.sessionMedia.generatedImageA11y', { name: 'diagram.png' }));
+    });
+
+    it('fills the tile and preserves aspect ratio when expo-image reports intrinsic dimensions', async () => {
+        const { SessionMediaInlineImages } = await import('./SessionMediaInlineImages');
+        const path = '.happier/uploads/generated/session-1/message-1/wide.png';
+        const screen = await renderScreen(
+            <SessionMediaInlineImages
+                sessionId="s1"
+                media={[{
+                    id: 'media-wide',
+                    name: 'wide.png',
+                    path,
+                    mimeType: 'image/png',
+                    sizeBytes: 42,
+                    category: 'generated',
+                    role: 'output',
+                }]}
+                onOpenPath={() => {}}
+                fileOpenEnabled
+                mediaPreviewEnabled
+            />,
+        );
+
+        const preview = screen.findByTestId(`message-session-media-inline-image-preview:${path}`);
+        expect(preview?.type).toBe('ExpoImage');
+        expect(preview?.props.contentFit).toBe('contain');
+        expect(preview?.props.style).toEqual({
+            position: 'absolute',
+            top: 0,
+            right: 0,
+            bottom: 0,
+            left: 0,
+        });
+
+        await act(async () => {
+            preview?.props.onLoad({
+                cacheType: 'none',
+                source: {
+                    url: 'blob:preview',
+                    width: 1600,
+                    height: 900,
+                    mediaType: 'image/png',
+                },
+            });
+        });
+
+        const tile = screen.findByTestId(`message-session-media-inline-image:${path}`);
+        expect(tile?.props.style).toContainEqual({ width: 220, height: 124 });
     });
 
     it('opens available previews using indexes that skip unavailable failure rows', async () => {
@@ -173,6 +262,8 @@ describe('SessionMediaInlineImages', () => {
                     role: 'output',
                 }]}
                 onOpenPath={() => {}}
+                fileOpenEnabled
+                mediaPreviewEnabled
             />,
         );
 
@@ -207,6 +298,8 @@ describe('SessionMediaInlineImages', () => {
                     role: 'input',
                 }]}
                 onOpenPath={() => {}}
+                fileOpenEnabled
+                mediaPreviewEnabled
             />,
         );
 
@@ -215,5 +308,39 @@ describe('SessionMediaInlineImages', () => {
         expect(tile?.props.accessibilityRole).toBe('button');
         expect(tile?.props.accessibilityLabel).toBeTruthy();
         expect(tile?.props.accessibilityHint).toBe(t('files.sessionMedia.previewUnavailableA11y'));
+    });
+
+    it('does not announce an unavailable image as actionable when file opening is unavailable', async () => {
+        previewState.current = {
+            status: 'error',
+            uri: null,
+            error: 'not found',
+        };
+
+        const { SessionMediaInlineImages } = await import('./SessionMediaInlineImages');
+        const path = '.happier/uploads/generated/session-1/message-1/missing.png';
+        const screen = await renderScreen(
+            <SessionMediaInlineImages
+                sessionId="s1"
+                media={[{
+                    id: 'media-missing',
+                    name: 'missing.png',
+                    path,
+                    mimeType: 'image/png',
+                    sizeBytes: 42,
+                    category: 'generated',
+                    role: 'output',
+                }]}
+                onOpenPath={() => {
+                    throw new Error('file opening is unavailable');
+                }}
+                fileOpenEnabled={false}
+                mediaPreviewEnabled
+            />,
+        );
+
+        const tile = screen.findByTestId(`message-session-media-inline-image:${path}`);
+        expect(tile?.props.accessibilityRole).toBe('image');
+        expect(tile?.props.onPress).toBeUndefined();
     });
 });

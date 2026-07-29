@@ -9,6 +9,7 @@ import {
     makeToolCall,
 } from './ToolView.testHelpers';
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -56,11 +57,11 @@ installToolShellCommonModuleMocks({
         (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'permissionPromptSurface') return 'transcript';
                     if (key === 'toolViewShowDebugByDefault') return false;
                     return false;
-                },
+                } }),
             },
         }),
 });
@@ -113,7 +114,13 @@ describe('ToolFullView (permission pending)', () => {
         });
 
         const screen = await renderScreen(
-            React.createElement(ToolFullView, { tool, metadata: null, messages: [], sessionId: 's1' }),
+            React.createElement(ToolFullView, {
+                tool,
+                owningMessageId: 'tool-message-1',
+                metadata: null,
+                messages: [],
+                sessionId: 's1',
+            }),
         );
 
         expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(1);
@@ -133,7 +140,13 @@ describe('ToolFullView (permission pending)', () => {
         });
 
         const screen = await renderScreen(
-            React.createElement(ToolFullView, { tool, metadata: null, messages: [], sessionId: 's1' }),
+            React.createElement(ToolFullView, {
+                tool,
+                owningMessageId: 'tool-message-2',
+                metadata: null,
+                messages: [],
+                sessionId: 's1',
+            }),
         );
 
         expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(0);
@@ -155,6 +168,7 @@ describe('ToolFullView (permission pending)', () => {
         const screen = await renderScreen(
             React.createElement(ToolFullView, {
                 tool,
+                owningMessageId: 'task-message-1',
                 metadata: null,
                 messages: [],
                 sessionId: 's1',
@@ -198,6 +212,7 @@ describe('ToolFullView (permission pending)', () => {
         const screen = await renderScreen(
             React.createElement(ToolFullView, {
                 tool,
+                owningMessageId: 'task-message-2',
                 metadata: null,
                 messages: [childToolMessage],
                 sessionId: 's1',
@@ -228,6 +243,7 @@ describe('ToolFullView (permission pending)', () => {
         const screen = await renderScreen(
             React.createElement(ToolFullView, {
                 tool,
+                owningMessageId: 'tool-message-3',
                 metadata: null,
                 messages: [],
                 sessionId: 's1',

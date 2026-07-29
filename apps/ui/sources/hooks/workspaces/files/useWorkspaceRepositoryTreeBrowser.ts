@@ -8,6 +8,7 @@ import {
     listWorkspaceRepositoryDirectoryEntries,
     warmWorkspaceRepositoryDirectoryCache,
 } from '@/sync/domains/workspaces/files/workspaceRepositoryDirectory';
+import { useWorkspaceRepositoryDirectoryRevision } from './useWorkspaceRepositoryDirectoryRevision';
 
 function joinPath(parent: string, name: string): string {
     const trimmedParent = parent.trim().replace(/\/+$/g, '');
@@ -47,6 +48,11 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
     onExpandedPathsChange?: (paths: string[]) => void;
     reloadToken?: number;
 }>) {
+    const directoryRevision = useWorkspaceRepositoryDirectoryRevision(input.workspaceCacheKey);
+    const effectiveReloadToken = React.useMemo(() => (
+        `${input.reloadToken ?? ''}:${directoryRevision}`
+    ), [directoryRevision, input.reloadToken]);
+
     const getCachedEntries = React.useCallback((directoryPath: string) => {
         const cached = getCachedWorkspaceRepositoryDirectoryEntries({
             workspaceCacheKey: input.workspaceCacheKey,
@@ -83,7 +89,7 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
         rootDirectoryPath: '',
         expandedPaths: input.expandedPaths,
         onExpandedPathsChange: input.onExpandedPathsChange,
-        reloadToken: input.reloadToken,
+        reloadToken: effectiveReloadToken,
         getCachedEntries,
         loadDirectoryEntries,
         warmDirectoryEntries,

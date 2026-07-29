@@ -1,17 +1,21 @@
 import type { AgentCoreConfig, MachineLoginKey } from '@/agents/registry/registryCore';
+import { BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES } from '@/agents/registry/generatedBundledPluginEntries';
 import {
     AGENT_IDS,
     DEFAULT_AGENT_ID,
+    getAllAgentProviderOwnedEnvironmentKeys,
     getAgentCore as getExpoAgentCore,
     isAgentId,
     resolveAgentIdFromCliDetectKey,
     resolveAgentIdFromConnectedServiceId,
     resolveAgentIdFromFlavor,
+    resolveAgentIdFromSessionMetadata,
     type AgentId,
 } from '@/agents/registry/registryCore';
 
 import type { AgentUiConfig } from '@/agents/registry/registryUi';
 import { applyProviderSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol';
 type RegistryUiModule = typeof import('@/agents/registry/registryUi');
 type AgentIconTintTheme = Parameters<RegistryUiModule['getAgentIconTintColor']>[1];
 import * as RegistryUi from '@/agents/registry/registryUi';
@@ -33,6 +37,7 @@ import {
 } from '@/agents/registry/registryUiBehavior';
 
 export { AGENT_IDS, DEFAULT_AGENT_ID };
+export { getAllAgentProviderOwnedEnvironmentKeys };
 export type { AgentId, MachineLoginKey };
 
 export type AgentCatalogEntry = Readonly<{
@@ -48,6 +53,21 @@ function registryUi(): typeof RegistryUi {
 
 export function getAgentCore(id: AgentId): AgentCoreConfig {
     return getExpoAgentCore(id);
+}
+
+export function resolveBundledAgentIdFromContributionIdentity(identity: unknown): AgentId | null {
+    const parsed = PluginContributionIdentityV1Schema.safeParse(identity);
+    if (!parsed.success) return null;
+    for (const agentId of AGENT_IDS) {
+        const bundledIdentity = BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES[agentId];
+        if (
+            bundledIdentity.pluginId === parsed.data.pluginId
+            && bundledIdentity.localId === parsed.data.localId
+        ) {
+            return agentId;
+        }
+    }
+    return null;
 }
 
 export function writeAgentVendorResumeIdToMetadata<Metadata extends Record<string, unknown>>(
@@ -116,6 +136,7 @@ export function getAgent(id: AgentId): AgentCatalogEntry {
 export {
     isAgentId,
     resolveAgentIdFromFlavor,
+    resolveAgentIdFromSessionMetadata,
     resolveAgentIdFromCliDetectKey,
     resolveAgentIdFromConnectedServiceId,
     getAgentResumeExperimentsFromSettings,

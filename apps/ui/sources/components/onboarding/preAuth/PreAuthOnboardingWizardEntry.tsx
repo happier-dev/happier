@@ -1,7 +1,6 @@
 import * as React from 'react';
-import { Linking, Platform } from 'react-native';
-
-import { useRouter } from 'expo-router';
+import { Linking, Platform, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { authGetToken } from '@/auth/flows/getToken';
@@ -22,8 +21,10 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveAppUrlScheme } from '@/utils/url/appScheme';
 import { trackAccountCreated } from '@/track';
 import { t } from '@/text';
+import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 
 import { getPendingSetupIntent, clearPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
+import { usePendingSetupIntent } from '@/components/onboarding/state/usePendingSetupIntent';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
 import { isTauriDesktop } from '@/utils/platform/tauri';
@@ -41,6 +42,64 @@ import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShell
 import { setOnboardingWizardPreAuthResumeIntent, resolveWizardAuthReturnToRoute } from '@/components/onboarding/state/wizardResume';
 import { getWizardStepDefinition } from '@/components/onboarding/state/wizardStepRegistry';
 import type { WizardStepId } from '@/components/onboarding/state/wizardTypes';
+import { type JourneyBeatId, type JourneySurface } from '@/components/onboarding/tour/state/journeyBeats';
+import { readJourneyReplayBeatId, readWebQueryParam } from '@/components/onboarding/tour/state/journeyReplayIntent';
+import { useOnboardingJourneySessionActive } from '@/components/onboarding/tour/state/journeySession';
+import { useLocalSetting } from '@/sync/store/hooks';
+
+type OnboardingJourneyHostModule = typeof import('@/components/onboarding/tour/OnboardingJourneyHost');
+let onboardingJourneyHostModulePromise: Promise<OnboardingJourneyHostModule> | null = null;
+
+function loadOnboardingJourneyHostModule(): Promise<OnboardingJourneyHostModule> {
+    onboardingJourneyHostModulePromise ??= import('@/components/onboarding/tour/OnboardingJourneyHost');
+    return onboardingJourneyHostModulePromise;
+}
+
+export function preloadOnboardingJourneyHost(): void {
+    void loadOnboardingJourneyHostModule();
+}
+
+const LazyOnboardingJourneyHost = React.lazy(async () => {
+    const module = await loadOnboardingJourneyHostModule();
+    return { default: module.OnboardingJourneyHost };
+});
+
+const journeyLoadingStylesheet = StyleSheet.create((theme) => ({
+    root: {
+        flex: 1,
+        minHeight: 0,
+        backgroundColor: theme.colors.background.canvas,
+    },
+}));
+
+function OnboardingJourneyLoadingSurface(): React.ReactElement {
+    useUnistyles();
+    return <View testID="onboarding-journey-loading" style={journeyLoadingStylesheet.root} />;
+}
+
+type JourneyHostErrorBoundaryProps = Readonly<{
+    children: React.ReactNode;
+    fallback: React.ReactNode;
+}>;
+
+type JourneyHostErrorBoundaryState = Readonly<{
+    didCatch: boolean;
+}>;
+
+class JourneyHostErrorBoundary extends React.Component<JourneyHostErrorBoundaryProps, JourneyHostErrorBoundaryState> {
+    state: JourneyHostErrorBoundaryState = { didCatch: false };
+
+    static getDerivedStateFromError(): JourneyHostErrorBoundaryState {
+        return { didCatch: true };
+    }
+
+    render(): React.ReactNode {
+        if (this.state.didCatch) {
+            return this.props.fallback;
+        }
+        return this.props.children;
+    }
+}
 
 export type PreAuthOnboardingWizardEntryProps = Readonly<{
     testID?: string;
@@ -59,9 +118,36 @@ function resolveUnauthShellRouteTestId(stepId: WizardStepId): string {
     return 'unauth-shell-route-welcome';
 }
 
+function readDebugWebQueryParam(name: string): string {
+    if (!process.env.EXPO_PUBLIC_DEBUG) return '';
+    return readWebQueryParam(name);
+}
+
+function resolveJourneySurface(params: Readonly<{ isDesktopShell: boolean; platformOs: string }>): JourneySurface {
+    if (params.isDesktopShell) return 'desktop';
+    return params.platformOs === 'web' ? 'web' : 'native';
+}
+
 export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardingWizardEntry(props: PreAuthOnboardingWizardEntryProps) {
     const auth = useAuth();
-    const router = useRouter();
+    const onboardingTourDecision = useFeatureDecision('app.ui.onboardingTour', { scopeKind: 'runtime' });
+    const onboardingTourEnabled = onboardingTourDecision?.state === 'enabled';
+    const onboardingTourResolving = onboardingTourDecision == null;
+    // The journey is a FIRST-RUN experience (D21). `hasCompletedAuthOnce` survives
+    // logout by design, so returning users get the preserved classic welcome shell.
+    const hasCompletedAuthOnce = useLocalSetting('hasCompletedAuthOnce') === true;
+    // Sticky: once a journey session is live it OWNS the viewport until it ends.
+    // This flag flips true when the host mounts and stays true across the auth hinge
+    // (login sets `hasCompletedAuthOnce`), so a first-run journey is never torn down
+    // mid-setup — the root cause of the S4-beside-the-live-shell composition defect.
+    const journeySessionActive = useOnboardingJourneySessionActive();
+    // A persisted setup-intent continuation for an authed user means the journey's
+    // setup act was interrupted (e.g. reload lost the in-memory session latch). The
+    // journey re-latches at the setup act instead of ever exposing the shell (D21/P1).
+    const routeGatePendingSetupIntent = usePendingSetupIntent();
+    const hasAuthedSetupContinuation =
+        auth.isAuthenticated
+        && (routeGatePendingSetupIntent?.phase === 'awaiting_auth' || routeGatePendingSetupIntent?.phase === 'post_auth');
     const isLandscape = useIsLandscape();
     const isDesktopShell = React.useMemo(() => isTauriDesktop(), []);
     const authEntryOptions = useAuthEntryOptions();
@@ -264,10 +350,6 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         }
     }, [auth]);
 
-    const changeRelayViaServerConfig = React.useCallback(() => {
-        router.replace('/?happier_wizard_step=relay_select');
-    }, [router]);
-
     React.useEffect(() => {
         const autoRedirect = authEntryOptions.autoRedirect;
         const providerId = autoRedirect.providerId;
@@ -314,28 +396,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         if (props.initialStepId) {
             return props.initialStepId;
         }
-        if (Platform.OS !== 'web') {
-            return undefined;
-        }
-        if (!process.env.EXPO_PUBLIC_DEBUG) {
-            return undefined;
-        }
-
-        const location =
-            typeof window !== 'undefined'
-                ? window.location
-                : (globalThis as unknown as { location?: { search?: unknown } }).location;
-        const search = typeof location?.search === 'string' ? location.search : '';
-        const href = typeof (location as { href?: unknown } | null)?.href === 'string'
-            ? String((location as { href?: unknown }).href)
-            : '';
-        const fallbackSearch = !search && href.includes('?') ? href.slice(href.indexOf('?')) : '';
-        const query = search || fallbackSearch;
-        if (!query) {
-            return undefined;
-        }
-        const value = new URLSearchParams(query).get('happier_wizard_step');
-        const candidate = typeof value === 'string' ? value.trim() : '';
+        const candidate = readDebugWebQueryParam('happier_wizard_step');
         if (!candidate) {
             return undefined;
         }
@@ -347,6 +408,10 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             return undefined;
         }
     }, [props.initialStepId]);
+
+    const resolvedInitialBeatId = React.useMemo((): JourneyBeatId | undefined => (
+        readJourneyReplayBeatId()
+    ), []);
 
     const shellChrome = shellChromeHost === 'unauth-shell' ? (
         <>
@@ -372,12 +437,22 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         onCreateAccountViaProvider: createAccountViaProvider,
         onLoginWithKeylessProvider: loginWithKeylessProvider,
         onLoginWithMtls: loginWithMtls,
-        onChangeRelayViaServerConfig: changeRelayViaServerConfig,
     };
 
     const controller = useOnboardingWizardController(wizardSurfaceProps);
-
-    return (
+    const wizardFallback = (
+        <OnboardingWizardSurfacePresentation
+            {...wizardSurfaceProps}
+            controller={controller}
+        />
+    );
+    const journeyLoadingFallback = <OnboardingJourneyLoadingSurface />;
+    const journeySurface = resolveJourneySurface({
+        isDesktopShell,
+        platformOs: Platform.OS,
+    });
+    const shellTestID = props.testID ?? resolveUnauthShellRouteTestId(controller.stepId);
+    const renderClassicShell = (children: React.ReactNode) => (
         <UnauthenticatedSplitShell
             stepId={controller.stepId}
             isWelcomeStep={controller.stepId === 'welcome'}
@@ -389,12 +464,45 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             onBack={controller.onBack ?? undefined}
             transitionDirection={controller.contentTransitionDirection}
             workflowPresentation={controller.stepId === 'scan_code' ? 'fullBleed' : 'padded'}
-            testID={props.testID ?? resolveUnauthShellRouteTestId(controller.stepId)}
+            testID={shellTestID}
         >
-            <OnboardingWizardSurfacePresentation
-                {...wizardSurfaceProps}
-                controller={controller}
-            />
+            {children}
         </UnauthenticatedSplitShell>
     );
+
+    if (onboardingTourResolving) {
+        return journeyLoadingFallback;
+    }
+
+    // Explicit replay intent (deep-link into a specific journey beat) reaches the
+    // journey regardless of returning-user status; replay is an intent, not the default.
+    const hasExplicitJourneyReplayIntent = resolvedInitialBeatId != null;
+    const shouldRenderJourney =
+        onboardingTourEnabled
+        && (journeySessionActive || hasAuthedSetupContinuation || !hasCompletedAuthOnce || hasExplicitJourneyReplayIntent);
+    // Re-latch case: authed setup continuation without a live journey session mounts
+    // the host directly at the first setup-act beat (S3) instead of the journey start.
+    const journeyInitialBeatId = resolvedInitialBeatId
+        ?? (hasAuthedSetupContinuation && !journeySessionActive ? 'S3' as JourneyBeatId : undefined);
+
+    if (shouldRenderJourney) {
+        preloadOnboardingJourneyHost();
+        const fallback = renderClassicShell(wizardFallback);
+        return (
+            <JourneyHostErrorBoundary fallback={fallback}>
+                <React.Suspense fallback={journeyLoadingFallback}>
+                    <LazyOnboardingJourneyHost
+                        testID={props.testID ?? 'onboarding-journey'}
+                        surface={journeySurface}
+                        isDesktopShell={isDesktopShell}
+                        initialBeatId={journeyInitialBeatId}
+                        preAuthController={controller}
+                        wizardSurfaceProps={wizardSurfaceProps}
+                    />
+                </React.Suspense>
+            </JourneyHostErrorBoundary>
+        );
+    }
+
+    return renderClassicShell(wizardFallback);
 });

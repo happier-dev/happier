@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import {
     installPromptLibrarySettingsCommonModuleMocks,
     promptLibrarySettingsRouterBackSpy,
@@ -28,6 +28,14 @@ const promptExternalLinksState = vi.hoisted(() => ({
                 externalRef: { relativePath: 'review/code.md' },
                 lastExternalDigest: 'digest-1',
             },
+        ],
+    },
+}));
+const promptFoldersState = vi.hoisted(() => ({
+    value: {
+        v: 1,
+        folders: [
+            { id: 'folder-1', name: 'Ops', parentId: null },
         ],
     },
 }));
@@ -76,15 +84,7 @@ installPromptLibrarySettingsCommonModuleMocks({
             },
             useSettingMutable: (key: string) => {
                 if (key === 'promptFoldersV1') {
-                    return [
-                        {
-                            v: 1,
-                            folders: [
-                                { id: 'folder-1', name: 'Ops', parentId: null },
-                            ],
-                        },
-                        setPromptFoldersSpy,
-                    ];
+                    return [promptFoldersState.value, setPromptFoldersSpy];
                 }
                 return [null, vi.fn()];
             },
@@ -164,6 +164,12 @@ describe('PromptDocEditorScreen', () => {
         promptLibrarySettingsRouterPushSpy.mockReset();
         updatePromptDocSpy.mockClear();
         setPromptFoldersSpy.mockClear();
+        promptFoldersState.value = {
+            v: 1,
+            folders: [
+                { id: 'folder-1', name: 'Ops', parentId: null },
+            ],
+        };
     });
 
     it('falls back to the docs list when saving from a deep-linked editor without back history', async () => {
@@ -205,6 +211,35 @@ describe('PromptDocEditorScreen', () => {
         expect(screen.findByTestId('promptDoc.tags')?.props.value).toBe('alpha, beta');
         expect(footer.props.primaryTestID).toBe('promptDoc.save');
         expect(footer.props.secondaryTestID).toBe('promptDoc.cancel');
+    });
+
+    it('preserves dirty prompt doc fields when prompt-folder settings refresh', async () => {
+        const { PromptDocEditorScreen } = await import('./PromptDocEditorScreen');
+        const screen = await renderScreen(React.createElement(PromptDocEditorScreen, { artifactId: 'doc-1' }));
+
+        await act(async () => {
+            screen.changeTextByTestId('promptDoc.title', 'Draft title');
+            screen.changeTextByTestId('promptDoc.editor', 'draft markdown');
+            screen.changeTextByTestId('promptDoc.folderName', 'Draft folder');
+            screen.changeTextByTestId('promptDoc.tags', 'draft, tag');
+        });
+
+        promptFoldersState.value = {
+            v: 1,
+            folders: [
+                { id: 'folder-1', name: 'Renamed Ops', parentId: null },
+            ],
+        };
+
+        await act(async () => {
+            screen.changeTextByTestId('promptDoc.tags', 'draft, tag updated');
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(screen.findByTestId('promptDoc.title')?.props.value).toBe('Draft title');
+        expect(screen.findByTestId('promptDoc.editor')?.props.value).toBe('draft markdown');
+        expect(screen.findByTestId('promptDoc.folderName')?.props.value).toBe('Draft folder');
+        expect(screen.findByTestId('promptDoc.tags')?.props.value).toBe('draft, tag updated');
     });
 
     it('renders a title input, markdown editor, and save action for new docs', async () => {

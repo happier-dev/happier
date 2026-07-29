@@ -5,6 +5,7 @@ import { renderHook, standardCleanup } from '@/dev/testkit';
 
 import { useSessionMessages, useSessionSubagentSourceMessages, useSessionTranscriptIds, useSessionVisibleReadSeq } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
+import type { Message } from '@/sync/domains/messages/messageTypes';
 
 afterEach(() => {
     standardCleanup();
@@ -78,6 +79,62 @@ describe('useSessionMessages', () => {
 
             expect(hook.getCurrent()).toBe(11);
             expect(renderCount).toBe(initialRenderCount);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('does not rescan visible read seq when unrelated store state publishes', async () => {
+        const previousState = storage.getState();
+        try {
+            const messagesById: Record<string, Message> = {
+                'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, seq: 10, text: 'hi' },
+            };
+            let transcriptOrderReads = 0;
+            const transcript = {
+                get messageIdsOldestFirst() {
+                    transcriptOrderReads += 1;
+                    return ['m-1'];
+                },
+                messagesById,
+                messagesMap: messagesById,
+                // Minimal selector fixture: reducer internals are irrelevant to visible-read derivation.
+                reducerState: {} as any,
+                latestThinkingMessageId: null,
+                latestThinkingMessageActivityAtMs: null,
+                messagesVersion: 1,
+                isLoaded: true,
+            };
+
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-visible-cache': transcript,
+                },
+            }));
+
+            const hook = await renderHook(() => useSessionVisibleReadSeq('s-visible-cache', {
+                sessionSeq: 12,
+                latestTurnStatus: 'in_progress',
+            }), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent()).toBe(10);
+            const readsAfterInitialRender = transcriptOrderReads;
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    isDataReady: state.isDataReady,
+                }));
+            });
+
+            expect(hook.getCurrent()).toBe(10);
+            expect(transcriptOrderReads).toBe(readsAfterInitialRender);
 
             await hook.unmount();
         } finally {
@@ -535,6 +592,73 @@ describe('useSessionMessages', () => {
 
             expect(hook.getCurrent().isLoaded).toBe(true);
             expect(hook.getCurrent().messages.map((message) => message.id)).toEqual(['m-1', 'm-2']);
+
+            await hook.unmount();
+        } finally {
+            await act(async () => {
+                storage.setState(previousState);
+            });
+        }
+    });
+
+    it('uses transcript block order when deriving committed messages from the populated message map fallback', async () => {
+        const previousState = storage.getState();
+        try {
+            const messagesById = {
+                'z-text': {
+                    id: 'z-text',
+                    kind: 'agent-text',
+                    localId: null,
+                    createdAt: 2_000,
+                    text: 'Text before the question.',
+                    isThinking: false,
+                    seq: 10,
+                    transcriptBlockIndex: 0,
+                } as any,
+                'a-tool': {
+                    id: 'a-tool',
+                    kind: 'tool-call',
+                    localId: null,
+                    createdAt: 2_000,
+                    tool: {
+                        id: 'ask1',
+                        name: 'AskUserQuestion',
+                        state: 'running',
+                        input: { questions: [{ question: 'Choose a path' }] },
+                        createdAt: 2_000,
+                        startedAt: 2_000,
+                        completedAt: null,
+                        description: null,
+                    },
+                    children: [],
+                    seq: 10,
+                    transcriptBlockIndex: 1,
+                } as any,
+            };
+
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-1': {
+                        messageIdsOldestFirst: [],
+                        messagesById,
+                        messagesMap: messagesById,
+                        reducerState: {} as any,
+                        latestThinkingMessageId: null,
+                        latestThinkingMessageActivityAtMs: null,
+                        messagesVersion: 3,
+                        isLoaded: true,
+                    },
+                },
+            }));
+
+            const hook = await renderHook(() => useSessionMessages('s-1'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent().isLoaded).toBe(true);
+            expect(hook.getCurrent().messages.map((message) => message.id)).toEqual(['z-text', 'a-tool']);
 
             await hook.unmount();
         } finally {

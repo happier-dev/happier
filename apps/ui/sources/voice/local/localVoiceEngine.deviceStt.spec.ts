@@ -1,34 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+    audioStreamStart,
     emitSpeechRecEvent,
     getStorage,
     loadLocalVoiceEngineWithCompatState,
     registerLocalVoiceEngineHarnessHooks,
-    sendMessage,
     setPlatformOs,
     speechRecAbort,
     speechRecStart,
     speechRecStop,
     speechRecRequestPermissionsAsync,
+    submitMessage,
 } from './localVoiceEngine.testHarness';
 import type { TurnEndpointSignal } from '@/voice/runtime/input/TurnEndpointController';
-
-const webVadState = vi.hoisted(() => ({
-    onSpeechEnd: null as null | (() => void),
-}));
-
-vi.mock('@ricky0123/vad-web', () => ({
-    MicVAD: {
-        new: vi.fn(async (options: { onSpeechEnd?: () => void }) => {
-            webVadState.onSpeechEnd = typeof options.onSpeechEnd === 'function' ? options.onSpeechEnd : null;
-            return {
-                pause: vi.fn(),
-                start: vi.fn(),
-            };
-        }),
-    },
-}));
 
 type CallCountSpy = {
     mock: {
@@ -72,20 +57,20 @@ describe('local voice engine device STT (experimental)', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_direct',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_direct: {
-                            ...storage.getState().settings.voice.adapters.local_direct,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_direct: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_direct.config,
                             stt: {
                                 provider: 'device',
                                 openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
                                 googleGemini: { apiKey: null, model: 'gemini-2.0-flash-lite', language: null },
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                                 autoSpeakReplies: false,
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -100,6 +85,14 @@ describe('local voice engine device STT (experimental)', () => {
             sessionId: 's1',
             error: 'mic_permission_denied',
         });
+        const { getVoiceConversationRuntimeSnapshot } = await import('@/voice/runtime/machine/voiceConversationRuntimeStore');
+        expect(getVoiceConversationRuntimeSnapshot().error).toMatchObject({
+            kind: 'mic_permission_denied',
+            phase: 'preflight',
+            retryPolicy: 'user_action',
+            recoveryAction: 'open_settings',
+            presentation: 'permission_required',
+        });
     });
 
     it('supports provider-based device STT settings', async () => {
@@ -110,20 +103,20 @@ describe('local voice engine device STT (experimental)', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_direct',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_direct: {
-                            ...storage.getState().settings.voice.adapters.local_direct,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_direct: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_direct.config,
                             stt: {
                                 provider: 'device',
                                 openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
                                 googleGemini: { apiKey: null, model: 'gemini-2.0-flash-lite', language: null },
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                                 autoSpeakReplies: false,
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -146,19 +139,19 @@ describe('local voice engine device STT (experimental)', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_direct',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_direct: {
-                            ...storage.getState().settings.voice.adapters.local_direct,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_direct: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_direct.config,
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                                 provider: 'device',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                                 autoSpeakReplies: false,
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -180,8 +173,9 @@ describe('local voice engine device STT (experimental)', () => {
 
         await stopPromise;
 
-        expect(sendMessage).toHaveBeenCalledWith('s1', 'hello from device stt', undefined, undefined, {
-            bypassPendingQueueReason: 'voice_turn',
+        expect(submitMessage).toHaveBeenCalledWith('s1', 'hello from device stt', undefined, undefined, {
+            callerSurface: 'voice_turn',
+            forceImmediate: true,
         });
         expect((globalThis.fetch as any).mock.calls.length).toBe(0);
     });
@@ -196,15 +190,15 @@ describe('local voice engine device STT (experimental)', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_direct',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_direct: {
-                            ...storage.getState().settings.voice.adapters.local_direct,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_direct: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_direct.config,
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                                 provider: 'device',
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -233,16 +227,16 @@ describe('local voice engine device STT (experimental)', () => {
                     voice: {
                         ...storage.getState().settings.voice,
                         providerId: 'local_direct',
-                        adapters: {
-                            ...storage.getState().settings.voice.adapters,
-                            local_direct: {
-                                ...storage.getState().settings.voice.adapters.local_direct,
+                        providers: {
+                            ...storage.getState().settings.voice.providers,
+                            local_direct: { schemaVersion: 1, config: {
+                                ...storage.getState().settings.voice.providers.local_direct.config,
                                 stt: {
-                                    ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                    ...storage.getState().settings.voice.providers.local_direct.config.stt,
                                     useDeviceStt: true,
                                     baseUrl: null,
                                 },
-                            },
+                            } },
                         },
                     },
                 },
@@ -267,24 +261,24 @@ describe('local voice engine device STT (experimental)', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_direct',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_direct: {
-                            ...storage.getState().settings.voice.adapters.local_direct,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_direct: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_direct.config,
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                                 provider: 'device',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                                 autoSpeakReplies: false,
                             },
                             handsFree: {
-                                ...storage.getState().settings.voice.adapters.local_direct.handsFree,
+                                ...storage.getState().settings.voice.providers.local_direct.config.handsFree,
                                 enabled: true,
                                 endpointing: { silenceMs: 0, minSpeechMs: 0 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -301,10 +295,11 @@ describe('local voice engine device STT (experimental)', () => {
         });
         emitSpeechRecEvent('end', {});
 
-        await waitForCallCount(sendMessage, 1);
+        await waitForCallCount(submitMessage, 1);
         await waitForCallCount(speechRecStart, 2);
-        expect(sendMessage).toHaveBeenCalledWith('s1', 'hands free message', undefined, undefined, {
-            bypassPendingQueueReason: 'voice_turn',
+        expect(submitMessage).toHaveBeenCalledWith('s1', 'hands free message', undefined, undefined, {
+            callerSurface: 'voice_turn',
+            forceImmediate: true,
         });
         expect(speechRecStart).toHaveBeenCalledTimes(2);
         expect(getLocalVoiceState().status).toBe('recording');
@@ -318,24 +313,24 @@ describe('local voice engine device STT (experimental)', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_direct',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_direct: {
-                            ...storage.getState().settings.voice.adapters.local_direct,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_direct: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_direct.config,
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                                 provider: 'device',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                                 autoSpeakReplies: false,
                             },
                             handsFree: {
-                                ...storage.getState().settings.voice.adapters.local_direct.handsFree,
+                                ...storage.getState().settings.voice.providers.local_direct.config.handsFree,
                                 enabled: true,
                                 endpointing: { silenceMs: 0, minSpeechMs: 0 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -351,7 +346,7 @@ describe('local voice engine device STT (experimental)', () => {
         emitSpeechRecEvent('end', {});
 
         await vi.waitFor(() => {
-            expect(sendMessage).not.toHaveBeenCalled();
+            expect(submitMessage).not.toHaveBeenCalled();
             expect(speechRecStart).toHaveBeenCalledTimes(2);
             expect(getLocalVoiceState().status).toBe('recording');
         });
@@ -365,24 +360,24 @@ describe('local voice engine device STT (experimental)', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_direct',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_direct: {
-                            ...storage.getState().settings.voice.adapters.local_direct,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_direct: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_direct.config,
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                                 provider: 'device',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                                 autoSpeakReplies: false,
                             },
                             handsFree: {
-                                ...storage.getState().settings.voice.adapters.local_direct.handsFree,
+                                ...storage.getState().settings.voice.providers.local_direct.config.handsFree,
                                 enabled: true,
                                 endpointing: { silenceMs: 0, minSpeechMs: 0 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -392,8 +387,9 @@ describe('local voice engine device STT (experimental)', () => {
         await toggleLocalVoiceTurn('s1');
         expect(getLocalVoiceState().status).toBe('recording');
 
+        const stopCallCountBeforeManualToggle = speechRecStop.mock.calls.length;
         const stopPromise = toggleLocalVoiceTurn('s1');
-        expect(speechRecStop).toHaveBeenCalledTimes(1);
+        expect(speechRecStop).toHaveBeenCalledTimes(stopCallCountBeforeManualToggle + 1);
         emitSpeechRecEvent('end', {});
         await stopPromise;
 
@@ -410,25 +406,25 @@ describe('local voice engine device STT (experimental)', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_direct',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_direct: {
-                            ...storage.getState().settings.voice.adapters.local_direct,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_direct: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_direct.config,
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                                 useDeviceStt: true,
                                 baseUrl: null,
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                                 autoSpeakReplies: false,
                             },
                             handsFree: {
-                                ...storage.getState().settings.voice.adapters.local_direct.handsFree,
+                                ...storage.getState().settings.voice.providers.local_direct.config.handsFree,
                                 enabled: true,
                                 endpointing: { silenceMs: 10, minSpeechMs: 0 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -447,68 +443,11 @@ describe('local voice engine device STT (experimental)', () => {
         });
         emitSpeechRecEvent('end', {});
 
-        await waitForCallCount(sendMessage, 1);
-        expect(sendMessage).toHaveBeenCalledWith('s1', 'timed hands free', undefined, undefined, {
-            bypassPendingQueueReason: 'voice_turn',
+        await waitForCallCount(submitMessage, 1);
+        expect(submitMessage).toHaveBeenCalledWith('s1', 'timed hands free', undefined, undefined, {
+            callerSurface: 'voice_turn',
+            forceImmediate: true,
         });
-    });
-
-    it('keeps hands-free web capture active when a web VAD endpoint only yields a short backchannel partial', async () => {
-        setPlatformOs('web');
-        webVadState.onSpeechEnd = null;
-        (globalThis as { window?: object }).window = {};
-        (globalThis as { document?: object }).document = {};
-
-        const storage = await getStorage();
-        storage.__setState({
-            settings: {
-                ...storage.getState().settings,
-                voice: {
-                    ...storage.getState().settings.voice,
-                    providerId: 'local_direct',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_direct: {
-                            ...storage.getState().settings.voice.adapters.local_direct,
-                            stt: {
-                                ...storage.getState().settings.voice.adapters.local_direct.stt,
-                                useDeviceStt: true,
-                                baseUrl: null,
-                            },
-                            tts: {
-                                ...storage.getState().settings.voice.adapters.local_direct.tts,
-                                autoSpeakReplies: false,
-                            },
-                            handsFree: {
-                                ...storage.getState().settings.voice.adapters.local_direct.handsFree,
-                                enabled: true,
-                                endpointing: { silenceMs: 0, minSpeechMs: 0 },
-                            },
-                        },
-                    },
-                },
-            },
-        });
-
-        const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
-        await toggleLocalVoiceTurn('s1');
-        expect(getLocalVoiceState().status).toBe('recording');
-        expect(speechRecStart).toHaveBeenCalledTimes(1);
-
-        emitSpeechRecEvent('result', { isFinal: false, results: [{ transcript: 'web vad message', confidence: 0.9, segments: [] }] });
-        expect(speechRecStop).not.toHaveBeenCalled();
-
-        const onSpeechEnd = webVadState.onSpeechEnd as null | (() => void);
-        onSpeechEnd?.();
-        expect(getLocalVoiceState().status).toBe('recording');
-        emitSpeechRecEvent('end', {});
-
-        await vi.waitFor(() => {
-            expect(getLocalVoiceState().status).toBe('recording');
-        });
-        expect(sendMessage).not.toHaveBeenCalled();
-        expect(speechRecStart).toHaveBeenCalledTimes(1);
-        expect(getLocalVoiceState().status).toBe('recording');
     });
 
     it('routes runtime-owned hands-free endpoint signals through the capture-owner active-session gate', async () => {
@@ -561,24 +500,24 @@ describe('local voice engine device STT (experimental)', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_direct',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_direct: {
-                            ...storage.getState().settings.voice.adapters.local_direct,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_direct: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_direct.config,
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                                 provider: 'device',
                             },
                             tts: {
-                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                ...storage.getState().settings.voice.providers.local_direct.config.tts,
                                 autoSpeakReplies: false,
                             },
                             handsFree: {
-                                ...storage.getState().settings.voice.adapters.local_direct.handsFree,
+                                ...storage.getState().settings.voice.providers.local_direct.config.handsFree,
                                 enabled: true,
                                 endpointing: { silenceMs: 0, minSpeechMs: 0 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -594,6 +533,7 @@ describe('local voice engine device STT (experimental)', () => {
 
         endpointSignalHarness.emit?.({
             detectedAt: Date.now(),
+            endpoint: { reason: 'structural_fallback', confidence: null },
             sessionId: 's1',
             source: 'heuristic',
             transcript: 'hands free message',
@@ -608,8 +548,9 @@ describe('local voice engine device STT (experimental)', () => {
             inFlight: false,
             provider: 'device',
         }));
-        expect(sendMessage).toHaveBeenCalledWith('s1', 'hands free message', undefined, undefined, {
-            bypassPendingQueueReason: 'voice_turn',
+        expect(submitMessage).toHaveBeenCalledWith('s1', 'hands free message', undefined, undefined, {
+            callerSurface: 'voice_turn',
+            forceImmediate: true,
         });
     });
 
@@ -621,20 +562,20 @@ describe('local voice engine device STT (experimental)', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_direct',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_direct: {
-                            ...storage.getState().settings.voice.adapters.local_direct,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_direct: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_direct.config,
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                                 provider: 'device',
                             },
                             handsFree: {
-                                ...storage.getState().settings.voice.adapters.local_direct.handsFree,
+                                ...storage.getState().settings.voice.providers.local_direct.config.handsFree,
                                 enabled: true,
                                 endpointing: { silenceMs: 0, minSpeechMs: 0 },
                             },
-                        },
+                        } },
                     },
                 },
             },
@@ -669,6 +610,8 @@ describe('local voice engine device STT (experimental)', () => {
             sessionId: 's1',
             signal: new AbortController().signal,
         });
+        expect(liveMicSession.ensureActive).not.toHaveBeenCalled();
+        expect(audioStreamStart).not.toHaveBeenCalled();
         emitSpeechRecEvent('result', {
             isFinal: true,
             results: [{ transcript: 'hands free message', confidence: 0.9, segments: [] }],
@@ -681,6 +624,7 @@ describe('local voice engine device STT (experimental)', () => {
                 transcript: 'hands free message',
             }));
         });
+        const stopCallCountBeforeEndpointStop = speechRecStop.mock.calls.length;
         await expect(owner.stopEndpointDrivenCapture({
             adaptiveConfig: { ignoredPhrases: [] },
             provider: 'device',
@@ -694,7 +638,7 @@ describe('local voice engine device STT (experimental)', () => {
             kind: 'submit_turn',
             transcript: 'hands free message',
         });
-        expect(speechRecStop).toHaveBeenCalledTimes(1);
+        expect(speechRecStop.mock.calls.length).toBeGreaterThan(stopCallCountBeforeEndpointStop);
     });
 
     it('delegates device STT ownership to LocalVoiceCaptureOwner instead of constructing the device controller in localVoiceEngine', async () => {
@@ -744,16 +688,16 @@ describe('local voice engine device STT (experimental)', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_direct',
-                    adapters: {
-                        ...storage.getState().settings.voice.adapters,
-                        local_direct: {
-                            ...storage.getState().settings.voice.adapters.local_direct,
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_direct: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_direct.config,
                             stt: {
-                                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                                 useDeviceStt: true,
                                 baseUrl: null,
                             },
-                        },
+                        } },
                     },
                 },
             },

@@ -41,10 +41,37 @@ function readTtlFromEnv(): number {
 }
 
 const ttlMs = readTtlFromEnv();
+const pendingSetupIntentListeners = new Set<() => void>();
+let cachedSerializedRecord: string | null = null;
+let cachedSerializedRecordSnapshot: PendingSetupIntent | null = null;
+let cachedSerializedRecordExpiresAtMs = 0;
+
+export function subscribePendingSetupIntent(listener: () => void): () => void {
+    pendingSetupIntentListeners.add(listener);
+    return () => {
+        pendingSetupIntentListeners.delete(listener);
+    };
+}
+
+export function emitPendingSetupIntentChanged(): void {
+    for (const listener of Array.from(pendingSetupIntentListeners)) {
+        listener();
+    }
+}
 
 function normalizeRelayUrl(raw: string | null | undefined): string | null {
     const value = String(raw ?? '').trim().replace(/\/+$/, '');
     return value ? value : null;
+}
+
+export function buildDismissedThisComputerSetupIntent(
+    relayUrl: string | null | undefined,
+): PendingSetupIntent {
+    return {
+        branch: 'thisComputer',
+        phase: 'dismissed',
+        relayUrl: normalizeRelayUrl(relayUrl),
+    };
 }
 
 function normalizeMachineId(raw: string | null | undefined): string | null {
@@ -109,4 +136,34 @@ export function fromRecord(value: unknown): PendingSetupIntent | null {
         };
     }
     return null;
+}
+
+function getRecordExpiresAtMs(value: unknown): number {
+    if (!value || typeof value !== 'object') return 0;
+    const createdAtMs = Number((value as Record<string, unknown>).createdAtMs ?? 0);
+    if (!Number.isFinite(createdAtMs) || createdAtMs <= 0) return 0;
+    return Math.floor(createdAtMs) + ttlMs;
+}
+
+export function fromSerializedRecord(raw: string): PendingSetupIntent | null {
+    if (
+        raw === cachedSerializedRecord
+        && (cachedSerializedRecordSnapshot === null || Date.now() <= cachedSerializedRecordExpiresAtMs)
+    ) {
+        return cachedSerializedRecordSnapshot;
+    }
+
+    try {
+        const parsed = JSON.parse(raw) as unknown;
+        const record = fromRecord(parsed);
+        cachedSerializedRecord = raw;
+        cachedSerializedRecordSnapshot = record;
+        cachedSerializedRecordExpiresAtMs = record ? getRecordExpiresAtMs(parsed) : 0;
+        return record;
+    } catch {
+        cachedSerializedRecord = raw;
+        cachedSerializedRecordSnapshot = null;
+        cachedSerializedRecordExpiresAtMs = 0;
+        return null;
+    }
 }

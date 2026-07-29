@@ -13,14 +13,11 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
+vi.mock('@/sync/domains/state/storage', () => ({
     storage: {
         getState: getStateMock,
     },
-});
-});
+}));
 
 describe('machineScm', () => {
     afterEach(() => {
@@ -57,6 +54,46 @@ describe('machineScm', () => {
             },
             timeoutMs: undefined,
         });
+    });
+
+    it('forwards a projected packed backend preference through the canonical SCM request', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+                scmGitRepoPreferredBackendQualifiedId: 'acme.scm/stacked',
+            },
+        });
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true, snapshot: undefined });
+
+        const { machineScmStatusSnapshot } = await import('./machineScm');
+        await machineScmStatusSnapshot('machine-1', { cwd: '/repo' });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            payload: {
+                cwd: '/repo',
+                backendPreference: {
+                    kind: 'prefer',
+                    backendId: 'acme.scm/stacked',
+                },
+            },
+        }));
+    });
+
+    it('keeps qualified first-party preferences compatible with legacy CLI backend ids', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'sapling',
+                scmGitRepoPreferredBackendQualifiedId: 'happier.scm.backend.git/git',
+            },
+        });
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true, snapshot: undefined });
+
+        const { machineScmStatusSnapshot } = await import('./machineScm');
+        await machineScmStatusSnapshot('machine-1', { cwd: '/repo' });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            payload: { cwd: '/repo' },
+        }));
     });
 
     it('maps unavailable machine-rpc failures to the standard backend unavailable SCM response', async () => {
@@ -147,6 +184,68 @@ describe('machineScm', () => {
                 timeoutMs: undefined,
             },
         );
+    });
+
+    it('passes the requested server scope through worktree creation RPCs', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+        });
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true, stdout: '', stderr: '' });
+
+        const { machineScmWorktreeCreate } = await import('./machineScm');
+        const response = await machineScmWorktreeCreate(
+            'machine-1',
+            {
+                cwd: '/repo',
+                displayName: 'feature-auth',
+            },
+            { serverId: 'server-b' },
+        );
+
+        expect(response.success).toBe(true);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            method: RPC_METHODS.SCM_WORKTREE_CREATE,
+            serverId: 'server-b',
+            payload: expect.objectContaining({
+                cwd: '/repo',
+                displayName: 'feature-auth',
+            }),
+        }));
+    });
+
+    it('passes the requested server scope through non-worktree machine SCM RPCs', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+        });
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true, stdout: '', stderr: '' });
+
+        const { machineScmBranchCreate } = await import('./machineScm');
+        const response = await machineScmBranchCreate(
+            'machine-1',
+            {
+                cwd: '/repo',
+                name: 'feature/auth',
+                checkout: true,
+            },
+            { serverId: 'server-b' },
+        );
+
+        expect(response.success).toBe(true);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            method: RPC_METHODS.SCM_BRANCH_CREATE,
+            serverId: 'server-b',
+            payload: expect.objectContaining({
+                cwd: '/repo',
+                name: 'feature/auth',
+                checkout: true,
+            }),
+        }));
     });
 
     it('routes remote management and branch integration through canonical machine SCM RPCs', async () => {

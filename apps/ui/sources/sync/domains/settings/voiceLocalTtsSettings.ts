@@ -1,14 +1,21 @@
 import { z } from 'zod';
-import { LocalNeuralExecutionSchema } from '@happier-dev/protocol';
+import { KOKORO_DEFAULT_TTS_PACK_ID, LocalNeuralExecutionSchema } from '@happier-dev/protocol';
 
 import { SecretStringSchema } from '../../encryption/secretSettings';
+import { migrateLegacyGoogleTtsSettings } from './migrations/legacyGoogleSpeechSettingsMigration';
+import {
+  VoiceLocalSpeechProviderIdSchema,
+  VoiceLocalSpeechProviderSettingsRecordSchema,
+} from './voiceLocalSpeechProviderSettings';
 
-export const VoiceLocalTtsProviderSchema = z.enum(['device', 'openai_compat', 'google_cloud', 'local_neural']);
+export const VoiceLocalTtsProviderSchema = VoiceLocalSpeechProviderIdSchema;
 export type VoiceLocalTtsProvider = z.infer<typeof VoiceLocalTtsProviderSchema>;
 
 const VoiceLocalTtsOpenAiCompatSchema = z
   .object({
     baseUrl: z.string().nullable().default(null),
+    insecureLocalOriginConsent: z.string().url().nullable().default(null),
+    insecureLocalConsentMachineId: z.string().min(1).max(256).nullable().default(null),
     apiKey: SecretStringSchema.nullable().default(null),
     model: z.string().default('tts-1'),
     voice: z.string().default('alloy'),
@@ -20,37 +27,25 @@ const VoiceLocalTtsLocalNeuralSchema = z
   .object({
     model: z.enum(['kokoro']).default('kokoro'),
     // A stable cross-platform identifier for Kokoro model packs across native and daemon-backed surfaces.
-    assetId: z.string().nullable().default('kokoro-82m-v1.0-onnx-q8-wasm'),
+    assetId: z.string().nullable().default(KOKORO_DEFAULT_TTS_PACK_ID),
     voiceId: z.string().nullable().default(null),
     speed: z.number().min(0.5).max(2).nullable().default(null),
     execution: LocalNeuralExecutionSchema.default('auto'),
   })
   .prefault({});
 
-const VoiceLocalTtsGoogleCloudSchema = z
-  .object({
-    apiKey: SecretStringSchema.nullable().default(null),
-    androidCertSha1: z.string().nullable().default(null),
-    voiceName: z.string().nullable().default(null),
-    languageCode: z.string().nullable().default(null),
-    format: z.enum(['mp3', 'wav']).default('mp3'),
-    speakingRate: z.number().min(0.25).max(4).nullable().default(null),
-    pitch: z.number().min(-20).max(20).nullable().default(null),
-  })
-  .prefault({});
-
-const VoiceLocalTtsSchemaV2 = z.object({
+const VoiceLocalTtsSchemaV3 = z.object({
   provider: VoiceLocalTtsProviderSchema.default('openai_compat'),
   openaiCompat: VoiceLocalTtsOpenAiCompatSchema,
   localNeural: VoiceLocalTtsLocalNeuralSchema,
-  googleCloud: VoiceLocalTtsGoogleCloudSchema,
+  providers: VoiceLocalSpeechProviderSettingsRecordSchema.default({}),
   autoSpeakReplies: z.boolean().default(true),
   bargeInEnabled: z.boolean().default(true),
 });
 
-type VoiceLocalTtsV2 = z.infer<typeof VoiceLocalTtsSchemaV2>;
+type VoiceLocalTtsV3 = z.infer<typeof VoiceLocalTtsSchemaV3>;
 
-function migrateLegacyLocalTts(input: Record<string, unknown>): VoiceLocalTtsV2 {
+function migrateLegacyLocalTts(input: Record<string, unknown>): VoiceLocalTtsV3 {
   const baseUrl = typeof input.baseUrl === 'string' ? input.baseUrl : input.baseUrl === null ? null : null;
   const apiKey = SecretStringSchema.nullable().safeParse(input.apiKey).success
     ? (SecretStringSchema.nullable().parse(input.apiKey) as any)
@@ -70,34 +65,28 @@ function migrateLegacyLocalTts(input: Record<string, unknown>): VoiceLocalTtsV2 
     provider,
     openaiCompat: {
       baseUrl: baseUrl && baseUrl.trim().length > 0 ? baseUrl.trim() : null,
+      insecureLocalOriginConsent: null,
+      insecureLocalConsentMachineId: null,
       apiKey,
       model,
       voice,
       format,
     },
-    localNeural: { model: 'kokoro', assetId: 'kokoro-82m-v1.0-onnx-q8-wasm', voiceId: null, speed: null, execution: 'auto' },
-    googleCloud: {
-      apiKey: null,
-      androidCertSha1: null,
-      voiceName: null,
-      languageCode: null,
-      format: 'mp3',
-      speakingRate: null,
-      pitch: null,
-    },
+    localNeural: { model: 'kokoro', assetId: KOKORO_DEFAULT_TTS_PACK_ID, voiceId: null, speed: null, execution: 'auto' },
+    providers: {},
     autoSpeakReplies,
     bargeInEnabled,
   };
 }
 
-function migrateKokoroProviderToLocalNeural(input: Record<string, unknown>): VoiceLocalTtsV2 {
+function migrateKokoroProviderToLocalNeural(input: Record<string, unknown>): VoiceLocalTtsV3 {
   const provider = input.provider === 'device' ? 'device' : 'local_neural';
   const kokoro = (input.kokoro && typeof input.kokoro === 'object' ? input.kokoro : null) as any;
   const assetId = typeof kokoro?.assetSetId === 'string' && kokoro.assetSetId.trim().length > 0 ? kokoro.assetSetId.trim() : null;
   const voiceId = typeof kokoro?.voiceId === 'string' && kokoro.voiceId.trim().length > 0 ? kokoro.voiceId.trim() : null;
   const speed = typeof kokoro?.speed === 'number' && Number.isFinite(kokoro.speed) ? kokoro.speed : null;
 
-  const base = VoiceLocalTtsSchemaV2.parse({});
+  const base = VoiceLocalTtsSchemaV3.parse({});
   return {
     ...base,
     provider: provider as any,
@@ -115,10 +104,14 @@ function migrateKokoroProviderToLocalNeural(input: Record<string, unknown>): Voi
 
 export const VoiceLocalTtsSchema = z.preprocess((raw) => {
   if (!raw || typeof raw !== 'object') return raw;
-  const obj = raw as Record<string, unknown>;
+  const obj = migrateLegacyGoogleTtsSettings(raw as Record<string, unknown>);
 
   // If the new provider format is present, keep as-is.
-  if ('provider' in obj || 'openaiCompat' in obj || 'localNeural' in obj) {
+  if (obj.provider === 'kokoro' || 'kokoro' in obj) {
+    return migrateKokoroProviderToLocalNeural(obj);
+  }
+
+  if ('provider' in obj || 'openaiCompat' in obj || 'localNeural' in obj || 'providers' in obj) {
     // Normalize legacy flat `baseUrl` into `openaiCompat.baseUrl` when present.
     if (obj.provider === 'openai_compat' && obj.openaiCompat && typeof obj.openaiCompat === 'object') {
       const legacyBaseUrl = typeof obj.baseUrl === 'string' ? obj.baseUrl.trim() : '';
@@ -142,12 +135,7 @@ export const VoiceLocalTtsSchema = z.preprocess((raw) => {
     return migrateLegacyLocalTts(obj);
   }
 
-  // Legacy v2 shape: kokoro provider config.
-  if ('kokoro' in obj || obj.provider === 'kokoro') {
-    return migrateKokoroProviderToLocalNeural(obj);
-  }
-
   return obj;
-}, VoiceLocalTtsSchemaV2);
+}, VoiceLocalTtsSchemaV3);
 
 export type VoiceLocalTtsSettings = z.infer<typeof VoiceLocalTtsSchema>;

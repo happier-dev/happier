@@ -3,6 +3,7 @@ import {
     type PeerTcpTunnelFrameV1,
     type PeerTcpTunnelOpenResponseV1,
     type PeerTcpTunnelOpenV1,
+    type PeerTcpTunnelOpenV2,
 } from '@happier-dev/protocol';
 
 import type { PeerTcpTunnelClientStream } from './client';
@@ -10,6 +11,7 @@ import {
     decodePeerTcpTunnelFrameForEncoding,
     decodePeerTcpTunnelSubstreamFrameV2,
     encodePeerTcpTunnelFrameForEncoding,
+    encodePeerTcpTunnelSubstreamDataFrameV2,
     encodePeerTcpTunnelSubstreamFrameV2,
     encodePeerTcpTunnelSubstreamOpenFrameV2,
 } from './frameEncoding';
@@ -43,7 +45,7 @@ function resolveWebSocketCtor(input?: PeerTcpTunnelWebSocketCtor): PeerTcpTunnel
 
 export async function openPeerTcpTunnelLoopbackStream(input: Readonly<{
     endpointUrl: string;
-    open: PeerTcpTunnelOpenV1;
+    open: PeerTcpTunnelOpenV1 | PeerTcpTunnelOpenV2;
     response: PeerTcpTunnelOpenResponseV1;
     WebSocketCtor?: PeerTcpTunnelWebSocketCtor;
     openTimeoutMs?: number;
@@ -68,7 +70,7 @@ export async function openPeerTcpTunnelLoopbackStream(input: Readonly<{
         };
     });
 
-    const handlers = new Set<(frame: PeerTcpTunnelFrameV1) => void>();
+    const handlers = new Set<(frame: Exclude<PeerTcpTunnelFrameV1, { kind: 'open' }>) => void>();
     const substreamHandlers = new Set<(event: Readonly<{
         substreamId: string;
         frame: Exclude<PeerTcpTunnelFrameV1, { kind: 'open' }>;
@@ -98,7 +100,6 @@ export async function openPeerTcpTunnelLoopbackStream(input: Readonly<{
 
     return {
         sendFrame: (frame) => {
-            if (frame.kind === 'open') return;
             socket.send(encodePeerTcpTunnelFrameForEncoding({
                 encoding: input.response.encoding,
                 frame,
@@ -115,6 +116,13 @@ export async function openPeerTcpTunnelLoopbackStream(input: Readonly<{
             socket.send(encodePeerTcpTunnelSubstreamOpenFrameV2({
                 tunnelId: input.open.tunnelId,
                 substreamId,
+            }));
+        },
+        sendSubstreamDataFrame: (substreamId, frame) => {
+            if (input.response.encoding !== 'binary_frame_v2') return;
+            socket.send(encodePeerTcpTunnelSubstreamDataFrameV2({
+                substreamId,
+                frame,
             }));
         },
         sendSubstreamFrame: (substreamId, frame) => {

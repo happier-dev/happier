@@ -63,6 +63,10 @@ describe('fetchSessionByIdWithServerScope', () => {
             targetServerId: 'server-b',
             targetServerUrl: 'https://server-b.example.test',
             token: 'scoped-token',
+            credentials: {
+                token: 'scoped-token',
+                secret: 'scoped-secret',
+            },
             timeoutMs: 5000,
             encryption: {
                 decryptEncryptionKey,
@@ -88,7 +92,10 @@ describe('fetchSessionByIdWithServerScope', () => {
 
         expect(result).toEqual({ ok: true, session: { id: 'session-1' } });
         const params = fetchAndApplySessionByIdSpy.mock.calls[0]?.[0];
-        expect(params.credentials).toEqual({ token: 'scoped-token', secret: '' });
+        expect(params.credentials).toEqual({
+            token: 'scoped-token',
+            secret: 'scoped-secret',
+        });
         await params.request('/v2/sessions/session-1', { method: 'GET', headers: { 'X-Test': '1' } });
         expect(runtimeFetchSpy).toHaveBeenCalledWith(
             'https://server-b.example.test/v2/sessions/session-1',
@@ -124,5 +131,66 @@ describe('fetchSessionByIdWithServerScope', () => {
             sessionId: 'session-1',
             includeTurnsProjection: false,
         }));
+    });
+
+    it('returns an ephemeral tuple writer context only for an explicit mutation snapshot read', async () => {
+        resolveContextSpy.mockResolvedValue({ scope: 'active', timeoutMs: 5000 });
+        const snapshot = {
+            mode: 'owner',
+            metadataLayoutVersion: 1,
+            metadataVersion: 3,
+            sharedMetadataCiphertext: 'shared-current',
+            ownerMetadataCiphertext: 'owner-current',
+            agentStateVersion: 4,
+            agentStateCiphertext: null,
+            value: {
+                metadata: { summary: { text: 'Before', updatedAt: 1 } },
+                sharedMetadata: { v: 1 },
+                ownerMetadata: { v: 1 },
+                agentState: null,
+            },
+        };
+        fetchAndApplySessionByIdSpy.mockResolvedValue({
+            ok: true,
+            session: { id: 'session-1', encryptionMode: 'e2ee' },
+            metadataTupleMutationSnapshot: snapshot,
+        });
+        const encryptRaw = vi.fn(async () => 'encrypted-payload');
+        const activeEncryption = {
+            getSessionEncryption: vi.fn(() => ({ encryptRaw })),
+        } as any;
+
+        const { fetchSessionByIdWithServerScope } =
+            await import('./fetchSessionByIdWithServerScope');
+        const result = await fetchSessionByIdWithServerScope({
+            sessionId: 'session-1',
+            activeCredentials: {
+                token: 'active-token',
+                secret: 'active-secret',
+            },
+            activeEncryption,
+            sessionDataKeys: new Map(),
+            activeRequest: vi.fn(),
+            applySessions: vi.fn(),
+            log: { log: vi.fn() },
+            includeMetadataTupleMutationSnapshot: true,
+        });
+
+        expect(fetchAndApplySessionByIdSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                includeMetadataTupleMutationSnapshot: true,
+            }),
+        );
+        expect(result.metadataTupleMutationSnapshot).toBe(snapshot);
+        expect(result.metadataTupleWriterContext).not.toHaveProperty(
+            'credentials',
+        );
+        expect(
+            result.metadataTupleWriterContext?.sealOwnerMetadata,
+        ).toEqual(expect.any(Function));
+        await expect(
+            result.metadataTupleWriterContext?.encryptPayload({ v: 1 }),
+        ).resolves.toBe('encrypted-payload');
+        expect(encryptRaw).toHaveBeenCalledWith({ v: 1 });
     });
 });

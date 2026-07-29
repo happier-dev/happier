@@ -95,7 +95,7 @@ describe('connectedServicesNewSessionBindings', () => {
         });
     });
 
-    it('degrades to native when account groups are disabled for spawn', () => {
+    it('preserves explicit group intent when account groups are unavailable for spawn', () => {
         const result = buildConnectedServicesBindingsPayload({
             supportedConnectedServiceIds: ['anthropic'],
             connectedServiceProfileOptionsByServiceId: profileOptionsByServiceId,
@@ -111,10 +111,15 @@ describe('connectedServicesNewSessionBindings', () => {
             accountGroupsFeatureEnabled: false,
         });
 
-        expect(result).toBeNull();
+        expect(result).toEqual({
+            v: 1,
+            bindingsByServiceId: {
+                anthropic: { source: 'connected', selection: 'group', groupId: 'team' },
+            },
+        });
     });
 
-    it('degrades to native when the selected group cannot currently resolve an active connected profile', () => {
+    it('preserves explicit group intent when the selected group cannot currently resolve an active connected profile', () => {
         const result = buildConnectedServicesBindingsPayload({
             supportedConnectedServiceIds: ['anthropic'],
             connectedServiceProfileOptionsByServiceId: profileOptionsByServiceId,
@@ -141,10 +146,15 @@ describe('connectedServicesNewSessionBindings', () => {
             accountGroupsFeatureEnabled: true,
         });
 
-        expect(result).toBeNull();
+        expect(result).toEqual({
+            v: 1,
+            bindingsByServiceId: {
+                anthropic: { source: 'connected', selection: 'group', groupId: 'team' },
+            },
+        });
     });
 
-    it('degrades to native when the selected group is not ready', () => {
+    it('preserves explicit group intent when the selected group is not ready', () => {
         const result = buildConnectedServicesBindingsPayload({
             supportedConnectedServiceIds: ['anthropic'],
             connectedServiceProfileOptionsByServiceId: profileOptionsByServiceId,
@@ -171,7 +181,12 @@ describe('connectedServicesNewSessionBindings', () => {
             accountGroupsFeatureEnabled: true,
         });
 
-        expect(result).toBeNull();
+        expect(result).toEqual({
+            v: 1,
+            bindingsByServiceId: {
+                anthropic: { source: 'connected', selection: 'group', groupId: 'team' },
+            },
+        });
     });
 
     it('builds group options only from supported services when the feature is enabled', () => {
@@ -205,6 +220,7 @@ describe('connectedServicesNewSessionBindings', () => {
                     groupId: 'team',
                     label: 'Team',
                     activeProfileId: 'primary',
+                    memberProfileIds: ['primary', 'backup'],
                     enabledMemberCount: 2,
                     autoSwitch: false,
                     status: 'ready',
@@ -242,6 +258,7 @@ describe('connectedServicesNewSessionBindings', () => {
                     groupId: 'team',
                     label: 'Team',
                     activeProfileId: 'primary',
+                    memberProfileIds: ['primary', 'backup'],
                     enabledMemberCount: 2,
                     autoSwitch: false,
                     status: 'exhausted',

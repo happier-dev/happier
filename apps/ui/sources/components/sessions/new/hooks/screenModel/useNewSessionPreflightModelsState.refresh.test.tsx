@@ -189,6 +189,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         const cacheKey = buildDynamicModelProbeCacheKey({
             machineId: 'machine-1',
             targetKey: 'backend:codex',
+            providerConnectionId: null,
             serverId: 'server-1',
             cwd: '/repo',
         });

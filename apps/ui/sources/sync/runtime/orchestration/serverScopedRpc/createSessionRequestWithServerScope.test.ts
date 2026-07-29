@@ -40,7 +40,19 @@ vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
 
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
-import { createSessionRequestWithServerScope } from './createSessionRequestWithServerScope';
+import {
+    captureSessionRequestAuthorityForServerAccountScope,
+    createSessionRequestWithServerScope,
+    resolveSessionRequestForServerAccountScope,
+} from './createSessionRequestWithServerScope';
+
+function tokenForSub(sub: string): string {
+    const payload = globalThis.btoa(JSON.stringify({ sub }))
+        .replaceAll('+', '-')
+        .replaceAll('/', '_')
+        .replaceAll('=', '');
+    return `e30.${payload}.signature`;
+}
 
 function expectHeaderValue(headers: HeadersInit | undefined, key: string, value: string) {
     expect(new Headers(headers).get(key)).toBe(value);
@@ -75,7 +87,8 @@ describe('createSessionRequestWithServerScope', () => {
         const ownerServer = upsertServerProfile({ serverUrl: 'https://owner.example', name: 'Owner' });
         setActiveServerId(activeServer.id, { scope: 'device' });
 
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'owner-token', secret: 'owner-secret' });
+        const ownerToken = tokenForSub('owner-account');
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
         runtimeFetchMock.mockImplementation(async () => new Response(null, { status: 200, headers: new Headers() }));
 
@@ -91,7 +104,7 @@ describe('createSessionRequestWithServerScope', () => {
         const call = runtimeFetchMock.mock.calls.find(([input]) => String(input).includes('/v1/sessions/s1/messages?scope=main'));
         expect(call).toBeTruthy();
         expect(call?.[1]).toEqual(expect.objectContaining({ method: 'GET' }));
-        expectHeaderValue(call?.[1]?.headers, 'Authorization', 'Bearer owner-token');
+        expectHeaderValue(call?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
     });
 
     it('preserves request body and existing headers for non-GET scoped requests', async () => {
@@ -99,7 +112,8 @@ describe('createSessionRequestWithServerScope', () => {
         const ownerServer = upsertServerProfile({ serverUrl: 'https://owner.example', name: 'Owner' });
         setActiveServerId(activeServer.id, { scope: 'device' });
 
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'owner-token', secret: 'owner-secret' });
+        const ownerToken = tokenForSub('owner-account');
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
         runtimeFetchMock.mockImplementation(async () => new Response(null, { status: 200, headers: new Headers() }));
 
@@ -125,9 +139,80 @@ describe('createSessionRequestWithServerScope', () => {
             method: 'POST',
             body: JSON.stringify({ hello: 'world' }),
         }));
-        expectHeaderValue(call?.[1]?.headers, 'Authorization', 'Bearer owner-token');
+        expectHeaderValue(call?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
         expectHeaderValue(call?.[1]?.headers, 'Content-Type', 'application/json');
         expectHeaderValue(call?.[1]?.headers, 'X-Test', '1');
+    });
+
+    it('binds an outbox action request to the exact persisted server and authenticated account', async () => {
+        const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
+        const ownerServer = upsertServerProfile({ serverUrl: 'https://owner.example', name: 'Owner' });
+        setActiveServerId(activeServer.id, { scope: 'device' });
+        const ownerToken = tokenForSub('account-owner');
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
+        createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
+        runtimeFetchMock.mockResolvedValue(new Response(null, { status: 200 }));
+
+        const request = await resolveSessionRequestForServerAccountScope({
+            scope: { serverId: ownerServer.id, accountId: 'account-owner' },
+            activeRequest: async () => { throw new Error('must not substitute active authority'); },
+        });
+        await request('/v2/sessions/s1/pending', { method: 'POST', body: 'exact-body' });
+
+        const call = runtimeFetchMock.mock.calls.find(([input]) => String(input).includes('/v2/sessions/s1/pending'));
+        expect(call).toBeTruthy();
+        expect(call?.[1]).toEqual(expect.objectContaining({ body: 'exact-body' }));
+        expectHeaderValue(call?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
+    });
+
+    it('keeps a same-server request bound to the captured account after stored credentials change', async () => {
+        const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
+        setActiveServerId(activeServer.id, { scope: 'device' });
+        const accountAToken = tokenForSub('account-a');
+        const accountBToken = tokenForSub('account-b');
+        getCredentialsForServerUrlMock.mockResolvedValueOnce({
+            token: accountAToken,
+            secret: 'account-a-secret',
+        });
+        createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
+        runtimeFetchMock.mockResolvedValue(new Response(null, { status: 200 }));
+
+        const authority = await captureSessionRequestAuthorityForServerAccountScope({
+            scope: { serverId: activeServer.id, accountId: 'account-a' },
+            activeRequest: async () => {
+                throw new Error('captured account authority must not use the mutable active request');
+            },
+        });
+        getCredentialsForServerUrlMock.mockResolvedValue({
+            token: accountBToken,
+            secret: 'account-b-secret',
+        });
+
+        await authority.request('/v1/sessions/history/messages', { method: 'GET' });
+
+        expect(getCredentialsForServerUrlMock).toHaveBeenCalledTimes(1);
+        const call = runtimeFetchMock.mock.calls.find(([input]) =>
+            String(input).includes('/v1/sessions/history/messages'));
+        expect(call).toBeTruthy();
+        expectHeaderValue(call?.[1]?.headers, 'Authorization', `Bearer ${accountAToken}`);
+        expect(authority.scope).toEqual({
+            serverId: activeServer.id,
+            accountId: 'account-a',
+        });
+    });
+
+    it('rejects credentials whose authenticated account does not match the persisted outbox scope', async () => {
+        const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
+        const ownerServer = upsertServerProfile({ serverUrl: 'https://owner.example', name: 'Owner' });
+        setActiveServerId(activeServer.id, { scope: 'device' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('different-account'), secret: 'owner-secret' });
+        createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
+
+        await expect(resolveSessionRequestForServerAccountScope({
+            scope: { serverId: ownerServer.id, accountId: 'account-owner' },
+            activeRequest: async () => new Response(null, { status: 200 }),
+        })).rejects.toThrow('authenticated account does not match');
+        expect(runtimeFetchMock).not.toHaveBeenCalled();
     });
 });
 

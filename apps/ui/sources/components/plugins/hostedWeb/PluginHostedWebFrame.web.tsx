@@ -1,25 +1,27 @@
-import type { PluginHostedWebBridgeEnvelopeV1 } from '@happier-dev/protocol';
+import type {
+    PluginHostedWebBridgeEnvelopeV1,
+    PluginHostedWebBridgeResponseEnvelopeV1,
+    PluginHostedWebSecurityPolicyV1,
+} from '@happier-dev/protocol';
 import * as React from 'react';
-import { View } from 'react-native';
 
-import {
-    resolvePluginHostedWebIframeSandbox,
-    type PluginHostedWebSandboxPolicy,
-} from './sandbox';
-import { validatePluginHostedWebBridgeMessage } from './bridge';
+import type {
+    BrowserDiagnosticsEngineBridgeConfig,
+    BrowserFrameNavigationCommand,
+} from '@/components/browser/frame/types';
+import { HostedPluginTarget } from '@/components/browser/adapters/HostedPluginTarget.web';
 
-const iframeStyle: React.CSSProperties = {
-    border: 0,
-    display: 'block',
-    height: '100%',
-    width: '100%',
-};
+import type { PluginHostedWebSandboxPolicy } from './sandbox';
 
 export function PluginHostedWebFrame(props: Readonly<{
     title: string;
     url: string;
     sandbox: PluginHostedWebSandboxPolicy;
+    security: PluginHostedWebSecurityPolicyV1;
     testID: string;
+    navigationKey?: string;
+    navigationCommand?: BrowserFrameNavigationCommand;
+    diagnostics?: BrowserDiagnosticsEngineBridgeConfig;
     bridge?: Readonly<{
         expectedOrigin: string;
         expectedPluginId: string;
@@ -28,48 +30,22 @@ export function PluginHostedWebFrame(props: Readonly<{
         expectedNonce: string;
         expectedSessionId?: string | null;
         allowedMessageKinds: ReadonlySet<string>;
-        onMessage: (envelope: PluginHostedWebBridgeEnvelopeV1) => void;
+        onMessage: (
+            envelope: PluginHostedWebBridgeEnvelopeV1,
+        ) => void | PluginHostedWebBridgeResponseEnvelopeV1 | Promise<PluginHostedWebBridgeResponseEnvelopeV1 | void>;
     }> | null;
 }>): React.ReactElement {
-    React.useEffect(() => {
-        const bridge = props.bridge;
-        if (!bridge) return;
-        if (typeof window === 'undefined') return;
-
-        const listener = (event: MessageEvent) => {
-            const result = validatePluginHostedWebBridgeMessage({
-                message: event.data,
-                origin: event.origin,
-                expectedOrigin: bridge.expectedOrigin,
-                expectedPluginId: bridge.expectedPluginId,
-                expectedContributionId: bridge.expectedContributionId,
-                expectedSurfaceId: bridge.expectedSurfaceId,
-                expectedNonce: bridge.expectedNonce,
-                expectedSessionId: bridge.expectedSessionId,
-                allowedMessageKinds: bridge.allowedMessageKinds,
-            });
-            if (result.ok) {
-                bridge.onMessage(result.envelope);
-            }
-        };
-
-        window.addEventListener('message', listener);
-        return () => {
-            window.removeEventListener('message', listener);
-        };
-    }, [props.bridge]);
-
     return (
-        <View testID={`${props.testID}-container`} style={{ flex: 1, minHeight: 0 }}>
-            {React.createElement('iframe', {
-                'data-testid': props.testID,
-                referrerPolicy: 'no-referrer',
-                sandbox: resolvePluginHostedWebIframeSandbox(props.sandbox),
-                src: props.url,
-                style: iframeStyle,
-                testID: props.testID,
-                title: props.title,
-            })}
-        </View>
+        <HostedPluginTarget
+            title={props.title}
+            url={props.url}
+            sandbox={props.sandbox}
+            security={props.security}
+            testID={props.testID}
+            navigationKey={props.navigationKey}
+            navigationCommand={props.navigationCommand}
+            diagnostics={props.diagnostics}
+            bridge={props.bridge}
+        />
     );
 }

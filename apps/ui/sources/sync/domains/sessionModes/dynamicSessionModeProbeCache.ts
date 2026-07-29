@@ -15,6 +15,12 @@ const PERSIST_VERSION = 2;
 const PERSIST_MAX_ENTRIES = 200;
 const PERSIST_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
 
+const transientUnavailableByKey = new Map<string, Readonly<{
+    updatedAt: number;
+    expiresAt: number;
+    value: PreflightSessionModeList;
+}>>();
+
 function normalizePersistedModeList(input: unknown): PreflightSessionModeList | null {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
     const modesRaw = (input as any).availableModes;
@@ -43,10 +49,28 @@ const persistedCache = createPersistentProbedResourceCache<PreflightSessionModeL
 });
 
 export function resetDynamicSessionModeProbeCacheForTests(): void {
+    transientUnavailableByKey.clear();
     persistedCache.resetForTests();
 }
 
+function readTransientUnavailable(key: string, nowMs = Date.now()): DynamicSessionModeProbeCacheEntry | null {
+    const entry = transientUnavailableByKey.get(key) ?? null;
+    if (!entry) return null;
+    if (nowMs >= 0 && nowMs > entry.expiresAt) {
+        transientUnavailableByKey.delete(key);
+        return null;
+    }
+    return {
+        kind: 'success',
+        updatedAt: entry.updatedAt,
+        expiresAt: entry.expiresAt,
+        value: entry.value,
+    };
+}
+
 export function readDynamicSessionModeProbeCache(key: string): DynamicSessionModeProbeCacheEntry | null {
+    const transientUnavailable = readTransientUnavailable(key);
+    if (transientUnavailable) return transientUnavailable;
     const snap: ProbedResourceSnapshot<PreflightSessionModeList> = persistedCache.getSnapshot(key);
     if (snap.dataUpdatedAt !== null && snap.data) {
         return {
@@ -67,11 +91,26 @@ export function readDynamicSessionModeProbeCache(key: string): DynamicSessionMod
 }
 
 export function writeDynamicSessionModeProbeCacheSuccess(key: string, value: PreflightSessionModeList, nowMs = Date.now()): void {
+    transientUnavailableByKey.delete(key);
     persistedCache.writeSuccess(key, value, nowMs);
 }
 
 export function writeDynamicSessionModeProbeCacheError(key: string, nowMs = Date.now()): void {
+    transientUnavailableByKey.delete(key);
     persistedCache.writeError(key, new Error('dynamic-session-mode-probe-failed'), nowMs);
+}
+
+export function writeDynamicSessionModeProbeCacheUnavailable(
+    key: string,
+    value: PreflightSessionModeList,
+    nowMs = Date.now(),
+): void {
+    persistedCache.writeError(key, new Error('dynamic-session-mode-probe-unavailable'), nowMs);
+    transientUnavailableByKey.set(key, {
+        updatedAt: nowMs,
+        expiresAt: nowMs + DYNAMIC_SESSION_MODE_PROBE_ERROR_BACKOFF_MS,
+        value,
+    });
 }
 
 export async function runDynamicSessionModeProbeDedupe<T>(

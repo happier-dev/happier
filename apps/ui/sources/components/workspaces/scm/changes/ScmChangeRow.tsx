@@ -189,7 +189,7 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
                 fileName={file.fileName}
                 filePath={file.filePath}
                 fullPath={file.fullPath}
-                nameMaxWidth="70%"
+                preferNameOverPath
                 pathTextStyle={{
                     fontSize: 13,
                     color: theme.colors.text.secondary,

@@ -71,8 +71,7 @@ vi.mock('@/sync/domains/server/url/shouldHoldUnauthenticatedShellForWebServerOve
     shouldHoldUnauthenticatedShellForWebServerOverride: () => false,
 }));
 
-vi.mock('@/components/onboarding', () => ({
-    resolvePostAuthSetupRoute: () => '/',
+vi.mock('@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry', () => ({
     PreAuthOnboardingWizardEntry: () => {
         const options = authEntryOptionsState.current;
         const nodes: React.ReactNode[] = [];

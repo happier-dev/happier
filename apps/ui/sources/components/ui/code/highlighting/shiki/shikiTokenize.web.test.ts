@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const codeToTokensSpy = vi.fn((_code: string, options: any) => ({
+    fg: '#111111',
+    tokens: [[{ content: String(options.theme), color: '#222222' }]],
+}));
+
 const createHighlighterSpy = vi.fn(async (..._args: any[]) => ({
     loadLanguage: async () => {},
-    codeToTokens: (_code: string, options: any) => ({
-        fg: '#111111',
-        tokens: [[{ content: String(options.theme), color: '#222222' }]],
-    }),
+    codeToTokens: codeToTokensSpy,
 }));
 
 vi.mock('shiki', () => ({
@@ -31,10 +33,7 @@ function makeColors(keyword: string) {
 function makeHighlighter() {
     return {
         loadLanguage: async () => {},
-        codeToTokens: (_code: string, options: any) => ({
-            fg: '#111111',
-            tokens: [[{ content: String(options.theme), color: '#222222' }]],
-        }),
+        codeToTokens: codeToTokensSpy,
     };
 }
 
@@ -55,6 +54,7 @@ async function importFreshModule() {
 describe('shikiTokenizeLines dynamic theme cache', () => {
     beforeEach(() => {
         createHighlighterSpy.mockClear();
+        codeToTokensSpy.mockClear();
     });
 
     it('uses effective syntax colors in the registered Shiki theme key', async () => {
@@ -90,6 +90,18 @@ describe('shikiTokenizeLines dynamic theme cache', () => {
         expect(createHighlighterSpy).toHaveBeenCalledTimes(3);
         const themeNames = createHighlighterSpy.mock.calls.map((call) => call[0]?.themes?.[0]?.name);
         expect(new Set(themeNames).size).toBe(2);
+    });
+
+    it('reuses tokenization results for identical theme, language, and content', async () => {
+        const { shikiTokenizeLines } = await importFreshModule();
+        const colors = makeColors('#123456');
+
+        await shikiTokenizeLines({ isDark: false, language: 'typescript', lines: ['const value = 1;'], colors });
+        await shikiTokenizeLines({ isDark: false, language: 'typescript', lines: ['const value = 1;'], colors });
+        await shikiTokenizeLines({ isDark: false, language: 'typescript', lines: ['const value = 2;'], colors });
+
+        expect(createHighlighterSpy).toHaveBeenCalledTimes(1);
+        expect(codeToTokensSpy).toHaveBeenCalledTimes(2);
     });
 
     it('evicts least recently used dynamic highlighters beyond the cache cap', async () => {

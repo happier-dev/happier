@@ -4,10 +4,7 @@ import { vi } from 'vitest';
 const globalWithDev = globalThis as typeof globalThis & { __DEV__?: boolean };
 let previousDev: boolean | undefined;
 
-vi.mock('expo-modules-core', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('expo-modules-core')>();
-    return { ...actual, requireOptionalNativeModule: () => null };
-});
+vi.mock('expo-modules-core', () => ({ requireOptionalNativeModule: () => null }));
 vi.mock('expo-constants', () => ({ default: { expoConfig: { extra: { app: {} } } } }));
 
 import { loadAppConfig } from './appConfig';

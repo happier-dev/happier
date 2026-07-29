@@ -46,6 +46,8 @@ describe('AttachmentsInlineImages (svg previews)', () => {
                     },
                 ]}
                 onOpenPath={() => {}}
+                fileOpenEnabled
+                mediaPreviewEnabled
             />,
         );
 

@@ -10,6 +10,18 @@ import {
 import { normalizeSpawnSessionResult } from './_shared';
 
 describe('normalizeSpawnSessionResult errorDetail carry-through (D2)', () => {
+    it('preserves the Remote predecessor accepted-pending recovery fields', () => {
+        expect(normalizeSpawnSessionResult({
+            type: 'success',
+            spawnNonce: 'remote-predecessor-spawn-nonce',
+            sessionIdStatus: 'pending',
+        })).toEqual({
+            type: 'success',
+            spawnNonce: 'remote-predecessor-spawn-nonce',
+            sessionIdStatus: 'pending',
+        });
+    });
+
     it('carries a structured connected-service resume-unreachable detail from the daemon payload', () => {
         const result = normalizeSpawnSessionResult({
             type: 'error',

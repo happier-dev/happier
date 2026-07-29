@@ -2,9 +2,10 @@ import type {
     AcpConfigOptionOverridesV1,
     BackendTargetRefV2,
     SessionMcpSelectionV1,
+    SessionModelSelectionV1,
     WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
-import type { CodexBackendMode } from '@happier-dev/agents';
+import type { CodexBackendMode } from '@happier-dev/protocol';
 
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 
@@ -83,6 +84,8 @@ export type AutomationTemplate = Readonly<{
     resume?: string;
     permissionMode?: string;
     permissionModeUpdatedAt?: number;
+    modelSelection?: SessionModelSelectionV1 | null;
+    /** Read-only compatibility fields. New templates write `modelSelection`. */
     modelId?: string;
     modelUpdatedAt?: number;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;

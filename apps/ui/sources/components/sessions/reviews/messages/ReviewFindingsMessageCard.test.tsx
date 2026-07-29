@@ -112,6 +112,97 @@ vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
 }));
 
 describe('ReviewFindingsMessageCard', () => {
+  it('fails closed if retained mutation callbacks are invoked after the transcript becomes read-only', async () => {
+    sessionExecutionRunActionSpy.mockClear();
+    submitMessageSpy.mockClear();
+    useSessionMessagesSpy.mockReturnValue({ messages: [], isLoaded: true });
+
+    const { ReviewFindingsMessageCard } = await import('./ReviewFindingsMessageCard');
+    const payload: any = {
+      runRef: {
+        runId: 'run_1',
+        callId: 'call_1',
+        backendId: 'claude',
+        retentionPolicy: 'resumable',
+      },
+      summary: 'summary',
+      overviewMarkdown: '## Overview',
+      generatedAtMs: 1,
+      findings: [
+        {
+          id: 'f1',
+          title: 'T',
+          severity: 'low',
+          category: 'style',
+          summary: 'S',
+          filePath: 'a.ts',
+          startLine: 1,
+          endLine: 1,
+        },
+      ],
+      questions: [],
+      assumptions: [],
+      triage: { findings: [{ id: 'f1', status: 'accept' }] },
+    };
+    const screen = await renderScreen(
+      <ReviewFindingsMessageCard payload={payload} sessionId="sess_1" canSendMessages />,
+    );
+    const findingHeader = findTestInstanceByTypeContainingText(screen, 'Pressable', 'T')!;
+    await act(async () => {
+      await pressTestInstanceAsync(findingHeader);
+    });
+    const askReviewer = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Ask reviewer')
+      ?? findTestInstanceByTypeContainingText(screen, 'Pressable', 'askReviewer');
+    await act(async () => {
+      await pressTestInstanceAsync(askReviewer!);
+    });
+    const inputs = screen.findAllByType('TextInput');
+    const retainedFollowUpChange = inputs.at(-1)!.props.onChangeText;
+    await act(async () => {
+      retainedFollowUpChange('Please clarify.');
+    });
+
+    const rejectFinding = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Ignore')
+      ?? findTestInstanceByTypeContainingText(screen, 'Pressable', 'reject');
+    const retainedRejectFinding = rejectFinding!.props.onPress;
+    const retainedApplyTriage = screen.findByTestId('review-findings-apply-triage')!.props.onPress;
+    const retainedPublishAccepted = screen.findByTestId('review-findings-publish-accepted')!.props.onPress;
+    const sendFollowUp = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Send follow-up')
+      ?? findTestInstanceByTypeContainingText(screen, 'Pressable', 'sendFollowUp');
+    const retainedSendFollowUp = sendFollowUp!.props.onPress;
+
+    await act(async () => {
+      screen.tree.update(
+        <ReviewFindingsMessageCard
+          payload={payload}
+          sessionId="sess_1"
+          canSendMessages={false}
+        />,
+      );
+    });
+    await act(async () => {
+      retainedApplyTriage();
+      retainedSendFollowUp();
+      retainedPublishAccepted();
+      retainedRejectFinding();
+      retainedFollowUpChange('Injected after read-only');
+      await Promise.resolve();
+    });
+
+    expect(sessionExecutionRunActionSpy).not.toHaveBeenCalled();
+    expect(submitMessageSpy).not.toHaveBeenCalled();
+    expect(screen.findByTestId('review-findings-apply-triage')).toBeNull();
+    expect(screen.findByTestId('review-findings-publish-accepted')).toBeNull();
+
+    await act(async () => {
+      screen.tree.update(
+        <ReviewFindingsMessageCard payload={payload} sessionId="sess_1" canSendMessages />,
+      );
+    });
+    expect(screen.findByTestId('review-findings-publish-accepted')!.props.disabled).toBe(false);
+    expect(screen.findAllByType('TextInput').at(-1)!.props.value).toBe('Please clarify.');
+  });
+
   it('falls back to disabling follow-up affordances for coderabbit when backend capabilities are unavailable', async () => {
     sessionExecutionRunActionSpy.mockClear();
     useExecutionRunsBackendsForSessionSpy.mockReturnValue(null);
@@ -130,7 +221,7 @@ describe('ReviewFindingsMessageCard', () => {
       assumptions: [],
     };
 
-    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1', canSendMessages: true }));
     const tree = screen.tree;
 
     const findingHeader = findTestInstanceByTypeContainingText(screen, 'Pressable', 'T');
@@ -162,7 +253,7 @@ describe('ReviewFindingsMessageCard', () => {
       assumptions: [],
     };
 
-    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1', canSendMessages: true }));
     const tree = screen.tree;
 
     const findingHeader = findTestInstanceByTypeContainingText(screen, 'Pressable', 'T');
@@ -193,7 +284,7 @@ describe('ReviewFindingsMessageCard', () => {
       assumptions: [],
     };
 
-    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1', canSendMessages: true }));
     const tree = screen.tree;
 
     const findingHeader = findTestInstanceByTypeContainingText(screen, 'Pressable', 'T');
@@ -222,7 +313,7 @@ describe('ReviewFindingsMessageCard', () => {
       triage: { findings: [{ id: 'f1', status: 'needs_refinement', comment: 'please clarify' }] },
     };
 
-    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1', canSendMessages: true }));
     const tree = screen.tree;
 
     const findingHeader = findTestInstanceByTypeContainingText(screen, 'Pressable', 'T');
@@ -257,7 +348,7 @@ describe('ReviewFindingsMessageCard', () => {
       ],
     };
 
-    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1', canSendMessages: true }));
     const tree = screen.tree;
 
     const header = findTestInstanceByTypeContainingText(screen, 'Pressable', 'T');
@@ -322,7 +413,7 @@ describe('ReviewFindingsMessageCard', () => {
       assumptions: [],
     };
 
-    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1', canSendMessages: true }));
 
     const findingHeader = findTestInstanceByTypeContainingText(screen, 'Pressable', 'T');
     expect(findingHeader).toBeDefined();
@@ -391,7 +482,7 @@ describe('ReviewFindingsMessageCard', () => {
       assumptions: [],
     };
 
-    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1', canSendMessages: true }));
 
     const findingHeader = findTestInstanceByTypeContainingText(screen, 'Pressable', 'T');
     expect(findingHeader).toBeDefined();
@@ -465,7 +556,7 @@ describe('ReviewFindingsMessageCard', () => {
       triage: { findings: [{ id: 'f1', status: 'accept' }] },
     };
 
-    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1', canSendMessages: true }));
     const tree = screen.tree;
 
     const publish = screen.findByTestId('review-findings-publish-accepted');
@@ -558,7 +649,7 @@ describe('ReviewFindingsMessageCard', () => {
       triage: { findings: [{ id: 'f1', status: 'accept' }] },
     };
 
-    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1', canSendMessages: true }));
     const tree = screen.tree;
 
     const findingHeader = screen.findByTestId('review-findings-header:f1');

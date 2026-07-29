@@ -7,6 +7,34 @@ import { renderScreen } from '@/dev/testkit';
 import { AuthEntryView } from './AuthEntryView';
 
 describe('AuthEntryView', () => {
+    const readyOptions = {
+        serverAvailability: 'ready' as const,
+        serverUrlForCopy: 'https://relay.example.test',
+        showAuthActions: true,
+        showProviderSignup: false,
+        showAnonymousSignup: true,
+        showMtlsLogin: false,
+        showKeylessProviderLogin: false,
+        providerId: null,
+        keylessProviderId: null,
+        providerSignupTitle: '',
+        providerKeylessTitle: '',
+        anonymousSignupTitle: 'Create account',
+        mtlsTitle: 'Sign in with certificate',
+        primarySignupTitle: 'Create account',
+        mtlsPrimary: false,
+        keylessPrimary: false,
+        autoRedirect: {
+            enabled: false,
+            providerId: null,
+            toKeyedProvision: false,
+            toKeylessLogin: false,
+            toMtls: false,
+            toLegacySignupProvider: false,
+        },
+        retryServerCheck: vi.fn(),
+    };
+
     it('renders a retry action when the server is unavailable', async () => {
         const onChangeRelay = vi.fn();
         const retryServerCheck = vi.fn();
@@ -172,5 +200,25 @@ describe('AuthEntryView', () => {
 
         expect(onCreateAccount).not.toHaveBeenCalled();
         expect(onLoginWithKeylessProvider).toHaveBeenCalledWith('github');
+    });
+
+    it('hides the setup affordance when desktop setup is explicitly unavailable', async () => {
+        const screen = await renderScreen(
+            React.createElement(AuthEntryView, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                showOpenSetupAction: false,
+                options: readyOptions,
+                onOpenSetup: vi.fn(),
+                onChangeRelay: vi.fn(),
+                onRestore: vi.fn(),
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+            }),
+        );
+
+        expect(screen.findByTestId('welcome-open-setup')).toBeNull();
     });
 });

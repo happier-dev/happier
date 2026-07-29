@@ -89,4 +89,40 @@ describe('readCurrentAppRuntimeInfo', () => {
             launchSource: 'embedded',
         });
     });
+
+    it('uses the native application version when Expo reports the placeholder app version', async () => {
+        vi.doMock('expo-constants', () => ({
+            default: {
+                expoConfig: {
+                    version: '0.0.0',
+                    updates: {
+                        requestHeaders: {
+                            'expo-channel-name': 'development',
+                        },
+                    },
+                },
+            },
+        }));
+        vi.doMock('expo-application', () => ({
+            nativeApplicationVersion: '0.2.10',
+            nativeBuildVersion: '101',
+            applicationId: 'dev.happier.app',
+        }));
+        vi.doMock('expo-updates', () => ({
+            channel: 'development',
+            updateId: null,
+            runtimeVersion: '0.2.1-native',
+            createdAt: null,
+            isEmbeddedLaunch: true,
+        }));
+
+        const { readCurrentAppRuntimeInfo } = await import('./readCurrentAppRuntimeInfo');
+
+        expect(readCurrentAppRuntimeInfo()).toMatchObject({
+            appVersion: '0.2.10',
+            nativeApplicationVersion: '0.2.10',
+            updateChannel: 'development',
+            runtimeVersion: '0.2.1-native',
+        });
+    });
 });

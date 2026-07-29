@@ -16,6 +16,8 @@ function row(overrides: Partial<ModelCatalogRow>): ModelCatalogRow {
         isDefault: false,
         canInstall: true,
         canRemove: false,
+        licenseReview: null,
+        sourcePluginId: null,
         ...overrides,
     };
 }

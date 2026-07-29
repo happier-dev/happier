@@ -258,7 +258,7 @@ describe('sessionSetManualReadStateWithServerScope', () => {
                     host: '',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'codex',
+                        agentId: 'codex',
                         machineId: 'machine-1',
                         remoteSessionId: 'remote-1',
                         source: { kind: 'codexHome', home: 'user' },

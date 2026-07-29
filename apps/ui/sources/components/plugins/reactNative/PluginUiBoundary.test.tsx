@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -30,6 +30,10 @@ function ThrowingSurface(): React.ReactElement {
     throw new Error('plugin render failure');
 }
 
+function HealthySurface(): React.ReactElement {
+    return React.createElement('View', { testID: 'plugin-rn-ui-healthy' });
+}
+
 describe('PluginUiBoundary', () => {
     it('contains render crashes and reports the failed surface once', async () => {
         const onCrash = vi.fn();
@@ -46,6 +50,41 @@ describe('PluginUiBoundary', () => {
             expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
             expect(onCrash).toHaveBeenCalledTimes(1);
             expect(onCrash).toHaveBeenCalledWith('surface_1', expect.any(Error));
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
+
+    it('recovers a crashed surface only after its immutable artifact identity changes', async () => {
+        const onCrash = vi.fn();
+        const { PluginUiBoundary } = await import('./PluginUiBoundary');
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+        try {
+            const screen = await renderScreen(
+                <PluginUiBoundary surfaceId="surface_1" resetKey="artifact_1" onCrash={onCrash}>
+                    <ThrowingSurface />
+                </PluginUiBoundary>,
+            );
+
+            expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
+
+            await screen.update(
+                <PluginUiBoundary surfaceId="surface_1" resetKey="artifact_1" onCrash={onCrash}>
+                    <HealthySurface />
+                </PluginUiBoundary>,
+            );
+            expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
+            expect(screen.findByTestId('plugin-rn-ui-healthy')).toBeNull();
+
+            await screen.update(
+                <PluginUiBoundary surfaceId="surface_1" resetKey="artifact_2" onCrash={onCrash}>
+                    <HealthySurface />
+                </PluginUiBoundary>,
+            );
+            expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeNull();
+            expect(screen.findByTestId('plugin-rn-ui-healthy')).toBeTruthy();
+            expect(onCrash).toHaveBeenCalledTimes(1);
         } finally {
             consoleError.mockRestore();
         }

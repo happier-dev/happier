@@ -188,6 +188,7 @@ describe('SessionMessageDetailsView permission prompt fallback', () => {
         expect(tree).toBeDefined();
         expect(toolFullViewSpy).toHaveBeenCalledWith(expect.objectContaining({
             forcePermissionFooterInTranscript: true,
+            owningMessageId: 'message-1',
         }));
     });
 

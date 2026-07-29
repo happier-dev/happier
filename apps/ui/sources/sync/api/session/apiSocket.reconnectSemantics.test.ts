@@ -27,6 +27,7 @@ type ManagedConnectionTransport = Readonly<{
 }>;
 
 type SocketStub = Readonly<{
+    on: (event: string, listener: (...args: unknown[]) => void) => void;
     onAny: (listener: (event: string, data: unknown) => void) => void;
     timeout: (ms: number) => Readonly<{ emitWithAck: (event: string, payload: unknown) => Promise<unknown> }>;
     emitWithAck: (event: string, payload: unknown) => Promise<unknown>;
@@ -35,6 +36,8 @@ type SocketStub = Readonly<{
 const reachability = vi.hoisted(() => ({
     subscribeSpy: vi.fn(),
     startSpy: vi.fn(async (..._args: unknown[]) => {}),
+    invalidateSpy: vi.fn(async (..._args: unknown[]) => {}),
+    restartSpy: vi.fn((..._args: unknown[]) => {}),
     reportSpy: vi.fn((..._args: unknown[]) => {}),
     listenersByServerUrl: new Map<string, (state: ManagedConnectionState) => void>(),
 }));
@@ -70,6 +73,8 @@ vi.mock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', async (i
             };
         },
         startServerReachabilitySupervisor: (...args: unknown[]) => reachability.startSpy(...args),
+        invalidateServerReachabilitySupervisor: (...args: unknown[]) => reachability.invalidateSpy(...args),
+        reportServerRestarting: (...args: unknown[]) => reachability.restartSpy(...args),
         reportServerUnreachable: (...args: unknown[]) => reachability.reportSpy(...args),
     };
 });
@@ -178,6 +183,7 @@ function createSessionEncryptionStub() {
 
 function createSocketStub(emitWithAck: (event: string, payload: unknown) => Promise<unknown>): SocketStub {
     return {
+        on: vi.fn(),
         onAny: vi.fn(),
         timeout: vi.fn((_ms: number) => ({ emitWithAck })),
         emitWithAck,
@@ -196,6 +202,8 @@ describe('apiSocket reconnect semantics', () => {
     afterEach(() => {
         reachability.subscribeSpy.mockReset();
         reachability.startSpy.mockReset();
+        reachability.invalidateSpy.mockReset();
+        reachability.restartSpy.mockReset();
         reachability.reportSpy.mockReset();
         reachability.listenersByServerUrl.clear();
         transportFactory.createSyncSocketTransportSpy.mockReset();
@@ -208,7 +216,7 @@ describe('apiSocket reconnect semantics', () => {
         const controller = createTransportController();
         transportFactory.lastController = controller;
         transportFactory.createSyncSocketTransportSpy.mockImplementation((params: any) => ({
-            socket: { onAny: vi.fn() },
+            socket: { on: vi.fn(), onAny: vi.fn() },
             transport: controller.transport,
             ...params,
         }));
@@ -262,6 +270,157 @@ describe('apiSocket reconnect semantics', () => {
         expect(onReconnected).toHaveBeenCalledTimes(1);
     });
 
+    it('invalidates reachability instead of reporting generic unreachable when the socket transport drops', async () => {
+        const controller = createTransportController();
+        transportFactory.lastController = controller;
+        transportFactory.createSyncSocketTransportSpy.mockImplementation((params: any) => ({
+            socket: { on: vi.fn(), onAny: vi.fn() },
+            transport: controller.transport,
+            ...params,
+        }));
+
+        const { apiSocket } = await import('./apiSocket');
+
+        const endpoint = 'https://server.example.test';
+        apiSocket.initialize({ endpoint, token: 'token-1' }, { getSessionEncryption: vi.fn(), getMachineEncryption: vi.fn() } as never);
+
+        emitReachability(endpoint, {
+            phase: 'online',
+            reason: null,
+            attempt: 1,
+            nextRetryAt: null,
+            lastConnectedAt: Date.now(),
+            lastDisconnectedAt: null,
+            lastErrorMessage: null,
+        });
+        await settleAsyncWork();
+
+        controller.triggerDisconnected({ intentional: false, reason: 'transport close', error: new Error('transport close') });
+        await settleAsyncWork();
+
+        expect(reachability.invalidateSpy).toHaveBeenCalledWith({ serverUrl: endpoint, token: 'token-1' });
+        expect(reachability.reportSpy).not.toHaveBeenCalled();
+    });
+
+    it('reports planned server restart socket events to the reachability supervisor', async () => {
+        const controller = createTransportController();
+        const socketListeners = new Map<string, (payload: unknown) => void>();
+        const socket = {
+            onAny: vi.fn(),
+            on: vi.fn((event: string, listener: (payload: unknown) => void) => {
+                socketListeners.set(event, listener);
+                return socket;
+            }),
+        };
+        transportFactory.lastController = controller;
+        transportFactory.createSyncSocketTransportSpy.mockImplementation((params: any) => ({
+            socket,
+            transport: controller.transport,
+            ...params,
+        }));
+
+        const { apiSocket } = await import('./apiSocket');
+
+        const endpoint = 'https://server.example.test';
+        apiSocket.initialize({ endpoint, token: 'token-1' }, { getSessionEncryption: vi.fn(), getMachineEncryption: vi.fn() } as never);
+
+        emitReachability(endpoint, {
+            phase: 'online',
+            reason: null,
+            attempt: 1,
+            nextRetryAt: null,
+            lastConnectedAt: Date.now(),
+            lastDisconnectedAt: null,
+            lastErrorMessage: null,
+        });
+        await settleAsyncWork();
+
+        socketListeners.get('server:restarting')?.({ retryAfterMs: 7_000 });
+
+        expect(reachability.restartSpy).toHaveBeenCalledWith(endpoint, 7_000);
+    });
+
+    it('feeds active-server ephemerals to status-demand recovery without bypassing message handlers', async () => {
+        const controller = createTransportController();
+        const socketListeners: {
+            onAny: ((event: string, payload: unknown) => void) | null;
+        } = { onAny: null };
+        const emit = vi.fn();
+        const socket = {
+            connected: true,
+            emit,
+            on: vi.fn(),
+            onAny: vi.fn((listener: (event: string, payload: unknown) => void) => {
+                socketListeners.onAny = listener;
+                return socket;
+            }),
+        };
+        transportFactory.lastController = controller;
+        transportFactory.createSyncSocketTransportSpy.mockImplementation((params: unknown) => ({
+            socket,
+            transport: controller.transport,
+            ...(params as object),
+        }));
+
+        const { apiSocket } = await import('./apiSocket');
+        const {
+            replaceExternalSessionStatusDemandViewport,
+            resetExternalSessionStatusDemandCoordinatorForTests,
+        } = await import('@/sync/runtime/orchestration/externalSessions/externalSessionStatusDemandCoordinator');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const serverId = getActiveServerSnapshot().serverId;
+        const ephemeralHandler = vi.fn();
+        apiSocket.onMessage('ephemeral', ephemeralHandler);
+        replaceExternalSessionStatusDemandViewport('active-server-test', [{
+            serverId,
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            linkGeneration: 'generation-1',
+            demand: 'open',
+        }]);
+
+        const endpoint = 'https://server.example.test';
+        apiSocket.initialize(
+            { endpoint, token: 'token-1' },
+            { getSessionEncryption: vi.fn(), getMachineEncryption: vi.fn() } as never,
+        );
+        emitReachability(endpoint, {
+            phase: 'online',
+            reason: null,
+            attempt: 1,
+            nextRetryAt: null,
+            lastConnectedAt: Date.now(),
+            lastDisconnectedAt: null,
+            lastErrorMessage: null,
+        });
+        await settleAsyncWork();
+
+        expect(socketListeners.onAny).toBeTypeOf('function');
+        emit.mockClear();
+        socketListeners.onAny?.('ephemeral', {
+            type: 'machine-activity',
+            id: 'machine-1',
+            active: true,
+            activeAt: 1_000,
+        });
+
+        const demandPayloads = emit.mock.calls
+            .filter(([event]) => event === 'external-session-status-demand-v1')
+            .map(([, payload]) => payload);
+        expect(demandPayloads).toEqual([
+            expect.objectContaining({ revision: 3 }),
+        ]);
+        expect(ephemeralHandler).toHaveBeenCalledWith({
+            type: 'machine-activity',
+            id: 'machine-1',
+            active: true,
+            activeAt: 1_000,
+        });
+
+        apiSocket.disconnect();
+        resetExternalSessionStatusDemandCoordinatorForTests();
+    });
+
     it('disconnects the transport when reachability goes offline while a connect is in-flight', async () => {
         const connectedListeners = new Set<() => void>();
         const disconnectedListeners = new Set<(event: TransportDisconnectEvent) => void>();
@@ -302,7 +461,7 @@ describe('apiSocket reconnect semantics', () => {
         };
 
         transportFactory.createSyncSocketTransportSpy.mockImplementation((params: any) => ({
-            socket: { onAny: vi.fn() },
+            socket: { on: vi.fn(), onAny: vi.fn() },
             transport,
             ...params,
         }));
@@ -346,7 +505,7 @@ describe('apiSocket reconnect semantics', () => {
         const controller = createTransportController();
         transportFactory.lastController = controller;
         transportFactory.createSyncSocketTransportSpy.mockImplementation((params: any) => ({
-            socket: { onAny: vi.fn() },
+            socket: { on: vi.fn(), onAny: vi.fn() },
             transport: controller.transport,
             ...params,
         }));
@@ -397,7 +556,7 @@ describe('apiSocket reconnect semantics', () => {
             const controller = createTransportController();
             createControllers.push(controller);
             transportFactory.lastController = controller;
-            return { socket: { onAny: vi.fn() }, transport: controller.transport, ...params };
+            return { socket: { on: vi.fn(), onAny: vi.fn() }, transport: controller.transport, ...params };
         });
 
         const { apiSocket } = await import('./apiSocket');
@@ -561,7 +720,7 @@ describe('apiSocket reconnect semantics', () => {
         const controller = createTransportController();
         transportFactory.lastController = controller;
         transportFactory.createSyncSocketTransportSpy.mockImplementation((params: any) => ({
-            socket: { onAny: vi.fn() },
+            socket: { on: vi.fn(), onAny: vi.fn() },
             transport: controller.transport,
             ...params,
         }));
@@ -603,7 +762,7 @@ describe('apiSocket reconnect semantics', () => {
         const controller = createTransportController();
         transportFactory.lastController = controller;
         transportFactory.createSyncSocketTransportSpy.mockImplementation((params: any) => ({
-            socket: { onAny: vi.fn() },
+            socket: { on: vi.fn(), onAny: vi.fn() },
             transport: controller.transport,
             ...params,
         }));

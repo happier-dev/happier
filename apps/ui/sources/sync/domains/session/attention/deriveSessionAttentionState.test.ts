@@ -6,8 +6,8 @@ const runtimeIssue = {
     v: 1,
     scope: 'primary_session',
     status: 'failed',
-    code: 'provider_status_error',
-    source: 'provider_status_error',
+    code: 'agent_status_error',
+    source: 'agent_status_error',
     occurredAt: 100,
 } as const;
 
@@ -29,7 +29,7 @@ describe('deriveSessionAttentionState', () => {
 
     it('does not let stale waiting activity override review attention', async () => {
         expect(deriveSessionAttentionState({
-            latestTurnStatus: 'in_progress',
+            latestTurnStatus: 'completed',
             latestTurnStatusObservedAt: 1_000,
             lastRuntimeIssue: runtimeIssue,
             hasWaitingActivity: true,
@@ -53,7 +53,7 @@ describe('deriveSessionAttentionState', () => {
         })).toBe('running');
     });
 
-    it('keeps long-running in-progress turns running when the runtime heartbeat is fresh', async () => {
+    it('keeps an in-progress turn running until an explicit terminal projection', async () => {
         expect(deriveSessionAttentionState({
             active: true,
             activeAt: 121_000,
@@ -66,6 +66,29 @@ describe('deriveSessionAttentionState', () => {
             hasReviewActivity: true,
             nowMs: 122_000,
         })).toBe('running');
+    });
+
+    it('does not read provider activity while deriving session attention', async () => {
+        const nowMs = 1_000_000;
+        const input = {
+            active: true,
+            presence: 'online',
+            thinking: false,
+            thinkingAt: 0,
+            latestTurnStatus: 'completed' as const,
+            latestTurnStatusObservedAt: nowMs - 10_000,
+            get runtimeActivityState(): never {
+                throw new Error('session attention must not read provider activity');
+            },
+            get runtimeActivityActiveCount(): never {
+                throw new Error('session attention must not read provider activity');
+            },
+            hasWaitingActivity: false,
+            hasReviewActivity: true,
+            nowMs,
+        };
+
+        expect(deriveSessionAttentionState(input)).toBe('review');
     });
 
     it('prioritizes waiting over running and review when the primary session is not failed', async () => {

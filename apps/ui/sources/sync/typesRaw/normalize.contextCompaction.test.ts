@@ -8,14 +8,14 @@ describe('typesRaw context compaction normalization', () => {
             role: 'agent',
             content: {
                 type: 'acp',
-                provider: 'pi',
+                agentId: 'pi',
                 data: {
                     type: 'context-compaction',
                     phase: 'completed',
                     lifecycleId: 'pi:context-compaction',
-                    source: 'provider-event',
+                    source: 'agent-event',
                     continuation: 'paused',
-                    pauseReason: 'provider-idle-after-compaction',
+                    pauseReason: 'agent-idle-after-compaction',
                 },
             },
         } satisfies Record<string, unknown>;
@@ -29,11 +29,11 @@ describe('typesRaw context compaction normalization', () => {
         expect(normalized.content).toMatchObject({
             type: 'context-compaction',
             phase: 'completed',
-            provider: 'pi',
+            agentId: 'pi',
             lifecycleId: 'pi:context-compaction',
-            source: 'provider-event',
+            source: 'agent-event',
             continuation: 'paused',
-            pauseReason: 'provider-idle-after-compaction',
+            pauseReason: 'agent-idle-after-compaction',
         });
     });
 });

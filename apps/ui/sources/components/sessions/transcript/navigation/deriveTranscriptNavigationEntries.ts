@@ -11,17 +11,16 @@ import type {
     TranscriptNavigationEntryKind,
     TranscriptNavigationLoadedMessage,
     TranscriptNavigationPin,
-    TranscriptNavigationRemoteUserTurn,
     TranscriptNavigationRole,
 } from './transcriptNavigationTypes';
 
-type NavigationEntryWithOrder = Readonly<{
+export type NavigationEntryWithOrder = Readonly<{
     entry: TranscriptNavigationEntry;
     blockOrder: number;
     pinOrder: number;
 }>;
 
-type UserTurnDraft = Readonly<{
+export type UserTurnDraft = Readonly<{
     sessionId: string;
     seq: number;
     routeMessageId: string | null;
@@ -174,21 +173,7 @@ function buildUniquePins(sessionId: string, pins: readonly TranscriptNavigationP
 }
 
 function normalizeLoadedMessage(message: TranscriptNavigationLoadedMessage): TranscriptNavigationLoadedMessage {
-    const facts = message.derivationFacts;
-    if (facts) {
-        return {
-            sessionId: facts.sessionId,
-            messageId: message.messageId,
-            routeMessageId: facts.routeMessageId,
-            seq: facts.seq,
-            transcriptBlockIndex: facts.transcriptBlockIndex,
-            role: facts.role,
-            text: facts.textPreview,
-            createdAtMs: facts.createdAtMs,
-            loaded: message.loaded,
-            derivationFacts: facts,
-        };
-    }
+    if (message.preNormalized === true) return message;
 
     return {
         ...message,
@@ -211,7 +196,8 @@ function deriveLoadedUserTurns(
 ): Map<number, UserTurnDraft> {
     const turnsBySeq = new Map<number, UserTurnDraft>();
     let activeUser: TranscriptNavigationLoadedMessage | null = null;
-    let activeResponsePreview: string | null = null;
+    let activeAgentPreview: string | null = null;
+    let activeToolPreview: string | null = null;
 
     const commitActiveUser = () => {
         if (!activeUser) return;
@@ -219,7 +205,8 @@ function deriveLoadedUserTurns(
         const promptPreview = activeUser.text;
         if (seq === null || !promptPreview) {
             activeUser = null;
-            activeResponsePreview = null;
+            activeAgentPreview = null;
+            activeToolPreview = null;
             return;
         }
 
@@ -228,34 +215,42 @@ function deriveLoadedUserTurns(
             seq,
             routeMessageId: activeUser.routeMessageId,
             promptPreview,
-            responsePreview: activeResponsePreview,
+            // Agent text is the subtitle whenever the turn produced any; a tool-only turn falls
+            // back to what the agent did. Thinking rows never reach here: their builders emit no text.
+            responsePreview: activeAgentPreview ?? activeToolPreview,
             createdAtMs: normalizeFiniteInteger(activeUser.createdAtMs),
             loaded: activeUser.loaded !== false,
             blockOrder: normalizeBlockIndex(activeUser.transcriptBlockIndex, 'user'),
             transcriptBlockIndex: normalizeFiniteInteger(activeUser.transcriptBlockIndex),
         });
         activeUser = null;
-        activeResponsePreview = null;
+        activeAgentPreview = null;
+        activeToolPreview = null;
     };
 
     for (const message of loadedMessages) {
         if (message.role === 'user') {
             commitActiveUser();
             activeUser = message;
-            activeResponsePreview = null;
+            activeAgentPreview = null;
+            activeToolPreview = null;
             continue;
         }
-        if (!activeUser || message.role !== 'assistant') continue;
+        if (!activeUser) continue;
+        if (message.role !== 'assistant' && message.role !== 'tool') continue;
         // Seqs are per-message (the assistant reply never shares the user
-        // turn's seq), so turn membership is positional: assistant rows after
+        // turn's seq), so turn membership is positional: reply rows after
         // this user message and before the next one belong to this turn. Only
         // reject rows whose seq is out of order relative to the active turn.
-        const assistantSeq = normalizeFiniteInteger(message.seq);
+        const replySeq = normalizeFiniteInteger(message.seq);
         const activeUserSeq = normalizeFiniteInteger(activeUser.seq);
-        if (assistantSeq !== null && activeUserSeq !== null && assistantSeq < activeUserSeq) continue;
-        const responsePreview = message.text;
-        if (responsePreview) {
-            activeResponsePreview = responsePreview;
+        if (replySeq !== null && activeUserSeq !== null && replySeq < activeUserSeq) continue;
+        const preview = message.text;
+        if (!preview) continue;
+        if (message.role === 'assistant') {
+            activeAgentPreview = preview;
+        } else {
+            activeToolPreview = preview;
         }
     }
     commitActiveUser();
@@ -263,66 +258,40 @@ function deriveLoadedUserTurns(
     return turnsBySeq;
 }
 
-type LoadedSeqCoverage = Readonly<{ minSeq: number; maxSeq: number }>;
-
-function resolveLoadedSeqCoverage(
+/**
+ * Merge remote history rows into the loaded window on row identity (route id, else seq).
+ *
+ * A loaded window can hold non-contiguous seq ranges after a target-window jump, so a global
+ * `[minSeq, maxSeq]` filter would silently swallow every turn inside an unloaded gap. Identity
+ * merging keeps those turns as unloaded anchors while still letting the loaded row win whenever
+ * both sides describe the same message.
+ */
+function mergeRemoteNavigationMessages(
+    sessionId: string,
     loadedMessages: readonly TranscriptNavigationLoadedMessage[],
-): LoadedSeqCoverage | null {
-    let minSeq: number | null = null;
-    let maxSeq: number | null = null;
-    for (const message of loadedMessages) {
-        const seq = normalizeFiniteInteger(message.seq);
-        if (seq === null) continue;
-        minSeq = minSeq === null ? seq : Math.min(minSeq, seq);
-        maxSeq = maxSeq === null ? seq : Math.max(maxSeq, seq);
-    }
-    if (minSeq === null || maxSeq === null) return null;
-    return { minSeq, maxSeq };
-}
-
-function collectLoadedRouteMessageIds(
-    loadedMessages: readonly TranscriptNavigationLoadedMessage[],
-): ReadonlySet<string> {
-    const routeMessageIds = new Set<string>();
+    remoteMessages: readonly TranscriptNavigationLoadedMessage[],
+): TranscriptNavigationLoadedMessage[] {
+    const claimedIdentities = new Set<string>();
     for (const message of loadedMessages) {
         const routeMessageId = typeof message.routeMessageId === 'string' ? message.routeMessageId.trim() : '';
-        if (routeMessageId) routeMessageIds.add(routeMessageId);
+        if (routeMessageId) claimedIdentities.add(`route:${routeMessageId}`);
+        const seq = normalizeFiniteInteger(message.seq);
+        if (seq !== null) claimedIdentities.add(`seq:${seq}`);
     }
-    return routeMessageIds;
-}
 
-function addRemoteUserTurns(
-    sessionId: string,
-    turnsBySeq: Map<number, UserTurnDraft>,
-    remoteUserTurns: readonly TranscriptNavigationRemoteUserTurn[],
-    loadedMessages: readonly TranscriptNavigationLoadedMessage[],
-): void {
-    const coverage = resolveLoadedSeqCoverage(loadedMessages);
-    const loadedRouteMessageIds = collectLoadedRouteMessageIds(loadedMessages);
-    for (const remoteTurn of remoteUserTurns) {
-        if (remoteTurn.sessionId && normalizeSessionId(remoteTurn.sessionId) !== sessionId) continue;
-        const seq = normalizeFiniteInteger(remoteTurn.seq);
-        const promptPreview = normalizeTextPreview(remoteTurn.text);
-        if (seq === null || !promptPreview || turnsBySeq.has(seq)) continue;
-        // Identity-merge with the loaded window: inside the loaded seq coverage the loaded
-        // rows are the source of truth, so a remote-seeded turn either already exists as a
-        // loaded turn or was absorbed/deduped by transcript reconciliation. Never resurrect
-        // it as a phantom "unloaded" entry (QA-4).
-        if (coverage && seq >= coverage.minSeq && seq <= coverage.maxSeq) continue;
-        const remoteRouteMessageId = typeof remoteTurn.routeMessageId === 'string' ? remoteTurn.routeMessageId.trim() : '';
-        if (remoteRouteMessageId && loadedRouteMessageIds.has(remoteRouteMessageId)) continue;
-        turnsBySeq.set(seq, {
-            sessionId,
-            seq,
-            routeMessageId: null,
-            promptPreview,
-            responsePreview: null,
-            createdAtMs: normalizeFiniteInteger(remoteTurn.createdAtMs),
-            loaded: false,
-            blockOrder: 0,
-            transcriptBlockIndex: null,
-        });
+    const merged = [...loadedMessages];
+    for (const remoteMessage of remoteMessages) {
+        if (normalizeSessionId(remoteMessage.sessionId) !== sessionId) continue;
+        const seq = normalizeFiniteInteger(remoteMessage.seq);
+        if (seq === null) continue;
+        const routeMessageId = typeof remoteMessage.routeMessageId === 'string' ? remoteMessage.routeMessageId.trim() : '';
+        if (routeMessageId && claimedIdentities.has(`route:${routeMessageId}`)) continue;
+        if (claimedIdentities.has(`seq:${seq}`)) continue;
+        if (routeMessageId) claimedIdentities.add(`route:${routeMessageId}`);
+        claimedIdentities.add(`seq:${seq}`);
+        merged.push({ ...remoteMessage, loaded: false });
     }
+    return merged;
 }
 
 function findNearestUserTurn(turns: readonly UserTurnDraft[], seq: number): UserTurnDraft | null {
@@ -334,7 +303,7 @@ function findNearestUserTurn(turns: readonly UserTurnDraft[], seq: number): User
     return nearest;
 }
 
-function buildUserEntry(turn: UserTurnDraft, mode: 'all' | 'pinned', pin: TranscriptNavigationPin | null): NavigationEntryWithOrder | null {
+export function buildUserEntry(turn: UserTurnDraft, mode: 'all' | 'pinned', pin: TranscriptNavigationPin | null): NavigationEntryWithOrder | null {
     if (mode === 'pinned' && !pin) return null;
     const pinned = pin !== null;
     const pinnedAtMs = pin ? normalizeFiniteInteger(pin.pinnedAtMs) : null;
@@ -425,8 +394,16 @@ export function deriveTranscriptNavigationEntries(params: DeriveTranscriptNaviga
         .map(normalizeLoadedMessage)
         .sort(compareLoadedMessage);
     const pins = buildUniquePins(sessionId, params.pins);
-    const turnsBySeq = deriveLoadedUserTurns(sessionId, loadedMessages);
-    addRemoteUserTurns(sessionId, turnsBySeq, params.remoteUserTurns, loadedMessages);
+    // One row set, one positional pairing pass: remote rows are ordinary unloaded transcript rows,
+    // so a head-partial turn (loaded reply, user row outside the window) pairs like any other.
+    const turnRows = params.remoteMessages.length === 0
+        ? loadedMessages
+        : mergeRemoteNavigationMessages(
+            sessionId,
+            loadedMessages,
+            params.remoteMessages.map(normalizeLoadedMessage),
+        ).sort(compareLoadedMessage);
+    const turnsBySeq = deriveLoadedUserTurns(sessionId, turnRows);
 
     const userTurns = [...turnsBySeq.values()].sort((a, b) => a.seq - b.seq);
     const entries: NavigationEntryWithOrder[] = [];

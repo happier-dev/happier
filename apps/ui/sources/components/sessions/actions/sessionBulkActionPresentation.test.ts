@@ -14,15 +14,19 @@ describe('listSessionBulkActionDescriptors', () => {
                 sessionId: 'session-a',
                 active: true,
                 archived: false,
+                canStop: true,
+                canArchive: true,
                 pinned: false,
                 tags: [],
                 readState: 'unread',
+                canMoveToFolder: true,
             },
             {
                 key: 'session-b',
                 sessionId: 'session-b',
                 active: false,
                 archived: true,
+                hasAdminAccess: true,
                 pinned: true,
                 tags: ['urgent'],
                 readState: 'read',
@@ -105,5 +109,63 @@ describe('listSessionBulkActionDescriptors', () => {
         expect(descriptors.map((descriptor) => descriptor.id)).not.toContain(SESSION_BULK_ACTION_IDS.stop);
         expect(descriptors.map((descriptor) => descriptor.id)).not.toContain(SESSION_BULK_ACTION_IDS.archive);
         expect(descriptors.map((descriptor) => descriptor.id)).not.toContain(SESSION_BULK_ACTION_IDS.unarchive);
+    });
+
+    it('fails closed when lifecycle permission facts are absent', () => {
+        const descriptors = listSessionBulkActionDescriptors({
+            targets: [
+                {
+                    key: 'active-unknown-permissions',
+                    sessionId: 'active-unknown-permissions',
+                    active: true,
+                    archived: false,
+                },
+                {
+                    key: 'archived-unknown-permissions',
+                    sessionId: 'archived-unknown-permissions',
+                    active: false,
+                    archived: true,
+                },
+            ],
+            tagsEnabled: false,
+            moveEnabled: false,
+        });
+
+        expect(descriptors.map((descriptor) => descriptor.id)).not.toContain(SESSION_BULK_ACTION_IDS.stop);
+        expect(descriptors.map((descriptor) => descriptor.id)).not.toContain(SESSION_BULK_ACTION_IDS.archive);
+        expect(descriptors.map((descriptor) => descriptor.id)).not.toContain(SESSION_BULK_ACTION_IDS.unarchive);
+    });
+
+    it('shows move only when at least one selected item is eligible for folders', () => {
+        const unavailable = listSessionBulkActionDescriptors({
+            targets: [
+                {
+                    key: 'unscoped',
+                    sessionId: 'unscoped',
+                    canMoveToFolder: false,
+                },
+            ],
+            tagsEnabled: false,
+            moveEnabled: true,
+        });
+        const mixed = listSessionBulkActionDescriptors({
+            targets: [
+                {
+                    key: 'unscoped',
+                    sessionId: 'unscoped',
+                    canMoveToFolder: false,
+                },
+                {
+                    key: 'external',
+                    sessionId: 'external',
+                    canMoveToFolder: true,
+                },
+            ],
+            tagsEnabled: false,
+            moveEnabled: true,
+        });
+
+        expect(unavailable.map((descriptor) => descriptor.id)).not.toContain(SESSION_BULK_ACTION_IDS.moveToFolder);
+        expect(mixed.map((descriptor) => descriptor.id)).toContain(SESSION_BULK_ACTION_IDS.moveToFolder);
     });
 });

@@ -5,6 +5,39 @@ import { redactVoiceToolResultValue } from './redactVoiceToolResult';
 const SHARE_ALL = { shareFilePaths: true, shareSessionSummary: true, sharePermissionRequests: true } as const;
 
 describe('redactVoiceToolResultValue', () => {
+  it.each([
+    undefined,
+    null,
+    {
+      shareFilePaths: 'true',
+      shareSessionSummary: 'true',
+      sharePermissionRequests: 'true',
+    },
+    {
+      shareFilePaths: 1,
+      shareSessionSummary: 1,
+      sharePermissionRequests: 1,
+    },
+  ])('fails closed for omitted or malformed redaction prefs=%p', (privacyPrefs) => {
+    const result = Reflect.apply(redactVoiceToolResultValue, undefined, [
+      {
+        title: 'PRIVATE SESSION TITLE',
+        locationLabel: 'PRIVATE LOCATION LABEL',
+        path: '/Users/alice/Company/PrivateProject/README.md',
+        requestId: 'PRIVATE_REQUEST_ID',
+        safe: 'visible',
+      },
+      privacyPrefs,
+    ]);
+    const serialized = JSON.stringify(result);
+
+    expect(serialized).not.toContain('PRIVATE SESSION TITLE');
+    expect(serialized).not.toContain('PRIVATE LOCATION LABEL');
+    expect(serialized).not.toContain('/Users/alice/Company/PrivateProject/README.md');
+    expect(serialized).not.toContain('PRIVATE_REQUEST_ID');
+    expect(serialized).toContain('visible');
+  });
+
   it('drops session titles (summaries) when shareSessionSummary is false', () => {
     const result = redactVoiceToolResultValue(
       { ok: true, session: { id: 's1', title: 'Secret Summary', serverName: 'Box' } },
@@ -69,11 +102,19 @@ describe('redactVoiceToolResultValue', () => {
 
   it('drops pending permission-request identifiers when sharePermissionRequests is false', () => {
     const result = redactVoiceToolResultValue(
-      { ok: true, sessionId: 's1', permissionRequestIds: ['req_1', 'req_2'] },
+      {
+        ok: true,
+        sessionId: 's1',
+        permissionRequestIds: ['req_1', 'req_2'],
+        requestId: 'req_single',
+        requestIds: ['req_3', 'req_4'],
+      },
       { ...SHARE_ALL, sharePermissionRequests: false },
-    ) as { permissionRequestIds?: unknown; sessionId: string };
+    ) as { permissionRequestIds?: unknown; requestId?: unknown; requestIds?: unknown; sessionId: string };
 
     expect(result.permissionRequestIds).toBeUndefined();
+    expect(result.requestId).toBeUndefined();
+    expect(result.requestIds).toBeUndefined();
     expect(result.sessionId).toBe('s1');
   });
 
@@ -84,5 +125,30 @@ describe('redactVoiceToolResultValue', () => {
     ) as { permissionRequestIds: string[] };
 
     expect(result.permissionRequestIds).toEqual(['req_1']);
+  });
+
+  it('fails closed instead of leaking gated values beyond the traversal depth limit', () => {
+    let nested: Record<string, unknown> = {
+      permissionRequestIds: ['req_deep_secret'],
+      title: 'Deep secret session summary',
+      path: '/Users/alice/private/deep-secret.txt',
+    };
+    for (let depth = 0; depth < 24; depth += 1) {
+      nested = { child: nested };
+    }
+
+    const result = redactVoiceToolResultValue(
+      nested,
+      {
+        shareFilePaths: false,
+        shareSessionSummary: false,
+        sharePermissionRequests: false,
+      },
+    );
+    const serialized = JSON.stringify(result);
+
+    expect(serialized).not.toContain('req_deep_secret');
+    expect(serialized).not.toContain('Deep secret session summary');
+    expect(serialized).not.toContain('/Users/alice/private/deep-secret.txt');
   });
 });

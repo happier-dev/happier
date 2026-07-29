@@ -14,7 +14,7 @@ import { TRANSCRIPT_WEB_TOOL_GROUP_PREPEND_ANCHOR_TEST_ID_PREFIX } from '@/compo
 import { layout } from '@/components/ui/layout/layout';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
-import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
+import { resolveToolCallsGroupStatus } from '@/components/sessions/transcript/toolCalls/units/toolCallsGroupChrome';
 import {
     type TranscriptSessionCommonProps,
     useTranscriptSessionCommon,
@@ -86,17 +86,9 @@ export const ToolCallsGroupRowWithSessionCommon = React.memo(function ToolCallsG
         });
     }, [props.interaction.permissionDisabledReason, toolMessages]);
 
-    let status: 'running' | 'completed' | 'error' = 'completed';
-    let sawError = false;
-    for (const m of toolMessagesForSession) {
-        const kind = resolveToolStatusIndicatorKind(m.tool);
-        if (kind === 'running' || kind === 'permission_pending') {
-            status = 'running';
-            break;
-        }
-        if (kind === 'error') sawError = true;
-    }
-    if (status !== 'running' && sawError) status = 'error';
+    const status = resolveToolCallsGroupStatus({
+        toolMessages: toolMessagesForSession,
+    });
 
     const createdAt = toolMessagesForSession[0]?.createdAt ?? Date.now();
 

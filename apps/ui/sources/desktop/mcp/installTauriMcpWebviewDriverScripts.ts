@@ -1,6 +1,7 @@
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { applyLocalSettingsFromDesktopMcpBridge } from '@/sync/store/settingsWriters';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { resolveActivitySurfacePolicy } from '@/activity/attention/resolveActivitySurfacePolicy';
 import { buildDesktopActivityOverlaySnapshot } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlaySnapshot';
 import { buildDesktopActivityOverlayModel } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlayModel';
@@ -222,8 +223,7 @@ export function installTauriMcpWebviewDriverScripts(options?: Readonly<{
     const readDesktopOverlayWindowState = options?.readDesktopOverlayWindowState ?? getDesktopActivityOverlayWindowState;
     const ensureSessionVisible = options?.ensureSessionVisible
         ?? (async (sessionId: string, helperOptions?: Readonly<{ forceRefresh?: boolean }>) => {
-            const { sync } = await import('@/sync/sync');
-            return sync.ensureSessionVisibleForMessageRoute(sessionId, helperOptions);
+            return getSyncSingleton().ensureSessionVisibleForMessageRoute(sessionId, helperOptions);
         });
     const flushDesktopOverlaySync = options?.flushDesktopOverlaySync ?? (async () => {
         // This bridge runs in both the main and overlay windows. Only the main window is allowed to

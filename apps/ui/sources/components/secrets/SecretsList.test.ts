@@ -79,7 +79,7 @@ vi.mock('@/components/ui/lists/ItemGroup', async (importOriginal) => {
 });
 
 vi.mock('@/components/ui/lists/ItemRowActions', () => ({
-    ItemRowActions: () => null,
+    ItemRowActions: (props: Record<string, unknown>) => React.createElement('ItemRowActions', props),
 }));
 
 vi.mock('@/modal', async () => {
@@ -239,6 +239,30 @@ describe('SecretsList', () => {
         expect(textContent.indexOf('Secondary')).toBeGreaterThanOrEqual(0);
         expect(textContent.indexOf('Primary')).toBeGreaterThanOrEqual(0);
         expect(textContent.indexOf('Secondary')).toBeLessThan(textContent.indexOf('Primary'));
+    });
+
+    it('exposes stable automation identities for Saved Secret rows and mutation actions', async () => {
+        const secret: SavedSecret = {
+            id: 'secret-a',
+            name: 'Primary',
+            kind: 'apiKey',
+            encryptedValue: { _isSecretValue: true, value: 'a' },
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const { screen } = await renderSecretsList({ secrets: [secret] });
+
+        expect(screen.findByTestId('saved-secret:secret-a')).toBeTruthy();
+        expect(screen.findByTestId('saved-secret-add')).toBeTruthy();
+        const editActions = screen.findAllByType('ItemRowActions')
+            .find((row) => row.props.title === secret.name);
+        expect(editActions?.props.overflowTriggerTestID).toBe('saved-secret:secret-a:more');
+        expect(editActions?.props.actions.map((action: { inlineTestID?: string }) => action.inlineTestID))
+            .toEqual([
+                'saved-secret:secret-a:rename',
+                'saved-secret:secret-a:replace',
+                'saved-secret:secret-a:delete',
+            ]);
     });
 
     it('selects none row when include-none entry is pressed', async () => {

@@ -16,6 +16,7 @@ import { t } from '@/text';
 import { generateWorktreeName } from '@/utils/worktree/generateWorktreeName';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { isFirstPartyGitScmBackendId } from '@/scm/registry/firstPartyScmBackendIdentity';
 
 import {
     buildWorktreeSelectionListSteps,
@@ -72,7 +73,8 @@ export function useNewSessionCheckoutActionChip(params: Readonly<{
     // the minute-tick rebuild) keep a stable suggestion rather than reshuffling.
     const [worktreeNameSuggestion] = React.useState(() => generateWorktreeName());
     return React.useMemo<AgentInputExtraActionChip | null>(() => {
-        const supportsRepoWorktreeChip = params.repoScmSnapshot?.repo.isRepo === true && params.repoScmSnapshot.repo.backendId === 'git';
+        const supportsRepoWorktreeChip = params.repoScmSnapshot?.repo.isRepo === true
+            && isFirstPartyGitScmBackendId(params.repoScmSnapshot.repo.backendId);
         if (!supportsRepoWorktreeChip) {
             return null;
         }

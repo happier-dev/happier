@@ -75,4 +75,28 @@ describe('migrateAccountEncryptionMode', () => {
       return (err as any).code === 'restore_required' && err.status === 400;
     });
   });
+
+  it('surfaces metadata_privacy_upgrade_required as a typed error code', async () => {
+    mocks.serverFetch.mockResolvedValueOnce(
+      jsonResponse({ error: 'metadata_privacy_upgrade_required' }, 400),
+    );
+
+    await expect(
+      migrateAccountEncryptionMode(
+        { token: 't', encryption: { publicKey: 'pk', machineKey: 'mk' } } as any,
+        {
+          toMode: 'plain',
+          expectedSettingsVersion: 0,
+          settingsContent: { t: 'plain', v: {} },
+          connectedServices: { action: 'assert_empty' },
+          automations: { action: 'assert_empty' },
+        } as any,
+      ),
+    ).rejects.toSatisfy((err: unknown) => {
+      if (!(err instanceof HappyError)) return false;
+      return err.code === 'metadata_privacy_upgrade_required'
+        && err.status === 400;
+    });
+  });
+
 });

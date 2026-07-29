@@ -1,10 +1,13 @@
 import {
     DEFAULT_BROWSER_CAPABILITIES,
+    DEFAULT_DEVICE_CAPABILITIES,
     DEFAULT_LOCAL_SERVICE_CAPABILITIES,
     DEFAULT_MACHINE_LIVE_STREAM_CAPABILITIES,
     DEFAULT_MACHINE_TUNNEL_CAPABILITIES,
     DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
+    DEFAULT_PEER_MEDIATION_CAPABILITIES,
     DEFAULT_PETS_CAPABILITIES,
+    DEFAULT_SHARING_CAPABILITIES,
     type FeaturesResponse as RootLayoutFeatures,
 } from '@happier-dev/protocol';
 
@@ -21,6 +24,7 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
         | 'machines'
         | 'localServices'
         | 'browser'
+        | 'plugins'
         | 'devices'
         | 'terminal'
         | 'voice'
@@ -41,6 +45,7 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
             machines?: Partial<RootLayoutFeatures['features']['machines']>;
             localServices?: Partial<RootLayoutFeatures['features']['localServices']>;
             browser?: Partial<RootLayoutFeatures['features']['browser']>;
+            plugins?: Partial<RootLayoutFeatures['features']['plugins']>;
             devices?: Partial<RootLayoutFeatures['features']['devices']>;
             terminal?: Partial<RootLayoutFeatures['features']['terminal']>;
             voice?: Partial<RootLayoutFeatures['features']['voice']>;
@@ -49,10 +54,11 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
             encryption?: Partial<RootLayoutFeatures['features']['encryption']>;
             e2ee?: Partial<RootLayoutFeatures['features']['e2ee']>;
             pets?: Partial<RootLayoutFeatures['features']['pets']>;
+            providers?: Partial<RootLayoutFeatures['features']['providers']>;
         }>;
     capabilities?: Omit<
         Partial<RootLayoutFeatures['capabilities']>,
-        'oauth' | 'social' | 'auth' | 'encryption' | 'liveActivities' | 'pets' | 'localServices' | 'browser'
+        'oauth' | 'social' | 'auth' | 'encryption' | 'liveActivities' | 'pets' | 'localServices' | 'browser' | 'devices'
     > &
         Readonly<{
             oauth?: Partial<RootLayoutFeatures['capabilities']['oauth']>;
@@ -63,6 +69,7 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
             pets?: Partial<RootLayoutFeatures['capabilities']['pets']>;
             localServices?: Partial<RootLayoutFeatures['capabilities']['localServices']>;
             browser?: Partial<RootLayoutFeatures['capabilities']['browser']>;
+            devices?: Partial<RootLayoutFeatures['capabilities']['devices']>;
         }>;
 }>;
 
@@ -79,6 +86,11 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
         remoteHosts: {
             management: { enabled: true },
             secretMaterial: { enabled: false },
+        },
+        providers: {
+            enabled: false,
+            localDiscovery: { enabled: false },
+            localModelManagement: { enabled: false },
         },
         attachments: {
             uploads: { enabled: true },
@@ -108,6 +120,7 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             public: { enabled: true },
             contentKeys: { enabled: true },
             pendingQueueV2: { enabled: false },
+            pendingDeliveryState: { enabled: false },
         },
         sessions: {
             enabled: false,
@@ -119,6 +132,10 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
         },
         machines: {
             enabled: false,
+            peerMediation: {
+                enabled: false,
+                observability: { enabled: false },
+            },
             transfer: {
                 enabled: false,
                 directPeer: {
@@ -147,6 +164,8 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             enabled: false,
             inventory: { enabled: false },
             managed: { enabled: false },
+            launcher: { enabled: false },
+            actions: { enabled: false, terminate: { enabled: false } },
             preview: { enabled: false },
             publicPreview: { enabled: false },
         },
@@ -155,6 +174,22 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             viewTargets: { enabled: false },
             internal: { enabled: false },
             sidecar: { enabled: false },
+            diagnostics: { enabled: false },
+            context: { enabled: false },
+            automation: { enabled: false },
+            recording: { enabled: false, attachments: { enabled: false } },
+        },
+        plugins: {
+            enabled: false,
+            ui: {
+                enabled: false,
+                hostedWeb: { enabled: false },
+                structuredMessages: { enabled: false },
+                reactNativeBundles: {
+                    enabled: false,
+                    devHotReload: { enabled: false },
+                },
+            },
         },
         devices: {
             enabled: false,
@@ -182,6 +217,9 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
         },
         terminal: {
             embeddedPty: { enabled: false },
+            transport: {
+                byteStream: { enabled: false },
+            },
         },
         voice: { enabled: false, happierVoice: { enabled: false } },
         social: {
@@ -206,6 +244,7 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
         },
     },
     capabilities: {
+        connectedServices: { credentialDelete: { revisionGuard: false } },
         bugReports: {
             providerUrl: 'https://reports.happier.dev',
             defaultIncludeDiagnostics: true,
@@ -232,11 +271,13 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             tunnel: DEFAULT_MACHINE_TUNNEL_CAPABILITIES,
             liveStream: DEFAULT_MACHINE_LIVE_STREAM_CAPABILITIES,
             peerMediation: {
-                grantSigningKeys: [],
+                ...DEFAULT_PEER_MEDIATION_CAPABILITIES,
             },
         },
         localServices: DEFAULT_LOCAL_SERVICE_CAPABILITIES,
         browser: DEFAULT_BROWSER_CAPABILITIES,
+        devices: DEFAULT_DEVICE_CAPABILITIES,
+        sharing: DEFAULT_SHARING_CAPABILITIES,
         server: {},
         serverIdentity: { serverIdentityId: null },
         social: {
@@ -298,6 +339,7 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
     const nextMachines: Partial<RootLayoutFeatures['features']['machines']> = nextFeatures.machines ?? {};
     const nextLocalServices: Partial<RootLayoutFeatures['features']['localServices']> = nextFeatures.localServices ?? {};
     const nextBrowser: Partial<RootLayoutFeatures['features']['browser']> = nextFeatures.browser ?? {};
+    const nextPlugins: Partial<RootLayoutFeatures['features']['plugins']> = nextFeatures.plugins ?? {};
     const nextDevices: Partial<RootLayoutFeatures['features']['devices']> = nextFeatures.devices ?? {};
     const nextTerminal: Partial<RootLayoutFeatures['features']['terminal']> = nextFeatures.terminal ?? {};
     const nextAttachments: Partial<RootLayoutFeatures['features']['attachments']> = nextFeatures.attachments ?? {};
@@ -321,6 +363,7 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
     const nextCapabilitiesLocalServices: Partial<RootLayoutFeatures['capabilities']['localServices']> =
         nextCapabilities.localServices ?? {};
     const nextCapabilitiesBrowser: Partial<RootLayoutFeatures['capabilities']['browser']> = nextCapabilities.browser ?? {};
+    const nextCapabilitiesDevices: Partial<RootLayoutFeatures['capabilities']['devices']> = nextCapabilities.devices ?? {};
     const nextCapabilitiesAuthRecovery: Partial<RootLayoutFeatures['capabilities']['auth']['recovery']> =
         nextCapabilitiesAuth.recovery ?? {};
     const nextCapabilitiesAuthUi: Partial<RootLayoutFeatures['capabilities']['auth']['ui']> =
@@ -409,6 +452,14 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
                         ...(nextMachines.transfer?.serverRouted ?? {}),
                     },
                 },
+                peerMediation: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.machines.peerMediation,
+                    ...(nextMachines.peerMediation ?? {}),
+                    observability: {
+                        ...BASE_ROOT_LAYOUT_FEATURES.features.machines.peerMediation.observability,
+                        ...(nextMachines.peerMediation?.observability ?? {}),
+                    },
+                },
                 tunnel: {
                     ...BASE_ROOT_LAYOUT_FEATURES.features.machines.tunnel,
                     ...(nextMachines.tunnel ?? {}),
@@ -477,6 +528,38 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
                     ...BASE_ROOT_LAYOUT_FEATURES.features.browser.sidecar,
                     ...(nextBrowser.sidecar ?? {}),
                 },
+                diagnostics: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.browser.diagnostics,
+                    ...(nextBrowser.diagnostics ?? {}),
+                },
+                context: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.browser.context,
+                    ...(nextBrowser.context ?? {}),
+                },
+            },
+            plugins: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.plugins,
+                ...nextPlugins,
+                ui: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.plugins.ui,
+                    ...(nextPlugins.ui ?? {}),
+                    hostedWeb: {
+                        ...BASE_ROOT_LAYOUT_FEATURES.features.plugins.ui.hostedWeb,
+                        ...(nextPlugins.ui?.hostedWeb ?? {}),
+                    },
+                    structuredMessages: {
+                        ...BASE_ROOT_LAYOUT_FEATURES.features.plugins.ui.structuredMessages,
+                        ...(nextPlugins.ui?.structuredMessages ?? {}),
+                    },
+                    reactNativeBundles: {
+                        ...BASE_ROOT_LAYOUT_FEATURES.features.plugins.ui.reactNativeBundles,
+                        ...(nextPlugins.ui?.reactNativeBundles ?? {}),
+                        devHotReload: {
+                            ...BASE_ROOT_LAYOUT_FEATURES.features.plugins.ui.reactNativeBundles.devHotReload,
+                            ...(nextPlugins.ui?.reactNativeBundles?.devHotReload ?? {}),
+                        },
+                    },
+                },
             },
             devices: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.devices,
@@ -489,6 +572,14 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
             terminal: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.terminal,
                 ...nextTerminal,
+                transport: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.terminal.transport,
+                    ...(nextTerminal.transport ?? {}),
+                    byteStream: {
+                        ...BASE_ROOT_LAYOUT_FEATURES.features.terminal.transport.byteStream,
+                        ...(nextTerminal.transport?.byteStream ?? {}),
+                    },
+                },
             },
             voice: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.voice,
@@ -604,6 +695,22 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
                 sidecar: {
                     ...BASE_ROOT_LAYOUT_FEATURES.capabilities.browser.sidecar,
                     ...(nextCapabilitiesBrowser.sidecar ?? {}),
+                },
+                diagnostics: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.browser.diagnostics,
+                    ...(nextCapabilitiesBrowser.diagnostics ?? {}),
+                },
+                context: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.browser.context,
+                    ...(nextCapabilitiesBrowser.context ?? {}),
+                },
+            },
+            devices: {
+                ...BASE_ROOT_LAYOUT_FEATURES.capabilities.devices,
+                ...nextCapabilitiesDevices,
+                simulatorPreview: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.devices.simulatorPreview,
+                    ...(nextCapabilitiesDevices.simulatorPreview ?? {}),
                 },
             },
             social: {

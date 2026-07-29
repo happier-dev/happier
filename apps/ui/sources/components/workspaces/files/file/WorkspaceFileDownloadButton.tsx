@@ -44,7 +44,7 @@ export const WorkspaceFileDownloadButton = React.memo((props: Readonly<{
                 void (async () => {
                     if (!normalizedScope) return;
                     const res = await transfers.startDownload({ path: props.path, asZip: props.asZip === true });
-                    if (!res.ok) {
+                    if (!res.ok && res.canceled !== true) {
                         try {
                             const { Modal } = await import('@/modal');
                             Modal.alert(t('common.error'), res.error);

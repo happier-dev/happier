@@ -83,7 +83,7 @@ describe('useExecutionRunsBackendsForSession', () => {
       metadata: {
         externalSessionV1: {
           v: 1,
-          providerId: 'claude',
+          agentId: 'claude',
           machineId: 'machine-direct',
           remoteSessionId: 'remote-session-1',
           source: { kind: 'claudeConfig', configDir: '/tmp/claude-config' },
@@ -133,7 +133,7 @@ describe('useExecutionRunsBackendsForSession', () => {
       metadata: {
         externalSessionV1: {
           v: 1,
-          providerId: 'claude',
+          agentId: 'claude',
           machineId: 'machine-direct',
           remoteSessionId: 'remote-session-1',
           source: { kind: 'claudeConfig', configDir: '/tmp/claude-config' },
@@ -158,7 +158,7 @@ describe('useExecutionRunsBackendsForSession', () => {
       metadata: {
         externalSessionV1: {
           v: 1,
-          providerId: 'claude',
+          agentId: 'claude',
           machineId: 'machine-direct',
           remoteSessionId: 'remote-session-1',
           source: { kind: 'claudeConfig', configDir: '/tmp/claude-config' },
@@ -191,7 +191,7 @@ describe('useExecutionRunsBackendsForSession', () => {
       metadata: {
         externalSessionV1: {
           v: 1,
-          providerId: 'claude',
+          agentId: 'claude',
           machineId: 'machine-direct',
           remoteSessionId: 'remote-session-1',
           source: { kind: 'claudeConfig', configDir: '/tmp/claude-config' },

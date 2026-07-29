@@ -107,6 +107,52 @@ describe('resolveSessionComposerStateFromAuthoringContext', () => {
         expect(state.currentPath).toBe('/repo/snapshot');
     });
 
+    it('reads the layout-v1 machine label only from the owner compatibility view', () => {
+        const context: LiveSessionAuthoringContext = {
+            kind: 'liveSession',
+            session: {
+                ...BASE_SESSION,
+                metadataLayoutVersion: 1,
+                metadata: {
+                    v: 1,
+                    summary: {
+                        text: 'Shared title',
+                        updatedAt: 1,
+                    },
+                },
+                ownerMetadataView: {
+                    displayName: 'Private builder',
+                    host: 'private-host',
+                    machineId: 'private-machine',
+                },
+            } as never,
+            snapshot: BASE_SNAPSHOT as never,
+        };
+
+        expect(resolveSessionComposerStateFromAuthoringContext(context).machineName)
+            .toBe('Private builder');
+    });
+
+    it('normalizes an Agent without a configured default model to the canonical default mode', () => {
+        const context: LiveSessionAuthoringContext = {
+            kind: 'liveSession',
+            session: {
+                ...BASE_SESSION,
+                metadata: {
+                    ...BASE_SESSION.metadata,
+                    flavor: 'grok',
+                },
+            } as any,
+            snapshot: {
+                ...BASE_SNAPSHOT,
+                agentId: 'grok',
+                modelId: null,
+            } as any,
+        };
+
+        expect(resolveSessionComposerStateFromAuthoringContext(context).modelMode).toBe('default');
+    });
+
     it('prefers existing-session automation draft overrides over inherited snapshot values', () => {
         const context: ExistingSessionAutomationAuthoringContext = {
             kind: 'automationExistingSession',
@@ -146,5 +192,29 @@ describe('resolveSessionComposerStateFromAuthoringContext', () => {
         expect(state.modelMode).toBe('gpt-5');
         expect(state.profileId).toBe('profile-draft');
         expect(state.currentPath).toBe('/repo/draft');
+    });
+
+    it('prefers the canonical provider-bound draft selection over the legacy model id', () => {
+        const context: ExistingSessionAutomationAuthoringContext = {
+            kind: 'automationExistingSession',
+            session: BASE_SESSION as any,
+            draft: {
+                ...BASE_DRAFT,
+                modelSelection: {
+                    v: 1,
+                    updatedAt: 500,
+                    ref: {
+                        agentTargetKey: 'backend:claude',
+                        providerConnectionId: null,
+                        modelId: 'claude-opus-4-7',
+                    },
+                },
+            },
+            snapshot: BASE_SNAPSHOT as any,
+            capabilities: {} as any,
+            availability: {} as any,
+        };
+
+        expect(resolveSessionComposerStateFromAuthoringContext(context).modelMode).toBe('claude-opus-4-7');
     });
 });

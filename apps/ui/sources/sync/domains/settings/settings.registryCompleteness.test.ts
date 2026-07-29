@@ -1,25 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
 describe('settings registry completeness', () => {
-    it('builds the account settings schema entirely from schema metadata, canonical account artifacts, and provider settings', async () => {
-        const { PROVIDER_SETTINGS_SHAPE } = await import('@/agents/providers/registry/providerSettingArtifacts');
+    it('builds the account settings schema entirely from schema metadata and canonical account artifacts', async () => {
         const { ACCOUNT_SETTING_ARTIFACTS, SettingsSchema } = await import('./settings');
         const expectedSchemaKeys = new Set([
             'schemaVersion',
             ...Object.keys(ACCOUNT_SETTING_ARTIFACTS.shape),
-            ...Object.keys(PROVIDER_SETTINGS_SHAPE),
         ]);
 
         expect(new Set(Object.keys(SettingsSchema.shape))).toEqual(expectedSchemaKeys);
     });
 
-    it('builds account settings defaults entirely from schema metadata, canonical account artifacts, and provider settings', async () => {
-        const { PROVIDER_SETTINGS_DEFAULTS } = await import('@/agents/providers/registry/providerSettingArtifacts');
+    it('builds account settings defaults entirely from schema metadata and canonical account artifacts', async () => {
         const { ACCOUNT_SETTING_ARTIFACTS, settingsDefaults } = await import('./settings');
         const expectedDefaultKeys = new Set([
             'schemaVersion',
             ...Object.keys(ACCOUNT_SETTING_ARTIFACTS.defaults),
-            ...Object.keys(PROVIDER_SETTINGS_DEFAULTS),
         ]);
 
         expect(new Set(Object.keys(settingsDefaults))).toEqual(expectedDefaultKeys);
@@ -107,7 +103,7 @@ describe('settings registry completeness', () => {
             v: 1,
             defaults: {
                 configMode: 'linked',
-                stateMode: 'isolated',
+                stateMode: 'shared',
             },
             byAgentId: {},
             acknowledgedRisksByAgentId: {},

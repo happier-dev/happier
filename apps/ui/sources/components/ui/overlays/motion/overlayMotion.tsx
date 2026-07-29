@@ -117,6 +117,14 @@ export function useOverlayPresence(visible: boolean, exitMs: number): Readonly<{
 export function useOverlayMotionAnimation(params: Readonly<{
     visible: boolean;
     preset: OverlayMotionPreset;
+    /**
+     * On web, animate opacity ONLY (no transform). A non-`none` `transform` creates a
+     * CSS "backdrop root" that defeats a descendant's `backdrop-filter` (glass blur),
+     * so a transform-animated overlay that wraps a glass surface must opt in to keep
+     * its web blur. Native is unaffected (its blur is not `backdrop-filter`) and keeps
+     * the full slide/scale motion.
+     */
+    disableTransformOnWeb?: boolean;
 }>): Readonly<{
     exitMs: number;
     progress: Animated.Value;
@@ -153,13 +161,16 @@ export function useOverlayMotionAnimation(params: Readonly<{
         outputRange: [params.preset.fromTranslateY, 0],
     });
 
+    const omitTransform = params.disableTransformOnWeb === true && Platform.OS === 'web';
     return {
         exitMs: reducedMotion ? motionTokens.durationMs.instant : params.preset.exitMs,
         progress,
-        style: {
-            opacity,
-            transform: [{ translateX }, { translateY }, { scale }],
-        },
+        style: omitTransform
+            ? { opacity }
+            : {
+                opacity,
+                transform: [{ translateX }, { translateY }, { scale }],
+            },
     };
 }
 
@@ -169,6 +180,7 @@ export function OverlayMotionFrame(props: Readonly<{
     direction?: OverlayMotionDirection;
     style?: StyleProp<ViewStyle>;
     pointerEvents?: 'box-none' | 'none' | 'auto' | 'box-only';
+    disableTransformOnWeb?: boolean;
     children: React.ReactNode;
 }>): React.ReactElement {
     const preset = React.useMemo(() => resolveOverlayMotionPreset({
@@ -178,6 +190,7 @@ export function OverlayMotionFrame(props: Readonly<{
     const motion = useOverlayMotionAnimation({
         visible: props.visible,
         preset,
+        disableTransformOnWeb: props.disableTransformOnWeb,
     });
 
     return (

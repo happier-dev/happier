@@ -8,6 +8,12 @@ const listServerProfilesSpy = vi.fn();
 const getActiveServerSnapshotSpy = vi.fn();
 const runtimeFetchSpy = vi.fn();
 const invalidateCachedTransferRoutesForServerSpy = vi.fn();
+const invalidateCachedTransferRoutesForMachineSpy = vi.fn<(
+    input: Readonly<{
+        serverId?: string | null;
+        remoteMachineId: string;
+    }>,
+) => void>();
 const fetchAndApplySessionsSpy = vi.hoisted(() =>
     vi.fn<(params: { applySessions: (sessions: unknown[]) => void }) => Promise<void>>(async ({ applySessions }) => {
         applySessions([]);
@@ -42,6 +48,7 @@ function createSocketStub() {
             return socket;
         }),
         onAny: vi.fn(),
+        emit: vi.fn(),
         connect: vi.fn(() => {
             socket.connected = true;
             for (const listener of listeners.get('connect') ?? []) {
@@ -97,6 +104,12 @@ function mockConcurrentSessionCacheDeps() {
     }));
     vi.doMock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
         invalidateCachedTransferRoutesForServer: (...args: unknown[]) => invalidateCachedTransferRoutesForServerSpy(...args),
+        invalidateCachedTransferRoutesForMachine: (
+            input: Readonly<{
+                serverId?: string | null;
+                remoteMachineId: string;
+            }>,
+        ) => invalidateCachedTransferRoutesForMachineSpy(input),
     }));
     vi.doMock('@/sync/encryption/encryption', () => ({
         Encryption: {
@@ -162,6 +175,7 @@ beforeEach(() => {
     getActiveServerSnapshotSpy.mockReset();
     runtimeFetchSpy.mockReset();
     invalidateCachedTransferRoutesForServerSpy.mockReset();
+    invalidateCachedTransferRoutesForMachineSpy.mockReset();
     fetchAndApplySessionsSpy.mockReset();
     fetchAndApplySessionsSpy.mockImplementation(async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
         applySessions([]);
@@ -338,7 +352,7 @@ describe('concurrent session cache supervised sockets', () => {
         stopConcurrentSessionCacheSync();
     });
 
-    it('subscribes to machine updates without using socket.onAny', async () => {
+    it('subscribes to update and ephemeral channels without using socket.onAny', async () => {
         runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
@@ -362,8 +376,83 @@ describe('concurrent session cache supervised sockets', () => {
         expect(fakeSocket.onAny).not.toHaveBeenCalled();
         expect(fakeSocket.on).toHaveBeenCalledWith('connect', expect.any(Function));
         expect(fakeSocket.on).toHaveBeenCalledWith('update', expect.any(Function));
+        expect(fakeSocket.on).toHaveBeenCalledWith('ephemeral', expect.any(Function));
 
         stopConcurrentSessionCacheSync();
+    });
+
+    it('feeds concurrent-server machine activity transitions to status-demand recovery', async () => {
+        runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
+        const fakeSocket = createSocketStub();
+        ioSpy.mockReturnValue(fakeSocket);
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        listServerProfilesSpy.mockReturnValue([
+            { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
+            { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
+        ]);
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://stack-a.example.test',
+            kind: 'stack',
+            generation: 1,
+        });
+
+        mockConcurrentSessionCacheDeps();
+        await configureConcurrentSelection();
+        const {
+            replaceExternalSessionStatusDemandViewport,
+            resetExternalSessionStatusDemandCoordinatorForTests,
+        } = await import('./externalSessions/externalSessionStatusDemandCoordinator');
+        replaceExternalSessionStatusDemandViewport('concurrent-server-test', [{
+            serverId: 'server-b',
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            linkGeneration: 'generation-1',
+            demand: 'visible',
+        }]);
+
+        const { stopConcurrentSessionCacheSync } = await startConcurrentCacheAndWaitForReconcile();
+        fakeSocket.emit.mockClear();
+
+        fakeSocket.emitServerEvent('ephemeral', {
+            type: 'machine-activity',
+            id: 'machine-1',
+            active: true,
+            activeAt: 1_000,
+        });
+        fakeSocket.emitServerEvent('ephemeral', {
+            type: 'machine-activity',
+            id: 'machine-1',
+            active: true,
+            activeAt: 1_001,
+        });
+
+        expect(fakeSocket.emit).toHaveBeenCalledTimes(1);
+        expect(fakeSocket.emit).toHaveBeenLastCalledWith(
+            'external-session-status-demand-v1',
+            expect.objectContaining({ revision: 3 }),
+        );
+
+        fakeSocket.emitServerEvent('ephemeral', {
+            type: 'machine-activity',
+            id: 'machine-1',
+            active: false,
+            activeAt: 1_002,
+        });
+        fakeSocket.emitServerEvent('ephemeral', {
+            type: 'machine-activity',
+            id: 'machine-1',
+            active: true,
+            activeAt: 1_003,
+        });
+        expect(fakeSocket.emit).toHaveBeenCalledTimes(2);
+        expect(fakeSocket.emit).toHaveBeenLastCalledWith(
+            'external-session-status-demand-v1',
+            expect.objectContaining({ revision: 4 }),
+        );
+
+        stopConcurrentSessionCacheSync();
+        resetExternalSessionStatusDemandCoordinatorForTests();
     });
 
     it('refreshes the remote machine cache when a machine update arrives on the concurrent socket', async () => {

@@ -254,7 +254,6 @@ export function renderPluginSessionSurfaceTab(params: Readonly<{
         && (
             renderer?.kind === 'hostedWeb'
             || renderer?.kind === 'reactNative'
-            || renderer?.kind === 'embeddedWeb'
         )
     ) {
         return (

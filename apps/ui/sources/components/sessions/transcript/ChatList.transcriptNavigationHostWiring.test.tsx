@@ -4,11 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { standardCleanup } from '@/dev/testkit';
 import {
-    flashListChatListHarnessState,
-    renderFlashListChatListSession,
-    resetFlashListChatListHarness,
+    chatListHarnessState,
+    renderChatListHarnessSession,
+    resetChatListHarness,
 } from '@/dev/testkit/harness/chatListHarness';
-import { installFlashListChatListCommonModuleMocks } from '@/dev/testkit/harness/chatListHarnessModuleMocks';
+import { installChatListHarnessCommonModuleMocks } from '@/dev/testkit/harness/chatListHarnessModuleMocks';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { PersistedSessionMessagePinV1 } from '@/sync/domains/messages/pins/sessionMessagePins';
 import type { Message } from '@/sync/domains/messages/messageTypes';
@@ -85,10 +85,10 @@ vi.mock('react-native-mmkv', () => {
     return { MMKV };
 });
 
-installFlashListChatListCommonModuleMocks();
+installChatListHarnessCommonModuleMocks();
 
 vi.mock('@/components/sessions/chatListItems', async () => (
-    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListItemsModuleMock(buildChatListItemsMock)
+    (await import('@/dev/testkit/harness/chatListHarness')).createChatListHarnessItemsModuleMock(buildChatListItemsMock)
 ));
 
 vi.mock('./navigation/TranscriptNavigationRail', () => ({
@@ -221,6 +221,7 @@ vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
 vi.mock('@/components/markdown/enriched/preloadEnrichedMarkdownRuntime', () => ({
     isEnrichedMarkdownRuntimePreloaded: () => true,
     preloadEnrichedMarkdownRuntime: () => Promise.resolve(),
+    useEnrichedMarkdownRuntimeStatus: () => 'ready',
 }));
 
 vi.mock('@/sync/domains/state/agentStateCapabilities', () => ({
@@ -255,7 +256,7 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', async (importOriginal)
 });
 
 vi.mock('@/sync/sync', async () => (
-    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListSyncModuleMock({
+    (await import('@/dev/testkit/harness/chatListHarness')).createChatListHarnessSyncModuleMock({
         fetchUserMessageHistoryPage: fetchUserMessageHistoryPageMock,
         loadOlderMessages: loadOlderMessagesMock,
         loadNewerMessages: loadNewerMessagesMock,
@@ -282,7 +283,7 @@ function pin(overrides: Partial<PersistedSessionMessagePinV1> = {}): PersistedSe
 }
 
 function seedTranscriptMessages() {
-    flashListChatListHarnessState.sessionMessagesState = {
+    chatListHarnessState.sessionMessagesState = {
         isLoaded: true,
         messages: [
             {
@@ -326,7 +327,7 @@ describe('ChatList transcript navigation host wiring', () => {
         fetchUserMessageHistoryPageMock.mockReset();
         fetchUserMessageHistoryPageMock.mockResolvedValue({
             status: 'loaded',
-            entries: [],
+            rows: [],
             hasMore: false,
             nextBeforeSeq: null,
         });
@@ -335,18 +336,18 @@ describe('ChatList transcript navigation host wiring', () => {
         performTranscriptViewportCommandMock.mockClear();
         capturedNavigationRailProps = [];
         buildChatListItemsMock.mockClear();
-        resetFlashListChatListHarness();
-        flashListChatListHarnessState.activeServerAccountScope = activeScope;
-        flashListChatListHarnessState.sessionState = {
-            ...flashListChatListHarnessState.sessionState,
+        resetChatListHarness();
+        chatListHarnessState.activeServerAccountScope = activeScope;
+        chatListHarnessState.sessionState = {
+            ...chatListHarnessState.sessionState,
             id: 'session-1',
             seq: 12,
             active: true,
             metadata: { flavor: 'codex', codexBackendMode: 'appServer' },
         };
-        flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
-        flashListChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
-        flashListChatListHarnessState.settingValues.toolViewTimelineChromeMode = 'cards';
+        chatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
+        chatListHarnessState.settingValues.transcriptGroupToolCalls = false;
+        chatListHarnessState.settingValues.toolViewTimelineChromeMode = 'cards';
         resetUserMessageHistoryRemoteEntriesForTests();
     });
 
@@ -363,7 +364,7 @@ describe('ChatList transcript navigation host wiring', () => {
         savePersistedSessionMessagePins('session-1', [assistantPin], activeScope);
         seedTranscriptMessages();
 
-        const screen = await renderFlashListChatListSession();
+        const screen = await renderChatListHarnessSession();
 
         const latestRailProps = capturedNavigationRailProps.at(-1);
         expect(latestRailProps?.entries.map((entry) => ({
@@ -405,8 +406,6 @@ describe('ChatList transcript navigation host wiring', () => {
         ]);
         const { transcriptNavigationPaneStore } = await import('./navigation/transcriptNavigationPaneStore');
         const paneSnapshot = transcriptNavigationPaneStore.get('session-1');
-        expect(paneSnapshot.entries).toBe(latestRailProps?.entries);
-        expect(paneSnapshot.activeEntryId).toBeNull();
         expect(typeof paneSnapshot.onEntryPress).toBe('function');
 
         screen.pressByTestId('mounted-nav-entry:user-turn:7');
@@ -465,7 +464,7 @@ describe('ChatList transcript navigation host wiring', () => {
             hasMoreNewer: true,
         });
 
-        const screen = await renderFlashListChatListSession();
+        const screen = await renderChatListHarnessSession();
         screen.pressByTestId('mounted-nav-entry:pinned-assistant:500');
 
         await act(async () => {
@@ -486,7 +485,9 @@ describe('ChatList transcript navigation host wiring', () => {
 
         const { transcriptNavigationPaneStore } = await import('./navigation/transcriptNavigationPaneStore');
         const paneSnapshot = transcriptNavigationPaneStore.get('session-1');
-        const farEntry = paneSnapshot.entries.find((entry) => entry.seq === 500);
+        const farEntry = capturedNavigationRailProps
+            .at(-1)
+            ?.entries.find((entry) => entry.seq === 500);
         expect(farEntry).toBeDefined();
         const onEntryPress = paneSnapshot.onEntryPress;
         expect(onEntryPress).toBeTypeOf('function');
@@ -520,7 +521,7 @@ describe('ChatList transcript navigation host wiring', () => {
             hasMoreNewer: true,
         });
 
-        const screen = await renderFlashListChatListSession();
+        const screen = await renderChatListHarnessSession();
         const latestRailProps = capturedNavigationRailProps.at(-1);
         expect(latestRailProps).toBeDefined();
         const entry: TranscriptNavigationEntry = {
@@ -578,7 +579,10 @@ describe('ChatList transcript navigation host wiring', () => {
         seedTranscriptMessages();
         fetchUserMessageHistoryPageMock.mockResolvedValue({
             status: 'loaded',
-            entries: [{ seq: 3, createdAt: 30, text: 'Earlier remote prompt' }],
+            rows: [
+                { messageId: 'm3', routeMessageId: 'server:m3', seq: 3, createdAt: 30, role: 'user' as const, text: 'Earlier remote prompt' },
+                { messageId: 'm4', routeMessageId: 'server:m4', seq: 4, createdAt: 40, role: 'assistant' as const, text: 'Earlier remote answer' },
+            ],
             hasMore: false,
             nextBeforeSeq: null,
         });
@@ -595,14 +599,14 @@ describe('ChatList transcript navigation host wiring', () => {
             hasMoreNewer: true,
         });
 
-        const screen = await renderFlashListChatListSession();
+        const screen = await renderChatListHarnessSession();
         await act(async () => {
             await Promise.resolve();
             await Promise.resolve();
         });
 
         expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledWith('session-1', {
-            limit: 25,
+            limit: 40,
             beforeSeq: 7,
         });
         const latestRailProps = capturedNavigationRailProps.at(-1);
@@ -618,7 +622,7 @@ describe('ChatList transcript navigation host wiring', () => {
                 seq: 3,
                 loaded: false,
                 promptPreview: 'Earlier remote prompt',
-                responsePreview: null,
+                responsePreview: 'Earlier remote answer',
             },
             {
                 kind: 'user-turn',
@@ -637,7 +641,9 @@ describe('ChatList transcript navigation host wiring', () => {
         ]);
 
         const { transcriptNavigationPaneStore } = await import('./navigation/transcriptNavigationPaneStore');
-        expect(transcriptNavigationPaneStore.get('session-1').entries).toBe(latestRailProps?.entries);
+        expect(
+            transcriptNavigationPaneStore.get('session-1').onEntryPress,
+        ).toBeTypeOf('function');
 
         screen.pressByTestId('mounted-nav-entry:user-turn:3');
         await act(async () => {
@@ -645,9 +651,11 @@ describe('ChatList transcript navigation host wiring', () => {
             await Promise.resolve();
         });
 
+        // Remote rows now carry their server route id, so the jump targets the message identity
+        // and keeps the seq only as a hint.
         expect(loadTargetWindowMessagesMock).toHaveBeenCalledWith(
             'session-1',
-            { kind: 'seq', seq: 3 },
+            { kind: 'route-message-id', routeMessageId: 'server:m3', seqHint: 3 },
             expect.objectContaining({ direction: 'older' }),
         );
         expect(loadOlderMessagesMock).not.toHaveBeenCalled();

@@ -13,7 +13,12 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
   IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 
-type HeaderButtonElement = React.ReactElement<{ onPress?: () => void; disabled?: boolean }> | null | undefined;
+type HeaderButtonElement = React.ReactElement<{
+  onPress?: () => void;
+  disabled?: boolean;
+  accessibilityLabel?: string;
+  accessibilityRole?: string;
+}> | null | undefined;
 
 export type PickerStackScreenOptions = StackScreenOptions & Readonly<{
   presentation?: string;
@@ -111,11 +116,8 @@ export function installPickerCommonModuleMocks(options: PickerCommonModuleMocksO
             return await activeOptions.reactNavigationNative();
         }
 
-        return {
-            CommonActions: {
-                setParams: (params: Record<string, unknown>) => ({ type: 'SET_PARAMS', payload: { params } }),
-            },
-        };
+        const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+        return createReactNavigationNativeMock();
     });
 
     vi.mock('@expo/vector-icons', async () => {
@@ -134,10 +136,8 @@ export function installPickerCommonModuleMocks(options: PickerCommonModuleMocksO
             return await activeOptions.itemList();
         }
 
-        return {
-            ItemList: ({ children }: React.PropsWithChildren<Record<string, never>>) =>
-                React.createElement(React.Fragment, null, children),
-        };
+        const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
+        return createPassThroughModule(['ItemList']);
     });
 
     vi.mock('react-native-unistyles', async () => {

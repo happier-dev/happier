@@ -4,6 +4,10 @@ import { t } from '@/text';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AgentInputContentPopoverRenderArgs } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import { createConnectedServicesAuthActionChip } from '@/components/sessions/agentInput/definitions/createConnectedServicesAuthActionChip';
+import {
+  resolveConnectedServiceProfileActionRoute,
+} from '@/sync/domains/connectedServices/resolveConnectedServiceProfileActionRoute';
+import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { FeatureDecisionScopeParams } from '@/hooks/server/useFeatureDecision';
 import { useProfile } from '@/sync/store/hooks';
@@ -46,18 +50,6 @@ const EMPTY_DEFAULT_AUTH_SETTINGS: ConnectedServicesDefaultAuthByAgentIdV1 = {
 function resolveDefaultAuthWarningLabel(warningCode: ConnectedServicesAuthWarningCode | undefined): string | undefined {
   const key = resolveConnectedServicesAuthWarningTranslationKey(warningCode);
   return key ? t(key) : undefined;
-}
-
-function buildConnectedServiceProfileSettingsPath(params: Readonly<{
-  pathname: '/settings/connected-services/oauth' | '/settings/connected-services/profile';
-  serviceId: string;
-  profileId: string;
-}>): string {
-  const query = new URLSearchParams({
-    serviceId: params.serviceId,
-    profileId: params.profileId,
-  });
-  return `${params.pathname}?${query.toString()}`;
 }
 
 function areServiceBindingsEqual(
@@ -107,20 +99,19 @@ export function useNewSessionConnectedServices(params: Readonly<{
 }>): NewSessionConnectedServicesResult {
   const { agentCore, agentOptionState, settings, targetServerId, router, setAgentOptionStateForCurrentAgent } = params;
   const accountProfile = useProfile();
+  const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
   const connectedServicesFeatureScope = React.useMemo<FeatureDecisionScopeParams | undefined>(() => {
     const trimmedTargetServerId = targetServerId?.trim() ?? '';
     if (!trimmedTargetServerId) return undefined;
     return { scopeKind: 'spawn', serverId: trimmedTargetServerId };
   }, [targetServerId]);
-  const connectedServicesFeatureEnabled = useFeatureEnabled('connectedServices', connectedServicesFeatureScope);
   const accountGroupsFeatureEnabled = useFeatureEnabled('connectedServices.accountGroups', connectedServicesFeatureScope);
 
   const supportedConnectedServiceIds = React.useMemo<ReadonlyArray<ConnectedServiceId>>(() => {
     return resolveAgentSupportedConnectedServiceIds({
-      connectedServicesFeatureEnabled,
       agentCore,
     });
-  }, [agentCore, connectedServicesFeatureEnabled]);
+  }, [agentCore]);
 
   const connectedServiceProfileOptionsByServiceId = React.useMemo(() => {
     return buildConnectedServiceProfileOptionsByServiceId({
@@ -238,29 +229,23 @@ export function useNewSessionConnectedServices(params: Readonly<{
         }
         return {};
       }}
-      onOpenSettings={() => {
-        router.push('/settings/connected-services');
+      onOpenSettings={(serviceId) => {
+        router.push(resolveConnectedServiceProfileActionRoute(
+          { serviceId },
+          connectedServicesRegistry.entries,
+        ));
       }}
       onReconnectProfile={(serviceId, profileId) => {
-        const profile = connectedServiceProfileOptionsByServiceId[serviceId]?.find((option) => option.profileId === profileId);
-        if (profile?.kind === 'token') {
-          router.push(buildConnectedServiceProfileSettingsPath({
-            pathname: '/settings/connected-services/profile',
-            serviceId,
-            profileId,
-          }));
-          return;
-        }
-        router.push(buildConnectedServiceProfileSettingsPath({
-          pathname: '/settings/connected-services/oauth',
-          serviceId,
-          profileId,
-        }));
+        router.push(resolveConnectedServiceProfileActionRoute(
+          { serviceId, profileId },
+          connectedServicesRegistry.entries,
+        ));
       }}
       maxHeight={maxHeight}
     />
   ), [
     authLabel,
+    connectedServicesRegistry.entries,
     connectedServiceProfileOptionsByServiceId,
     connectedServiceAccountGroupOptionsByServiceId,
     optimisticBindingsByServiceId,

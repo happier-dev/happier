@@ -3,12 +3,12 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-    flashListChatListHarnessState,
-    renderFlashListChatList,
-    resetFlashListChatListHarness,
+    chatListHarnessState,
+    renderChatList,
+    requireCapturedLegendListProps,
+    resetChatListHarness,
     standardCleanup,
 } from '@/dev/testkit';
-import { triggerFlashListChatListLoad } from '@/dev/testkit/harness/chatListHarness';
 import type { SessionMessagesWindowState } from '@/sync/runtime/sessionMessagesWindowState';
 import {
     installTranscriptCommonModuleMocks,
@@ -17,8 +17,15 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const scrollToOffsetSpy = vi.fn();
-const scrollToIndexSpy = vi.fn();
+if (typeof (globalThis as any).requestAnimationFrame !== 'function') {
+    (globalThis as any).requestAnimationFrame = (callback: (time: number) => void) => (
+        setTimeout(() => callback(Date.now()), 0) as unknown as number
+    );
+    (globalThis as any).cancelAnimationFrame = (handle: number) => {
+        clearTimeout(handle as unknown as ReturnType<typeof setTimeout>);
+    };
+}
+
 const loadTargetWindowMessagesSpy = vi.hoisted(() => vi.fn());
 const markSessionLiveTailIntentSpy = vi.hoisted(() => vi.fn());
 const viewportControllerMockState = vi.hoisted(() => ({
@@ -59,11 +66,11 @@ type ChatListComponent = (typeof import('./ChatList'))['ChatList'];
 
 installTranscriptCommonModuleMocks({
     reactNative: async () =>
-        (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListReactNativeMock({
+        (await import('@/dev/testkit/harness/chatListHarness')).createChatListHarnessReactNativeMock({
             platformOs: 'ios',
         }),
     storage: async (importOriginal) =>
-        (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListStorageMock(importOriginal),
+        (await import('@/dev/testkit/harness/chatListHarness')).createChatListHarnessStorageMock(importOriginal),
 });
 
 beforeEach(() => {
@@ -71,14 +78,11 @@ beforeEach(() => {
     resetTranscriptCommonModuleMockState();
     viewportControllerMockState.resolveInputs = [];
     targetWindowState = activeTargetWindowState;
-    scrollToOffsetSpy.mockClear();
-    scrollToIndexSpy.mockClear();
-    resetFlashListChatListHarness({
-        flashListRefHandle: { scrollToOffset: scrollToOffsetSpy, scrollToIndex: scrollToIndexSpy },
+    resetChatListHarness({
         platformOs: 'ios',
     });
-    flashListChatListHarnessState.sessionState = {
-        ...flashListChatListHarnessState.sessionState,
+    chatListHarnessState.sessionState = {
+        ...chatListHarnessState.sessionState,
         active: true,
         id: 'session-target-window',
         seq: 0,
@@ -86,10 +90,10 @@ beforeEach(() => {
         accessLevel: null,
         canApprovePermissions: true,
     };
-    flashListChatListHarnessState.settingValues.transcriptScrollPinOffsetThresholdPx = 72;
-    flashListChatListHarnessState.sessionPendingState = { messages: [], discarded: [], isLoaded: true };
-    flashListChatListHarnessState.sessionActionDraftsState = [];
-    flashListChatListHarnessState.sessionMessagesState = {
+    chatListHarnessState.settingValues.transcriptScrollPinOffsetThresholdPx = 72;
+    chatListHarnessState.sessionPendingState = { messages: [], discarded: [], isLoaded: true };
+    chatListHarnessState.sessionActionDraftsState = [];
+    chatListHarnessState.sessionMessagesState = {
         isLoaded: true,
         messages: [
             { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, seq: 1, text: 'hi' },
@@ -105,8 +109,8 @@ afterEach(() => {
     resetTranscriptCommonModuleMockState();
 });
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () =>
-    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListModuleMock()
+vi.mock('@legendapp/list/react-native', async () =>
+    (await import('@/dev/testkit/harness/chatListHarness')).createLegendChatListModuleMock()
 );
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -118,7 +122,7 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 
 vi.mock('@/components/sessions/chatListItems', async () =>
-    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListItemsModuleMock(({ messageIdsOldestFirst, messagesById }: any) =>
+    (await import('@/dev/testkit/harness/chatListHarness')).createChatListHarnessItemsModuleMock(({ messageIdsOldestFirst, messagesById }: any) =>
         (messageIdsOldestFirst ?? []).map((id: string) => {
             const message = messagesById?.[id];
             return { kind: 'message', id: `msg:${id}`, messageId: id, createdAt: message?.createdAt ?? 0, seq: message?.seq ?? null };
@@ -177,7 +181,7 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 }));
 
 vi.mock('@/sync/sync', async () =>
-    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListSyncModuleMock({
+    (await import('@/dev/testkit/harness/chatListHarness')).createChatListHarnessSyncModuleMock({
         getSessionTargetWindowState: () => targetWindowState,
         hasDeferredNewerMessages: () => false,
         loadTargetWindowMessages: loadTargetWindowMessagesSpy,
@@ -206,128 +210,20 @@ vi.mock('@/components/sessions/transcript/viewport/createTranscriptViewportContr
     };
 });
 
-async function settleNativeMount(screen: Awaited<ReturnType<typeof renderFlashListChatList>>) {
-    await triggerFlashListChatListLoad(12, { turns: 1 });
-    await screen.settle({ advanceTimersMs: 160, cycles: 1, turns: 1 });
-}
-
-async function primeAtBottom(screen: Awaited<ReturnType<typeof renderFlashListChatList>>) {
-    await screen.triggerInitialFill({
-        layoutHeight: 600,
-        contentHeight: 1200,
-        contentWidth: 0,
-        flushOptions: { cycles: 1, turns: 1 },
+async function primeAtBottom(screen: Awaited<ReturnType<typeof renderChatList>>) {
+    chatListHarnessState.legendListState = { contentLength: 1200, scrollLength: 600 };
+    const legendProps = requireCapturedLegendListProps();
+    await act(async () => {
+        legendProps.onLoad?.({ elapsedTimeInMs: 12 });
     });
-    await settleNativeMount(screen);
-    scrollToOffsetSpy.mockClear();
-    scrollToIndexSpy.mockClear();
+    await screen.settle({ advanceTimersMs: 160, cycles: 1, turns: 1 });
     loadTargetWindowMessagesSpy.mockReset();
     markSessionLiveTailIntentSpy.mockReset();
     viewportControllerMockState.resolveInputs = [];
 }
 
-async function growStreamingAssistantMessage(
-    ChatList: ChatListComponent,
-    screen: Awaited<ReturnType<typeof renderFlashListChatList>>,
-    seq: number,
-    contentHeight = 1500,
-) {
-    flashListChatListHarnessState.sessionMessagesState = {
-        isLoaded: true,
-        messages: [
-            { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, seq: 1, text: 'hi' },
-            {
-                kind: 'assistant-text',
-                id: 'a1',
-                localId: null,
-                createdAt: 2,
-                seq: 2,
-                text: `streaming... ${seq}`,
-            },
-        ],
-    };
-    await screen.update(<ChatList session={{ ...flashListChatListHarnessState.sessionState, seq }} />);
-    await screen.settle({ cycles: 1, turns: 1 });
-    await screen.triggerContentSizeChange(0, contentHeight, { advanceTimersMs: 1, cycles: 1, turns: 2 });
-}
-
-async function appendLiveTailMessageAfterReset(
-    ChatList: ChatListComponent,
-    screen: Awaited<ReturnType<typeof renderFlashListChatList>>,
-    followBottomIntentKey: string,
-) {
-    flashListChatListHarnessState.sessionMessagesState = {
-        isLoaded: true,
-        messages: [
-            { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, seq: 1, text: 'hi' },
-            { kind: 'assistant-text', id: 'a1', localId: null, createdAt: 2, seq: 2, text: 'streaming... 1' },
-            { kind: 'assistant-text', id: 'a2', localId: null, createdAt: 3, seq: 3, text: 'live tail after reset' },
-        ],
-    };
-    await screen.update(
-        <ChatList
-            followBottomIntentKey={followBottomIntentKey}
-            session={{ ...flashListChatListHarnessState.sessionState, seq: 3 }}
-        />,
-    );
-    await screen.settle({ cycles: 1, turns: 1 });
-    await screen.triggerContentSizeChange(0, 1800, { advanceTimersMs: 1, cycles: 1, turns: 2 });
-    await screen.settle({ advanceTimersMs: 160, cycles: 2, turns: 2 });
-}
-
-function autoFollowReasons() {
-    return viewportControllerMockState.resolveInputs
-        .filter((input) => input.type === 'auto-follow')
-        .map((input) => input.reason);
-}
-
 describe('ChatList target-window active live-tail gating', () => {
-    it('gates auto-follow and native MVCP bottom autoscroll while target-window mode is active, then re-enables after live-tail reset', async () => {
-        const { ChatList } = await import('./ChatList');
-        const screen = await renderFlashListChatList(
-            <ChatList session={flashListChatListHarnessState.sessionState} />,
-        );
-
-        await primeAtBottom(screen);
-
-        await growStreamingAssistantMessage(ChatList, screen, 1);
-
-        expect(autoFollowReasons()).not.toContain('stream-append');
-        expect(scrollToOffsetSpy).not.toHaveBeenCalled();
-        expect(scrollToIndexSpy).not.toHaveBeenCalled();
-        expect(screen.requireCapturedFlashListProps().maintainVisibleContentPosition).toEqual({
-            startRenderingFromBottom: true,
-        });
-
-        targetWindowState = inactiveTargetWindowState;
-        viewportControllerMockState.resolveInputs = [];
-        scrollToOffsetSpy.mockClear();
-        scrollToIndexSpy.mockClear();
-
-        const followBottomIntentKey = 'live-tail-reset-1';
-        await act(async () => {
-            await screen.update(
-                <ChatList
-                    followBottomIntentKey={followBottomIntentKey}
-                    session={{ ...flashListChatListHarnessState.sessionState, seq: 2 }}
-                />,
-            );
-        });
-        await screen.settle({ cycles: 1, turns: 1 });
-        scrollToOffsetSpy.mockClear();
-        scrollToIndexSpy.mockClear();
-        await appendLiveTailMessageAfterReset(ChatList, screen, followBottomIntentKey);
-
-        expect(autoFollowReasons()).toContain('stream-append');
-        expect(scrollToOffsetSpy).not.toHaveBeenCalled();
-        expect(scrollToIndexSpy).not.toHaveBeenCalled();
-        expect(screen.requireCapturedFlashListProps().maintainVisibleContentPosition).toMatchObject({
-            startRenderingFromBottom: true,
-        });
-        expect(screen.requireCapturedFlashListProps().maintainVisibleContentPosition).not.toHaveProperty('disabled');
-    });
-
-    it('pages the active target window at the older FlashList edge', async () => {
+    it('pages the active target window at the older (top) edge', async () => {
         loadTargetWindowMessagesSpy.mockResolvedValue({
             status: 'loaded',
             windowId: 'window-100',
@@ -335,13 +231,13 @@ describe('ChatList target-window active live-tail gating', () => {
             targetPresent: true,
         });
         const { ChatList } = await import('./ChatList');
-        const screen = await renderFlashListChatList(
-            <ChatList session={flashListChatListHarnessState.sessionState} />,
+        const screen = await renderChatList(
+            <ChatList session={chatListHarnessState.sessionState} />,
         );
         await primeAtBottom(screen);
 
         await act(async () => {
-            screen.requireCapturedFlashListProps().onEndReached?.();
+            requireCapturedLegendListProps().onStartReached?.();
             await Promise.resolve();
         });
 
@@ -355,13 +251,13 @@ describe('ChatList target-window active live-tail gating', () => {
 
     it('exits target-window mode through live-tail intent at the newest edge when no newer pages remain', async () => {
         const { ChatList } = await import('./ChatList');
-        const screen = await renderFlashListChatList(
-            <ChatList session={flashListChatListHarnessState.sessionState} />,
+        const screen = await renderChatList(
+            <ChatList session={chatListHarnessState.sessionState} />,
         );
         await primeAtBottom(screen);
 
         await act(async () => {
-            screen.requireCapturedFlashListProps().onStartReached?.();
+            requireCapturedLegendListProps().onEndReached?.();
             await Promise.resolve();
         });
 

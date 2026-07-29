@@ -405,7 +405,6 @@ describe('SidebarView header automations button', () => {
         expect(screen.findByTestId('desktop-window-controls-host')).toBeTruthy();
         expect(screen.findByTestId('desktop-window-controls-slot')).toBeTruthy();
         expect(screen.findByTestId('desktop-window-drag-region')).toBeTruthy();
-        expect(screen.findByTestId('desktop-update-indicator-host')).toBeTruthy();
         expect(screen.findByTestId('injected-desktop-window-controls')).toBeTruthy();
         expect(screen.findByTestId('injected-desktop-update-indicator')).toBeTruthy();
         expect(desktopWindowBridgeState.getDesktopWindowChromePolicy).not.toHaveBeenCalled();

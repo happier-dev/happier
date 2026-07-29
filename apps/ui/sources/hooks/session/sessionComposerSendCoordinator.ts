@@ -39,6 +39,7 @@ export type OutboundHandoffComposerClearParams = Readonly<{
 export type FailedOutboundHandoffRestoreParams = Readonly<{
     snapshot: SessionDraftTextSnapshot;
     wasClearedAtHandoff: boolean;
+    isCanonicalOutboundHandoffPresent: () => boolean;
     isSemanticRestoreSafe?: () => boolean;
     restoreDraftForSessionIfCurrentValueMatches: (
         snapshot: SessionDraftTextSnapshot,
@@ -70,12 +71,14 @@ export function clearComposerAfterOutboundHandoff({
 export function restoreComposerAfterFailedOutboundHandoff({
     snapshot,
     wasClearedAtHandoff,
+    isCanonicalOutboundHandoffPresent,
     isSemanticRestoreSafe,
     restoreDraftForSessionIfCurrentValueMatches,
     restoreTransientInputState,
     restoreSemanticDraftValues,
 }: FailedOutboundHandoffRestoreParams): boolean {
     if (!wasClearedAtHandoff) return false;
+    if (isCanonicalOutboundHandoffPresent()) return false;
     if (isSemanticRestoreSafe && !isSemanticRestoreSafe()) {
         return false;
     }

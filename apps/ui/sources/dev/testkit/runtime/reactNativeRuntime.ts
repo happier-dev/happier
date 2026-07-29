@@ -2,6 +2,12 @@ import type { PlainObject } from './_shared';
 import { mergeObjects, mergeObjectsPreservingDescriptors } from './_shared';
 
 export type TestReactNativeRuntimeOverrides = Record<string, unknown>;
+export type TestReactNativeAppStateStatus =
+    | 'active'
+    | 'background'
+    | 'extension'
+    | 'inactive'
+    | 'unknown';
 type ReactNativeStubModule = typeof import('../../reactNativeStub');
 type DeepMutable<T> = T extends (...args: infer TArgs) => infer TResult
     ? (...args: TArgs) => TResult
@@ -43,4 +49,68 @@ export async function createReactNativeWebRuntime(
 
 export function installReactNativeWebRuntime(overrides?: TestReactNativeRuntimeOverrides) {
     return async () => createReactNativeWebRuntime(overrides);
+}
+
+export function createReactNativeAppStateEmitter(
+    initialState: TestReactNativeAppStateStatus = 'active',
+) {
+    let currentState = initialState;
+    const changeListeners = new Set<(state: TestReactNativeAppStateStatus) => void>();
+    const appState = {
+        get currentState() {
+            return currentState;
+        },
+        addEventListener(
+            eventName: string,
+            listener: (state: TestReactNativeAppStateStatus) => void,
+        ) {
+            if (eventName !== 'change') {
+                return { remove: () => {} };
+            }
+            changeListeners.add(listener);
+            return {
+                remove: () => {
+                    changeListeners.delete(listener);
+                },
+            };
+        },
+    };
+
+    return {
+        appState,
+        emit(state: TestReactNativeAppStateStatus) {
+            currentState = state;
+            for (const listener of [...changeListeners]) {
+                listener(state);
+            }
+        },
+        getListenerCount() {
+            return changeListeners.size;
+        },
+        install(target: object) {
+            const keys = ['currentState', 'addEventListener'] as const;
+            const originalDescriptors = new Map(
+                keys.map((key) => [key, Object.getOwnPropertyDescriptor(target, key)]),
+            );
+            for (const key of keys) {
+                const descriptor = Object.getOwnPropertyDescriptor(appState, key);
+                if (descriptor) {
+                    Object.defineProperty(target, key, {
+                        ...descriptor,
+                        configurable: true,
+                    });
+                }
+            }
+            return () => {
+                for (const key of keys) {
+                    const descriptor = originalDescriptors.get(key);
+                    if (descriptor) {
+                        Object.defineProperty(target, key, descriptor);
+                    } else {
+                        Reflect.deleteProperty(target, key);
+                    }
+                }
+            };
+        },
+    };
 }

@@ -14,6 +14,9 @@ rust-version = "1.94.1"
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+devtools = ["wry/devtools"]
+
 [build-dependencies]
 tauri-build = { version = "2.4.1", features = [] }
 flate2 = "1.1"
@@ -21,6 +24,7 @@ flate2 = "1.1"
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
+url = "2"
 log = "0.4"
 libc = "0.2"
 flate2 = "1.1"
@@ -31,16 +35,21 @@ tauri-plugin-notification = "2"
 tauri-plugin-mcp-bridge = "0.10"
 tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["sync"] }
+wry = "0.53.5"
+base64 = "0.22"
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-autostart = "2"
 tauri-plugin-updater = "2.9"
 
 [target."cfg(target_os = \"macos\")".dependencies]
+block2 = "0.6.1"
 objc2 = "0.6.2"
-objc2-app-kit = { version = "0.3.1", features = ["NSEvent", "NSScreen", "NSWindow"] }
+objc2-app-kit = { version = "0.3.1", features = ["NSBitmapImageRep", "NSEvent", "NSImage", "NSImageRep", "NSScreen", "NSWindow"] }
 objc2-core-graphics = "0.3.1"
-objc2-foundation = "0.3.1"
+objc2-foundation = { version = "0.3.1", features = ["NSData", "NSDate", "NSDictionary", "NSError", "NSObject", "NSRunLoop", "NSString"] }
+objc2-web-kit = { version = "0.3.1", features = ["WKSnapshotConfiguration", "WKWebView", "block2", "objc2-app-kit"] }
+png = "0.17.16"
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
 
 [dev-dependencies]

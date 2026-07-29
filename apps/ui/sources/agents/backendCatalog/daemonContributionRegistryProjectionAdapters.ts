@@ -1,12 +1,15 @@
 import type {
+    PluginActionConfirmationV2,
     PluginProjectedActionV2,
     PluginProjectedResourceV2,
-    PluginProjectedUiDescriptorV2,
+    PluginProjectedSettingsFieldV2,
+    PluginProjectedSettingsV2,
     PluginProjectionV2,
 } from '@happier-dev/protocol';
 import { AGENT_IDS, type AgentId } from '@happier-dev/agents';
 
 import type {
+    MergedBackendCapabilities,
     MergedBackendProjectionEntry,
     MergedProviderProjectionEntry,
 } from './mergedProjectionTypes';
@@ -17,51 +20,56 @@ export type PluginProjectionDiagnostic = Readonly<{
     severity?: string | null;
 }>;
 
-export type PluginProjectionSurface =
-    | 'settings'
-    | 'setup'
-    | 'status'
-    | 'agentSettings'
-    | 'providerSettings'
-    | 'backendSettings';
-
-export type PluginProjectionFieldKind =
+export type PluginProjectionEditableSettingControl =
+    | 'auto'
     | 'text'
-    | 'boolean'
-    | 'enum'
-    | 'secret'
+    | 'password'
+    | 'textarea'
+    | 'switch'
+    | 'select'
+    | 'multiSelect'
     | 'number'
-    | 'action'
-    | 'unsupported';
+    | 'json';
 
-export type PluginProjectionFieldOption = Readonly<{
-    id: string;
-    title: string;
-    subtitle?: string | null;
-}>;
+export type PluginProjectionEditableSettingValueType =
+    | 'string'
+    | 'boolean'
+    | 'number'
+    | 'integer'
+    | 'object'
+    | 'array'
+    | 'null';
 
-export type PluginProjectionField = Readonly<{
+export type PluginProjectionEditableSettingField = Readonly<{
     key: string;
-    kind: PluginProjectionFieldKind;
+    control: PluginProjectionEditableSettingControl;
+    valueType: PluginProjectionEditableSettingValueType;
+    valueSchema: PluginProjectedSettingsFieldV2['valueSchema'];
     title: string;
     subtitle?: string | null;
     order?: number;
     groupId?: string | null;
-    featureGate?: string | null;
-    actionId?: string | null;
-    value?: unknown;
-    enumOptions?: readonly PluginProjectionFieldOption[];
+    redaction: string;
+    clearWhenEmpty: string;
+    defaultBooleanValue?: boolean;
+    defaultValue?: PluginProjectedSettingsFieldV2['defaultValue'];
+    presentation?: PluginProjectedSettingsFieldV2['presentation'];
+    availability?: PluginProjectedSettingsFieldV2['availability'];
+    analytics?: PluginProjectedSettingsFieldV2['analytics'];
 }>;
 
-export type PluginProjectionSection = Readonly<{
+export type PluginProjectionEditableSettingsGroup = Readonly<{
     id: string;
+    pluginId: string;
+    version: 1;
     title: string;
-    footer?: string | null;
-    order?: number;
-    tone?: string | null;
-    featureGate?: string | null;
-    helpUrl?: string | null;
-    fields: readonly PluginProjectionField[];
+    description?: string | null;
+    storageScope: 'local' | 'synced' | 'project' | 'session';
+    presentation: PluginProjectedSettingsV2['presentation'];
+    target:
+        | Readonly<{ kind: 'plugin' }>
+        | Readonly<{ kind: 'agent'; agent: Readonly<{ pluginId: string; localId: string }> }>;
+    fields: readonly PluginProjectionEditableSettingField[];
 }>;
 
 export type PluginProjectionAction = Readonly<{
@@ -71,7 +79,8 @@ export type PluginProjectionAction = Readonly<{
     scopes: readonly string[];
     surfaces: readonly string[];
     placement: string;
-    dangerLevel: string;
+    dangerLevel: PluginProjectedActionV2['dangerLevel'];
+    confirmation: PluginActionConfirmationV2 | null;
     available: boolean | null;
 }>;
 
@@ -105,12 +114,7 @@ export type PluginProjectionEntry = Readonly<{
     diagnostics: readonly PluginProjectionDiagnostic[];
     actions: readonly PluginProjectionAction[];
     resources: readonly PluginProjectionResource[];
-    settingsSections: readonly PluginProjectionSection[];
-    setupSections: readonly PluginProjectionSection[];
-    statusSections: readonly PluginProjectionSection[];
-    agentSettingsSections: readonly PluginProjectionSection[];
-    providerSettingsSections: readonly PluginProjectionSection[];
-    backendSettingsSections: readonly PluginProjectionSection[];
+    editableSettingsGroups: readonly PluginProjectionEditableSettingsGroup[];
 }>;
 
 export type DaemonContributionRegistryProjection =
@@ -120,23 +124,24 @@ export type DaemonContributionRegistryProjection =
 export type DaemonContributionRegistryProjectionV1Like = Readonly<{
     v: 1;
     generationId?: string;
-    providersById?: Readonly<Record<string, Readonly<{
+    agentsById?: Readonly<Record<string, Readonly<{
         id?: string;
         title?: string;
         subtitle?: string;
         channel?: string;
         isBuiltIn?: boolean;
         settingsBackendId?: string;
-        providerAgentId?: string;
+        catalogAgentId?: string;
         iconAgentId?: string;
     }> & Readonly<Record<string, unknown>>>>;
     backendsById?: Readonly<Record<string, Readonly<{
         id?: string;
-        providerId: string;
+        agentId: string;
         title?: string;
         subtitle?: string;
-        providerAgentId?: string;
+        catalogAgentId?: string;
         iconAgentId?: string;
+        capabilities?: MergedBackendCapabilities;
     }> & Readonly<Record<string, unknown>>>>;
     actionsById?: Readonly<Record<string, Readonly<{
         id?: string;
@@ -154,108 +159,10 @@ export type DaemonContributionRegistryProjectionV1Like = Readonly<{
         digest?: string | null;
         contentType?: string | null;
     }> & Readonly<Record<string, unknown>>>>;
-    uiDescriptorsById?: Readonly<Record<string, Readonly<{
-        id?: string;
-        pluginId?: string;
-        surface?: string;
-        title?: string;
-        description?: string | null;
-        fields?: ReadonlyArray<Readonly<{
-            id?: string;
-            kind?: string;
-            title?: string;
-            description?: string | null;
-            options?: ReadonlyArray<Readonly<{
-                value?: string;
-                label?: string;
-            }>>;
-        }>>;
-    }> & Readonly<Record<string, unknown>>>>;
 }>;
 
 function readOptionalString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function normalizeProjectionFieldKind(kind: string | null): PluginProjectionFieldKind {
-    switch (kind) {
-    case 'text':
-    case 'markdown':
-        return 'text';
-    case 'boolean':
-        return 'boolean';
-    case 'select':
-    case 'enum':
-        return 'enum';
-    case 'secret':
-        return 'secret';
-    case 'number':
-        return 'number';
-    case 'action':
-        return 'action';
-    default:
-        return 'unsupported';
-    }
-}
-
-function createDescriptorSurfaceMaps(): Record<PluginProjectionSurface, Map<string, PluginProjectionSection[]>> {
-    return {
-        settings: new Map<string, PluginProjectionSection[]>(),
-        setup: new Map<string, PluginProjectionSection[]>(),
-        status: new Map<string, PluginProjectionSection[]>(),
-        agentSettings: new Map<string, PluginProjectionSection[]>(),
-        providerSettings: new Map<string, PluginProjectionSection[]>(),
-        backendSettings: new Map<string, PluginProjectionSection[]>(),
-    };
-}
-
-function pushDescriptorSection(
-    surfaceMaps: Record<PluginProjectionSurface, Map<string, PluginProjectionSection[]>>,
-    surface: PluginProjectionSurface,
-    pluginId: string,
-    section: PluginProjectionSection,
-): void {
-    const sections = surfaceMaps[surface].get(pluginId) ?? [];
-    sections.push(section);
-    surfaceMaps[surface].set(pluginId, sections);
-}
-
-function readDescriptorSections(
-    surfaceMaps: Record<PluginProjectionSurface, Map<string, PluginProjectionSection[]>>,
-    surface: PluginProjectionSurface,
-    pluginId: string,
-): readonly PluginProjectionSection[] {
-    return surfaceMaps[surface].get(pluginId) ?? [];
-}
-
-function collectPluginIdsFromSurfaceMaps(
-    surfaceMaps: Record<PluginProjectionSurface, Map<string, PluginProjectionSection[]>>,
-): readonly string[] {
-    return [
-        ...surfaceMaps.settings.keys(),
-        ...surfaceMaps.setup.keys(),
-        ...surfaceMaps.status.keys(),
-        ...surfaceMaps.agentSettings.keys(),
-        ...surfaceMaps.providerSettings.keys(),
-        ...surfaceMaps.backendSettings.keys(),
-    ];
-}
-
-function normalizeV1DescriptorSurface(surface: string | null): PluginProjectionSurface {
-    switch (surface) {
-    case 'status':
-        return 'status';
-    case 'setup':
-        return 'setup';
-    case 'agentSettings':
-        return 'agentSettings';
-    case 'providerSettings':
-        return 'providerSettings';
-    case 'backendSettings':
-        return 'backendSettings';
-    default:
-        return 'settings';
-    }
 }
 
 function isPluginProjectionV2(
@@ -277,8 +184,13 @@ function mapV2Action(action: PluginProjectedActionV2): PluginProjectionAction {
         surfaces: action.surfaces,
         placement: action.placement,
         dangerLevel: action.dangerLevel,
+        confirmation: action.confirmation ?? null,
         available: typeof action.available === 'boolean' ? action.available : null,
     };
+}
+
+function mapV1ActionDangerLevel(safety: unknown): PluginProjectedActionV2['dangerLevel'] {
+    return readOptionalString(safety) === 'safe' ? 'safe' : 'writesLocal';
 }
 
 function mapV2Resource(resource: PluginProjectedResourceV2): PluginProjectionResource {
@@ -291,31 +203,39 @@ function mapV2Resource(resource: PluginProjectedResourceV2): PluginProjectionRes
     };
 }
 
-function mapV2DescriptorSection(descriptor: PluginProjectedUiDescriptorV2): PluginProjectionSection {
-    const featureGate = descriptor.featureGate === undefined ? undefined : descriptor.featureGate;
-    const helpUrl = descriptor.helpUrl === undefined ? undefined : descriptor.helpUrl;
+function mapV2EditableSettingsField(field: PluginProjectedSettingsFieldV2): PluginProjectionEditableSettingField {
     return {
-        id: descriptor.id,
-        title: descriptor.title,
-        footer: descriptor.description ?? null,
-        ...(typeof descriptor.order === 'number' ? { order: descriptor.order } : {}),
-        ...(typeof descriptor.tone === 'string' ? { tone: descriptor.tone } : {}),
-        ...(featureGate !== undefined ? { featureGate } : {}),
-        ...(helpUrl !== undefined ? { helpUrl } : {}),
-        fields: descriptor.fields.map((field) => ({
-            key: field.id,
-            kind: normalizeProjectionFieldKind(field.type),
-            title: field.title,
-            subtitle: field.description ?? null,
-            ...(typeof field.order === 'number' ? { order: field.order } : {}),
-            ...(field.groupId !== undefined ? { groupId: field.groupId } : {}),
-            ...(field.featureGate !== undefined ? { featureGate: field.featureGate } : {}),
-            ...(field.actionId !== undefined ? { actionId: field.actionId } : {}),
-            enumOptions: field.options.map((option: { value: string; label: string }) => ({
-                id: option.value,
-                title: option.label,
-            })),
-        })),
+        key: field.id,
+        control: field.control,
+        valueType: field.valueType,
+        valueSchema: field.valueSchema,
+        title: field.displayKey,
+        subtitle: field.descriptionKey ?? null,
+        ...(typeof field.order === 'number' ? { order: field.order } : {}),
+        ...(field.groupId !== undefined ? { groupId: field.groupId } : {}),
+        redaction: field.redaction,
+        clearWhenEmpty: field.clearWhenEmpty,
+        ...(typeof field.defaultBooleanValue === 'boolean'
+            ? { defaultBooleanValue: field.defaultBooleanValue }
+            : {}),
+        ...(field.defaultValue !== undefined ? { defaultValue: field.defaultValue } : {}),
+        ...(field.presentation ? { presentation: field.presentation } : {}),
+        ...(field.availability ? { availability: field.availability } : {}),
+        ...(field.analytics ? { analytics: field.analytics } : {}),
+    };
+}
+
+function mapV2EditableSettingsGroup(settings: PluginProjectedSettingsV2): PluginProjectionEditableSettingsGroup {
+    return {
+        id: settings.id,
+        pluginId: settings.pluginId,
+        version: settings.version,
+        title: settings.title,
+        ...(settings.description ? { description: settings.description } : {}),
+        storageScope: settings.storageScope,
+        presentation: settings.presentation,
+        target: settings.target,
+        fields: settings.fields.map(mapV2EditableSettingsField),
     };
 }
 
@@ -338,7 +258,8 @@ function buildV1PluginProjectionById(
                 .filter((entry): entry is [string, boolean] => entry[1] === true)
                 .map(([surface]) => surface),
             placement: 'detailsPanel',
-            dangerLevel: readOptionalString(action.safety) ?? 'safe',
+            dangerLevel: mapV1ActionDangerLevel(action.safety),
+            confirmation: null,
             available: null,
         });
         actionsByPluginId.set(pluginId, actions);
@@ -362,47 +283,9 @@ function buildV1PluginProjectionById(
         resourcesByPluginId.set(pluginId, resources);
     }
 
-    const surfaceMaps = createDescriptorSurfaceMaps();
-    for (const descriptor of Object.values(projection.uiDescriptorsById ?? {})) {
-        const pluginId = readOptionalString(descriptor.pluginId);
-        const descriptorId = readOptionalString(descriptor.id);
-        const title = readOptionalString(descriptor.title);
-        if (!pluginId || !descriptorId || !title) continue;
-        const section: PluginProjectionSection = {
-            id: descriptorId,
-            title,
-            footer: readOptionalString(descriptor.description),
-            fields: Array.isArray(descriptor.fields)
-                ? descriptor.fields.flatMap((field) => {
-                    const key = readOptionalString(field.id);
-                    const kind = normalizeProjectionFieldKind(readOptionalString(field.kind));
-                    const fieldTitle = readOptionalString(field.title);
-                    if (!key || !fieldTitle) return [];
-                    return [{
-                        key,
-                        kind,
-                        title: fieldTitle,
-                        subtitle: readOptionalString(field.description),
-                        enumOptions: Array.isArray(field.options)
-                            ? field.options.flatMap((option: unknown): PluginProjectionFieldOption[] => {
-                                const record = option && typeof option === 'object' ? option as { value?: unknown; label?: unknown } : null;
-                                const id = readOptionalString(record?.value);
-                                const optionTitle = readOptionalString(record?.label);
-                                if (!id || !optionTitle) return [];
-                                return [{ id, title: optionTitle }];
-                            })
-                            : [],
-                    }];
-                })
-                : [],
-        };
-        pushDescriptorSection(surfaceMaps, normalizeV1DescriptorSurface(readOptionalString(descriptor.surface)), pluginId, section);
-    }
-
     const pluginIds = new Set<string>([
         ...actionsByPluginId.keys(),
         ...resourcesByPluginId.keys(),
-        ...collectPluginIdsFromSurfaceMaps(surfaceMaps),
     ]);
 
     const entries: Record<string, PluginProjectionEntry> = {};
@@ -420,12 +303,7 @@ function buildV1PluginProjectionById(
             diagnostics: [],
             actions: actionsByPluginId.get(pluginId) ?? [],
             resources: resourcesByPluginId.get(pluginId) ?? [],
-            settingsSections: readDescriptorSections(surfaceMaps, 'settings', pluginId),
-            setupSections: readDescriptorSections(surfaceMaps, 'setup', pluginId),
-            statusSections: readDescriptorSections(surfaceMaps, 'status', pluginId),
-            agentSettingsSections: readDescriptorSections(surfaceMaps, 'agentSettings', pluginId),
-            providerSettingsSections: readDescriptorSections(surfaceMaps, 'providerSettings', pluginId),
-            backendSettingsSections: readDescriptorSections(surfaceMaps, 'backendSettings', pluginId),
+            editableSettingsGroups: [],
         };
     }
 
@@ -449,22 +327,23 @@ function buildV2PluginProjectionById(
         resourcesByPluginId.set(resource.pluginId, resources);
     }
 
-    const surfaceMaps = createDescriptorSurfaceMaps();
-    for (const descriptor of Object.values(projection.uiDescriptorsById)) {
-        const section = mapV2DescriptorSection(descriptor);
-        pushDescriptorSection(surfaceMaps, descriptor.surface, descriptor.pluginId, section);
+    const editableSettingsByPluginId = new Map<string, PluginProjectionEditableSettingsGroup[]>();
+    for (const settings of Object.values(projection.settingsById ?? {})) {
+        const groups = editableSettingsByPluginId.get(settings.pluginId) ?? [];
+        groups.push(mapV2EditableSettingsGroup(settings));
+        editableSettingsByPluginId.set(settings.pluginId, groups);
     }
 
     const diagnosticsByPluginId = new Map<string, PluginProjectionDiagnostic[]>();
     for (const diagnostic of projection.diagnostics) {
-        if (!diagnostic.pluginId) continue;
-        const diagnostics = diagnosticsByPluginId.get(diagnostic.pluginId) ?? [];
+        const pluginId = diagnostic.plugin.id;
+        const diagnostics = diagnosticsByPluginId.get(pluginId) ?? [];
         diagnostics.push({
-            code: diagnostic.code,
-            message: diagnostic.message,
-            severity: diagnostic.severity,
+            code: diagnostic.data.code,
+            message: diagnostic.data.message ?? diagnostic.data.code,
+            severity: diagnostic.data.severity,
         });
-        diagnosticsByPluginId.set(diagnostic.pluginId, diagnostics);
+        diagnosticsByPluginId.set(pluginId, diagnostics);
     }
 
     const entries: Record<string, PluginProjectionEntry> = {};
@@ -487,28 +366,10 @@ function buildV2PluginProjectionById(
             diagnostics: diagnosticsByPluginId.get(pluginId) ?? [],
             actions: actionsByPluginId.get(pluginId) ?? [],
             resources: resourcesByPluginId.get(pluginId) ?? [],
-            settingsSections: readDescriptorSections(surfaceMaps, 'settings', pluginId),
-            setupSections: readDescriptorSections(surfaceMaps, 'setup', pluginId),
-            statusSections: readDescriptorSections(surfaceMaps, 'status', pluginId),
-            agentSettingsSections: readDescriptorSections(surfaceMaps, 'agentSettings', pluginId),
-            providerSettingsSections: readDescriptorSections(surfaceMaps, 'providerSettings', pluginId),
-            backendSettingsSections: readDescriptorSections(surfaceMaps, 'backendSettings', pluginId),
+            editableSettingsGroups: editableSettingsByPluginId.get(pluginId) ?? [],
         };
     }
     return entries;
-}
-
-function readV2RegistryDiagnostics(
-    projection: PluginProjectionV2,
-): readonly PluginProjectionDiagnostic[] {
-    return projection.diagnostics.flatMap((diagnostic) => {
-        if (diagnostic.pluginId) return [];
-        return [{
-            code: diagnostic.code,
-            message: diagnostic.message,
-            severity: diagnostic.severity,
-        }];
-    });
 }
 
 export function adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(
@@ -522,9 +383,12 @@ export function adaptDaemonContributionRegistryProjectionToMergedProjectionInput
     const mergedProviderProjectionById: Record<string, MergedProviderProjectionEntry> = {};
     const mergedBackendProjectionById: Record<string, MergedBackendProjectionEntry> = {};
 
-    for (const [providerId, entry] of Object.entries(projection.providersById ?? {})) {
-        mergedProviderProjectionById[providerId] = {
-            providerId,
+    for (const [agentEntryId, entry] of Object.entries(projection.agentsById ?? {})) {
+        mergedProviderProjectionById[agentEntryId] = {
+            agentId: agentEntryId,
+            identity: isPluginProjectionV2(projection)
+                ? projection.agentsById[agentEntryId]?.identity ?? null
+                : null,
             title: entry.title ?? null,
             subtitle: entry.subtitle ?? null,
             channel: entry.channel === 'stable' || entry.channel === 'experimental' || entry.channel === 'plugin'
@@ -534,19 +398,23 @@ export function adaptDaemonContributionRegistryProjectionToMergedProjectionInput
             settingsBackendId: typeof entry.settingsBackendId === 'string' && entry.settingsBackendId.trim().length > 0
                 ? entry.settingsBackendId.trim()
                 : null,
-            providerAgentId: isProjectedAgentId(entry.providerAgentId) ? entry.providerAgentId : null,
+            catalogAgentId: isProjectedAgentId(entry.catalogAgentId) ? entry.catalogAgentId : null,
             iconAgentId: isProjectedAgentId(entry.iconAgentId) ? entry.iconAgentId : null,
+            cli: isPluginProjectionV2(projection)
+                ? projection.agentsById[agentEntryId]?.cli ?? null
+                : null,
         };
     }
 
     for (const [backendId, entry] of Object.entries(projection.backendsById ?? {})) {
         mergedBackendProjectionById[backendId] = {
             backendId,
-            providerId: entry.providerId,
+            agentId: entry.agentId,
             title: entry.title ?? null,
             subtitle: entry.subtitle ?? null,
-            providerAgentId: isProjectedAgentId(entry.providerAgentId) ? entry.providerAgentId : null,
+            catalogAgentId: isProjectedAgentId(entry.catalogAgentId) ? entry.catalogAgentId : null,
             iconAgentId: isProjectedAgentId(entry.iconAgentId) ? entry.iconAgentId : null,
+            capabilities: entry.capabilities ?? null,
         };
     }
 
@@ -556,8 +424,6 @@ export function adaptDaemonContributionRegistryProjectionToMergedProjectionInput
         pluginProjectionById: isPluginProjectionV2(projection)
             ? buildV2PluginProjectionById(projection)
             : buildV1PluginProjectionById(projection),
-        registryDiagnostics: isPluginProjectionV2(projection)
-            ? readV2RegistryDiagnostics(projection)
-            : [],
+        registryDiagnostics: [],
     };
 }

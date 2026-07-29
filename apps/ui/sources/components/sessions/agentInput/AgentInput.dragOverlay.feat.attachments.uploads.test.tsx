@@ -224,7 +224,8 @@ vi.mock('@/sync/domains/state/storageStore', () => ({
     ),
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
+vi.mock('@/sync/store/hooks', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/store/hooks')>(),
     useLocalSetting: (key: string) => {
         if (key === 'uiBackdropBlurEnabled') return backdropBlurEnabled;
         return 1;

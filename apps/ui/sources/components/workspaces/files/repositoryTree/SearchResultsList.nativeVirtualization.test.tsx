@@ -6,7 +6,7 @@ import { installFilesContentCommonModuleMocks } from '@/components/workspaces/sc
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const flashListState = vi.hoisted(() => ({
+const legendListState = vi.hoisted(() => ({
     props: null as Record<string, unknown> | null,
 }));
 
@@ -26,12 +26,12 @@ installFilesContentCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () => {
+vi.mock('@legendapp/list/react-native', async () => {
     const ReactModule = await import('react');
     return {
-        FlashList: ReactModule.forwardRef((props: Record<string, unknown>, _ref) => {
-            flashListState.props = props;
-            return ReactModule.createElement('FlashList');
+        LegendList: ReactModule.forwardRef((props: Record<string, unknown>, _ref) => {
+            legendListState.props = props;
+            return ReactModule.createElement('LegendList');
         }),
     };
 });
@@ -61,7 +61,7 @@ vi.mock('@/constants/Typography', () => ({
 }));
 
 describe('SearchResultsList native virtualization', () => {
-    it('uses compact FlashList windows on native for large file-search result sets', async () => {
+    it('uses compact LegendList windows on native for large file-search result sets', async () => {
         const { SearchResultsList } = await import('./SearchResultsList');
         const searchResults = Array.from({ length: 40 }, (_, index) => ({
             fileType: 'file',
@@ -86,9 +86,9 @@ describe('SearchResultsList native virtualization', () => {
             />,
         );
 
-        expect(flashListState.props?.data).toHaveLength(40);
-        expect(flashListState.props?.estimatedItemSize).toBeGreaterThan(0);
-        expect(flashListState.props?.initialNumToRender).toBe(12);
-        expect(flashListState.props?.maxToRenderPerBatch).toBe(12);
+        expect(legendListState.props?.data).toHaveLength(40);
+        expect(legendListState.props?.estimatedItemSize).toBeGreaterThan(0);
+        expect(legendListState.props?.initialNumToRender).toBe(12);
+        expect(legendListState.props?.maxToRenderPerBatch).toBe(12);
     });
 });

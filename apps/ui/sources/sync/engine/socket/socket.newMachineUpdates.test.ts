@@ -11,6 +11,7 @@ import {
     resetSessionSurfaceVisibilityForTests,
 } from '@/sync/domains/session/sessionSurfaceVisibility';
 import * as executionRunActivityBus from '@/sync/runtime/executionRuns/executionRunActivityBus';
+import { resetTranscriptStreamSegmentAssemblyForTests } from '@/sync/engine/sessions/transcriptStreamSegmentAssembly';
 import type { NormalizedMessage } from '@/sync/typesRaw';
 import { flushMachineActivityUpdates, handleEphemeralSocketUpdate, handleUpdateContainer } from './socket';
 
@@ -108,7 +109,7 @@ function buildRawTranscriptStreamSegmentRecord(text: string, localId = 'segment-
         role: 'agent',
         content: {
             type: 'acp',
-            provider: 'codex',
+            agentId: 'codex',
             data: { type: 'message', message: text },
         },
         meta: {
@@ -119,6 +120,67 @@ function buildRawTranscriptStreamSegmentRecord(text: string, localId = 'segment-
                 segmentState: 'streaming',
                 startedAtMs: 1_000,
                 updatedAtMs: 1_010,
+            },
+        },
+    };
+}
+
+function buildEmptyCanonicalTurnDiffInput() {
+    return {
+        files: [],
+        _happier: {
+            sessionChangeScope: 'turn',
+            workspaceMutationSignal: 'turn-change-set',
+            turnId: 'turn-stream-1',
+            sessionId: 'stream-session-1',
+            provider: 'codex',
+            rawToolName: 'RepositoryCheckpointDiff',
+            canonicalToolName: 'Diff',
+            source: 'scm_checkpoint',
+            confidence: 'exact',
+            turnStatus: 'completed',
+            seqRange: {
+                startSeqInclusive: 1,
+                endSeqInclusive: 1,
+            },
+        },
+    };
+}
+
+function buildEmptyCanonicalTurnDiffCallContent(callId: string) {
+    return {
+        t: 'plain',
+        v: {
+            role: 'agent',
+            content: {
+                type: 'acp',
+                agentId: 'codex',
+                data: {
+                    type: 'tool-call',
+                    callId,
+                    name: 'Diff',
+                    input: JSON.stringify(buildEmptyCanonicalTurnDiffInput()),
+                    id: `${callId}-call`,
+                },
+            },
+        },
+    };
+}
+
+function buildEmptyCanonicalTurnDiffResultContent(callId: string) {
+    return {
+        t: 'plain',
+        v: {
+            role: 'agent',
+            content: {
+                type: 'acp',
+                agentId: 'codex',
+                data: {
+                    type: 'tool-result',
+                    callId,
+                    output: JSON.stringify({ status: 'completed', files: [] }),
+                    id: `${callId}-result`,
+                },
             },
         },
     };
@@ -392,7 +454,7 @@ describe('socket update handling: transcript-stream-segment ephemerals', () => {
                             role: 'agent',
                             content: {
                                 type: 'acp',
-                                provider: 'codex',
+                                agentId: 'codex',
                                 data: { type: 'message', message: 'Hello there' },
                             },
                             meta: {
@@ -427,6 +489,121 @@ describe('socket update handling: transcript-stream-segment ephemerals', () => {
                 }),
             ],
         );
+    });
+
+    it('applies transcript stream segment deltas by reconstructing text for live-consumed sessions', async () => {
+        resetTranscriptStreamSegmentAssemblyForTests();
+        const sessionId = 's-dispatch-delta';
+        const applyMessages = vi.fn();
+        markSessionSurfaceVisible(sessionId);
+        const params = buildEphemeralParams({
+            getSession: () => buildSession(sessionId, 'plain'),
+            applyMessages,
+        });
+
+        await handleEphemeralSocketUpdate({
+            ...params,
+            update: {
+                type: 'transcript-stream-segment',
+                sessionId,
+                message: {
+                    localId: 'segment-1',
+                    messageRole: 'agent',
+                    tick: 1,
+                    content: buildPlainTranscriptStreamSegmentContent('Hello'),
+                    createdAt: 1_000,
+                    updatedAt: 1_010,
+                },
+            },
+        });
+        await handleEphemeralSocketUpdate({
+            ...params,
+            update: {
+                type: 'transcript-stream-segment-delta',
+                sessionId,
+                message: {
+                    localId: 'segment-1',
+                    messageRole: 'agent',
+                    tick: 2,
+                    baseLength: 5,
+                    content: buildPlainTranscriptStreamSegmentContent(' world'),
+                    createdAt: 1_000,
+                    updatedAt: 1_040,
+                },
+            },
+        });
+
+        expect(applyMessages).toHaveBeenCalledTimes(2);
+        expect(applyMessages.mock.calls[1]?.[1]).toEqual([
+            expect.objectContaining({
+                localId: 'segment-1',
+                content: [expect.objectContaining({ type: 'text', text: 'Hello world' })],
+            }),
+        ]);
+        resetTranscriptStreamSegmentAssemblyForTests();
+    });
+
+    it('drops transcript stream segment deltas for sessions without a live transcript consumer', async () => {
+        resetTranscriptStreamSegmentAssemblyForTests();
+        vi.useFakeTimers();
+        const sessionId = 's-dispatch-delta-hidden';
+        const applyMessages = vi.fn();
+        const params = buildEphemeralParams({
+            getSession: () => buildSession(sessionId, 'plain'),
+            applyMessages,
+        });
+
+        await handleEphemeralSocketUpdate({
+            ...params,
+            update: {
+                type: 'transcript-stream-segment-delta',
+                sessionId,
+                message: {
+                    localId: 'segment-1',
+                    messageRole: 'agent',
+                    tick: 2,
+                    baseLength: 5,
+                    content: buildPlainTranscriptStreamSegmentContent(' world'),
+                    createdAt: 1_000,
+                    updatedAt: 1_040,
+                },
+            },
+        });
+
+        await vi.runAllTimersAsync();
+
+        expect(applyMessages).not.toHaveBeenCalled();
+        resetTranscriptStreamSegmentAssemblyForTests();
+    });
+
+    it('shares empty canonical turn diff suppression across transcript stream segment updates', async () => {
+        const sessionId = 'stream_empty_diff_session';
+        const callId = 'stream-empty-diff-call';
+        const applyMessages = vi.fn();
+        markSessionSurfaceVisible(sessionId);
+        storage.getState().applySessions([buildSession(sessionId, 'plain')]);
+
+        await handleEphemeralSocketUpdate(buildEphemeralParams({
+            update: buildTranscriptStreamSegmentUpdate(
+                sessionId,
+                buildEmptyCanonicalTurnDiffCallContent(callId),
+                'stream-empty-diff-call-message',
+            ),
+            getSession: (id) => storage.getState().sessions[id],
+            applyMessages,
+        }));
+
+        await handleEphemeralSocketUpdate(buildEphemeralParams({
+            update: buildTranscriptStreamSegmentUpdate(
+                sessionId,
+                buildEmptyCanonicalTurnDiffResultContent(callId),
+                'stream-empty-diff-result-message',
+            ),
+            getSession: (id) => storage.getState().sessions[id],
+            applyMessages,
+        }));
+
+        expect(applyMessages).not.toHaveBeenCalled();
     });
 
     it('drops off-screen transcript stream segment applies when the coalescing window flushes while hidden', async () => {
@@ -593,7 +770,7 @@ describe('socket update handling: transcript-stream-segment ephemerals', () => {
                     role: 'agent',
                     content: {
                         type: 'acp',
-                        provider: 'codex',
+                        agentId: 'codex',
                         data: { type: 'message', message: 'live' },
                     },
                     meta: {
@@ -626,32 +803,38 @@ describe('socket update handling: transcript-stream-segment ephemerals', () => {
 
 });
 
-describe('socket update handling: direct-session transcript delta ephemerals', () => {
-    it('forwards only the canonical direct-session transcript delta update', async () => {
+describe('socket update handling: external-session transcript invalidations', () => {
+    it('forwards only the content-free qualified invalidation', async () => {
         const updateExternalSessionTranscript = vi.fn();
 
         await handleEphemeralSocketUpdate(buildEphemeralParams({
             update: {
-                type: 'direct-session-transcript-delta',
-                sessionId: 's1',
-                items: [
-                    {
-                        id: 'direct-msg-1',
-                        createdAtMs: 1,
-                        raw: { role: 'user', content: { type: 'text', text: 'hello direct' } },
+                v: 1,
+                type: 'external-session-transcript-invalidated',
+                binding: {
+                    v: 1,
+                    machineId: 'm1',
+                    sessionId: 's1',
+                    link: { generation: 'link-1', remoteSessionId: 'remote-1' },
+                    source: {
+                        qualifiedIdentity: {
+                            v: 1,
+                            agent: { pluginId: 'happier.claude', localId: 'claude' },
+                            source: { kind: 'claudeConfig', contractVersion: 1 },
+                        },
+                        generation: 'source-1',
                     },
-                ],
-                nextCursor: 'tail-1',
-                truncated: false,
+                    contributionGeneration: 'contribution-1',
+                    cursorIdentity: `external_session_cursor_binding_v1:${'a'.repeat(64)}`,
+                },
             },
             updateExternalSessionTranscript,
         }));
 
         expect(updateExternalSessionTranscript).toHaveBeenCalledTimes(1);
         expect(updateExternalSessionTranscript).toHaveBeenCalledWith(expect.objectContaining({
-            type: 'direct-session-transcript-delta',
-            sessionId: 's1',
-            nextCursor: 'tail-1',
+            type: 'external-session-transcript-invalidated',
+            binding: expect.objectContaining({ sessionId: 's1' }),
         }));
     });
 

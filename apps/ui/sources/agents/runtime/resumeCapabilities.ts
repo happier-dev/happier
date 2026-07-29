@@ -6,14 +6,26 @@
  * - experimental (requires explicit opt-in).
  */
 
-import { evaluateVendorResumeEligibility, getAgentResumeConfig, isAgentId, resolveAgentIdFromFlavor, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import type { Settings } from '@/sync/domains/settings/settings';
-
+import {
+    evaluateVendorResumeEligibility,
+    getAgentResumeConfig,
+    isAgentId,
+    readNormalizedRuntimeDescriptor,
+    type AgentId,
+    resolveAgentIdFromFlavor,
+    resolveAgentIdFromSessionMetadata,
+} from '@happier-dev/agents';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
 import { deriveAcpBackendIdFromFlavor, isAcpFlavorPrefix } from './acpFlavor';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 
 export type ResumeCapabilityOptions = {
-    accountSettings?: Partial<Settings> | null;
+    accountSettings?: Record<string, unknown> | null;
+    linkedSessionCurrentAgent?: Readonly<{
+        identity: PluginContributionIdentityV1;
+        sourceKinds: readonly string[];
+    }> | null;
 };
 
 function isConfiguredAcpBackendEnabled(backendId: string, options?: ResumeCapabilityOptions): boolean {
@@ -64,13 +76,13 @@ export function canAgentResume(agent: string | null | undefined, options?: Resum
 
     // Use a synthetic metadata payload to evaluate enablement without requiring
     // a specific session's persisted vendor resume id.
-    return (
-        evaluateVendorResumeEligibility({
-            agentId,
-            metadata: { [field]: '__happier__' },
-            accountSettings: options?.accountSettings ?? null,
-        }).eligible === true
-    );
+    const eligibilityInput = {
+        agentId,
+        metadata: { [field]: '__happier__' },
+        accountSettings: options?.accountSettings ?? null,
+        linkedSessionCurrentAgent: options?.linkedSessionCurrentAgent ?? null,
+    };
+    return evaluateVendorResumeEligibility(eligibilityInput).eligible === true;
 }
 
 /**
@@ -84,6 +96,58 @@ export interface SessionMetadata {
     [key: string]: unknown;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function readNonEmptyString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readFiniteNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function resolveDeclaredAgentIdForResume(metadata: SessionMetadata | null | undefined): AgentId | null {
+    const runtimeProviderId = readNormalizedRuntimeDescriptor(metadata)?.providerId;
+    if (runtimeProviderId && isAgentId(runtimeProviderId)) return runtimeProviderId;
+
+    const linkedAgentId = readExternalSessionLink(metadata)?.agentId;
+    return linkedAgentId && isAgentId(linkedAgentId) ? linkedAgentId : null;
+}
+
+function readForkLineage(metadata: Record<string, unknown>): Record<string, unknown> | null {
+    const fork = asRecord(metadata.forkV1);
+    if (!fork || fork.v !== 1) return null;
+    const parentSessionId = readNonEmptyString(fork.parentSessionId);
+    return parentSessionId ? fork : null;
+}
+
+function hasUnconsumedReplaySeed(metadata: Record<string, unknown>): boolean {
+    const replaySeed = asRecord(metadata.replaySeedV1);
+    if (!replaySeed || replaySeed.v !== 1) return false;
+    if (!readNonEmptyString(replaySeed.seedText)) return false;
+    if (readNonEmptyString(replaySeed.appliedToLocalId)) return false;
+    if (readFiniteNumber(replaySeed.appliedAtMs) !== null) return false;
+    return true;
+}
+
+function canFreshSpawnMissingVendorResumeId(metadata: SessionMetadata): boolean {
+    const record = asRecord(metadata);
+    if (!record) return false;
+    if (Object.hasOwn(record, 'externalSessionV1')) return false;
+
+    const fork = readForkLineage(record);
+    if (!fork) return true;
+
+    // Fork children inherit prior-session context. Without a vendor resume id,
+    // a fresh spawn can only preserve that context while the replay seed is still pending.
+    return readNonEmptyString(fork.strategy) === 'replay'
+        && hasUnconsumedReplaySeed(record);
+}
+
 export function canResumeSession(metadata: SessionMetadata | null | undefined): boolean {
     if (!metadata) return false;
     return canResumeSessionWithOptions(metadata, undefined);
@@ -94,6 +158,8 @@ export function canResumeSessionWithOptions(metadata: SessionMetadata | null | u
     const flavor = metadata.flavor;
 
     if (isAcpFlavorPrefix(flavor)) {
+        const metadataRecord = asRecord(metadata);
+        if (metadataRecord && Object.hasOwn(metadataRecord, 'externalSessionV1')) return false;
         const backendId = getConfiguredAcpBackendId(flavor, metadata);
         return backendId !== null && isConfiguredAcpBackendEnabled(backendId, options);
     }
@@ -102,13 +168,13 @@ export function canResumeSessionWithOptions(metadata: SessionMetadata | null | u
     if (!agentId) return false;
     if (!isAgentId(agentId)) return false;
 
-    return (
-        evaluateVendorResumeEligibility({
-            agentId,
-            metadata,
-            accountSettings: options?.accountSettings ?? null,
-        }).eligible === true
-    );
+    const eligibilityInput = {
+        agentId,
+        metadata,
+        accountSettings: options?.accountSettings ?? null,
+        linkedSessionCurrentAgent: options?.linkedSessionCurrentAgent ?? null,
+    };
+    return evaluateVendorResumeEligibility(eligibilityInput).eligible === true;
 }
 
 /**
@@ -138,12 +204,24 @@ export function canContinueSessionWithFreshSpawn(
     if (!field) return false;
 
     const vendorResumeId = metadata[field];
-    return !(typeof vendorResumeId === 'string' && vendorResumeId.trim().length > 0);
+    if (typeof vendorResumeId === 'string' && vendorResumeId.trim().length > 0) {
+        return false;
+    }
+
+    return canFreshSpawnMissingVendorResumeId(metadata);
+}
+
+export function canResumeOrContinueSessionWithOptions(
+    metadata: SessionMetadata | null | undefined,
+    options?: ResumeCapabilityOptions,
+): boolean {
+    return canResumeSessionWithOptions(metadata, options)
+        || canContinueSessionWithFreshSpawn(metadata, options);
 }
 
 export function getAgentSessionId(metadata: SessionMetadata | null | undefined): string | null {
     if (!metadata) return null;
-    return getAgentVendorResumeId(metadata, metadata.flavor, undefined);
+    return getAgentVendorResumeId(metadata, undefined, undefined);
 }
 
 export function getAgentVendorResumeId(
@@ -157,14 +235,24 @@ export function getAgentVendorResumeId(
         return null;
     }
 
-    const agentId = resolveAgentIdFromFlavor(agent) ?? resolveAgentIdFromSessionMetadata(metadata);
+    const declaredAgentId = resolveDeclaredAgentIdForResume(metadata);
+    const explicitAgentId = resolveAgentIdFromFlavor(agent);
+    if (declaredAgentId && explicitAgentId && declaredAgentId !== explicitAgentId) {
+        return null;
+    }
+
+    const agentId = declaredAgentId
+        ?? explicitAgentId
+        ?? resolveAgentIdFromSessionMetadata(metadata);
     if (!agentId) return null;
     if (!isAgentId(agentId)) return null;
 
-    const eligibility = evaluateVendorResumeEligibility({
+    const eligibilityInput = {
         agentId,
         metadata,
         accountSettings: options?.accountSettings ?? null,
-    });
+        linkedSessionCurrentAgent: options?.linkedSessionCurrentAgent ?? null,
+    };
+    const eligibility = evaluateVendorResumeEligibility(eligibilityInput);
     return eligibility.eligible === true ? eligibility.vendorResumeId : null;
 }

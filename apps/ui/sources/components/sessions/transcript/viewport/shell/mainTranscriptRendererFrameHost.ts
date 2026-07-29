@@ -1,20 +1,7 @@
 import {
-    resolveTranscriptFlashListBottomMaintenanceDecision,
-    type TranscriptFlashListBottomMaintenanceResult,
-} from '@/components/sessions/transcript/scroll/transcriptFlashListBottomMaintenance';
-import type { TranscriptBottomFollowMode } from '@/components/sessions/transcript/scroll/transcriptBottomFollowMode';
-import type { TranscriptViewportTelemetryMvcpPolicy } from '@/components/sessions/transcript/scroll/transcriptViewportTelemetry';
-import {
     resolveMainTranscriptListShellFrame,
     type TranscriptListShellFrame,
 } from '@/components/sessions/transcript/viewport/shell/transcriptListShellCapabilities';
-
-export type MainTranscriptRendererFrameHost = Readonly<{
-    frame: TranscriptListShellFrame;
-    maintainVisibleContentPosition: TranscriptFlashListBottomMaintenanceResult;
-    pauseOffsetCorrection: boolean;
-    telemetryMvcpPolicy: TranscriptViewportTelemetryMvcpPolicy;
-}>;
 
 const TRANSCRIPT_LEGEND_MAINTAIN_SCROLL_AT_END_THRESHOLD_DEFAULT = 0.1;
 
@@ -34,65 +21,26 @@ function resolveLegendMaintainScrollAtEndThreshold(params: Readonly<{
 }
 
 export function resolveMainTranscriptRendererFrameHost(params: Readonly<{
-    autoFollowWhenPinned: boolean;
-    bottomFollowMode: TranscriptBottomFollowMode;
-    configuredDrawDistance?: unknown;
-    hasOpenViewportTransaction: boolean;
     layoutHeight: number;
-    liveRegionActive: boolean;
-    nativeEntryShouldUseBottomMaintenance: boolean;
     nativeID?: string;
-    pinEnabled: boolean;
     pinThresholdPx: number;
     platformOS: string;
-    targetWindowActive?: boolean;
-}>): MainTranscriptRendererFrameHost {
-    const bottomMaintenance = resolveTranscriptFlashListBottomMaintenanceDecision({
-        autoFollowWhenPinned: params.autoFollowWhenPinned,
-        bottomFollowMode: params.bottomFollowMode,
-        hasOpenViewportTransaction: params.hasOpenViewportTransaction,
-        layoutHeight: params.layoutHeight,
-        liveRegionActive: params.liveRegionActive,
-        nativeEntryShouldUseBottomMaintenance: params.nativeEntryShouldUseBottomMaintenance,
-        pinEnabled: params.pinEnabled,
-        pinThresholdPx: params.pinThresholdPx,
-        platformIsWeb: params.platformOS === 'web',
-        targetWindowActive: params.targetWindowActive,
-    });
-    const maintainVisibleContentPosition = bottomMaintenance.maintainVisibleContentPosition;
-
-    return {
-        frame: resolveMainTranscriptListShellFrame({
-            configuredDrawDistance: params.configuredDrawDistance,
-            listLayoutHeight: params.layoutHeight,
-            maintainScrollAtEndThreshold: resolveLegendMaintainScrollAtEndThreshold({
-                layoutHeight: params.layoutHeight,
-                pinThresholdPx: params.pinThresholdPx,
-            }),
-            maintainVisibleContentPosition,
-            nativeID: params.nativeID,
-            pauseOffsetCorrection: bottomMaintenance.pauseOffsetCorrection,
-            platformOS: params.platformOS,
+    /**
+     * Render-time session-entry snapshot intent. Legend's initial tail placement (and the
+     * adapter's held-'end' seed) must consume THIS basis, not the live bottom-follow mode:
+     * on a warm-instance session switch the mode ref still carries the previous session's
+     * 'following' during the next session's first render, which mounted detached-anchored
+     * entries at the tail and started a scroll war against the entry restore.
+     */
+    sessionEntryShouldFollowBottom: boolean;
+}>): TranscriptListShellFrame {
+    return resolveMainTranscriptListShellFrame({
+        legendInitialScrollAtEnd: params.sessionEntryShouldFollowBottom,
+        maintainScrollAtEndThreshold: resolveLegendMaintainScrollAtEndThreshold({
+            layoutHeight: params.layoutHeight,
+            pinThresholdPx: params.pinThresholdPx,
         }),
-        maintainVisibleContentPosition,
-        pauseOffsetCorrection: bottomMaintenance.pauseOffsetCorrection,
-        telemetryMvcpPolicy:
-            params.platformOS === 'web'
-                ? 'none'
-                : resolveNativeTelemetryMvcpPolicy(maintainVisibleContentPosition),
-    };
-}
-
-export function resolveNativeTelemetryMvcpPolicy(
-    maintenance: TranscriptFlashListBottomMaintenanceResult,
-): TranscriptViewportTelemetryMvcpPolicy {
-    if (!maintenance) return 'default';
-    if (
-        'startRenderingFromBottom' in maintenance &&
-        maintenance.startRenderingFromBottom === true
-    ) {
-        if (typeof maintenance.autoscrollToBottomThreshold === 'number') return 'autoscroll-threshold';
-        return 'start-rendering-from-bottom';
-    }
-    return 'default';
+        nativeID: params.nativeID,
+        platformOS: params.platformOS,
+    });
 }

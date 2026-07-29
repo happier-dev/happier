@@ -3,8 +3,20 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { observeServerTimestamp } from '@/sync/runtime/time';
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
-import { TRANSFER_RELAY_V2_SOCKET_EVENT, type TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
+import {
+    MACHINE_LIVE_STREAM_SOCKET_EVENT,
+    TRANSFER_RELAY_V2_SOCKET_EVENT,
+    type MachineLiveStreamRelayEnvelopeV1,
+    type TransferRelayV2SendEnvelope,
+} from '@happier-dev/protocol';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import {
+    RPC_ERROR_CODES,
+    RPC_ERROR_MESSAGES,
+    RPC_METHODS,
+    type SocketRpcAuthorizationContext,
+} from '@happier-dev/protocol/rpc';
+import { handleUiBrowserRecordingCaptureFrameRequest } from '@/sync/domains/browser/recording/reverseCaptureHandler';
 import { serverFetch, StaleServerGenerationError } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveSocketIoTransports } from '@/sync/runtime/socketIoTransports';
@@ -18,14 +30,17 @@ import {
 } from '@happier-dev/connection-supervisor';
 import { createSyncSocketTransport } from '@/sync/api/session/connection/createSyncSocketTransport';
 import {
+    invalidateServerReachabilitySupervisor,
     reportServerUnreachable,
+    reportServerRestarting,
     startServerReachabilitySupervisor,
     stopServerReachabilitySupervisor,
     subscribeServerReachabilityState,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
-import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
+import { isSocketIoAckTimeoutError, raceSocketIoAckTimeout } from '@/sync/runtime/socketIoAckTimeout';
+import { registerExternalSessionStatusDemandTransport } from '@/sync/runtime/orchestration/externalSessions/externalSessionStatusDemandCoordinator';
 
 const STATIC_EXPO_PUBLIC_HAPPIER_SOCKET_ACK_AUTH_SETTLE_TIMEOUT_MS =
     process.env.EXPO_PUBLIC_HAPPIER_SOCKET_ACK_AUTH_SETTLE_TIMEOUT_MS;
@@ -36,6 +51,14 @@ function readSocketAckAuthSettleTimeoutMs(): number {
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isFinite(parsed)) return 250;
     return Math.max(0, Math.min(5_000, parsed));
+}
+
+function readPlannedRestartRetryAfterMs(payload: unknown): number | undefined {
+    if (typeof payload !== 'object' || payload === null) {
+        return undefined;
+    }
+    const raw = (payload as { retryAfterMs?: unknown }).retryAfterMs;
+    return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : undefined;
 }
 
 function readSessionEncryptionModeFromLocalState(sessionId: string): 'plain' | 'e2ee' | null {
@@ -128,17 +151,25 @@ function buildSocketRpcCallPayload(params: Readonly<{
     method: string;
     payload: unknown;
     timeoutMs?: number;
-}>): Readonly<{ method: string; params: unknown; timeoutMs?: number }> {
+    authorization?: SocketRpcAuthorizationContext;
+}>): Readonly<{
+    method: string;
+    params: unknown;
+    timeoutMs?: number;
+    authorization?: SocketRpcAuthorizationContext;
+}> {
     if (typeof params.timeoutMs === 'number' && params.timeoutMs > 0) {
         return {
             method: params.method,
             params: params.payload,
             timeoutMs: params.timeoutMs,
+            ...(params.authorization ? { authorization: params.authorization } : {}),
         };
     }
     return {
         method: params.method,
         params: params.payload,
+        ...(params.authorization ? { authorization: params.authorization } : {}),
     };
 }
 
@@ -158,6 +189,12 @@ export interface SyncSocketState {
 }
 
 export type SyncSocketListener = (state: SyncSocketState) => void;
+
+/**
+ * Inbound machine-scoped reverse-RPC handler. Receives the already-decrypted request params and
+ * returns the response payload that this socket will re-encrypt (machine-scoped e2ee) for the ack.
+ */
+export type InboundMachineRpcHandler = (params: unknown) => Promise<unknown> | unknown;
 
 //
 // Main Class
@@ -192,6 +229,11 @@ class ApiSocket {
     private reachabilityServerUrl: string | null = null;
     private socketTransport: ManagedConnectionTransport | null = null;
     private detachSocketTransportListeners: Array<() => void> = [];
+    // Inbound machine-scoped reverse-RPC handlers, keyed by the FULL prefixed method
+    // (`<machineId>:<method>`). The daemon for `<machineId>` calls this method over its machine
+    // socket; the server forwards it to whichever client joined the matching rpc room. Registering
+    // here makes THIS user-scoped socket that client (room membership via `rpc-register`).
+    private inboundMachineRpcHandlers: Map<string, InboundMachineRpcHandler> = new Map();
 
     //
     // Initialization
@@ -315,10 +357,23 @@ class ApiSocket {
         this.send(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
     }
 
+    onMachineLiveStreamRelayEnvelope(handler: (payload: MachineLiveStreamRelayEnvelopeV1) => void) {
+        return this.onMessage(MACHINE_LIVE_STREAM_SOCKET_EVENT, handler);
+    }
+
+    sendMachineLiveStreamRelayEnvelope(payload: MachineLiveStreamRelayEnvelopeV1) {
+        this.send(MACHINE_LIVE_STREAM_SOCKET_EVENT, payload);
+    }
+
     /**
      * RPC call for sessions - uses session-specific encryption
      */
-    async sessionRPC<R, A>(sessionId: string, method: string, params: A, options?: { timeoutMs?: number }): Promise<R> {
+    async sessionRPC<R, A>(
+        sessionId: string,
+        method: string,
+        params: A,
+        options?: { timeoutMs?: number; onIssued?: () => void },
+    ): Promise<R> {
         const sessionEncryptionMode = readSessionEncryptionModeFromLocalState(sessionId);
         const usePlaintextParams = sessionEncryptionMode === 'plain';
         const sessionEncryption = usePlaintextParams ? null : this.encryption?.getSessionEncryption(sessionId);
@@ -393,7 +448,11 @@ class ApiSocket {
         machineId: string,
         method: string,
         params: A,
-        options?: { timeoutMs?: number },
+        options?: {
+            timeoutMs?: number;
+            authorization?: SocketRpcAuthorizationContext;
+            onIssued?: () => void;
+        },
     ): Promise<R> {
         const encryption = this.encryption;
         if (!encryption) {
@@ -410,6 +469,7 @@ class ApiSocket {
                 method: `${machineId}:${method}`,
                 payload: await machineEncryption.encryptRaw(params),
                 timeoutMs: options?.timeoutMs,
+                authorization: options?.authorization,
             }),
             options,
         );
@@ -428,19 +488,87 @@ class ApiSocket {
         return true;
     }
 
-    async emitWithAck<T = any>(event: string, data: any, opts?: { timeoutMs?: number }): Promise<T> {
+    /**
+     * The current socket.io connection id, or '' when not connected. Used to target per-tab
+     * live-stream relay delivery (`io.to(socketId)`) so a viewer's frames reach exactly this tab
+     * (C4). It changes across reconnects, so callers must read it at relay-open time.
+     */
+    getSocketId(): string {
+        return this.socket?.id ?? '';
+    }
+
+    /**
+     * Register an inbound machine-scoped reverse-RPC handler (daemon -> server -> this UI).
+     *
+     * The daemon for `machineId` invokes `<machineId>:<method>` over its persistent machine socket;
+     * the server forwards it to whichever client joined the matching rpc room. By emitting
+     * `rpc-register` for the prefixed method this user-scoped socket joins that room and answers the
+     * resulting `rpc-request` events from {@link handleInboundMachineRpcRequest}. Registration is
+     * reconnect-safe: every (re)connect re-emits `rpc-register` for all installed handlers.
+     *
+     * Machine-scoped e2ee + fail-closed: request params are decrypted, and the ack re-encrypted, with
+     * the per-machine key; a missing key, missing handler, or decrypt failure yields a fail-closed
+     * error the calling daemon treats as "no UI reachable".
+     *
+     * @returns a disposer that unregisters the handler (leaving the rpc room when connected).
+     */
+    registerMachineScopedRpcHandler(
+        machineId: string,
+        method: string,
+        handler: InboundMachineRpcHandler,
+    ): () => void {
+        const prefixedMethod = `${machineId}:${method}`;
+        this.inboundMachineRpcHandlers.set(prefixedMethod, handler);
+        this.socket?.emit(SOCKET_RPC_EVENTS.REGISTER, { method: prefixedMethod });
+        return () => {
+            if (this.inboundMachineRpcHandlers.get(prefixedMethod) === handler) {
+                this.inboundMachineRpcHandlers.delete(prefixedMethod);
+                this.socket?.emit(SOCKET_RPC_EVENTS.UNREGISTER, { method: prefixedMethod });
+            }
+        };
+    }
+
+    /**
+     * Desktop reverse browser-recording capture (W2C-BA-1 / RU2 G1). Binds the already-built UI
+     * capture handler to the machine-scoped `ui.browser.recording.captureFrame` reverse method so the
+     * spawned cli daemon (a SEPARATE OS process that cannot `invokeTauri` the desktop Wry WebView)
+     * can ask THIS desktop UI to capture one reference-only frame from the view it owns. Without this
+     * registration the reverse channel fails closed (`browser_recording_capture_adapter_missing`).
+     *
+     * Reference-only + fail-closed end to end (BRW-15): only a local file path + metadata cross back.
+     *
+     * @returns a disposer that unregisters the reverse-capture handler.
+     */
+    installBrowserRecordingReverseCapture(machineId: string): () => void {
+        return this.registerMachineScopedRpcHandler(
+            machineId,
+            RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME,
+            (params) => handleUiBrowserRecordingCaptureFrameRequest(params),
+        );
+    }
+
+    async emitWithAck<T = any>(
+        event: string,
+        data: any,
+        opts?: { timeoutMs?: number; onIssued?: () => void },
+    ): Promise<T> {
         if (this.currentConnectionState.phase === 'auth_failed') {
             throw createNotAuthenticatedError();
         }
         if (!this.socket) {
             throw new Error('Socket not connected');
         }
+        if (this.socket.connected === false) {
+            throw new Error('Socket not connected');
+        }
         const timeoutMs = opts?.timeoutMs;
         try {
-            if (typeof timeoutMs === 'number' && timeoutMs > 0) {
-                return await this.socket.timeout(timeoutMs).emitWithAck(event, data) as T;
-            }
-            return await this.socket.emitWithAck(event, data) as T;
+            const socketEmission = typeof timeoutMs === 'number' && timeoutMs > 0
+                ? this.socket.timeout(timeoutMs)
+                : this.socket;
+            opts?.onIssued?.();
+            const ackPromise = socketEmission.emitWithAck(event, data) as Promise<T>;
+            return await raceSocketIoAckTimeout(ackPromise, timeoutMs);
         } catch (error) {
             throw await this.coerceAckTimeoutAuthError(error);
         }
@@ -573,6 +701,14 @@ class ApiSocket {
         }
     }
 
+    private invalidateReachabilityAfterSocketTransportFailure(error: unknown): void {
+        const config = this.config;
+        if (!config) return;
+        void invalidateServerReachabilitySupervisor({ serverUrl: config.endpoint, token: config.token }).catch(() => {
+            reportServerUnreachable(config.endpoint, error);
+        });
+    }
+
     private handleReachabilityStateChange(state: ManagedConnectionState): void {
         if (!this.config) {
             return;
@@ -628,12 +764,26 @@ class ApiSocket {
         this.socket = socket;
         this.socketTransport = transport;
         this.socketTransportKey = key;
-        this.installSocketEventHandlers(socket);
+        const statusDemandTransport = registerExternalSessionStatusDemandTransport(
+            getActiveServerSnapshot().serverId,
+            (event, payload) => {
+                if (socket.connected) {
+                    socket.emit(event, payload);
+                }
+            },
+        );
+        this.installSocketEventHandlers(socket, statusDemandTransport.observeEphemeral);
 
         this.detachSocketTransportListeners = [
             transport.onConnected(() => {
                 this.clearError();
                 this.updateStatus('connected');
+                // Reconnect-safe: re-join every inbound reverse-RPC room on each (re)connect so a
+                // dropped socket does not silently stop answering daemon reverse calls.
+                for (const prefixedMethod of this.inboundMachineRpcHandlers.keys()) {
+                    socket.emit(SOCKET_RPC_EVENTS.REGISTER, { method: prefixedMethod });
+                }
+                statusDemandTransport.resend();
                 if (this.hasConnectedOnce && this.pendingReconnectNotification) {
                     this.reconnectedListeners.forEach((listener) => listener());
                 }
@@ -646,17 +796,38 @@ class ApiSocket {
                     return;
                 }
                 this.pendingReconnectNotification = true;
-                reportServerUnreachable(this.config!.endpoint, event.error ?? new Error(event.reason ?? 'socket disconnect'));
+                this.invalidateReachabilityAfterSocketTransportFailure(event.error ?? new Error(event.reason ?? 'socket disconnect'));
             }),
             transport.onError((error: unknown) => {
                 this.setError(error instanceof Error ? error : new Error(String(error)));
-                reportServerUnreachable(this.config!.endpoint, error);
+                this.invalidateReachabilityAfterSocketTransportFailure(error);
             }),
+            () => statusDemandTransport.dispose(),
         ];
     }
 
-    private installSocketEventHandlers(socket: Socket) {
+    private installSocketEventHandlers(
+        socket: Socket,
+        observeStatusDemandEphemeral: (update: unknown) => void,
+    ) {
+        socket.on?.('server:restarting', (payload: unknown) => {
+            const config = this.config;
+            if (!config) return;
+            reportServerRestarting(config.endpoint, readPlannedRestartRetryAfterMs(payload));
+        });
+        socket.on(
+            SOCKET_RPC_EVENTS.REQUEST,
+            async (
+                data: Readonly<{ method?: unknown; params?: unknown }>,
+                callback: (response: unknown) => void,
+            ) => {
+                callback(await this.handleInboundMachineRpcRequest(data));
+            },
+        );
         socket.onAny((event, data) => {
+            if (event === 'ephemeral') {
+                observeStatusDemandEphemeral(data);
+            }
             const handlers = this.messageHandlers.get(event);
             syncPerformanceTelemetry.measure(
                 'sync.socket.event',
@@ -671,6 +842,54 @@ class ApiSocket {
                 },
             );
         });
+    }
+
+    /**
+     * Dispatch one inbound machine-scoped reverse-RPC request (the `rpc-request` ack body).
+     *
+     * Mirrors the daemon-side `RpcHandlerManager.handleRequest` contract so the daemon's
+     * `callConnectedClientRpc` round-trips symmetrically: params arrive machine-encrypted, the
+     * response is machine-encrypted back. Every failure mode (no machine key, unknown method, bad
+     * params, handler throw) returns a fail-closed payload so the daemon treats it as "no UI" rather
+     * than ever observing a fabricated success.
+     */
+    private async handleInboundMachineRpcRequest(
+        request: Readonly<{ method?: unknown; params?: unknown }>,
+    ): Promise<unknown> {
+        const method = typeof request?.method === 'string' ? request.method : '';
+        const separatorIndex = method.indexOf(':');
+        const machineId = separatorIndex > 0 ? method.slice(0, separatorIndex) : '';
+        const machineEncryption = machineId
+            ? this.encryption?.getMachineEncryption(machineId) ?? null
+            : null;
+        if (!machineEncryption) {
+            // Cannot speak the machine-scoped e2ee envelope — fail closed. The daemon cannot decrypt
+            // this non-encrypted body and treats it as an unavailable UI.
+            return { error: 'Machine encryption not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
+        }
+
+        const handler = this.inboundMachineRpcHandlers.get(method);
+        if (!handler) {
+            return await machineEncryption.encryptRaw({
+                error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND,
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
+            });
+        }
+
+        try {
+            const decryptedParams = typeof request.params === 'string'
+                ? await machineEncryption.decryptRaw(request.params)
+                : null;
+            if (decryptedParams === null) {
+                return await machineEncryption.encryptRaw({ error: 'Invalid RPC params' });
+            }
+            const result = await handler(decryptedParams);
+            return await machineEncryption.encryptRaw(result);
+        } catch (error) {
+            return await machineEncryption.encryptRaw({
+                error: error instanceof Error ? error.message : 'Unknown error',
+            });
+        }
     }
 
     private applyManagedConnectionState(state: ManagedConnectionState) {

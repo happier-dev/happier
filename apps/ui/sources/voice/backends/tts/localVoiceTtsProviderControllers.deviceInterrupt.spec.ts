@@ -13,8 +13,9 @@ vi.mock('@/voice/local/speakDeviceText', () => ({
     stopDeviceSpeech: () => stopDeviceSpeechSpy(),
 }));
 
-vi.mock('@/sync/sync', () => ({ sync: { decryptSecretValue: () => null } }));
-vi.mock('@/voice/output/GoogleCloudTtsController', () => ({ speakGoogleCloudText: vi.fn() }));
+vi.mock('@/voice/credentials/bundledSpeechClient', () => ({
+    bundledSpeechDaemonClient: { transcribe: vi.fn(), synthesize: vi.fn() },
+}));
 vi.mock('@/voice/output/TtsController', () => ({ speakOpenAiCompatText: vi.fn() }));
 vi.mock('@/voice/output/KokoroTtsController', () => ({ speakKokoroText: vi.fn() }));
 
@@ -43,7 +44,7 @@ describe('device TTS provider controller', () => {
 
         let registeredStopper: (() => void) | null = null;
         const controllers = createDefaultLocalVoiceTtsProviderControllers();
-        await controllers.device.speak(baseCtx({
+        await controllers.get('device')!.speak(baseCtx({
             registerPlaybackStopper: (stopper: () => void) => {
                 registeredStopper = stopper;
                 return () => {};
@@ -67,7 +68,7 @@ describe('device TTS provider controller', () => {
 
         const onSpeaking = vi.fn();
         const controllers = createDefaultLocalVoiceTtsProviderControllers();
-        await controllers.device.speak(baseCtx({
+        await controllers.get('device')!.speak(baseCtx({
             onSpeaking,
             // Fire the stopper synchronously on registration (mirrors a pending interrupt).
             registerPlaybackStopper: (stopper: () => void) => {
@@ -89,7 +90,7 @@ describe('device TTS provider controller', () => {
 
         const onTtsFailed = vi.fn();
         const controllers = createDefaultLocalVoiceTtsProviderControllers();
-        await controllers.device.speak(baseCtx({ onTtsFailed }));
+        await controllers.get('device')!.speak(baseCtx({ onTtsFailed }));
 
         expect(onTtsFailed).toHaveBeenCalledTimes(1);
         const err = onTtsFailed.mock.calls[0]?.[0];
@@ -103,7 +104,7 @@ describe('device TTS provider controller', () => {
 
         const onTtsFailed = vi.fn();
         const controllers = createDefaultLocalVoiceTtsProviderControllers();
-        await controllers.device.speak(baseCtx({ onTtsFailed }));
+        await controllers.get('device')!.speak(baseCtx({ onTtsFailed }));
 
         expect(onTtsFailed).not.toHaveBeenCalled();
     });

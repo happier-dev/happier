@@ -1,10 +1,11 @@
 import { TRANSFER_RELAY_V2_SOCKET_EVENT, type TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
 
 import { apiSocket } from '@/sync/api/session/apiSocket';
-import { storage } from '@/sync/domains/state/storage';
 
-import { createEphemeralServerSocketClient } from './createEphemeralServerSocketClient';
-import { resolveServerScopedContext } from './resolveServerScopedContext';
+import {
+    createServerScopedRelaySocket,
+    type ServerScopedRelaySocket,
+} from './serverScopedRelaySocket';
 
 export type ServerScopedTransferRelaySocket = Readonly<{
     scopeUserId: string;
@@ -14,58 +15,40 @@ export type ServerScopedTransferRelaySocket = Readonly<{
     disconnect: () => void;
 }>;
 
-function readActiveProfileId(): string {
-    const profileId = String(storage.getState().profile?.id ?? '').trim();
-    if (!profileId) {
-        throw new Error('Active account profile id is unavailable for transfer relay');
-    }
-    return profileId;
-}
-
 export async function resolveServerScopedTransferRelaySocket(params: Readonly<{
     machineId: string;
     serverId?: string | null;
     timeoutMs?: number;
 }>): Promise<ServerScopedTransferRelaySocket> {
-    const context = await resolveServerScopedContext({
+    const socket = await createServerScopedRelaySocket<TransferRelayV2SendEnvelope>({
         machineId: params.machineId,
         serverId: params.serverId,
         timeoutMs: params.timeoutMs,
-    });
-    const scopeUserId = readActiveProfileId();
-
-    if (context.scope === 'active') {
-        return {
-            scopeUserId,
-            machineId: context.machineId,
-            sendEnvelope: (payload) => {
+        missingScopeUserProfileErrorMessage: 'Active account profile id is unavailable for transfer relay',
+        createActiveTransport: {
+            send: (payload) => {
                 apiSocket.sendTransferRelayV2Envelope(payload);
             },
-            onEnvelope: (listener) => apiSocket.onTransferRelayV2Envelope(listener),
-            disconnect: () => {},
-        };
-    }
-
-    const socket = await createEphemeralServerSocketClient({
-        serverUrl: context.targetServerUrl,
-        token: context.token,
-        timeoutMs: context.timeoutMs,
-    });
+            on: (listener) => apiSocket.onTransferRelayV2Envelope(listener),
+        },
+        createScopedTransport: (scopedSocket) => ({
+            send: (payload) => {
+                scopedSocket.emit(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
+            },
+            on: (listener) => {
+                scopedSocket.on(TRANSFER_RELAY_V2_SOCKET_EVENT, listener);
+                return () => {
+                    scopedSocket.off(TRANSFER_RELAY_V2_SOCKET_EVENT, listener);
+                };
+            },
+        }),
+    }) as ServerScopedTransferRelaySocket;
 
     return {
-        scopeUserId,
-        machineId: context.machineId,
-        sendEnvelope: (payload) => {
-            socket.emit(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
-        },
-        onEnvelope: (listener) => {
-            socket.on(TRANSFER_RELAY_V2_SOCKET_EVENT, listener);
-            return () => {
-                socket.off(TRANSFER_RELAY_V2_SOCKET_EVENT, listener);
-            };
-        },
-        disconnect: () => {
-            socket.disconnect();
-        },
+        scopeUserId: socket.scopeUserId,
+        machineId: socket.machineId,
+        sendEnvelope: socket.sendEnvelope,
+        onEnvelope: socket.onEnvelope,
+        disconnect: socket.disconnect,
     };
 }

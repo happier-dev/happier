@@ -77,6 +77,7 @@ vi.mock('@/sync/domains/session/changes/hooks/useDerivedSessionChangeSet', () =>
 
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: {
+        invalidateFromAutoRefresh: vi.fn(),
         invalidateFromAutoRefreshAndAwait: vi.fn(),
         invalidateFromMutationAndAwait: vi.fn(),
         invalidateFromUser: vi.fn(),
@@ -118,6 +119,6 @@ describe('SessionScmReviewDetailsView (loading)', () => {
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<SessionScmReviewDetailsView sessionId="s1" scopeId="session:s1" />)).tree;
 
-        expect(tree!.findAllByType('ActivityIndicator')).toHaveLength(1);
+        expect(tree!.findAll((node) => node.props.accessibilityRole === 'progressbar')).toHaveLength(1);
     });
 });

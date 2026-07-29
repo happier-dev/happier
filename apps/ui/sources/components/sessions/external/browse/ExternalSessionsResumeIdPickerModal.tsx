@@ -31,6 +31,10 @@ export const ExternalSessionsResumeIdPickerModal = React.memo(function ExternalS
                     props.onResolve(remoteSessionId);
                     props.onClose();
                 }}
+                onRequestClose={() => {
+                    props.onResolve(null);
+                    props.onClose();
+                }}
             />
         </View>
     );

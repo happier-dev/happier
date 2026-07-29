@@ -57,7 +57,7 @@ describe('buildSessionHandoffRecoveryPlan', () => {
             path: '/repo',
             agentRuntimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
+                agentId: 'codex',
                 provider: {
                     backendMode: 'appServer',
                     providerSessionId: 'thread_runtime',

@@ -30,8 +30,11 @@ export function applyToolResultUpdateToReducerMessage(params: Readonly<{
     message.tool.state === 'completed' &&
     message.tool.result === 'Approved' &&
     message.tool.permission?.status === 'approved';
+  const isRuntimeTerminalResult =
+    meta?.source === 'runtime' &&
+    meta.runtimeEventKind === 'tool-result';
 
-  if (message.tool.state !== 'running' && !isApprovedPlaceholder) {
+  if (message.tool.state !== 'running' && !isApprovedPlaceholder && !isRuntimeTerminalResult) {
     return;
   }
 
@@ -81,4 +84,3 @@ export function applyToolResultUpdateToReducerMessage(params: Readonly<{
 
   changed.add(messageId);
 }
-

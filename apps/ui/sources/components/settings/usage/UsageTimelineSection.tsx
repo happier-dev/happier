@@ -7,13 +7,11 @@ import { t } from '@/text';
 import type { UsageAnalyticsViewModel, UsageMetric } from '@/sync/api/account/usageAnalytics';
 
 import { UsageJourneyChart } from './UsageJourneyChart';
+import { formatIdentifierLabel } from './sections/shared';
 
 const styles = StyleSheet.create(() => ({
     stack: {
         gap: 12,
-    },
-    timelineCard: {
-        minHeight: 350,
     },
 }));
 
@@ -24,14 +22,14 @@ function TimelineJourneyCard(props: Readonly<{
     metric: UsageMetric;
     currency: string;
 }>): React.ReactElement {
-    const leader = props.timeline[props.timeline.length - 1]?.leaders[0]?.label ?? t('usage.noData');
+    const leaderRaw = props.timeline[props.timeline.length - 1]?.leaders[0]?.label ?? t('usage.noData.title');
+    const leader = formatIdentifierLabel(leaderRaw);
 
     return (
         <PanelCard
             testID={props.testID}
             headerEyebrow={props.label}
-            title={leader}
-            style={styles.timelineCard}
+            subtitle={leader}
         >
             <UsageJourneyChart timeline={props.timeline} metric={props.metric} currency={props.currency} />
         </PanelCard>

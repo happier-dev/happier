@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildProviderAccountUsageRecordId,
   buildSystemSessionMetadataV1,
+  ExternalSessionOperationSharedPresentationV1Schema,
 } from '@happier-dev/protocol';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
@@ -15,6 +16,8 @@ import {
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
+import type { StorageState } from '@/sync/store/types';
+import type { StoreApi, UseBoundStore } from 'zustand';
 import {
   clearSessionDraftValuesForSession,
   flushSessionDraftValues,
@@ -27,25 +30,6 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('@/agents/registry/registryUiBehavior', () => ({
-  buildResumeCapabilityOptionsFromUiState: () => ({}),
-  buildNewSessionOptionsFromUiState: () => ({}),
-  canSelectAgentWithoutDetectedCli: () => false,
-  getNewSessionAgentInputExtraActionChips: () => [],
-  buildSpawnEnvironmentVariablesFromUiState: () => ({}),
-  buildResumeSessionExtrasFromUiState: () => null,
-  buildSpawnSessionExtrasFromUiState: () => null,
-  buildWakeResumeExtras: () => null,
-  getAgentResumeExperimentsFromSettings: () => null,
-  getNewSessionPreflightIssues: () => [],
-  getNewSessionRelevantInstallableDepKeys: () => [],
-  resolveAgentUiBehavior: () => ({}),
-  resolveAgentUiBehaviorFromFlavor: () => ({}),
-  resolveSessionGoalActionCapabilityProfile: () => null,
-  classifyAgentSessionComposerNonSteerablePayload: () => null,
-  supportsDetectedMcpConfigScan: () => false,
-  supportsEditableSessionGoals: () => false,
-}));
 vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
   getResolvedBackendCatalogEntries: () => [],
 }));
@@ -113,6 +97,10 @@ const sessionUsageLimitConsumeResetCreditSpy = vi.hoisted(() => vi.fn(async () =
 })));
 const connectedServiceQuotaRecoveryCreditConsumeSpy = vi.hoisted(() => vi.fn(async (params: any) => ({
   ok: true,
+  receipt: {
+    idempotencyKey: 'test-reset-credit',
+    status: 'consumed',
+  },
   snapshot: {
     v: 1,
     serviceId: params.serviceId,
@@ -142,19 +130,18 @@ vi.mock('./view/WarningActionBanner', () => ({
     return React.createElement('WarningActionBanner', props);
   },
 }));
-const sessionUsageState = vi.hoisted(() => ({ current: null as null | {
-  inputTokens: number;
-  outputTokens: number;
-  cacheCreation: number;
-  cacheRead: number;
-  contextSize: number;
-  timestamp: number;
-  contextWindowTokens?: number;
-} }));
 const participantTargetsState = vi.hoisted(() => ({ current: [] as any[] }));
 const reviewCommentDraftsState = vi.hoisted(() => ({ current: [] as any[] }));
 const sessionMessagesState = vi.hoisted(() => ({ current: [] as any[] }));
 const focusState = vi.hoisted(() => ({ current: true }));
+const machineReachabilityState = vi.hoisted(() => ({
+  current: {
+    machineReachable: true,
+    machineOnline: true,
+    machineRpcTargetAvailable: true,
+    machineReachability: 'reachable' as 'reachable' | 'unreachable' | 'unknown',
+  },
+}));
 const pathnameState = vi.hoisted(() => ({ current: '/session/s1' }));
 const windowDimensionsState = vi.hoisted(() => ({ current: { width: 1200, height: 800 } }));
 const composerKeyboardState = vi.hoisted(() => ({
@@ -163,6 +150,7 @@ const composerKeyboardState = vi.hoisted(() => ({
 }));
 const storageState = vi.hoisted(() => ({
   isDataReady: true,
+  machines: {} as Record<string, unknown>,
   sessions: {
     s1: {
       id: 's1',
@@ -181,7 +169,7 @@ const storageState = vi.hoisted(() => ({
         homeDir: '/tmp',
         externalSessionV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           machineId: 'machine-1',
           remoteSessionId: 'vendor-session-1',
           source: { kind: 'codexHome', home: 'user' },
@@ -190,12 +178,20 @@ const storageState = vi.hoisted(() => ({
       agentState: {},
     } as any,
   },
+  sessionMessages: {} as Record<string, unknown>,
+  sessionPending: {} as Record<string, unknown>,
+  sessionListRenderables: {} as Record<string, unknown>,
+  sessionTailContiguousFloorSeq: {} as Record<string, unknown>,
   artifacts: {} as Record<string, any>,
   profile: {
     connectedServicesV2: [],
+    connectedServiceCredentialRevisionsV1: [],
   } as any,
   settings: {} as Record<string, unknown>,
   concurrentSessionListCacheByServerId: {} as Record<string, unknown>,
+}));
+const shellStorageStoreState = vi.hoisted(() => ({
+  current: null as UseBoundStore<StoreApi<StorageState>> | null,
 }));
 const recipientStateState = vi.hoisted(() => ({
   current: {
@@ -207,7 +203,6 @@ const recipientStateState = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
   LinearGradient: 'LinearGradient',
 }));
@@ -289,8 +284,14 @@ installSessionShellCommonModuleMocks({
     return modalMock.module;
   },
   storage: async (importOriginal) => {
-    const { createLiveStorageStoreMock, createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
     const { listOpenApprovalArtifactsForSession } = await import('@/sync/domains/artifacts/approvalArtifacts');
+    const { create } = await import('zustand');
+    // Test boundary: this fixture supplies only the StorageState fields consumed by SessionView.
+    const shellStorageStore = create<StorageState>(
+      () => ({ ...storageState } as unknown as StorageState),
+    );
+    shellStorageStoreState.current = shellStorageStore;
 
     const readLocalSetting = <K extends keyof LocalSettings>(key: K): LocalSettings[K] => {
       if (key === 'acknowledgedCliVersions') return {} as LocalSettings[K];
@@ -311,7 +312,7 @@ installSessionShellCommonModuleMocks({
     return createStorageModuleMock({
       importOriginal,
       overrides: {
-        storage: createLiveStorageStoreMock(() => storageState as any),
+        storage: shellStorageStore,
         useActiveServerAccountScope: () => null,
         useSession: () => storageState.sessions.s1,
         useIsDataReady: () => true,
@@ -324,7 +325,6 @@ installSessionShellCommonModuleMocks({
           listOpenApprovalArtifactsForSession(Object.values(storageState.artifacts), String(sessionId ?? '')),
         useWorkspaceReviewCommentsDrafts: () => reviewCommentDraftsState.current,
         useSessionReviewCommentsDrafts: () => reviewCommentDraftsState.current,
-        useSessionUsage: () => sessionUsageState.current,
         useProfile: () => storageState.profile,
         useLocalSetting: readLocalSetting,
         useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [readLocalSetting(key), vi.fn<(value: LocalSettings[K]) => void>()],
@@ -456,7 +456,7 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', async (impo
 
   return {
     ...actual,
-    useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
+    useSessionMachineReachability: () => machineReachabilityState.current,
     useSessionReachableMachineTarget: () => null,
   };
 });
@@ -496,6 +496,8 @@ vi.mock('@/sync/sync', () => ({
     publishSessionModelOverrideToMetadata: async () => {},
     refreshSessions: syncRefreshSessionsSpy,
     refreshSessionMessages: syncRefreshSessionMessagesSpy,
+    getAcceptedExternalSessionTailCursor: () => null,
+    subscribeAcceptedExternalSessionTailCursor: () => () => {},
     markSessionLiveTailIntent: () => {},
     onSessionVisible: () => {},
     sendMessage: syncSubmitMessageSpy,
@@ -579,6 +581,18 @@ vi.mock('@/sync/domains/session/resolveWorkspaceScopeForSession', () => ({
   resolveWorkspaceScopeForSession: () => ({ serverId: 'server-canonical', machineId: 'machine-1', rootPath: '/tmp' }),
   useWorkspaceScopeForSession: () => ({ serverId: 'server-canonical', machineId: 'machine-1', rootPath: '/tmp' }),
 }));
+
+function syncShellStorageStore() {
+  const shellStorageStore = shellStorageStoreState.current;
+  if (!shellStorageStore) return;
+  // Test boundary: preserve the complete mock-store shape while overlaying this file's live fixture.
+  shellStorageStore.setState({
+    ...shellStorageStore.getState(),
+    ...storageState,
+    machines: {},
+    sessionListRenderables: {},
+  } as unknown as StorageState, true);
+}
 
 describe('SessionView (direct sessions)', () => {
   async function renderSessionView() {
@@ -679,9 +693,14 @@ describe('SessionView (direct sessions)', () => {
     participantTargetsState.current = [];
     sessionMessagesState.current = [];
     windowDimensionsState.current = { width: 1200, height: 800 };
-    sessionUsageState.current = null;
     reviewCommentDraftsState.current = [];
     focusState.current = true;
+    machineReachabilityState.current = {
+      machineReachable: true,
+      machineOnline: true,
+      machineRpcTargetAvailable: true,
+      machineReachability: 'reachable',
+    };
     pathnameState.current = '/session/s1';
     preferredServerIdState.current = 'server-canonical';
     storageState.sessions.s1 = {
@@ -690,6 +709,7 @@ describe('SessionView (direct sessions)', () => {
       encryptionMode: 'plain',
       presence: 'offline',
       active: true,
+      currentStorageState: 'machine_only',
       accessLevel: 'edit',
       canApprovePermissions: false,
       metadata: {
@@ -701,7 +721,7 @@ describe('SessionView (direct sessions)', () => {
         homeDir: '/tmp',
         externalSessionV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           machineId: 'machine-1',
           remoteSessionId: 'vendor-session-1',
           source: { kind: 'codexHome', home: 'user' },
@@ -714,6 +734,7 @@ describe('SessionView (direct sessions)', () => {
     storageState.isDataReady = true;
     storageState.profile = {
       connectedServicesV2: [],
+      connectedServiceCredentialRevisionsV1: [],
     };
     storageState.concurrentSessionListCacheByServerId = {};
     delete (storageState as any).sessionListRenderables;
@@ -721,6 +742,7 @@ describe('SessionView (direct sessions)', () => {
     (storageState as any).deleteWorkspaceReviewCommentDraft = deleteWorkspaceReviewCommentDraftSpy;
     (storageState as any).clearWorkspaceReviewCommentDrafts = clearWorkspaceReviewCommentDraftsSpy;
     (storageState as any).setWorkspaceReviewCommentDraftIncluded = setWorkspaceReviewCommentDraftIncludedSpy;
+    syncShellStorageStore();
     recipientStateState.current = {
       recipient: null,
       setManualRecipient: vi.fn(),
@@ -751,36 +773,149 @@ describe('SessionView (direct sessions)', () => {
     vi.clearAllMocks();
   });
 
-  it('passes direct takeover footer actions to the transcript when a linked direct session is not yet controlled', async () => {
-    const screen = await renderSessionView();
+  it('keeps external control footer status conservative and exposes one explicit takeover preflight', async () => {
+    await renderSessionView();
 
     const latestChatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
-    expect(latestChatListProps?.directControlFooter).toEqual(expect.objectContaining({
-      canTakeOverDirect: true,
-      canTakeOverPersist: true,
+    expect(latestChatListProps?.externalControlFooter).toEqual({
+      externalAgentPresentation: {
+        state: 'unknown',
+        labelKey: 'status.externalStatusUnknown',
+        agentLabel: 'Codex',
+        machineLabel: 'happy-host',
+      },
+      statusKnown: false,
+      machineOnline: false,
+      runnerActive: false,
+      trustedPid: null,
+      activity: 'unknown',
+      canTakeOverDirect: false,
+      canTakeOverPersist: false,
+      takeoverPreflightInFlight: false,
       takeoverInFlight: null,
-    }));
+      onRequestTakeoverPreflight: expect.any(Function),
+      materialize: {
+        requestEnabled: true,
+        inFlight: false,
+        onRequest: expect.any(Function),
+      },
+    });
+    expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
 
     await act(async () => {
-      await latestChatListProps.directControlFooter.onRequestTakeOverDirect();
+      await latestChatListProps?.externalControlFooter?.onRequestTakeoverPreflight?.();
     });
 
-    expect(machineExternalSessionTakeoverSpy).toHaveBeenCalledWith({
-      machineId: 'machine-1',
-      sessionId: 's1',
-    }, { serverId: 'server-canonical' });
-    expect(modalAlertSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionStatusGetSpy).toHaveBeenCalledTimes(1);
+    expect(showExternalSessionTakeoverDialogSpy).toHaveBeenCalledWith({
+      canTakeOverDirect: true,
+      canTakeOverPersist: true,
+      canForceStop: false,
+    });
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+  });
+
+  it('passes only generic progress presentation to the mounted transcript owner', async () => {
+    const session = storageState.sessions.s1 as any;
+    session.metadata = {
+      ...session.metadata,
+      externalSessionOperationPresentationV1:
+        ExternalSessionOperationSharedPresentationV1Schema.parse({
+        v: 1,
+        operationId: 'operation-1',
+        revision: 4,
+        kind: 'materialize',
+        status: 'awaiting_user_resume',
+        phase: 'importing',
+      }),
+    };
 
     await renderSessionView();
 
-    const rerenderedChatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
-    expect(rerenderedChatListProps?.directControlFooter).toEqual(expect.objectContaining({
-      canTakeOverDirect: true,
-      canTakeOverPersist: true,
-      takeoverInFlight: null,
+    const latestChatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+    expect(latestChatListProps?.session.metadata.externalSessionOperationPresentationV1)
+      .toMatchObject({
+        operationId: 'operation-1',
+        revision: 4,
+        status: 'awaiting_user_resume',
+      });
+    expect(latestChatListProps?.session.metadata.externalSessionOperationV1)
+      .toBeUndefined();
+    expect(latestChatListProps?.externalControlFooter).toEqual(expect.objectContaining({
+      statusKnown: false,
+      onRequestTakeoverPreflight: undefined,
+      materialize: null,
     }));
-    expect(rerenderedChatListProps?.directControlFooter).not.toBe(latestChatListProps?.directControlFooter);
+    expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+  });
 
+  it('renders the persistent published-snapshot banner while a linked Agent is offline', async () => {
+    const session = storageState.sessions.s1 as any;
+    session.currentStorageState = 'snapshot_complete';
+    session.publishedThroughServerSeq = 12;
+    session.materializedThroughSourceAt = Date.now() - 60_000;
+    machineReachabilityState.current = {
+      machineReachable: false,
+      machineOnline: false,
+      machineRpcTargetAvailable: false,
+      machineReachability: 'unreachable',
+    };
+
+    await renderSessionViewAndSettle();
+
+    expect(findWarningActionBannerProps('session.externalTranscript.snapshot')).toEqual(expect.objectContaining({
+      actionLabel: 'externalSessions.sharingUpdateSharedCopy',
+      disabled: true,
+    }));
+  });
+
+  it('updates the published-snapshot banner when the mounted session gains server authority', async () => {
+    await renderSessionViewAndSettle();
+
+    expect(findWarningActionBannerProps('session.externalTranscript.snapshot')).toBeUndefined();
+
+    machineReachabilityState.current = {
+      machineReachable: false,
+      machineOnline: false,
+      machineRpcTargetAvailable: false,
+      machineReachability: 'unreachable',
+    };
+
+    await act(async () => {
+      storageState.sessions.s1 = {
+        ...storageState.sessions.s1,
+        currentStorageState: 'snapshot_complete',
+        acceptedThroughServerSeq: 12,
+        publishedThroughServerSeq: 12,
+        materializedThroughSourceAt: Date.now() - 60_000,
+      };
+      syncShellStorageStore();
+    });
+    await settleExternalSessionView();
+
+    expect(findWarningActionBannerProps('session.externalTranscript.snapshot')).toEqual(expect.objectContaining({
+      actionLabel: 'externalSessions.sharingUpdateSharedCopy',
+      disabled: true,
+    }));
+  });
+
+  it('does not reinterpret unknown machine reachability as published-snapshot authority', async () => {
+    const session = storageState.sessions.s1 as any;
+    session.currentStorageState = 'snapshot_complete';
+    session.publishedThroughServerSeq = 12;
+    session.materializedThroughSourceAt = Date.now() - 60_000;
+    machineReachabilityState.current = {
+      machineReachable: true,
+      machineOnline: false,
+      machineRpcTargetAvailable: false,
+      machineReachability: 'unknown',
+    };
+
+    await renderSessionViewAndSettle();
+
+    expect(findWarningActionBannerProps('session.externalTranscript.snapshot')).toBeUndefined();
   });
 
   it('uses the existing-session panel-height contract for tall viewports', async () => {
@@ -999,7 +1134,7 @@ describe('SessionView (direct sessions)', () => {
       ...session.metadata,
       sessionModesV1: {
         v: 1,
-        provider: 'codex',
+        agentId: 'codex',
         updatedAt: 1,
         currentModeId: 'default',
         availableModes: [
@@ -1009,7 +1144,7 @@ describe('SessionView (direct sessions)', () => {
       },
       sessionConfigOptionsV1: {
         v: 1,
-        provider: 'codex',
+        agentId: 'codex',
         updatedAt: 1,
         configOptions: [
           {
@@ -1055,7 +1190,7 @@ describe('SessionView (direct sessions)', () => {
     }));
   });
 
-  it('projects the direct-session provider id into the agent input when no canonical agent signal exists', async () => {
+  it('projects the external-session Agent id into the Agent input when no canonical Agent signal exists', async () => {
     const session = (await import('@/sync/domains/state/storage')).storage.getState().sessions.s1 as any;
     session.metadata = {
       machineId: 'machine-1',
@@ -1065,7 +1200,7 @@ describe('SessionView (direct sessions)', () => {
       homeDir: '/tmp',
       externalSessionV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         machineId: 'machine-1',
         remoteSessionId: 'vendor-session-1',
         source: { kind: 'codexHome', home: 'user' },
@@ -1119,7 +1254,7 @@ describe('SessionView (direct sessions)', () => {
       },
       externalSessionV1: {
         v: 1,
-        providerId: 'customAcp',
+        agentId: 'customAcp',
         machineId: 'machine-1',
         remoteSessionId: 'vendor-session-1',
         source: { kind: 'customAcpRuntime', cwd: '/tmp' },
@@ -1135,53 +1270,6 @@ describe('SessionView (direct sessions)', () => {
     expect(agentInput.props.agentLabel).toBe('Review Bot');
     expect(resolveSessionViewRuntimeDisplayStateSpy).toHaveBeenCalledWith(expect.objectContaining({
       providerName: 'Review Bot',
-    }));
-  });
-
-  it('passes live usage context-window telemetry through to AgentInput', async () => {
-    sessionUsageState.current = {
-      inputTokens: 700,
-      outputTokens: 250,
-      cacheCreation: 0,
-      cacheRead: 200,
-      contextSize: 1200,
-      timestamp: 1,
-      contextWindowTokens: 258400,
-    };
-    storageState.sessions.s1.latestUsage = {
-      inputTokens: 10,
-      outputTokens: 5,
-      cacheCreation: 0,
-      cacheRead: 0,
-      contextSize: 20,
-      timestamp: 1,
-      contextWindowTokens: 99999,
-    };
-
-    const screen = await renderSessionViewAndSettle();
-
-    expect(findAgentInput(screen).props.usageData).toEqual(expect.objectContaining({
-      contextSize: 1200,
-      contextWindowTokens: 258400,
-    }));
-  });
-
-  it('falls back to latest session usage context-window telemetry when live usage is unavailable', async () => {
-    storageState.sessions.s1.latestUsage = {
-      inputTokens: 700,
-      outputTokens: 250,
-      cacheCreation: 0,
-      cacheRead: 200,
-      contextSize: 1200,
-      timestamp: 1,
-      contextWindowTokens: 258400,
-    };
-
-    const screen = await renderSessionViewAndSettle();
-
-    expect(findAgentInput(screen).props.usageData).toEqual(expect.objectContaining({
-      contextSize: 1200,
-      contextWindowTokens: 258400,
     }));
   });
 
@@ -1224,7 +1312,7 @@ describe('SessionView (direct sessions)', () => {
     expect(useConnectedServiceQuotaSnapshotsSpy).toHaveBeenCalledWith([
       { serviceId: 'openai-codex', profileId: 'work' },
     ]);
-    expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
+    expect(findAgentInput(screen).props.instrumentQuota?.viewModel).toEqual(expect.objectContaining({
       remainingPct: 12,
       ringValueLabel: '12',
     }));
@@ -1276,15 +1364,15 @@ describe('SessionView (direct sessions)', () => {
     const screen = await renderSessionViewAndSettle();
     const agentInput = findAgentInput(screen);
 
-    expect(agentInput.props.providerUsageGauge?.recoveryCreditSummary).toEqual({
+    expect(agentInput.props.instrumentQuota?.viewModel.recoveryCreditSummary).toEqual({
       availableCount: 1,
       nextExpiresAtMs: 9_999_999_999_999,
       providerCreditId: 'reset-credit-1',
     });
-    expect(agentInput.props.onProviderUsageRecoveryCreditPress).toEqual(expect.any(Function));
+    expect(agentInput.props.instrumentQuota?.onRecoveryCreditPress).toEqual(expect.any(Function));
 
     await act(async () => {
-      await agentInput.props.onProviderUsageRecoveryCreditPress();
+      await agentInput.props.instrumentQuota.onRecoveryCreditPress();
     });
 
     expect(connectedServiceQuotaRecoveryCreditConsumeSpy).toHaveBeenCalledWith({
@@ -1292,7 +1380,6 @@ describe('SessionView (direct sessions)', () => {
       serverId: 'server-1',
       serviceId: 'openai-codex',
       profileId: 'work',
-      providerCreditId: 'reset-credit-1',
       sourceSnapshotFetchedAtMs: 1,
     });
   });
@@ -1316,7 +1403,7 @@ describe('SessionView (direct sessions)', () => {
       code: 'usage_limit',
       source: 'usage_limit',
       occurredAt: 2_000,
-      provider: 'codex',
+      agentId: 'codex',
       usageLimit: {
         v: 1,
         resetAtMs: 8_200_000,
@@ -1383,7 +1470,6 @@ describe('SessionView (direct sessions)', () => {
       serverId: 'server-1',
       serviceId: 'openai-codex',
       profileId: 'work',
-      providerCreditId: 'reset-credit-1',
       sourceSnapshotFetchedAtMs: 1000,
     });
     expect(sessionUsageLimitConsumeResetCreditSpy).not.toHaveBeenCalled();
@@ -1407,7 +1493,7 @@ describe('SessionView (direct sessions)', () => {
       code: 'usage_limit',
       source: 'usage_limit',
       occurredAt: 2_000,
-      provider: 'codex',
+      agentId: 'codex',
       usageLimit: {
         v: 1,
         resetAtMs: 8_200_000,
@@ -1459,16 +1545,16 @@ describe('SessionView (direct sessions)', () => {
     const screen = await renderSessionViewAndSettle();
     const agentInput = findAgentInput(screen);
 
-    expect(agentInput.props.providerUsageGauge?.remainingPct).toBe(5);
-    expect(agentInput.props.providerUsageGauge?.recoveryCreditSummary).toEqual({
+    expect(agentInput.props.instrumentQuota?.viewModel.remainingPct).toBe(5);
+    expect(agentInput.props.instrumentQuota?.viewModel.recoveryCreditSummary).toEqual({
       availableCount: 1,
       nextExpiresAtMs: 9_999_999_999_999,
       providerCreditId: 'reset-credit-1',
     });
-    expect(agentInput.props.onProviderUsageRecoveryCreditPress).toEqual(expect.any(Function));
+    expect(agentInput.props.instrumentQuota?.onRecoveryCreditPress).toEqual(expect.any(Function));
 
     await act(async () => {
-      await agentInput.props.onProviderUsageRecoveryCreditPress();
+      await agentInput.props.instrumentQuota.onRecoveryCreditPress();
     });
 
     expect(connectedServiceQuotaRecoveryCreditConsumeSpy).toHaveBeenCalledWith({
@@ -1476,7 +1562,6 @@ describe('SessionView (direct sessions)', () => {
       serverId: 'server-1',
       serviceId: 'openai-codex',
       profileId: 'work',
-      providerCreditId: 'reset-credit-1',
       sourceSnapshotFetchedAtMs: 2000,
     });
   });
@@ -1512,7 +1597,7 @@ describe('SessionView (direct sessions)', () => {
       code: 'usage_limit',
       source: 'usage_limit',
       occurredAt: 1_000,
-      provider: 'codex',
+      agentId: 'codex',
       usageLimit: {
         v: 1,
         resetAtMs: 8_200_000,
@@ -1592,8 +1677,8 @@ describe('SessionView (direct sessions)', () => {
     const screen = await renderSessionViewAndSettle();
     const usageLimitBanner = findWarningActionBannerProps('session-usageLimit-recovery');
 
-    expect(findAgentInput(screen).props.providerUsageGauge?.recoveryCreditSummary ?? null).toBeNull();
-    expect(findAgentInput(screen).props.onProviderUsageRecoveryCreditPress).toBeUndefined();
+    expect(findAgentInput(screen).props.instrumentQuota?.viewModel.recoveryCreditSummary ?? null).toBeNull();
+    expect(findAgentInput(screen).props.instrumentQuota?.onRecoveryCreditPress).toBeUndefined();
     expect(usageLimitBanner?.body).not.toContain('usage reset');
     expect(usageLimitBanner?.secondaryActions).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ testID: 'session-usageLimit-recovery-consumeResetCredit' }),
@@ -1668,8 +1753,7 @@ describe('SessionView (direct sessions)', () => {
     expect(useConnectedServiceQuotaSnapshotsSpy).toHaveBeenCalledWith([
       { serviceId: 'openai-codex', profileId: 'work' },
     ]);
-    expect(agentInput.props.providerUsageGauge ?? null).toBeNull();
-    expect(agentInput.props.onProviderUsageRecoveryCreditPress).toBeUndefined();
+    expect(agentInput.props.instrumentQuota).toBeNull();
   });
 
   it('passes native runtime quota evidence through to AgentInput without connected-service selection', async () => {
@@ -1681,7 +1765,7 @@ describe('SessionView (direct sessions)', () => {
       code: 'usage_limit',
       source: 'usage_limit',
       occurredAt: 1_000,
-      provider: 'claude',
+      agentId: 'claude',
       usageLimit: {
         v: 1,
         resetAtMs: 3_000,
@@ -1697,7 +1781,7 @@ describe('SessionView (direct sessions)', () => {
     const screen = await renderSessionViewAndSettle();
 
     expect(useConnectedServiceQuotaSnapshotsSpy).toHaveBeenCalledWith([]);
-    expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
+    expect(findAgentInput(screen).props.instrumentQuota?.viewModel).toEqual(expect.objectContaining({
       remainingPct: 12,
       ringValueLabel: '12',
     }));
@@ -1753,7 +1837,7 @@ describe('SessionView (direct sessions)', () => {
 
     expect(useConnectedServiceQuotaSnapshotsSpy).toHaveBeenCalledWith([]);
     expect(useProviderAccountUsageSnapshotsSpy).toHaveBeenCalledWith([recordId]);
-    expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
+    expect(findAgentInput(screen).props.instrumentQuota?.viewModel).toEqual(expect.objectContaining({
       remainingPct: 59,
       ringValueLabel: '59',
       activeAccountDisplayLabel: 'native@example.com',
@@ -1809,7 +1893,7 @@ describe('SessionView (direct sessions)', () => {
     const screen = await renderSessionViewAndSettle();
 
     expect(useProviderAccountUsageSnapshotsSpy).toHaveBeenCalledWith([recordId]);
-    expect(findAgentInput(screen).props.providerUsageGauge).toBeNull();
+    expect(findAgentInput(screen).props.instrumentQuota).toBeNull();
   });
 
   it('uses the active group profile for provider usage when the binding stores only a group id', async () => {
@@ -1865,7 +1949,7 @@ describe('SessionView (direct sessions)', () => {
     expect(useConnectedServiceQuotaSnapshotsSpy).toHaveBeenCalledWith([
       { serviceId: 'openai-codex', profileId: 'active-profile' },
     ]);
-    expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
+    expect(findAgentInput(screen).props.instrumentQuota?.viewModel).toEqual(expect.objectContaining({
       remainingPct: 65,
       ringValueLabel: '65',
     }));
@@ -2132,34 +2216,158 @@ describe('SessionView (direct sessions)', () => {
     await renderSessionViewAndSettle();
 
     expect(chatHeaderPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
-      badges: ['sessionsList.storageDirectTab', 'agentInput.agent.codex · happy-host'],
+      badges: ['sessionsList.storageExternalFilter', 'agentInput.agent.codex · happy-host'],
     }));
   });
 
-  it('polls direct session status using the active cadence without forcing transcript refreshes', async () => {
-    const previousActivePollMs = process.env.EXPO_PUBLIC_HAPPIER_EXTERNAL_SESSIONS_TAIL_POLL_MS_ACTIVE;
-    process.env.EXPO_PUBLIC_HAPPIER_EXTERNAL_SESSIONS_TAIL_POLL_MS_ACTIVE = '50';
+  it('consumes pushed external-Agent status without recurring status or transcript refreshes', async () => {
+    (storageState.sessions.s1 as any).metadata.externalAgentObservationV1 = {
+      v: 1,
+      qualifiedLinkIdentity: {
+        v: 1,
+        agent: {
+          pluginId: 'happier.codex',
+          localId: 'codex',
+        },
+        source: {
+          kind: 'codex.home',
+          contractVersion: 1,
+        },
+      },
+      linkGeneration: 'link-generation-1',
+      status: 'working',
+      observedAtMs: Date.now(),
+      expiresAtMs: Date.now() + 60_000,
+    };
 
-    try {
-      await renderSessionView();
+    await renderSessionViewAndSettle();
 
-      const initialStatusCallCount = machineExternalSessionStatusGetSpy.mock.calls.length;
-      expect(initialStatusCallCount).toBeGreaterThanOrEqual(1);
-      expect(syncRefreshSessionMessagesSpy).not.toHaveBeenCalled();
+    expect(chatHeaderPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
+      isConnected: false,
+    }));
+    const latestHeaderProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
+    const externalStatus = React.Children.toArray(latestHeaderProps?.rightElement?.props?.children)
+      .find((child: any) => child?.props?.testID === 'session-header-external-agent-status-working') as any;
+    expect(externalStatus?.props?.accessibilityLabel).toBe('status.workingExternally');
+    expect(chatListPropsSpy.mock.calls.at(-1)?.[0]?.externalControlFooter)
+      .toEqual(expect.objectContaining({
+        statusKnown: false,
+        externalAgentPresentation: {
+          state: 'working',
+          labelKey: 'status.workingExternally',
+          agentLabel: 'Codex',
+          machineLabel: 'happy-host',
+        },
+      }));
+    expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
+    expect(syncRefreshSessionMessagesSpy).not.toHaveBeenCalled();
 
-      await act(async () => {
-        await sleep(75);
-      });
-      await flushHookEffects({ cycles: 1, turns: 2 });
-      expect(machineExternalSessionStatusGetSpy.mock.calls.length).toBeGreaterThanOrEqual(initialStatusCallCount + 1);
-      expect(syncRefreshSessionMessagesSpy).not.toHaveBeenCalled();
-    } finally {
-      if (previousActivePollMs === undefined) {
-        delete process.env.EXPO_PUBLIC_HAPPIER_EXTERNAL_SESSIONS_TAIL_POLL_MS_ACTIVE;
-      } else {
-        process.env.EXPO_PUBLIC_HAPPIER_EXTERNAL_SESSIONS_TAIL_POLL_MS_ACTIVE = previousActivePollMs;
-      }
-    }
+    await act(async () => {
+      await sleep(75);
+    });
+    await flushHookEffects({ cycles: 1, turns: 2 });
+
+    expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
+    expect(syncRefreshSessionMessagesSpy).not.toHaveBeenCalled();
+  });
+
+  it('locally expires pushed external-Agent footer status without a status RPC', async () => {
+    await import('./SessionView');
+    (storageState.sessions.s1 as any).metadata.externalAgentObservationV1 = {
+      v: 1,
+      qualifiedLinkIdentity: {
+        v: 1,
+        agent: {
+          pluginId: 'happier.codex',
+          localId: 'codex',
+        },
+        source: {
+          kind: 'codex.home',
+          contractVersion: 1,
+        },
+      },
+      linkGeneration: 'link-generation-1',
+      status: 'waiting',
+      observedAtMs: Date.now(),
+      expiresAtMs: Date.now() + 500,
+    };
+
+    await renderSessionViewAndSettle();
+
+    expect(chatListPropsSpy.mock.calls.at(-1)?.[0]?.externalControlFooter)
+      .toEqual(expect.objectContaining({
+        externalAgentPresentation: expect.objectContaining({
+          state: 'waiting',
+          labelKey: 'status.needsInputExternally',
+        }),
+      }));
+    expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await sleep(550);
+    });
+    await flushHookEffects({ cycles: 1, turns: 2 });
+
+    expect(chatListPropsSpy.mock.calls.at(-1)?.[0]?.externalControlFooter)
+      .toEqual(expect.objectContaining({
+        externalAgentPresentation: expect.objectContaining({
+          state: 'unknown',
+          labelKey: 'status.externalStatusUnknown',
+        }),
+      }));
+    expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not present managed-runtime status for malformed external-link metadata', async () => {
+    (storageState.sessions.s1 as any).metadata.externalSessionV1 = { v: 1 };
+    (storageState.sessions.s1 as any).metadata.externalAgentObservationV1 = {
+      v: 1,
+      qualifiedLinkIdentity: {
+        v: 1,
+        agent: { pluginId: 'happier.codex', localId: 'codex' },
+        source: { kind: 'codex.home', contractVersion: 1 },
+      },
+      linkGeneration: 'link-generation-1',
+      status: 'working',
+      observedAtMs: Date.now(),
+      expiresAtMs: Date.now() + 60_000,
+    };
+
+    await renderSessionViewAndSettle();
+
+    const latestHeaderProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
+    const externalStatus = React.Children.toArray(latestHeaderProps?.rightElement?.props?.children)
+      .find((child: any) => child?.props?.testID?.startsWith('session-header-external-agent-status-'));
+    expect(externalStatus).toBeUndefined();
+  });
+
+  it('presents an expired pushed external-Agent observation as honest unknown', async () => {
+    (storageState.sessions.s1 as any).metadata.externalAgentObservationV1 = {
+      v: 1,
+      qualifiedLinkIdentity: {
+        v: 1,
+        agent: {
+          pluginId: 'happier.codex',
+          localId: 'codex',
+        },
+        source: {
+          kind: 'codex.home',
+          contractVersion: 1,
+        },
+      },
+      linkGeneration: 'link-generation-1',
+      status: 'working',
+      observedAtMs: Date.now() - 10_000,
+      expiresAtMs: Date.now() - 1,
+    };
+
+    await renderSessionViewAndSettle();
+
+    const latestHeaderProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
+    const externalStatus = React.Children.toArray(latestHeaderProps?.rightElement?.props?.children)
+      .find((child: any) => child?.props?.testID === 'session-header-external-agent-status-unknown') as any;
+    expect(externalStatus?.props?.accessibilityLabel).toBe('status.externalStatusUnknown');
+    expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
   });
 
   it('prompts for takeover on send and submits after taking over the direct session', async () => {
@@ -2168,6 +2376,7 @@ describe('SessionView (direct sessions)', () => {
     writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'interrupt');
     flushSessionDraftValues(null);
     const screen = await renderSessionView();
+    expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
 
     const agentInput = findAgentInput(screen);
     await act(async () => {
@@ -2186,6 +2395,7 @@ describe('SessionView (direct sessions)', () => {
     });
     await settleExternalSessionView();
 
+    expect(machineExternalSessionStatusGetSpy).toHaveBeenCalled();
     expect(showExternalSessionTakeoverDialogSpy).toHaveBeenCalledWith({
       canTakeOverDirect: true,
       canTakeOverPersist: true,
@@ -2346,7 +2556,7 @@ describe('SessionView (direct sessions)', () => {
 
   });
 
-  it('passes force-stop through when persisting takeover from the send prompt', async () => {
+  it('uses canonical public intent when persisting takeover from the send prompt', async () => {
     showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'persisted', forceStop: true });
     machineExternalSessionStatusGetSpy.mockResolvedValue({
       ok: true,
@@ -2358,6 +2568,15 @@ describe('SessionView (direct sessions)', () => {
       canForceStop: true,
       trustedPid: 123,
     });
+    (storageState.sessions.s1 as any).metadata.externalSessionV1 = {
+      ...(storageState.sessions.s1 as any).metadata.externalSessionV1,
+      linkedAtMs: 1_000,
+      qualifiedIdentity: {
+        v: 1,
+        agent: { pluginId: 'happier.codex', localId: 'codex' },
+        source: { kind: 'codexHome', contractVersion: 1 },
+      },
+    };
     const screen = await renderSessionView();
 
     const agentInput = findAgentInput(screen);
@@ -2372,8 +2591,24 @@ describe('SessionView (direct sessions)', () => {
 
     expect(machineExternalSessionTakeoverPersistSpy).toHaveBeenCalledWith({
       machineId: 'machine-1',
-      sessionId: 's1',
-      forceStop: true,
+      request: {
+        v: 1,
+        idempotencyKey: expect.any(String),
+        sessionId: 's1',
+        source: {
+          machineId: 'machine-1',
+          remoteSessionId: 'vendor-session-1',
+          qualifiedIdentity: {
+            v: 1,
+            agent: { pluginId: 'happier.codex', localId: 'codex' },
+            source: { kind: 'codexHome', contractVersion: 1 },
+          },
+          linkGeneration: '1000',
+        },
+        plan: 'takeover',
+        targetStorageMode: 'persisted',
+        targetRuntimeMode: 'terminal',
+      },
     }, { serverId: 'server-canonical' });
     expect(syncSubmitMessageSpy).toHaveBeenCalledWith(
       's1',
@@ -2481,7 +2716,7 @@ describe('SessionView (direct sessions)', () => {
 
     expect(chatListPropsSpy).toHaveBeenCalled();
     const lastChatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
-    expect(lastChatListProps?.directControlFooter ?? null).toBeNull();
+    expect(lastChatListProps?.externalControlFooter ?? null).toBeNull();
     expect(lastChatListProps?.onRequestSwitchToRemote).toBeUndefined();
     expect(voiceSurfacePropsSpy).not.toHaveBeenCalled();
 

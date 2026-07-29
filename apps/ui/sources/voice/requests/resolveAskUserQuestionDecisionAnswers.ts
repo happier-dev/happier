@@ -59,7 +59,7 @@ function pickOptionLabel(options: readonly string[], decision: DirectPermissionD
 export function resolveAskUserQuestionDecisionAnswers(
     request: PendingPermissionRequest | null | undefined,
     decision: DirectPermissionDecision,
-): ReadonlyArray<Readonly<{ question: string; answer: string }>> | null {
+): ReadonlyArray<Readonly<{ question: string; values: readonly string[] }>> | null {
     if (!request || typeof request.tool !== 'string' || !isAskUserQuestionToolName(request.tool)) return null;
 
     const questions = Array.isArray((request.arguments as { questions?: unknown })?.questions)
@@ -67,7 +67,7 @@ export function resolveAskUserQuestionDecisionAnswers(
         : [];
     if (questions.length === 0) return null;
 
-    const answers: Array<Readonly<{ question: string; answer: string }>> = [];
+    const answers: Array<Readonly<{ question: string; values: readonly string[] }>> = [];
     for (const rawQuestion of questions) {
         const question = normalizeText(rawQuestion?.question);
         const options = Array.isArray(rawQuestion?.options)
@@ -79,7 +79,7 @@ export function resolveAskUserQuestionDecisionAnswers(
 
         const answer = pickOptionLabel(options, decision);
         if (!answer) return null;
-        answers.push({ question, answer });
+        answers.push({ question, values: [answer] });
     }
 
     return answers.length > 0 ? answers : null;

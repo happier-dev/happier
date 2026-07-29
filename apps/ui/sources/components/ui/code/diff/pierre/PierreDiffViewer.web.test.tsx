@@ -1,8 +1,11 @@
+// @vitest-environment jsdom
+
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installCodeDiffCommonModuleMocks } from '../codeDiffTestHelpers';
+import { InitialPresentationReadinessProvider } from '@/components/ui/presentation/InitialPresentationReadinessContext';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -10,6 +13,9 @@ import { installCodeDiffCommonModuleMocks } from '../codeDiffTestHelpers';
 const fileDiffSpy = vi.fn();
 const virtualizerSpy = vi.fn();
 const settingValues: Record<string, unknown> = {};
+const pierreWorkerPoolMock = vi.hoisted(() => ({
+    current: null as any,
+}));
 
 function resetSettingValues() {
     settingValues.filesDiffTokenizationMaxLineLength = 1234;
@@ -43,7 +49,7 @@ vi.mock('./pierreThemeRegistry.web', () => ({
 }));
 
 vi.mock('./pierreWorkerPool.web', () => ({
-    getPierreDiffWorkerPool: () => null,
+    getPierreDiffWorkerPool: () => pierreWorkerPoolMock.current,
 }));
 
 vi.mock('./resolvePierreLanguageOverride.web', () => ({
@@ -110,6 +116,151 @@ async function findPierreHoverUtilityButtonProps(utility: any): Promise<any> {
 describe('PierreDiffViewer (web)', () => {
     beforeEach(() => {
         resetSettingValues();
+        pierreWorkerPoolMock.current = null;
+    });
+
+    it('uses an exact content-sensitive cache key for initial presentation terminality', async () => {
+        const { buildPierreInitialPresentationCacheKey } = await import('./pierreInitialPresentation.web');
+        const first = buildPierreInitialPresentationCacheKey({
+            fileName: 'src/a.ts',
+            language: 'typescript',
+            patch: '@@ -1 +1 @@\n-a\n+b',
+        });
+        const second = buildPierreInitialPresentationCacheKey({
+            fileName: 'src/a.ts',
+            language: 'typescript',
+            patch: '@@ -1 +1 @@\n-a\n+c',
+        });
+
+        expect(first).not.toBe(second);
+        expect(first).toMatch(/^happier-pierre-diff:v1:[0-9a-f]{64}$/);
+        expect(first).not.toContain('@@ -1 +1 @@\n-a\n+b');
+        expect(second).toHaveLength(first.length);
+    });
+
+    it('requires both the exact worker cache entry and final shadow DOM, while accepting a virtualized placeholder', async () => {
+        const { isPierreInitialPresentationDomTerminal } = await import('./pierreInitialPresentation.web');
+        const root = document.createElement('div');
+        const host = document.createElement('div');
+        const shadowRoot = host.attachShadow({ mode: 'open' });
+        const querySelector = root.querySelector.bind(root);
+        vi.spyOn(root, 'querySelector').mockImplementation((selector: string) => (
+            selector === 'diffs-container'
+                ? host
+                : querySelector(selector)
+        ));
+        const pre = document.createElement('pre');
+        pre.setAttribute('data-diff', '');
+        shadowRoot.appendChild(pre);
+        root.appendChild(host);
+        const fileDiff = { cacheKey: 'exact', hunks: [], name: 'a.ts' } as any;
+        const getDiffResultCache = vi.fn((): unknown => undefined);
+        const pool = { getDiffResultCache } as any;
+
+        expect(isPierreInitialPresentationDomTerminal({
+            fileDiff,
+            pool,
+            root,
+            virtualized: false,
+        })).toBe(false);
+
+        getDiffResultCache.mockReturnValue({ highlighted: true });
+        expect(isPierreInitialPresentationDomTerminal({
+            fileDiff,
+            pool,
+            root,
+            virtualized: false,
+        })).toBe(true);
+
+        pre.remove();
+        const placeholder = document.createElement('div');
+        placeholder.setAttribute('data-placeholder', '');
+        shadowRoot.appendChild(placeholder);
+        getDiffResultCache.mockReturnValue(undefined);
+        expect(isPierreInitialPresentationDomTerminal({
+            fileDiff,
+            pool,
+            root,
+            virtualized: true,
+        })).toBe(true);
+        expect(isPierreInitialPresentationDomTerminal({
+            fileDiff,
+            pool,
+            root,
+            virtualized: false,
+        })).toBe(false);
+    });
+
+    it('attaches to a Pierre shadow root that appears after observation starts', async () => {
+        const { observePierreInitialPresentationDom } = await import('./pierreInitialPresentation.web');
+        const root = document.createElement('div');
+        const host = document.createElement('div');
+        const shadowRoot = host.attachShadow({ mode: 'open' });
+        let currentHost: HTMLElement | null = null;
+        const querySelector = root.querySelector.bind(root);
+        vi.spyOn(root, 'querySelector').mockImplementation((selector: string) => (
+            selector === 'diffs-container'
+                ? currentHost
+                : querySelector(selector)
+        ));
+        const onMutation = vi.fn();
+        const stop = observePierreInitialPresentationDom(root, onMutation);
+        try {
+            currentHost = host;
+            root.appendChild(host);
+            await Promise.resolve();
+            onMutation.mockClear();
+
+            const finalPre = document.createElement('pre');
+            finalPre.setAttribute('data-diff', '');
+            shadowRoot.appendChild(finalPre);
+            await Promise.resolve();
+
+            expect(onMutation).toHaveBeenCalled();
+        } finally {
+            stop();
+        }
+    });
+
+    it('commits a final app fallback when the initial presentation has no worker pool', async () => {
+        fileDiffSpy.mockClear();
+        const handle = {
+            complete: vi.fn(),
+            dispose: vi.fn(),
+        };
+        const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
+        const patch = [
+            'diff --git a/a.ts b/a.ts',
+            '--- a/a.ts',
+            '+++ b/a.ts',
+            '@@ -1,1 +1,1 @@',
+            '-foo',
+            '+bar',
+            '',
+        ].join('\n');
+
+        const screen = await renderScreen(
+            <InitialPresentationReadinessProvider value={{
+                presentationPending: true,
+                registerProducer: () => handle,
+            }}>
+                <PierreDiffViewer
+                    mode="unified"
+                    filePath="src/a.ts"
+                    unifiedDiff={patch}
+                    wrapLines
+                    showLineNumbers
+                    showPrefix
+                />
+            </InitialPresentationReadinessProvider>,
+        );
+        try {
+            expect(screen.findByProps({ 'data-testid': 'pierre-diff-fallback' })).not.toBeNull();
+            expect(fileDiffSpy).not.toHaveBeenCalled();
+            expect(handle.complete).toHaveBeenCalledTimes(1);
+        } finally {
+            await screen.unmount();
+        }
     });
 
     it('inherits maxHeight on the wrapper when virtualized', async () => {

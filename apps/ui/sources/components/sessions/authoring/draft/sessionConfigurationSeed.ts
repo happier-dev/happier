@@ -15,6 +15,7 @@ import {
     normalizeOptionalString,
 } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
 import type { NewSessionData } from '@/utils/sessions/tempDataStore';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 import type { ExistingSessionAuthoringSnapshotSession } from './sessionAuthoringDraftAdapters';
 import {
@@ -58,6 +59,7 @@ export function buildNewSessionTempDataFromSessionConfiguration(params: Readonly
     const snapshot = deriveSessionAuthoringSnapshot({
         session: params.session,
     });
+    const metadata = readSessionOwnerMetadataView(params.session);
     const directoryOverride = normalizeOptionalString(params.directoryOverride);
     const draft = buildNewSessionAuthoringDraft({
         directory: directoryOverride ?? snapshot.directory,
@@ -72,8 +74,7 @@ export function buildNewSessionTempDataFromSessionConfiguration(params: Readonly
         resumeSessionId: null,
         permissionMode: snapshot.permissionMode,
         permissionModeUpdatedAt: snapshot.permissionModeUpdatedAt,
-        modelId: snapshot.modelId,
-        modelUpdatedAt: snapshot.modelUpdatedAt,
+        modelSelection: snapshot.modelSelection,
         mcpSelection: snapshot.mcpSelection,
         connectedServices: snapshot.connectedServices,
         terminal: snapshot.terminal,
@@ -82,8 +83,8 @@ export function buildNewSessionTempDataFromSessionConfiguration(params: Readonly
         windowsTerminalWindowName: null,
         experimentalCodexAcp: null,
         codexBackendMode: snapshot.codexBackendMode,
-        acpSessionModeId: readSessionModeOverrideId(params.session.metadata),
-        sessionConfigOptionOverrides: readSessionConfigOptionOverrides(params.session.metadata),
+        acpSessionModeId: readSessionModeOverrideId(metadata),
+        sessionConfigOptionOverrides: readSessionConfigOptionOverrides(metadata),
         automation: null,
     });
 

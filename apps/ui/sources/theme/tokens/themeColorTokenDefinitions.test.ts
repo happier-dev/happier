@@ -27,6 +27,7 @@ const requiredTokenIds = [
     'surface.selected',
     'surface.pressedOverlay',
     'surface.ripple',
+    'surface.sectionTint',
     'border.default',
     'border.surface',
     'border.strong',
@@ -215,6 +216,19 @@ describe('editable theme color token definitions', () => {
             .sort();
 
         expect(unclassifiedPaths).toEqual([]);
+    });
+
+    it('classifies floating glass surface recipe leaves as internal tokens', () => {
+        const classifiedPaths = new Set(
+            (tokenDefinitionsModule.THEME_COLOR_TOKEN_CLASSIFICATIONS ?? [])
+                .filter((classification) => classification.status === 'internal')
+                .map((classification) => classification.path.join('.')),
+        );
+
+        expect(classifiedPaths).toContain('glass.border');
+        expect(classifiedPaths).toContain('glass.innerShadow');
+        expect(classifiedPaths).toContain('glass.castShadow');
+        expect(classifiedPaths).toContain('glass.composerSurface');
     });
 
     it('exposes surface highlight as an editable color token with transparent base defaults', () => {

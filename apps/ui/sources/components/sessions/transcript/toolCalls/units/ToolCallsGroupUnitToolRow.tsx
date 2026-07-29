@@ -11,8 +11,7 @@ import {
     type TranscriptSessionCommonProps,
     useTranscriptSessionCommon,
 } from '@/components/sessions/transcript/transcriptSessionCommon';
-import { ToolCallPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
-import { resolveMessagePinAvailability } from '@/components/sessions/transcript/messageActions/resolveMessagePinAvailability';
+import { resolveToolRowPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
 import { resolveMessageRouteIdForDisplay } from '@/sync/domains/messages/messageRouteIds';
 import type { PersistedSessionMessagePinV1 } from '@/sync/domains/messages/pins/sessionMessagePins';
 import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
@@ -86,22 +85,16 @@ export const ToolCallsGroupUnitToolRowWithSessionCommon = React.memo(function To
     const nestedMessageId = props.interaction.disableToolNavigation
         ? undefined
         : resolveMessageRouteIdForDisplay({ message, messagesById, reducerState });
-    const toolPinAvailability = React.useMemo(() => resolveMessagePinAvailability({
+    const toolPinAction = resolveToolRowPinAction({
         sessionId: props.sessionId,
         seq: message.seq ?? null,
         transcriptBlockIndex: message.transcriptBlockIndex ?? null,
         routeMessageId: nestedMessageId ?? null,
-        role: 'tool',
-        pins: props.messagePins ?? [],
+        pins: props.messagePins,
         readOnlyContext: props.interaction.permissionDisabledReason === 'readOnly',
-    }), [message.seq, message.transcriptBlockIndex, nestedMessageId, props.interaction.permissionDisabledReason, props.messagePins, props.sessionId]);
-    const toolPinAction = props.onToggleToolPin && toolPinAvailability.status === 'available' ? (
-        <ToolCallPinAction
-            availability={toolPinAvailability}
-            onTogglePin={props.onToggleToolPin}
-            testID={`transcript-tool-call-pin:${message.id}`}
-        />
-    ) : null;
+        onTogglePin: props.onToggleToolPin,
+        testID: `transcript-tool-call-pin:${message.id}`,
+    });
 
     return (
         <ToolCallsGroupUnitRowFrame

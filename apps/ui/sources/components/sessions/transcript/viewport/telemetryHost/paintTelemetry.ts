@@ -67,10 +67,8 @@ export function recordFirstListPaintTelemetry(params: Readonly<{
 
 export function recordStablePaintTelemetry(params: Readonly<{
     clearWebStablePaintRetry: () => void;
-    coldItemCount: number;
     committedMessagesCount: number;
     firstListPaintObserved: boolean;
-    hotItemCount: number;
     isWarmKeepAliveInstance: boolean;
     itemCount: number;
     nativeMountSettleDeadlineReached: boolean;
@@ -81,7 +79,6 @@ export function recordStablePaintTelemetry(params: Readonly<{
     routeHydrationPending: boolean;
     sessionId: string;
     telemetryState: TranscriptPaintTelemetryState | null;
-    webHotColdSplit: boolean;
 }>): boolean {
     const telemetryState = params.telemetryState;
     if (
@@ -98,12 +95,10 @@ export function recordStablePaintTelemetry(params: Readonly<{
         'ui.sessions.transcript.stablePaint',
         readSessionUiTelemetryNowMs() - telemetryState.startedAtMs,
         {
-            coldItems: params.webHotColdSplit ? params.coldItemCount : 0,
             committedMessages: params.committedMessagesCount,
             contentHeight: params.paintMetrics.contentHeight,
             distanceFromBottom: params.paintMetrics.distanceFromBottom,
             firstListPaintObserved: params.firstListPaintObserved ? 1 : 0,
-            hotItems: params.webHotColdSplit ? params.hotItemCount : 0,
             items: params.itemCount,
             layoutHeight: params.paintMetrics.layoutHeight,
             native: params.platformOS === 'web' ? 0 : 1,
@@ -113,7 +108,6 @@ export function recordStablePaintTelemetry(params: Readonly<{
             routeHydrationPending: params.routeHydrationPending ? 1 : 0,
             warmKeepAlive: params.isWarmKeepAliveInstance ? 1 : 0,
             web: params.platformOS === 'web' ? 1 : 0,
-            webHotColdSplit: params.webHotColdSplit ? 1 : 0,
         },
     );
     recordSessionOpenPaintForSessionUiTelemetry({
@@ -131,11 +125,9 @@ export function recordStablePaintTelemetry(params: Readonly<{
 
 export function useTranscriptPaintTelemetry(params: Readonly<{
     clearWebStablePaintRetry: () => void;
-    coldItemCount: number;
     committedMessagesCount: number;
     firstListPaintObserved: boolean;
     firstPaintTelemetryRef: ReadRef<TranscriptPaintTelemetryState | null>;
-    hotItemCount: number;
     isWarmKeepAliveInstanceProp: boolean;
     itemCount: number;
     lastPinOffsetForIntentRef: ReadRef<number | null>;
@@ -155,15 +147,12 @@ export function useTranscriptPaintTelemetry(params: Readonly<{
     setFirstListPaintObserved: (value: boolean) => void;
     stablePaintTelemetryRef: ReadRef<TranscriptPaintTelemetryState | null>;
     telemetryPlatform: TranscriptViewportPlatform;
-    webHotColdSplit: boolean;
 }>) {
     const {
         clearWebStablePaintRetry,
-        coldItemCount,
         committedMessagesCount,
         firstListPaintObserved,
         firstPaintTelemetryRef,
-        hotItemCount,
         isWarmKeepAliveInstanceProp,
         itemCount,
         lastPinOffsetForIntentRef,
@@ -183,7 +172,6 @@ export function useTranscriptPaintTelemetry(params: Readonly<{
         setFirstListPaintObserved,
         stablePaintTelemetryRef,
         telemetryPlatform,
-        webHotColdSplit,
     } = params;
     const resolveEffectiveListPaintMetrics = React.useCallback((): TranscriptPaintMetrics | null => {
         if (platformOS === 'web') {
@@ -254,7 +242,7 @@ export function useTranscriptPaintTelemetry(params: Readonly<{
         setFirstListPaintObserved,
     ]);
 
-    const handleFlashListLoad = React.useCallback(() => {
+    const handleListLoad = React.useCallback(() => {
         recordFirstListPaint();
         recordNativeVisibleWindowTelemetry();
     }, [recordFirstListPaint, recordNativeVisibleWindowTelemetry]);
@@ -275,10 +263,8 @@ export function useTranscriptPaintTelemetry(params: Readonly<{
         }
         return recordStablePaintTelemetry({
             clearWebStablePaintRetry,
-            coldItemCount,
             committedMessagesCount,
             firstListPaintObserved,
-            hotItemCount,
             isWarmKeepAliveInstance,
             itemCount,
             nativeMountSettleDeadlineReached,
@@ -289,14 +275,11 @@ export function useTranscriptPaintTelemetry(params: Readonly<{
             routeHydrationPending,
             sessionId,
             telemetryState: stablePaintTelemetryRef.current,
-            webHotColdSplit,
         });
     }, [
         clearWebStablePaintRetry,
-        coldItemCount,
         committedMessagesCount,
         firstListPaintObserved,
-        hotItemCount,
         isWarmKeepAliveInstance,
         itemCount,
         latestCommittedActivityKey,
@@ -307,17 +290,16 @@ export function useTranscriptPaintTelemetry(params: Readonly<{
         sessionId,
         stablePaintTelemetryRef,
         telemetryPlatform,
-        webHotColdSplit,
     ]);
 
     return React.useMemo(() => ({
-        handleFlashListLoad,
+        handleListLoad,
         isWarmKeepAliveInstance,
         recordFirstListPaint,
         recordStablePaintTelemetry: recordStablePaint,
         resolveEffectiveListPaintMetrics,
     }), [
-        handleFlashListLoad,
+        handleListLoad,
         isWarmKeepAliveInstance,
         recordFirstListPaint,
         recordStablePaint,

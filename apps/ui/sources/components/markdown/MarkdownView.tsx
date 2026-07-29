@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { StyleProp, TextStyle } from 'react-native';
 
-import type { Option } from './MarkdownBlockView';
+import type { Option, OptionLongPressHandler } from './MarkdownBlockView';
 import type { MarkdownSourceRange } from './parseMarkdown';
 import {
     normalizeMarkdownRenderingProfile,
@@ -9,9 +9,10 @@ import {
 } from './rendering/MarkdownRenderingProfile';
 import { MarkdownViewRenderer } from './rendering/MarkdownViewRenderer';
 import type { StreamingTextRevealPreset } from './streaming/streamingTextRevealConfig';
-import type { MarkdownStreamingMode } from './streaming/useStreamingMarkdownBlocks';
+import type { MarkdownStreamingMode } from './streaming/usePreparedStreamingMarkdown';
 
 export type { Option };
+export type { OptionLongPressHandler };
 export type { MarkdownRenderingProfile };
 export type { MarkdownSourceRange };
 
@@ -24,6 +25,7 @@ export const MarkdownView = React.memo((props: {
     testID?: string;
     markdown: string;
     onOptionPress?: (option: Option) => void;
+    onOptionLongPress?: OptionLongPressHandler;
     onLinkPress?: (url: string) => boolean | void;
     textStyle?: StyleProp<TextStyle>;
     selectable?: boolean;
@@ -33,6 +35,7 @@ export const MarkdownView = React.memo((props: {
     streamingAnimated?: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
     staticRenderPlaceholderEnabled?: boolean;
+    renderCacheKey?: string;
     onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
@@ -48,6 +51,7 @@ export const MarkdownView = React.memo((props: {
             testID={props.testID}
             markdown={props.markdown}
             onOptionPress={props.onOptionPress}
+            onOptionLongPress={props.onOptionLongPress}
             onLinkPress={props.onLinkPress}
             textStyle={props.textStyle}
             selectable={selectable}
@@ -56,6 +60,7 @@ export const MarkdownView = React.memo((props: {
             streamingAnimated={props.streamingAnimated === true}
             streamingRevealPreset={props.streamingRevealPreset}
             staticRenderPlaceholderEnabled={props.staticRenderPlaceholderEnabled}
+            renderCacheKey={props.renderCacheKey}
             onPressSourceRange={props.onPressSourceRange}
             renderAfterSourceRange={props.renderAfterSourceRange}
             highlightSourceRange={props.highlightSourceRange}

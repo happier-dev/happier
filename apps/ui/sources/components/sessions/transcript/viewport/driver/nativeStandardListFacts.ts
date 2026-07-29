@@ -29,9 +29,11 @@ function resolveStandardDistanceFromLiveTail(input: Readonly<{
 function mapRenderedIndexToSourceIndex(readers: NativeListFactReaders, renderedIndex: number): number | null {
     if (!Number.isInteger(renderedIndex) || renderedIndex < 0) return null;
     const sourceIndex = readers.readSourceIndexForRenderedIndex?.(renderedIndex);
+    if (sourceIndex === null) return null;
     if (typeof sourceIndex === 'number' && Number.isInteger(sourceIndex) && sourceIndex >= 0) {
         return sourceIndex;
     }
+    if (sourceIndex !== undefined) return null;
     const renderedItemCount = readers.readRenderedItemCount?.() ?? 0;
     if (!Number.isInteger(renderedItemCount) || renderedItemCount <= 0 || renderedIndex >= renderedItemCount) {
         return null;
@@ -76,12 +78,22 @@ export function createNativeStandardListFactSource(
                 range.startIndex > range.endIndex
             ) return null;
 
-            const startSourceIndex = mapRenderedIndexToSourceIndex(readers, range.startIndex);
-            const endSourceIndex = mapRenderedIndexToSourceIndex(readers, range.endIndex);
-            if (startSourceIndex === null || endSourceIndex === null) return null;
+            let firstSourceIndex: number | null = null;
+            let lastSourceIndex: number | null = null;
+            for (let renderedIndex = range.startIndex; renderedIndex <= range.endIndex; renderedIndex += 1) {
+                const sourceIndex = mapRenderedIndexToSourceIndex(readers, renderedIndex);
+                if (sourceIndex === null) continue;
+                firstSourceIndex = firstSourceIndex === null
+                    ? sourceIndex
+                    : Math.min(firstSourceIndex, sourceIndex);
+                lastSourceIndex = lastSourceIndex === null
+                    ? sourceIndex
+                    : Math.max(lastSourceIndex, sourceIndex);
+            }
+            if (firstSourceIndex === null || lastSourceIndex === null) return null;
             return {
-                firstSourceIndex: Math.min(startSourceIndex, endSourceIndex),
-                lastSourceIndex: Math.max(startSourceIndex, endSourceIndex),
+                firstSourceIndex,
+                lastSourceIndex,
             };
         },
         resolveReachedEdge(edge) {

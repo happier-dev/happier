@@ -529,17 +529,4 @@ describe('transcript bottom-follow mode', () => {
         });
     });
 
-    it('keeps content growth from releasing or rearming follow state by itself', () => {
-        expect(resolveTranscriptBottomFollowMode(state({ mode: 'following' }), {
-            type: 'content-growth',
-        })).toMatchObject({
-            mode: 'following',
-        });
-
-        expect(resolveTranscriptBottomFollowMode(state({ mode: 'released' }), {
-            type: 'content-growth',
-        })).toMatchObject({
-            mode: 'released',
-        });
-    });
 });

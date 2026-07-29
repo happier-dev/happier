@@ -8,14 +8,14 @@ import {
 import { listUiFeatureToggleDefinitions } from './uiFeatureToggles';
 
 const CODEX_APP_SERVER_FEATURE_IDS = [
-    'providers.codex.appServer.goals',
-    'providers.codex.appServer.plugins',
-    'providers.codex.appServer.structuredInput',
-    'providers.codex.appServer.permissionProfiles',
+    'agents.codex.appServer.goals',
+    'agents.codex.appServer.plugins',
+    'agents.codex.appServer.structuredInput',
+    'agents.codex.appServer.permissionProfiles',
 ] as const;
 const PROVIDER_RUNTIME_FEATURE_IDS = [
     ...CODEX_APP_SERVER_FEATURE_IDS,
-    'providers.claude.unifiedTerminal',
+    'agents.claude.unifiedTerminal',
 ] as const;
 
 describe('UI provider runtime feature registry', () => {

@@ -1,29 +1,71 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { t } from '@/text';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useLocalSettingMutable, useSettingMutable } from '@/sync/domains/state/storage';
+import { normalizeComposerBannerCollapseRecord } from '@/components/sessions/composerBanners/composerBannerCollapse';
 import type { BusySteerSendPolicy, MessageSendMode } from '@/sync/domains/session/control/submitMode';
+import type { NewSessionPresentationModeV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 
 type PendingQueueDrainMode = 'one_at_a_time' | 'drain_all';
+type PendingQueueDeliveryTiming = 'after_foreground_ready' | 'after_runtime_idle';
+type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
+type AgentInputHistoryScope = 'perSession' | 'global';
 
 export const SessionComposerSettingsView = React.memo(function SessionComposerSettingsView() {
     const { theme } = useUnistyles();
+    const popoverBoundaryRef = React.useRef<any>(null);
     const [messageSendMode, setMessageSendMode] = useSettingMutable('sessionMessageSendMode');
     const [busySteerSendPolicy, setBusySteerSendPolicy] = useSettingMutable('sessionBusySteerSendPolicy');
     const [nonSteerableSendPrompt, setNonSteerableSendPrompt] = useSettingMutable('sessionNonSteerableSendPrompt');
     const [pendingQueueDrainMode, setPendingQueueDrainMode] = useSettingMutable('sessionPendingQueueDrainMode');
+    const [pendingQueueDeliveryTiming, setPendingQueueDeliveryTiming] = useSettingMutable('sessionPendingQueueDeliveryTiming');
     const [agentInputEnterToSend, setAgentInputEnterToSend] = useSettingMutable('agentInputEnterToSend');
     const [agentInputEnterToSendNative, setAgentInputEnterToSendNative] = useSettingMutable('agentInputEnterToSendNative');
-    const [alwaysShowContextSize, setAlwaysShowContextSize] = useSettingMutable('alwaysShowContextSize');
+    const [agentInputHistoryScope, setAgentInputHistoryScope] = useSettingMutable('agentInputHistoryScope');
+    const [agentInputActionBarLayout, setAgentInputActionBarLayout] = useSettingMutable('agentInputActionBarLayout');
+    const [agentInputChipDensity, setAgentInputChipDensity] = useSettingMutable('agentInputChipDensity');
+    const [newSessionPresentationMode, setNewSessionPresentationMode] = useSettingMutable('newSessionPresentationModeV1');
+    const [composerSurfaceStyle, setComposerSurfaceStyle] = useSettingMutable('composerSurfaceStyle');
+    const [rememberBannerVisibility, setRememberBannerVisibility] = useSettingMutable('sessionComposerRememberBannerVisibility');
+    const [collapsedBannerKinds, setCollapsedBannerKinds] = useLocalSettingMutable('sessionComposerCollapsedBannerKinds');
+    const hiddenBannerCount = Object.keys(normalizeComposerBannerCollapseRecord(collapsedBannerKinds)).length;
+    const [openHistoryScopeMenu, setOpenHistoryScopeMenu] = React.useState(false);
+    const [openNewSessionPresentationMenu, setOpenNewSessionPresentationMenu] = React.useState(false);
     const enterToSendEnabled = Platform.OS === 'web' ? agentInputEnterToSend : agentInputEnterToSendNative;
     const setEnterToSendEnabled = Platform.OS === 'web' ? setAgentInputEnterToSend : setAgentInputEnterToSendNative;
+    const enterToSendSubtitle = enterToSendEnabled
+        ? Platform.OS === 'web'
+            ? t('settingsFeatures.enterToSendEnabled')
+            : t('settingsSession.inputBehavior.enterToSendEnabledNativeSubtitle')
+        : t('settingsFeatures.enterToSendDisabled');
+    const normalizedHistoryScope = agentInputHistoryScope === 'global' ? 'global' : 'perSession';
+    const historyScopeOptions: Array<{
+        id: AgentInputHistoryScope;
+        title: string;
+        subtitle: string;
+        iconName: IoniconName;
+    }> = [
+        {
+            id: 'perSession',
+            title: t('settingsFeatures.historyScopePerSessionOption'),
+            subtitle: t('settingsFeatures.historyScopePerSession'),
+            iconName: 'repeat-outline',
+        },
+        {
+            id: 'global',
+            title: t('settingsFeatures.historyScopeGlobalOption'),
+            subtitle: t('settingsFeatures.historyScopeGlobal'),
+            iconName: 'globe-outline',
+        },
+    ];
     const sendOptions: Array<{ key: MessageSendMode; title: string; subtitle: string }> = [
         {
             key: 'agent_queue',
@@ -77,22 +119,128 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
             subtitle: t('settingsSession.messageSending.pendingDrainMode.drainAllSubtitle'),
         },
     ];
+    const pendingQueueDeliveryTimingOptions: Array<{ key: PendingQueueDeliveryTiming; title: string; subtitle: string }> = [
+        {
+            key: 'after_foreground_ready',
+            title: t('settingsSession.messageSending.pendingDeliveryTiming.afterForegroundReadyTitle'),
+            subtitle: t('settingsSession.messageSending.pendingDeliveryTiming.afterForegroundReadySubtitle'),
+        },
+        {
+            key: 'after_runtime_idle',
+            title: t('settingsSession.messageSending.pendingDeliveryTiming.afterRuntimeIdleTitle'),
+            subtitle: t('settingsSession.messageSending.pendingDeliveryTiming.afterRuntimeIdleSubtitle'),
+        },
+    ];
+    const normalizedNewSessionPresentationMode: NewSessionPresentationModeV1 =
+        newSessionPresentationMode === 'screen' || newSessionPresentationMode === 'modal'
+            ? newSessionPresentationMode
+            : 'auto';
+    const newSessionPresentationOptions: Array<{
+        id: NewSessionPresentationModeV1;
+        title: string;
+        subtitle: string;
+        iconName: IoniconName;
+    }> = [
+        {
+            id: 'auto',
+            title: t('settingsSession.sessionCreation.presentationAutoTitle'),
+            subtitle: t('settingsSession.sessionCreation.presentationAutoSubtitle'),
+            iconName: 'sparkles-outline',
+        },
+        {
+            id: 'screen',
+            title: t('settingsSession.sessionCreation.presentationScreenTitle'),
+            subtitle: t('settingsSession.sessionCreation.presentationScreenSubtitle'),
+            iconName: 'expand-outline',
+        },
+        {
+            id: 'modal',
+            title: t('settingsSession.sessionCreation.presentationModalTitle'),
+            subtitle: t('settingsSession.sessionCreation.presentationModalSubtitle'),
+            iconName: 'albums-outline',
+        },
+    ];
     const pendingQueueMayBeUsed = messageSendMode === 'server_pending' || busySteerSendPolicy === 'server_pending';
 
     return (
-        <ItemList style={{ paddingTop: 0 }}>
+        <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
             <ItemGroup title={t('settingsSession.inputBehavior.title')} footer={t('settingsSession.inputBehavior.footer')}>
                 <Item
                     title={t('settingsFeatures.enterToSend')}
-                    subtitle={enterToSendEnabled
-                        ? Platform.OS === 'web'
-                            ? t('settingsFeatures.enterToSendEnabled')
-                            : t('settingsSession.inputBehavior.enterToSendEnabledNativeSubtitle')
-                        : t('settingsFeatures.enterToSendDisabled')}
-                    icon={<Ionicons name="return-down-forward-outline" size={29} color={theme.colors.accent.blue} />}
+                    subtitle={enterToSendSubtitle}
+                    icon={<Ionicons name="return-down-forward-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={<Switch value={enterToSendEnabled} onValueChange={setEnterToSendEnabled} />}
                     showChevron={false}
                     onPress={() => setEnterToSendEnabled(!enterToSendEnabled)}
+                />
+                {Platform.OS === 'web' ? (
+                    <DropdownMenu
+                        open={openHistoryScopeMenu}
+                        onOpenChange={setOpenHistoryScopeMenu}
+                        variant="selectable"
+                        search={false}
+                        selectedId={normalizedHistoryScope}
+                        showCategoryTitles={false}
+                        matchTriggerWidth={true}
+                        connectToTrigger={true}
+                        rowKind="item"
+                        popoverBoundaryRef={popoverBoundaryRef}
+                        itemTrigger={{
+                            title: t('settingsFeatures.historyScope'),
+                            icon: <Ionicons name="time-outline" size={29} color={theme.colors.accent.blue} />,
+                        }}
+                        items={historyScopeOptions.map((opt) => ({
+                            id: opt.id,
+                            title: opt.title,
+                            subtitle: opt.subtitle,
+                            icon: (
+                                <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                    <Ionicons name={opt.iconName} size={22} color={theme.colors.text.secondary} />
+                                </View>
+                            ),
+                        }))}
+                        onSelect={(id) => {
+                            if (id === 'perSession' || id === 'global') {
+                                setAgentInputHistoryScope(id);
+                            }
+                            setOpenHistoryScopeMenu(false);
+                        }}
+                    />
+                ) : null}
+            </ItemGroup>
+            <ItemGroup title={t('settingsSession.sessionCreation.presentationGroupTitle')} footer={t('settingsSession.sessionCreation.presentationGroupFooter')}>
+                <DropdownMenu
+                    open={openNewSessionPresentationMenu}
+                    onOpenChange={setOpenNewSessionPresentationMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={normalizedNewSessionPresentationMode}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.sessionCreation.presentationModeTitle'),
+                        subtitle: t('settingsSession.sessionCreation.presentationModeSubtitle'),
+                        icon: <Ionicons name="browsers-outline" size={29} color={theme.colors.accent.blue} />,
+                    }}
+                    items={newSessionPresentationOptions.map((opt) => ({
+                        id: opt.id,
+                        title: opt.title,
+                        subtitle: opt.subtitle,
+                        icon: (
+                            <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                <Ionicons name={opt.iconName} size={22} color={theme.colors.text.secondary} />
+                            </View>
+                        ),
+                    }))}
+                    onSelect={(id) => {
+                        if (id === 'auto' || id === 'screen' || id === 'modal') {
+                            setNewSessionPresentationMode(id);
+                        }
+                        setOpenNewSessionPresentationMenu(false);
+                    }}
                 />
             </ItemGroup>
             <ItemGroup title={t('settingsSession.messageSending.title')} footer={t('settingsSession.messageSending.footer')}>
@@ -137,28 +285,108 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
                 ))}
             </ItemGroup>
             {pendingQueueMayBeUsed ? (
-                <ItemGroup title={t('settingsSession.messageSending.pendingDrainModeTitle')} footer={t('settingsSession.messageSending.pendingDrainModeFooter')}>
-                    {pendingQueueDrainModeOptions.map((option) => (
-                        <Item
-                            key={option.key}
-                            title={option.title}
-                            subtitle={option.subtitle}
-                            icon={<Ionicons name="layers-outline" size={29} color={theme.colors.accent.blue} />}
-                            rightElement={pendingQueueDrainMode === option.key ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
-                            onPress={() => setPendingQueueDrainMode(option.key)}
-                            showChevron={false}
-                        />
-                    ))}
-                </ItemGroup>
+                <>
+                    <ItemGroup title={t('settingsSession.messageSending.pendingDrainModeTitle')} footer={t('settingsSession.messageSending.pendingDrainModeFooter')}>
+                        {pendingQueueDrainModeOptions.map((option) => (
+                            <Item
+                                key={option.key}
+                                title={option.title}
+                                subtitle={option.subtitle}
+                                icon={<Ionicons name="layers-outline" size={29} color={theme.colors.accent.blue} />}
+                                rightElement={pendingQueueDrainMode === option.key ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                                onPress={() => setPendingQueueDrainMode(option.key)}
+                                showChevron={false}
+                            />
+                        ))}
+                    </ItemGroup>
+                    <ItemGroup title={t('settingsSession.messageSending.pendingDeliveryTimingTitle')} footer={t('settingsSession.messageSending.pendingDeliveryTimingFooter')}>
+                        {pendingQueueDeliveryTimingOptions.map((option) => (
+                            <Item
+                                key={option.key}
+                                title={option.title}
+                                subtitle={option.subtitle}
+                                icon={<Ionicons name="time-outline" size={29} color={theme.colors.accent.blue} />}
+                                rightElement={pendingQueueDeliveryTiming === option.key ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                                onPress={() => setPendingQueueDeliveryTiming(option.key)}
+                                showChevron={false}
+                            />
+                        ))}
+                    </ItemGroup>
+                </>
             ) : null}
             <ItemGroup title={t('settingsSession.input.title')} footer={t('settingsSession.input.footer')}>
                 <Item
-                    title={t('settingsAppearance.alwaysShowContextSize')}
-                    subtitle={t('settingsAppearance.alwaysShowContextSizeDescription')}
-                    icon={<Ionicons name="analytics-outline" size={29} color={theme.colors.accent.indigo} />}
-                    rightElement={<Switch value={alwaysShowContextSize} onValueChange={setAlwaysShowContextSize} />}
+                    title={t('settingsAppearance.agentInputActionBarLayout')}
+                    subtitle={t('settingsAppearance.agentInputActionBarLayoutDescription')}
+                    icon={<Ionicons name="menu-outline" size={29} color={theme.colors.accent.indigo} />}
+                    detail={agentInputActionBarLayout === 'auto'
+                        ? t('settingsAppearance.agentInputActionBarLayoutOptions.auto')
+                        : agentInputActionBarLayout === 'wrap'
+                            ? t('settingsAppearance.agentInputActionBarLayoutOptions.wrap')
+                            : agentInputActionBarLayout === 'scroll'
+                                ? t('settingsAppearance.agentInputActionBarLayoutOptions.scroll')
+                                : t('settingsAppearance.agentInputActionBarLayoutOptions.collapsed')}
+                    onPress={() => {
+                        const order: Array<typeof agentInputActionBarLayout> = ['auto', 'wrap', 'scroll', 'collapsed'];
+                        const idx = Math.max(0, order.indexOf(agentInputActionBarLayout));
+                        setAgentInputActionBarLayout(order[(idx + 1) % order.length]!);
+                    }}
+                />
+                <Item
+                    title={t('settingsAppearance.agentInputChipDensity')}
+                    subtitle={t('settingsAppearance.agentInputChipDensityDescription')}
+                    icon={<Ionicons name="text-outline" size={29} color={theme.colors.accent.indigo} />}
+                    detail={agentInputChipDensity === 'auto'
+                        ? t('settingsAppearance.agentInputChipDensityOptions.auto')
+                        : agentInputChipDensity === 'labels'
+                            ? t('settingsAppearance.agentInputChipDensityOptions.labels')
+                            : t('settingsAppearance.agentInputChipDensityOptions.icons')}
+                    onPress={() => {
+                        const order: Array<typeof agentInputChipDensity> = ['auto', 'labels', 'icons'];
+                        const idx = Math.max(0, order.indexOf(agentInputChipDensity));
+                        setAgentInputChipDensity(order[(idx + 1) % order.length]!);
+                    }}
+                />
+                <Item
+                    title={t('settingsAppearance.glass.composer')}
+                    subtitle={t('settingsAppearance.glass.composerHint')}
+                    icon={<Ionicons name="chatbox-outline" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-composer-glassSurface-switch"
+                            value={composerSurfaceStyle === 'glass'}
+                            onValueChange={(next) => setComposerSurfaceStyle(next ? 'glass' : 'standard')}
+                        />
+                    }
                     showChevron={false}
                 />
+            </ItemGroup>
+
+            <ItemGroup title={t('settingsSession.banners.title')} footer={t('settingsSession.banners.footer')}>
+                <Item
+                    title={t('settingsSession.banners.rememberVisibilityTitle')}
+                    subtitle={t('settingsSession.banners.rememberVisibilitySubtitle')}
+                    icon={<Ionicons name="eye-off-outline" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-composer-rememberBannerVisibility-switch"
+                            value={rememberBannerVisibility}
+                            onValueChange={setRememberBannerVisibility}
+                        />
+                    }
+                    showChevron={false}
+                />
+                {hiddenBannerCount > 0 ? (
+                    <Item
+                        testID="settings-composer-resetHiddenBanners"
+                        title={t('settingsSession.banners.resetHiddenTitle')}
+                        subtitle={t('settingsSession.banners.resetHiddenSubtitle')}
+                        icon={<Ionicons name="eye-outline" size={29} color={theme.colors.accent.indigo} />}
+                        detail={String(hiddenBannerCount)}
+                        onPress={() => setCollapsedBannerKinds({})}
+                        showChevron={false}
+                    />
+                ) : null}
             </ItemGroup>
         </ItemList>
     );

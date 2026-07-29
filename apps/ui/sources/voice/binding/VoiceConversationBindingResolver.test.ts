@@ -118,7 +118,12 @@ describe('VoiceConversationBindingResolver', () => {
         });
 
         const resolver = createVoiceConversationBindingResolver({
-            getState: () => ({ sessions: {} }),
+            getState: () => ({
+                sessions: {
+                    'carrier-a': createTestSession('carrier-a', null),
+                    'carrier-b': createTestSession('carrier-b', null),
+                },
+            }),
             store,
         });
 
@@ -152,7 +157,11 @@ describe('VoiceConversationBindingResolver', () => {
         });
 
         const resolver = createVoiceConversationBindingResolver({
-            getState: () => ({ sessions: {} }),
+            getState: () => ({
+                sessions: {
+                    'carrier-s1': createTestSession('carrier-s1', null),
+                },
+            }),
             store,
         });
 
@@ -374,5 +383,85 @@ describe('VoiceConversationBindingResolver', () => {
 
         expect(binding?.conversationSessionId).toBe('carrier_new');
         expect(store.getState().getByControlSessionId('session_a')?.conversationSessionId).toBe('carrier_old');
+    });
+
+    it('rejects a newer runtime binding from replaced storage and resolves the current persisted binding', async () => {
+        const { createVoiceSessionBindingStore } = await import('./voiceConversationBindingStore');
+        const { createVoiceConversationBindingResolver } = await import('./VoiceConversationBindingResolver');
+
+        const store = createVoiceSessionBindingStore();
+        store.getState().bind({
+            adapterId: 'local_conversation',
+            controlSessionId: '__voice_agent__',
+            conversationSessionId: 'account-a-voice-conversation',
+            transcriptMode: 'native_session',
+            targetSessionId: 'account-a-target',
+            updatedAt: 500,
+        });
+        const resolver = createVoiceConversationBindingResolver({
+            getState: () => ({
+                sessions: {
+                    'account-b-voice-conversation': createTestSession(
+                        'account-b-voice-conversation',
+                        createVoiceConversationMetadata({
+                            adapterId: 'local_conversation',
+                            controlSessionId: '__voice_agent__',
+                            conversationSessionId: 'account-b-voice-conversation',
+                            transcriptMode: 'native_session',
+                            targetSessionId: 'account-b-target',
+                            updatedAt: 100,
+                        }),
+                    ),
+                },
+            }),
+            store,
+        });
+
+        expect(
+            resolver.resolveByControlSessionId({
+                controlSessionId: '__voice_agent__',
+                adapterId: 'local_conversation',
+            }),
+        ).toEqual({
+            adapterId: 'local_conversation',
+            controlSessionId: '__voice_agent__',
+            conversationSessionId: 'account-b-voice-conversation',
+            transcriptMode: 'native_session',
+            targetSessionId: 'account-b-target',
+            updatedAt: 100,
+        });
+    });
+
+    it('keeps an exact runtime-attempt binding resolvable without a persisted conversation session', async () => {
+        const { createVoiceSessionBindingStore } = await import('./voiceConversationBindingStore');
+        const { createVoiceConversationBindingResolver } = await import('./VoiceConversationBindingResolver');
+
+        const store = createVoiceSessionBindingStore();
+        const runtimeAttemptBinding = {
+            adapterId: 'realtime_openai',
+            controlSessionId: 'account-b-control',
+            conversationSessionId: 'voice-direct-media:attempt-b',
+            lifetime: 'runtime_attempt' as const,
+            transcriptMode: 'synthetic' as const,
+            targetSessionId: 'account-b-target',
+            updatedAt: 700,
+        };
+        store.getState().bind(runtimeAttemptBinding);
+        const resolver = createVoiceConversationBindingResolver({
+            getState: () => ({ sessions: {} }),
+            store,
+        });
+
+        expect(
+            resolver.resolveByControlSessionId({
+                controlSessionId: 'account-b-control',
+                adapterId: 'realtime_openai',
+            }),
+        ).toEqual(runtimeAttemptBinding);
+        expect(
+            resolver.resolveByConversationSessionId({
+                conversationSessionId: 'voice-direct-media:attempt-b',
+            }),
+        ).toEqual(runtimeAttemptBinding);
     });
 });

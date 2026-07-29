@@ -15,6 +15,7 @@ function row(overrides: Partial<ReturnType<typeof selectManagedLocalServiceRows>
         launchMode: 'detectAfterLaunch',
         routeName: 'plugin-web',
         port: 5173,
+        supportedActions: ['stop_managed'],
         diagnostics: [],
         updatedAt: 1_000,
         ...overrides,
@@ -53,5 +54,19 @@ describe('managed local services store', () => {
         });
 
         expect(selectManagedLocalServiceRows(updated)[0]).toBe(firstRow);
+    });
+
+    it('keeps daemon-projected supported actions as row identity data', () => {
+        const hydrated = applyManagedLocalServicesSnapshot(createManagedLocalServicesState(), {
+            generatedAt: 1_000,
+            refreshState: 'idle',
+            rows: [row({ supportedActions: ['stop_managed', 'restart_managed'] })],
+            diagnostics: [],
+        });
+
+        expect(selectManagedLocalServiceRows(hydrated)[0]?.supportedActions).toEqual([
+            'stop_managed',
+            'restart_managed',
+        ]);
     });
 });

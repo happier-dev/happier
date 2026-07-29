@@ -107,6 +107,32 @@ describe('buildSessionActivityAttention', () => {
         });
     });
 
+    it('treats fresh optimistic queued user input as working attention', () => {
+        const attention = buildSessionActivityAttention({
+            session: createSessionFixture({
+                id: 'session-pending-working',
+                active: true,
+                presence: 'online',
+                thinking: false,
+                thinkingAt: 1,
+                pendingCount: 1,
+                optimisticThinkingAt: 1_000,
+                metadata: createMetadata(),
+            }),
+            nowMs: 1_100,
+        });
+
+        expect(attention).toMatchObject({
+            sessionId: 'session-pending-working',
+            attentionState: 'thinking',
+            hasAttention: true,
+            reasons: {
+                hasQueuedUserInput: true,
+                isThinking: true,
+            },
+        });
+    });
+
     it('surfaces a recent explicit turn completion as ready attention', () => {
         const attention = buildSessionActivityAttention({
             session: Object.assign(createSessionFixture({
@@ -174,8 +200,8 @@ describe('buildSessionActivityAttention', () => {
                     v: 1,
                     scope: 'primary_session',
                     status: 'failed',
-                    code: 'provider_status_error',
-                    source: 'provider_status_error',
+                    code: 'agent_status_error',
+                    source: 'agent_status_error',
                     occurredAt: 100,
                     sanitizedPreview: 'Provider reported an error',
                 },
@@ -188,5 +214,50 @@ describe('buildSessionActivityAttention', () => {
             hasAttention: true,
         });
         expect(attention.priority).toBeGreaterThan(0);
+    });
+
+    it('keeps same-id pending requests fresh when completed request arguments differ', () => {
+        const attention = buildSessionActivityAttention({
+            session: createSessionFixture({
+                id: 'session-permission-retry',
+                active: true,
+                presence: 'online',
+                pendingPermissionRequestCount: 1,
+                pendingRequestObservedAt: null,
+                agentState: {
+                    controlledByUser: null,
+                    requests: {
+                        permission_retry: {
+                            tool: 'Bash',
+                            kind: 'permission',
+                            arguments: { command: 'git status' },
+                            createdAt: 12_345,
+                        },
+                    },
+                    completedRequests: {
+                        permission_retry: {
+                            tool: 'Bash',
+                            kind: 'permission',
+                            arguments: { command: 'git diff' },
+                            completedAt: 12_500,
+                            status: 'approved',
+                        },
+                    },
+                },
+                metadata: createMetadata({
+                    summary: { text: 'Retry permission', updatedAt: 1 },
+                }),
+            }),
+            nowMs: 12_600,
+        });
+
+        expect(attention).toMatchObject({
+            sessionId: 'session-permission-retry',
+            attentionState: 'permission_required',
+            hasAttention: true,
+            reasons: {
+                hasPendingPermissionRequests: true,
+            },
+        });
     });
 });

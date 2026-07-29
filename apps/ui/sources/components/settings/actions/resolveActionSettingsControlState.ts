@@ -1,4 +1,4 @@
-import type { ActionId, ActionSurfaces, ActionsSettingsV1 } from '@happier-dev/protocol';
+import { isAgentInitiatedApprovalRequiredByDefault, type ActionId, type ActionSurfaces, type ActionsSettingsV1 } from '@happier-dev/protocol';
 
 import { getActionSettingsTargetPreferenceSelected, setActionTargetSelected } from './actionSettingsTargetSelection';
 import {
@@ -18,6 +18,13 @@ export type ActionSettingsTargetControlState =
         kind: 'approval';
         value: ActionSettingsApprovalControlValue;
         approvalSurface: keyof ActionSurfaces;
+        /**
+         * True when this action is floored by the agent danger/egress policy on `agent`
+         * (CON-5). The settings UI must display the EFFECTIVE floor: it clamps the value to
+         * `ask_first` and forbids the `allowed` option, since a floored action can never run on the
+         * agent surface without human consent.
+         */
+        floored: boolean;
     }>
     | Readonly<{
         kind: 'switch';
@@ -79,22 +86,33 @@ export function resolveActionSettingsTargetControlState(
         };
     }
 
+    // CON-5: the EFFECTIVE agent floor. On `agent`, a danger/egress-floored action can never
+    // run without human consent, so the settings UI must never present it as `allowed`. We clamp to
+    // `ask_first` and surface `floored: true` so the control disables the `allowed` option. We reuse
+    // the canonical policy predicate (no duplicated floor list).
+    const floored = approvalSurface === 'agent'
+        && isAgentInitiatedApprovalRequiredByDefault(params.actionId);
+
     if (!selected) {
         return {
             kind: 'approval',
             value: 'off',
             approvalSurface,
+            floored,
         };
     }
 
+    const persistedApprovalRequired = getActionTargetApprovalRequired({
+        settings: params.settings,
+        actionId: params.actionId,
+        targetId: params.targetId,
+    });
+
     return {
         kind: 'approval',
-        value: getActionTargetApprovalRequired({
-            settings: params.settings,
-            actionId: params.actionId,
-            targetId: params.targetId,
-        }) ? 'ask_first' : 'allowed',
+        value: floored || persistedApprovalRequired ? 'ask_first' : 'allowed',
         approvalSurface,
+        floored,
     };
 }
 
@@ -139,11 +157,17 @@ export function applyActionSettingsTargetControlState(params: ApplyActionSetting
             targetId: params.targetId,
             selected: true,
         });
+        // CON-5: a floored action can never be `allowed` on `agent`. If a caller still
+        // attempts to write `allowed` (e.g. a stale control), clamp the persisted state to
+        // approval-required rather than silently dropping the floor (fail-closed).
+        const approvalSurface = resolveActionSettingsApprovalSurface(params.actionId, params.targetId);
+        const floored = approvalSurface === 'agent'
+            && isAgentInitiatedApprovalRequiredByDefault(params.actionId);
         return setActionTargetApprovalRequired({
             settings: selected,
             actionId: params.actionId,
             targetId: params.targetId,
-            approvalRequired: false,
+            approvalRequired: floored,
         });
     }
 

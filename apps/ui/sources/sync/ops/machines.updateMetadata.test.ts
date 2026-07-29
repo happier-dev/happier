@@ -7,6 +7,7 @@ import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetr
 const emitWithAckMock = vi.hoisted(() => vi.fn());
 const getMachineEncryptionMock = vi.hoisted(() => vi.fn());
 const encryptRawMock = vi.hoisted(() => vi.fn());
+const getSyncSingletonMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/api/session/apiSocket', () => ({
     apiSocket: {
@@ -21,6 +22,10 @@ vi.mock('../sync', () => ({
             getMachineEncryption: (machineId: string) => getMachineEncryptionMock(machineId),
         },
     },
+}));
+
+vi.mock('@/sync/runtime/getSyncSingleton', () => ({
+    getSyncSingleton: getSyncSingletonMock,
 }));
 
 const initialStorageState = storage.getInitialState();
@@ -53,7 +58,13 @@ describe('machineUpdateMetadata', () => {
         emitWithAckMock.mockReset();
         getMachineEncryptionMock.mockReset();
         encryptRawMock.mockReset();
+        getSyncSingletonMock.mockReset();
 
+        getSyncSingletonMock.mockReturnValue({
+            encryption: {
+                getMachineEncryption: (machineId: string) => getMachineEncryptionMock(machineId),
+            },
+        });
         getMachineEncryptionMock.mockReturnValue({
             encryptRaw: (...args: any[]) => encryptRawMock(...args),
             decryptRaw: vi.fn(),
@@ -91,6 +102,7 @@ describe('machineUpdateMetadata', () => {
         const res = await machineUpdateMetadata('m1', updatedMetadata, 1);
 
         expect(res).toEqual({ version: 2, metadata: 'enc_server' });
+        expect(getSyncSingletonMock).toHaveBeenCalledTimes(1);
         expect(emitWithAckMock).toHaveBeenCalledWith('machine-update-metadata', {
             machineId: 'm1',
             metadata: 'enc_local',

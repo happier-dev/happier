@@ -233,7 +233,7 @@ vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
             return React.createElement(React.Fragment, { key: file.key }, row, inline);
         });
 
-        return React.createElement('FlashList', props, header, ...rows);
+        return React.createElement('VirtualizedList', props, header, ...rows);
     }),
 }));
 

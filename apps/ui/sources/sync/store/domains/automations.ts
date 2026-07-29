@@ -1,6 +1,9 @@
 import type { Automation, AutomationRun } from '@/sync/domains/automations/automationTypes';
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 
 import type { StoreGet, StoreSet } from './_shared';
+
+const AUTOMATION_RUNS_MAX_ENTRIES_PER_AUTOMATION = loadSyncTuning().automationRunsMaxEntriesPerAutomation;
 
 export type AutomationsDomain = {
     automations: Record<string, Automation>;
@@ -20,7 +23,8 @@ function sortRunsNewestFirst(runs: AutomationRun[]): AutomationRun[] {
                 return right.scheduledAt - left.scheduledAt;
             }
             return right.updatedAt - left.updatedAt;
-        });
+        })
+        .slice(0, AUTOMATION_RUNS_MAX_ENTRIES_PER_AUTOMATION);
 }
 
 export function createAutomationsDomain<S extends AutomationsDomain>({

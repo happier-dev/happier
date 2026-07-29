@@ -1,4 +1,7 @@
-import { formatPermissionRequestSummary, isAskUserQuestionToolName } from "@happier-dev/protocol";
+import {
+    formatPermissionRequestSummary,
+    isAskUserQuestionToolName,
+} from "@happier-dev/protocol";
 import { Session } from "@/sync/domains/state/storageTypes";
 import { Message } from "@/sync/domains/messages/messageTypes";
 import { storage } from '@/sync/domains/state/storage';
@@ -8,6 +11,8 @@ import { trimIdent } from "@/utils/strings/trimIdent";
 import { redactVoicePathLikeData, redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 import { resolveVoiceSessionLabel } from "@/voice/context/resolveVoiceSessionLabel";
 import { resolveVoiceToolResultHumanSummary } from "@/voice/context/resolveVoiceToolResultHumanSummary";
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
+import { isInventoryPrivacyVoiceToolName } from '@/sync/domains/settings/actionSettingsPolicy';
 interface SessionMetadata {
     summary?: { text?: string };
     path?: string;
@@ -23,7 +28,11 @@ export interface VoiceContextFormatterPrefs {
     voiceShareToolNames?: boolean;
     voiceShareToolArgs?: boolean;
     voiceShareFilePaths?: boolean;
+    voiceSharePermissionRequests?: boolean;
+    voiceShareDeviceInventory?: boolean;
 }
+
+export type ResolvedVoiceContextFormatterPrefs = Readonly<Required<VoiceContextFormatterPrefs>>;
 
 interface AskUserQuestionOptionLike {
     label?: unknown;
@@ -101,15 +110,17 @@ function collectUserActionSummary(
     return lines.length > 0 ? lines.join('\n') : null;
 }
 
-function resolvePrefs(prefs?: VoiceContextFormatterPrefs) {
+function resolvePrefs(prefs?: VoiceContextFormatterPrefs): ResolvedVoiceContextFormatterPrefs {
     return {
-        voiceShareSessionSummary: prefs?.voiceShareSessionSummary ?? true,
-        voiceShareRecentMessages: prefs?.voiceShareRecentMessages ?? true,
+        voiceShareSessionSummary: prefs?.voiceShareSessionSummary === true,
+        voiceShareRecentMessages: prefs?.voiceShareRecentMessages === true,
         voiceRecentMessagesCount: clampInt(prefs?.voiceRecentMessagesCount, { min: 0, max: 50, fallback: 10 }),
-        voiceShareToolNames: prefs?.voiceShareToolNames ?? true,
-        voiceShareToolArgs: prefs?.voiceShareToolArgs ?? true,
-        voiceShareFilePaths: prefs?.voiceShareFilePaths ?? true,
-    } as const;
+        voiceShareToolNames: prefs?.voiceShareToolNames === true,
+        voiceShareToolArgs: prefs?.voiceShareToolArgs === true,
+        voiceShareFilePaths: prefs?.voiceShareFilePaths === true,
+        voiceSharePermissionRequests: prefs?.voiceSharePermissionRequests === true,
+        voiceShareDeviceInventory: prefs?.voiceShareDeviceInventory === true,
+    };
 }
 
 function formatSessionReference(
@@ -141,8 +152,15 @@ function resolveToolResultVoiceSummary(
     toolInput: unknown,
     toolState: string,
     toolResult: unknown,
-    prefs: Readonly<{ voiceShareFilePaths: boolean }>,
+    prefs: Readonly<{
+        voiceShareToolNames: boolean;
+        voiceShareFilePaths: boolean;
+        voiceShareSessionSummary: boolean;
+        voiceShareDeviceInventory: boolean;
+    }>,
 ): string | null {
+    if (!prefs.voiceShareToolNames) return null;
+    if (!prefs.voiceShareDeviceInventory && isInventoryPrivacyVoiceToolName(toolName)) return null;
     const result = asObject(toolResult);
     if (!result) return null;
     const summary = resolveVoiceToolResultHumanSummary({
@@ -150,6 +168,7 @@ function resolveToolResultVoiceSummary(
         toolInput,
         toolResult,
         shareFilePaths: prefs.voiceShareFilePaths,
+        shareSessionSummary: prefs.voiceShareSessionSummary,
     });
     if (!summary) return null;
 
@@ -180,13 +199,14 @@ export function summarizeAgentRequestForVoiceHuman(
     prefs?: VoiceContextFormatterPrefs,
 ): string {
     const resolved = resolvePrefs(prefs);
+    const sharedToolName = resolved.voiceShareToolNames ? toolName : 'the requested tool';
 
     if (requestKind === 'permission') {
         const summarized = formatPermissionRequestSummary({
-            toolName,
+            toolName: sharedToolName,
             toolInput: resolved.voiceShareFilePaths ? toolArgs : redactVoicePathLikeData(toolArgs ?? null),
         }).replace(/^Permission required:\s*/i, '').trim();
-        return `The coding session needs permission for ${summarized}. Say approve or deny.`;
+        return `The coding session needs permission for ${summarized}. Review it in the session UI to approve or deny.`;
     }
 
     const summary = collectUserActionSummary(toolName, toolArgs, resolved);
@@ -262,15 +282,18 @@ export function formatPermissionRequest(
         ? (resolved.voiceShareFilePaths ? (toolArgs ?? null) : redactVoicePathLikeData(toolArgs ?? null))
         : null;
     const args = argsObj !== null ? JSON.stringify(argsObj) : null;
+    const sharedToolName = resolved.voiceShareToolNames ? toolName : null;
     const sessionReference = formatSessionReference(sessionId, resolved);
     return trimIdent(`
-        Coding assistant is requesting permission to use ${toolName} in ${sessionReference}:
+        Coding assistant is requesting permission to use ${sharedToolName ?? 'a tool'} in ${sessionReference}:
         <request_id>${requestId}</request_id>
-        <tool_name>${toolName}</tool_name>
+        ${sharedToolName ? `<tool_name>${sharedToolName}</tool_name>` : '<tool_name_redacted>true</tool_name_redacted>'}
         ${args ? `<tool_args>${args}</tool_args>` : '<tool_args_redacted>true</tool_args_redacted>'}
         Interrupt your previous plan and tell the human about this request now.
-        Do not call any tools or send new coding-session work until the human answers approve or deny.
-        Ask the human to say approve or deny.
+        Do not call any tools or send new coding-session work while this permission remains pending.
+        Tell the human to use the canonical session UI to approve or deny it.
+        A spoken answer does not decide this permission request.
+        Never claim it was settled until canonical session updates show the result.
     `);
 }
 
@@ -290,6 +313,7 @@ export function formatUserActionRequest(
         ? (resolved.voiceShareFilePaths ? (toolArgs ?? null) : redactVoicePathLikeData(toolArgs ?? null))
         : null;
     const args = argsObj !== null ? JSON.stringify(argsObj) : null;
+    const sharedToolName = resolved.voiceShareToolNames ? toolName : null;
     const redactedActionGuidance = !summary && !args
         ? 'Review the request and approve, reject, or request changes based on the user intent.'
         : '';
@@ -298,13 +322,13 @@ export function formatUserActionRequest(
         Coding assistant needs user input to continue in ${sessionReference}:
         <request_id>${requestId}</request_id>
         <request_kind>user_action</request_kind>
-        <tool_name>${toolName}</tool_name>
+        ${sharedToolName ? `<tool_name>${sharedToolName}</tool_name>` : '<tool_name_redacted>true</tool_name_redacted>'}
         ${summary ? summary : ''}
         ${args ? `<request_payload>${args}</request_payload>` : '<request_payload_redacted>true</request_payload_redacted>'}
         ${redactedActionGuidance}
         Interrupt your previous plan and present this request to the human now.
         Do not call other tools or send new coding-session work until the human answers.
-        Ask the human for the missing input. Reply with answerUserActionRequest using structured question/answer entries for this user_action request.
+        Ask the human for the missing input. Reply with answerUserActionRequest using structured question/values entries for this user_action request.
     `);
 }
 
@@ -391,12 +415,13 @@ export function formatSessionFull(session: Session, messages: Message[], prefs?:
     const resolved = resolvePrefs(prefs);
     const state: any = storage.getState();
     const lookupSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, session.id);
-    const sessionMetadata = lookupSessionMetadata ?? session.metadata;
+    const sharedSessionMetadata = lookupSessionMetadata ?? session.metadata;
+    const ownerSessionMetadata = readVoiceSessionOwnerMetadataFromState(state, session.id);
     const rawSessionSummary =
-        typeof sessionMetadata?.summary?.text === 'string'
-            ? sessionMetadata.summary.text
-            : typeof sessionMetadata?.summaryText === 'string'
-                ? sessionMetadata.summaryText
+        typeof sharedSessionMetadata?.summary?.text === 'string'
+            ? sharedSessionMetadata.summary.text
+            : typeof sharedSessionMetadata?.summaryText === 'string'
+                ? sharedSessionMetadata.summaryText
                 : null;
     const sessionSummary = rawSessionSummary
         ? maybeRedactVoiceString(rawSessionSummary, resolved.voiceShareFilePaths)
@@ -404,9 +429,9 @@ export function formatSessionFull(session: Session, messages: Message[], prefs?:
     const lines: string[] = [];
 
     // Add session context
-    lines.push(`# Session: ${resolveVoiceSessionLabel(session.id, resolved, { metadata: sessionMetadata, fallbackLabel: 'the current session' })}`);
-    if (resolved.voiceShareFilePaths && sessionMetadata && typeof (sessionMetadata as any).path === 'string') {
-        const path = String((sessionMetadata as any).path);
+    lines.push(`# Session: ${resolveVoiceSessionLabel(session.id, resolved, { metadata: sharedSessionMetadata, fallbackLabel: 'the current session' })}`);
+    if (resolved.voiceShareFilePaths && ownerSessionMetadata && typeof ownerSessionMetadata.path === 'string') {
+        const path = String(ownerSessionMetadata.path);
         if (path.trim().length > 0) {
             lines.push('## Session Path');
             lines.push(path);
@@ -417,11 +442,24 @@ export function formatSessionFull(session: Session, messages: Message[], prefs?:
         lines.push(sessionSummary);
     }
 
-    const pendingRequestSections: string[] = [];
-    for (const request of listPendingSessionRequests(session, messages)) {
-        if (request.kind === 'user_action') {
+    if (resolved.voiceSharePermissionRequests) {
+        const pendingRequestSections: string[] = [];
+        for (const request of listPendingSessionRequests(session, messages)) {
+            if (request.kind === 'user_action') {
+                pendingRequestSections.push(
+                    formatUserActionRequest(
+                        session.id,
+                        request.id,
+                        request.tool,
+                        request.arguments,
+                        prefs,
+                    ),
+                );
+                continue;
+            }
+
             pendingRequestSections.push(
-                formatUserActionRequest(
+                formatPermissionRequest(
                     session.id,
                     request.id,
                     request.tool,
@@ -429,22 +467,11 @@ export function formatSessionFull(session: Session, messages: Message[], prefs?:
                     prefs,
                 ),
             );
-            continue;
         }
-
-        pendingRequestSections.push(
-            formatPermissionRequest(
-                session.id,
-                request.id,
-                request.tool,
-                request.arguments,
-                prefs,
-            ),
-        );
-    }
-    if (pendingRequestSections.length > 0) {
-        lines.push('## Pending Requests');
-        lines.push(pendingRequestSections.join('\n\n'));
+        if (pendingRequestSections.length > 0) {
+            lines.push('## Pending Requests');
+            lines.push(pendingRequestSections.join('\n\n'));
+        }
     }
 
     const recent = formatRecentMessages(session.id, messages, prefs);
@@ -456,18 +483,30 @@ export function formatSessionFull(session: Session, messages: Message[], prefs?:
     return lines.join('\n\n');
 }
 
-export function formatSessionOffline(sessionId: string, metadata?: SessionMetadata): string {
-    const prefs = resolvePrefs();
+export function formatSessionOffline(
+    sessionId: string,
+    metadata: SessionMetadata | undefined,
+    formatterPrefs: VoiceContextFormatterPrefs,
+): string {
+    const prefs = resolvePrefs(formatterPrefs);
     return `${formatSessionReference(sessionId, prefs, metadata, 'the current session')} went offline.`;
 }
 
-export function formatSessionOnline(sessionId: string, metadata?: SessionMetadata): string {
-    const prefs = resolvePrefs();
+export function formatSessionOnline(
+    sessionId: string,
+    metadata: SessionMetadata | undefined,
+    formatterPrefs: VoiceContextFormatterPrefs,
+): string {
+    const prefs = resolvePrefs(formatterPrefs);
     return `${formatSessionReference(sessionId, prefs, metadata, 'the current session')} came online.`;
 }
 
-export function formatSessionFocus(sessionId: string, metadata?: SessionMetadata): string {
-    const prefs = resolvePrefs();
+export function formatSessionFocus(
+    sessionId: string,
+    metadata: SessionMetadata | undefined,
+    formatterPrefs: VoiceContextFormatterPrefs,
+): string {
+    const prefs = resolvePrefs(formatterPrefs);
     return `${formatSessionReference(sessionId, prefs, metadata, 'the current session')} became focused.`;
 }
 
@@ -476,8 +515,10 @@ export function formatReadyEvent(
     messages?: ReadonlyArray<Message>,
     prefs?: VoiceContextFormatterPrefs,
 ): string {
-    const summary = summarizeAssistantMessagesForVoiceHuman(messages ?? [], prefs);
     const resolved = resolvePrefs(prefs);
+    const summary = resolved.voiceShareRecentMessages
+        ? summarizeAssistantMessagesForVoiceHuman(messages ?? [], prefs)
+        : null;
     const sessionReference = formatSessionReference(sessionId, resolved);
     if (summary) {
         return `Coding assistant finished working in ${sessionReference}. Latest response: ${summary} Report this to the human immediately.`;

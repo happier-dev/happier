@@ -1,34 +1,55 @@
-import { coerceSessionUserPromptV1 } from '@happier-dev/protocol';
+import type { SessionMessageRole } from '@happier-dev/protocol';
 
-import type { ApiMessage } from '@/sync/api/types/apiTypes';
-import { ApiSessionMessagesResponseSchema } from '@/sync/api/types/apiTypes';
-import { readStoredSessionMessage } from '@/sync/runtime/readStoredSessionContent';
+import { buildSessionMessagesPath } from '@/sync/api/session/sessionMessagesApi';
+import type { NormalizedMessage } from '@/sync/typesRaw';
 
-type SessionMessagesEncryptionMode = 'e2ee' | 'plain';
+import {
+    runSessionMessagesPagePipeline,
+    type SessionMessagesEncryption,
+    type SessionMessagesEncryptionMode,
+} from './sessionMessagesPagePipeline';
 
-type DecryptedSessionMessage = Readonly<{
-    id: string;
-    seq?: number | null;
-    localId: string | null;
-    content: unknown | null;
-    createdAt: number;
-}>;
+export const USER_MESSAGE_HISTORY_REMOTE_PAGE_SIZE = 40;
 
-type SessionMessagesEncryption = {
-    decryptMessages: (messages: ApiMessage[]) => Promise<Array<DecryptedSessionMessage | null>>;
-};
+/**
+ * Roles requested for session history. `role=user` is sent alongside so a server that predates
+ * the multi-role filter still answers with a narrower user-only page instead of erroring; the
+ * returned rows are always classified here, so a server that ignores both params cannot corrupt
+ * the result either.
+ */
+export const SESSION_MESSAGE_HISTORY_REMOTE_ROLES: readonly SessionMessageRole[] = ['user', 'agent'];
+export const SESSION_MESSAGE_HISTORY_REMOTE_ROLES_QUERY = SESSION_MESSAGE_HISTORY_REMOTE_ROLES.join(',');
 
-export const USER_MESSAGE_HISTORY_REMOTE_PAGE_SIZE = 25;
+/**
+ * Captured agent/tool text is a navigation subtitle source, never replayed as input, so it is
+ * clamped at ingestion to keep long replies out of memory. User prompts are intentionally kept
+ * verbatim: composer history restores them into the input.
+ */
+const AGENT_HISTORY_TEXT_CAPTURE_LIMIT = 512;
 
-export type UserMessageHistoryRemoteEntry = Readonly<{
+export type SessionMessageHistoryRemoteRole = 'user' | 'assistant' | 'tool';
+
+/**
+ * Rows are ordered newest-first (descending seq) and successive pages are strictly older, so
+ * concatenating pages in fetch order stays globally newest-first. Composer history walks that
+ * array positionally from the most recent prompt; navigation re-sorts by seq and is order-agnostic.
+ */
+export type SessionMessageHistoryRemoteRow = Readonly<{
+    messageId: string;
+    routeMessageId: string;
     seq: number;
     createdAt: number;
+    role: SessionMessageHistoryRemoteRole;
     text: string;
 }>;
 
 export type FetchUserMessageHistoryPageResult =
-    | Readonly<{ status: 'loaded'; entries: UserMessageHistoryRemoteEntry[]; hasMore: boolean; nextBeforeSeq: number | null }>
+    | Readonly<{ status: 'loaded'; rows: SessionMessageHistoryRemoteRow[]; hasMore: boolean; nextBeforeSeq: number | null }>
     | Readonly<{ status: 'not_ready' | 'unsupported' | 'error' }>;
+
+// `runSessionMessagesPagePipeline` only logs when it skips an unknown session, which this caller
+// never reports; history pages have no debug-log surface of their own.
+const SILENT_HISTORY_PAGE_LOG = { log: () => undefined };
 
 function normalizeHistoryPageLimit(value: number | undefined): number {
     if (typeof value !== 'number' || !Number.isFinite(value)) return USER_MESSAGE_HISTORY_REMOTE_PAGE_SIZE;
@@ -40,53 +61,81 @@ function normalizeBeforeSeq(value: number | null | undefined): number | null {
     return Math.max(1, Math.trunc(value));
 }
 
-function buildUserMessageHistoryPath(params: Readonly<{
-    sessionId: string;
-    limit: number;
-    beforeSeq: number | null;
-}>): string {
-    const qs = new URLSearchParams({
-        scope: 'main',
-        role: 'user',
-        limit: String(params.limit),
-    });
-    if (params.beforeSeq !== null) {
-        qs.set('beforeSeq', String(params.beforeSeq));
-    }
-    return `/v1/sessions/${encodeURIComponent(params.sessionId)}/messages?${qs.toString()}`;
+function normalizeFiniteInteger(value: unknown): number | null {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+    return Math.trunc(value);
 }
 
-async function decryptUserHistoryMessages(params: Readonly<{
-    sessionId: string;
-    messages: ApiMessage[];
-    sessionEncryptionMode: SessionMessagesEncryptionMode;
-    getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
-}>): Promise<Array<DecryptedSessionMessage | null> | null> {
-    if (params.sessionEncryptionMode === 'plain') {
-        return Promise.all(params.messages.map((message) => readStoredSessionMessage({ message })));
-    }
-
-    const encryption = params.getSessionEncryption(params.sessionId);
-    if (!encryption) return null;
-    return encryption.decryptMessages(params.messages);
+function clampAgentHistoryText(value: string): string {
+    return value.length <= AGENT_HISTORY_TEXT_CAPTURE_LIMIT
+        ? value
+        : value.slice(0, AGENT_HISTORY_TEXT_CAPTURE_LIMIT).trimEnd();
 }
 
-function extractUserHistoryEntries(messages: ReadonlyArray<DecryptedSessionMessage | null>): UserMessageHistoryRemoteEntry[] {
-    const entries: UserMessageHistoryRemoteEntry[] = [];
-    for (const message of messages) {
-        if (!message || message.content === null) continue;
-        const prompt = coerceSessionUserPromptV1(message.content);
-        if (!prompt) continue;
-        const text = prompt.text.trim();
-        const seq = typeof message.seq === 'number' && Number.isFinite(message.seq) ? Math.trunc(message.seq) : null;
-        if (!text || seq === null) continue;
-        entries.push({
-            seq,
-            createdAt: message.createdAt,
-            text,
-        });
+/**
+ * Agent rows collapse to the last readable text block, falling back to the last tool call.
+ * Thinking blocks are deliberately skipped: they never stand in for a reply preview.
+ */
+function readAgentHistoryText(
+    content: Extract<NormalizedMessage, { role: 'agent' }>['content'],
+): Readonly<{ role: SessionMessageHistoryRemoteRole; text: string }> | null {
+    let agentText: string | null = null;
+    let toolText: string | null = null;
+    for (const block of content) {
+        if (block.type === 'text') {
+            const text = block.text.trim();
+            if (text) agentText = text;
+            continue;
+        }
+        if (block.type === 'tool-call') {
+            const text = (block.description ?? block.name).trim();
+            if (text) toolText = text;
+        }
     }
-    return entries;
+    if (agentText) return { role: 'assistant', text: clampAgentHistoryText(agentText) };
+    if (toolText) return { role: 'tool', text: clampAgentHistoryText(toolText) };
+    return null;
+}
+
+function buildHistoryRow(message: NormalizedMessage): SessionMessageHistoryRemoteRow | null {
+    const seq = normalizeFiniteInteger(message.seq);
+    const createdAt = normalizeFiniteInteger(message.createdAt);
+    if (seq === null || createdAt === null) return null;
+
+    const identity = {
+        messageId: message.id,
+        routeMessageId: `server:${message.id}`,
+        seq,
+        createdAt,
+    } as const;
+
+    if (message.role === 'user') {
+        const text = message.content.text.trim();
+        return text ? { ...identity, role: 'user', text } : null;
+    }
+    if (message.role === 'agent') {
+        const agentText = readAgentHistoryText(message.content);
+        return agentText ? { ...identity, ...agentText } : null;
+    }
+    return null;
+}
+
+/**
+ * The shared page pipeline hands `older` pages back ascending because the transcript renders them
+ * that way. History rows are ordered here, once, instead of at each consumer.
+ */
+function compareHistoryRowsNewestFirst(a: SessionMessageHistoryRemoteRow, b: SessionMessageHistoryRemoteRow): number {
+    if (a.seq !== b.seq) return b.seq - a.seq;
+    if (a.createdAt !== b.createdAt) return b.createdAt - a.createdAt;
+    return b.messageId.localeCompare(a.messageId);
+}
+
+function classifyHistoryPageFailure(status: number | null): 'unsupported' | 'error' {
+    if (status === null) return 'error';
+    // Old servers reject the role/roles filter outright; a 2xx body this client cannot parse is
+    // an equally unsupported response shape. Everything else is transient.
+    if (status === 400 || status === 404 || status === 405 || status === 501) return 'unsupported';
+    return status >= 200 && status < 300 ? 'unsupported' : 'error';
 }
 
 export async function fetchUserMessageHistoryPage(params: Readonly<{
@@ -107,33 +156,56 @@ export async function fetchUserMessageHistoryPage(params: Readonly<{
 
     const limit = normalizeHistoryPageLimit(params.limit);
     const beforeSeq = normalizeBeforeSeq(params.beforeSeq);
+    const requestPath = buildSessionMessagesPath({
+        sessionId,
+        scope: 'main',
+        role: 'user',
+        roles: SESSION_MESSAGE_HISTORY_REMOTE_ROLES,
+        limit,
+        ...(beforeSeq !== null ? { beforeSeq } : {}),
+    });
 
+    const transport: { lastResponseStatus: number | null } = { lastResponseStatus: null };
     try {
-        const response = await params.request(buildUserMessageHistoryPath({ sessionId, limit, beforeSeq }));
-        if (!response.ok) {
-            return response.status === 400 || response.status === 404 || response.status === 405 || response.status === 501
-                ? { status: 'unsupported' }
-                : { status: 'error' };
-        }
-
-        const parsed = ApiSessionMessagesResponseSchema.safeParse(await response.json());
-        if (!parsed.success) return { status: 'unsupported' };
-
-        const decrypted = await decryptUserHistoryMessages({
+        const page = await runSessionMessagesPagePipeline({
             sessionId,
-            messages: parsed.data.messages,
+            purpose: 'older',
+            page: {
+                direction: 'older',
+                requestPath,
+                scope: 'main',
+                limit,
+                ...(beforeSeq !== null ? { beforeSeq } : {}),
+            },
+            // History pages are a read-only projection: they never touch the transcript store and
+            // must not re-emit task lifecycle events already handled by the transcript pipeline.
+            lifecyclePolicy: 'suppress',
             sessionEncryptionMode,
             getSessionEncryption: params.getSessionEncryption,
+            request: async (path) => {
+                const response = await params.request(path);
+                transport.lastResponseStatus = typeof response?.status === 'number' ? response.status : null;
+                return response;
+            },
+            sessionReceivedMessages: new Map<string, Map<string, number>>(),
+            applyMessages: () => undefined,
+            log: SILENT_HISTORY_PAGE_LOG,
         });
-        if (!decrypted) return { status: 'not_ready' };
+
+        const rows: SessionMessageHistoryRemoteRow[] = [];
+        for (const message of page.normalizedMessages) {
+            const row = buildHistoryRow(message);
+            if (row) rows.push(row);
+        }
+        rows.sort(compareHistoryRowsNewestFirst);
 
         return {
             status: 'loaded',
-            entries: extractUserHistoryEntries(decrypted),
-            hasMore: parsed.data.hasMore === true,
-            nextBeforeSeq: typeof parsed.data.nextBeforeSeq === 'number' ? parsed.data.nextBeforeSeq : null,
+            rows,
+            hasMore: page.page.hasMore === true,
+            nextBeforeSeq: typeof page.page.nextBeforeSeq === 'number' ? page.page.nextBeforeSeq : null,
         };
     } catch {
-        return { status: 'error' };
+        return { status: classifyHistoryPageFailure(transport.lastResponseStatus) };
     }
 }

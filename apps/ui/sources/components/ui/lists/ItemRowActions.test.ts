@@ -55,8 +55,8 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock(
         {
                                             Platform: {
-                                                OS: 'ios',
-                                                select: (m: any) => m?.ios ?? m?.default,
+                                                OS: 'web',
+                                                select: (m: any) => m?.web ?? m?.default,
                                             },
                                             AppState: {
                                                 addEventListener: () => ({ remove: () => {} }),
@@ -104,13 +104,18 @@ describe('ItemRowActions', () => {
             ],
         }));
 
-        expect(screen.findByTestId('row-actions-trigger')).toBeTruthy();
+        expect(screen.findByTestId('row-actions-trigger')?.props.accessibilityState).toEqual({
+            expanded: false,
+        });
         expect(screen.findAllByTestId('edit')).toHaveLength(0);
 
         act(() => {
             screen.pressByTestId('row-actions-trigger');
         });
 
+        expect(screen.findByTestId('row-actions-trigger')?.props.accessibilityState).toEqual({
+            expanded: true,
+        });
         expect(screen.findByTestId('edit')).toBeTruthy();
         expect(screen.findAllByTestId('edit').length).toBeGreaterThan(0);
 
@@ -260,6 +265,86 @@ describe('ItemRowActions', () => {
             act(() => {
                 screen?.tree.unmount();
             });
+        }
+    });
+
+    it('gives inline icon actions a 44px target and visible web focus ring', async () => {
+        const { ItemRowActions } = await import('./ItemRowActions');
+
+        const screen = await renderScreen(React.createElement(ItemRowActions, {
+            title: 'Plugin',
+            compactThreshold: 200,
+            actions: [
+                {
+                    id: 'disable',
+                    title: 'Disable plugin',
+                    icon: 'close-circle-outline',
+                    inlineTestID: 'disable-plugin',
+                    onPress: vi.fn(),
+                },
+            ],
+        }));
+
+        const action = screen.findByTestId('disable-plugin');
+        expect(action).toBeTruthy();
+        expect(typeof action?.props.style).toBe('function');
+        const flatten = (style: unknown) => (Array.isArray(style)
+            ? Object.assign({}, ...style.filter(Boolean))
+            : (style ?? {})) as Record<string, unknown>;
+        const base = flatten(action!.props.style({ pressed: false, focused: false }));
+        const focused = flatten(action!.props.style({ pressed: false, focused: true }));
+        const hitSlop = typeof action!.props.hitSlop === 'number'
+            ? {
+                top: action!.props.hitSlop,
+                bottom: action!.props.hitSlop,
+                left: action!.props.hitSlop,
+                right: action!.props.hitSlop,
+            }
+            : action!.props.hitSlop as { top?: number; bottom?: number; left?: number; right?: number };
+
+        expect(Number(base.width)).toBeGreaterThanOrEqual(44);
+        expect(Number(base.height)).toBeGreaterThanOrEqual(44);
+        expect(Number(base.width) + Number(hitSlop.left ?? 0) + Number(hitSlop.right ?? 0)).toBeGreaterThanOrEqual(44);
+        expect(Number(base.height) + Number(hitSlop.top ?? 0) + Number(hitSlop.bottom ?? 0)).toBeGreaterThanOrEqual(44);
+        expect(focused.outlineStyle).toBe('solid');
+        expect(focused.outlineWidth).toBeGreaterThanOrEqual(2);
+        expect(focused.outlineColor).toBeTruthy();
+    });
+
+    it('gives inline icon actions a 48dp Android target', async () => {
+        const { Platform } = await import('react-native');
+        const previousPlatform = Platform.OS;
+        (Platform as { OS: string }).OS = 'android';
+        try {
+            const { ItemRowActions } = await import('./ItemRowActions');
+            const screen = await renderScreen(React.createElement(ItemRowActions, {
+                title: 'Plugin',
+                compactThreshold: 200,
+                actions: [
+                    {
+                        id: 'disable',
+                        title: 'Disable plugin',
+                        icon: 'close-circle-outline',
+                        inlineTestID: 'disable-plugin-android',
+                        onPress: vi.fn(),
+                    },
+                ],
+            }));
+
+            const action = screen.findByTestId('disable-plugin-android');
+            expect(action).toBeTruthy();
+            const flatten = (style: unknown) => (Array.isArray(style)
+                ? Object.assign({}, ...style.filter(Boolean))
+                : (style ?? {})) as Record<string, unknown>;
+            const base = flatten(action!.props.style({ pressed: false, focused: false }));
+            const hitSlop = Number(action!.props.hitSlop ?? 0);
+            expect(Number(base.width)).toBeGreaterThanOrEqual(48);
+            expect(Number(base.height)).toBeGreaterThanOrEqual(48);
+            expect(hitSlop).toBe(0);
+            expect(Number(base.width) + (hitSlop * 2)).toBeGreaterThanOrEqual(48);
+            expect(Number(base.height) + (hitSlop * 2)).toBeGreaterThanOrEqual(48);
+        } finally {
+            (Platform as { OS: string }).OS = previousPlatform;
         }
     });
 });

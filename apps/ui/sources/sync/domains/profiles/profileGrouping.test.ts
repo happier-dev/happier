@@ -57,11 +57,11 @@ describe('buildProfileGroups', () => {
 
         const groups = buildProfileGroups({
             customProfiles,
-            favoriteProfileIds: ['', 'anthropic', 'missing-profile', 'custom-profile'],
+            favoriteProfileIds: ['', 'azure-openai', 'missing-profile', 'custom-profile'],
         });
 
         expect(groups.favoriteIds.has('')).toBe(true);
-        expect(groups.favoriteIds.has('anthropic')).toBe(true);
+        expect(groups.favoriteIds.has('azure-openai')).toBe(true);
         expect(groups.favoriteIds.has('custom-profile')).toBe(true);
         expect(groups.favoriteIds.has('missing-profile')).toBe(false);
     });
@@ -99,18 +99,18 @@ describe('buildProfileGroups', () => {
 
         const groups = buildProfileGroups({
             customProfiles,
-            favoriteProfileIds: ['anthropic', 'custom-profile'],
+            favoriteProfileIds: ['azure-openai', 'custom-profile'],
             profileEnabledById: {
-                anthropic: false,
+                'azure-openai': false,
                 'custom-profile': false,
             },
         });
 
-        expect(groups.favoriteIds.has('anthropic')).toBe(false);
+        expect(groups.favoriteIds.has('azure-openai')).toBe(false);
         expect(groups.favoriteIds.has('custom-profile')).toBe(false);
         expect(groups.favoriteProfiles.map((p) => p.id)).toEqual([]);
         expect(groups.customProfiles.map((p) => p.id)).not.toContain('custom-profile');
-        expect(groups.builtInProfiles.map((p) => p.id)).not.toContain('anthropic');
+        expect(groups.builtInProfiles.map((p) => p.id)).not.toContain('azure-openai');
     });
 
     it('can include disabled profiles for management surfaces', () => {
@@ -124,16 +124,16 @@ describe('buildProfileGroups', () => {
 
         const groups = buildProfileGroups({
             customProfiles,
-            favoriteProfileIds: ['anthropic', 'custom-profile'],
+            favoriteProfileIds: ['azure-openai', 'custom-profile'],
             profileEnabledById: {
-                anthropic: false,
+                'azure-openai': false,
                 'custom-profile': false,
             },
             includeDisabledProfiles: true,
         });
 
-        expect(groups.favoriteIds.has('anthropic')).toBe(true);
+        expect(groups.favoriteIds.has('azure-openai')).toBe(true);
         expect(groups.favoriteIds.has('custom-profile')).toBe(true);
-        expect(groups.favoriteProfiles.map((p) => p.id)).toEqual(['anthropic', 'custom-profile']);
+        expect(groups.favoriteProfiles.map((p) => p.id)).toEqual(['azure-openai', 'custom-profile']);
     });
 });

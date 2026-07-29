@@ -2,15 +2,6 @@ import type { SessionViewportAnchorSnapshot } from '@/sync/sync';
 import { sync } from '@/sync/sync';
 import type { TranscriptViewportAnchorIdentity } from '@/components/sessions/transcript/viewport/transcriptViewportTypes';
 
-const TRANSCRIPT_NATIVE_ENTRY_SLICE_HEAD_OFFSET_TOLERANCE_PX = 2;
-
-export function canUseWriteFreeEntrySliceForAnchorOffset(itemOffsetPx: number): boolean {
-    return (
-        Number.isFinite(itemOffsetPx) &&
-        Math.abs(itemOffsetPx) <= TRANSCRIPT_NATIVE_ENTRY_SLICE_HEAD_OFFSET_TOLERANCE_PX
-    );
-}
-
 export function normalizeRestoreAnchorIdentity(
     anchor: Pick<SessionViewportAnchorSnapshot, 'kind' | 'itemId' | 'messageId'>,
 ): TranscriptViewportAnchorIdentity | null {

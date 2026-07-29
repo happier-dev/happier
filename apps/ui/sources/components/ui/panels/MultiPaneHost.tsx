@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Animated, Platform, Pressable, View } from 'react-native';
+import { Animated, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ResolvedPaneLayout } from './paneBreakpoints';
 import { ResizableDockedPane } from './ResizableDockedPane';
@@ -316,6 +316,17 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     flexShrink: 0,
                     alignSelf: 'stretch',
                     height: '100%',
+                    // The seam cast lives on this element, not the inner surface: overflow:'hidden'
+                    // above clips any shadow a child tries to throw past the pane edge. An element's
+                    // own shadow is not clipped by its own overflow, so this is the only owner that
+                    // can reach the main content. x-offset only, no spread, web-only.
+                    ...(Platform.OS === 'web'
+                        ? {
+                            boxShadow: theme.dark
+                                ? '-5px 0 22px rgba(0, 0, 0, 0.13)'
+                                : '-5px 0 22px rgba(0, 0, 0, 0.035)',
+                        }
+                        : {}),
                     opacity: detailsPresence.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
                     transform: [
                         {
@@ -340,8 +351,13 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                             flex: 1,
                             minHeight: 0,
                             minWidth: 0,
-                            borderLeftWidth: 1,
-                            borderLeftColor: theme.colors.border.default,
+                            borderLeftWidth: StyleSheet.hairlineWidth,
+                            // Half the weight of border.default on purpose: the wrapper's cast
+                            // carries the separation, so this line only has to define the edge.
+                            // Alpha, not a flat hex, so it composites over whatever is behind.
+                            borderLeftColor: theme.dark
+                                ? 'rgba(255, 255, 255, 0.025)'
+                                : 'rgba(0, 0, 0, 0.041)',
                             backgroundColor: theme.colors.surface.base,
                         }}
                     >
@@ -363,6 +379,17 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     flexShrink: 0,
                     alignSelf: 'stretch',
                     height: '100%',
+                    // The seam cast lives on this element, not the inner surface: overflow:'hidden'
+                    // above clips any shadow a child tries to throw past the pane edge. An element's
+                    // own shadow is not clipped by its own overflow, so this is the only owner that
+                    // can reach the main content. x-offset only, no spread, web-only.
+                    ...(Platform.OS === 'web'
+                        ? {
+                            boxShadow: theme.dark
+                                ? '-5px 0 22px rgba(0, 0, 0, 0.13)'
+                                : '-5px 0 22px rgba(0, 0, 0, 0.035)',
+                        }
+                        : {}),
                     opacity: rightPresence.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
                     transform: [
                         {
@@ -387,8 +414,13 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                             flex: 1,
                             minHeight: 0,
                             minWidth: 0,
-                            borderLeftWidth: 1,
-                            borderLeftColor: theme.colors.border.default,
+                            borderLeftWidth: StyleSheet.hairlineWidth,
+                            // Half the weight of border.default on purpose: the wrapper's cast
+                            // carries the separation, so this line only has to define the edge.
+                            // Alpha, not a flat hex, so it composites over whatever is behind.
+                            borderLeftColor: theme.dark
+                                ? 'rgba(255, 255, 255, 0.025)'
+                                : 'rgba(0, 0, 0, 0.041)',
                             backgroundColor: theme.colors.surface.base,
                         }}
                     >

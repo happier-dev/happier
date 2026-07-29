@@ -14,6 +14,18 @@ export type SessionListAttentionPlacementReason =
     | 'failed'
     | 'ready';
 
+/**
+ * Item-level projection of a 'working' placement: 'working' means live
+ * foreground working signals, and 'working-retained' means the session
+ * is held in the working group by retention while its signals are stale (rows
+ * render a paused indicator for it). All count as working placement for grouping.
+ */
+export type SessionListWorkingPlacementReason = 'working' | 'working-retained';
+
+export function isSessionListWorkingPlacementReason(value: unknown): value is SessionListWorkingPlacementReason {
+    return value === 'working' || value === 'working-retained';
+}
+
 export function normalizeSessionListAttentionPlacementMode(value: unknown): SessionListAttentionPlacementMode {
     return normalizeSessionListPlacementMode(value);
 }

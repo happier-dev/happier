@@ -117,7 +117,7 @@ describe('useWebViewBridgeMessenger', () => {
         const { getCurrent } = await renderHook(() => useWebViewBridgeMessenger({ onEnvelope }));
         const messenger = getCurrent();
 
-        messenger.onMessage({ nativeEvent: { data: 'not json' } } as any);
+        messenger.onMessage({ nativeEvent: { data: 'not json' } } as Parameters<typeof messenger.onMessage>[0]);
 
         expect(onEnvelope).not.toHaveBeenCalled();
     });

@@ -1,20 +1,30 @@
 import * as React from 'react';
-import type { ScrollView } from 'react-native';
-import type { ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol';
+import { View } from 'react-native';
+import {
+    readExternalSessionsSettingsV1,
+    removeExternalSessionsAutoLinkSourcePolicyV1,
+    upsertExternalSessionsAutoLinkSourcePolicyV1,
+    type ExternalSessionsAgentId,
+    type ExternalSessionsSource,
+} from '@happier-dev/protocol';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { getAgentCore } from '@/agents/catalog/catalog';
+import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { SessionContextChips } from '@/components/sessions/context/SessionContextChips';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ItemList } from '@/components/ui/lists/ItemList';
 import { PopoverScope } from '@/components/ui/popover';
 import { Modal } from '@/modal';
-import { useAllMachines } from '@/sync/domains/state/storage';
+import { useAllMachines, useSetting } from '@/sync/domains/state/storage';
 import { machineExternalSessionLinkEnsure } from '@/sync/ops/machineExternalSessions';
 import { useProfile, useSettings } from '@/sync/store/hooks';
+import { sync } from '@/sync/sync';
 import type { Theme } from '@/theme';
 import { t } from '@/text';
 
@@ -24,10 +34,19 @@ import {
     listExternalSessionBrowseProviderIds,
     resolveExternalSessionBrowseCompatibleLinkSource,
     resolveExternalSessionBrowseLinkEnsureRequestExtras,
+    resolveExternalSessionBrowseSourceOption,
     resolveExternalSessionBrowseSourceOptions,
 } from './resolveExternalSessionBrowseSourceOptions';
 import { ExternalSessionBrowseCandidatesList } from './ExternalSessionBrowseCandidatesList';
-import { useExternalSessionBrowseCandidates, type ExternalSessionBrowseCandidate } from './useExternalSessionBrowseCandidates';
+import {
+    readExternalSessionBrowseCandidateKey,
+    useExternalSessionBrowseCandidates,
+    type ExternalSessionBrowseCandidate,
+} from './useExternalSessionBrowseCandidates';
+import {
+    resolveExternalSessionBrowseRpcErrorMessage,
+    resolveExternalSessionBrowseThrownErrorMessage,
+} from './externalSessionBrowseErrorPresentation';
 
 type ExternalSessionBrowseProviderId = ExternalSessionsAgentId;
 type AppTheme = Theme;
@@ -56,8 +75,10 @@ function getPreferredMachineId(
 }
 
 const stylesheet = StyleSheet.create((theme: AppTheme) => ({
-    list: {
-        paddingTop: 0,
+    root: {
+        flex: 1,
+        minHeight: 0,
+        backgroundColor: theme.colors.surface.base,
     },
     filtersGroup: {
         marginTop: 0,
@@ -70,12 +91,17 @@ const stylesheet = StyleSheet.create((theme: AppTheme) => ({
         elevation: 0,
         marginHorizontal: 12,
     },
+    lockedScopeSummary: {
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+    },
 }));
 
 export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     interaction?: ExternalSessionsBrowseInteraction;
     lockScope?: ExternalSessionsBrowseScopeLock | null;
     onPickRemoteSessionId?: (remoteSessionId: string) => void;
+    onRequestClose?: () => void;
 }>) => {
     const interaction: ExternalSessionsBrowseInteraction = props.interaction ?? 'openSession';
     const lockScope = props.lockScope ?? null;
@@ -86,25 +112,76 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const machines = useAllMachines();
     const profile = useProfile();
     const settings = useSettings();
-    const providers = React.useMemo<ReadonlyArray<Readonly<{ id: ExternalSessionBrowseProviderId; label: string }>>>(
-        () => listExternalSessionBrowseProviderIds().map((providerId) => ({
-            id: providerId,
-            label: t(getAgentCore(providerId).displayNameKey),
-        })),
-        [],
+    const externalSessionsSettings = readExternalSessionsSettingsV1(
+        useSetting('externalSessionsSettingsV1'),
     );
-    const providerIds = React.useMemo<readonly ExternalSessionBrowseProviderId[]>(() => providers.map((provider) => provider.id), [providers]);
+    const autoLinkMutationPendingRef = React.useRef(false);
+    const linkingSessionIdRef = React.useRef<string | null>(null);
+    const [autoLinkMutationPending, setAutoLinkMutationPending] = React.useState(false);
     const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(() => (
         lockScope?.machineId ?? getPreferredMachineId(machines, null)
     ));
+    const effectiveSelectedMachineId = React.useMemo(() => {
+        if (lockScope) return lockScope.machineId;
+        return getPreferredMachineId(machines, selectedMachineId);
+    }, [lockScope, machines, selectedMachineId]);
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: effectiveSelectedMachineId,
+        serverId: lockScope?.serverId ?? null,
+        retainInputsAcrossScopeChange: true,
+    });
+    const daemonMergedProjectionInputs = daemonMergedProjection.inputs;
+    const daemonMergedProjectionReady = daemonMergedProjection.phase === 'ready';
+    const browseProviderIds = React.useMemo(
+        () => listExternalSessionBrowseProviderIds({
+            projection: daemonMergedProjectionInputs?.pluginProjectionV2,
+        }),
+        [daemonMergedProjectionInputs?.pluginProjectionV2],
+    );
+    const providers = React.useMemo<ReadonlyArray<Readonly<{
+        id: ExternalSessionBrowseProviderId;
+        label: string;
+        iconAgentId: string;
+    }>>>(
+        () => browseProviderIds.map((providerId) => {
+            const projection = resolveAgentCatalogProjection(providerId, {
+                enabledAgentIds: browseProviderIds,
+                backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+                acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+                mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
+                mergedBackendProjectionById: daemonMergedProjectionInputs?.mergedBackendProjectionById ?? null,
+            });
+            return {
+                id: providerId,
+                label: projection.title,
+                iconAgentId: projection.iconAgentId ?? providerId,
+            };
+        }),
+        [
+            browseProviderIds,
+            daemonMergedProjectionInputs?.mergedBackendProjectionById,
+            daemonMergedProjectionInputs?.mergedProviderProjectionById,
+            settings.acpCatalogSettingsV1,
+            settings.backendEnabledByTargetKey,
+        ],
+    );
+    const providerIds = React.useMemo<readonly ExternalSessionBrowseProviderId[]>(() => providers.map((provider) => provider.id), [providers]);
     const [selectedProviderId, setSelectedProviderId] = React.useState<ExternalSessionBrowseProviderId | null>(() => (
         lockScope?.providerId ?? getPreferredExternalSessionBrowseProviderId(providerIds, null)
     ));
     const sourceOptions = React.useMemo(() => {
         if (lockScope) {
+            const resolvedOption = resolveExternalSessionBrowseSourceOption({
+                providerId: lockScope.providerId,
+                profile,
+                settings,
+                projection: daemonMergedProjectionInputs?.pluginProjectionV2,
+                source: lockScope.source,
+            });
             return [{
                 key: 'locked',
-                label: t('externalSessions.browseSources'),
+                label: resolvedOption?.label ?? t('externalSessions.browseSources'),
+                ...(resolvedOption?.detail ? { detail: resolvedOption.detail } : {}),
                 source: lockScope.source,
             }];
         }
@@ -113,8 +190,9 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
             providerId: selectedProviderId,
             profile,
             settings,
+            projection: daemonMergedProjectionInputs?.pluginProjectionV2,
         });
-    }, [lockScope, profile, selectedProviderId, settings]);
+    }, [daemonMergedProjectionInputs?.pluginProjectionV2, lockScope, profile, selectedProviderId, settings]);
     const [selectedSourceKey, setSelectedSourceKey] = React.useState<string | null>(() => (
         lockScope ? 'locked' : sourceOptions[0]?.key ?? null
     ));
@@ -124,11 +202,25 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const [sourceMenuOpen, setSourceMenuOpen] = React.useState(false);
     const [searchQuery, setSearchQuery] = React.useState('');
     const [candidateSearchTerm, setCandidateSearchTerm] = React.useState('');
-    const popoverBoundaryRef = React.useRef<ScrollView>(null);
-    const effectiveSelectedMachineId = React.useMemo(() => {
-        if (lockScope) return lockScope.machineId;
-        return getPreferredMachineId(machines, selectedMachineId);
-    }, [lockScope, machines, selectedMachineId]);
+    const popoverBoundaryRef = React.useRef<View>(null);
+    const selectedAgentProjection = React.useMemo(() => (
+        selectedProviderId
+            ? resolveAgentCatalogProjection(selectedProviderId, {
+                enabledAgentIds: browseProviderIds,
+                backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+                acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+                mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
+                mergedBackendProjectionById: daemonMergedProjectionInputs?.mergedBackendProjectionById ?? null,
+            })
+            : null
+    ), [
+        browseProviderIds,
+        daemonMergedProjectionInputs?.mergedBackendProjectionById,
+        daemonMergedProjectionInputs?.mergedProviderProjectionById,
+        selectedProviderId,
+        settings.acpCatalogSettingsV1,
+        settings.backendEnabledByTargetKey,
+    ]);
 
     React.useEffect(() => {
         if (lockScope) return;
@@ -167,6 +259,13 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         () => lockScope?.source ?? sourceOptions.find((option) => option.key === selectedSourceKey)?.source ?? sourceOptions[0]?.source ?? null,
         [lockScope, selectedSourceKey, sourceOptions],
     );
+    const selectedSourceLabel = React.useMemo(() => {
+        const option = sourceOptions.find((candidate) => candidate.key === selectedSourceKey)
+            ?? sourceOptions[0];
+        return option
+            ? [option.label, option.detail].filter(Boolean).join(' · ')
+            : null;
+    }, [selectedSourceKey, sourceOptions]);
     const machineMenuItems = React.useMemo(() => machines.map((machine) => ({
         id: machine.id,
         title: machine.metadata?.displayName || machine.metadata?.host || machine.id,
@@ -176,7 +275,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const providerMenuItems = React.useMemo(() => providers.map((provider) => ({
         id: provider.id,
         title: provider.label,
-        icon: <Ionicons name="hardware-chip-outline" size={18} color={theme.colors.text.secondary} />,
+        icon: <AgentIcon agentId={provider.iconAgentId} size={18} />,
     })), [providers, theme.colors.text.secondary]);
     const sourceMenuItems = React.useMemo(() => sourceOptions.map((sourceOption) => ({
         id: sourceOption.key,
@@ -215,23 +314,98 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         loading,
         loadingMore,
         searchAugmenting,
+        searchIncomplete,
+        preparation,
+        autoLinkPolicyScope,
         error,
         loadMore,
+        cancelPreparation,
+        reload,
     } = useExternalSessionBrowseCandidates({
-        machineId: effectiveSelectedMachineId,
+        machineId: daemonMergedProjectionReady ? effectiveSelectedMachineId : null,
         serverId: lockScope?.serverId ?? null,
         providerId: selectedProviderId,
         source: selectedSource,
         searchTerm: candidateSearchTerm,
     });
+    const autoLinkPolicyEnabled = React.useMemo(() => {
+        if (!effectiveSelectedMachineId || !autoLinkPolicyScope) return false;
+        return externalSessionsSettings?.autoLinkSourcePolicies.some((policy) => (
+            policy.machineId === effectiveSelectedMachineId
+            && policy.sourcePolicyId === autoLinkPolicyScope.sourcePolicyId
+            && policy.qualifiedIdentity.agent.pluginId
+                === autoLinkPolicyScope.qualifiedIdentity.agent.pluginId
+            && policy.qualifiedIdentity.agent.localId
+                === autoLinkPolicyScope.qualifiedIdentity.agent.localId
+            && policy.qualifiedIdentity.source.kind
+                === autoLinkPolicyScope.qualifiedIdentity.source.kind
+            && policy.qualifiedIdentity.source.contractVersion
+                === autoLinkPolicyScope.qualifiedIdentity.source.contractVersion
+        )) === true;
+    }, [autoLinkPolicyScope, effectiveSelectedMachineId, externalSessionsSettings]);
+    const setAutoLinkPolicyEnabled = React.useCallback(async (enabled: boolean) => {
+        if (
+            !effectiveSelectedMachineId
+            || !autoLinkPolicyScope
+            || autoLinkMutationPendingRef.current
+        ) return;
+        autoLinkMutationPendingRef.current = true;
+        setAutoLinkMutationPending(true);
+        try {
+            await sync.mutateAccountSettings((raw) => ({
+                ...raw,
+                externalSessionsSettingsV1: enabled
+                    ? upsertExternalSessionsAutoLinkSourcePolicyV1(
+                        raw.externalSessionsSettingsV1,
+                        {
+                            machineId: effectiveSelectedMachineId,
+                            qualifiedIdentity: autoLinkPolicyScope.qualifiedIdentity,
+                            sourcePolicyId: autoLinkPolicyScope.sourcePolicyId,
+                            enabledAtMs: Date.now(),
+                        },
+                    )
+                    : removeExternalSessionsAutoLinkSourcePolicyV1(
+                        raw.externalSessionsSettingsV1,
+                        {
+                            machineId: effectiveSelectedMachineId,
+                            qualifiedIdentity: autoLinkPolicyScope.qualifiedIdentity,
+                            sourcePolicyId: autoLinkPolicyScope.sourcePolicyId,
+                        },
+                    ),
+            }));
+        } catch {
+            await Modal.alert(
+                t('common.error'),
+                t('externalSessions.settingsAutoLinkUpdateFailed'),
+            );
+        } finally {
+            autoLinkMutationPendingRef.current = false;
+            setAutoLinkMutationPending(false);
+        }
+    }, [autoLinkPolicyScope, effectiveSelectedMachineId]);
+    const selectedMachineIsOffline = React.useMemo(() => {
+        if (!effectiveSelectedMachineId) return false;
+        return machines.find((machine) => machine.id === effectiveSelectedMachineId)?.active === false;
+    }, [effectiveSelectedMachineId, machines]);
+    const selectedMachineLabel = React.useMemo(() => {
+        const machine = machines.find((candidate) => candidate.id === effectiveSelectedMachineId);
+        return machine?.metadata?.displayName || machine?.metadata?.host || machine?.id || null;
+    }, [effectiveSelectedMachineId, machines]);
 
     const handleOpenCandidate = React.useCallback(async (candidate: ExternalSessionBrowseCandidate) => {
         if (!effectiveSelectedMachineId || !selectedProviderId || !selectedSource) return;
+        if (linkingSessionIdRef.current !== null) return;
         if (interaction === 'pickRemoteSessionId') {
             props.onPickRemoteSessionId?.(candidate.remoteSessionId);
             return;
         }
-        setLinkingSessionId(candidate.remoteSessionId);
+        if (candidate.linkedSessionId) {
+            router.push(`/session/${candidate.linkedSessionId}` as any);
+            return;
+        }
+        const candidateKey = readExternalSessionBrowseCandidateKey(candidate);
+        linkingSessionIdRef.current = candidateKey;
+        setLinkingSessionId(candidateKey);
         try {
             const linkEnsureExtras = resolveExternalSessionBrowseLinkEnsureRequestExtras({
                 providerId: selectedProviderId,
@@ -250,6 +424,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                 machineId: effectiveSelectedMachineId,
                 agentId: selectedProviderId,
                 remoteSessionId: candidate.remoteSessionId,
+                ...(candidate.linkData ? { linkData: candidate.linkData } : {}),
                 ...(candidate.title ? { titleHint: candidate.title } : {}),
                 ...(readExternalSessionBrowseCandidatePath(candidate.details) ? { directoryHint: readExternalSessionBrowseCandidatePath(candidate.details)! } : {}),
                 ...linkEnsureExtras,
@@ -259,20 +434,27 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                 ? await machineExternalSessionLinkEnsure(request, { serverId: lockScope.serverId })
                 : await machineExternalSessionLinkEnsure(request);
             if (!result.ok) {
-                Modal.alert(t('common.error'), result.error);
+                Modal.alert(
+                    t('common.error'),
+                    resolveExternalSessionBrowseRpcErrorMessage(result.errorCode, 'link'),
+                );
                 return;
             }
             router.push(`/session/${result.sessionId}` as any);
         } catch (linkError) {
-            Modal.alert(t('common.error'), linkError instanceof Error ? linkError.message : t('externalSessions.browseLinkFailed'));
+            Modal.alert(
+                t('common.error'),
+                resolveExternalSessionBrowseThrownErrorMessage(linkError, 'link'),
+            );
         } finally {
+            linkingSessionIdRef.current = null;
             setLinkingSessionId(null);
         }
     }, [effectiveSelectedMachineId, interaction, lockScope?.serverId, props, router, selectedProviderId, selectedSource]);
 
     return (
         <PopoverScope boundaryRef={popoverBoundaryRef}>
-            <ItemList ref={popoverBoundaryRef} style={styles.list} testID="direct-sessions-browse-modal">
+            <View ref={popoverBoundaryRef} style={styles.root} testID="direct-sessions-browse-modal">
                 {!locked ? (
                     <ItemGroup
                         style={styles.filtersGroup}
@@ -327,7 +509,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                                     connectToTrigger={true}
                                     popoverBoundaryRef={popoverBoundaryRef}
                                     itemTrigger={{
-                                        title: t('externalSessions.browseProviders'),
+                                        title: t('externalSessions.browseAgents'),
                                         icon: <Ionicons name="hardware-chip-outline" size={18} color={theme.colors.text.secondary} />,
                                         subtitleFormatter: formatSelectedTitleSubtitle,
                                         showSelectedDetail: false,
@@ -364,22 +546,78 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                             </>
                         )}
                     </ItemGroup>
+                ) : (
+                    <View
+                        testID="direct-session-locked-scope-summary"
+                        style={styles.lockedScopeSummary}
+                    >
+                        <SessionContextChips
+                            machineLabel={selectedMachineLabel ?? lockScope?.machineId ?? t('externalSessions.browseNoMachines')}
+                            pathLabel={[
+                                selectedAgentProjection?.title ?? lockScope?.providerId,
+                                selectedSourceLabel,
+                            ].filter(Boolean).join(' · ')}
+                        />
+                    </View>
+                )}
+                {autoLinkPolicyScope ? (
+                    <ItemGroup
+                        title={t('externalSessions.settingsAutoLinkGroupTitle')}
+                        containerStyle={styles.filtersGroupContainer}
+                    >
+                        <Item
+                            testID="external-sessions-browse-auto-link"
+                            title={t('externalSessions.browseAutoLinkTitle')}
+                            subtitle={t('externalSessions.settingsAutoLinkSubtitle')}
+                            loading={autoLinkMutationPending}
+                            disabled={autoLinkMutationPending}
+                            rightElement={(
+                                <Switch
+                                    testID="external-sessions-browse-auto-link-toggle"
+                                    accessibilityLabel={t('externalSessions.browseAutoLinkTitle')}
+                                    accessibilityHint={t('externalSessions.settingsAutoLinkHint')}
+                                    value={autoLinkPolicyEnabled}
+                                    disabled={autoLinkMutationPending}
+                                    onValueChange={(enabled) => {
+                                        void setAutoLinkPolicyEnabled(enabled);
+                                    }}
+                                />
+                            )}
+                            rightElementOutsidePressable
+                            showChevron={false}
+                            onPress={() => {
+                                void setAutoLinkPolicyEnabled(!autoLinkPolicyEnabled);
+                            }}
+                        />
+                    </ItemGroup>
                 ) : null}
 
                 <ExternalSessionBrowseCandidatesList
                     candidates={candidates}
                     loading={loading}
                     error={error}
+                    offline={selectedMachineIsOffline}
                     nextCursor={nextCursor}
                     loadingMore={loadingMore}
                     searchAugmenting={searchAugmenting}
+                    searchIncomplete={searchIncomplete}
+                    preparation={preparation}
                     linkingSessionId={linkingSessionId}
+                    agentId={selectedAgentProjection?.iconAgentId ?? selectedProviderId}
+                    agentLabel={selectedAgentProjection?.title ?? null}
+                    machineLabel={selectedMachineLabel}
+                    sourceLabel={selectedSourceLabel}
                     searchQuery={searchQuery}
                     onSearchQueryChange={setSearchQuery}
                     onSelectCandidate={(candidate) => { void handleOpenCandidate(candidate); }}
                     onLoadMore={() => { void loadMore(); }}
+                    onCancelPreparation={cancelPreparation}
+                    onRetry={() => {
+                        void (nextCursor ? loadMore() : reload());
+                    }}
+                    onRequestClose={props.onRequestClose ?? (() => router.back())}
                 />
-            </ItemList>
+            </View>
         </PopoverScope>
     );
 });

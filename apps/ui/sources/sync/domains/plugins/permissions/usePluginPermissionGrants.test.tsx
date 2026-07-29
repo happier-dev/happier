@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 import type {
     PluginPermissionGrant,
+    PluginPermissionGrantApprovedResult,
+    PluginPermissionGrantListInput,
     PluginPermissionGrantListResponse,
     PluginPermissionPendingGrantRequest,
 } from './types';
@@ -141,5 +143,126 @@ describe('usePluginPermissionGrants', () => {
             await hook.getCurrent().dismissRequest({ requestId: 'request-2' });
         });
         expect(hook.getCurrent().pendingRequests).toHaveLength(0);
+    });
+
+    it('keeps disabled panes inert at the shared mutation boundary', async () => {
+        const actions = {
+            list: vi.fn(async () => ({ grants: [grant()], pendingRequests: [pendingRequest()] })),
+            grant: vi.fn(async () => ({
+                grant: grant(),
+                pendingRequest: pendingRequest({ status: 'granted', grantId: 'grant-1', decidedAt: 2 }),
+            })),
+            revoke: vi.fn(async () => ({ grant: grant({ status: 'revoked', revokedAt: 3 }) })),
+            dismissRequest: vi.fn(async () => ({
+                pendingRequest: pendingRequest({ id: 'request-1', status: 'dismissed', decidedAt: 4 }),
+            })),
+            request: vi.fn(),
+        };
+        const { usePluginPermissionGrants } = await import('./usePluginPermissionGrants');
+
+        const hook = await renderHook(() => usePluginPermissionGrants({
+            actions,
+            enabled: false,
+            listInput: { capability, targetScope },
+        }));
+        await flushHookEffects();
+
+        await act(async () => {
+            hook.getCurrent().upsertPendingRequest(pendingRequest());
+            await hook.getCurrent().grant({ requestId: 'request-1' });
+            await hook.getCurrent().revoke({ grantId: 'grant-1' });
+            await hook.getCurrent().dismissRequest({ requestId: 'request-1' });
+        });
+
+        expect(actions.list).not.toHaveBeenCalled();
+        expect(actions.grant).not.toHaveBeenCalled();
+        expect(actions.revoke).not.toHaveBeenCalled();
+        expect(actions.dismissRequest).not.toHaveBeenCalled();
+        expect(hook.getCurrent().pendingRequests).toHaveLength(0);
+        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(false);
+    });
+
+    it('fails closed across scope changes and ignores stale list and mutation results', async () => {
+        const projectOneList = deferred<PluginPermissionGrantListResponse>();
+        const projectTwoList = deferred<PluginPermissionGrantListResponse>();
+        const staleGrant = deferred<PluginPermissionGrantApprovedResult>();
+        const projectTwoScope = { kind: 'project', projectId: 'project-2' } as const;
+        const actions = {
+            list: vi.fn((input: PluginPermissionGrantListInput) => (
+                input.targetScope?.kind === 'project' && input.targetScope.projectId === 'project-1'
+                    ? projectOneList.promise
+                    : projectTwoList.promise
+            )),
+            grant: vi.fn(() => staleGrant.promise),
+            revoke: vi.fn(),
+            dismissRequest: vi.fn(),
+            request: vi.fn(),
+        };
+        const { usePluginPermissionGrants } = await import('./usePluginPermissionGrants');
+        type HookProps = Readonly<{ targetScope: typeof targetScope | typeof projectTwoScope }>;
+        const hook = await renderHook(
+            (props: HookProps) => usePluginPermissionGrants({
+                actions,
+                enabled: true,
+                listInput: { capability, targetScope: props.targetScope },
+            }),
+            { initialProps: { targetScope } as HookProps },
+        );
+
+        projectOneList.resolve({ grants: [grant()], pendingRequests: [pendingRequest()] });
+        await flushHookEffects();
+        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(true);
+        let staleMutation!: Promise<void>;
+        await act(async () => {
+            staleMutation = hook.getCurrent().grant({ requestId: 'request-1' });
+        });
+
+        await hook.rerender({ targetScope: projectTwoScope });
+        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(false);
+        expect(hook.getCurrent().pendingRequests).toHaveLength(0);
+        projectTwoList.resolve({
+            grants: [grant({ id: 'grant-2', targetScope: projectTwoScope })],
+            pendingRequests: [],
+        });
+        await flushHookEffects();
+        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope: projectTwoScope })).toBe(true);
+
+        staleGrant.resolve({
+            grant: grant(),
+            pendingRequest: pendingRequest({ status: 'granted', grantId: 'grant-1', decidedAt: 3 }),
+        });
+        await act(async () => { await staleMutation; });
+        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope: projectTwoScope })).toBe(true);
+        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(false);
+    });
+
+    it('preserves trusted rows while offline and refreshes them after reconnect', async () => {
+        const actions = {
+            list: vi.fn()
+                .mockResolvedValueOnce({ grants: [grant()], pendingRequests: [pendingRequest()] })
+                .mockRejectedValueOnce(new Error('offline'))
+                .mockResolvedValueOnce({ grants: [], pendingRequests: [] }),
+            grant: vi.fn(),
+            revoke: vi.fn(),
+            dismissRequest: vi.fn(),
+            request: vi.fn(),
+        };
+        const { usePluginPermissionGrants } = await import('./usePluginPermissionGrants');
+        const hook = await renderHook(() => usePluginPermissionGrants({
+            actions,
+            enabled: true,
+            listInput: { capability, targetScope },
+        }));
+        await flushHookEffects();
+
+        await act(async () => { await hook.getCurrent().refresh(); });
+        expect(hook.getCurrent().state.status).toBe('error');
+        expect(hook.getCurrent().state.error).toBe('offline');
+        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(true);
+
+        await act(async () => { await hook.getCurrent().refresh(); });
+        expect(hook.getCurrent().state.status).toBe('ready');
+        expect(hook.getCurrent().state.error).toBeNull();
+        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(false);
     });
 });

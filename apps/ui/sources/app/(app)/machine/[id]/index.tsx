@@ -18,6 +18,7 @@ import {
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import type { Machine, MachineMetadata, Session } from '@/sync/domains/state/storageTypes';
 import {
+    completeMachineSpawnAttemptCustody,
     machineSpawnNewSession,
     machineStopDaemon,
     machineStopSession,
@@ -26,7 +27,16 @@ import {
     machineClearReplacementFromAccount,
     machineReplaceInAccount,
     machineRevokeFromAccount,
+    machineRevokeWithProviderCleanup,
 } from '@/sync/ops';
+import {
+    createUiSessionSpawnNonce,
+    createUiSessionSpawnUserAttemptId,
+} from '@/sync/domains/session/spawn/spawnSessionNonce';
+import {
+    resolveMachineDetailSpawnAttempt,
+    type MachineDetailSpawnAttempt,
+} from '@/components/machines/machineDetailSpawnAttempt';
 import { sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
 import { Modal } from '@/modal';
 import { formatPathRelativeToHome, getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
@@ -56,18 +66,24 @@ import {
 import { Switch } from '@/components/ui/forms/Switch';
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
-import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
+import {
+    hasProviderMachineStateV1,
+    readProviderSettingsFromAccountSettingsV1,
+    type DaemonExecutionRunEntry,
+} from '@happier-dev/protocol';
 import { ExecutionRunRow } from '@/components/sessions/runs/ExecutionRunRow';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import { PathInputBrowseButton } from '@/components/ui/pathBrowser/PathInputBrowseButton';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
+import { runRefreshDiagnosticAction } from '@/utils/system/userInteractionDiagnostics';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
-import { readDisplayMachineIdForSession } from '@/sync/ops/sessionMachineTarget';
-import { resolveMachineExactSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness';
+import { readDisplayMachineIdForSession, readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import {
     MachineReplacementPickerModal,
     type MachineReplacementPickerCandidate,
@@ -201,17 +217,19 @@ export default function MachineDetailScreen() {
     const [isUpdatingWindowsConsoleMode, setIsUpdatingWindowsConsoleMode] = useState(false);
     const [openWindowsRemoteSessionLaunchModeMenu, setOpenWindowsRemoteSessionLaunchModeMenu] = useState(false);
     const [isRevokingMachine, setIsRevokingMachine] = useState(false);
+    const [isProviderCleanupPending, setIsProviderCleanupPending] = useState(false);
     const [replacingMachineId, setReplacingMachineId] = useState<string | null>(null);
     const [isClearingReplacement, setIsClearingReplacement] = useState(false);
     const [customPath, setCustomPath] = useState('');
     const [isSpawning, setIsSpawning] = useState(false);
     const inputRef = useRef<MultiTextInputHandle>(null);
+    const spawnAttemptRef = useRef<MachineDetailSpawnAttempt | null>(null);
     const [showAllPaths, setShowAllPaths] = useState(false);
     const [isHydratingMachine, setIsHydratingMachine] = useState(() => Boolean(machineId) && !machine);
     const machineHydrationRequestedRef = useRef(false);
     const isOnline = !!machine && isMachineOnline(machine);
     const machineSpawnReadiness = useMemo(
-        () => resolveMachineExactSpawnReadiness(machine, machineId),
+        () => resolveMachineSpawnReadiness({ machine, selectedMachineId: machineId }),
         [machine, machineId],
     );
     const machineCanSpawn = machineSpawnReadiness.status === 'ready';
@@ -228,6 +246,14 @@ export default function MachineDetailScreen() {
     const windowsRemoteSessionLaunchModeDefault = useSetting('sessionWindowsRemoteSessionLaunchMode');
     const [terminalTmuxByMachineId, setTerminalTmuxByMachineId] = useSettingMutable('sessionTmuxByMachineId');
     const settings = useSettings();
+    const hasDurableProviderCleanup = useMemo(() => {
+        if (!machineId || !machine?.revokedAt) return false;
+        return hasProviderMachineStateV1(
+            readProviderSettingsFromAccountSettingsV1(settings).settings,
+            machineId,
+        );
+    }, [machine?.revokedAt, machineId, settings]);
+    const providerCleanupPending = isProviderCleanupPending || hasDurableProviderCleanup;
     const machineListByServerId = useMachineListByServerId();
     const allMachines = useMemo(() => {
         const byId = new Map<string, Machine>();
@@ -444,7 +470,7 @@ export default function MachineDetailScreen() {
 
     const handleRevokeMachine = useCallback(() => {
         if (!machineId || isRevokingMachine) return;
-        if (machine?.revokedAt) return;
+        if (machine?.revokedAt && !providerCleanupPending) return;
 
         fireAndForget((async () => {
             const confirmed = await Modal.confirm(
@@ -456,18 +482,36 @@ export default function MachineDetailScreen() {
 
             setIsRevokingMachine(true);
             try {
-                const result = await machineRevokeFromAccount(machineId);
+                const result = await machineRevokeWithProviderCleanup(machineId, {
+                    revoke: machineRevokeFromAccount,
+                    mutateProviderSettings: async (mutate) => {
+                        await sync.mutateAccountSettings((raw) => {
+                            const current = readProviderSettingsFromAccountSettingsV1(raw).settings;
+                            return { ...raw, providerSettingsV1: mutate(current) };
+                        });
+                    },
+                });
                 if (!result.ok) {
-                    await Modal.alert(t('common.error'), t('errors.operationFailed'));
+                    if ('machineRevoked' in result && result.machineRevoked) {
+                        setIsProviderCleanupPending(true);
+                        await sync.refreshMachinesThrottled({ staleMs: 0, force: true });
+                        await Modal.alert(
+                            t('common.error'),
+                            t('settingsProviders.errors.machineCleanupPendingDescription'),
+                        );
+                    } else {
+                        await Modal.alert(t('common.error'), t('errors.operationFailed'));
+                    }
                     return;
                 }
+                setIsProviderCleanupPending(false);
                 await sync.refreshMachinesThrottled({ staleMs: 0, force: true });
                 router.back();
             } finally {
                 setIsRevokingMachine(false);
             }
         })(), { tag: 'MachineDetailScreen.revokeMachine' });
-    }, [isRevokingMachine, machine?.revokedAt, machineId, router]);
+    }, [isRevokingMachine, machine?.revokedAt, machineId, providerCleanupPending, router]);
 
     const replacementCandidates = useMemo<MachineReplacementPickerCandidate[]>(() => {
         if (!machineId) return [];
@@ -567,9 +611,10 @@ export default function MachineDetailScreen() {
         return sessions.filter(item => {
             if (typeof item === 'string') return false;
             const session = item as Session;
+            const ownerMetadata = readSessionOwnerMetadataView(session);
             return readDisplayMachineIdForSession({
                 sessionId: session.id,
-                metadata: session.metadata ?? null,
+                metadata: ownerMetadata,
             }) === machineId;
         }) as Session[];
     }, [sessions, machineId]);
@@ -583,9 +628,12 @@ export default function MachineDetailScreen() {
     const recentPaths = useMemo(() => {
         const paths = new Set<string>();
         machineSessions.forEach(session => {
-            if (session.metadata?.path) {
-                paths.add(session.metadata.path);
-            }
+            const ownerMetadata = readSessionOwnerMetadataView(session);
+            const path = readDisplayPathForSession({
+                sessionId: session.id,
+                metadata: ownerMetadata,
+            });
+            if (path) paths.add(path);
         });
         return Array.from(paths).sort();
     }, [machineSessions]);
@@ -663,20 +711,25 @@ export default function MachineDetailScreen() {
     const handleRefresh = async () => {
         setIsRefreshing(true);
         try {
-            await sync.refreshMachines();
-            refreshDetectedCapabilities({ bypassCache: true });
-            if (canPrefetchMachineDoctorSnapshot && machineDoctorSnapshotPrefetchTargets.length > 0) {
-                await fetchMachineDoctorSnapshots(machineDoctorSnapshotPrefetchTargets);
-            }
-            if (machineId && isOnline && !isServerSwitching) {
-                setExecutionRunsState((prev) => ({ status: 'loading', runs: prev.runs }));
-                const res = await machineExecutionRunsList(machineId, { serverId: machineServerId });
-                if (res.ok) {
-                    setExecutionRunsState({ status: 'loaded', runs: res.runs });
-                } else {
-                    setExecutionRunsState((prev) => ({ status: 'error', runs: prev.runs, error: res.error }));
+            await runRefreshDiagnosticAction({
+                action: 'pull_to_refresh',
+                screen: 'machine_detail',
+            }, async () => {
+                await sync.refreshMachines();
+                refreshDetectedCapabilities({ bypassCache: true });
+                if (canPrefetchMachineDoctorSnapshot && machineDoctorSnapshotPrefetchTargets.length > 0) {
+                    await fetchMachineDoctorSnapshots(machineDoctorSnapshotPrefetchTargets);
                 }
-            }
+                if (machineId && isOnline && !isServerSwitching) {
+                    setExecutionRunsState((prev) => ({ status: 'loading', runs: prev.runs }));
+                    const res = await machineExecutionRunsList(machineId, { serverId: machineServerId });
+                    if (res.ok) {
+                        setExecutionRunsState({ status: 'loaded', runs: res.runs });
+                    } else {
+                        setExecutionRunsState((prev) => ({ status: 'error', runs: prev.runs, error: res.error }));
+                    }
+                }
+            });
         } finally {
             setIsRefreshing(false);
         }
@@ -857,7 +910,7 @@ export default function MachineDetailScreen() {
                 settings: storage.getState().settings,
                 machineId,
             });
-            const result = await machineSpawnNewSession({
+            const spawnOptions = {
                 machineId: machineId!,
                 ...(machineServerId ? { serverId: machineServerId } : {}),
                 directory: absolutePath,
@@ -865,9 +918,35 @@ export default function MachineDetailScreen() {
                 backendTarget: preferredBackendTarget,
                 terminal,
                 ...(effectiveWindowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode: effectiveWindowsRemoteSessionLaunchMode } : {}),
+            } as const;
+            const launchSignature = JSON.stringify({
+                machineId,
+                serverId: machineServerId ?? null,
+                directory: absolutePath,
+                backendTarget: preferredBackendTarget,
+                terminal,
+                windowsRemoteSessionLaunchMode: effectiveWindowsRemoteSessionLaunchMode ?? null,
+            });
+            spawnAttemptRef.current = resolveMachineDetailSpawnAttempt({
+                current: spawnAttemptRef.current,
+                signature: launchSignature,
+                createUserAttemptId: createUiSessionSpawnUserAttemptId,
+                createSpawnNonce: createUiSessionSpawnNonce,
+            });
+            const result = await machineSpawnNewSession({
+                ...spawnOptions,
+                userAttemptId: spawnAttemptRef.current.userAttemptId,
+                spawnNonce: spawnAttemptRef.current.spawnNonce,
             });
             switch (result.type) {
                 case 'success':
+                    if (result.spawnAttemptCustody?.status === 'completed') {
+                        const completed = await completeMachineSpawnAttemptCustody(result.spawnAttemptCustody);
+                        if (!completed) {
+                            throw new Error('Created session custody could not be completed.');
+                        }
+                    }
+                    spawnAttemptRef.current = null;
                     // Dismiss machine picker & machine detail screen
                     router.back();
                     router.back();
@@ -889,6 +968,9 @@ export default function MachineDetailScreen() {
                     break;
                 }
                 case 'error':
+                    if (result.spawnAttemptCustody?.status !== 'unresolved') {
+                        spawnAttemptRef.current = null;
+                    }
                     Modal.alert(t('common.error'), result.errorMessage);
                     break;
             }
@@ -917,8 +999,7 @@ export default function MachineDetailScreen() {
     }, [activeServerId, customPath, machine?.metadata?.homeDir, machineCanSpawn, machineId]);
 
     const pastUsedRelativePath = useCallback((session: Session) => {
-        if (!session.metadata) return t('machine.unknownPath');
-        return formatPathRelativeToHome(session.metadata.path, session.metadata.homeDir);
+        return getSessionSubtitle(session);
     }, []);
 
     const headerBackTitle = t('machine.back');
@@ -1622,11 +1703,15 @@ export default function MachineDetailScreen() {
                     ) : null}
                     <Item
                         title={t('machine.actions.removeMachine')}
-                        subtitle={machine.revokedAt ? t('machine.actions.removeMachineAlreadyRemoved') : t('machine.actions.removeMachineSubtitle')}
+                        subtitle={providerCleanupPending
+                            ? t('settingsProviders.errors.machineCleanupPendingDescription')
+                            : machine.revokedAt
+                                ? t('machine.actions.removeMachineAlreadyRemoved')
+                                : t('machine.actions.removeMachineSubtitle')}
                         subtitleLines={0}
                         destructive
                         showChevron={false}
-                        disabled={isRevokingMachine || Boolean(machine.revokedAt)}
+                        disabled={isRevokingMachine || (Boolean(machine.revokedAt) && !providerCleanupPending)}
                         loading={isRevokingMachine}
                         onPress={handleRevokeMachine}
                     />

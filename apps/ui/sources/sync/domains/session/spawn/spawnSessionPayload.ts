@@ -1,13 +1,13 @@
 import type { TerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import type { CodexBackendMode } from '@happier-dev/agents';
+import type {
+    AgentSessionStartupInstructionsV1,
+    CodexBackendMode,
+} from '@happier-dev/protocol';
 import {
-    isVersionSupported,
-    MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION,
-} from '@/utils/system/versionUtils';
-import {
-    convertBackendTargetRefV2ToV1,
+    buildBackendTargetKeyV2,
     readBackendTargetRefV2,
+    SessionModelSelectionV1Schema,
     type BackendTargetRefV2Input,
     type BackendTargetRefV2,
 } from '@happier-dev/protocol';
@@ -15,10 +15,13 @@ import type {
     AcpConfigOptionOverridesV1,
     RuntimeDescriptorV1,
     SessionMcpSelectionV1,
+    SessionModelSelectionV1,
     WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
-
-import { buildCodexBackendTransportFields, type CodexBackendTransportFields } from '../codexBackendTransport';
+import {
+    buildBackendTransportFieldsFromUiState,
+    type AgentBackendTransportFields,
+} from '@/agents/registry/registryUiBehavior';
 
 // Options for spawning a session
 export interface SpawnSessionOptions {
@@ -29,17 +32,14 @@ export interface SpawnSessionOptions {
     approvedNewDirectoryCreation?: boolean;
     backendTarget: BackendTargetRefV2Input;
     spawnNonce?: string;
+    /** Opaque UI-local identity for one explicit user launch attempt. */
+    userAttemptId?: string;
     // Session-scoped profile identity (non-secret). Empty string means "no profile".
     profileId?: string;
-    // Environment variables from AI backend profile
-    // Accepts any environment variables - daemon will pass them to the agent process
-    // Common variables include:
-    // - ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL, ANTHROPIC_SMALL_FAST_MODEL
-    // - OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL, OPENAI_API_TIMEOUT_MS
-    // - AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_VERSION, AZURE_OPENAI_DEPLOYMENT_NAME
-    // - TOGETHER_API_KEY, TOGETHER_MODEL
-    // - API_TIMEOUT_MS, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
-    // - Custom variables (DEEPSEEK_*, Z_AI_*, etc.)
+    // Launch-profile extras and narrow legacy compatibility environment.
+    // Provider endpoint/auth/model routing is resolved from modelSelection and its
+    // exact provider connection; reserved routing keys are rejected at the daemon
+    // spawn-composition boundary rather than accepted from this UI payload.
     environmentVariables?: Record<string, string>;
     resume?: string;
     permissionMode?: PermissionMode;
@@ -50,8 +50,7 @@ export interface SpawnSessionOptions {
      * Optional: seed a session-wide model override at spawn time.
      * This is persisted to session metadata so the model choice follows the session across devices.
      */
-    modelId?: string;
-    modelUpdatedAt?: number;
+    modelSelection?: SessionModelSelectionV1;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     /**
      * Experimental: route Codex through ACP (codex-acp).
@@ -83,7 +82,7 @@ export interface SpawnSessionOptions {
     accountSettingsVersionHint?: number;
 }
 
-export type SpawnHappySessionRpcParams = CodexBackendTransportFields & {
+export type SpawnHappySessionRpcParams = AgentBackendTransportFields & {
     type: 'spawn-in-directory'
     directory: string
     transcriptStorage?: 'persisted' | 'direct'
@@ -93,13 +92,13 @@ export type SpawnHappySessionRpcParams = CodexBackendTransportFields & {
     profileId?: string
     environmentVariables?: Record<string, string>
     resume?: string
+    agentSessionStartupInstructionsV1?: AgentSessionStartupInstructionsV1
     runtimeDescriptorV1?: RuntimeDescriptorV1
     permissionMode?: PermissionMode
     permissionModeUpdatedAt?: number
     agentModeId?: string
     agentModeUpdatedAt?: number
-    modelId?: string
-    modelUpdatedAt?: number
+    modelSelection?: SessionModelSelectionV1
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1
     terminal?: TerminalSpawnOptions
     windowsRemoteSessionLaunchMode?: WindowsRemoteSessionLaunchMode
@@ -113,93 +112,10 @@ export type SpawnHappySessionRpcParams = CodexBackendTransportFields & {
     accountSettingsVersionHint?: number
 };
 
-export type LegacySpawnHappySessionRpcParams = {
-    type: 'spawn-in-directory'
-    directory: string
-    approvedNewDirectoryCreation?: boolean
-    agent?: string
-    profileId?: string
-    environmentVariables?: Record<string, string>
-    resume?: string
-    permissionMode?: PermissionMode
-    permissionModeUpdatedAt?: number
-    modelId?: string
-    modelUpdatedAt?: number
-    experimentalCodexAcp?: boolean
-    terminal?: TerminalSpawnOptions
-    windowsRemoteSessionConsole?: 'hidden' | 'visible'
-    connectedServices?: unknown
-};
-
-export type CompatibleSpawnHappySessionRpcParams =
-    | SpawnHappySessionRpcParams
-    | LegacySpawnHappySessionRpcParams;
-
-export function shouldUseLegacySpawnHappySessionRpcParams(daemonCliVersion?: string | null): boolean {
-    const normalizedVersion = typeof daemonCliVersion === 'string' ? daemonCliVersion.trim() : '';
-    return normalizedVersion.length > 0
-        && !isVersionSupported(normalizedVersion, MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION);
-}
-
-function resolveLegacyWindowsRemoteSessionConsole(params: Readonly<{
-    windowsRemoteSessionLaunchMode?: WindowsRemoteSessionLaunchMode;
-    windowsRemoteSessionConsole?: 'hidden' | 'visible';
-}>): 'hidden' | 'visible' | undefined {
-    if (params.windowsRemoteSessionConsole === 'hidden' || params.windowsRemoteSessionConsole === 'visible') {
-        return params.windowsRemoteSessionConsole;
-    }
-    if (params.windowsRemoteSessionLaunchMode === 'hidden') return 'hidden';
-    if (params.windowsRemoteSessionLaunchMode === 'console') return 'visible';
-    return undefined;
-}
-
-function buildLegacySpawnHappySessionRpcParams(options: SpawnSessionOptions): LegacySpawnHappySessionRpcParams {
-    const params = buildSpawnHappySessionRpcParams(options);
-    const legacyBackendTarget = convertBackendTargetRefV2ToV1(readBackendTargetRefV2(params.backendTarget));
-    const legacyAgent = legacyBackendTarget.kind === 'builtInAgent' ? legacyBackendTarget.agentId.trim() : '';
-    if (legacyAgent.length === 0) {
-        throw new Error('Legacy spawn payload is only available for built-in agents');
-    }
-
-    const legacyConsole = resolveLegacyWindowsRemoteSessionConsole({
-        windowsRemoteSessionLaunchMode: params.windowsRemoteSessionLaunchMode,
-        windowsRemoteSessionConsole: params.windowsRemoteSessionConsole,
-    });
-
-    return {
-        type: 'spawn-in-directory',
-        directory: params.directory,
-        approvedNewDirectoryCreation: params.approvedNewDirectoryCreation,
-        agent: legacyAgent,
-        profileId: params.profileId,
-        environmentVariables: params.environmentVariables,
-        resume: params.resume,
-        permissionMode: params.permissionMode,
-        permissionModeUpdatedAt: params.permissionModeUpdatedAt,
-        ...(typeof params.modelId === 'string' && typeof params.modelUpdatedAt === 'number'
-            ? {
-                modelId: params.modelId,
-                modelUpdatedAt: params.modelUpdatedAt,
-            }
-            : {}),
-        ...(params.codexBackendMode === 'acp' ? { experimentalCodexAcp: true } : {}),
-        ...(params.terminal ? { terminal: params.terminal } : {}),
-        ...(legacyConsole ? { windowsRemoteSessionConsole: legacyConsole } : {}),
-        ...(params.connectedServices !== undefined ? { connectedServices: params.connectedServices } : {}),
-    };
-}
-
-export function buildCompatibleSpawnHappySessionRpcParams(params: Readonly<{
-    options: SpawnSessionOptions;
-    daemonCliVersion?: string | null;
-}>): CompatibleSpawnHappySessionRpcParams {
-    if (!shouldUseLegacySpawnHappySessionRpcParams(params.daemonCliVersion)) {
-        return buildSpawnHappySessionRpcParams(params.options);
-    }
-    return buildLegacySpawnHappySessionRpcParams(params.options);
-}
-
-export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): SpawnHappySessionRpcParams {
+function buildSpawnHappySessionRpcParamsInternal(
+    options: SpawnSessionOptions,
+    trustedHiddenSystemSessionStartupInstructions?: AgentSessionStartupInstructionsV1,
+): SpawnHappySessionRpcParams {
     const {
         directory,
         transcriptStorage,
@@ -213,8 +129,7 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         permissionModeUpdatedAt,
         agentModeId,
         agentModeUpdatedAt,
-        modelId,
-        modelUpdatedAt,
+        modelSelection,
         sessionConfigOptionOverrides,
         experimentalCodexAcp,
         codexBackendMode,
@@ -228,20 +143,21 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         accountSettingsVersionHint,
     } = options;
 
-    const normalizedModelId = typeof modelId === 'string' ? modelId.trim() : '';
-    const includeModelOverride =
-        normalizedModelId.length > 0 &&
-        normalizedModelId !== 'default' &&
-        typeof modelUpdatedAt === 'number' &&
-        Number.isFinite(modelUpdatedAt);
+    const normalizedSpawnNonce = typeof spawnNonce === 'string' ? spawnNonce.trim() : '';
     const canonicalBackendTarget = readBackendTargetRefV2(backendTarget);
-    const codexTransportFields = buildCodexBackendTransportFields({
+    const canonicalModelSelection = modelSelection
+        ? SessionModelSelectionV1Schema.parse(modelSelection)
+        : null;
+    if (canonicalModelSelection
+        && canonicalModelSelection.ref.agentTargetKey !== buildBackendTargetKeyV2(canonicalBackendTarget)) {
+        throw new Error('Spawn model selection target mismatch');
+    }
+    const backendTransportFields = buildBackendTransportFieldsFromUiState({
         backendTarget: canonicalBackendTarget,
-        ...(typeof spawnNonce === 'string' && spawnNonce.trim().length > 0 ? { spawnNonce: spawnNonce.trim() } : {}),
-        codexBackendMode,
-        experimentalCodexAcp,
+        providerMode: codexBackendMode,
+        legacyExperimentalMode: experimentalCodexAcp,
         runtimeDescriptorV1,
-        resume,
+        providerSessionId: resume,
     });
 
     const params: SpawnHappySessionRpcParams = {
@@ -250,9 +166,13 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         transcriptStorage,
         approvedNewDirectoryCreation,
         backendTarget: canonicalBackendTarget,
+        ...(normalizedSpawnNonce ? { spawnNonce: normalizedSpawnNonce } : {}),
         profileId,
         environmentVariables,
         resume,
+        ...(trustedHiddenSystemSessionStartupInstructions
+            ? { agentSessionStartupInstructionsV1: trustedHiddenSystemSessionStartupInstructions }
+            : {}),
         permissionMode,
         permissionModeUpdatedAt,
         ...(typeof agentModeId === 'string' && agentModeId.trim().length > 0
@@ -263,13 +183,13 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
                     : {}),
             }
             : {}),
-        ...(includeModelOverride ? { modelId: normalizedModelId, modelUpdatedAt } : {}),
+        ...(canonicalModelSelection ? { modelSelection: canonicalModelSelection } : {}),
         ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
-        ...(codexTransportFields.codexBackendMode ? { codexBackendMode: codexTransportFields.codexBackendMode } : {}),
+        ...(backendTransportFields.codexBackendMode ? { codexBackendMode: backendTransportFields.codexBackendMode } : {}),
         ...(runtimeDescriptorV1
             ? { runtimeDescriptorV1 }
-            : codexTransportFields.runtimeDescriptorV1
-                ? { runtimeDescriptorV1: codexTransportFields.runtimeDescriptorV1 }
+            : backendTransportFields.runtimeDescriptorV1
+                ? { runtimeDescriptorV1: backendTransportFields.runtimeDescriptorV1 }
                 : {}),
         connectedServices,
         ...(mcpSelection ? { mcpSelection } : {}),
@@ -295,4 +215,19 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
     }
 
     return params;
+}
+
+export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): SpawnHappySessionRpcParams {
+    return buildSpawnHappySessionRpcParamsInternal(options);
+}
+
+/**
+ * Narrow wire builder for host-owned hidden system sessions. Ordinary session
+ * creation must use buildSpawnHappySessionRpcParams and cannot author startup text.
+ */
+export function buildTrustedHiddenSystemSessionSpawnHappySessionRpcParams(
+    options: SpawnSessionOptions,
+    startupInstructions: AgentSessionStartupInstructionsV1,
+): SpawnHappySessionRpcParams {
+    return buildSpawnHappySessionRpcParamsInternal(options, startupInstructions);
 }

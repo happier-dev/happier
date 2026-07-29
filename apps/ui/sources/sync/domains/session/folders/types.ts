@@ -6,7 +6,7 @@ import {
     type SessionFolderV1,
     type SessionFolderWorkspaceRefV1,
     type SessionFoldersV1,
-} from '@happier-dev/protocol/sessionFolders';
+} from '@happier-dev/protocol/sessions';
 
 export {
     SessionFolderV1Schema,

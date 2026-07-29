@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
+import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+
 import { findStructuredMessageRenderer } from './structuredMessageRegistry';
+
+const failClosedInteraction = deriveTranscriptInteraction({ kind: 'public' });
 
 describe('structured message registry (voice agent turn)', () => {
   it('registers voice_agent_turn.v1 but does not render a transcript card', () => {
@@ -13,6 +17,7 @@ describe('structured message registry (voice agent turn)', () => {
     const el = entry!.render(parsed.success ? parsed.data : (null as any), {
       sessionId: 's1',
       message: { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'x' } as any,
+      interaction: failClosedInteraction,
       onJumpToAnchor: () => {},
     });
     expect(el).toBeNull();
@@ -28,6 +33,7 @@ describe('structured message registry (voice agent turn)', () => {
     const el = entry!.render(parsed.success ? parsed.data : (null as any), {
       sessionId: 's1',
       message: { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'x' } as any,
+      interaction: failClosedInteraction,
       onJumpToAnchor: () => {},
     });
     expect(el).toBeNull();
@@ -53,6 +59,7 @@ describe('structured message registry (voice agent turn)', () => {
     const el = entry!.render(parsed.success ? parsed.data : (null as any), {
       sessionId: 's1',
       message: { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'x' } as any,
+      interaction: failClosedInteraction,
       onJumpToAnchor: () => {},
     });
     expect(el).toBeNull();

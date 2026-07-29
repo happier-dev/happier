@@ -1,7 +1,17 @@
-export type SessionMobileSurface = 'chat' | 'browse' | 'git' | 'tabs' | 'terminal';
+export type SessionPluginMobileSurface = `plugin:${string}:${string}`;
+export type SessionMobileSurface =
+    | 'chat'
+    | 'browse'
+    | 'git'
+    | 'navigation'
+    | 'tabs'
+    | 'browser'
+    | 'services'
+    | 'terminal'
+    | SessionPluginMobileSurface;
 export type SessionLegacyRouteKind = 'index' | 'files' | 'git' | 'details' | 'terminal';
 
-type SessionRightTabId = 'git' | 'files' | 'terminal';
+type SessionRightTabId = 'git' | 'files' | 'navigation' | 'terminal' | 'browser' | 'services' | SessionPluginMobileSurface;
 type SessionRoutePathQueryValue = string | number | boolean | null | undefined;
 
 type SessionRoutePathOptions = Readonly<{
@@ -9,12 +19,34 @@ type SessionRoutePathOptions = Readonly<{
     query?: Readonly<Record<string, SessionRoutePathQueryValue>>;
 }>;
 
-function normalizeSessionMobileSurface(value: string | null | undefined): SessionMobileSurface | null {
+/**
+ * The one place a persisted / routed / navigator-supplied surface string becomes a
+ * `SessionMobileSurface`. Everything that accepts a surface from outside the type system —
+ * persistence, deep links, the cockpit tab navigator's route names — goes through here, so a
+ * newly declared surface becomes reachable by extending this list once.
+ */
+export function normalizeSessionMobileSurface(value: string | null | undefined): SessionMobileSurface | null {
     const normalized = typeof value === 'string' ? value.trim() : '';
-    if (normalized === 'chat' || normalized === 'browse' || normalized === 'git' || normalized === 'tabs' || normalized === 'terminal') {
+    if (
+        normalized === 'chat'
+        || normalized === 'browse'
+        || normalized === 'git'
+        || normalized === 'navigation'
+        || normalized === 'tabs'
+        || normalized === 'browser'
+        || normalized === 'services'
+        || normalized === 'terminal'
+    ) {
+        return normalized;
+    }
+    if (isSessionPluginMobileSurface(normalized)) {
         return normalized;
     }
     return null;
+}
+
+export function isSessionPluginMobileSurface(value: string): value is SessionPluginMobileSurface {
+    return /^plugin:[^:]+:.+$/.test(value);
 }
 
 function normalizeRouteQueryValue(value: unknown): string | null {
@@ -45,6 +77,21 @@ export function resolveSessionRightTabIdForSurface(
     }
     if (surface === 'terminal' && terminalTabAvailable) {
         return 'terminal';
+    }
+    if (surface === 'browser') {
+        return 'browser';
+    }
+    if (surface === 'services') {
+        return 'services';
+    }
+    if (surface === 'navigation') {
+        return 'navigation';
+    }
+    if (surface === 'chat' || surface === 'tabs') {
+        return null;
+    }
+    if (isSessionPluginMobileSurface(surface)) {
+        return surface;
     }
     return null;
 }
@@ -86,6 +133,18 @@ export function resolveSessionMobileSurfaceIntent(input: Readonly<{
     if (input.activeRightTabId === 'terminal' && input.terminalTabAvailable === true) {
         return 'terminal';
     }
+    if (input.activeRightTabId === 'browser') {
+        return 'browser';
+    }
+    if (input.activeRightTabId === 'services') {
+        return 'services';
+    }
+    if (input.activeRightTabId === 'navigation') {
+        return 'navigation';
+    }
+    if (input.activeRightTabId && isSessionPluginMobileSurface(input.activeRightTabId)) {
+        return input.activeRightTabId;
+    }
     if (input.detailsTargetPresent === true) {
         return 'tabs';
     }
@@ -100,7 +159,13 @@ export function resolveSessionRoutePathForSurface(
 ): string {
     const encodedSessionId = encodeURIComponent(sessionId);
     const searchParams = new URLSearchParams();
-    if (surface === 'chat') {
+    if (
+        surface === 'chat'
+        || surface === 'navigation'
+        || surface === 'browser'
+        || surface === 'services'
+        || surface.startsWith('plugin:')
+    ) {
         searchParams.set('mobileSurface', surface);
     }
     const serverId = normalizeRouteQueryValue(options?.serverId);
@@ -171,4 +236,23 @@ export function resolveSessionCockpitRouteFromPathname(
             terminalTabAvailable,
         }),
     };
+}
+
+export function shouldRouteSessionCockpitSurfacePressThroughUrl(input: Readonly<{
+    pathname: string | null | undefined;
+    sessionId: string;
+    surface: SessionMobileSurface;
+    terminalTabAvailable?: boolean;
+    explicitRootSurfaceHint?: string | null;
+}>): boolean {
+    const currentRoute = resolveSessionCockpitRouteFromPathname(
+        input.pathname,
+        null,
+        input.terminalTabAvailable ?? true,
+        input.explicitRootSurfaceHint,
+    );
+    if (!currentRoute || currentRoute.sessionId !== input.sessionId) {
+        return true;
+    }
+    return currentRoute.surface !== input.surface;
 }

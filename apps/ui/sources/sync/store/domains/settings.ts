@@ -15,6 +15,7 @@ import {
     areAccountSettingsScopesEqual,
     type AccountSettingsScope,
 } from '../../domains/settings/scope/accountSettingsScope';
+import { areAccountSettingsJsonValuesEqual } from '../../domains/settings/accountSettingsStructuralEquality';
 import {
     loadAccountPurchases,
     prepareAccountProfileScopeForActivation,
@@ -189,6 +190,9 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
         applySettingsLocal: (delta) =>
             set((state) => {
                 const newSettings = applySettings(state.settings, delta);
+                if (areAccountSettingsJsonValuesEqual(newSettings, state.settings)) {
+                    return state;
+                }
                 if (state.settingsScope) {
                     saveAccountSettings(state.settingsScope, newSettings, state.settingsVersion ?? 0);
                 } else {
@@ -258,6 +262,9 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
             set((state) => {
                 const previousLocalSettings = state.localSettings;
                 const updatedLocalSettings = applyLocalSettings(state.localSettings, delta);
+                if (areAccountSettingsJsonValuesEqual(updatedLocalSettings, previousLocalSettings)) {
+                    return state;
+                }
                 saveLocalSettings(updatedLocalSettings);
                 emitLocalSettingChangedEvents({
                     previousSettings: previousLocalSettings,

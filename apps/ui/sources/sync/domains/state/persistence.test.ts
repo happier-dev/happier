@@ -253,7 +253,7 @@ describe('persistence', () => {
                 themePreference: 'adaptive',
                 themeProfiles: {
                     profiles: [],
-                    activeProfileId: null,
+                    activeProfileIds: { light: null, dark: null },
                 },
             });
             consoleError.mockRestore();
@@ -269,7 +269,7 @@ describe('persistence', () => {
                 themePreference: 'dark',
                 themeProfiles: {
                     profiles: [],
-                    activeProfileId: null,
+                    activeProfileIds: { light: null, dark: null },
                 },
             });
         });
@@ -452,11 +452,29 @@ describe('persistence', () => {
                 accountId: 'account-a',
                 instanceId: 'tab-a',
             };
+            const validCursor = 'happier_external_cursor_v1:dGFpbC1i';
 
-            saveExternalSessionTailCursor('session-1', 'tail-b', accountBScope);
+            saveExternalSessionTailCursor('session-1', validCursor, accountBScope);
 
-            expect(loadExternalSessionTailCursor('session-1', accountBScope)).toBe('tail-b');
+            expect(loadExternalSessionTailCursor('session-1', accountBScope)).toBe(validCursor);
             expect(loadExternalSessionTailCursor('session-1', accountAScope)).toBeNull();
+        });
+
+        it('deletes malformed and oversized persisted direct-session tail cursors', () => {
+            const scope = {
+                serverScope: 'server-a',
+                accountId: 'account-a',
+                instanceId: 'tab-a',
+            };
+            const key = 'direct-session-tail-cursor-v1:server-a:account-a:session-1:tab-a';
+
+            store.set(key, 'source-native-cursor');
+            expect(loadExternalSessionTailCursor('session-1', scope)).toBeNull();
+            expect(store.has(key)).toBe(false);
+
+            store.set(key, `happier_external_cursor_v1:${'a'.repeat(4_096)}`);
+            expect(loadExternalSessionTailCursor('session-1', scope)).toBeNull();
+            expect(store.has(key)).toBe(false);
         });
 
         it('uses legacy server-scoped cursor only as an instance bootstrap fallback', () => {
@@ -508,8 +526,8 @@ describe('persistence', () => {
         it('does not synthesize local-neural execution defaults inside pending voice deltas', () => {
             store.set('pending-settings', JSON.stringify({
                 voice: {
-                    adapters: {
-                        local_direct: {
+                    providers: {
+                        local_direct: { schemaVersion: 1, config: {
                             tts: {
                                 provider: 'local_neural',
                                 localNeural: {
@@ -523,14 +541,16 @@ describe('persistence', () => {
                                     assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
                                 },
                             },
-                        },
+                        } },
                     },
                 },
             }));
 
             const pending = loadPendingSettings() as any;
-            expect(pending.voice?.adapters?.local_direct?.tts?.localNeural?.execution).toBeUndefined();
-            expect(pending.voice?.adapters?.local_direct?.stt?.localNeural?.execution).toBeUndefined();
+            const config = pending.voice?.providers?.local_direct?.config;
+            expect(config?.tts?.localNeural?.execution).toBeUndefined();
+            expect(config?.stt?.localNeural?.execution).toBeUndefined();
+            expect(JSON.stringify(pending.voice)).not.toContain('"adapters"');
         });
 
         it('returns empty object when pending-settings JSON is invalid', () => {
@@ -570,24 +590,26 @@ describe('persistence', () => {
                     providerId: 'realtime_elevenlabs',
                     // Invalid nested type that would fail strict VoiceSettingsSchema parsing.
                     privacy: { recentMessagesCount: 'nope' },
-                    adapters: {
-                        realtime_elevenlabs: {
+                    providers: {
+                        realtime_elevenlabs: { schemaVersion: 2, config: {
                             billingMode: 'byo',
                             byo: {
                                 agentId: 'agent_1',
                                 apiKey: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'abc' } },
                             },
-                        },
+                        } },
                     },
                 },
             }));
 
             const pending = loadPendingSettings() as any;
             expect(Object.keys(pending).sort()).toEqual(['voice']);
-            expect(pending.voice?.adapters?.realtime_elevenlabs?.byo?.agentId).toBe('agent_1');
-            expect(pending.voice?.adapters?.realtime_elevenlabs?.byo?.apiKey).toEqual(
+            const realtimeConfig = pending.voice?.providers?.realtime_elevenlabs?.config;
+            expect(realtimeConfig?.byo?.agentId).toBe('agent_1');
+            expect(realtimeConfig?.byo?.apiKey).toEqual(
                 { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'abc' } },
             );
+            expect(JSON.stringify(pending.voice)).not.toContain('"adapters"');
         });
 
         it('keeps valid secrets delta and does not inject other defaults', () => {
@@ -775,6 +797,168 @@ describe('persistence', () => {
     });
 
     describe('new session draft', () => {
+        it('normalizes legacy modelMode to a target-bound selection and writes canonical-only drafts', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    selectedSecretId: null,
+                    agentType: 'codex',
+                    permissionMode: 'default',
+                    modelMode: 'gpt-5.5',
+                    updatedAt: 42,
+                }),
+            );
+
+            const migrated = loadNewSessionDraft();
+            expect(migrated?.modelSelection).toEqual({
+                v: 1,
+                updatedAt: 42,
+                ref: {
+                    agentTargetKey: 'backend:codex',
+                    providerConnectionId: null,
+                    modelId: 'gpt-5.5',
+                },
+            });
+            expect(migrated).not.toHaveProperty('modelMode');
+
+            saveNewSessionDraft(migrated!);
+            const stored = JSON.parse(store.get('new-session-draft-v1')!);
+            expect(stored.modelSelection).toEqual(migrated?.modelSelection);
+            expect(stored).not.toHaveProperty('modelMode');
+        });
+
+        it('migrates an Oh My Pi draft to structured durable identity without a flat alias', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: 'continue',
+                    selectedMachineId: 'machine-1',
+                    selectedPath: '/repo',
+                    selectedProfileId: null,
+                    selectedSecretId: null,
+                    agentType: 'ohMyPi',
+                    backendTarget: {
+                        kind: 'builtInAgent',
+                        agentId: 'ohMyPi',
+                    },
+                    permissionMode: 'default',
+                    modelSelection: {
+                        v: 1,
+                        updatedAt: 42,
+                        ref: {
+                            agentTargetKey: 'backend:ohMyPi',
+                            providerConnectionId: null,
+                            modelId: 'anthropic/claude-sonnet-4-6',
+                        },
+                    },
+                    acpSessionModeId: null,
+                    updatedAt: 42,
+                }),
+            );
+
+            const migrated = loadNewSessionDraft();
+            expect(migrated).toMatchObject({
+                agentType: 'ohMyPi',
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'ohMyPi',
+                },
+                modelSelection: {
+                    ref: {
+                        agentTargetKey: 'agent:happier.agent.ohmypi/ohmypi',
+                    },
+                },
+            });
+
+            saveNewSessionDraft(migrated!);
+            const stored = JSON.parse(store.get('new-session-draft-v1')!);
+            expect(stored).not.toHaveProperty('agentType');
+            expect(stored.backendTarget).toEqual({
+                kind: 'agent',
+                identity: {
+                    pluginId: 'happier.agent.ohmypi',
+                    localId: 'ohmypi',
+                },
+            });
+            expect(stored.modelSelection.ref.agentTargetKey).toBe(
+                'agent:happier.agent.ohmypi/ohmypi',
+            );
+            expect(JSON.stringify(stored)).not.toContain('ohMyPi');
+        });
+
+        it('normalizes the legacy default sentinel to automatic selection', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    agentType: 'codex',
+                    permissionMode: 'default',
+                    modelMode: 'default',
+                    updatedAt: 42,
+                }),
+            );
+
+            expect(loadNewSessionDraft()?.modelSelection).toBeNull();
+        });
+
+        it('refuses a canonical selection whose agent target does not match the draft target', () => {
+            const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: 'keep this draft fail-closed',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    agentType: 'codex',
+                    permissionMode: 'default',
+                    modelSelection: {
+                        v: 1,
+                        updatedAt: 42,
+                        ref: {
+                            agentTargetKey: 'backend:claude',
+                            providerConnectionId: 'pc_01J00000000000000000000000',
+                            modelId: 'claude-sonnet-4-6',
+                        },
+                    },
+                    updatedAt: 42,
+                }),
+            );
+
+            expect(loadNewSessionDraft()).toBeNull();
+            expect(consoleError).toHaveBeenCalled();
+            consoleError.mockRestore();
+        });
+
+        it('does not fall back to legacy modelMode when canonical selection is present but malformed', () => {
+            const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: 'keep this draft fail-closed',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    agentType: 'codex',
+                    permissionMode: 'default',
+                    modelSelection: { v: 1, ref: { modelId: 'provider-model' } },
+                    modelMode: 'gpt-5.5',
+                    updatedAt: 42,
+                }),
+            );
+
+            expect(loadNewSessionDraft()).toBeNull();
+            expect(consoleError).toHaveBeenCalled();
+            consoleError.mockRestore();
+        });
+
         it('roundtrips acpSessionModeId when persisted', () => {
             store.set(
                 'new-session-draft-v1',
@@ -873,7 +1057,11 @@ describe('persistence', () => {
             );
 
             const draft = loadNewSessionDraft();
-            expect(draft?.modelMode).toBe('adaptiveUsage');
+            expect(draft?.modelSelection?.ref).toEqual({
+                agentTargetKey: 'backend:claude',
+                providerConnectionId: null,
+                modelId: 'adaptiveUsage',
+            });
         });
 
         it('preserves freeform model ids in the new session draft', () => {
@@ -893,7 +1081,11 @@ describe('persistence', () => {
             );
 
             const draft = loadNewSessionDraft();
-            expect(draft?.modelMode).toBe('claude-3-5-sonnet-latest');
+            expect(draft?.modelSelection?.ref).toEqual({
+                agentTargetKey: 'backend:claude',
+                providerConnectionId: null,
+                modelId: 'claude-3-5-sonnet-latest',
+            });
         });
 
         it('roundtrips resumeSessionId when persisted', () => {
@@ -1120,6 +1312,47 @@ describe('persistence', () => {
             expect((draft as any)?.backendNewSessionOptionStateByTargetKey?.[auggieTargetKey]?.allowIndexing).toBe(true);
         });
 
+        it('preserves nested connected-service binding option state when hydrating legacy agent-keyed drafts', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    agentType: 'claude',
+                    permissionMode: 'default',
+                    modelMode: 'default',
+                    sessionType: 'simple',
+                    agentNewSessionOptionStateByAgentId: {
+                        claude: {
+                            connectedServicesBindingsByServiceId: {
+                                anthropic: { source: 'native' },
+                                linear: {
+                                    source: 'connected',
+                                    selection: 'profile',
+                                    profileId: 'profile-linear',
+                                },
+                            },
+                        },
+                    },
+                    updatedAt: Date.now(),
+                }),
+            );
+
+            const claudeTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' });
+            expect((loadNewSessionDraft() as any)?.backendNewSessionOptionStateByTargetKey?.[claudeTargetKey]).toEqual({
+                connectedServicesBindingsByServiceId: {
+                    anthropic: { source: 'native' },
+                    linear: {
+                        source: 'connected',
+                        selection: 'profile',
+                        profileId: 'profile-linear',
+                    },
+                },
+            });
+        });
+
         it('clamps invalid permissionMode to default', () => {
             store.set(
                 'new-session-draft-v1',
@@ -1157,7 +1390,7 @@ describe('persistence', () => {
             );
 
             const draft = loadNewSessionDraft();
-            expect(draft?.modelMode).toBe('default');
+            expect(draft?.modelSelection).toBeNull();
         });
 
         it('roundtrips automation draft when automation is enabled', () => {

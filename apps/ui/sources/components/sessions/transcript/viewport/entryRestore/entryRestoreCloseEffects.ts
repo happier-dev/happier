@@ -11,7 +11,7 @@ export type EntryRestoreCloseWriteContext = Readonly<{
     distanceFromBottom?: number;
     issuedContentHeight?: number;
     issuedLayoutHeight?: number;
-    kind?: 'anchor' | 'distance' | 'bottom' | 'slice-anchor';
+    kind?: 'anchor' | 'distance' | 'bottom';
 }>;
 
 export type EntryRestoreCloseEffect =
@@ -39,9 +39,6 @@ export type EntryRestoreCloseEffect =
     }>
     | Readonly<{
         type: 'release-native-entry-paint';
-    }>
-    | Readonly<{
-        type: 'reveal-entry-slice-window';
     }>;
 
 export function resolveEntryRestoreCloseEffects(params: Readonly<{
@@ -71,9 +68,6 @@ export function resolveEntryRestoreCloseEffects(params: Readonly<{
             ? { type: 'native-initial-viewport-applied' }
             : { type: 'release-native-entry-paint' },
     );
-    if (params.writeContext?.kind === 'slice-anchor') {
-        effects.push({ type: 'reveal-entry-slice-window' });
-    }
     return effects;
 }
 
@@ -128,7 +122,7 @@ function resolveRestoreDecisionFields(
 function resolveRestoreDecisionMode(
     writeContext: EntryRestoreCloseWriteContext | null,
 ): TranscriptViewportMode {
-    if (writeContext?.kind === 'anchor' || writeContext?.kind === 'slice-anchor') return 'restore-anchor';
+    if (writeContext?.kind === 'anchor') return 'restore-anchor';
     if (writeContext?.kind === 'bottom') return 'follow-bottom';
     return 'restore-distance';
 }

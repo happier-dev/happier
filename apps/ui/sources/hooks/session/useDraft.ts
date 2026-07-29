@@ -12,6 +12,7 @@ import {
 } from '@/sync/domains/sessionInitialPrompt/sessionInitialPromptV1';
 import { containsLikelyNonWhitespace, isLargeTextInputValueLength } from '@/components/ui/forms/largeTextInputPolicy';
 import { useWebLifecycleFlush } from './useWebLifecycleFlush';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 interface UseDraftOptions {
     autoSaveInterval?: number; // in milliseconds, default 2000
@@ -43,9 +44,10 @@ export function useDraft(
     const resolvedSessionId = normalizeSessionId(sessionId);
     const session = resolvedSessionId ? storage.getState().sessions[resolvedSessionId] : null;
     const storedDraft = typeof session?.draft === 'string' ? session.draft : null;
-    const forkInitialPrompt = readForkInitialPromptV1(session?.metadata);
+    const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
+    const forkInitialPrompt = readForkInitialPromptV1(ownerMetadata);
     const forkInitialPromptText = forkInitialPrompt?.text ?? null;
-    const sessionInitialPrompt = readSessionInitialPromptV1(session?.metadata);
+    const sessionInitialPrompt = readSessionInitialPromptV1(ownerMetadata);
     const consumedSessionInitialPromptKeyRef = useRef<string | null>(null);
     const sessionInitialPromptKey = useMemo(() => {
         if (!resolvedSessionId || !sessionInitialPrompt) return null;

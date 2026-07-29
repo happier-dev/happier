@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { clearSessionSurfaceVisibilityForServerScopeReset } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
@@ -29,6 +30,9 @@ const sessionSubagentsHookSpy = vi.hoisted(() => vi.fn());
 const sessionExecutionRunsSupportedHookSpy = vi.hoisted(() => vi.fn());
 const selectSyncErrorForServerSpy = vi.hoisted(() => vi.fn((_syncError: unknown, _serverId: string | null) => null));
 const approvalArtifactsSpy = vi.hoisted(() => vi.fn());
+const sendMessageSpy = vi.hoisted(() => vi.fn(async () => ({ localId: 'local-message-1' })));
+const enqueuePendingMessageSpy = vi.hoisted(() => vi.fn(async () => ({ localId: 'pending-message-1' })));
+const pendingOutboundSendPromises = vi.hoisted(() => [] as Promise<unknown>[]);
 const routerPathnameState = vi.hoisted(() => ({ current: '/' }));
 const themeColors = vi.hoisted(() => ({
     text: '#000',
@@ -71,7 +75,7 @@ const storageListeners = new Set<() => void>();
 
 function getStorageStateForTest() {
     return {
-        sessions: sessionState ? { s1: sessionState } : {},
+        sessions: sessionState ? { [sessionState.id]: sessionState } : {},
         machines: {},
         sessionMessages: {},
         sessionPending: {},
@@ -115,7 +119,6 @@ function emitStorageChangeForTest(): void {
     }
 }
 
-vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
     LinearGradient: 'LinearGradient',
 }));
@@ -357,12 +360,27 @@ vi.mock('@/sync/sync', () => ({
         refreshSessions: async () => {},
         onSessionVisible: onSessionVisibleSpy,
         markSessionLiveTailIntent: markSessionLiveTailIntentSpy,
-        sendMessage: async () => {},
-        enqueuePendingMessage: async () => {},
+        getAcceptedExternalSessionTailCursor: () => null,
+        subscribeAcceptedExternalSessionTailCursor: () => () => {},
+        sendMessage: sendMessageSpy,
+        enqueuePendingMessage: enqueuePendingMessageSpy,
         submitMessage: async () => {},
         encryption: {
             getMachineEncryption: () => null,
         },
+    },
+}));
+vi.mock('@/utils/system/fireAndForget', () => ({
+    fireAndForget: (promise: Promise<unknown>, options?: Readonly<{ tag?: string }>) => {
+        if (options?.tag?.startsWith('SessionView.sendMessage.')) {
+            pendingOutboundSendPromises.push(promise);
+        }
+    },
+}));
+vi.mock('@/utils/timing/runAfterInteractionsWithFallback', () => ({
+    runAfterInteractionsWithFallback: (callback: () => void) => {
+        callback();
+        return () => {};
     },
 }));
 vi.mock('@/sync/ops', async (importOriginal) => {
@@ -390,6 +408,7 @@ vi.mock('@/components/sessions/agentInput', () => ({
 vi.mock('@/utils/system/versionUtils', () => ({
     isVersionSupported: () => true,
     MINIMUM_CLI_VERSION: '0.0.0',
+    MINIMUM_CLI_PENDING_QUEUE_V2_VERSION: '0.0.0',
 }));
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex'],
@@ -400,7 +419,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
         cli: { spawnAgent: 'codex' },
         model: { defaultMode: 'default' },
         resume: { vendorResumeIdField: null },
-        uiConnectedService: { serviceId: null, label: 'Codex', connectRoute: null },
+        uiConnectedService: { serviceId: null, labelKey: 'agentInput.agent.codex', connectRoute: null },
     }),
     getAgentResumeExperimentsFromSettings: () => null,
     getNewSessionRelevantInstallableDepKeys: () => [],
@@ -506,6 +525,8 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
             active: true,
             agentStateVersion: 1,
             accessLevel: 'edit',
+            pendingVersion: 1,
+            pendingCount: 0,
             metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/tmp' },
             agentState: {},
         };
@@ -533,6 +554,9 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         sessionExecutionRunsSupportedHookSpy.mockClear();
         selectSyncErrorForServerSpy.mockClear();
         approvalArtifactsSpy.mockClear();
+        sendMessageSpy.mockClear();
+        enqueuePendingMessageSpy.mockClear();
+        pendingOutboundSendPromises.length = 0;
         sessionScreenFocusState.current = true;
         routerPathnameState.current = '/';
     });
@@ -563,6 +587,67 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
     it('renders ChatList immediately for an already-loaded seq-only transcript', async () => {
         const screen = await renderSessionView();
 
+        expect(screen.findAllByType('ChatList')).toHaveLength(1);
+
+        await screen.unmount();
+    });
+
+    it('reveals the exact hidden post-Voice session with its hydrated late-result transcript', async () => {
+        const hiddenSessionId = 'global-voice-late-result';
+        const resultMessageId = 'global-voice-late-result-message';
+        sessionState = {
+            ...sessionState,
+            id: hiddenSessionId,
+            serverId: 'server-a',
+            seq: 2,
+            lastViewedSessionSeq: 1,
+            active: false,
+            presence: 'offline',
+            metadata: {
+                ...sessionState.metadata,
+                systemSessionV1: {
+                    v: 1,
+                    key: 'voice_conversation_retired',
+                    hidden: true,
+                },
+            },
+        };
+        committedMessagesState = [{
+            id: resultMessageId,
+            kind: 'agent-text',
+            role: 'agent',
+            createdAt: 2_000,
+            seq: 2,
+            text: 'The delegated task completed after Voice ended.',
+            content: [{
+                type: 'text',
+                text: 'The delegated task completed after Voice ended.',
+            }],
+        }];
+        transcriptIdsState = [resultMessageId];
+
+        const screen = await renderSessionView({
+            id: hiddenSessionId,
+            routeServerId: 'server-a',
+        });
+
+        expect(onSessionVisibleSpy).toHaveBeenCalledTimes(1);
+        expect(onSessionVisibleSpy).toHaveBeenCalledWith(hiddenSessionId);
+        expect(shouldRenderChatTimelineForSessionMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                committedMessagesCount: 1,
+            }),
+        );
+        expect(chatListRenderSpy.mock.calls.at(-1)?.[0]?.session).toMatchObject({
+            id: hiddenSessionId,
+            serverId: 'server-a',
+            metadata: {
+                systemSessionV1: {
+                    key: 'voice_conversation_retired',
+                    hidden: true,
+                },
+            },
+        });
         expect(screen.findAllByType('ChatList')).toHaveLength(1);
 
         await screen.unmount();
@@ -677,6 +762,34 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         await screen.update(<SessionView id="s1" />);
 
         expect(onSessionVisibleSpy).toHaveBeenCalledTimes(1);
+
+        await screen.unmount();
+    });
+
+    it('synchronously re-runs transcript activation after a server-scope reset while warm route switches remain the control', async () => {
+        const screen = await renderSessionView();
+        const { SessionView } = await import('./SessionView');
+
+        expect(onSessionVisibleSpy).toHaveBeenLastCalledWith('s1');
+        expect(onSessionVisibleSpy).toHaveBeenCalledTimes(1);
+
+        sessionState = { ...sessionState, id: 's2' };
+        await screen.update(<SessionView id="s2" />);
+        expect(onSessionVisibleSpy).toHaveBeenLastCalledWith('s2');
+
+        sessionState = { ...sessionState, id: 's1' };
+        await screen.update(<SessionView id="s1" />);
+        expect(onSessionVisibleSpy).toHaveBeenLastCalledWith('s1');
+        expect(onSessionVisibleSpy).toHaveBeenCalledTimes(3);
+
+        await act(async () => {
+            clearSessionSurfaceVisibilityForServerScopeReset();
+        });
+
+        // No timer or later socket/update turn: activation must be reacquired in the
+        // reset commit so onSessionVisible can restore viewport intent before paint.
+        expect(onSessionVisibleSpy).toHaveBeenLastCalledWith('s1');
+        expect(onSessionVisibleSpy).toHaveBeenCalledTimes(4);
 
         await screen.unmount();
     });
@@ -1002,40 +1115,29 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
     });
 
     it('keeps the transcript host stable for pending-version-only updates while still refreshing pending messages', async () => {
-        vi.useFakeTimers();
-        try {
-            const screen = await renderSessionView();
+        const screen = await renderSessionView();
 
-            await flushHookEffects({ cycles: 2, turns: 1 });
-            await act(async () => {
-                await vi.runOnlyPendingTimersAsync();
-            });
-            chatListRenderSpy.mockClear();
-            shouldRenderChatTimelineForSessionMock.mockClear();
-            fetchPendingMessagesSpy.mockClear();
+        await flushHookEffects({ cycles: 2, turns: 1 });
+        chatListRenderSpy.mockClear();
+        shouldRenderChatTimelineForSessionMock.mockClear();
+        fetchPendingMessagesSpy.mockClear();
 
-            await act(async () => {
-                sessionState = {
-                    ...sessionState,
-                    pendingVersion: 2,
-                    pendingCount: 1,
-                };
-                emitStorageChangeForTest();
-                await Promise.resolve();
-            });
-            await flushHookEffects({ cycles: 5, turns: 5 });
-            await act(async () => {
-                await vi.runOnlyPendingTimersAsync();
-            });
+        await act(async () => {
+            sessionState = {
+                ...sessionState,
+                pendingVersion: 2,
+                pendingCount: 1,
+            };
+            emitStorageChangeForTest();
+            await Promise.resolve();
+        });
+        await flushHookEffects({ cycles: 5, turns: 5 });
 
-            expect(chatListRenderSpy).not.toHaveBeenCalled();
-            expect(shouldRenderChatTimelineForSessionMock).not.toHaveBeenCalled();
-            expect(fetchPendingMessagesSpy).toHaveBeenCalledWith('s1');
+        expect(chatListRenderSpy).not.toHaveBeenCalled();
+        expect(shouldRenderChatTimelineForSessionMock).not.toHaveBeenCalled();
+        expect(fetchPendingMessagesSpy).toHaveBeenCalledWith('s1');
 
-            await screen.unmount();
-        } finally {
-            vi.useRealTimers();
-        }
+        await screen.unmount();
     });
 
     it('keeps the transcript host stable for metadata freshness-only updates', async () => {
@@ -1046,14 +1148,14 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
                 summary: { text: 'Summary', updatedAt: 100 },
                 sessionModesV1: {
                     v: 1,
-                    provider: 'codex',
+                    agentId: 'codex',
                     updatedAt: 100,
                     currentModeId: 'default',
                     availableModes: [{ id: 'default', name: 'Default' }],
                 },
                 sessionModelsV1: {
                     v: 1,
-                    provider: 'codex',
+                    agentId: 'codex',
                     updatedAt: 100,
                     currentModelId: 'model-a',
                     availableModels: [{ id: 'model-a', name: 'Model A' }],
@@ -1125,31 +1227,34 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         await screen.unmount();
     });
 
-    it('re-arms transcript bottom follow when the user sends a message', async () => {
+    it('requests mounted transcript follow without duplicating the sync live-tail owner after send', async () => {
         const screen = await renderSessionView();
+        const outboundText = 'hello from the composer';
 
         const initialFollowBottomIntentKey = chatListRenderSpy.mock.calls.at(-1)?.[0]?.followBottomIntentKey;
-        let agentInput = screen.tree.root.findByType('AgentInput' as any);
-        expect(typeof agentInput.props?.onChangeText).toBe('function');
+        const initialAgentInputProps = agentInputRenderSpy.mock.calls.at(-1)?.[0];
+        expect(typeof initialAgentInputProps?.onChangeText).toBe('function');
 
         await act(async () => {
-            agentInput.props.onChangeText('hello from the composer');
+            initialAgentInputProps.onChangeText(outboundText);
         });
         await flushHookEffects({ cycles: 2, turns: 1 });
 
-        agentInput = screen.tree.root.findByType('AgentInput' as any);
-        expect(agentInput.props.value).toBe('hello from the composer');
-        expect(typeof agentInput.props?.onSend).toBe('function');
+        const sendAgentInputProps = agentInputRenderSpy.mock.calls.at(-1)?.[0];
+        expect(typeof sendAgentInputProps?.onSend).toBe('function');
 
         await act(async () => {
-            agentInput.props.onSend();
-            await Promise.resolve();
-            await Promise.resolve();
+            // This test replaces AgentInput with a host spy, so provide the same live-input
+            // override that the real composer supplies when its local text is fresher than props.
+            sendAgentInputProps.onSend({ inputTextOverride: outboundText });
+            await Promise.all(pendingOutboundSendPromises.splice(0));
         });
-        await flushHookEffects({ cycles: 5, turns: 5 });
+        await flushHookEffects({ cycles: 2, turns: 2 });
 
-        expect(markSessionLiveTailIntentSpy).toHaveBeenCalledWith('s1');
         const nextFollowBottomIntentKey = chatListRenderSpy.mock.calls.at(-1)?.[0]?.followBottomIntentKey;
+        expect(enqueuePendingMessageSpy).toHaveBeenCalledOnce();
+        expect(sendMessageSpy).not.toHaveBeenCalled();
+        expect(markSessionLiveTailIntentSpy).not.toHaveBeenCalled();
         expect(nextFollowBottomIntentKey).not.toBe(initialFollowBottomIntentKey);
 
         await screen.unmount();

@@ -44,6 +44,7 @@ export function buildActivityBadgeStateFromOverview(params: Readonly<{
         (params.sessionOptions?.showUnread !== false && candidate.reasons.hasUnread)
         || (params.sessionOptions?.showPendingPermissionRequests !== false && candidate.reasons.hasPendingPermissionRequests)
         || (params.sessionOptions?.showPendingUserActionRequests !== false && candidate.reasons.hasPendingUserActionRequests)
+        || (params.sessionOptions?.showPendingUserActionRequests !== false && candidate.reasons.hasBlockedPendingDelivery)
     )).length;
     const count = Math.max(0, selectedSessionCount + Math.max(0, Math.trunc(params.numericInboxCount)));
     return {

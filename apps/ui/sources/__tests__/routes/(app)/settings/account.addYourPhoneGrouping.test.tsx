@@ -9,12 +9,12 @@ import {
     resetSessionSettingsEntryState,
     sessionSettingsEntryState,
 } from './sessionSettingsEntryTestHelpers';
+import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let windowDimensions: { width: number; height: number } = { width: 1200, height: 800 };
 
-vi.mock('react-native-reanimated', () => ({}));
 
 installSessionSettingsEntryModuleMocks({
     reactNative: async () => {
@@ -38,7 +38,7 @@ installSessionSettingsEntryModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettingMutable: () => [false, vi.fn()],
+                useSettingMutable: createUseSettingMutableMockFromReader(() => [false, vi.fn()]),
                 useProfile: () => ({
                     id: 'p',
                     timestamp: 0,
@@ -49,6 +49,9 @@ installSessionSettingsEntryModuleMocks({
                     linkedProviders: [],
                     connectedServices: [],
                     connectedServicesV2: [],
+                    connectedServiceCredentialRevisionsV1: [],
+                    connectedAccountsV4: [],
+                    connectedAccountGroupsV4: [],
                 }),
             },
         });

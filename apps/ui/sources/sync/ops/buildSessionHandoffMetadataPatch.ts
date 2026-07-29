@@ -1,5 +1,11 @@
 import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
-import { type ExternalSessionsSource, type RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import {
+    buildLinkedExternalSessionMetadataV1,
+    readLinkedExternalSessionV1FromMetadata,
+    removeLinkedExternalSessionMetadataV1,
+    type ExternalSessionsSource,
+    type RuntimeDescriptorV1,
+} from '@happier-dev/protocol';
 
 import { getAgentBehavior, writeAgentVendorResumeIdToMetadata, type AgentId } from '@/agents/catalog/catalog';
 
@@ -22,7 +28,7 @@ function normalizeWorkspaceRootPath(raw: unknown): string | null {
 export function buildSessionHandoffMetadataPatch(input: Readonly<{
     metadata: MetadataRecord;
     sourceMetadataForHandoff?: MetadataRecord;
-    providerId: AgentId;
+    agentId: AgentId;
     sourceMachineId: string;
     targetMachineId: string;
     sessionStorageBefore: SessionHandoffStorageMode;
@@ -43,11 +49,11 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
         ...input.metadata,
         machineId: input.targetMachineId,
         path: input.targetPath,
-        flavor: input.providerId,
-    }, input.providerId, input.targetRemoteSessionId);
+        flavor: input.agentId,
+    }, input.agentId, input.targetRemoteSessionId);
 
-    const providerPatch = getAgentBehavior(input.providerId).sessionHandoff?.buildProviderPatch?.({
-        agentId: input.providerId,
+    const providerPatch = getAgentBehavior(input.agentId).sessionHandoff?.buildProviderPatch?.({
+        agentId: input.agentId,
         metadata: next,
         sourceMetadataForHandoff: input.sourceMetadataForHandoff,
         targetRemoteSessionId: input.targetRemoteSessionId,
@@ -73,9 +79,10 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
 
     if (input.sessionStorageAfter === 'direct') {
         delete next.externalHistoryImportV1;
-        next.externalSessionV1 = {
+        const externalSessionV1 = readLinkedExternalSessionV1FromMetadata({
+          externalSessionV1: {
             v: 1,
-            providerId: input.providerId,
+            agentId: input.agentId,
             machineId: input.targetMachineId,
             remoteSessionId: input.targetRemoteSessionId,
             source: input.targetDirectSource,
@@ -83,12 +90,17 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
             ...(providerPatch?.externalSessionRuntimeDescriptor
                 ? { runtimeDescriptorV1: providerPatch.externalSessionRuntimeDescriptor }
                 : {}),
-        };
+          },
+        });
+        if (!externalSessionV1) {
+            throw new Error(`Invalid external-session handoff link for Agent ${input.agentId}`);
+        }
+        next = buildLinkedExternalSessionMetadataV1(next, externalSessionV1) as MetadataRecord;
     } else {
-        delete next.externalSessionV1;
+        next = removeLinkedExternalSessionMetadataV1(next) as MetadataRecord;
         next.externalHistoryImportV1 = {
             v: 1,
-            providerId: input.providerId,
+            agentId: input.agentId,
             remoteSessionId: input.targetRemoteSessionId,
             importedAtMs: input.completedAtMs,
             source: input.targetDirectSource,
@@ -99,7 +111,7 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
         v: 1,
         sourceMachineId: input.sourceMachineId,
         targetMachineId: input.targetMachineId,
-        providerId: input.providerId,
+        agentId: input.agentId,
         sessionStorageBefore: input.sessionStorageBefore,
         sessionStorageAfter: input.sessionStorageAfter,
         transportStrategy: input.transportStrategy,

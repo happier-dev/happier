@@ -1,16 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DecryptedMessage, Session } from '@/sync/domains/state/storageTypes';
 import { handleNewMessageSocketUpdate } from './sessionSocketUpdate';
-import type { NormalizedMessage } from '@/sync/typesRaw';
+import { createRawMessageNormalizationSequenceState, type NormalizedMessage } from '@/sync/typesRaw';
 import { createSessionMessageApplyCoalescer } from './sessionMessageApplyCoalescer';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { flushRealtimeFanoutTelemetry, resetRealtimeFanoutTelemetry } from '@/sync/runtime/performance/realtimeFanoutTelemetry';
+
+type TestAttentionImpact = {
+    affectsUnread: boolean;
+    affectsMeaningfulActivity: boolean;
+};
+
+const userAttentionImpact = {
+    affectsUnread: true,
+    affectsMeaningfulActivity: true,
+} satisfies TestAttentionImpact;
 
 function buildUpdate(params: {
     sid?: string;
     messageId: string;
     messageSeq: number;
     content?: { t: 'encrypted'; c: string } | { t: 'plain'; v: unknown };
+    attentionImpact?: TestAttentionImpact;
+    sourceCreatedAt?: number;
+    sourceUpdatedAt?: number;
+    transcriptObservationProvenance?: {
+        kind: 'non_dependent';
+        source: 'background' | 'external' | 'sidechain' | 'history';
+    };
 }): {
     id: string;
     seq: number;
@@ -18,10 +35,14 @@ function buildUpdate(params: {
     body: {
         t: 'new-message';
         sid?: string;
-        message: {
-            id: string;
-            seq: number;
+            message: {
+                id: string;
+                seq: number;
                 content: { t: 'encrypted'; c: string } | { t: 'plain'; v: unknown };
+                attentionImpact?: TestAttentionImpact;
+                sourceCreatedAt?: number;
+                sourceUpdatedAt?: number;
+                transcriptObservationProvenance?: NonNullable<Parameters<typeof buildUpdate>[0]['transcriptObservationProvenance']>;
             localId: null;
             createdAt: number;
             updatedAt: number;
@@ -39,6 +60,12 @@ function buildUpdate(params: {
                 id: params.messageId,
                 seq: params.messageSeq,
                 content: params.content ?? { t: 'encrypted', c: 'x' },
+                ...(params.attentionImpact ? { attentionImpact: params.attentionImpact } : {}),
+                ...(params.sourceCreatedAt !== undefined ? { sourceCreatedAt: params.sourceCreatedAt } : {}),
+                ...(params.sourceUpdatedAt !== undefined ? { sourceUpdatedAt: params.sourceUpdatedAt } : {}),
+                ...(params.transcriptObservationProvenance !== undefined
+                    ? { transcriptObservationProvenance: params.transcriptObservationProvenance }
+                    : {}),
                 localId: null,
                 createdAt: 1_000,
                 updatedAt: 1_000,
@@ -62,6 +89,28 @@ function buildSession(sessionId: string, seq = 1): Session {
         thinking: false,
         thinkingAt: 0,
         presence: 'online',
+    };
+}
+
+function createEmptyCanonicalTurnDiffInput() {
+    return {
+        files: [],
+        _happier: {
+            sessionChangeScope: 'turn',
+            workspaceMutationSignal: 'turn-change-set',
+            turnId: 'turn-1',
+            sessionId: 's1',
+            provider: 'codex',
+            rawToolName: 'RepositoryCheckpointDiff',
+            canonicalToolName: 'Diff',
+            source: 'scm_checkpoint',
+            confidence: 'exact',
+            turnStatus: 'completed',
+            seqRange: {
+                startSeqInclusive: 2,
+                endSeqInclusive: 3,
+            },
+        },
     };
 }
 
@@ -128,6 +177,69 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(normalized?.seq).toBe(2);
     });
 
+    it('preserves authenticated transcript-observation metadata on normalized socket messages', async () => {
+        const { params, applyMessages } = buildHarness({
+            updateData: buildUpdate({
+                sid: 's1', messageId: 'm2', messageSeq: 2,
+                sourceCreatedAt: 100,
+                sourceUpdatedAt: 200,
+                transcriptObservationProvenance: { kind: 'non_dependent', source: 'history' },
+            }),
+        });
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(applyMessages.mock.calls[0]?.[1]?.[0]).toMatchObject({
+            id: 'm2', seq: 2, sourceCreatedAt: 100, sourceUpdatedAt: 200,
+            transcriptObservationProvenance: { kind: 'non_dependent', source: 'history' },
+        });
+    });
+
+    it('materializes recovered lifecycle history without reopening the live turn or activity projection', async () => {
+        const onTaskLifecycleEvent = vi.fn();
+        const { params, applySessions } = buildHarness({
+            updateData: buildUpdate({
+                sid: 's1', messageId: 'history-task-started', messageSeq: 2,
+                attentionImpact: userAttentionImpact,
+                sourceCreatedAt: 100,
+                sourceUpdatedAt: 200,
+                transcriptObservationProvenance: { kind: 'non_dependent', source: 'history' },
+            }),
+            getSession: () => ({
+                ...buildSession('s1'),
+                updatedAt: 500,
+                meaningfulActivityAt: 500,
+                latestTurnStatus: 'completed',
+            }),
+            getSessionEncryption: () => ({
+                decryptMessage: async () => ({
+                    id: 'history-task-started', localId: null, createdAt: 1_000,
+                    content: {
+                        role: 'agent',
+                        content: {
+                            type: 'acp', agentId: 'codex',
+                            data: { type: 'task_started', id: 'old-task' },
+                        },
+                    },
+                }),
+            }),
+            onTaskLifecycleEvent,
+        });
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(onTaskLifecycleEvent).not.toHaveBeenCalled();
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({
+                seq: 2,
+                updatedAt: 500,
+                meaningfulActivityAt: 500,
+                thinking: false,
+                latestTurnStatus: 'completed',
+            }),
+        ]);
+    });
+
     it('does not trigger catch-up when message seq is contiguous', async () => {
         const { params, fetchSessions, applyMessages, onMessageGapDetected, markSessionMaterializedMaxSeq } = buildHarness({
             updateData: buildUpdate({ sid: 's1', messageId: 'm2', messageSeq: 2 }),
@@ -141,6 +253,66 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(applyMessages).toHaveBeenCalledTimes(1);
         expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 2);
         expect(onMessageGapDetected).not.toHaveBeenCalled();
+    });
+
+    it('does not materialize empty canonical turn diff call/result pairs from live socket updates', async () => {
+        const normalizationState = createRawMessageNormalizationSequenceState();
+        const decryptMessage = vi.fn(async (message: { id?: unknown }) => {
+            if (message.id === 'turn-diff-call') {
+                return {
+                    id: 'turn-diff-call',
+                    localId: null,
+                    createdAt: 1_000,
+                    content: {
+                        role: 'agent',
+                        content: {
+                            type: 'codex',
+                            provider: 'codex',
+                            data: {
+                                type: 'tool-call',
+                                callId: 'empty-diff-call',
+                                id: 'empty-diff-call-row',
+                                name: 'Diff',
+                                input: createEmptyCanonicalTurnDiffInput(),
+                            },
+                        },
+                    },
+                };
+            }
+            return {
+                id: 'turn-diff-result',
+                localId: null,
+                createdAt: 1_001,
+                content: {
+                    role: 'agent',
+                    content: {
+                        type: 'codex',
+                        provider: 'codex',
+                        data: {
+                            type: 'tool-call-result',
+                            callId: 'empty-diff-call',
+                            id: 'empty-diff-result-row',
+                            output: { status: 'completed', files: [] },
+                        },
+                    },
+                },
+            };
+        });
+        const { params, applyMessages } = buildHarness({
+            getSessionEncryption: () => ({ decryptMessage }),
+            rawMessageNormalizationState: normalizationState,
+        } as Partial<Parameters<typeof handleNewMessageSocketUpdate>[0]>);
+
+        await handleNewMessageSocketUpdate({
+            ...params,
+            updateData: buildUpdate({ sid: 's1', messageId: 'turn-diff-call', messageSeq: 2 }),
+        });
+        await handleNewMessageSocketUpdate({
+            ...params,
+            updateData: buildUpdate({ sid: 's1', messageId: 'turn-diff-result', messageSeq: 3 }),
+        });
+
+        expect(applyMessages).not.toHaveBeenCalled();
     });
 
     it('drops replayed new-message updates that are already materialized before decrypting', async () => {
@@ -219,6 +391,12 @@ describe('handleNewMessageSocketUpdate', () => {
         const markSessionKnownRemoteSeq = vi.fn();
         const markSessionTranscriptDeferred = vi.fn();
         const { params, applySessions, applyMessages, markSessionMaterializedMaxSeq } = buildHarness({
+            updateData: buildUpdate({
+                sid: 's1',
+                messageId: 'm2',
+                messageSeq: 2,
+                attentionImpact: userAttentionImpact,
+            }),
             getSessionEncryption: () => ({ decryptMessage }),
             getSession: () => ({
                 ...buildSession('s1'),
@@ -263,6 +441,12 @@ describe('handleNewMessageSocketUpdate', () => {
         const markSessionKnownRemoteSeq = vi.fn();
         const markSessionTranscriptDeferred = vi.fn();
         const { params, applyMessages, applySessions, markSessionMaterializedMaxSeq } = buildHarness({
+            updateData: buildUpdate({
+                sid: 's1',
+                messageId: 'm2',
+                messageSeq: 2,
+                attentionImpact: userAttentionImpact,
+            }),
             getSession: () => buildSession('s1'),
             getSessionEncryption: () => ({ decryptMessage }),
             isSessionActivelyViewed: () => false,
@@ -301,6 +485,12 @@ describe('handleNewMessageSocketUpdate', () => {
         const markSessionKnownRemoteSeq = vi.fn();
         const markSessionTranscriptDeferred = vi.fn();
         const { params, applyMessages, fetchSessions, markSessionMaterializedMaxSeq } = buildHarness({
+            updateData: buildUpdate({
+                sid: 's1',
+                messageId: 'm2',
+                messageSeq: 2,
+                attentionImpact: userAttentionImpact,
+            }),
             getSessionEncryption: () => ({ decryptMessage }),
             getSession: () => undefined,
             getSessionProjection: () => ({
@@ -418,7 +608,7 @@ describe('handleNewMessageSocketUpdate', () => {
                         role: 'agent',
                         content: {
                             type: 'acp',
-                            provider: 'test-provider',
+                            agentId: 'test-provider',
                             data: { type: 'task_started', id: 'turn-1' },
                         },
                     },
@@ -432,8 +622,8 @@ describe('handleNewMessageSocketUpdate', () => {
                     v: 1,
                     scope: 'primary_session',
                     status: 'failed',
-                    code: 'provider_status_error',
-                    source: 'provider_status_error',
+                    code: 'agent_status_error',
+                    source: 'agent_status_error',
                     occurredAt: 100,
                     sanitizedPreview: 'Provider reported an error',
                 },
@@ -445,7 +635,7 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(applySessions.mock.calls[0]?.[0]?.[0]).toMatchObject({
             id: 's1',
             latestTurnStatus: 'in_progress',
-            lastRuntimeIssue: expect.objectContaining({ source: 'provider_status_error' }),
+            lastRuntimeIssue: expect.objectContaining({ source: 'agent_status_error' }),
             thinking: true,
         });
     });
@@ -462,7 +652,7 @@ describe('handleNewMessageSocketUpdate', () => {
                         role: 'agent',
                         content: {
                             type: 'acp',
-                            provider: 'test-provider',
+                            agentId: 'test-provider',
                             data: { type: 'task_started', id: 'turn-1' },
                         },
                     },
@@ -501,7 +691,7 @@ describe('handleNewMessageSocketUpdate', () => {
                         role: 'agent',
                         content: {
                             type: 'acp',
-                            provider: 'test-provider',
+                            agentId: 'test-provider',
                             data: { type, id: 'turn-1' },
                         },
                     },
@@ -717,7 +907,7 @@ describe('handleNewMessageSocketUpdate', () => {
                         role: 'agent',
                         content: {
                             type: 'acp',
-                            provider: 'kimi',
+                            agentId: 'kimi',
                             data: { type: 'turn_aborted', id: 'task_1' },
                         },
                     },

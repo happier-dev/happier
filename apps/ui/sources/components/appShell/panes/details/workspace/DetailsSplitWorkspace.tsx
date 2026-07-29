@@ -23,6 +23,7 @@ import type {
     PaneDetailsStateView,
 } from './detailsWorkspaceTypes';
 import { DetailsTabGroupPanel, type DetailsTabGroupPanelProps } from './DetailsTabGroupPanel';
+import type { DetailsTabPresentation } from './DetailsTabStrip';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
@@ -45,6 +46,7 @@ export type DetailsSplitWorkspaceProps = Readonly<{
     forceEmptyState?: boolean;
     testIds?: DetailsTabGroupPanelProps['testIds'];
     resolveTabIconName?: ((tab: DetailsTabState) => string | null | undefined) | null;
+    resolveTabPresentation?: ((tab: DetailsTabState) => DetailsTabPresentation | null | undefined) | null;
     renderTabContent: (tab: DetailsTabState) => React.ReactNode;
     renderHeaderLeadingActions?: (() => React.ReactNode) | null;
     renderHeaderActions?: (() => React.ReactNode) | null;
@@ -165,6 +167,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
                     forceEmptyState={props.forceEmptyState}
                     testIds={groupPanelTestIds}
                     resolveTabIconName={props.resolveTabIconName}
+                    resolveTabPresentation={props.resolveTabPresentation}
                     renderTabContent={props.renderTabContent}
                     renderHeaderLeadingActions={isFocused ? props.renderHeaderLeadingActions : null}
                     renderHeaderActions={isFocused ? props.renderHeaderActions : null}
@@ -183,6 +186,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
         props.renderHeaderLeadingActions,
         props.renderTabContent,
         props.resolveTabIconName,
+        props.resolveTabPresentation,
         styles.groupFrame,
     ]);
 
@@ -195,6 +199,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
             forceEmptyState={props.forceEmptyState}
             testIds={groupPanelTestIds}
             resolveTabIconName={props.resolveTabIconName}
+            resolveTabPresentation={props.resolveTabPresentation}
             renderTabContent={props.renderTabContent}
             renderHeaderLeadingActions={props.renderHeaderLeadingActions}
             renderHeaderActions={props.renderHeaderActions}
@@ -212,6 +217,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
         props.renderHeaderLeadingActions,
         props.renderTabContent,
         props.resolveTabIconName,
+        props.resolveTabPresentation,
     ]);
 
     const handleRequestSplitLeaf = React.useCallback((input: Readonly<{

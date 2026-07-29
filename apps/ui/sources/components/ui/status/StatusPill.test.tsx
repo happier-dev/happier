@@ -8,7 +8,44 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
+vi.mock('@/components/ui/text/Text', async () => {
+    const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
+    return createUiTextModuleMock();
+});
+
 describe('StatusPill', () => {
+    it('maps onboarding status states to green live, amber needs-attention, and neutral otherwise', async () => {
+        const { StatusPill, resolveStatusPillVariantForState } = await import('./StatusPill');
+
+        const live = await renderScreen(
+            <StatusPill
+                variant={resolveStatusPillVariantForState('live')}
+                label="Connected"
+                testID="status-live"
+            />,
+        );
+        const needsAttention = await renderScreen(
+            <StatusPill
+                variant={resolveStatusPillVariantForState('needsAttention')}
+                label="Needs attention"
+                testID="status-needs-attention"
+            />,
+        );
+        const neutral = await renderScreen(
+            <StatusPill
+                variant={resolveStatusPillVariantForState('neutral')}
+                label="Waiting"
+                testID="status-neutral"
+            />,
+        );
+
+        expect(live.findByTestId('status-live:variant:success')).not.toBeNull();
+        expect(live.findByTestId('status-live:dot')).not.toBeNull();
+        expect(live.findByTestId('status-live:label')).not.toBeNull();
+        expect(needsAttention.findByTestId('status-needs-attention:variant:warning')).not.toBeNull();
+        expect(neutral.findByTestId('status-neutral:variant:neutral')).not.toBeNull();
+    });
+
     it('renders a semantic status pill with a stable variant marker', async () => {
         const { StatusPill } = await import('./StatusPill');
 

@@ -43,17 +43,24 @@ export function deriveSessionListMeaningfulActivityAt(params: Readonly<{
 export function deriveSessionListAttentionState(input: Readonly<{
     hasUnreadMessages: boolean;
     pendingCount: number;
+    pendingBlockedCount?: number;
     sessionState: SessionState;
     latestTurnStatus?: PrimaryTurnStatusV1 | null;
     lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
     active?: boolean | null;
     activeAt?: number | null;
+    archivedAt?: number | null;
     presence?: unknown;
     thinking?: boolean | null;
     thinkingAt?: number | null;
+    optimisticThinkingAt?: number | null;
     seq?: number | null;
     meaningfulActivityAt?: number | null;
     latestTurnStatusObservedAt?: number | null;
+    runtimeActivityState?: 'active' | 'idle' | 'unknown' | null;
+    runtimeActivityActiveCount?: number | null;
+    runtimeActivityObservedAt?: number | null;
+    runtimeActivityRevision?: number | null;
     latestReadyEventSeq?: number | null;
     lastViewedSessionSeq?: number | null;
     pendingRequestObservedAt?: number | null;
@@ -66,12 +73,19 @@ export function deriveSessionListAttentionState(input: Readonly<{
     const runtimePresentation = deriveSessionRuntimePresentationState({
         active: input.active,
         activeAt: input.activeAt,
+        archivedAt: input.archivedAt,
         presence: input.presence,
         thinking: input.thinking,
         thinkingAt: input.thinkingAt,
+        optimisticThinkingAt: input.optimisticThinkingAt,
+        hasPendingUserMessages: input.pendingCount > 0,
         latestTurnStatus: input.latestTurnStatus,
         lastRuntimeIssue: input.lastRuntimeIssue,
         latestTurnStatusObservedAt: input.latestTurnStatusObservedAt,
+        runtimeActivityState: input.runtimeActivityState,
+        runtimeActivityActiveCount: input.runtimeActivityActiveCount,
+        runtimeActivityObservedAt: input.runtimeActivityObservedAt,
+        runtimeActivityRevision: input.runtimeActivityRevision,
         meaningfulActivityAt: input.meaningfulActivityAt,
         hasPendingPermissionRequests: input.sessionState === 'permission_required',
         hasPendingUserActionRequests: input.sessionState === 'action_required',
@@ -81,6 +95,7 @@ export function deriveSessionListAttentionState(input: Readonly<{
     if (runtimePresentation.attention === 'failed') return 'failed';
     if (input.sessionState === 'action_required') return 'action_required';
     if (input.sessionState === 'permission_required') return 'permission_required';
+    if ((input.pendingBlockedCount ?? 0) > 0) return 'action_required';
     if (runtimePresentation.working) return 'thinking';
     if (!hasTerminalPrimaryTurnProjection && input.sessionState === 'resuming') return 'thinking';
     if (!hasTerminalPrimaryTurnProjection && input.sessionState === 'thinking') return 'thinking';

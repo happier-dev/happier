@@ -191,6 +191,37 @@ describe('serverProfiles', () => {
         expect(listener).toHaveBeenCalled();
     });
 
+    it('returns referentially stable profile lists while the persisted raw state is unchanged', async () => {
+        // readPersistedState is on hot selector paths (17 call sites); re-parsing the whole
+        // persisted blob per call costs real CPU and breaks referential stability for
+        // consumers comparing identities. The parse must be cached by the raw string.
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        stubWebRuntime('https://origin.example.test');
+
+        const profiles = await importFresh();
+        const created = profiles.upsertServerProfile({
+            serverUrl: 'https://device.example.test',
+            name: 'Device',
+        });
+
+        const firstList = profiles.listServerProfiles();
+        const secondList = profiles.listServerProfiles();
+        const firstEntry = firstList.find((profile) => profile.id === created.id);
+        const secondEntry = secondList.find((profile) => profile.id === created.id);
+        expect(firstEntry).toBeTruthy();
+        expect(secondEntry).toBe(firstEntry);
+        expect(profiles.getServerProfileById(created.id)).toBe(firstEntry);
+
+        // A write must invalidate the cached parse.
+        const baselineCount = firstList.length;
+        profiles.upsertServerProfile({
+            serverUrl: 'https://next.example.test',
+            name: 'Next',
+        });
+        expect(profiles.listServerProfiles()).toHaveLength(baselineCount + 1);
+    });
+
     it('persists a shareable relay URL on the active server snapshot', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;

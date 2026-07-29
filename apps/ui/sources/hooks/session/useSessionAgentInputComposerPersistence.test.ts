@@ -3,6 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
+import type { AgentInputLocalUiStateV1 } from '@/sync/domains/input/draftValues/agentInputLocalUiStateStore';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 const mmkvStore = vi.hoisted(() => new Map<string, string>());
@@ -515,6 +516,122 @@ describe('useSessionAgentInputComposerPersistence', () => {
             mockWindowLifecycle.restore();
             mockDocument.restore();
         }
+    });
+
+    it('keeps restoreToken stable across self-originated selection and scroll persists', async () => {
+        // Live incident (web composer, 2026-07-22): every keystroke persisted the
+        // caret, which bumped the store's updatedAt, which churned restoreToken,
+        // which made AgentInput's restore effect re-apply the (by then stale)
+        // persisted selection — dragging the user's caret 20-100 characters
+        // backwards while typing a long message. The token must identify a
+        // restore generation, never echo our own persist writes.
+        vi.useFakeTimers();
+        const { useSessionAgentInputComposerPersistence } = await importHook();
+
+        const hook = await renderHook(
+            () => useSessionAgentInputComposerPersistence({
+                sessionId: 'session-a',
+                textLength: 20,
+                fontScale: 1,
+            }),
+        );
+
+        const initialToken = hook.getCurrent().inputPersistence.restoreToken;
+
+        await act(async () => {
+            hook.getCurrent().inputPersistence.onSelectionChangePersist({ start: 5, end: 5 }, 21);
+            vi.advanceTimersByTime(150);
+        });
+        expect(hook.getCurrent().inputPersistence.restoreToken).toBe(initialToken);
+
+        await act(async () => {
+            hook.getCurrent().inputPersistence.onScrollYChange(42);
+            vi.advanceTimersByTime(150);
+        });
+        expect(hook.getCurrent().inputPersistence.restoreToken).toBe(initialToken);
+
+        vi.useRealTimers();
+    });
+
+    it('changes restoreToken once when the persisted basis becomes applicable after an async draft load', async () => {
+        // Regression (2026-07-23): opening a previous session mounts the
+        // composer before the draft text is adopted (live textLength 0 vs
+        // persisted textLength N), so the persisted scrollY is withheld by the
+        // drift guard and the persisted selection is clamped to {0,0}. The
+        // restore consumers are keyed on restoreToken — it must change exactly
+        // once when the draft basis is adopted so the real scroll/selection get
+        // applied, and then stay stable across self-originated persists.
+        vi.useFakeTimers();
+        const { useSessionAgentInputComposerPersistence } = await importHook();
+        const localUiStateStore = await importLocalUiStateStore();
+        const owner = { kind: 'session' as const, sessionId: 'session-a' };
+
+        localUiStateStore.patchAgentInputLocalUiState(activeScopeState.value, owner, {
+            scrollY: 88,
+            selection: { start: 30, end: 30 },
+            textLength: 42,
+            fontScale: 1,
+        });
+
+        const hook = await renderHook(
+            (params: Readonly<{ textLength: number }>) =>
+                useSessionAgentInputComposerPersistence({
+                    sessionId: 'session-a',
+                    textLength: params.textLength,
+                    fontScale: 1,
+                }),
+            { initialProps: { textLength: 0 } },
+        );
+
+        const pendingToken = hook.getCurrent().inputPersistence.restoreToken;
+        expect(hook.getCurrent().inputPersistence.initialScrollY).toBeUndefined();
+
+        await hook.rerender({ textLength: 42 });
+
+        const adoptedToken = hook.getCurrent().inputPersistence.restoreToken;
+        expect(adoptedToken).not.toBe(pendingToken);
+        expect(hook.getCurrent().inputPersistence.initialScrollY).toBe(88);
+        expect(hook.getCurrent().inputPersistence.initialSelection).toEqual({ start: 30, end: 30 });
+
+        await act(async () => {
+            hook.getCurrent().inputPersistence.onSelectionChangePersist({ start: 31, end: 31 }, 43);
+            vi.advanceTimersByTime(150);
+        });
+        expect(hook.getCurrent().inputPersistence.restoreToken).toBe(adoptedToken);
+
+        vi.useRealTimers();
+    });
+
+    it('changes restoreToken when the session owner changes and after an explicit transient-state restore', async () => {
+        const { useSessionAgentInputComposerPersistence } = await importHook();
+
+        const hook = await renderHook(
+            (sessionId: string) => useSessionAgentInputComposerPersistence({
+                sessionId,
+                textLength: 20,
+                fontScale: 1,
+            }),
+            { initialProps: 'session-a' },
+        );
+
+        const tokenA = hook.getCurrent().inputPersistence.restoreToken;
+
+        await hook.rerender('session-b');
+        const tokenB = hook.getCurrent().inputPersistence.restoreToken;
+        expect(tokenB).not.toBe(tokenA);
+
+        let captured: AgentInputLocalUiStateV1 | null = null;
+        await act(async () => {
+            hook.getCurrent().setExpanded(true);
+            hook.getCurrent().inputPersistence.onSelectionChangePersist({ start: 3, end: 3 }, 20);
+            captured = hook.getCurrent().captureTransientInputState();
+        });
+        const tokenBeforeRestore = hook.getCurrent().inputPersistence.restoreToken;
+
+        await act(async () => {
+            hook.getCurrent().restoreTransientInputState(captured);
+        });
+        expect(hook.getCurrent().inputPersistence.restoreToken).not.toBe(tokenBeforeRestore);
     });
 
     it('clears transient scroll and selection while preserving expansion after outbound handoff', async () => {

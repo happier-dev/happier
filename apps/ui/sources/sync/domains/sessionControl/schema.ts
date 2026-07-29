@@ -8,7 +8,7 @@ const SessionModeOptionSchema = z.object({
 
 const SessionModesStateSchema = z.object({
     v: z.literal(1),
-    provider: z.string().trim().min(1),
+    agentId: z.string().trim().min(1),
     updatedAt: z.number(),
     currentModeId: z.string().trim().min(1),
     availableModes: z.array(SessionModeOptionSchema).default([]),
@@ -38,7 +38,7 @@ const SessionModelSchema = z.object({
 
 const SessionModelsStateSchema = z.object({
     v: z.literal(1),
-    provider: z.string().trim().min(1),
+    agentId: z.string().trim().min(1),
     updatedAt: z.number(),
     currentModelId: z.string().trim().min(1),
     availableModels: z.array(SessionModelSchema).default([]),
@@ -50,18 +50,25 @@ const SessionConfigOptionSelectOptionSchema = z.object({
     description: z.string().trim().min(1).optional(),
 });
 
+const SessionConfigOptionSelectGroupSchema = z.object({
+    id: z.string().min(1),
+    name: z.string().trim().min(1),
+    options: z.array(SessionConfigOptionSelectOptionSchema),
+});
+
 const SessionConfigOptionSchema = z.object({
-    id: z.string().trim().min(1),
+    id: z.string().min(1),
     name: z.string().trim().min(1),
     description: z.string().trim().min(1).optional(),
     type: z.string().trim().min(1),
     currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-    options: z.array(SessionConfigOptionSelectOptionSchema).default([]),
+    options: z.array(SessionConfigOptionSelectOptionSchema).optional(),
+    groups: z.array(SessionConfigOptionSelectGroupSchema).optional(),
 });
 
 const SessionConfigOptionsStateSchema = z.object({
     v: z.literal(1),
-    provider: z.string().trim().min(1),
+    agentId: z.string().trim().min(1),
     updatedAt: z.number(),
     configOptions: z.array(SessionConfigOptionSchema).default([]),
 });

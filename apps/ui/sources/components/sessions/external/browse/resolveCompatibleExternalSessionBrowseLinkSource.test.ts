@@ -42,4 +42,36 @@ describe('resolveCompatibleExternalSessionBrowseLinkSource', () => {
         })).toEqual(candidateSource);
     });
 
+    it('treats a codex connected-service group as identity across active-member rotation', () => {
+        const selectedSource: ExternalSessionsSource = {
+            kind: 'codexHome',
+            home: 'connectedService',
+            connectedServiceId: 'openai-codex',
+            connectedServiceProfileId: 'member-a',
+            connectedServiceGroupId: 'primary-pool',
+        };
+        const rotatedCandidate: ExternalSessionsSource = {
+            kind: 'codexHome',
+            home: 'connectedService',
+            connectedServiceId: 'openai-codex',
+            connectedServiceProfileId: 'member-b',
+            connectedServiceGroupId: 'primary-pool',
+            homePath: '/tmp/member-b',
+        };
+        const otherGroupCandidate: ExternalSessionsSource = {
+            ...rotatedCandidate,
+            connectedServiceProfileId: 'member-a',
+            connectedServiceGroupId: 'other-pool',
+        };
+
+        expect(resolveCompatibleExternalSessionBrowseLinkSource({
+            selectedSource,
+            candidateSource: rotatedCandidate,
+        })).toEqual(rotatedCandidate);
+        expect(resolveCompatibleExternalSessionBrowseLinkSource({
+            selectedSource,
+            candidateSource: otherGroupCandidate,
+        })).toEqual(selectedSource);
+    });
+
 });

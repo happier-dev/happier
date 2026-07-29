@@ -9,6 +9,7 @@ import type {
     SplitCanvasNode,
     SplitCanvasSplitNode,
 } from '@/components/appShell/splitCanvas/model/splitCanvasTypes';
+import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
 import type { Settings } from '@/sync/domains/settings/settings';
 
 export type SessionSplitCanvasLeafPayload = Readonly<{
@@ -94,6 +95,51 @@ export function readPersistedSessionSplitCanvasSnapshot(input: Readonly<{
     }
 
     return parseSplitCanvasPersistenceSnapshot<SessionSplitCanvasLeafPayload>(parsed.data);
+}
+
+export function areSessionSplitCanvasSnapshotsEqual(left: unknown, right: unknown): boolean {
+    return areAccountSettingsJsonValuesEqual(left, right);
+}
+
+function readRouteOnlySessionId(value: unknown): string | null {
+    const parsed = SessionSplitCanvasPersistenceSnapshotSchema.safeParse(value);
+    if (!parsed.success) {
+        return null;
+    }
+
+    const { root, focusedLeafId, maximizedLeafId } = parsed.data;
+    if (maximizedLeafId !== null) {
+        return null;
+    }
+    if (!root || root.kind !== 'leaf' || root.leafKind !== 'session') {
+        return null;
+    }
+    if (focusedLeafId !== root.id) {
+        return null;
+    }
+
+    return root.payload.sessionId;
+}
+
+export function shouldPersistSessionSplitCanvasSnapshot(input: Readonly<{
+    persisted: unknown;
+    snapshot: SessionSplitCanvasPersistenceSnapshot;
+    routeSessionId: string;
+}>): boolean {
+    if (areSessionSplitCanvasSnapshotsEqual(input.persisted, input.snapshot)) {
+        return false;
+    }
+
+    const routeSessionId = input.routeSessionId.trim();
+    const snapshotRouteOnlySessionId = readRouteOnlySessionId(input.snapshot);
+    if (routeSessionId && snapshotRouteOnlySessionId === routeSessionId) {
+        const persistedRouteOnlySessionId = readRouteOnlySessionId(input.persisted);
+        if (input.persisted == null || persistedRouteOnlySessionId !== null) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 export function writePersistedSessionSplitCanvasSnapshot(input: Readonly<{

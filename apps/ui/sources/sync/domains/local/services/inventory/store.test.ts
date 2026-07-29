@@ -62,6 +62,29 @@ describe('local service inventory store', () => {
         expect(refreshing.diagnostics).toEqual([]);
     });
 
+    it('rejects an injected/rehydrated plain-object state shape instead of throwing mid-render (L0-4)', () => {
+        // A rehydrated or injected state where `rowsById` is a plain object (not a Map) must be
+        // caught at the selector contract boundary with a clear error, not crash the Local
+        // Services tab via `rowsById.get is not a function` mid-render.
+        const malformed = {
+            machineId: 'machine-a',
+            generatedAt: 1_000,
+            refreshState: 'idle' as const,
+            rowIds: ['entry-1'],
+            rowsById: { 'entry-1': entry() } as unknown as ReturnType<
+                typeof createLocalServiceInventoryState
+            >['rowsById'],
+            diagnostics: [],
+        };
+
+        expect(() => selectLocalServiceInventoryRows(malformed)).toThrowError(/must be a Map/);
+    });
+
+    it('selects rows from canonical Map-backed state without throwing (L0-4)', () => {
+        const state = createLocalServiceInventoryState();
+        expect(selectLocalServiceInventoryRows(state)).toEqual([]);
+    });
+
     it('preserves row references when a snapshot does not change an entry semantically', () => {
         const hydrated = applyLocalServiceInventorySnapshot(createLocalServiceInventoryState(), {
             v: 1,

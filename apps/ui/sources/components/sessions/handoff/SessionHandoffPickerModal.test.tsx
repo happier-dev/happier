@@ -143,7 +143,6 @@ describe('SessionHandoffPickerModal', () => {
                     id: 'machine_target',
                     active: true,
                     activeAt: Date.now(),
-                    spawnReadinessStatus: 'ready',
                     metadata: { displayName: 'Target machine', host: 'target.local' },
                 },
             ],
@@ -153,7 +152,6 @@ describe('SessionHandoffPickerModal', () => {
                 id: 'machine_target',
                 active: true,
                 activeAt: Date.now(),
-                spawnReadinessStatus: 'ready',
                 metadata: { displayName: 'Target machine', host: 'target.local' },
             },
         ];
@@ -165,7 +163,13 @@ describe('SessionHandoffPickerModal', () => {
                     machineId: 'machine_source',
                     path: '~/projects/happier',
                     homeDir: '/Users/tester',
-                    externalSessionV1: { source: 'claudeConfig' },
+                    externalSessionV1: {
+                        v: 1,
+                        agentId: 'claude',
+                        machineId: 'machine_source',
+                        remoteSessionId: 'claude_session_1',
+                        source: { kind: 'claudeConfig', configDir: '/Users/tester/.claude' },
+                    },
                 },
             },
         };
@@ -179,7 +183,13 @@ describe('SessionHandoffPickerModal', () => {
                     // session record path for safety decisions (not the display string).
                     path: '~',
                     homeDir: '/Users/tester',
-                    externalSessionV1: { source: 'claudeConfig' },
+                    externalSessionV1: {
+                        v: 1,
+                        agentId: 'claude',
+                        machineId: 'machine_source',
+                        remoteSessionId: 'claude_session_1',
+                        source: { kind: 'claudeConfig', configDir: '/Users/tester/.claude' },
+                    },
                 },
             },
         ];
@@ -246,6 +256,52 @@ describe('SessionHandoffPickerModal', () => {
             },
         });
         expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('offers direct target handling for released directSessionV1 metadata', async () => {
+        const releasedDirectSessionV1 = {
+            v: 1,
+            providerId: 'claude',
+            machineId: 'machine_source',
+            remoteSessionId: 'claude_session_1',
+            source: { kind: 'claudeConfig', configDir: '/Users/tester/.claude' },
+        };
+        sessionsByIdState = {
+            sess_1: {
+                id: 'sess_1',
+                metadata: {
+                    flavor: 'claude',
+                    machineId: 'machine_source',
+                    path: '~/projects/happier',
+                    homeDir: '/Users/tester',
+                    directSessionV1: releasedDirectSessionV1,
+                },
+            },
+        };
+        sessionsState = [{
+            id: 'sess_1',
+            metadata: {
+                flavor: 'claude',
+                machineId: 'machine_source',
+                path: '~/projects/happier',
+                homeDir: '/Users/tester',
+                directSessionV1: releasedDirectSessionV1,
+            },
+        }];
+
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        const rendered = await renderScreen(<SessionHandoffPickerModal
+            onClose={vi.fn()}
+            onResolve={vi.fn()}
+            sessionId="sess_1"
+            sourceMachineId="machine_source"
+            serverId="server_a"
+        />);
+
+        const directModeMenu = rendered.tree
+            .findAllByType('DropdownMenu' as any)
+            .find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.directTargetMode.title');
+        expect(directModeMenu).toBeTruthy();
     });
 
     it('forces conflictPolicy=replace_existing when workspace transfer strategy is sync_changes', async () => {
@@ -657,13 +713,13 @@ describe('SessionHandoffPickerModal', () => {
         });
     });
 
-    it('does not start when the selected machine has no exact spawn readiness', async () => {
+    it('does not start when the selected machine is structurally offline', async () => {
         machineListByServerIdState = {
             server_a: [
                 {
                     id: 'machine_target',
-                    active: true,
-                    activeAt: Date.now(),
+                    active: false,
+                    activeAt: 0,
                     metadata: { displayName: 'Target machine', host: 'target.local' },
                 },
             ],

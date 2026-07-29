@@ -1,12 +1,18 @@
 import { renderHook } from '@/dev/testkit';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { AGENTS_CORE } from '@happier-dev/agents';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS, CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol';
 import { act } from 'react-test-renderer';
+import {
+    createConnectedAccountDescriptorProjectionLoadingState,
+    type ConnectedAccountDescriptorProjectionState,
+} from '@/sync/domains/connectedServices/connectedAccountDescriptorProjection';
+import { installConnectedAccountDescriptorProjection } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
 const useFeatureEnabledMock = vi.hoisted(() => vi.fn());
 const setSessionConnectedServiceAuthBindingMock = vi.hoisted(() => vi.fn());
 const modalAlertMock = vi.hoisted(() => vi.fn());
+const modalConfirmMock = vi.hoisted(() => vi.fn());
 const routerPushMock = vi.hoisted(() => vi.fn());
 const profileState = vi.hoisted(() => ({
     current: {
@@ -39,6 +45,82 @@ const profileState = vi.hoisted(() => ({
     },
 }));
 
+const authSwitchConnectedAccountProjection = {
+    scopeKey: 'auth-switch-test',
+    status: 'ready',
+    descriptors: [{
+        id: 'openai-codex',
+        serviceId: 'openai-codex',
+        pluginId: 'happier.agent.codex',
+        provenance: 'first_party',
+        sourceKind: 'bundled',
+        title: 'Codex',
+        authentication: {
+            defaultModeId: 'oauth',
+            modes: [{
+                id: 'oauth',
+                kind: 'oauthAuthorizationCode',
+                scopes: ['openid', 'profile', 'email', 'offline_access'],
+                pkce: 'required',
+                outcomeReconciliation: 'none',
+            }],
+        },
+        capabilities: [],
+        availability: { state: 'available', reason: 'resolved' },
+        diagnostics: [],
+    }, {
+        id: 'anthropic',
+        serviceId: 'anthropic',
+        pluginId: 'happier.agent.claude',
+        provenance: 'first_party',
+        sourceKind: 'bundled',
+        title: 'Anthropic API key',
+        authentication: {
+            defaultModeId: 'api-key',
+            modes: [{
+                id: 'api-key',
+                kind: 'manual',
+                outcomeReconciliation: 'none',
+                fields: [{
+                    id: 'token',
+                    title: 'Anthropic API key',
+                    schema: { type: 'string', minLength: 1 },
+                    secret: true,
+                }],
+            }],
+        },
+        capabilities: [],
+        availability: { state: 'available', reason: 'resolved' },
+        diagnostics: [],
+    }, {
+        id: 'openai',
+        serviceId: 'openai',
+        pluginId: 'happier.voice.openai',
+        provenance: 'first_party',
+        sourceKind: 'bundled',
+        title: 'OpenAI API key',
+        authentication: {
+            defaultModeId: 'api-key',
+            modes: [{
+                id: 'api-key',
+                kind: 'manual',
+                outcomeReconciliation: 'none',
+                fields: [{
+                    id: 'token',
+                    title: 'OpenAI API key',
+                    schema: { type: 'string', minLength: 1 },
+                    secret: true,
+                }],
+            }],
+        },
+        capabilities: [],
+        availability: { state: 'available', reason: 'resolved' },
+        diagnostics: [],
+    }],
+    conflicts: [],
+    errorReason: null,
+} satisfies ConnectedAccountDescriptorProjectionState;
+
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
@@ -67,6 +149,7 @@ vi.mock('@/modal', async () => {
     return createModalModuleMock({
         spies: {
             alert: (...args) => modalAlertMock(...args),
+            confirm: (...args) => modalConfirmMock(...args),
         },
     }).module;
 });
@@ -108,12 +191,21 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputChipLabel', () =>
 
 describe('useSessionConnectedServicesAuthSwitch', () => {
     beforeEach(() => {
+        installConnectedAccountDescriptorProjection(authSwitchConnectedAccountProjection);
         useFeatureEnabledMock.mockReset();
         useFeatureEnabledMock.mockReturnValue(true);
         setSessionConnectedServiceAuthBindingMock.mockReset();
         setSessionConnectedServiceAuthBindingMock.mockResolvedValue({ ok: true, action: 'restart_requested' });
         modalAlertMock.mockReset();
+        modalConfirmMock.mockReset();
+        modalConfirmMock.mockResolvedValue(true);
         routerPushMock.mockClear();
+    });
+
+    afterEach(() => {
+        installConnectedAccountDescriptorProjection(
+            createConnectedAccountDescriptorProjectionLoadingState('auth-switch-test-cleanup'),
+        );
     });
 
     it('disables changed auth options when no reachable machine target is available', async () => {
@@ -535,13 +627,13 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             expect.objectContaining({
                 key: 'connected-services-auth-switch-service-openai-codex-failed',
                 testID: 'session-connected-services-auth-switch-service-openai-codex-failed-status',
-                label: 'connectedServices.serviceNames.openaiCodex auth failed',
+                label: 'Codex auth failed',
                 tone: 'warning',
             }),
             expect.objectContaining({
                 key: 'connected-services-auth-switch-service-openai-not-attempted',
                 testID: 'session-connected-services-auth-switch-service-openai-not-attempted-status',
-                label: 'connectedServices.serviceNames.openai auth not applied',
+                label: 'OpenAI API key auth not applied',
                 tone: 'warning',
             }),
         ]);
@@ -794,6 +886,8 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         // Retry re-applies the ATTEMPTED binding via the same canonical mutation.
         setSessionConnectedServiceAuthBindingMock.mockClear();
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({ ok: true, action: 'metadata_updated' });
+        modalConfirmMock.mockClear();
+        modalConfirmMock.mockResolvedValue(false);
         await act(async () => {
             alertButtons?.find((button) => button.text === 'connectedServices.authSwitch.partialApply.retry')?.onPress?.();
             await Promise.resolve();
@@ -805,6 +899,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 }),
             }),
         }));
+        expect(modalConfirmMock).not.toHaveBeenCalled();
     });
 
     it('reverts a partial hot-apply to the previous binding via the canonical apply path', async () => {
@@ -993,6 +1088,85 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         expect((hook.getCurrent() as { actionableState?: unknown }).actionableState).toEqual(expectedState);
     });
 
+    it('routes a reconnect-profile action requirement to the exact qualified account owner', async () => {
+        setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
+            ok: false,
+            errorCode: 'profile_action_required',
+            serviceId: 'openai-codex',
+            diagnostics: {
+                actionRequired: {
+                    kind: 'reconnect_profile',
+                    profileId: 'happier',
+                },
+            },
+        });
+        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+
+        const hook = await renderHook(() =>
+            useSessionConnectedServicesAuthSwitch({
+                sessionId: 'session-1',
+                agentId: 'codex',
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                agentCore: AGENTS_CORE.codex,
+                sessionMetadata: {
+                    connectedServices: {
+                        bindingsByServiceId: {
+                            'openai-codex': { source: 'native' },
+                        },
+                    },
+                },
+                settings: {
+                    connectedServicesProfileLabelByKey: { 'openai-codex/happier': 'Happier' },
+                    connectedServicesDefaultProfileByServiceId: {},
+                    connectedServicesProviderStateSharingSettingsV1: {
+                        v: 1,
+                        defaults: { configMode: 'linked', stateMode: 'shared' },
+                        byAgentId: {},
+                        acknowledgedRisksByAgentId: {},
+                    },
+                },
+                switchingDisabledReason: null,
+            }),
+        );
+
+        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
+        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
+        const content = renderContent({
+            requestClose: vi.fn(),
+            maxHeight: 320,
+        });
+
+        await act(async () => {
+            (content as { props: {
+                setBindingForService: (
+                    serviceId: string,
+                    binding: { source: 'connected'; selection: 'profile'; profileId: string },
+                ) => void;
+            } }).props.setBindingForService('openai-codex', {
+                source: 'connected',
+                selection: 'profile',
+                profileId: 'happier',
+            });
+            await Promise.resolve();
+        });
+
+        expect(routerPushMock).toHaveBeenCalledWith({
+            pathname: '/(app)/settings/connected-services/account',
+            params: {
+                pluginId: 'happier.agent.codex',
+                localId: 'openai-codex',
+                accountId: 'happier',
+            },
+        });
+        expect((hook.getCurrent() as { actionableState?: unknown }).actionableState).toEqual({
+            kind: 'reconnect_profile',
+            profileId: 'happier',
+        });
+
+        await hook.unmount();
+    });
+
     it('surfaces provider session-state resume gaps with executable diagnostic actions', async () => {
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
             ok: false,
@@ -1128,10 +1302,11 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         expect(routerPushMock).toHaveBeenCalledWith('/(app)/settings/connected-services/provider-state-sharing');
         alertButtons.find((button) => button.text === 'connectedServices.detail.actions.reconnect')?.onPress?.();
         expect(routerPushMock).toHaveBeenCalledWith({
-            pathname: '/(app)/settings/connected-services/oauth',
+            pathname: '/(app)/settings/connected-services/account',
             params: {
-                serviceId: 'openai-codex',
-                profileId: 'happier',
+                pluginId: 'happier.agent.codex',
+                localId: 'openai-codex',
+                accountId: 'happier',
             },
         });
 
@@ -1252,10 +1427,11 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         expect(routerPushMock).toHaveBeenCalledWith('/(app)/settings/connected-services/provider-state-sharing');
         alertButtons.find((button) => button.text === 'connectedServices.detail.actions.reconnect')?.onPress?.();
         expect(routerPushMock).toHaveBeenCalledWith({
-            pathname: '/(app)/settings/connected-services/oauth',
+            pathname: '/(app)/settings/connected-services/account',
             params: {
-                serviceId: 'openai-codex',
-                profileId: 'happier',
+                pluginId: 'happier.agent.codex',
+                localId: 'openai-codex',
+                accountId: 'happier',
             },
         });
         await act(async () => {
@@ -1367,7 +1543,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 sessionMetadata: {
                     agentRuntimeDescriptorV1: {
                         v: 1,
-                        providerId: 'codex',
+                        agentId: 'codex',
                         provider: {
                             backendMode: 'appServer',
                             home: 'connectedService',
@@ -1396,7 +1572,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         );
 
         expect(hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.label)
-            .toBe('connectedServices.serviceNames.openaiCodex: Happier');
+            .toBe('Codex: Happier');
     });
 
     it('labels native session auth with the compact native label', async () => {
@@ -1497,14 +1673,27 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
         const content = renderContent({ requestClose, maxHeight: 320 });
 
-        (content as { props: { onOpenSettings: () => void } }).props.onOpenSettings();
+        (content as { props: { onOpenSettings: (serviceId: string) => void } }).props.onOpenSettings('anthropic');
 
         expect(requestClose).toHaveBeenCalledOnce();
-        expect(routerPushMock).toHaveBeenCalledWith('/(app)/settings/connected-services');
+        // UI-2: the picker's settings action deep-links to the tapped service's
+        // settings screen, matching the settings-side onOpenConnectedServiceSettings
+        // consumers instead of discarding the serviceId.
+        expect(routerPushMock).toHaveBeenCalledWith({
+            pathname: '/(app)/settings/connected-services/account',
+            params: {
+                pluginId: 'happier.agent.claude',
+                localId: 'anthropic',
+            },
+        });
     });
 
     it('closes the auth popover before starting an existing-session auth switch', async () => {
         const switchOrder: string[] = [];
+        modalConfirmMock.mockImplementationOnce(async () => {
+            switchOrder.push('confirm');
+            return true;
+        });
         setSessionConnectedServiceAuthBindingMock.mockImplementationOnce(() => {
             switchOrder.push('rpc');
             return Promise.resolve({ ok: true, action: 'restart_requested' });
@@ -1555,7 +1744,48 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         });
 
         expect(requestClose).toHaveBeenCalledOnce();
-        expect(switchOrder.slice(0, 2)).toEqual(['close', 'rpc']);
+        expect(switchOrder.slice(0, 3)).toEqual(['close', 'confirm', 'rpc']);
+    });
+
+    it('does not mutate or call the switch RPC when an active-session switch is cancelled', async () => {
+        modalConfirmMock.mockResolvedValueOnce(false);
+        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+
+        const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
+            sessionId: 'session-1',
+            agentId: 'claude',
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            agentCore: AGENTS_CORE.claude,
+            sessionMetadata: {
+                connectedServices: {
+                    bindingsByServiceId: { anthropic: { source: 'native' } },
+                },
+            },
+            settings: {
+                connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                connectedServicesDefaultProfileByServiceId: {},
+            },
+            switchingDisabledReason: null,
+            sessionActive: true,
+        }));
+
+        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
+        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
+        const content = renderContent({ requestClose: vi.fn(), maxHeight: 320 });
+
+        await act(async () => {
+            (content as { props: { setBindingForService: (serviceId: string, binding: unknown) => void } })
+                .props.setBindingForService('anthropic', {
+                    source: 'connected',
+                    selection: 'profile',
+                    profileId: 'work',
+                });
+            await Promise.resolve();
+        });
+
+        expect(modalConfirmMock).toHaveBeenCalledOnce();
+        expect(setSessionConnectedServiceAuthBindingMock).not.toHaveBeenCalled();
     });
 
     it('shows a restarting status badge until the switched session is active with the requested binding', async () => {
@@ -1717,6 +1947,20 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             });
             await Promise.resolve();
         });
+
+        expect(setSessionConnectedServiceAuthBindingMock).toHaveBeenCalledWith(expect.objectContaining({
+            bindings: {
+                v: 1,
+                bindingsByServiceId: {
+                    anthropic: {
+                        source: 'connected',
+                        selection: 'group',
+                        groupId: 'team',
+                    },
+                    'claude-subscription': { source: 'native' },
+                },
+            },
+        }));
 
         expect(hook.getCurrent().statusBadges).toEqual([
             expect.objectContaining({

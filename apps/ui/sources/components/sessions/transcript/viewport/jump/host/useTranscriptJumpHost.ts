@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { useCommittedTranscriptRef } from '@/components/sessions/transcript/viewport/lifecycle/host/useCommittedTranscriptRef';
+import type { TranscriptExitSnapshotSelection } from '@/components/sessions/transcript/viewport/lifecycle/transcriptSameSessionHandoff';
 
 import { sync, type SessionViewportAnchorSnapshot } from '@/sync/sync';
 import {
@@ -16,7 +18,6 @@ import {
     type WebTranscriptScrollMetrics,
 } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
 import type { TranscriptViewportTelemetryScrollReason } from '@/components/sessions/transcript/scroll/transcriptViewportTelemetry';
-import type { WebDomScrollObservation } from '@/components/sessions/transcript/viewport/driver/webDomObservation';
 import type {
     PendingJumpSeqViewportPromotion,
     PromotedJumpSeqViewportProtection,
@@ -44,7 +45,7 @@ import type { LastNativeRestoreIndexCommand } from '@/components/sessions/transc
 import type { TranscriptPrependOlderLoadSyncOptions } from '@/components/sessions/transcript/viewport/prepend/host/runTranscriptPrependOlderLoad';
 import {
     executeTranscriptTargetWindowJump,
-    isTranscriptSeqMountedInWebRenderedWindow,
+    isTranscriptTargetObservedAtAlignment,
     resolveTranscriptJumpTargetRequest,
     resolveTranscriptNavigationJumpPlan,
     resolveTranscriptNavigationPaneJumpRequest,
@@ -52,7 +53,9 @@ import {
     resolveTranscriptRouteJumpSeqPlan,
     resolveTranscriptTargetWindowLoadTarget,
 } from '@/components/sessions/transcript/viewport/window/useTranscriptTargetWindowHostAdapter';
+import { queryExactWebTranscriptDataTestId } from '@/components/sessions/transcript/webTranscriptDomTestId';
 import type {
+    TranscriptExplicitJumpOperationId,
     TranscriptJumpResult,
     TranscriptJumpTarget,
     TranscriptJumpTargetIndexResult,
@@ -66,30 +69,30 @@ import {
     type TranscriptNavigationEntry,
     type TranscriptNavigationJumpRequest,
 } from '@/components/sessions/transcript/navigation/transcriptNavigationTypes';
-import { deriveTranscriptNavigationRailLayout } from '@/components/sessions/transcript/navigation/deriveTranscriptNavigationRailLayout';
 import {
     transcriptNavigationPaneStore,
-    useTranscriptNavigationPaneOpen,
 } from '@/components/sessions/transcript/navigation/transcriptNavigationPaneStore';
 import {
     deriveTranscriptNavigationRuntimeAnchors,
+    resolveTranscriptNavigationAnchorIdForJumpTarget,
     type TranscriptNavigationRuntimeAnchor,
 } from '@/components/sessions/transcript/viewport/visibility/transcriptNavigationRuntimeAnchors';
+import {
+    resolveRetainedTranscriptNavigationLandedAnchor,
+    type TranscriptNavigationLandedAnchor,
+} from '@/components/sessions/transcript/viewport/visibility/transcriptNavigationLandedAnchor';
 import {
     collectTranscriptNavigationMessageIdsForItem,
     transcriptNavigationRoleForMessage,
 } from '@/components/sessions/transcript/viewport/lifecycle/transcriptRowClassification';
 import {
     getTranscriptNavigationVisibilityStore,
-    useTranscriptNavigationVisibilitySnapshot,
+    useTranscriptNavigationVisibilityHasSubscribers,
 } from '@/components/sessions/transcript/viewport/visibility/transcriptNavigationVisibilityStore';
 import {
-    hasAnyWebTranscriptDataTestId,
-    scheduleWebTranscriptNavigationVisibilityObservation,
-} from '@/components/sessions/transcript/viewport/visibility/webTranscriptNavigationVisibilityObserver';
-import {
-    TRANSCRIPT_WEB_HOT_TAIL_ITEM_TEST_ID_PREFIX,
-} from '@/components/sessions/transcript/web/WebTranscriptSplitFooter';
+    publishTranscriptNavigationVisibility,
+    readRendererVisibleSourceIndexRange,
+} from '@/components/sessions/transcript/viewport/visibility/transcriptNavigationVisibilityPublish';
 import {
     TRANSCRIPT_WEB_PREPEND_ANCHOR_TEST_ID_PREFIX,
 } from '@/components/sessions/transcript/viewport/prepend/webTranscriptPrependAnchor';
@@ -99,7 +102,6 @@ import { waitForVisualUpdateWithTimeout } from '@/components/sessions/transcript
 type MutableRef<T> = { current: T };
 type PlatformOS = 'web' | 'ios' | 'android' | 'windows' | 'macos' | 'native';
 type ExplicitJumpTakeoverEffects = ReturnType<TranscriptLifecycleHost['planExplicitJumpTakeover']>['explicitJumpTakeoverEffects'];
-const TRANSCRIPT_WEB_NON_PROGRAMMATIC_SCROLL_SUSTAIN_FRAMES = 2;
 const TRANSCRIPT_SCROLL_JUMP_TO_BOTTOM_REVEAL_VIEWPORT_RATIO_MAX = 4;
 
 export function useTranscriptJumpWindowFacts(params: Readonly<{
@@ -108,6 +110,7 @@ export function useTranscriptJumpWindowFacts(params: Readonly<{
     sessionId: string;
 }>): Readonly<{
     isSeqLoaded(seq: number): boolean;
+    isSeqRangeLoaded(fromInclusive: number, toInclusive: number): boolean;
     resolveTargetWindowItemSeq(item: ChatTranscriptListItem): number | null;
     sessionTargetWindowState: ReturnType<typeof sync.getSessionTargetWindowState>;
 }> {
@@ -149,13 +152,25 @@ export function useTranscriptJumpWindowFacts(params: Readonly<{
             && seq >= sessionTargetWindowState.windowMinSeq
             && seq <= sessionTargetWindowState.windowMaxSeq;
     }, [loadedTranscriptSeqSet, sessionTargetWindowState]);
+    const isSeqRangeLoaded = React.useCallback((fromInclusive: number, toInclusive: number): boolean => {
+        if (
+            !sessionTargetWindowState.isWindowMode ||
+            typeof sessionTargetWindowState.windowMinSeq !== 'number' ||
+            typeof sessionTargetWindowState.windowMaxSeq !== 'number'
+        ) return false;
+        const minSeq = Math.min(sessionTargetWindowState.windowMinSeq, sessionTargetWindowState.windowMaxSeq);
+        const maxSeq = Math.max(sessionTargetWindowState.windowMinSeq, sessionTargetWindowState.windowMaxSeq);
+        return fromInclusive >= minSeq && toInclusive <= maxSeq;
+    }, [sessionTargetWindowState]);
 
     return React.useMemo(() => ({
         isSeqLoaded,
+        isSeqRangeLoaded,
         resolveTargetWindowItemSeq,
         sessionTargetWindowState,
     }), [
         isSeqLoaded,
+        isSeqRangeLoaded,
         resolveTargetWindowItemSeq,
         sessionTargetWindowState,
     ]);
@@ -166,7 +181,10 @@ export function useTranscriptJumpTargetWindowActiveBridge(params: Readonly<{
     targetWindowActive: boolean;
     targetWindowActiveRef: MutableRef<boolean>;
 }>): void {
-    params.targetWindowActiveRef.current = params.targetWindowActive;
+    useCommittedTranscriptRef(
+        params.targetWindowActiveRef,
+        params.targetWindowActive,
+    );
     React.useEffect(() => {
         if (!params.targetWindowActive) {
             params.activeTargetWindowTargetRef.current = null;
@@ -211,15 +229,16 @@ export type TranscriptJumpHostDeps = Readonly<{
     listContentHeightRef: MutableRef<number>;
     listData: readonly ChatTranscriptListItem[];
     listLayoutHeight: number;
-    listLayoutWidthPx: number;
     listRef: MutableRef<ScrollableChatListRef | null>;
     itemsRef: MutableRef<readonly ChatTranscriptListItem[]>;
     messagesById: Readonly<Record<string, Message>>;
     onJumpLanded?: (result: Extract<TranscriptJumpResult, { status: 'scrolled' | 'window-rendered' }>) => void;
+    onSuccessfulRouteJumpSettled(sessionId: string): void;
     onViewportChangeRef: MutableRef<((state: TranscriptViewportChangeState) => void) | undefined>;
     pendingJumpSeqViewportPromotionRef: MutableRef<PendingJumpSeqViewportPromotion | null>;
+    pinThresholdPx: number;
     pinThresholdPxRef: MutableRef<number>;
-    pinToBottom(reason?: TranscriptViewportTelemetryScrollReason): boolean;
+    pinToBottom(): boolean;
     platformOS: PlatformOS;
     promotedJumpSeqViewportProtectionRef: MutableRef<PromotedJumpSeqViewportProtection | null>;
     readCurrentNativeDistanceFromBottom(): number | null;
@@ -240,18 +259,15 @@ export type TranscriptJumpHostDeps = Readonly<{
     stampViewportAnchorForEmit(anchor: SessionViewportAnchorSnapshot | null | undefined): SessionViewportAnchorSnapshot | null | undefined;
     targetWindowHasMoreNewer: boolean;
     targetWindowIsWindowMode: boolean;
-    transcriptContentMaxWidth: number;
     transcriptNavigationEntries: readonly TranscriptNavigationEntry[];
     transcriptNavigationRuntimeAnchorsRef: MutableRef<readonly TranscriptNavigationRuntimeAnchor[]>;
-    usesNativeFlashListBottomMaintenance: boolean;
     waitForNextVisualUpdate(): Promise<void>;
-    webDomObservation: WebDomScrollObservation;
     wantsPinnedRef: MutableRef<boolean>;
 }>;
 
 export type TranscriptJumpHost = Readonly<{
     commitJumpToBottomDistanceForVisibility(distanceFromBottom: number): void;
-    flushPendingJumpSeqViewportPromotionForExit(): void;
+    flushPendingJumpSeqViewportPromotionForExit(): TranscriptExitSnapshotSelection | null;
     handleTranscriptNavigationPaneEntryPress(entry: TranscriptNavigationEntry): Promise<TranscriptJumpResult> | undefined;
     handleTranscriptNavigationRailJump(
         entry: TranscriptNavigationEntry,
@@ -263,21 +279,15 @@ export type TranscriptJumpHost = Readonly<{
         target: TranscriptJumpTarget,
         options?: Readonly<{ align?: TranscriptViewportJumpAlignment; preferTargetWindow?: boolean }>,
     ): Promise<TranscriptJumpResult>;
-    observeWebTranscriptNavigationVisibilityForSession(
-        metrics: WebTranscriptScrollMetrics,
-        scrollIntent: Readonly<{ isTrusted: boolean }> | null,
+    /**
+     * The session's ONE navigation-visibility publication point. `input` carries
+     * this frame's user-authority classification, which releases a jump landing's
+     * claim on the current anchor. Called without it (layout change, consumer
+     * arrival, viewability) the claim is preserved.
+     */
+    observeTranscriptNavigationVisibilityForSession(
+        input?: Readonly<{ genuineUserMovement?: boolean }>,
     ): void;
-    observeWebGenuineScrollMovement(params: Readonly<{
-        distanceFromBottom: number;
-        isTrusted: boolean;
-        metrics: WebTranscriptScrollMetrics | null;
-        pinThresholdPx: number;
-        visualBottomScrollOffset: number | null;
-    }>): Readonly<{
-        webMovedSinceLastObservation: boolean | null;
-        webObservedUpwardIntent: boolean;
-        webObservedUserScrollMovement: boolean;
-    }>;
     onScrollToIndexFailed(info: Readonly<{ index: number; averageItemLength: number }>): void;
     promotePendingJumpSeqViewportSnapshot(params: Readonly<{
         distanceFromBottom: number;
@@ -287,10 +297,6 @@ export type TranscriptJumpHost = Readonly<{
         scrollOffsetPx: number;
     }>): boolean;
     shouldSuppressGenericViewportStateForProtectedJumpSeq(): boolean;
-    transcriptNavigationRailVisibilitySnapshot: Readonly<{
-        currentAnchorId: string | null;
-        visibleAnchorIds: readonly string[];
-    }>;
 }>;
 
 export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJumpHost {
@@ -323,13 +329,14 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         listContentHeightRef,
         listData,
         listLayoutHeight,
-        listLayoutWidthPx,
         listRef,
         itemsRef,
         messagesById,
         onJumpLanded,
+        onSuccessfulRouteJumpSettled,
         onViewportChangeRef,
         pendingJumpSeqViewportPromotionRef,
+        pinThresholdPx,
         pinThresholdPxRef,
         pinToBottom,
         platformOS,
@@ -347,12 +354,9 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         stampViewportAnchorForEmit,
         targetWindowHasMoreNewer,
         targetWindowIsWindowMode,
-        transcriptContentMaxWidth,
         transcriptNavigationEntries,
         transcriptNavigationRuntimeAnchorsRef,
-        usesNativeFlashListBottomMaintenance,
         waitForNextVisualUpdate,
-        webDomObservation,
         wantsPinnedRef,
     } = deps;
 
@@ -360,6 +364,12 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
     const jumpToBottomDistanceFromBottomRef = React.useRef(0);
     const lastJumpSeqRef = React.useRef<number | null>(null);
     const inFlightJumpSeqRef = React.useRef<number | null>(null);
+    const currentExplicitJumpOperationRef = React.useRef<TranscriptExplicitJumpOperationId | null>(null);
+    const resolveSeqForMessageIdRef = React.useRef(resolveSeqForMessageId);
+    useCommittedTranscriptRef(
+        resolveSeqForMessageIdRef,
+        resolveSeqForMessageId,
+    );
     const transcriptScrollJumpToBottomEnabled = useSetting('transcriptScrollJumpToBottomEnabled');
     const transcriptScrollJumpToBottomMinNewCount = useSetting('transcriptScrollJumpToBottomMinNewCount');
     const transcriptScrollJumpToBottomRevealViewportRatio = useSetting('transcriptScrollJumpToBottomRevealViewportRatio');
@@ -373,7 +383,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         typeof transcriptScrollJumpToBottomRevealViewportRatio === 'number' && Number.isFinite(transcriptScrollJumpToBottomRevealViewportRatio)
             ? Math.max(0, Math.min(TRANSCRIPT_SCROLL_JUMP_TO_BOTTOM_REVEAL_VIEWPORT_RATIO_MAX, transcriptScrollJumpToBottomRevealViewportRatio))
             : settingsDefaults.transcriptScrollJumpToBottomRevealViewportRatio;
-    const jumpRevealOffsetThresholdPx = Math.max(pinThresholdPxRef.current, Math.trunc(listLayoutHeight * jumpRevealViewportRatio));
+    const jumpRevealOffsetThresholdPx = Math.max(pinThresholdPx, Math.trunc(listLayoutHeight * jumpRevealViewportRatio));
     const jumpAnimateScroll = transcriptScrollJumpToBottomAnimateScroll !== false;
 
     const resolveRouteMessageIdForMessageId = React.useCallback((messageId: string): string | null => {
@@ -427,7 +437,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
                     role,
                 },
                 items: itemsRef.current as readonly Record<string, unknown>[],
-                resolveSeqForMessageId,
+                resolveSeqForMessageId: resolveSeqForMessageIdRef.current,
                 resolveRouteMessageIdForMessageId,
                 resolveTranscriptBlockIndexForMessageId,
                 resolveRoleForMessageId,
@@ -439,7 +449,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         return resolveTranscriptJumpSeqIndex({
             targetSeq: normalizedSeq,
             items: itemsRef.current,
-            resolveSeqForMessageId,
+            resolveSeqForMessageId: resolveSeqForMessageIdRef.current,
             hasMoreOlder: hasMoreOlderRef.current !== false,
         });
     }, [
@@ -447,17 +457,20 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         itemsRef,
         resolveRoleForMessageId,
         resolveRouteMessageIdForMessageId,
-        resolveSeqForMessageId,
+        resolveSeqForMessageIdRef,
         resolveTranscriptBlockIndexForMessageId,
         targetWindowHasMoreNewer,
     ]);
-    resolveJumpToSeqIndexForCommandRef.current = resolveJumpToSeqIndexFromLoadedItems;
+    useCommittedTranscriptRef(
+        resolveJumpToSeqIndexForCommandRef,
+        resolveJumpToSeqIndexFromLoadedItems,
+    );
 
     const resolveJumpTargetIndexFromRenderedWindow = React.useCallback((target: TranscriptJumpTarget): TranscriptJumpTargetIndexResult => {
         return resolveTranscriptJumpTargetIndex({
             target,
             items: canonicalWindowedItemsRef.current as readonly Record<string, unknown>[],
-            resolveSeqForMessageId,
+            resolveSeqForMessageId: resolveSeqForMessageIdRef.current,
             resolveRouteMessageIdForMessageId,
             resolveTranscriptBlockIndexForMessageId,
             resolveRoleForMessageId,
@@ -469,7 +482,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         hasMoreOlderRef,
         resolveRoleForMessageId,
         resolveRouteMessageIdForMessageId,
-        resolveSeqForMessageId,
+        resolveSeqForMessageIdRef,
         resolveTranscriptBlockIndexForMessageId,
         targetWindowHasMoreNewer,
     ]);
@@ -607,13 +620,13 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         wantsPinnedRef,
     ]);
 
-    const flushPendingJumpSeqViewportPromotionForExit = React.useCallback(() => {
+    const flushPendingJumpSeqViewportPromotionForExit = React.useCallback((): TranscriptExitSnapshotSelection | null => {
         const pending = pendingJumpSeqViewportPromotionRef.current;
-        if (!pending) return;
-        if (pending.sessionId !== currentSessionIdRef.current) return;
-        if (platformOS !== 'web') return;
+        if (!pending) return null;
+        if (pending.sessionId !== currentSessionIdRef.current) return null;
+        if (platformOS !== 'web') return null;
         const metrics = resolveWebScrollMetrics();
-        if (!metrics) return;
+        if (!metrics) return null;
         const viewportState = resolveJumpSeqViewportPromotionState({
             distanceFromBottom: getWebTranscriptDistanceFromBottom(metrics),
             metrics,
@@ -632,6 +645,29 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         queueMicrotask(() => {
             emit?.(viewportState);
         });
+        if (viewportState.isPinned) {
+            return {
+                source: 'jump-promotion',
+                viewport: {
+                    anchor: null,
+                    capturedAtMs: Date.now(),
+                    isPinned: true,
+                    offsetY: 0,
+                    shouldRestoreViewport: false,
+                },
+            };
+        }
+        if (!viewportState.anchor) return null;
+        return {
+            source: 'jump-promotion',
+            viewport: {
+                anchor: viewportState.anchor,
+                capturedAtMs: viewportState.anchor.capturedAtMs,
+                isPinned: false,
+                offsetY: viewportState.offsetY,
+                shouldRestoreViewport: true,
+            },
+        };
     }, [
         currentSessionIdRef,
         invalidateViewportAnchorCapture,
@@ -708,127 +744,133 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         }),
         [transcriptNavigationEntries, transcriptNavigationRenderedSources],
     );
-    transcriptNavigationRuntimeAnchorsRef.current = transcriptNavigationRuntimeAnchors;
+    useCommittedTranscriptRef(
+        transcriptNavigationRuntimeAnchorsRef,
+        transcriptNavigationRuntimeAnchors,
+    );
 
-    const transcriptNavigationRailVisible = React.useMemo(() => deriveTranscriptNavigationRailLayout({
-        entryCount: transcriptNavigationEntries.length,
-        paneHeightPx: listLayoutHeight,
-        paneWidthPx: listLayoutWidthPx,
-        platformOS: platformOS === 'web' || platformOS === 'ios' || platformOS === 'android'
-            ? platformOS
-            : 'native-other',
-        transcriptContentWidthPx: Math.min(listLayoutWidthPx, transcriptContentMaxWidth),
-        transcriptMaxWidthPx: transcriptContentMaxWidth,
-    }).visible, [
-        listLayoutHeight,
-        listLayoutWidthPx,
-        platformOS,
-        transcriptContentMaxWidth,
-        transcriptNavigationEntries.length,
-    ]);
-    const transcriptNavigationPaneOpen = useTranscriptNavigationPaneOpen(sessionId);
-    const transcriptNavigationVisibilitySnapshot = useTranscriptNavigationVisibilitySnapshot(sessionId, {
-        enabled: transcriptNavigationRailVisible || transcriptNavigationPaneOpen,
-    });
-    const transcriptNavigationRailVisibilitySnapshot = React.useMemo(() => {
-        const entryIds = new Set(transcriptNavigationEntries.map((entry) => entry.id));
-        const currentAnchorId = transcriptNavigationVisibilitySnapshot.currentAnchorId &&
-            entryIds.has(transcriptNavigationVisibilitySnapshot.currentAnchorId)
-            ? transcriptNavigationVisibilitySnapshot.currentAnchorId
-            : null;
-        const visibleAnchorIds = transcriptNavigationVisibilitySnapshot.visibleAnchorIds.filter((id) => entryIds.has(id));
-        return {
-            currentAnchorId,
-            visibleAnchorIds,
-        };
-    }, [transcriptNavigationEntries, transcriptNavigationVisibilitySnapshot]);
+    // Consumer PRESENCE only — never the anchor itself. Presence changes at
+    // mount/unmount rate and gates publication below.
+    const hasTranscriptNavigationVisibilityConsumers = useTranscriptNavigationVisibilityHasSubscribers(sessionId);
 
-    const observeWebTranscriptNavigationVisibilityForSession = React.useCallback((
-        metrics: WebTranscriptScrollMetrics,
-        scrollIntent: Readonly<{ isTrusted: boolean }> | null,
+    const listDataRef = React.useRef(listData);
+    useCommittedTranscriptRef(listDataRef, listData);
+
+    // Jump-landing intent, held only until the reader takes the viewport back.
+    // A ref, not a store: the single publication point below is still the only
+    // thing that writes navigation visibility, and the host must not re-render
+    // when this changes.
+    const landedNavigationAnchorRef = React.useRef<TranscriptNavigationLandedAnchor | null>(null);
+
+    /**
+     * The ONE navigation-visibility publication point, in renderer index space on
+     * every platform. `readVisibleSourceIndexRange` is the renderer seam's own
+     * visible window (Legend list state) — no DOM query and no layout read, so
+     * this stays free on the per-scroll-frame path, and it reports null rather
+     * than row 0 while the renderer is still unmeasured.
+     */
+    const observeTranscriptNavigationVisibilityForSession = React.useCallback((
+        input?: Readonly<{ genuineUserMovement?: boolean }>,
     ) => {
-        if (platformOS !== 'web') return;
-        scheduleWebTranscriptNavigationVisibilityObservation({
-            anchors: transcriptNavigationRuntimeAnchorsRef.current,
-            metrics,
-            scrollIntent,
+        const anchors = transcriptNavigationRuntimeAnchorsRef.current;
+        // Retention is resolved HERE, immediately before the write, so the frame
+        // that carries the reader's own movement already publishes containment.
+        const landedNavigationAnchor = resolveRetainedTranscriptNavigationLandedAnchor({
+            anchors,
+            genuineUserMovement: input?.genuineUserMovement === true,
+            landed: landedNavigationAnchorRef.current,
+            sessionId,
+        });
+        landedNavigationAnchorRef.current = landedNavigationAnchor;
+        publishTranscriptNavigationVisibility({
+            anchors,
+            itemCount: listDataRef.current.length,
+            landedAnchorId: landedNavigationAnchor?.anchorId ?? null,
+            // "Am I measured yet" is the RENDERER's fact, and its reader already
+            // answers null while it cannot place a window. Gating on the host's
+            // own layout height as well is wrong: on web that state stays 0 for
+            // this shell, so a renderer reporting a perfectly good window would
+            // be discarded as `unmeasured-viewport` and the rail never lights up.
+            readVisibleSourceRange: () => readRendererVisibleSourceIndexRange(listRef.current),
             store: getTranscriptNavigationVisibilityStore(sessionId),
         });
     }, [
-        platformOS,
+        listRef,
         sessionId,
         transcriptNavigationRuntimeAnchorsRef,
     ]);
 
-    const observeWebGenuineScrollMovement = React.useCallback((params: Readonly<{
-        distanceFromBottom: number;
-        isTrusted: boolean;
-        metrics: WebTranscriptScrollMetrics | null;
-        pinThresholdPx: number;
-        visualBottomScrollOffset: number | null;
-    }>): Readonly<{
-        webMovedSinceLastObservation: boolean | null;
-        webObservedUpwardIntent: boolean;
-        webObservedUserScrollMovement: boolean;
-    }> => {
-        const metrics = params.metrics;
-        if (!metrics) {
-            return {
-                webMovedSinceLastObservation: null,
-                webObservedUpwardIntent: false,
-                webObservedUserScrollMovement: false,
-            };
-        }
-        const movement = webDomObservation.observeGenuineScrollMovement({
-            metrics,
-            fallbackObservedScrollTop: wantsPinnedRef.current ? params.visualBottomScrollOffset : null,
-            distanceFromBottom: params.distanceFromBottom,
-            pinThresholdPx: params.pinThresholdPx,
-            sustainFrames: TRANSCRIPT_WEB_NON_PROGRAMMATIC_SCROLL_SUSTAIN_FRAMES,
-            isTrusted: params.isTrusted,
-        });
-        if (!movement.isGenuineUserMovement) {
-            return {
-                webMovedSinceLastObservation: movement.movedSinceLastObservation,
-                webObservedUpwardIntent: false,
-                webObservedUserScrollMovement: false,
-            };
-        }
-        if (!movement.upwardIntent) {
-            return {
-                webMovedSinceLastObservation: movement.movedSinceLastObservation,
-                webObservedUpwardIntent: false,
-                webObservedUserScrollMovement: true,
-            };
-        }
-        return {
-            webMovedSinceLastObservation: movement.movedSinceLastObservation,
-            webObservedUpwardIntent: true,
-            webObservedUserScrollMovement: true,
-        };
+    // Re-derive without a scroll: a consumer ARRIVING (rail mounted, pane opened)
+    // is itself a trigger — publication is subscriber-gated, so without this the
+    // store stays empty until the reader scrolls. Anchor/entry changes (pin
+    // toggle, prepend, a new turn) and layout/content-size changes all move the
+    // visible range too.
+    React.useEffect(() => {
+        observeTranscriptNavigationVisibilityForSession();
     }, [
-        wantsPinnedRef,
-        webDomObservation,
+        hasTranscriptNavigationVisibilityConsumers,
+        listContentHeight,
+        listLayoutHeight,
+        observeTranscriptNavigationVisibilityForSession,
+        transcriptNavigationRuntimeAnchors,
     ]);
 
-    const isWebTranscriptSeqMounted = React.useCallback((seq: number): boolean => {
-        return isTranscriptSeqMountedInWebRenderedWindow({
-            hasAnyTestId: hasAnyWebTranscriptDataTestId,
-            hotTailTestIdPrefix: TRANSCRIPT_WEB_HOT_TAIL_ITEM_TEST_ID_PREFIX,
-            items: canonicalWindowedItemsRef.current,
-            platformOS,
-            prependAnchorTestIdPrefix: TRANSCRIPT_WEB_PREPEND_ANCHOR_TEST_ID_PREFIX,
-            resolveContainer: () => resolveWebScrollMetrics()?.element,
-            resolveItemId: (item) => item.id,
-            resolveSeq: resolveTargetWindowItemSeq,
-            seq,
+    /**
+     * The landing seam that already drives the jump highlight also records where
+     * the reader was put, and publishes it. A target-window landing produces no
+     * scroll frame of its own, so without publishing here the rail keeps showing
+     * the pre-jump anchor indefinitely.
+     */
+    const handleJumpLanded = React.useCallback((
+        result: Extract<TranscriptJumpResult, { status: 'scrolled' | 'window-rendered' }>,
+    ) => {
+        const anchorId = resolveTranscriptNavigationAnchorIdForJumpTarget({
+            anchors: transcriptNavigationRuntimeAnchorsRef.current,
+            target: result.target,
         });
+        landedNavigationAnchorRef.current = anchorId ? { anchorId, sessionId } : null;
+        observeTranscriptNavigationVisibilityForSession();
+        onJumpLanded?.(result);
+    }, [
+        observeTranscriptNavigationVisibilityForSession,
+        onJumpLanded,
+        sessionId,
+        transcriptNavigationRuntimeAnchorsRef,
+    ]);
+
+    const resolveWebTranscriptTargetObservation = React.useCallback((
+        target: TranscriptJumpTarget,
+    ): Readonly<{ item: Element; metrics: WebTranscriptScrollMetrics }> | null => {
+        const targetIndex = resolveJumpTargetIndexFromRenderedWindow(target);
+        if (targetIndex.status !== 'found') return null;
+        const targetItem = canonicalWindowedItemsRef.current[targetIndex.index];
+        if (!targetItem) return null;
+        const metrics = resolveWebScrollMetrics();
+        if (!metrics) return null;
+        const testId = `${TRANSCRIPT_WEB_PREPEND_ANCHOR_TEST_ID_PREFIX}${targetItem.id}`;
+        const lookup = queryExactWebTranscriptDataTestId(metrics.element, testId);
+        return lookup.element ? { item: lookup.element, metrics } : null;
     }, [
         canonicalWindowedItemsRef,
-        platformOS,
-        resolveTargetWindowItemSeq,
+        resolveJumpTargetIndexFromRenderedWindow,
         resolveWebScrollMetrics,
     ]);
+
+    const isWebTranscriptTargetMounted = React.useCallback((target: TranscriptJumpTarget): boolean => (
+        resolveWebTranscriptTargetObservation(target) !== null
+    ), [resolveWebTranscriptTargetObservation]);
+
+    const isWebTranscriptTargetAligned = React.useCallback((
+        target: TranscriptJumpTarget,
+        align: TranscriptViewportJumpAlignment | undefined,
+    ): boolean => {
+        const observation = resolveWebTranscriptTargetObservation(target);
+        return observation !== null && isTranscriptTargetObservedAtAlignment({
+            align,
+            item: observation.item,
+            metrics: observation.metrics,
+        });
+    }, [resolveWebTranscriptTargetObservation]);
 
     const jumpToBottom = React.useCallback(() => {
         const plan = lifecycleHost.planExplicitJumpTakeover({
@@ -837,27 +879,12 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         });
         commitBottomFollowModeState(plan.state.bottomFollowState);
         applyExplicitJumpTakeoverApplyEffects(plan.explicitJumpTakeoverEffects);
-        if (usesNativeFlashListBottomMaintenance) {
-            const distanceFromBottom = readCurrentNativeDistanceFromBottom();
-            if (distanceFromBottom != null && distanceFromBottom <= pinThresholdPxRef.current) {
-                lifecycleHost.clearNativeExplicitJumpConfirmation({ sessionId });
-                commitExplicitReturnToLiveTailState('jump-to-bottom');
-                invalidateViewportAnchorCapture();
-                return;
-            }
-        }
-        if (usesNativeFlashListBottomMaintenance) {
-            lifecycleHost.armNativeExplicitJumpConfirmation({
-                sessionId,
-                issuedContentHeight: listContentHeightRef.current,
-            });
-        }
         const command = resolveViewportCommand({
             type: 'jump-to-bottom',
             sessionId,
         });
         if (!executeViewportCommandWithAnimation(command, jumpAnimateScroll)) {
-            pinToBottom('jump-to-bottom');
+            pinToBottom();
         }
         commitExplicitReturnToLiveTailState('jump-to-bottom');
         invalidateViewportAnchorCapture();
@@ -869,13 +896,9 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         invalidateViewportAnchorCapture,
         jumpAnimateScroll,
         lifecycleHost,
-        listContentHeightRef,
-        pinThresholdPxRef,
         pinToBottom,
-        readCurrentNativeDistanceFromBottom,
         resolveViewportCommand,
         sessionId,
-        usesNativeFlashListBottomMaintenance,
     ]);
 
     const jumpToTranscriptTarget = React.useCallback(async (
@@ -886,8 +909,20 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         if (!targetRequest) return { status: 'not-found', reason: 'invalid-target' };
         const { normalizedTargetSeq, routeMessageId, transcriptBlockIndex, role } = targetRequest;
         if (!sessionId) return { status: 'not-found', reason: 'unavailable' };
+        const operationId: TranscriptExplicitJumpOperationId = Symbol('transcript-explicit-jump');
+        currentExplicitJumpOperationRef.current = operationId;
+        const isCurrentOperation = (): boolean => currentExplicitJumpOperationRef.current === operationId;
+        const takeoverPlan = lifecycleHost.planExplicitJumpTakeover({
+            reason: 'jump-to-seq',
+            sessionId,
+        });
+        commitBottomFollowModeState(takeoverPlan.state.bottomFollowState);
+        applyExplicitJumpTakeoverApplyEffects(takeoverPlan.explicitJumpTakeoverEffects);
+        const acquiredRenderer = listRef.current;
+        const releaseRendererTakeover = acquiredRenderer?.beginExplicitJumpTakeover?.(operationId);
         beginExplicitJumpWriteBarrier();
         const scrollToTarget = (): boolean => {
+            if (!isCurrentOperation()) return false;
             const command = resolveViewportCommand({
                 type: 'jump-to-seq',
                 sessionId,
@@ -898,6 +933,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
                 ...(options?.align ? { align: options.align } : {}),
             });
             const applied = executeViewportCommandWithAnimation(command, true);
+            if (!isCurrentOperation()) return false;
             if (applied && platformOS === 'web') {
                 pendingJumpSeqViewportPromotionRef.current = {
                     emitViewportChange: onViewportChangeRef.current,
@@ -917,20 +953,38 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
             }
             return applied;
         };
+        const isTargetOwnedByRenderer = (): boolean => {
+            const targetIndex = resolveJumpTargetIndexFromRenderedWindow(target);
+            if (targetIndex.status !== 'found') return false;
+            const targetItem = canonicalWindowedItemsRef.current[targetIndex.index];
+            if (!targetItem) return false;
+            return listRef.current?.hasLiveWebHold?.({
+                kind: 'item',
+                itemId: targetItem.id,
+            }) === true;
+        };
         try {
             const result = await executeTranscriptTargetWindowJump({
                 align: options?.align,
                 canRenderTargetWindow: options?.preferTargetWindow === true && !forkedTranscriptEnabled,
                 forceTargetWindow: options?.preferTargetWindow === true,
+                isCurrentOperation,
+                isTargetAligned: platformOS === 'web'
+                    ? () => isWebTranscriptTargetAligned(target, options?.align)
+                    : undefined,
                 isTargetInRenderedWindow: () => isTranscriptJumpTargetInRenderedWindow(target),
                 isTargetMounted: () => platformOS === 'web'
-                    ? isWebTranscriptSeqMounted(normalizedTargetSeq)
+                    ? isWebTranscriptTargetMounted(target)
                     : true,
+                isTargetOwnedByRenderer: platformOS === 'web'
+                    ? isTargetOwnedByRenderer
+                    : undefined,
                 loadTargetWindow: async ({ target: windowTarget, direction }) => {
                     const loadTarget = resolveTranscriptTargetWindowLoadTarget(windowTarget, normalizedTargetSeq);
                     const result = await sync.loadTargetWindowMessages(sessionId, loadTarget, {
                         direction: direction ?? 'initial',
                     });
+                    if (!isCurrentOperation()) return { status: 'stale' as const };
                     if (result?.status === 'stale') return { status: 'stale' as const };
                     if (result?.status === 'loaded' && result.targetPresent) {
                         activeTargetWindowTargetRef.current = windowTarget;
@@ -943,13 +997,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
                     }
                     return null;
                 },
-                nudgeScrollForGap: platformOS === 'web' ? () => {
-                    const element = resolveWebScrollMetrics()?.element;
-                    if (!element) return;
-                    const st = (element as HTMLElement).scrollTop;
-                    if (st > 0) (element as HTMLElement).scrollTop = st - 1;
-                } : undefined,
-                onJumpLanded,
+                onJumpLanded: handleJumpLanded,
                 pageTowardTarget: async () => {
                     const syncLoadOlderOptions = resolveSyncLoadOlderOptions();
                     const loadOlderResult = forkedTranscriptEnabled
@@ -959,11 +1007,14 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
                         : (syncLoadOlderOptions
                             ? await sync.loadOlderMessages(sessionId, syncLoadOlderOptions)
                             : await sync.loadOlderMessages(sessionId));
+                    if (!isCurrentOperation()) return { status: 'aborted' };
                     if (loadOlderResult.status === 'no_more') {
                         return { status: 'not-found', reason: 'exhausted' };
                     }
                     await Promise.resolve();
+                    if (!isCurrentOperation()) return { status: 'aborted' };
                     await Promise.resolve();
+                    if (!isCurrentOperation()) return { status: 'aborted' };
                     return scrollToTarget()
                         ? { status: 'scrolled', target }
                         : { status: 'not-found', reason: 'unavailable' };
@@ -983,6 +1034,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
                     });
                 },
             });
+            if (!isCurrentOperation()) return { status: 'aborted' };
             if (
                 platformOS === 'web' &&
                 (result.status === 'scrolled' || result.status === 'window-rendered') &&
@@ -998,44 +1050,89 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
                     });
                 }
             }
+            if (
+                platformOS !== 'web' &&
+                (result.status === 'scrolled' || result.status === 'window-rendered')
+            ) {
+                const distanceFromBottom = readCurrentNativeDistanceFromBottom();
+                if (
+                    distanceFromBottom !== null &&
+                    Number.isFinite(distanceFromBottom) &&
+                    distanceFromBottom > pinThresholdPxRef.current
+                ) {
+                    const measuredDistanceFromBottom = Math.max(0, distanceFromBottom);
+                    invalidateViewportAnchorCapture();
+                    wantsPinnedRef.current = false;
+                    isPinnedRef.current = false;
+                    lastPinOffsetForIntentRef.current = measuredDistanceFromBottom;
+                    commitBottomFollowModeState({ dragSession: null, mode: 'released' });
+                    commitJumpToBottomDistanceForVisibility(measuredDistanceFromBottom);
+                    commitScrollPinState({
+                        ...scrollPinRef.current,
+                        isPinned: false,
+                    });
+                    emitViewportChange({
+                        isPinned: false,
+                        offsetY: measuredDistanceFromBottom,
+                        shouldRestoreViewport: true,
+                    });
+                }
+            }
             return result;
         } finally {
             endExplicitJumpWriteBarrier();
+            releaseRendererTakeover?.();
+            if (currentExplicitJumpOperationRef.current === operationId) {
+                currentExplicitJumpOperationRef.current = null;
+            }
         }
     }, [
         activeTargetWindowTargetRef,
         beginExplicitJumpWriteBarrier,
+        canonicalWindowedItemsRef,
+        commitJumpToBottomDistanceForVisibility,
+        commitScrollPinState,
+        emitViewportChange,
         endExplicitJumpWriteBarrier,
         executeViewportCommandWithAnimation,
         forkedTranscriptEnabled,
+        invalidateViewportAnchorCapture,
+        isPinnedRef,
         isTranscriptJumpTargetInRenderedWindow,
-        isWebTranscriptSeqMounted,
+        isWebTranscriptTargetAligned,
+        isWebTranscriptTargetMounted,
+        lastPinOffsetForIntentRef,
         lastRouteJumpProtectionClearingWebMovementAtMsRef,
-        onJumpLanded,
+        handleJumpLanded,
         onViewportChangeRef,
         pendingJumpSeqViewportPromotionRef,
+        pinThresholdPxRef,
         platformOS,
         promotePendingJumpSeqViewportSnapshot,
+        readCurrentNativeDistanceFromBottom,
         resolveJumpTargetIndexFromRenderedWindow,
         resolveSyncLoadOlderOptions,
         resolveViewportCommand,
         resolveWebScrollMetrics,
+        applyExplicitJumpTakeoverApplyEffects,
+        commitBottomFollowModeState,
+        lifecycleHost,
+        listRef,
+        scrollPinRef,
         sessionId,
         waitForNextVisualUpdate,
+        wantsPinnedRef,
     ]);
 
     const isTranscriptNavigationTargetInRenderedWindow = React.useCallback((target: TranscriptJumpTarget): boolean => {
         return resolveTranscriptNavigationTargetInRenderedWindow({
             platformOS,
             isTargetInItemSpace: isTranscriptJumpTargetInRenderedWindow(target),
-            isTargetMountedInDom: () => {
-                const targetRequest = resolveTranscriptJumpTargetRequest(target);
-                return targetRequest ? isWebTranscriptSeqMounted(targetRequest.normalizedTargetSeq) : false;
-            },
+            isTargetMountedInDom: () => isWebTranscriptTargetMounted(target),
         });
     }, [
         isTranscriptJumpTargetInRenderedWindow,
-        isWebTranscriptSeqMounted,
+        isWebTranscriptTargetMounted,
         platformOS,
     ]);
 
@@ -1069,8 +1166,6 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
 
     React.useLayoutEffect(() => {
         transcriptNavigationPaneStore.set(sessionId, {
-            activeEntryId: transcriptNavigationRailVisibilitySnapshot.currentAnchorId,
-            entries: transcriptNavigationEntries,
             onEntryPress: handleTranscriptNavigationPaneEntryPress,
         });
         return () => {
@@ -1079,8 +1174,6 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
     }, [
         handleTranscriptNavigationPaneEntryPress,
         sessionId,
-        transcriptNavigationEntries,
-        transcriptNavigationRailVisibilitySnapshot.currentAnchorId,
     ]);
 
     React.useEffect(() => {
@@ -1107,8 +1200,12 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
                     { kind: 'seq', seq: normalizedTarget },
                     { preferTargetWindow: true },
                 );
-                if (result.status === 'scrolled' || result.status === 'window-rendered') {
+                if (
+                    (result.status === 'scrolled' || result.status === 'window-rendered') &&
+                    inFlightJumpSeqRef.current === normalizedTarget
+                ) {
                     lastJumpSeqRef.current = normalizedTarget;
+                    onSuccessfulRouteJumpSettled(sessionId);
                 }
             } finally {
                 if (inFlightJumpSeqRef.current === normalizedTarget) {
@@ -1123,6 +1220,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         jumpToTranscriptTarget,
         listContentHeight,
         listLayoutHeight,
+        onSuccessfulRouteJumpSettled,
         platformOS,
         resolveWebScrollMetrics,
         sessionId,
@@ -1165,12 +1263,10 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         jumpToBottom,
         jumpToBottomAffordance,
         jumpToTranscriptTarget,
-        observeWebGenuineScrollMovement,
-        observeWebTranscriptNavigationVisibilityForSession,
+        observeTranscriptNavigationVisibilityForSession,
         onScrollToIndexFailed,
         promotePendingJumpSeqViewportSnapshot,
         shouldSuppressGenericViewportStateForProtectedJumpSeq,
-        transcriptNavigationRailVisibilitySnapshot,
     }), [
         commitJumpToBottomDistanceForVisibility,
         flushPendingJumpSeqViewportPromotionForExit,
@@ -1179,11 +1275,9 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         jumpToBottom,
         jumpToBottomAffordance,
         jumpToTranscriptTarget,
-        observeWebGenuineScrollMovement,
-        observeWebTranscriptNavigationVisibilityForSession,
+        observeTranscriptNavigationVisibilityForSession,
         onScrollToIndexFailed,
         promotePendingJumpSeqViewportSnapshot,
         shouldSuppressGenericViewportStateForProtectedJumpSeq,
-        transcriptNavigationRailVisibilitySnapshot,
     ]);
 }

@@ -41,6 +41,8 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         | 'canCreate'
         | 'isCreating'
         | 'pendingLaunchAttempt'
+        | 'providerLaunchError'
+        | 'retryProviderLaunch'
         | 'submitAccessibilityLabel'
         | 'emptyAutocompletePrefixes'
         | 'emptyAutocompleteSuggestions'

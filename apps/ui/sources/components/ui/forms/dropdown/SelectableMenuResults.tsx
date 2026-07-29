@@ -11,6 +11,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Eyebrow } from '@/components/ui/text/Eyebrow';
 import type { ScrollItemLayoutHandler } from '@/components/ui/scroll/useScrollRectIntoView';
 
+type RowFrameStyle = React.ComponentProps<typeof View>['style'];
+
 type WebMouseDownActivationEvent = Readonly<{
     button?: number;
     currentTarget?: unknown;
@@ -34,6 +36,7 @@ function asWebMouseDownActivationEvent(event: unknown): WebMouseDownActivationEv
 type ElementLike = Readonly<{
     contains?: (node: unknown) => boolean;
     closest?: (selector: string) => unknown;
+    getAttribute?: (name: string) => string | null;
 }>;
 
 function asElementLike(value: unknown): ElementLike | null {
@@ -51,7 +54,9 @@ const INTERACTIVE_DESCENDANT_SELECTOR = [
     '[role="link"]',
 ].join(',');
 
-function startsFromInteractiveDescendant(event: WebMouseDownActivationEvent): boolean {
+const useBrowserLayoutEffect = typeof window === 'undefined' ? React.useEffect : React.useLayoutEffect;
+
+function startsFromInteractiveDescendant(event: WebMouseDownActivationEvent, rowTestID: string): boolean {
     const target = asElementLike(event.target ?? event.nativeEvent?.target);
     const currentTarget = asElementLike(event.currentTarget ?? event.nativeEvent?.currentTarget);
     if (!target || !currentTarget || target === currentTarget) return false;
@@ -59,8 +64,117 @@ function startsFromInteractiveDescendant(event: WebMouseDownActivationEvent): bo
 
     const interactiveAncestor = target.closest(INTERACTIVE_DESCENDANT_SELECTOR);
     if (!interactiveAncestor || interactiveAncestor === currentTarget) return false;
+    const interactiveElement = asElementLike(interactiveAncestor);
+    if (interactiveElement?.getAttribute?.('data-testid') === rowTestID) return false;
     if (typeof currentTarget.contains !== 'function') return true;
     return currentTarget.contains(interactiveAncestor);
+}
+
+function installWebTrailingClickBlocker(): void {
+    if (typeof document === 'undefined') return;
+
+    let safetyTimer: ReturnType<typeof setTimeout> | null = null;
+    const cleanup = () => {
+        document.removeEventListener('click', blockClick, true);
+        document.removeEventListener('pointerup', blockRelease, true);
+        document.removeEventListener('mouseup', blockRelease, true);
+        if (safetyTimer !== null) clearTimeout(safetyTimer);
+        safetyTimer = null;
+    };
+    const blockClick = (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        cleanup();
+    };
+    let releaseCleanupScheduled = false;
+    const blockRelease = (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        if (releaseCleanupScheduled) return;
+        releaseCleanupScheduled = true;
+        // Pointer/mouse release and click are one activation sequence. Keep all
+        // three blocked, then retire the shield in the next task.
+        setTimeout(cleanup, 0);
+    };
+
+    document.addEventListener('click', blockClick, true);
+    document.addEventListener('pointerup', blockRelease, true);
+    document.addEventListener('mouseup', blockRelease, true);
+    safetyTimer = setTimeout(cleanup, 1_000);
+}
+
+function useWebRowFrameLayout(
+    rowAnchorRef: React.RefObject<View | null>,
+    onLayout: ScrollItemLayoutHandler | undefined,
+) {
+    const previousLayoutRef = React.useRef<Readonly<{ y: number; height: number }> | null>(null);
+
+    useBrowserLayoutEffect(() => {
+        if (Platform.OS !== 'web' || !onLayout) return undefined;
+        const node = rowAnchorRef.current as unknown as HTMLElement | null;
+        if (!node) return undefined;
+
+        const emitLayout = () => {
+            const layout = {
+                y: node.offsetTop,
+                height: node.offsetHeight,
+            };
+            const previousLayout = previousLayoutRef.current;
+            if (previousLayout?.y === layout.y && previousLayout.height === layout.height) return;
+            previousLayoutRef.current = layout;
+            onLayout({ nativeEvent: { layout } });
+        };
+
+        emitLayout();
+
+        if (typeof ResizeObserver === 'undefined') return undefined;
+        const observer = new ResizeObserver(emitLayout);
+        observer.observe(node);
+        return () => {
+            observer.disconnect();
+        };
+    }, [onLayout, rowAnchorRef]);
+}
+
+function SelectableMenuRowFrame(props: {
+    children: React.ReactNode;
+    rowAnchorRef: React.RefObject<View | null>;
+    testID: string;
+    style: RowFrameStyle;
+    onMouseDownCapture: ((event: unknown) => void) | undefined;
+    onPointerEnter: (() => void) | undefined;
+    onLayout: ScrollItemLayoutHandler | undefined;
+}) {
+    useWebRowFrameLayout(props.rowAnchorRef, props.onLayout);
+
+    if (Platform.OS === 'web') {
+        return React.createElement(
+            'div',
+            {
+                ref: props.rowAnchorRef as unknown as React.RefObject<HTMLDivElement>,
+                ...(typeof document === 'undefined' ? { testID: props.testID, onLayout: props.onLayout } : {}),
+                'data-testid': props.testID,
+                style: props.style as React.CSSProperties | undefined,
+                onMouseDownCapture: props.onMouseDownCapture,
+                onPointerEnter: props.onPointerEnter,
+            },
+            props.children,
+        );
+    }
+
+    return (
+        <View
+            ref={props.rowAnchorRef}
+            testID={props.testID}
+            style={props.style}
+            onPointerEnter={props.onPointerEnter}
+            {...(props.onLayout ? { onLayout: props.onLayout } : {})}
+        >
+            {props.children}
+        </View>
+    );
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -83,7 +197,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingBottom: 8,
         color: theme.colors.input.placeholder,
     },
+    rowFrame: {
+        width: '100%',
+    },
+    itemRowPressable: {
+        width: '100%',
+    },
     submenuAnchorFrame: {
+        width: '100%',
         position: 'relative',
     },
     submenuAnchor: {
@@ -111,7 +232,6 @@ export function SelectableMenuResults(props: {
     registerItemLayout?: (key: string) => ScrollItemLayoutHandler;
 }) {
     const styles = stylesheet;
-    const mouseDownActivatedItemIdRef = React.useRef<string | null>(null);
     const rowAnchorRefs = React.useRef(new Map<string, React.RefObject<View | null>>());
     const submenuAnchorRefs = React.useRef(new Map<string, React.RefObject<View | null>>());
 
@@ -136,15 +256,10 @@ export function SelectableMenuResults(props: {
         return true;
     }, [props]);
     const handleMouseDownActivatedPress = React.useCallback((item: SelectableMenuItem) => {
-        mouseDownActivatedItemIdRef.current = String(item.id);
+        installWebTrailingClickBlocker();
         props.onPressItem(item);
     }, [props.onPressItem]);
     const handlePressItem = React.useCallback((item: SelectableMenuItem) => {
-        const itemId = String(item.id);
-        if (Platform.OS === 'web' && mouseDownActivatedItemIdRef.current === itemId) {
-            mouseDownActivatedItemIdRef.current = null;
-            return;
-        }
         props.onPressItem(item);
     }, [props.onPressItem]);
     const isPrimaryWebActivationEvent = React.useCallback((event: WebMouseDownActivationEvent) => {
@@ -187,7 +302,7 @@ export function SelectableMenuResults(props: {
                                 const activationEvent = asWebMouseDownActivationEvent(event);
                                 if (item.disabled) return;
                                 if (!isPrimaryWebActivationEvent(activationEvent)) return;
-                                if (startsFromInteractiveDescendant(activationEvent)) return;
+                                if (startsFromInteractiveDescendant(activationEvent, optionTestID)) return;
                                 activationEvent.preventDefault?.();
                                 activationEvent.stopPropagation?.();
                                 if (handleOpenSubmenu(item, submenuAnchorRef as React.RefObject<unknown>)) return;
@@ -200,16 +315,20 @@ export function SelectableMenuResults(props: {
                     const itemNode = rowKind === 'item' ? (
                         <Item
                             {...(props.itemProps ?? {})}
+                            pressableStyle={[
+                                props.itemProps?.pressableStyle,
+                                styles.itemRowPressable,
+                            ]}
                             testID={optionTestID}
                             title={item.title}
                             subtitle={item.subtitleNode ?? item.subtitle}
+                            accessibilityLabel={item.accessibilityLabel}
                             icon={item.left}
                             rightElement={item.right}
                             selected={isSelected}
                             disabled={item.disabled}
                             showChevron={false}
                             showDivider={false}
-                            onMouseDownCapture={handleOptionMouseDownCapture}
                             onPress={() => {
                                 if (item.disabled) return;
                                 if (handleOpenSubmenu(item, rowAnchorRef as React.RefObject<unknown>)) return;
@@ -226,11 +345,11 @@ export function SelectableMenuResults(props: {
                             right={item.right}
                             title={item.titleNode ?? item.title}
                             subtitle={item.subtitleNode ?? item.subtitle}
+                            accessibilityLabel={item.accessibilityLabel}
                             containerStyle={item.rowContainerStyle}
                             titleStyle={item.rowTitleStyle}
                             subtitleStyle={item.rowSubtitleStyle}
                             testID={optionTestID}
-                            onMouseDownCapture={handleOptionMouseDownCapture}
                             onPress={() => {
                                 if (item.disabled) return;
                                 if (handleOpenSubmenu(item, rowAnchorRef as React.RefObject<unknown>)) return;
@@ -245,18 +364,13 @@ export function SelectableMenuResults(props: {
                     );
 
                     const scrollFrameLayout = props.registerItemLayout?.(String(itemIndex));
-                    return (
-                        <View
-                            ref={rowAnchorRef}
-                            key={item.id}
-                            testID={`${optionTestID}:scroll-frame`}
-                            style={item.hasSubmenu ? styles.submenuAnchorFrame : undefined}
-                            onPointerEnter={Platform.OS === 'web' && item.hasSubmenu ? () => {
-                                props.onSelectionChange(itemIndex);
-                                handleOpenItemSubmenu();
-                            } : undefined}
-                            {...(scrollFrameLayout ? { onLayout: scrollFrameLayout } : {})}
-                        >
+                    const rowFrameTestID = `${optionTestID}:scroll-frame`;
+                    const rowFramePointerEnter = Platform.OS === 'web' && item.hasSubmenu ? () => {
+                        props.onSelectionChange(itemIndex);
+                        handleOpenItemSubmenu();
+                    } : undefined;
+                    const rowFrameChildren = (
+                        <>
                             {itemNode}
                             {item.hasSubmenu ? (
                                 <View
@@ -267,7 +381,20 @@ export function SelectableMenuResults(props: {
                                     style={styles.submenuAnchor}
                                 />
                             ) : null}
-                        </View>
+                        </>
+                    );
+                    return (
+                        <SelectableMenuRowFrame
+                            key={item.id}
+                            testID={rowFrameTestID}
+                            rowAnchorRef={rowAnchorRef}
+                            style={item.hasSubmenu ? styles.submenuAnchorFrame : styles.rowFrame}
+                            onMouseDownCapture={handleOptionMouseDownCapture}
+                            onPointerEnter={rowFramePointerEnter}
+                            onLayout={scrollFrameLayout}
+                        >
+                            {rowFrameChildren}
+                        </SelectableMenuRowFrame>
                     );
                 });
 

@@ -1,15 +1,19 @@
-import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
+import {
+    BackendTargetKeyV2InputSchema,
+    buildSettingArtifacts,
+    defineSettingDefinitions,
+} from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import {
-    buildProviderUniverseBackendTargetKey,
-    listProviderUniverseIds,
-} from '@/agents/providers/registry/providerUniverse';
+    buildAgentUniverseBackendTargetKey,
+    listAgentUniverseIds,
+} from '@/agents/catalog/agentUniverse';
 import { PERMISSION_MODES } from '@/constants/PermissionModes';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 
 const DEFAULT_SESSION_PERMISSION_MODE_BY_TARGET_KEY: Record<string, PermissionMode> = Object.fromEntries(
-    listProviderUniverseIds().map((id) => [buildProviderUniverseBackendTargetKey(id), 'default']),
+    listAgentUniverseIds().map((id) => [buildAgentUniverseBackendTargetKey(id), 'default']),
 );
 
 function buildPermissionModeAnalyticsProperties(value: unknown): Record<string, string> {
@@ -18,8 +22,8 @@ function buildPermissionModeAnalyticsProperties(value: unknown): Record<string, 
         : {};
 
     return Object.fromEntries(
-        listProviderUniverseIds().map((agentId) => {
-            const targetKey = buildProviderUniverseBackendTargetKey(agentId);
+        listAgentUniverseIds().map((agentId) => {
+            const targetKey = buildAgentUniverseBackendTargetKey(agentId);
             const raw = record[targetKey];
             const normalized = typeof raw === 'string' && (PERMISSION_MODES as readonly string[]).includes(raw)
                 ? raw
@@ -31,7 +35,7 @@ function buildPermissionModeAnalyticsProperties(value: unknown): Record<string, 
 
 export const ACCOUNT_PERMISSION_SETTING_DEFINITIONS = defineSettingDefinitions({
     sessionDefaultPermissionModeByTargetKey: {
-        schema: z.record(z.string(), z.enum(PERMISSION_MODES)).default(DEFAULT_SESSION_PERMISSION_MODE_BY_TARGET_KEY),
+        schema: z.record(BackendTargetKeyV2InputSchema, z.enum(PERMISSION_MODES)).default(DEFAULT_SESSION_PERMISSION_MODE_BY_TARGET_KEY),
         default: DEFAULT_SESSION_PERMISSION_MODE_BY_TARGET_KEY,
         description: 'Default permission mode per agent for new sessions',
         storageScope: 'account',

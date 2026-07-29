@@ -15,6 +15,7 @@ import type { ExistingSessionAutomationAuthoringContext } from '@/components/ses
 import { Modal } from '@/modal';
 import { nowServerMs } from '@/sync/runtime/time';
 import { t, tLoose } from '@/text';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export function ExistingSessionAutomationComposer(props: Readonly<{
     context: ExistingSessionAutomationAuthoringContext;
@@ -27,6 +28,7 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
 }>): React.JSX.Element {
     const composerState = resolveSessionComposerStateFromAuthoringContext(props.context);
     const profileId = composerState.profileId;
+    const ownerMetadata = readSessionOwnerMetadataView(props.context.session);
 
     return (
         <AgentInput
@@ -41,7 +43,7 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
             autocompletePrefixes={['@', '/']}
             autocompleteSuggestions={(query) => getSuggestions(props.context.session.id, query)}
             sessionId={props.context.session.id}
-            metadata={props.context.session.metadata}
+            metadata={ownerMetadata}
             agentType={composerState.agentId ?? undefined}
             agentLabel={composerState.agentId ? t(getAgentCore(composerState.agentId).displayNameKey) : tLoose('common.unknown')}
             permissionMode={composerState.permissionMode}

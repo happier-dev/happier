@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
@@ -19,20 +20,49 @@ import {
 } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import { decodeAutomationTemplate } from '@/sync/domains/automations/automationTemplateCodec';
 
+function modelSelection(
+    agentTargetKey: string,
+    modelId = 'gpt-5',
+    updatedAt = 456,
+    providerConnectionId: string | null = null,
+): SessionModelSelectionV1 {
+    return SessionModelSelectionV1Schema.parse({
+        v: 1 as const,
+        updatedAt,
+        ref: {
+            agentTargetKey,
+            providerConnectionId,
+            modelId,
+        },
+    });
+}
+
 describe('sessionAuthoringDraftAdapters', () => {
+    it('preserves an absent draft model selection so migrated profile intent can fill it on read', () => {
+        const draft = buildNewSessionAuthoringDraftFromTempData({
+            prompt: 'Review this',
+            directory: '/tmp/project',
+            agentType: 'claude',
+            backendTarget: { kind: 'backend', backendId: 'claude' },
+            selectedProfileId: 'deepseek',
+        });
+
+        expect(Object.prototype.hasOwnProperty.call(draft, 'modelSelection')).toBe(false);
+    });
+
     it('hydrates an existing-session automation template into a shared authoring draft', () => {
         const template = decodeAutomationTemplate(JSON.stringify({
             directory: '/tmp/project',
             prompt: 'Summarize the latest changes',
             displayText: 'Summarize the latest changes',
+            agent: 'codex',
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             environmentVariables: { OPENAI_API_KEY: 'secret' },
             resume: 'resume-1',
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:codex'),
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
@@ -71,8 +101,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             resumeSessionId: 'resume-1',
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:codex'),
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
@@ -115,8 +144,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             resumeSessionId: 'resume-1',
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:codex'),
             mcpSelection: null,
             connectedServices: { github: { installationId: '123' } },
             terminal: { mode: 'integrated' },
@@ -148,8 +176,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             resume: 'resume-1',
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:codex'),
             connectedServices: { github: { installationId: '123' } },
             terminal: { mode: 'integrated' },
             windowsRemoteSessionLaunchMode: 'console',
@@ -183,8 +210,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             resumeSessionId: 'resume-1',
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
@@ -214,7 +240,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             profileId: 'profile-1',
             permissionMode: 'acceptEdits',
-            modelId: 'gpt-5',
+            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
             transcriptStorage: 'direct',
             acpSessionModeId: 'plan',
             codexBackendMode: 'appServer',
@@ -253,8 +279,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             permissionModeUpdatedAt: 123,
             agentModeId: 'plan',
             agentModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
             sessionConfigOptionOverrides: {
                 v: 1,
                 updatedAt: 789,
@@ -296,8 +321,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 resumeSessionId: null,
                 permissionMode: null,
                 permissionModeUpdatedAt: null,
-                modelId: null,
-                modelUpdatedAt: null,
+                modelSelection: null,
                 mcpSelection: null,
                 connectedServices: null,
                 terminal: null,
@@ -328,16 +352,15 @@ describe('sessionAuthoringDraftAdapters', () => {
             checkoutCreationDraft: null,
             prompt: 'Send the daily reminder',
             displayText: 'Send the daily reminder',
-            agentId: null,
-            backendTarget: null,
+            agentId: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'codex' },
             transcriptStorage: 'direct',
             profileId: null,
             environmentVariables: { FOO: 'bar' },
             resumeSessionId: null,
             permissionMode: 'readOnly',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:codex'),
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
@@ -367,6 +390,63 @@ describe('sessionAuthoringDraftAdapters', () => {
         });
 
         expect(hydrated).toEqual(initialDraft);
+    });
+
+    it('preserves a provider-bound model literally named default across authoring boundaries', () => {
+        const explicitDefault = modelSelection('backend:codex', 'default', 456, 'pc_openrouter');
+        const draft = buildNewSessionAuthoringDraft({
+            directory: '/tmp/project',
+            checkoutCreationDraft: null,
+            prompt: 'Run the review',
+            displayText: 'Run the review',
+            agentId: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'codex' },
+            transcriptStorage: 'persisted',
+            profileId: null,
+            environmentVariables: null,
+            resumeSessionId: null,
+            permissionMode: null,
+            permissionModeUpdatedAt: null,
+            modelSelection: explicitDefault,
+            mcpSelection: null,
+            connectedServices: null,
+            terminal: null,
+            windowsRemoteSessionLaunchMode: null,
+            windowsRemoteSessionConsole: null,
+            windowsTerminalWindowName: null,
+            experimentalCodexAcp: null,
+            codexBackendMode: null,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            automation: null,
+        });
+
+        const template = buildAutomationTemplateFromSessionAuthoringDraft(draft);
+        const hydrated = hydrateSessionAuthoringDraftFromAutomationTemplate({
+            targetType: 'new_session',
+            template,
+        });
+        const spawnOptions = buildSpawnSessionOptionsFromAuthoringDraft({
+            draft: hydrated,
+            machineId: 'machine-1',
+        });
+        const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft({
+            draft: hydrated,
+            machineId: 'machine-1',
+            selectedSecretId: null,
+            selectedSecretIdByProfileIdByEnvVarName: null,
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
+            backendNewSessionOptionStateByTargetKey: null,
+            updatedAt: 987,
+        });
+
+        expect(template.modelSelection).toEqual(explicitDefault);
+        expect(template).not.toHaveProperty('modelId');
+        expect(hydrated.modelSelection).toEqual(explicitDefault);
+        expect(spawnOptions.modelSelection).toEqual(explicitDefault);
+        expect(spawnOptions).not.toHaveProperty('modelId');
+        expect(persistedDraft.modelSelection).toEqual(explicitDefault);
+        expect(persistedDraft).not.toHaveProperty('modelMode');
     });
 
     it('hydrates an existing-session authoring draft from a live session snapshot', () => {
@@ -413,8 +493,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             profileId: 'profile-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
             terminal: { mode: 'tmux', tmux: { sessionName: 'happy-dev' } },
             experimentalCodexAcp: null,
             codexBackendMode: 'acp',
@@ -457,8 +536,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 resumeSessionId: null,
                 permissionMode: 'acceptEdits',
                 permissionModeUpdatedAt: 123,
-                modelId: 'gpt-5',
-                modelUpdatedAt: 456,
+                modelSelection: modelSelection('backend:codex'),
                 mcpSelection: null,
                 connectedServices: null,
                 terminal: null,
@@ -502,8 +580,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             displayText: 'Keep this message',
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:codex'),
             existingSessionId: 'session-1',
             sessionEncryptionKeyBase64: 'new-dek',
             automation: expect.objectContaining({
@@ -551,8 +628,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             profileId: 'profile-live',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
             codexBackendMode: 'acp',
             existingSessionId: 'session-1',
             sessionEncryptionKeyBase64: 'dek-live',
@@ -575,8 +651,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 resumeSessionId: null,
                 permissionMode: 'read-only',
                 permissionModeUpdatedAt: 12,
-                modelId: 'template-model',
-                modelUpdatedAt: 34,
+                modelSelection: modelSelection('backend:codex', 'template-model', 34),
                 mcpSelection: null,
                 connectedServices: null,
                 terminal: null,
@@ -629,8 +704,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 resumeSessionId: null,
                 permissionMode: 'acceptEdits',
                 permissionModeUpdatedAt: 123,
-                modelId: 'gpt-5',
-                modelUpdatedAt: 456,
+                modelSelection: modelSelection('backend:codex'),
                 mcpSelection: null,
                 connectedServices: null,
                 terminal: null,
@@ -675,14 +749,48 @@ describe('sessionAuthoringDraftAdapters', () => {
             displayText: 'Keep my edited message',
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:codex'),
             sessionEncryptionKeyBase64: 'new-dek',
             automation: expect.objectContaining({
                 name: 'Current automation',
                 everyMinutes: 60,
             }),
         }));
+    });
+
+    it('preserves an explicit Automatic model choice instead of inheriting a fallback selection', () => {
+        const merged = mergeExistingSessionAutomationTemplateDraft({
+            hydratedTemplateDraft: {
+                targetType: 'existing_session', directory: '/template', checkoutCreationDraft: null,
+                prompt: 'Template', displayText: 'Template', agentId: 'codex',
+                backendTarget: { kind: 'backend', backendId: 'codex' }, transcriptStorage: 'persisted',
+                profileId: null, environmentVariables: null, resumeSessionId: null,
+                permissionMode: 'default', permissionModeUpdatedAt: 1, modelSelection: null,
+                mcpSelection: null, connectedServices: null, terminal: null,
+                windowsRemoteSessionLaunchMode: null, windowsRemoteSessionConsole: null,
+                windowsTerminalWindowName: null, experimentalCodexAcp: null, codexBackendMode: null,
+                acpSessionModeId: null, sessionConfigOptionOverrides: null, existingSessionId: 'session-1',
+                sessionEncryptionMode: 'e2ee', sessionEncryptionKeyBase64: null,
+                sessionEncryptionVariant: null, automation: null,
+            },
+            targetSession: {
+                id: 'session-1', encryptionMode: 'e2ee',
+                metadata: {
+                    path: '/live', host: 'host', flavor: 'codex',
+                    modelSelectionIntentV1: {
+                        v: 1, updatedAt: 20,
+                        selection: { agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'gpt-5.5' },
+                    },
+                },
+                permissionMode: 'default', permissionModeUpdatedAt: 1,
+                modelMode: 'gpt-5.5', modelModeUpdatedAt: 20,
+            },
+            currentDraft: null,
+            sessionDekBase64: null,
+            seededAutomationDraft: null,
+        });
+
+        expect(merged.modelSelection).toBeNull();
     });
 
     it('preserves persisted template permission and model overrides when hydrating against a live session snapshot', () => {
@@ -701,8 +809,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 resumeSessionId: null,
                 permissionMode: 'readOnly',
                 permissionModeUpdatedAt: 12,
-                modelId: 'claude-sonnet-4-6',
-                modelUpdatedAt: 34,
+                modelSelection: modelSelection('backend:claude', 'claude-sonnet-4-6', 34),
                 mcpSelection: null,
                 connectedServices: null,
                 terminal: null,
@@ -753,8 +860,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             displayText: 'Template prompt',
             permissionMode: 'readOnly',
             permissionModeUpdatedAt: 12,
-            modelId: 'claude-sonnet-4-6',
-            modelUpdatedAt: 34,
+            modelSelection: modelSelection('backend:claude', 'claude-sonnet-4-6', 34),
             sessionEncryptionKeyBase64: 'live-dek',
             automation: {
                 enabled: true,
@@ -833,8 +939,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             resumeSessionId: null,
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:codex'),
             mcpSelection: null,
             connectedServices: null,
             terminal: null,
@@ -911,8 +1016,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 resumeSessionId: null,
                 permissionMode: 'acceptEdits',
                 permissionModeUpdatedAt: 123,
-                modelId: 'gpt-5',
-                modelUpdatedAt: 456,
+                modelSelection: modelSelection('backend:codex'),
                 mcpSelection: null,
                 connectedServices: null,
                 terminal: null,
@@ -967,8 +1071,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             resumeSessionId: 'resume-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
@@ -1017,8 +1120,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             resumeSessionId: 'resume-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
@@ -1066,8 +1168,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             resumeSessionId: 'resume-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
@@ -1140,7 +1241,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             transcriptStorage: 'direct',
             permissionMode: 'safe-yolo',
-            modelMode: 'gpt-5',
+            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
             acpSessionModeId: 'plan',
             codexBackendMode: 'appServer',
             mcpSelection: {
@@ -1291,8 +1392,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             resumeSessionId: 'resume-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
             mcpSelection: null,
             connectedServices: { v: 1, bindingsByServiceId: { github: { source: 'connected' } } },
             terminal: null,
@@ -1334,7 +1434,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             profileId: 'profile-1',
             resumeSessionId: 'resume-1',
             permissionMode: 'safe-yolo',
-            modelId: 'gpt-5',
+            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
             codexBackendMode: 'appServer',
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: {
@@ -1375,8 +1475,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             resumeSessionId: 'resume-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
             mcpSelection: null,
             connectedServices: { v: 1, bindingsByServiceId: { github: { source: 'connected' } } },
             terminal: null,
@@ -1425,7 +1524,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             profileId: 'profile-1',
             resumeSessionId: 'resume-1',
             permissionMode: 'safe-yolo',
-            modelId: 'gpt-5',
+            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
             codexBackendMode: 'appServer',
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: {

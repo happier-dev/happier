@@ -17,7 +17,6 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 const desktopActivityOverlayRuntimeSpy = vi.fn(() => null);
 const activityBadgeRuntimeSpy = vi.fn(() => null);
 
-vi.mock('react-native-reanimated', () => ({}));
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));

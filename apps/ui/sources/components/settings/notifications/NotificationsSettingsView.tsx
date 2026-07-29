@@ -14,6 +14,8 @@ import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { useLocalSettings, useSettings } from '@/sync/domains/state/storage';
 import { useApplyLocalSettings, useApplySettings } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
+import { sync } from '@/sync/sync';
+import { runPushNotificationPermissionPriming } from '@/activity/notifications/permission/pushNotificationPermissionPriming';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
@@ -106,6 +108,15 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
                     enabled,
                 },
             },
+        });
+        if (!enabled) return;
+        // Enabling push here is the user's demonstrated intent, so it is the right moment to ask
+        // the OS — framed in-app first. Registration itself never prompts, so without this the
+        // setting could be on while the OS permission was never requested.
+        void runPushNotificationPermissionPriming({
+            pushEnabled: true,
+            trigger: 'user_action',
+            onGranted: () => sync.onPushPermissionGranted(),
         });
     }, [attentionPolicy.channels, setAttentionPolicy]);
 

@@ -1,11 +1,15 @@
 import {
     AcpConfigOptionOverridesV1Schema,
+    SessionModelSelectionV1Schema,
     readBackendTargetRefV2,
+    type AiLaunchProfile,
     type BackendTargetRefV2,
+    type ProviderSettingsMigrationStateV1,
+    type SessionModelSelectionV1,
 } from '@happier-dev/protocol';
 
 import { DEFAULT_AGENT_ID, isAgentId } from '@/agents/catalog/catalog';
-import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import {
@@ -27,6 +31,7 @@ import {
     resolveCanonicalCodexBackendMode,
 } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
 import type { AutomationTemplate } from '@/sync/domains/automations/automationTypes';
+import { normalizeAutomationTemplateLaunchProfileReference } from '@/sync/domains/automations/normalizeAutomationTemplateLaunchProfileReference';
 import type { NewSessionData } from '@/utils/sessions/tempDataStore';
 import {
     normalizeBackendNewSessionOptionStateByTargetKey,
@@ -41,7 +46,15 @@ import type { SessionAuthoringDraft } from './sessionAuthoringDraft';
 
 type ExistingSessionAuthoringSnapshotSession = Pick<
     Session,
-    'id' | 'encryptionMode' | 'metadata' | 'permissionMode' | 'permissionModeUpdatedAt' | 'modelMode' | 'modelModeUpdatedAt'
+    | 'id'
+    | 'encryptionMode'
+    | 'metadataLayoutVersion'
+    | 'metadata'
+    | 'ownerMetadataView'
+    | 'permissionMode'
+    | 'permissionModeUpdatedAt'
+    | 'modelMode'
+    | 'modelModeUpdatedAt'
 >;
 
 export type { ExistingSessionAuthoringSnapshotSession };
@@ -74,8 +87,11 @@ function buildExistingSessionAuthoringDraftFromSnapshotData(params: Readonly<{
         resumeSessionId: null,
         permissionMode: params.snapshot.permissionMode,
         permissionModeUpdatedAt: params.snapshot.permissionModeUpdatedAt,
-        modelId: params.snapshot.modelId,
-        modelUpdatedAt: params.snapshot.modelUpdatedAt,
+        modelSelection: buildCanonicalDraftModelSelection({
+            backendTarget: params.snapshot.backendTarget,
+            agentId: params.snapshot.agentId,
+            modelSelection: params.snapshot.modelSelection,
+        }),
         mcpSelection: params.snapshot.mcpSelection,
         connectedServices: params.snapshot.connectedServices,
         terminal: params.snapshot.terminal,
@@ -112,8 +128,9 @@ export function mergeExistingSessionAuthoringDraftInheritedFields(
         resumeSessionId: current.resumeSessionId ?? fallback.resumeSessionId,
         permissionMode: current.permissionMode ?? fallback.permissionMode,
         permissionModeUpdatedAt: current.permissionModeUpdatedAt ?? fallback.permissionModeUpdatedAt,
-        modelId: current.modelId ?? fallback.modelId,
-        modelUpdatedAt: current.modelUpdatedAt ?? fallback.modelUpdatedAt,
+        modelSelection: current.modelSelection !== undefined
+            ? current.modelSelection
+            : fallback.modelSelection,
         mcpSelection: current.mcpSelection ?? fallback.mcpSelection,
         connectedServices: current.connectedServices ?? fallback.connectedServices,
         terminal: current.terminal ?? fallback.terminal,
@@ -148,8 +165,7 @@ function mergeExistingSessionAuthoringDraftEditableFields(params: Readonly<{
         displayText: params.currentDraft.displayText,
         permissionMode: params.currentDraft.permissionMode,
         permissionModeUpdatedAt: params.currentDraft.permissionModeUpdatedAt,
-        modelId: params.currentDraft.modelId,
-        modelUpdatedAt: params.currentDraft.modelUpdatedAt,
+        modelSelection: params.currentDraft.modelSelection,
         automation: params.currentDraft.automation ?? params.fallbackAutomationDraft ?? null,
     };
 }
@@ -174,8 +190,9 @@ export function mergeExistingSessionAutomationTemplateDraft(params: Readonly<{
             displayText: params.hydratedTemplateDraft.displayText,
             permissionMode: params.hydratedTemplateDraft.permissionMode ?? fallbackDraft.permissionMode,
             permissionModeUpdatedAt: params.hydratedTemplateDraft.permissionModeUpdatedAt ?? fallbackDraft.permissionModeUpdatedAt,
-            modelId: params.hydratedTemplateDraft.modelId ?? fallbackDraft.modelId,
-            modelUpdatedAt: params.hydratedTemplateDraft.modelUpdatedAt ?? fallbackDraft.modelUpdatedAt,
+            modelSelection: params.hydratedTemplateDraft.modelSelection !== undefined
+                ? params.hydratedTemplateDraft.modelSelection
+                : fallbackDraft.modelSelection,
             automation: params.currentDraft?.automation ?? params.seededAutomationDraft,
         }, fallbackDraft)
         : params.hydratedTemplateDraft;
@@ -211,6 +228,41 @@ function resolveDraftBackendTarget(draft: Pick<SessionAuthoringDraft, 'backendTa
         : null;
 }
 
+function buildCanonicalDraftModelSelection(params: Readonly<{
+    backendTarget: BackendTargetRefV2 | null | undefined;
+    agentId: string | null | undefined;
+    modelSelection?: SessionModelSelectionV1 | null;
+    legacyModelId?: string | null;
+    legacyUpdatedAt?: number | null;
+}>): SessionModelSelectionV1 | null {
+    const target = resolveDraftBackendTarget({
+        backendTarget: params.backendTarget ?? null,
+        agentId: params.agentId ?? null,
+    });
+    if (params.modelSelection) {
+        const selection = SessionModelSelectionV1Schema.parse(params.modelSelection);
+        if (!target || selection.ref.agentTargetKey !== resolveBackendTargetKeyV2(target)) {
+            throw new Error('Session authoring model selection target mismatch');
+        }
+        return selection;
+    }
+
+    const modelId = normalizeOptionalString(params.legacyModelId);
+    if (!modelId || modelId === 'default') return null;
+    if (!target) {
+        throw new Error('Session authoring model selection requires backend target');
+    }
+    return SessionModelSelectionV1Schema.parse({
+        v: 1,
+        updatedAt: normalizeOptionalNumber(params.legacyUpdatedAt) ?? 0,
+        ref: {
+            agentTargetKey: resolveBackendTargetKeyV2(target),
+            providerConnectionId: null,
+            modelId,
+        },
+    });
+}
+
 function resolveDraftSpawnBackendTarget(draft: Pick<SessionAuthoringDraft, 'backendTarget' | 'agentId'>): SpawnSessionOptions['backendTarget'] | null {
     const backendTarget = resolveDraftBackendTarget(draft);
     return backendTarget ? readBackendTargetRefV2(backendTarget) : null;
@@ -223,7 +275,7 @@ function resolveNewSessionDraftAgentId(params: Readonly<{
     if (params.backendTarget) {
         const candidateAgentId = params.backendTarget.configuredBackendId ? null : params.backendTarget.backendId;
         if (candidateAgentId && isAgentId(candidateAgentId)) return candidateAgentId;
-        return resolveProviderAgentIdForBackendTarget(readBackendTargetRefV2(params.backendTarget));
+        return resolveCatalogAgentIdForBackendTarget(readBackendTargetRefV2(params.backendTarget));
     }
     if (typeof params.agentId === 'string' && isAgentId(params.agentId)) {
         return params.agentId;
@@ -250,10 +302,13 @@ function resolveConnectedServicesFromAgentOptionState(params: Readonly<{
 
 type NewSessionAuthoringDraftParams = Omit<
     SessionAuthoringDraft,
-    'targetType' | 'existingSessionId' | 'sessionEncryptionMode' | 'sessionEncryptionKeyBase64' | 'sessionEncryptionVariant' | 'experimentalCodexAcp' | 'windowsTerminalWindowName'
+    'targetType' | 'existingSessionId' | 'sessionEncryptionMode' | 'sessionEncryptionKeyBase64' | 'sessionEncryptionVariant' | 'experimentalCodexAcp' | 'windowsTerminalWindowName' | 'modelSelection' | 'modelId' | 'modelUpdatedAt'
 > & Readonly<{
     experimentalCodexAcp?: boolean | null;
     windowsTerminalWindowName?: SessionAuthoringDraft['windowsTerminalWindowName'];
+    modelSelection?: SessionModelSelectionV1 | null;
+    modelId?: string | null;
+    modelUpdatedAt?: number | null;
 }>;
 
 export function buildNewSessionAuthoringDraft(params: NewSessionAuthoringDraftParams): SessionAuthoringDraft {
@@ -261,6 +316,17 @@ export function buildNewSessionAuthoringDraft(params: NewSessionAuthoringDraftPa
         codexBackendMode: params.codexBackendMode,
         experimentalCodexAcp: params.experimentalCodexAcp,
     });
+
+    const hasModelSelectionInput = params.modelSelection !== undefined || params.modelId !== undefined;
+    const normalizedModelSelection = hasModelSelectionInput
+        ? buildCanonicalDraftModelSelection({
+            backendTarget: params.backendTarget,
+            agentId: params.agentId,
+            modelSelection: params.modelSelection,
+            legacyModelId: params.modelId,
+            legacyUpdatedAt: params.modelUpdatedAt,
+        })
+        : undefined;
 
     return {
         targetType: 'new_session',
@@ -276,8 +342,7 @@ export function buildNewSessionAuthoringDraft(params: NewSessionAuthoringDraftPa
         resumeSessionId: normalizeOptionalString(params.resumeSessionId),
         permissionMode: normalizeOptionalString(params.permissionMode),
         permissionModeUpdatedAt: normalizeOptionalNumber(params.permissionModeUpdatedAt),
-        modelId: normalizeOptionalString(params.modelId),
-        modelUpdatedAt: normalizeOptionalNumber(params.modelUpdatedAt),
+        ...(hasModelSelectionInput ? { modelSelection: normalizedModelSelection } : {}),
         mcpSelection: params.mcpSelection ?? null,
         connectedServices: params.connectedServices,
         terminal: params.terminal ?? null,
@@ -309,6 +374,7 @@ type ResolvedNewSessionAuthoringDraftInputs = Readonly<{
     resumeSessionId?: SessionAuthoringDraft['resumeSessionId'];
     permissionMode?: SessionAuthoringDraft['permissionMode'];
     permissionModeUpdatedAt?: SessionAuthoringDraft['permissionModeUpdatedAt'];
+    modelSelection?: SessionModelSelectionV1 | null;
     modelId?: SessionAuthoringDraft['modelId'];
     modelUpdatedAt?: SessionAuthoringDraft['modelUpdatedAt'];
     mcpSelection?: SessionAuthoringDraft['mcpSelection'];
@@ -340,8 +406,9 @@ export function buildNewSessionAuthoringDraftFromResolvedInputs(
         resumeSessionId: params.resumeSessionId ?? null,
         permissionMode: params.permissionMode ?? null,
         permissionModeUpdatedAt: params.permissionModeUpdatedAt ?? null,
-        modelId: params.modelId ?? null,
-        modelUpdatedAt: params.modelUpdatedAt ?? null,
+        modelSelection: params.modelSelection,
+        modelId: params.modelSelection === undefined ? params.modelId : undefined,
+        modelUpdatedAt: params.modelUpdatedAt,
         mcpSelection: params.mcpSelection ?? null,
         connectedServices: params.connectedServices,
         terminal: params.terminal ?? null,
@@ -379,6 +446,9 @@ function resolveNewSessionSourceProfileId(source: NewSessionAuthoringDraftSource
 }
 
 function resolveNewSessionSourceModelId(source: NewSessionAuthoringDraftSource): string | null {
+    if (source.kind === 'persistedDraft') {
+        return source.source.modelSelection?.ref.modelId ?? null;
+    }
     const rawModelMode = source.source.modelMode;
     if (!isModelMode(rawModelMode)) {
         return null;
@@ -407,8 +477,12 @@ function buildNewSessionAuthoringDraftFromSource(source: NewSessionAuthoringDraf
         resumeSessionId: source.source.resumeSessionId ?? null,
         permissionMode: source.source.permissionMode ?? null,
         permissionModeUpdatedAt: null,
-        modelId: resolveNewSessionSourceModelId(source),
-        modelUpdatedAt: null,
+        modelSelection: source.source.modelSelection,
+        modelId: source.source.modelSelection === undefined
+            && (source.kind === 'tempData' && Object.prototype.hasOwnProperty.call(source.source, 'modelMode'))
+            ? resolveNewSessionSourceModelId(source)
+            : undefined,
+        modelUpdatedAt: source.source.modelSelection?.updatedAt,
         mcpSelection: source.source.mcpSelection ?? null,
         connectedServices: normalizeSessionAuthoringConnectedServices(resolveConnectedServicesFromAgentOptionState({
             backendTarget,
@@ -532,8 +606,15 @@ export function hydrateSessionAuthoringDraftFromAutomationTemplate(params: Reado
         resumeSessionId: normalizeOptionalString(params.template.resume),
         permissionMode: normalizeOptionalString(params.template.permissionMode),
         permissionModeUpdatedAt: normalizeOptionalNumber(params.template.permissionModeUpdatedAt),
-        modelId: normalizeOptionalString(params.template.modelId),
-        modelUpdatedAt: normalizeOptionalNumber(params.template.modelUpdatedAt),
+        modelSelection: buildCanonicalDraftModelSelection({
+            backendTarget: sanitizedBackendTarget,
+            agentId: sanitizedBackendTarget && !sanitizedBackendTarget.configuredBackendId
+                ? sanitizedBackendTarget.backendId
+                : params.template.agent,
+            modelSelection: params.template.modelSelection,
+            legacyModelId: params.template.modelId,
+            legacyUpdatedAt: params.template.modelUpdatedAt,
+        }),
         sessionConfigOptionOverrides: normalizeSessionConfigOptionOverrides(params.template.sessionConfigOptionOverrides),
         mcpSelection: params.template.mcpSelection ?? null,
         connectedServices: normalizeSessionAuthoringConnectedServices(params.template.connectedServices),
@@ -575,6 +656,10 @@ export async function buildAutomationEditTemplateSeed(params: Readonly<{
         }>;
     }>;
     decryptAutomationTemplateRaw: (payloadCiphertext: string) => Promise<unknown>;
+    launchProfileContext?: Readonly<{
+        profiles: readonly AiLaunchProfile[];
+        migration: ProviderSettingsMigrationStateV1 | undefined;
+    }>;
 }>): Promise<Readonly<{
     hydratedDraft: SessionAuthoringDraft;
     seededAutomationDraft: NewSessionAutomationDraft;
@@ -590,11 +675,17 @@ export async function buildAutomationEditTemplateSeed(params: Readonly<{
     if (!decoded) {
         throw new Error('Invalid decrypted automation template payload');
     }
+    const normalizedTemplate = params.launchProfileContext
+        ? normalizeAutomationTemplateLaunchProfileReference({
+            template: decoded,
+            ...params.launchProfileContext,
+        })
+        : decoded;
 
     return {
         hydratedDraft: hydrateSessionAuthoringDraftFromAutomationTemplate({
             targetType: params.automation.targetType,
-            template: decoded,
+            template: normalizedTemplate,
         }),
         seededAutomationDraft: sanitizeNewSessionAutomationDraft({
             enabled: params.automation.enabled,
@@ -644,8 +735,7 @@ export function buildAutomationTemplateFromSessionAuthoringDraft(draft: SessionA
         ...(normalizeOptionalString(draft.resumeSessionId) ? { resume: draft.resumeSessionId!.trim() } : {}),
         ...(normalizeOptionalString(draft.permissionMode) ? { permissionMode: draft.permissionMode!.trim() } : {}),
         ...(typeof draft.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: draft.permissionModeUpdatedAt } : {}),
-        ...(normalizeOptionalString(draft.modelId) ? { modelId: draft.modelId!.trim() } : {}),
-        ...(typeof draft.modelUpdatedAt === 'number' ? { modelUpdatedAt: draft.modelUpdatedAt } : {}),
+        ...(draft.modelSelection ? { modelSelection: draft.modelSelection } : {}),
         ...(draft.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: draft.sessionConfigOptionOverrides } : {}),
         ...(draft.mcpSelection ? { mcpSelection: draft.mcpSelection } : {}),
         ...(draft.connectedServices !== undefined && draft.connectedServices !== null ? { connectedServices: draft.connectedServices } : {}),
@@ -715,8 +805,7 @@ export function buildSpawnSessionOptionsFromAuthoringDraft(params: Readonly<{
                     : {}),
             }
             : {}),
-        ...(normalizeOptionalString(params.draft.modelId) ? { modelId: params.draft.modelId!.trim() } : {}),
-        ...(typeof params.draft.modelUpdatedAt === 'number' ? { modelUpdatedAt: params.draft.modelUpdatedAt } : {}),
+        ...(params.draft.modelSelection ? { modelSelection: params.draft.modelSelection } : {}),
         ...(params.draft.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: params.draft.sessionConfigOptionOverrides } : {}),
         ...(codexBackendMode ? { codexBackendMode, experimentalCodexAcp: codexBackendMode === 'acp' } : {}),
         ...(params.draft.terminal ? { terminal: params.draft.terminal as SpawnSessionOptions['terminal'] } : {}),
@@ -775,7 +864,7 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
         selectedProfileId: params.draft.profileId,
         transcriptStorage: params.draft.transcriptStorage ?? undefined,
         permissionMode: isPermissionMode(params.draft.permissionMode) ? params.draft.permissionMode : undefined,
-        modelMode: params.draft.modelId ?? undefined,
+        modelSelection: params.draft.modelSelection,
         acpSessionModeId: params.draft.acpSessionModeId ?? null,
         sessionConfigOptionOverrides: params.draft.sessionConfigOptionOverrides ?? null,
         codexBackendMode,
@@ -849,7 +938,7 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
         ...(params.draft.backendTarget ? { backendTarget: params.draft.backendTarget } : {}),
         ...(params.draft.transcriptStorage ? { transcriptStorage: params.draft.transcriptStorage } : {}),
         permissionMode: isPermissionMode(params.draft.permissionMode) ? params.draft.permissionMode : 'default',
-        modelMode: isModelMode(params.draft.modelId) ? params.draft.modelId : 'default',
+        modelSelection: params.draft.modelSelection,
         acpSessionModeId: normalizeOptionalString(params.draft.acpSessionModeId),
         ...(params.draft.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: params.draft.sessionConfigOptionOverrides } : {}),
         ...(codexBackendMode ? { codexBackendMode } : {}),

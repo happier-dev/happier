@@ -73,34 +73,7 @@ describe('normalizeTranscriptScrollIngress', () => {
         });
     });
 
-    it('normalizes native inverted raw offsets through the native driver fact source', () => {
-        const observation = normalizeTranscriptScrollIngress({
-            eventNativeEvent: {
-                contentOffset: { y: 300 },
-                contentSize: { height: 2000 },
-                layoutMeasurement: { height: 500 },
-                isTrusted: false,
-            },
-            measuredContentHeight: 0,
-            measuredLayoutHeight: 0,
-            platform: 'native',
-        });
-
-        expect(observation).toMatchObject({
-            contentHeightPx: 2000,
-            distanceFromLiveTailPx: 300,
-            distanceFromLiveTailForReleasePx: 300,
-            hasLiveWebMetrics: false,
-            isTrusted: false,
-            layoutHeightPx: 500,
-            platform: 'native',
-            rawOffsetY: 300,
-            scrollOffsetPx: 1200,
-            visualBottomScrollOffsetPx: 1500,
-        });
-    });
-
-    it('normalizes native standard raw offsets without inverted mirroring', () => {
+    it('normalizes native raw offsets in standard scroll space', () => {
         const observation = normalizeTranscriptScrollIngress({
             eventNativeEvent: {
                 contentOffset: { y: 1500 },
@@ -110,7 +83,6 @@ describe('normalizeTranscriptScrollIngress', () => {
             },
             measuredContentHeight: 0,
             measuredLayoutHeight: 0,
-            nativeCommandSpace: 'standard',
             platform: 'native',
         });
 
@@ -138,7 +110,6 @@ describe('normalizeTranscriptScrollIngress', () => {
             },
             measuredContentHeight: 0,
             measuredLayoutHeight: 0,
-            nativeCommandSpace: 'standard',
             platform: 'native',
         });
 
@@ -163,9 +134,10 @@ describe('normalizeTranscriptScrollIngress', () => {
             platform: 'native',
         })).toBeNull();
 
+        // Raw offsets beyond the visual bottom clamp the live-tail distance to zero.
         expect(normalizeTranscriptScrollIngress({
             eventNativeEvent: {
-                contentOffset: { y: -40 },
+                contentOffset: { y: 1600 },
                 contentSize: { height: 2000 },
                 layoutMeasurement: { height: 500 },
             },

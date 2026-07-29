@@ -4,7 +4,7 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 import { pruneSecretBindings } from '@/sync/domains/settings/secretBindings';
 
 describe('pruneSecretBindings', () => {
-    it('drops bindings for unknown profiles, unknown secrets, and non-required env names; normalizes env var name casing', () => {
+    it('prunes truly unknown bindings and invalid entries for a valid editable legacy profile', () => {
         const base = settingsParse({});
 
         const settings = {
@@ -26,8 +26,10 @@ describe('pruneSecretBindings', () => {
                 { id: 's1', name: 'S1', kind: 'apiKey', encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'Zm9v' } }, createdAt: 0, updatedAt: 0 },
             ],
             secretBindingsByProfileId: {
-                // Unknown profile -> drop
+                // Truly unknown profile -> prune.
                 'missing-profile': { OPENAI_API_KEY: 's1' },
+                // Historical generated profile may be absent from today's catalog.
+                gemini: { GEMINI_API_KEY: 's1' },
                 // Known profile:
                 'custom-1': {
                     // Normalized to uppercase and kept
@@ -44,13 +46,16 @@ describe('pruneSecretBindings', () => {
 
         const pruned = pruneSecretBindings(settings as any);
         expect(pruned.secretBindingsByProfileId).toEqual({
+            gemini: {
+                GEMINI_API_KEY: 's1',
+            },
             'custom-1': {
                 OPENAI_API_KEY: 's1',
             },
         });
     });
 
-    it('treats non-array envVarRequirements as empty (does not throw)', () => {
+    it('preserves bindings byte-for-byte when the profile record is malformed', () => {
         const base = settingsParse({});
 
         const settings = {
@@ -77,6 +82,10 @@ describe('pruneSecretBindings', () => {
         };
 
         const pruned = pruneSecretBindings(settings as any);
-        expect(pruned.secretBindingsByProfileId).toEqual({});
+        expect(pruned.secretBindingsByProfileId).toEqual({
+            'custom-1': {
+                OPENAI_API_KEY: 's1',
+            },
+        });
     });
 });

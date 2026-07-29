@@ -429,6 +429,37 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         expect(result?.capabilities?.operationLabels?.commit).toBe('Commit changes');
     });
 
+    it('preserves a qualified external backend id in the ui working snapshot', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            sessions: {
+                session_1: {
+                    id: 'session_1',
+                    metadata: {
+                        machineId: 'machine-a',
+                        path: '/repo',
+                    },
+                },
+            },
+        } as any);
+        vi.mocked(sessionScmStatusSnapshot).mockResolvedValue({
+            success: true,
+            snapshot: makeScmSnapshot({
+                repo: {
+                    isRepo: true,
+                    rootPath: '/repo',
+                    backendId: 'acme.scm/stacked',
+                    mode: '.git',
+                    worktrees: [],
+                    remotes: [],
+                },
+            }),
+        } as any);
+
+        const result = await new ScmRepositoryService().fetchSnapshotForSession('session_1');
+
+        expect(result?.repo.backendId).toBe('acme.scm/stacked');
+    });
+
     it('preserves protocol repo metadata in the ui snapshot shape', async () => {
         vi.spyOn(storage, 'getState').mockReturnValue({
             sessions: {
@@ -804,13 +835,18 @@ describe('ScmRepositoryService.fetchSnapshotForMachinePath', () => {
 
         const service = new ScmRepositoryService();
         const result = await service.fetchSnapshotForMachinePath({
+            serverId: 'server-a',
             machineId: 'machine-a',
             path: '~/repo',
         });
 
-        expect(machineScmStatusSnapshot).toHaveBeenCalledWith('machine-a', {
-            cwd: '/Users/tester/repo',
-        });
+        expect(machineScmStatusSnapshot).toHaveBeenCalledWith(
+            'machine-a',
+            {
+                cwd: '/Users/tester/repo',
+            },
+            { serverId: 'server-a' },
+        );
         expect(result).not.toBeNull();
         expect(result?.projectKey).toBe('machine-a:/Users/tester/repo');
         expect(result?.repo.rootPath).toBe('/Users/tester/repo');

@@ -1,4 +1,7 @@
-import { type V2SessionListResponse } from '@happier-dev/protocol';
+import {
+    parseSessionRuntimeActivityProjectionFields,
+    type V2SessionListResponse,
+} from '@happier-dev/protocol';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch } from '@/sync/http/client';
@@ -14,6 +17,7 @@ import type {
 import { preserveSessionRuntimeLocalMetadata } from '@/sync/domains/session/preserveSessionRuntimeLocalMetadata';
 import {
     buildSessionListRenderableFromSession,
+    preserveSessionListRenderableStaleFields,
     resolveSessionListReadableSeq,
 } from '@/sync/domains/session/listing/sessionListRenderable';
 import { resolveSessionRuntimePresenceFields } from '@/sync/domains/session/attention/runtimePresentation';
@@ -30,13 +34,21 @@ import {
 } from '@/sync/encryption/sessionDataKeyHydration';
 import type { EncryptionScopeInput } from '@/sync/encryption/encryption';
 
-import { parsePlainSessionAgentState, parsePlainSessionMetadata } from './parsePlainSessionPayload';
+import {
+    compareSessionMetadataRevisions,
+    parseDecryptedSessionMetadata,
+    parsePlainSessionAgentState,
+    parsePlainSessionMetadata,
+    readSessionMetadataLayoutVersion,
+} from './parsePlainSessionPayload';
 import { fetchSessionListPageCompat } from './sessionHttpCompat';
 import { orderRowsForSessionListHydration } from './sessionListHydrationPriority';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 type SessionEncryption = {
     decryptAgentState: (version: number, value: string | null) => Promise<any>;
     decryptMetadata: (version: number, value: string) => Promise<any>;
+    decryptMetadataPayload?: (version: number, value: string) => Promise<unknown | null>;
     decryptSessionSnapshotState?: (
         metadataVersion: number,
         metadata: string,
@@ -92,8 +104,16 @@ type SessionListRenderablePatch = Readonly<{
 }>;
 
 const DEFAULT_SESSION_LIST_PATH = '/v2/sessions';
+// The pre-continuation owner already bounded cold attention hydration to 100
+// candidate rows. Keep continuation itself bounded to the same ceiling so a
+// malformed or moving server cursor cannot turn cold sync into an open-ended scan.
+const DEFAULT_SESSION_LIST_ATTENTION_CONTINUATION_MAX_PAGES = 100;
 const NO_SERVER_ID_ABORT_KEY = '__default__';
 const activeSessionListDataKeyHydrationControllers = new WeakMap<SessionDataKeyHydrationEncryption, Map<string, AbortController>>();
+
+function readSessionListRowAgentStateVersion(row: SessionListRow): number {
+    return row.agentStateVersion ?? 0;
+}
 
 function normalizeSessionListAbortKey(params: Readonly<{
     serverId?: string | null;
@@ -126,7 +146,7 @@ function createSessionListDataKeyHydrationAbortController(params: Readonly<{
     return controller;
 }
 
-function normalizeSessionListPinnedSessionIds(values: ReadonlyArray<string> | undefined): string[] {
+function normalizeSessionListHydrationSessionIds(values: ReadonlyArray<string> | undefined): string[] {
     if (!values) return [];
     const seen = new Set<string>();
     const ids: string[] = [];
@@ -140,13 +160,9 @@ function normalizeSessionListPinnedSessionIds(values: ReadonlyArray<string> | un
 }
 
 function buildSessionListInitialPath(params: {
-    pinnedSessionIds: readonly string[];
     includeAttentionRows: boolean;
 }): string | undefined {
     const query: string[] = [];
-    if (params.pinnedSessionIds.length > 0) {
-        query.push(`pinnedSessionIds=${encodeURIComponent(params.pinnedSessionIds.join(','))}`);
-    }
     if (params.includeAttentionRows) {
         query.push('includeAttention=true');
     }
@@ -173,6 +189,32 @@ function normalizeSessionListTimestamp(value: number | null | undefined): number
         : null;
 }
 
+function readCompleteRuntimeActivityProjection(
+    value: unknown,
+): Partial<Pick<
+    SessionListRenderableSession,
+    'runtimeActivityState'
+    | 'runtimeActivityActiveCount'
+    | 'runtimeActivityObservedAt'
+    | 'runtimeActivityRevision'
+>> {
+    const parsed = parseSessionRuntimeActivityProjectionFields(value);
+    if (parsed.kind !== 'valid') return {};
+    return {
+        runtimeActivityState: parsed.projection.state,
+        runtimeActivityActiveCount: parsed.projection.activeCount,
+        runtimeActivityObservedAt: parsed.projection.observedAt,
+        runtimeActivityRevision: parsed.projection.revision,
+    };
+}
+
+function readSessionListRowPendingBlockedCount(row: SessionListRow): number | undefined {
+    const value = (row as { pendingBlockedCount?: unknown }).pendingBlockedCount;
+    return typeof value === 'number' && Number.isFinite(value)
+        ? Math.max(0, Math.trunc(value))
+        : undefined;
+}
+
 function isSessionListRowAttentionHydrationPriority(row: SessionListRow): boolean {
     if ((row.pendingPermissionRequestCount ?? 0) > 0 || (row.pendingUserActionRequestCount ?? 0) > 0) {
         return true;
@@ -185,21 +227,123 @@ function isSessionListRowAttentionHydrationPriority(row: SessionListRow): boolea
         && latestReadyEventSeq > (normalizeSessionListSeq(row.lastViewedSessionSeq) ?? 0);
 }
 
+function buildHydratedSessionFromRowState(params: {
+    row: SessionListRow;
+    encryptionMode: 'e2ee' | 'plain';
+    metadata: any;
+    agentState: any;
+    cachedEntry?: SessionListCacheEntryV1;
+    serverId?: string | null;
+}): HydratedSession {
+    const { row, cachedEntry } = params;
+    const {
+        ownerMetadata: _ownerMetadataCiphertext,
+        ...sessionRow
+    } = row;
+    const metadataLayoutVersion = readSessionMetadataLayoutVersion(row.metadataLayoutVersion);
+    const mergedMetadata = metadataLayoutVersion === 1
+        ? params.metadata
+        : preserveSessionRuntimeLocalMetadata(
+            cachedEntry
+                ? {
+                    path: cachedEntry.path,
+                    homeDir: cachedEntry.homeDir ?? undefined,
+                    host: cachedEntry.host ?? undefined,
+                    machineId: cachedEntry.machineId ?? undefined,
+                    flavor: cachedEntry.flavor ?? undefined,
+                    externalSessionV1: cachedEntry.externalSessionV1 ?? undefined,
+                }
+                : null,
+            params.metadata,
+        );
+
+    const latestTurnStatus = row.latestTurnStatus ?? null;
+    const latestTurnStatusObservedAt = row.latestTurnStatusObservedAt ?? null;
+    const runtimePresence = resolveSessionRuntimePresenceFields({
+        thinking: row.thinking === true,
+        thinkingAt: normalizeSessionListTimestamp(row.thinkingAt) ?? 0,
+        latestTurnStatus,
+        latestTurnStatusObservedAt,
+    });
+
+    return {
+        ...sessionRow,
+        serverId: typeof params.serverId === 'string' && params.serverId.trim().length > 0
+            ? params.serverId.trim()
+            : undefined,
+        encryptionMode: params.encryptionMode,
+        ...(metadataLayoutVersion > 0 ? { metadataLayoutVersion } : {}),
+        thinking: runtimePresence.thinking,
+        thinkingAt: runtimePresence.thinkingAt,
+        metadata: mergedMetadata,
+        agentState: params.agentState,
+        agentStateVersion: readSessionListRowAgentStateVersion(row),
+        metadataUnavailable: row.metadata != null && mergedMetadata == null,
+        accessLevel: normalizeAccessLevel(row.share?.accessLevel),
+        canApprovePermissions: row.share?.canApprovePermissions ?? undefined,
+        latestTurnStatus,
+        latestTurnStatusObservedAt,
+        ...readCompleteRuntimeActivityProjection(row),
+        latestReadyEventSeq: normalizeLastViewedSessionSeq(row.latestReadyEventSeq),
+        latestReadyEventAt: normalizeSessionListTimestamp(row.latestReadyEventAt),
+        rollbackEligibleTurnStarts: readRollbackEligibleTurnStarts(
+            (row as Record<string, unknown>).rollbackEligibleTurnStarts,
+        ) ?? null,
+        pendingRequestObservedAt: normalizeSessionListTimestamp(row.pendingRequestObservedAt),
+        presence: row.active ? 'online' : row.activeAt,
+    };
+}
+
+function buildPlainHydratedSessionFromRow(
+    row: SessionListRow,
+    cachedEntry?: SessionListCacheEntryV1,
+    serverId?: string | null,
+): HydratedSession {
+    return buildHydratedSessionFromRowState({
+        row,
+        encryptionMode: 'plain',
+        metadata: parsePlainSessionMetadata(row.metadata, row.metadataLayoutVersion),
+        agentState: readSessionMetadataLayoutVersion(row.metadataLayoutVersion) === 1
+            ? null
+            : parsePlainSessionAgentState(row.agentState ?? null),
+        cachedEntry,
+        serverId,
+    });
+}
+
 function buildRenderableFromRowAndCache(
     row: SessionListRow,
     cachedEntry: SessionListCacheEntryV1 | undefined,
     existingSession?: Session | null | undefined,
     currentRenderable?: SessionListRenderableSession | null | undefined,
 ): SessionListRenderableSession {
-    const metadataMatches = cachedEntry?.metadataVersion === row.metadataVersion;
-    const agentStateMatches = cachedEntry?.agentStateVersion === row.agentStateVersion;
+    const metadataMatches =
+        readSessionMetadataLayoutVersion(cachedEntry?.metadataLayoutVersion)
+            === readSessionMetadataLayoutVersion(row.metadataLayoutVersion)
+        && cachedEntry?.metadataVersion === row.metadataVersion;
+    const rowAgentStateVersion = readSessionListRowAgentStateVersion(row);
+    const agentStateMatches = cachedEntry?.agentStateVersion === rowAgentStateVersion;
     const existingSessionRenderable = existingSession
         ? buildSessionListRenderableFromSession(existingSession, currentRenderable ?? undefined)
         : undefined;
     const existingRenderable = currentRenderable ?? existingSessionRenderable;
-    const existingMetadataMatches = existingSession?.metadataVersion === row.metadataVersion
+    if (row.encryptionMode === 'plain') {
+        const hydratedSession = buildPlainHydratedSessionFromRow(row, cachedEntry);
+        const previousRenderable = existingRenderable ?? (cachedEntry ? buildRenderableFromCachedEntry(cachedEntry) : undefined);
+        const renderable = preserveSessionListRenderableStaleFields(
+            previousRenderable,
+            buildSessionListRenderableFromSession(hydratedSession as Session, existingRenderable ?? undefined),
+        );
+        return hydratedSession.metadataUnavailable === true && renderable.metadata == null
+            ? { ...renderable, metadataUnavailable: true }
+            : renderable;
+    }
+    const existingMetadataMatches =
+        readSessionMetadataLayoutVersion(existingSession?.metadataLayoutVersion)
+            === readSessionMetadataLayoutVersion(row.metadataLayoutVersion)
+        && existingSession?.metadataVersion === row.metadataVersion
         && existingSessionRenderable?.metadata != null;
-    const existingAgentStateMatches = existingSession?.agentStateVersion === row.agentStateVersion;
+    const existingAgentStateMatches = existingSession?.agentStateVersion === rowAgentStateVersion;
     const cachedRenderableMetadata: SessionListRenderableMetadata | null = isSessionListCacheEntryMetadataUsable(cachedEntry)
         ? {
             name: cachedEntry.name,
@@ -215,7 +359,12 @@ function buildRenderableFromRowAndCache(
         : null;
     const useMatchingCacheMetadata = metadataMatches && cachedRenderableMetadata != null;
     const useExistingSessionMetadata = !useMatchingCacheMetadata && existingMetadataMatches;
-    const useStaleCacheMetadata = !useMatchingCacheMetadata && !useExistingSessionMetadata && cachedRenderableMetadata != null;
+    const useStaleCacheMetadata =
+        !useMatchingCacheMetadata
+        && !useExistingSessionMetadata
+        && cachedRenderableMetadata != null
+        && readSessionMetadataLayoutVersion(cachedEntry?.metadataLayoutVersion)
+            === readSessionMetadataLayoutVersion(row.metadataLayoutVersion);
     const renderableMetadata = useMatchingCacheMetadata || useStaleCacheMetadata
         ? cachedRenderableMetadata
         : useExistingSessionMetadata
@@ -298,12 +447,16 @@ function buildRenderableFromRowAndCache(
         activeAt: row.activeAt,
         archivedAt: row.archivedAt ?? null,
         pendingCount: row.pendingCount,
+        pendingBlockedCount: readSessionListRowPendingBlockedCount(row),
         pendingVersion: row.pendingVersion,
         lastViewedSessionSeq,
+        metadataLayoutVersion: useStaleCacheMetadata
+            ? cachedEntry?.metadataLayoutVersion
+            : readSessionMetadataLayoutVersion(row.metadataLayoutVersion) || undefined,
         metadataVersion: useStaleCacheMetadata
             ? cachedEntry?.metadataVersion ?? row.metadataVersion
             : row.metadataVersion,
-        agentStateVersion: row.agentStateVersion,
+        agentStateVersion: rowAgentStateVersion,
         metadata: renderableMetadata,
         thinking: runtimePresence.thinking,
         thinkingAt: runtimePresence.thinkingAt,
@@ -314,6 +467,7 @@ function buildRenderableFromRowAndCache(
         hasPendingUserActionRequests,
         latestTurnStatus,
         latestTurnStatusObservedAt,
+        ...readCompleteRuntimeActivityProjection(row),
         latestReadyEventSeq,
         latestReadyEventAt,
         lastRuntimeIssue: row.lastRuntimeIssue ?? null,
@@ -334,8 +488,13 @@ function isCurrentRenderableCompleteForWarmHydration(
     if (!currentRenderable) return false;
     if (currentRenderable.seq < row.seq) return false;
     if (currentRenderable.updatedAt < row.updatedAt) return false;
-    if (currentRenderable.metadataVersion < row.metadataVersion) return false;
-    if (currentRenderable.agentStateVersion < row.agentStateVersion) return false;
+    if (compareSessionMetadataRevisions({
+        incomingLayoutVersion: row.metadataLayoutVersion,
+        incomingMetadataVersion: row.metadataVersion,
+        storedLayoutVersion: currentRenderable.metadataLayoutVersion,
+        storedMetadataVersion: currentRenderable.metadataVersion,
+    }) > 0) return false;
+    if (currentRenderable.agentStateVersion < readSessionListRowAgentStateVersion(row)) return false;
     if ((currentRenderable.archivedAt ?? null) !== (row.archivedAt ?? null)) return false;
     if (row.metadata != null && currentRenderable.metadata == null) return false;
     if (
@@ -356,16 +515,22 @@ function needsWarmHydration(params: {
     existingSession?: Session | null | undefined;
     currentRenderable?: SessionListRenderableSession | null | undefined;
     isRequiredHydrationRow?: boolean;
+    isAttentionHydrationRow?: boolean;
 }): boolean {
     const { row, cachedEntry, existingSession } = params;
+    if (params.isRequiredHydrationRow) return true;
     if (!existingSession) {
-        if (params.isRequiredHydrationRow) return true;
+        if (params.isAttentionHydrationRow) return true;
         return !isCurrentRenderableCompleteForWarmHydration(row, params.currentRenderable);
     }
     if (row.metadata != null && existingSession.metadata == null) return true;
     if (!cachedEntry) return true;
+    if (
+        readSessionMetadataLayoutVersion(cachedEntry.metadataLayoutVersion)
+            !== readSessionMetadataLayoutVersion(row.metadataLayoutVersion)
+    ) return true;
     if (cachedEntry.metadataVersion !== row.metadataVersion) return true;
-    if (cachedEntry.agentStateVersion !== row.agentStateVersion) return true;
+    if (cachedEntry.agentStateVersion !== readSessionListRowAgentStateVersion(row)) return true;
     return false;
 }
 
@@ -605,7 +770,12 @@ function isHydratedSessionCurrentForListState(
 
     if (currentRenderable.seq > session.seq) return false;
     if (currentRenderable.updatedAt > session.updatedAt) return false;
-    if (currentRenderable.metadataVersion > session.metadataVersion) return false;
+    if (compareSessionMetadataRevisions({
+        incomingLayoutVersion: currentRenderable.metadataLayoutVersion,
+        incomingMetadataVersion: currentRenderable.metadataVersion,
+        storedLayoutVersion: session.metadataLayoutVersion,
+        storedMetadataVersion: session.metadataVersion,
+    }) > 0) return false;
     if (currentRenderable.agentStateVersion > session.agentStateVersion) return false;
     if ((currentRenderable.archivedAt ?? null) !== (session.archivedAt ?? null)) return false;
 
@@ -621,16 +791,23 @@ function buildStaleHydratedSessionRenderablePatch(
 
     const hydratedRenderable = buildSessionListRenderableFromSession(session as Session);
     const patch: Partial<Omit<SessionListRenderableSession, 'id'>> = {};
+    const hydratedMetadataRevisionComparedToCurrent = compareSessionMetadataRevisions({
+        incomingLayoutVersion: hydratedRenderable.metadataLayoutVersion,
+        incomingMetadataVersion: hydratedRenderable.metadataVersion,
+        storedLayoutVersion: currentRenderable.metadataLayoutVersion,
+        storedMetadataVersion: currentRenderable.metadataVersion,
+    });
 
     const shouldPatchMetadata =
         hydratedRenderable.metadata != null
-        && currentRenderable.metadataVersion <= hydratedRenderable.metadataVersion
+        && hydratedMetadataRevisionComparedToCurrent >= 0
         && (
             currentRenderable.metadata == null
-            || currentRenderable.metadataVersion < hydratedRenderable.metadataVersion
+            || hydratedMetadataRevisionComparedToCurrent > 0
         );
     if (shouldPatchMetadata) {
         patch.metadata = hydratedRenderable.metadata;
+        patch.metadataLayoutVersion = hydratedRenderable.metadataLayoutVersion;
         patch.metadataVersion = hydratedRenderable.metadataVersion;
     }
 
@@ -696,7 +873,10 @@ function buildMetadataUnavailableRenderablePatches(params: Readonly<{
     for (const session of params.sessions) {
         if (session.metadataUnavailable !== true) continue;
         const previousRenderable = params.previousRenderables.get(session.id);
-        if (previousRenderable?.metadata != null) {
+        if (
+            readSessionMetadataLayoutVersion(session.metadataLayoutVersion) !== 1
+            && previousRenderable?.metadata != null
+        ) {
             patches.push({
                 sessionId: session.id,
                 patch: {
@@ -710,6 +890,13 @@ function buildMetadataUnavailableRenderablePatches(params: Readonly<{
         patches.push({
             sessionId: session.id,
             patch: {
+                ...(readSessionMetadataLayoutVersion(session.metadataLayoutVersion) === 1
+                    ? {
+                        metadata: null,
+                        metadataLayoutVersion: session.metadataLayoutVersion,
+                        metadataVersion: session.metadataVersion,
+                    }
+                    : {}),
                 metadataUnavailable: true,
             },
         });
@@ -778,69 +965,60 @@ async function decryptSessionRow(
             }
 
             try {
+                const metadataLayoutVersion = readSessionMetadataLayoutVersion(
+                    row.metadataLayoutVersion,
+                );
                 const decryptedState = encryptionMode === 'plain'
                     ? {
-                        metadata: parsePlainSessionMetadata(row.metadata),
-                        agentState: parsePlainSessionAgentState(row.agentState),
+                        metadata: parsePlainSessionMetadata(
+                            row.metadata,
+                            row.metadataLayoutVersion,
+                        ),
+                        agentState: metadataLayoutVersion === 1
+                            ? null
+                            : parsePlainSessionAgentState(row.agentState ?? null),
                     }
+                    : metadataLayoutVersion === 1
+                        ? {
+                            metadata: await (
+                                sessionEncryption!.decryptMetadataPayload?.(
+                                    row.metadataVersion,
+                                    row.metadata,
+                                ) ?? Promise.resolve(null)
+                            ),
+                            agentState: null,
+                        }
                     : sessionEncryption!.decryptSessionSnapshotState
                         ? await sessionEncryption!.decryptSessionSnapshotState(
                             row.metadataVersion,
                             row.metadata,
-                            row.agentStateVersion,
-                            row.agentState,
+                            row.agentStateVersion ?? 0,
+                            row.agentState ?? null,
                         )
                         : await (async () => {
                             const [metadata, agentState] = await Promise.all([
                                 sessionEncryption!.decryptMetadata(row.metadataVersion, row.metadata),
-                                sessionEncryption!.decryptAgentState(row.agentStateVersion, row.agentState),
+                                sessionEncryption!.decryptAgentState(
+                                    row.agentStateVersion ?? 0,
+                                    row.agentState ?? null,
+                                ),
                             ]);
                             return { metadata, agentState };
                         })();
-                const mergedMetadata = preserveSessionRuntimeLocalMetadata(
-                    cachedEntry
-                        ? {
-                            path: cachedEntry.path,
-                            homeDir: cachedEntry.homeDir ?? undefined,
-                            host: cachedEntry.host ?? undefined,
-                            machineId: cachedEntry.machineId ?? undefined,
-                            flavor: cachedEntry.flavor ?? undefined,
-                            externalSessionV1: cachedEntry.externalSessionV1 ?? undefined,
-                        }
-                        : null,
-                    decryptedState.metadata,
-                );
-
-                const latestTurnStatus = row.latestTurnStatus ?? null;
-                const latestTurnStatusObservedAt = row.latestTurnStatusObservedAt ?? null;
-                const runtimePresence = resolveSessionRuntimePresenceFields({
-                    thinking: row.thinking === true,
-                    thinkingAt: normalizeSessionListTimestamp(row.thinkingAt) ?? 0,
-                    latestTurnStatus,
-                    latestTurnStatusObservedAt,
-                });
-
-                return {
-                    ...row,
-                    serverId: typeof serverId === 'string' && serverId.trim().length > 0 ? serverId.trim() : undefined,
+                const metadata = encryptionMode === 'plain'
+                    ? decryptedState.metadata
+                    : parseDecryptedSessionMetadata(
+                        decryptedState.metadata,
+                        row.metadataLayoutVersion,
+                    );
+                return buildHydratedSessionFromRowState({
+                    row,
+                    serverId,
                     encryptionMode,
-                    thinking: runtimePresence.thinking,
-                    thinkingAt: runtimePresence.thinkingAt,
-                    metadata: mergedMetadata,
+                    metadata,
                     agentState: decryptedState.agentState,
-                    metadataUnavailable: row.metadata != null && mergedMetadata == null,
-                    accessLevel: normalizeAccessLevel(row.share?.accessLevel),
-                    canApprovePermissions: row.share?.canApprovePermissions ?? undefined,
-                    latestTurnStatus,
-                    latestTurnStatusObservedAt,
-                    latestReadyEventSeq: normalizeLastViewedSessionSeq(row.latestReadyEventSeq),
-                    latestReadyEventAt: normalizeSessionListTimestamp(row.latestReadyEventAt),
-                    rollbackEligibleTurnStarts: readRollbackEligibleTurnStarts(
-                        (row as Record<string, unknown>).rollbackEligibleTurnStarts,
-                    ) ?? null,
-                    pendingRequestObservedAt: normalizeSessionListTimestamp(row.pendingRequestObservedAt),
-                    presence: row.active ? 'online' : row.activeAt,
-                };
+                    cachedEntry,
+                });
             } catch (error) {
                 console.error(`[sessionsSnapshot] Failed to decrypt session ${row.id}`, error);
                 return null;
@@ -924,6 +1102,7 @@ function createHydratedSessionApplyBatcher(params: {
     shouldContinue: () => boolean;
     batchSize: number;
     flushDelayMs: number;
+    coalesceRequiredRows?: boolean;
 }): {
     enqueue: (session: HydratedSession, options?: { required?: boolean }) => void;
     flush: (reason?: HydrationApplyFlushReason) => void;
@@ -934,6 +1113,7 @@ function createHydratedSessionApplyBatcher(params: {
     let pending: HydratedSession[] = [];
     let pendingRequiredRows = 0;
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    let flushTimerReason: HydrationApplyFlushReason | null = null;
     let firstQueuedAtMs: number | null = null;
     let appliedRows = 0;
     let staleSkippedRows = 0;
@@ -942,6 +1122,7 @@ function createHydratedSessionApplyBatcher(params: {
         if (!flushTimer) return;
         clearTimeout(flushTimer);
         flushTimer = null;
+        flushTimerReason = null;
     };
 
     const flush = (reason: HydrationApplyFlushReason = 'manual'): void => {
@@ -1014,9 +1195,13 @@ function createHydratedSessionApplyBatcher(params: {
         }
     };
 
-    const scheduleFlush = (): void => {
-        if (flushTimer) return;
-        flushTimer = setTimeout(() => flush('timer'), flushDelayMs);
+    const scheduleFlush = (delayMs = flushDelayMs, reason: HydrationApplyFlushReason = 'timer'): void => {
+        if (flushTimer) {
+            if (reason !== 'size' || flushTimerReason === 'size') return;
+            clearFlushTimer();
+        }
+        flushTimerReason = reason;
+        flushTimer = setTimeout(() => flush(reason), delayMs);
     };
 
     return {
@@ -1038,7 +1223,15 @@ function createHydratedSessionApplyBatcher(params: {
                 backgroundRows: requiredRows === 1 ? 0 : 1,
             });
             if (pending.length >= batchSize) {
-                flush('size');
+                if (pendingRequiredRows > 0) {
+                    if (params.coalesceRequiredRows === true) {
+                        scheduleFlush();
+                    } else {
+                        flush('size');
+                    }
+                    return;
+                }
+                scheduleFlush(flushDelayMs, 'size');
                 return;
             }
             scheduleFlush();
@@ -1058,7 +1251,8 @@ function scheduleReadStateRepair(params: {
     void (async () => {
         for (const session of params.sessions) {
             try {
-                const readState = session.metadata?.readStateV1;
+                if (readSessionMetadataLayoutVersion(session.metadataLayoutVersion) !== 0) continue;
+                const readState = readSessionOwnerMetadataView(session)?.readStateV1;
                 if (!readState) continue;
                 if (readState.sessionSeq <= (session.seq ?? 0)) continue;
                 await params.repairInvalidReadStateV1({ sessionId: session.id, sessionSeqUpperBound: session.seq ?? 0 });
@@ -1077,9 +1271,9 @@ export async function fetchAndApplySessions(params: {
     sessionListCursor?: string | null;
     sessionListPageSize?: number;
     sessionListMaxPages?: number;
+    sessionListAttentionMaxPages?: number;
     includeActiveSessionRows?: boolean;
     includeSessionListAttentionRows?: boolean;
-    sessionListPinnedSessionIds?: ReadonlyArray<string>;
     priorityHydrationSessionIds?: ReadonlyArray<string>;
     credentials: AuthCredentials;
     encryption: SessionListEncryption;
@@ -1111,7 +1305,7 @@ export async function fetchAndApplySessions(params: {
     repairInvalidReadStateV1: (params: { sessionId: string; sessionSeqUpperBound: number }) => Promise<void>;
     log: { log: (message: string) => void };
 }): Promise<SessionListFetchResult> {
-    const { credentials, encryption, sessionDataKeys, applySessions, repairInvalidReadStateV1, log } = params;
+    const { credentials, encryption, sessionDataKeys, applySessions, repairInvalidReadStateV1 } = params;
     const snapshotStartedAtMs = nowMs();
     const request =
         params.request
@@ -1119,6 +1313,16 @@ export async function fetchAndApplySessions(params: {
 
     const sessionListPageSize = Math.max(1, Math.min(200, Math.trunc(params.sessionListPageSize ?? 50)));
     const sessionListMaxPages = Math.max(1, Math.trunc(params.sessionListMaxPages ?? 1));
+    const sessionListAttentionMaxPages = Math.max(
+        1,
+        Math.min(
+            DEFAULT_SESSION_LIST_ATTENTION_CONTINUATION_MAX_PAGES,
+            Math.trunc(
+                params.sessionListAttentionMaxPages
+                ?? DEFAULT_SESSION_LIST_ATTENTION_CONTINUATION_MAX_PAGES,
+            ),
+        ),
+    );
     const sessions: V2SessionListResponse['sessions'] = [];
     const seenSessionIds = new Set<string>();
     const concurrencyLimit = Math.max(1, Math.trunc(params.sessionListHydrationConcurrencyLimit ?? 4));
@@ -1149,6 +1353,8 @@ export async function fetchAndApplySessions(params: {
     let fetchedPages = 0;
     let nextCursorForMore: string | null = cursor;
     let hasNextForMore = false;
+    let attentionNextCursor: string | null = null;
+    let attentionHasNext = false;
     let source: 'v2' | 'v1' = 'v2';
     const buildFetchResult = (): SessionListFetchResult => ({
         sessionIds: sessions.map((session) => session.id),
@@ -1164,23 +1370,33 @@ export async function fetchAndApplySessions(params: {
         }
     };
 
-    const pinnedSessionIds = normalizeSessionListPinnedSessionIds(params.sessionListPinnedSessionIds);
     const initialSessionListPath = !cursor && !params.sessionListPath
         ? buildSessionListInitialPath({
-            pinnedSessionIds,
             includeAttentionRows: params.includeSessionListAttentionRows === true,
         })
         : undefined;
 
     if (params.includeActiveSessionRows === true && !cursor && !params.sessionListPath) {
-        const activePage = await fetchSessionListPageCompat({
-            request,
-            token: credentials.token,
-            sessionListPath: '/v2/sessions/active',
-            cursor: null,
+        const activePageFields = {
+            loadedSessions: sessions.length,
             limit: 500,
-            allowLegacyV1Fallback: false,
-        });
+            cursorPresent: 0,
+            activePage: 1,
+            listPage: 0,
+        };
+        const activePage = await syncPerformanceTelemetry.measureAsync(
+            'sync.sessions.snapshot.fetchPage',
+            activePageFields,
+            async () => fetchSessionListPageCompat({
+                request,
+                token: credentials.token,
+                sessionListPath: '/v2/sessions/active',
+                cursor: null,
+                limit: 500,
+                allowLegacyV1Fallback: false,
+                telemetryFields: activePageFields,
+            }),
+        );
         appendRows(activePage.sessions);
     }
 
@@ -1190,17 +1406,14 @@ export async function fetchAndApplySessions(params: {
             loadedSessions: sessions.length,
             limit: pageLimit,
             cursorPresent: cursor ? 1 : 0,
+            activePage: 0,
+            listPage: 1,
         };
-        const timedRequest: typeof request = (path, init) => syncPerformanceTelemetry.measureAsync(
-            'sync.sessions.snapshot.fetchPage.request',
-            fetchPageFields,
-            async () => request(path, init),
-        );
         const page = await syncPerformanceTelemetry.measureAsync(
             'sync.sessions.snapshot.fetchPage',
             fetchPageFields,
             async () => fetchSessionListPageCompat({
-                request: timedRequest,
+                request,
                 token: credentials.token,
                 sessionListPath: params.sessionListPath ?? initialSessionListPath,
                 cursor,
@@ -1233,6 +1446,10 @@ export async function fetchAndApplySessions(params: {
                 nextCursor = page.nextCursor;
                 nextCursorForMore = page.nextCursor;
                 hasNextForMore = page.hasNext === true && typeof page.nextCursor === 'string' && page.source === 'v2';
+                if (fetchedPages === 0 && params.includeSessionListAttentionRows === true) {
+                    attentionNextCursor = page.attentionNextCursor;
+                    attentionHasNext = page.attentionHasNext;
+                }
             },
         );
 
@@ -1241,6 +1458,36 @@ export async function fetchAndApplySessions(params: {
         if (nextCursor && seenCursors.has(nextCursor)) break;
         if (nextCursor) seenCursors.add(nextCursor);
         cursor = nextCursor;
+    }
+
+    if (
+        params.includeSessionListAttentionRows === true
+        && source === 'v2'
+    ) {
+        const seenAttentionCursors = new Set<string>();
+        let fetchedAttentionPages = 0;
+
+        while (
+            attentionHasNext
+            && attentionNextCursor
+            && fetchedAttentionPages < sessionListAttentionMaxPages
+        ) {
+            if (seenAttentionCursors.has(attentionNextCursor)) break;
+            seenAttentionCursors.add(attentionNextCursor);
+
+            const attentionPage = await fetchSessionListPageCompat({
+                request,
+                token: credentials.token,
+                sessionListPath: DEFAULT_SESSION_LIST_PATH,
+                attentionCursor: attentionNextCursor,
+                limit: sessionListPageSize,
+                allowLegacyV1Fallback: false,
+            });
+            appendRows(attentionPage.sessions);
+            fetchedAttentionPages += 1;
+            attentionNextCursor = attentionPage.attentionNextCursor;
+            attentionHasNext = attentionPage.attentionHasNext;
+        }
     }
 
     const sessionsNeedingEncryption = sessions.filter((session) => session.encryptionMode !== 'plain');
@@ -1259,6 +1506,16 @@ export async function fetchAndApplySessions(params: {
             .map((sessionId) => String(sessionId ?? '').trim())
             .filter(Boolean),
     );
+    for (const row of sessions) {
+        const existingSession = params.getExistingSession?.(row.id);
+        if (
+            existingSession
+            && readSessionMetadataLayoutVersion(row.metadataLayoutVersion)
+                > readSessionMetadataLayoutVersion(existingSession.metadataLayoutVersion)
+        ) {
+            requiredHydrationSessionIds.add(row.id);
+        }
+    }
     const requiredSnapshotRows = countRowsWithIds(sessions, requiredHydrationSessionIds);
     const backgroundSnapshotRows = countBackgroundRows(sessions.length, requiredSnapshotRows);
 
@@ -1368,8 +1625,7 @@ export async function fetchAndApplySessions(params: {
 
     if (shouldApplyRenderables) {
         const priorityHydrationSessionIds = new Set([
-            ...normalizeSessionListPinnedSessionIds(params.priorityHydrationSessionIds),
-            ...pinnedSessionIds,
+            ...normalizeSessionListHydrationSessionIds(params.priorityHydrationSessionIds),
         ]);
         for (const row of sessions) {
             if (isSessionListRowAttentionHydrationPriority(row)) {
@@ -1389,6 +1645,7 @@ export async function fetchAndApplySessions(params: {
                     existingSession: params.getExistingSession?.(row.id),
                     currentRenderable: params.getCurrentSessionListRenderable?.(row.id),
                     isRequiredHydrationRow: requiredHydrationSessionIds.has(row.id),
+                    isAttentionHydrationRow: isSessionListRowAttentionHydrationPriority(row),
                 }),
             ),
             requiredSessionIds: requiredHydrationSessionIds,
@@ -1458,6 +1715,7 @@ export async function fetchAndApplySessions(params: {
                 shouldContinue,
                 batchSize: backgroundHydrationApplyBatchSize,
                 flushDelayMs: backgroundHydrationApplyFlushDelayMs,
+                coalesceRequiredRows: params.awaitSessionListHydration === true,
             });
             const hydrationAttribution = createBackgroundHydrationAttribution();
             const hydrationPromise = syncPerformanceTelemetry.measureAsync(
@@ -1612,9 +1870,6 @@ export async function fetchAndApplySessions(params: {
                                         }
                                         const enqueueStartedAtMs = nowMs();
                                         hydratedSessionBatcher.enqueue(decryptedSession, { required: isRequiredHydrationRow });
-                                        if (isRequiredHydrationRow && params.awaitSessionListHydration === true) {
-                                            hydratedSessionBatcher.flush('required');
-                                        }
                                         addBackgroundHydrationDuration(
                                             hydrationAttribution,
                                             'applyEnqueueMs',
@@ -1622,6 +1877,13 @@ export async function fetchAndApplySessions(params: {
                                         );
                                         hydrationAttribution.enqueuedRows += 1;
                                         markRequiredHydrationResult(row, decryptedSession);
+                                        if (
+                                            isRequiredHydrationRow
+                                            && params.awaitSessionListHydration === true
+                                            && pendingRequiredHydrationIds.size === 0
+                                        ) {
+                                            hydratedSessionBatcher.flush('required');
+                                        }
                                         return decryptedSession;
                                     } catch (error) {
                                         rejectPendingRequiredHydration(error);
@@ -1643,6 +1905,12 @@ export async function fetchAndApplySessions(params: {
                         backgroundHydrationConcurrencyLimit,
                     );
                     const finalFlushStartedAtMs = nowMs();
+                    if (
+                        params.awaitSessionListHydration !== true
+                        && backgroundHydrationApplyFlushDelayMs > 0
+                    ) {
+                        await yieldToSessionListBackgroundHydration(backgroundHydrationApplyFlushDelayMs);
+                    }
                     hydratedSessionBatcher.flush('final');
                     addBackgroundHydrationDuration(
                         hydrationAttribution,
@@ -1714,7 +1982,6 @@ export async function fetchAndApplySessions(params: {
             }
         }
 
-        log.log(`📥 fetchSessions completed - rendered ${appliedRenderableCount} session list rows before selective hydration`);
         return buildFetchResult();
     }
 
@@ -1756,6 +2023,5 @@ export async function fetchAndApplySessions(params: {
         repairInvalidReadStateV1,
     });
 
-    log.log(`📥 fetchSessions completed - processed ${decryptedSessions.length} sessions`);
     return buildFetchResult();
 }

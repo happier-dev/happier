@@ -106,18 +106,32 @@ function mergeChromeConfig(
 
 export function CustomModal({ config, onClose, showBackdrop = true, visible, zIndexBase }: CustomModalProps) {
     const Component = config.component;
+    const dismissible = config.dismissible !== false;
     const [chromeOverride, setChromeOverride] = React.useState<CustomModalChromeConfig | null | undefined>(undefined);
     const effectiveChrome = chromeOverride === undefined ? config.chrome : chromeOverride;
     const chrome = effectiveChrome?.kind === 'card' ? effectiveChrome : null;
+    const accessibilityLabel = config.accessibilityLabel
+        ?? (typeof chrome?.title === 'string' ? chrome.title : undefined);
 
-    const handleClose = React.useCallback(() => {
+    const handleSharedDismiss = React.useCallback(() => {
+        if (!dismissible) {
+            return;
+        }
         try {
             config.onRequestClose?.();
         } catch {
             // ignore
         }
         onClose();
-    }, [config.onRequestClose, onClose]);
+    }, [config.onRequestClose, dismissible, onClose]);
+
+    const handleComponentClose = React.useCallback(() => {
+        if (dismissible) {
+            handleSharedDismiss();
+            return;
+        }
+        onClose();
+    }, [dismissible, handleSharedDismiss, onClose]);
 
     const setChrome = React.useCallback((nextChrome: CustomModalChromeConfig | null) => {
         setChromeOverride((prevOverride) => {
@@ -133,7 +147,8 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
     return (
         <BaseModal
             visible={visible}
-            onClose={handleClose}
+            onClose={handleSharedDismiss}
+            accessibilityLabel={accessibilityLabel}
             closeOnBackdrop={config.closeOnBackdrop ?? true}
             showBackdrop={showBackdrop}
             zIndexBase={zIndexBase}
@@ -153,12 +168,12 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
                     scrollHost={chrome.scrollHost}
                     bodyScroll={chrome.bodyScroll ?? 'none'}
                     dimensions={chrome.dimensions}
-                    onClose={handleClose}
+                    onClose={dismissible ? handleSharedDismiss : undefined}
                 >
-                    <Component {...config.props} onClose={handleClose} setChrome={setChrome} />
+                    <Component {...config.props} onClose={handleComponentClose} setChrome={setChrome} />
                 </ModalCardFrame>
             ) : (
-                <Component {...config.props} onClose={handleClose} setChrome={setChrome} />
+                <Component {...config.props} onClose={handleComponentClose} setChrome={setChrome} />
             )}
         </BaseModal>
     );

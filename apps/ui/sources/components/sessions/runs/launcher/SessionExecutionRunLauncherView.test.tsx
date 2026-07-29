@@ -232,6 +232,7 @@ describe('SessionExecutionRunLauncherView', () => {
         }]>).at(-1)?.[0];
         expect(cacheRequest).toMatchObject({
             serverId: 'server-launcher',
+            request: { requests: [{ id: 'tool.executionRuns', params: { sessionId: 'session-launcher' } }] },
         });
         expect(resolveSessionTargetServerIdSpy).not.toHaveBeenCalled();
         const executorConfig = createDefaultActionExecutorSpy.mock.calls.at(-1)?.[0] as {

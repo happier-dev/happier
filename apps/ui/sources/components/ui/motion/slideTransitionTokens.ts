@@ -26,6 +26,8 @@ export type SlideTransitionPresetTokens = Readonly<{
     maxBlurPx: number;
     /** Multiplier applied when mapping web blurPx → native BlurView intensity (capped at 100). */
     nativeBlurIntensityScale: number;
+    /** Duration for reduced-motion crossfades. */
+    reducedMotionDurationMs: number;
     /** Spring config for adapters (`SlideTransitionSwitch`, `StoryDeckSlideTransition`). */
     spring: WithSpringConfig;
 }>;
@@ -35,12 +37,14 @@ export const slideTransitionTokens: Readonly<Record<SlideTransitionPreset, Slide
         translatePx: 32,
         maxBlurPx: 12,
         nativeBlurIntensityScale: 3,
+        reducedMotionDurationMs: 180,
         spring: { damping: 18, stiffness: 140, mass: 0.9 },
     },
     compact: {
         translatePx: 16,
         maxBlurPx: 6,
         nativeBlurIntensityScale: 3,
+        reducedMotionDurationMs: 140,
         spring: { damping: 24, stiffness: 220, mass: 0.7 },
     },
 } as const;

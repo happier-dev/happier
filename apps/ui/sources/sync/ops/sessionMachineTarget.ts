@@ -10,8 +10,7 @@ import {
     type SessionMachineTargetState,
     type SessionTargetMetadataLike,
 } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
-
-export const INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR = 'Session RPC unavailable for inactive session';
+export { INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR } from '@/sync/runtime/sessionMachineRpcErrorCodes';
 
 export function readMachineTargetForSession(
     sessionId: string,

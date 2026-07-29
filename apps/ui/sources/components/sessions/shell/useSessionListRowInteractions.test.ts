@@ -13,9 +13,14 @@ import { treeRowId } from './drop-resolution/treeRowId';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const setSessionFolderAssignmentSpy = vi.hoisted(() => vi.fn(async () => {}));
-const getCredentialsForServerUrlSpy = vi.hoisted(() => vi.fn(async () => ({
-    token: 'folder-token',
-    secret: 'folder-secret',
+const resolveSessionOrganizationMutationScopeSpy = vi.hoisted(() => vi.fn(async (serverId: string) => ({
+    ok: true as const,
+    scope: {
+        credentials: { token: 'folder-token', secret: 'folder-secret' },
+        serverId,
+        serverIdAliases: ['profile-a', 'legacy-a'],
+        serverUrl: 'https://server-a.example.test',
+    },
 })));
 
 vi.mock('react-native-reanimated', () => ({
@@ -31,25 +36,9 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (action: () => Promise<void>) => [null, () => { void action(); }],
 }));
 
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    TokenStorage: {
-        getCredentialsForServerUrl: getCredentialsForServerUrlSpy,
-    },
-}));
-
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getServerProfileById: (serverId: string) => (serverId === 'server-a'
-        ? {
-            id: 'profile-a',
-            serverIdentityId: 'server-a',
-            legacyServerIds: ['legacy-a'],
-            serverUrl: 'https://server-a.example.test',
-        }
-        : null),
-}));
-
 vi.mock('@/sync/ops/sessionOrganization', () => ({
-    setSessionFolderAssignment: setSessionFolderAssignmentSpy,
+    resolveSessionOrganizationMutationScope: resolveSessionOrganizationMutationScopeSpy,
+    writeSessionOrganizationFolderAssignment: setSessionFolderAssignmentSpy,
 }));
 
 describe('useSessionListRowInteractions', () => {
@@ -123,7 +112,7 @@ describe('useSessionListRowInteractions', () => {
 
     it('persists drag folder assignments under the list projection server id', async () => {
         setSessionFolderAssignmentSpy.mockClear();
-        getCredentialsForServerUrlSpy.mockClear();
+        resolveSessionOrganizationMutationScopeSpy.mockClear();
         const folderItems: SessionListIndexItem[] = [
             listItems[0]!,
             {
@@ -174,14 +163,17 @@ describe('useSessionListRowInteractions', () => {
 
         await vi.waitFor(() => {
             expect(setSessionFolderAssignmentSpy).toHaveBeenCalledWith({
-                credentials: { token: 'folder-token', secret: 'folder-secret' },
-                serverId: 'server-a',
-                serverUrl: 'https://server-a.example.test',
+                scope: {
+                    credentials: { token: 'folder-token', secret: 'folder-secret' },
+                    serverId: 'server-a',
+                    serverIdAliases: ['profile-a', 'legacy-a'],
+                    serverUrl: 'https://server-a.example.test',
+                },
                 sessionId: 's1',
                 folderId: 'folder-a',
             });
         });
-        expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith('https://server-a.example.test', { serverId: 'profile-a' });
+        expect(resolveSessionOrganizationMutationScopeSpy).toHaveBeenCalledWith('server-a');
 
         await hook.unmount();
     });

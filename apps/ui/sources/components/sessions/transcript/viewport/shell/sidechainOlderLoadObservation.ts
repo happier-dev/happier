@@ -6,6 +6,7 @@ import type {
     TranscriptOlderPaginationScrollMetrics,
 } from '@/components/sessions/transcript/pagination/useTranscriptOlderPagination';
 import {
+    resolveTranscriptViewportTelemetryRendererFacts,
     resolveTranscriptViewportTelemetryPlatform,
 } from '@/components/sessions/transcript/scroll/transcriptViewportTelemetry';
 import type {
@@ -45,6 +46,8 @@ export type SidechainOlderLoadTelemetryFacts = Readonly<{
 export type SidechainOlderLoadObservationInput =
     | number
     | Readonly<{
+        /** Estimate-immune item-space edge proximity (native; see the machine contract). */
+        itemsToOlderEdge?: number | null;
         nativeObservedOffset?: TranscriptViewportObservedOffset | null;
         offsetY?: number;
         trigger?: OlderPaginationScrollTrigger;
@@ -52,7 +55,7 @@ export type SidechainOlderLoadObservationInput =
     }>;
 
 export type SidechainOlderLoadIngressResult =
-    | Readonly<{ ok: false; reason: 'missing_offset' }>
+    | Readonly<{ ok: false; reason: 'missing_offset' | 'not_older_edge' }>
     | Readonly<{
         ok: true;
         observation: SidechainOlderLoadObservationInput;
@@ -67,9 +70,39 @@ export type SidechainOlderLoadObservationResult =
             offsetY: number;
             scrollable: boolean;
             trigger?: OlderPaginationScrollTrigger;
+            itemsToOlderEdge?: number | null;
         }>;
         telemetry: SidechainOlderLoadTelemetryFacts;
     }>;
+
+export function applySidechainCommittedLayoutObservation(params: Readonly<{
+    nativeObservedOffset: TranscriptViewportObservedOffset | null;
+    onObservation: (observation: SidechainOlderLoadObservationInput) => void;
+    platformOS: string;
+    viewportGuardThresholdPx: number;
+    webElement: unknown;
+}>): boolean {
+    if (params.platformOS === 'web') {
+        const webObservation = resolveWebDomOlderLoadObservation({
+            requestedTrigger: 'layout-committed',
+            target: params.webElement,
+            viewportGuardThresholdPx: params.viewportGuardThresholdPx,
+        });
+        if (!webObservation) return false;
+        params.onObservation({
+            offsetY: webObservation.offsetY,
+            webObservation,
+        });
+        return true;
+    }
+    if (!params.nativeObservedOffset) return false;
+    params.onObservation({
+        nativeObservedOffset: params.nativeObservedOffset,
+        offsetY: params.nativeObservedOffset.canonicalOffsetY,
+        trigger: 'layout-committed',
+    });
+    return true;
+}
 
 type ScrollObservedTelemetryEvent = TranscriptViewportTelemetryEvent & Readonly<{ type: 'scroll-observed' }>;
 
@@ -116,9 +149,18 @@ export function resolveSidechainOlderLoadScrollEventObservation(params: Readonly
 
 export function resolveSidechainOlderLoadEdgeReachedObservation(params: Readonly<{
     nativeObservedOffset?: TranscriptViewportObservedOffset | null;
+    reachedEdge?: 'start' | 'end';
+    resolveReachedEdge?: (edge: 'start' | 'end') => 'newer' | 'older';
     viewportGuardThresholdPx: number;
     webElement: unknown;
 }>): SidechainOlderLoadIngressResult {
+    if (
+        !params.reachedEdge
+        || !params.resolveReachedEdge
+        || params.resolveReachedEdge(params.reachedEdge) !== 'older'
+    ) {
+        return { ok: false, reason: 'not_older_edge' };
+    }
     const webObservation = resolveWebDomOlderLoadObservation({
         requestedTrigger: 'edge-reached',
         target: params.webElement,
@@ -181,6 +223,10 @@ export function resolveSidechainOlderLoadObservation(params: Readonly<{
             ? undefined
             : params.observation.trigger
     );
+    const itemsToOlderEdge =
+        typeof params.observation === 'number'
+            ? null
+            : params.observation.itemsToOlderEdge ?? null;
     const layoutHeightPx =
         params.platformOS === 'web' && webObservation
             ? webObservation.layoutHeight
@@ -208,6 +254,7 @@ export function resolveSidechainOlderLoadObservation(params: Readonly<{
                 offsetY: normalizedOffsetY,
                 scrollable: false,
                 trigger,
+                itemsToOlderEdge,
             },
             telemetry: {
                 contentHeightPx,
@@ -238,6 +285,7 @@ export function resolveSidechainOlderLoadObservation(params: Readonly<{
             offsetY: normalizedOffsetY,
             scrollable,
             trigger,
+            itemsToOlderEdge,
         },
         telemetry: {
             contentHeightPx,
@@ -253,8 +301,8 @@ export function resolveSidechainOlderLoadObservation(params: Readonly<{
 }
 
 export function buildSidechainOlderLoadScrollObservedTelemetryEvent(params: Readonly<{
-    flashListContentHeightPx: number;
-    flashListLayoutHeightPx: number;
+    listContentHeightPx: number;
+    listLayoutHeightPx: number;
     paginationSnapshot: TranscriptOlderPaginationSnapshot;
     platformOS: string;
     sessionId: string;
@@ -266,7 +314,7 @@ export function buildSidechainOlderLoadScrollObservedTelemetryEvent(params: Read
         type: 'scroll-observed',
         sessionId: params.sessionId,
         platform: resolveTranscriptViewportTelemetryPlatform(params.platformOS),
-        listImplementation: 'flash_v2',
+        listImplementation: resolveTranscriptViewportTelemetryRendererFacts().listImplementation,
         mode: 'user-unpinned',
         reason: 'observed',
         offsetY: params.telemetry.offsetY,
@@ -279,14 +327,11 @@ export function buildSidechainOlderLoadScrollObservedTelemetryEvent(params: Read
             domScrollHeight: webMetrics.scrollHeight,
             domClientHeight: webMetrics.clientHeight,
         } : {}),
-        flashListContentHeight: params.flashListContentHeightPx,
-        flashListLayoutHeight: params.flashListLayoutHeightPx,
+        listContentHeight: params.listContentHeightPx,
+        listLayoutHeight: params.listLayoutHeightPx,
         scrollable: params.telemetry.scrollable,
         paginationPhase: params.paginationSnapshot.phase,
         paginationSuspendedReasons: params.paginationSnapshot.suspendedReasons,
-        coldCount: params.telemetry.itemCount,
-        hotCount: 0,
-        pendingWebPrependAnchorKind: 'none',
         programmaticWebWrite: false,
         timestampMs: params.timestampMs,
     };
@@ -295,8 +340,8 @@ export function buildSidechainOlderLoadScrollObservedTelemetryEvent(params: Read
 export function applySidechainOlderLoadObservation(params: Readonly<{
     contentHeightPx: number;
     dataOrder: TranscriptListShellDataOrder;
-    flashListContentHeightPx: number;
-    flashListLayoutHeightPx: number;
+    listContentHeightPx: number;
+    listLayoutHeightPx: number;
     getPaginationSnapshot: () => TranscriptOlderPaginationSnapshot;
     itemCount: number;
     layoutHeightPx: number;
@@ -323,8 +368,8 @@ export function applySidechainOlderLoadObservation(params: Readonly<{
 
     if (params.platformOS === 'web' && params.recordTelemetry) {
         params.recordTelemetry(buildSidechainOlderLoadScrollObservedTelemetryEvent({
-            flashListContentHeightPx: params.flashListContentHeightPx,
-            flashListLayoutHeightPx: params.flashListLayoutHeightPx,
+            listContentHeightPx: params.listContentHeightPx,
+            listLayoutHeightPx: params.listLayoutHeightPx,
             paginationSnapshot: params.getPaginationSnapshot(),
             platformOS: params.platformOS,
             sessionId: params.sessionId,

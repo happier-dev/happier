@@ -182,4 +182,38 @@ describe('readSessionWorkStateFromMetadata', () => {
             completedAt: 19,
         }));
     });
+
+    it.each(['blocked', 'usageLimited'] as const)(
+        'preserves the frozen %s reason through canonical and deployed legacy reads',
+        (statusReason) => {
+            const canonical = readSessionWorkStateFromMetadata({
+                sessionWorkStateV1: {
+                    v: 1,
+                    backendId: 'codex',
+                    updatedAt: 20,
+                    items: [{
+                        id: 'goal:thread-1',
+                        kind: 'goal',
+                        origin: 'vendor',
+                        status: 'blocked',
+                        statusReason,
+                        title: 'Preserve native reason',
+                        updatedAt: 20,
+                    }],
+                },
+            });
+            const legacy = readSessionWorkStateFromMetadata({
+                flavor: 'codex',
+                sessionGoalV1: {
+                    objective: 'Preserve native reason',
+                    status: 'blocked',
+                    statusReason,
+                    updatedAt: 20,
+                },
+            });
+
+            expect(canonical?.items[0]?.statusReason).toBe(statusReason);
+            expect(legacy?.items[0]?.statusReason).toBe(statusReason);
+        },
+    );
 });

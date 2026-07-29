@@ -28,11 +28,11 @@ const state: any = {
   settings: {
     voice: {
       providerId: 'local_conversation',
-      adapters: {
-        local_conversation: {
+      providers: {
+        local_conversation: { schemaVersion: 1, config: {
           conversationMode: 'agent',
           agent: { backend: 'daemon', stayInVoiceHome: false, teleportEnabled: true },
-        },
+        } },
       },
     },
   },
@@ -53,8 +53,8 @@ describe('teleportVoiceAgentToSessionRoot', () => {
     ensureBoundSpy.mockReset();
     stopSpy.mockReset();
     state.settings.voice.providerId = 'local_conversation';
-    state.settings.voice.adapters.local_conversation.conversationMode = 'agent';
-    state.settings.voice.adapters.local_conversation.agent = { backend: 'daemon', stayInVoiceHome: false, teleportEnabled: true };
+    state.settings.voice.providers.local_conversation.config.conversationMode = 'agent';
+    state.settings.voice.providers.local_conversation.config.agent = { backend: 'daemon', stayInVoiceHome: false, teleportEnabled: true };
   });
 
   it('rebinds the global voice agent to the requested session root before stopping the global run', async () => {
@@ -71,7 +71,7 @@ describe('teleportVoiceAgentToSessionRoot', () => {
 
   it('fails closed when teleport is disabled', async () => {
     const { teleportVoiceAgentToSessionRoot } = await import('./teleportVoiceAgentToSessionRoot');
-    state.settings.voice.adapters.local_conversation.agent.teleportEnabled = false;
+    state.settings.voice.providers.local_conversation.config.agent.teleportEnabled = false;
 
     await expect(teleportVoiceAgentToSessionRoot({ sessionId: 's1' })).resolves.toEqual({ ok: false, code: 'VOICE_TELEPORT_DISABLED' });
     expect(ensureBoundSpy).not.toHaveBeenCalled();
@@ -80,7 +80,7 @@ describe('teleportVoiceAgentToSessionRoot', () => {
 
   it('fails closed when stayInVoiceHome is enabled', async () => {
     const { teleportVoiceAgentToSessionRoot } = await import('./teleportVoiceAgentToSessionRoot');
-    state.settings.voice.adapters.local_conversation.agent.stayInVoiceHome = true;
+    state.settings.voice.providers.local_conversation.config.agent.stayInVoiceHome = true;
 
     await expect(teleportVoiceAgentToSessionRoot({ sessionId: 's1' })).resolves.toEqual({ ok: false, code: 'VOICE_TELEPORT_BLOCKED_BY_HOME' });
     expect(ensureBoundSpy).not.toHaveBeenCalled();

@@ -9,13 +9,10 @@ import {
 import { useMachineListByServerId, useMachineListStatusByServerId } from '@/sync/domains/state/storage';
 import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
-import { resolveMachineExactSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness';
-import type { MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 
 export type ServerScopedMachine = Machine & Readonly<{
     serverId: string;
     serverName: string;
-    spawnReadinessStatus: MachineSpawnReadiness['status'];
 }>;
 
 export type ServerScopedMachineGroup = Readonly<{
@@ -50,19 +47,16 @@ function buildServerScopedMachine(machine: Machine, params: Readonly<{ serverId:
         ...machine,
         serverId: params.serverId,
         serverName: params.serverName,
-        spawnReadinessStatus: resolveMachineExactSpawnReadiness(machine, machine.id).status,
     };
 }
 
 function buildMachineOptionSignature(machine: Machine): string {
-    const readinessStatus = resolveMachineExactSpawnReadiness(machine, machine.id).status;
     const metadata = machine.metadata;
     return [
         machine.id,
         String(machine.active === true),
         String(machine.activeAt ?? ''),
         String(machine.updatedAt ?? ''),
-        readinessStatus,
         String(machine.revokedAt ?? ''),
         String(machine.replacedByMachineId ?? ''),
         String(machine.daemonStateVersion ?? ''),

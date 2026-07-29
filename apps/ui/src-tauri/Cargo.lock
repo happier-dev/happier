@@ -94,6 +94,8 @@ checksum = "b0674a1ddeecb70197781e945de4b3b8ffb61fa939a5597bcf48503737663100"
 name = "app"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "block2 0.6.1",
  "flate2",
  "libc",
  "log",
@@ -101,6 +103,8 @@ dependencies = [
  "objc2-app-kit 0.3.1",
  "objc2-core-graphics",
  "objc2-foundation 0.3.1",
+ "objc2-web-kit 0.3.1",
+ "png 0.17.16",
  "serde",
  "serde_json",
  "tauri",
@@ -115,6 +119,8 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "tokio",
+ "url",
+ "wry",
 ]
 
 [[package]]

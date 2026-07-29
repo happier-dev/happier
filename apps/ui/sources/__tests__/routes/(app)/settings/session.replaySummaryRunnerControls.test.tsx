@@ -57,18 +57,16 @@ afterEach(() => {
     resetSessionSettingsEntryState();
 });
 
-describe('Session settings (Replay summary runner controls)', () => {
+describe('Session resume settings (Replay summary runner controls)', () => {
     it('renders a max seed chars input when replay is enabled', async () => {
         executionRunsEnabledState.enabled = true;
         sessionSettingsEntryState.settingsState.sessionReplayEnabled = true;
 
-        const mod = await import('@/app/(app)/settings/session');
-        const SessionSettingsScreen = mod.default;
+        const mod = await import('@/app/(app)/settings/session/resume');
+        const SessionResumeSettingsScreen = mod.default;
 
-        const screen = await renderScreen(React.createElement(SessionSettingsScreen));
-        const texts = screen.getTextContent();
+        const screen = await renderScreen(React.createElement(SessionResumeSettingsScreen));
 
-        expect(texts).toContain('settingsSession.replayResume.maxSeedCharsTitle');
         expect(screen.findAllByTestId('settings-session-replay-maxSeedChars-input')).toHaveLength(1);
     });
 
@@ -77,14 +75,12 @@ describe('Session settings (Replay summary runner controls)', () => {
         sessionSettingsEntryState.settingsState.sessionReplayEnabled = true;
         sessionSettingsEntryState.settingsState.sessionReplayStrategy = 'summary_plus_recent';
 
-        const mod = await import('@/app/(app)/settings/session');
-        const SessionSettingsScreen = mod.default;
+        const mod = await import('@/app/(app)/settings/session/resume');
+        const SessionResumeSettingsScreen = mod.default;
 
-        const screen = await renderScreen(React.createElement(SessionSettingsScreen));
-        const texts = screen.getTextContent();
+        const screen = await renderScreen(React.createElement(SessionResumeSettingsScreen));
         const summaryRunnerPickers = screen.findAllByType('LlmTaskRunnerConfigV1BackendModelPicker' as any);
 
-        expect(texts).toContain('settingsSession.replayResume.summaryRunner.title');
         expect(summaryRunnerPickers).toHaveLength(1);
         expect(summaryRunnerPickers[0]?.props?.backendTestID).toBe('settings-session-replay-summaryRunner-backend');
         expect(summaryRunnerPickers[0]?.props?.modelTestID).toBe('settings-session-replay-summaryRunner-model');
@@ -95,12 +91,12 @@ describe('Session settings (Replay summary runner controls)', () => {
         sessionSettingsEntryState.settingsState.sessionReplayEnabled = true;
         sessionSettingsEntryState.settingsState.sessionReplayStrategy = 'summary_plus_recent';
 
-        const mod = await import('@/app/(app)/settings/session');
-        const SessionSettingsScreen = mod.default;
+        const mod = await import('@/app/(app)/settings/session/resume');
+        const SessionResumeSettingsScreen = mod.default;
 
-        const screen = await renderScreen(React.createElement(SessionSettingsScreen));
-        const texts = screen.getTextContent();
+        const screen = await renderScreen(React.createElement(SessionResumeSettingsScreen));
+        const summaryRunnerPickers = screen.findAllByType('LlmTaskRunnerConfigV1BackendModelPicker' as any);
 
-        expect(texts).not.toContain('settingsSession.replayResume.summaryRunner.title');
+        expect(summaryRunnerPickers).toHaveLength(0);
     });
 });

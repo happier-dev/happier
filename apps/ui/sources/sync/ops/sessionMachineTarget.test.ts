@@ -50,7 +50,7 @@ describe('sessionMachineTarget', () => {
                         path: '/workspace/direct-repo',
                         externalSessionV1: {
                             v: 1,
-                            providerId: 'codex',
+                            agentId: 'codex',
                             machineId: 'm-direct',
                             remoteSessionId: 'remote-1',
                             source: { kind: 'codexHome', home: 'user' },
@@ -91,7 +91,7 @@ describe('sessionMachineTarget', () => {
                         path: '/workspace/direct-repo',
                         externalSessionV1: {
                             v: 1,
-                            providerId: 'codex',
+                            agentId: 'codex',
                             machineId: 'm-direct',
                             remoteSessionId: 'remote-1',
                             source: { kind: 'codexHome', home: 'user' },
@@ -108,7 +108,7 @@ describe('sessionMachineTarget', () => {
                         machineId: null,
                         externalSessionV1: {
                             v: 1,
-                            providerId: 'codex',
+                            agentId: 'codex',
                         },
                     },
                 },
@@ -618,7 +618,7 @@ describe('sessionMachineTarget', () => {
             metadata: {
                 externalSessionV1: {
                     v: 1,
-                    providerId: 'claude',
+                    agentId: 'claude',
                     machineId: 'm-direct',
                     remoteSessionId: 'remote-1',
                     source: { kind: 'claudeConfig', configDir: '/tmp/claude' },

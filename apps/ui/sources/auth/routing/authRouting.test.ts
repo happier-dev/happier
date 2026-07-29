@@ -1,5 +1,41 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { isPublicRouteForUnauthenticated } from './authRouting';
+
+type DevGlobal = typeof globalThis & { __DEV__?: boolean };
+
+function withDevBuild<T>(enabled: boolean, run: () => T): T {
+    const devGlobal = globalThis as DevGlobal;
+    const hadOwnDevFlag = Object.prototype.hasOwnProperty.call(devGlobal, '__DEV__');
+    const previousDevFlag = devGlobal.__DEV__;
+    vi.stubGlobal('__DEV__', enabled);
+    try {
+        return run();
+    } finally {
+        if (hadOwnDevFlag) {
+            vi.stubGlobal('__DEV__', previousDevFlag);
+        } else {
+            Reflect.deleteProperty(devGlobal, '__DEV__');
+        }
+    }
+}
+
+function withDebugRouteEnv<T>(value: string | undefined, run: () => T): T {
+    const previousDebugFlag = process.env.EXPO_PUBLIC_DEBUG;
+    if (value === undefined) {
+        delete process.env.EXPO_PUBLIC_DEBUG;
+    } else {
+        process.env.EXPO_PUBLIC_DEBUG = value;
+    }
+    try {
+        return run();
+    } finally {
+        if (previousDebugFlag === undefined) {
+            delete process.env.EXPO_PUBLIC_DEBUG;
+        } else {
+            process.env.EXPO_PUBLIC_DEBUG = previousDebugFlag;
+        }
+    }
+}
 
 describe('isPublicRouteForUnauthenticated', () => {
     const routeCases: Array<{ name: string; segments: string[]; expected: boolean }> = [
@@ -22,6 +58,7 @@ describe('isPublicRouteForUnauthenticated', () => {
         { name: 'grouped oauth return route', segments: ['(app)', 'oauth', 'github'], expected: true },
         { name: 'desktop activity overlay route', segments: ['desktop', 'activity-overlay'], expected: true },
         { name: 'grouped desktop activity overlay route', segments: ['(app)', 'desktop', 'activity-overlay'], expected: true },
+        { name: 'other dev route stays private', segments: ['(app)', 'dev', 'other'], expected: false },
         { name: 'private settings route', segments: ['settings'], expected: false },
         { name: 'grouped private settings route', segments: ['(app)', 'settings'], expected: false },
         { name: 'unknown private route', segments: ['inbox'], expected: false },
@@ -32,5 +69,25 @@ describe('isPublicRouteForUnauthenticated', () => {
 
     it.each(routeCases)('$name', ({ segments, expected }) => {
         expect(isPublicRouteForUnauthenticated(segments)).toBe(expected);
+    });
+
+    it('allows the stage D-PERF route before auth only in dev or debug-export builds', () => {
+        withDevBuild(true, () => {
+            withDebugRouteEnv(undefined, () => {
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(true);
+            });
+        });
+
+        withDevBuild(false, () => {
+            withDebugRouteEnv(undefined, () => {
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(false);
+            });
+        });
+
+        withDevBuild(false, () => {
+            withDebugRouteEnv('1', () => {
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(true);
+            });
+        });
     });
 });

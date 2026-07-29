@@ -30,6 +30,7 @@ export async function uploadBulkPayloadFromFile<TFinalize extends { success: boo
     }>) => Promise<{ success: boolean; error?: string }>;
     finalize: (request: Readonly<{ uploadId: string }>) => Promise<TFinalize>;
     abort?: ((request: Readonly<{ uploadId: string }>) => Promise<unknown>) | null;
+    closeFileReader?: boolean;
     onProgress?: ((progress: ChunkUploadProgress) => void) | null;
     signal?: AbortSignal | null;
 }>): Promise<TFinalize | BulkTransferFailureResponse> {
@@ -50,6 +51,8 @@ export async function uploadBulkPayloadFromFile<TFinalize extends { success: boo
             signal: params.signal ?? null,
         });
     } finally {
-        await params.fileReader.close();
+        if (params.closeFileReader !== false) {
+            await params.fileReader.close();
+        }
     }
 }

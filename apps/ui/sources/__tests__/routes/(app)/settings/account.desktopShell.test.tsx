@@ -7,12 +7,12 @@ import {
 } from '@/dev/testkit';
 import { createAccountFeaturesResponse, getRequestUrl, isFeaturesRequest } from './account.testHelpers';
 import { installAccountSettingsRouteModuleMocks } from './accountSettingsRouteTestHelpers';
+import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let windowDimensions: { width: number; height: number } = { width: 1440, height: 900 };
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -140,7 +140,7 @@ installAccountSettingsRouteModuleMocks({
                     if (key === 'settingsNavSidebarWidthBasisPx') return [1200, vi.fn()];
                     return [null, vi.fn()];
                 }) as any,
-                useSettingMutable: () => [false, vi.fn()],
+                useSettingMutable: createUseSettingMutableMockFromReader(() => [false, vi.fn()]),
                 useProfile: () => ({
                     id: 'p',
                     timestamp: 0,
@@ -234,8 +234,9 @@ describe('Settings → Account desktop shell', () => {
         expect(screen.findByTestId('settings-sidebar')).toBeTruthy();
         expect(screen.findByTestId('settings-account-secret-key-item')).toBeTruthy();
         const text = screen.getTextContent();
-        expect(text).toContain('connectedServices.serviceNames.openaiCodex');
-        expect(text).toContain('connectedServices.serviceNames.anthropic');
-        expect(text).toContain('connectedServices.serviceNames.gemini');
+        expect(text).not.toContain('connectedServices.serviceNames.openaiCodex');
+        expect(text).not.toContain('connectedServices.serviceNames.anthropic');
+        expect(text).not.toContain('connectedServices.serviceNames.gemini');
+        expect(text).toContain('settings.connectedServices');
     });
 });

@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderSettingsView, standardCleanup } from '@/dev/testkit';
+import { BUILT_IN_THEME_PROFILES } from '@/theme/profiles/builtInThemeProfiles';
 import { installSessionSettingsEntryModuleMocks, resetSessionSettingsEntryState } from './sessionSettingsEntryTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -10,7 +11,7 @@ import { installSessionSettingsEntryModuleMocks, resetSessionSettingsEntryState 
 const shared = vi.hoisted(() => ({
     settingsState: {
         themePreference: 'adaptive',
-        themeProfiles: { activeProfileId: null, profiles: [] },
+        themeProfiles: { activeProfileIds: { light: null, dark: null }, profiles: [] },
         uiFontScale: 1,
         uiContentWidthMode: 'compact',
         uiItemDensity: 'comfortable',
@@ -120,7 +121,7 @@ afterEach(() => {
     resetSessionSettingsEntryState();
     Reflect.deleteProperty(globalThis, 'document');
     shared.settingsState.themePreference = 'adaptive';
-    shared.settingsState.themeProfiles = { activeProfileId: null, profiles: [] };
+    shared.settingsState.themeProfiles = { activeProfileIds: { light: null, dark: null }, profiles: [] };
     shared.settingsState.uiContentWidthMode = 'compact';
     shared.settingsState.uiItemDensity = 'comfortable';
     shared.setAdaptiveThemes.mockClear();
@@ -135,31 +136,59 @@ afterEach(() => {
 });
 
 describe('Appearance settings item density', () => {
-    it('renders theme selection as an explicit dropdown including curated themes', async () => {
+    const findDropdownByTriggerTestId = (
+        screen: Awaited<ReturnType<typeof renderSettingsView>>,
+        testID: string,
+    ) => screen.findAllByType('DropdownMenu' as any)
+        .find((node: any) => node.props?.itemTrigger?.itemProps?.testID === testID);
+
+    it('renders one current-theme dropdown outside adaptive mode and slot dropdowns in adaptive mode', async () => {
         shared.settingsState.themePreference = 'light';
         const mod = await import('@/app/(app)/settings/appearance');
         const screen = await renderSettingsView(React.createElement(mod.default));
 
-        const themeDropdown = screen.findAllByType('DropdownMenu' as any)[0];
-        expect(themeDropdown).toBeTruthy();
-        expect(themeDropdown?.props?.selectedId).toBe('light');
-        expect(themeDropdown?.props?.items.map((item: any) => item.id)).toEqual(['adaptive', 'light', 'dark', 'premiumDark', 'premiumLight']);
+        const currentThemeDropdown = findDropdownByTriggerTestId(screen, 'settings-theme-selector-trigger');
+        const lightDropdown = findDropdownByTriggerTestId(screen, 'settings-theme-light-selector-trigger');
+        const darkDropdown = findDropdownByTriggerTestId(screen, 'settings-theme-dark-selector-trigger');
+        expect(currentThemeDropdown).toBeTruthy();
+        expect(lightDropdown).toBeUndefined();
+        expect(darkDropdown).toBeUndefined();
+        expect(currentThemeDropdown?.props?.selectedId).toBe('light');
+        expect(currentThemeDropdown?.props?.items.map((item: any) => item.id)).toEqual([
+            'adaptive',
+            'light',
+            'dark',
+            ...BUILT_IN_THEME_PROFILES.map((definition) => definition.profile.id),
+        ]);
+
+        shared.settingsState.themePreference = 'adaptive';
+        const adaptiveScreen = await renderSettingsView(React.createElement(mod.default));
+        const adaptiveLightDropdown = findDropdownByTriggerTestId(adaptiveScreen, 'settings-theme-light-selector-trigger');
+        const adaptiveDarkDropdown = findDropdownByTriggerTestId(adaptiveScreen, 'settings-theme-dark-selector-trigger');
+        expect(adaptiveLightDropdown).toBeTruthy();
+        expect(adaptiveDarkDropdown).toBeTruthy();
+        expect(adaptiveLightDropdown?.props?.items.map((item: any) => item.id)).toEqual([
+            'light',
+            ...BUILT_IN_THEME_PROFILES
+                .filter((definition) => definition.preferredMode === 'light')
+                .map((definition) => definition.profile.id),
+        ]);
     });
 
-    it('activates a curated dark theme from the theme dropdown', async () => {
+    it('assigns a curated dark theme from the current-theme dropdown and switches to dark mode', async () => {
         shared.settingsState.themePreference = 'light';
         const mod = await import('@/app/(app)/settings/appearance');
         const screen = await renderSettingsView(React.createElement(mod.default));
 
-        const themeDropdown = screen.findAllByType('DropdownMenu' as any)[0];
+        const themeDropdown = findDropdownByTriggerTestId(screen, 'settings-theme-selector-trigger');
 
         await act(async () => {
             themeDropdown!.props.onSelect('premiumDark');
         });
 
-        const themeProfiles = shared.settingsState.themeProfiles as { activeProfileId: string | null; profiles: Array<{ id: string; overrides: { dark: Record<string, string> } }> };
+        const themeProfiles = shared.settingsState.themeProfiles as { activeProfileIds: { light: string | null; dark: string | null }; profiles: Array<{ id: string; overrides: { dark: Record<string, string> } }> };
         expect(shared.settingsState.themePreference).toBe('dark');
-        expect(themeProfiles.activeProfileId).toBe('premiumDark');
+        expect(themeProfiles.activeProfileIds).toEqual({ light: null, dark: 'premiumDark' });
         expect(themeProfiles.profiles).toEqual([]);
         expect(shared.setTheme).toHaveBeenCalledWith('dark');
     });
@@ -169,7 +198,7 @@ describe('Appearance settings item density', () => {
         const mod = await import('@/app/(app)/settings/appearance');
         const screen = await renderSettingsView(React.createElement(mod.default));
 
-        const themeDropdown = screen.findAllByType('DropdownMenu' as any)[0];
+        const themeDropdown = findDropdownByTriggerTestId(screen, 'settings-theme-selector-trigger');
         expect(themeDropdown).toBeTruthy();
         expect(themeDropdown?.props?.selectedId).toBe('light');
 
@@ -197,7 +226,7 @@ describe('Appearance settings item density', () => {
         const mod = await import('@/app/(app)/settings/appearance');
         const screen = await renderSettingsView(React.createElement(mod.default));
 
-        const themeDropdown = screen.findAllByType('DropdownMenu' as any)[0];
+        const themeDropdown = findDropdownByTriggerTestId(screen, 'settings-theme-selector-trigger');
         expect(themeDropdown).toBeTruthy();
         expect(themeDropdown?.props?.selectedId).toBe('light');
 

@@ -2,6 +2,7 @@ import type { ScmBranchListEntry } from '@happier-dev/protocol';
 
 import { machineScmBranchList } from '@/sync/ops/scm/machineScm';
 import { sessionScmBranchList } from '@/sync/ops';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { resolveRepoScmMachinePathRequest } from './resolveRepoScmMachinePathRequest';
 import { resolveRepoScmSessionRequest } from './resolveRepoScmSessionRequest';
 
@@ -47,6 +48,7 @@ export class RepoScmBranchService {
     }
 
     async fetchBranchesForMachinePath(input: Readonly<{
+        serverId?: string | null;
         machineId: string;
         path: string;
         includeRemotes?: boolean;
@@ -59,10 +61,13 @@ export class RepoScmBranchService {
         const includeRemotes = input.includeRemotes === true;
         const requestKey = this.createRequestKey(request.repoIdentityKey, includeRemotes);
         return await this.fetchBranchesForRepoIdentity(requestKey, async () => {
-            const response = await machineScmBranchList(request.machineId, {
+            const branchRequest = {
                 cwd: request.resolvedPath,
                 includeRemotes,
-            });
+            };
+            const response = input.serverId
+                ? await machineScmBranchList(request.machineId, branchRequest, { serverId: input.serverId })
+                : await machineScmBranchList(request.machineId, branchRequest);
             if (!response.success) {
                 throw new Error(response.error || 'Failed to fetch source-control branches');
             }
@@ -83,11 +88,15 @@ export class RepoScmBranchService {
         const includeRemotes = input.includeRemotes === true;
         const requestKey = this.createRequestKey(request.repoIdentityKey, includeRemotes);
         return await this.fetchBranchesForRepoIdentity(requestKey, async () => {
+            const serverId = resolvePreferredServerIdForSessionId(input.sessionId);
             if (request.machineId) {
-                const response = await machineScmBranchList(request.machineId, {
+                const branchRequest = {
                     cwd: request.resolvedPath,
                     includeRemotes,
-                });
+                };
+                const response = serverId
+                    ? await machineScmBranchList(request.machineId, branchRequest, { serverId })
+                    : await machineScmBranchList(request.machineId, branchRequest);
                 if (response.success) {
                     return response.branches ?? [];
                 }

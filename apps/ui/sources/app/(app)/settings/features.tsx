@@ -38,6 +38,7 @@ export default React.memo(function FeaturesSettingsScreen() {
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
     const [commandPaletteEnabled, setCommandPaletteEnabled] = useSettingMutable('commandPaletteEnabled');
     const [embeddedTerminalDockLocation, setEmbeddedTerminalDockLocation] = useLocalSettingMutable('embeddedTerminalDockLocation');
+    const [terminalRendererPreference, setTerminalRendererPreference] = useLocalSettingMutable('terminalRendererPreference');
     const [showEnvironmentBadge, setShowEnvironmentBadge] = useSettingMutable('showEnvironmentBadge');
     const [useMachinePickerSearch, setUseMachinePickerSearch] = useSettingMutable('useMachinePickerSearch');
     const [usePathPickerSearch, setUsePathPickerSearch] = useSettingMutable('usePathPickerSearch');
@@ -213,6 +214,7 @@ export default React.memo(function FeaturesSettingsScreen() {
     const standardToggleDefinitions = visibleToggleDefinitions.filter((d) => !d.isExperimental);
     const experimentalToggleDefinitions = visibleToggleDefinitions.filter((d) => d.isExperimental);
     const [embeddedTerminalDockMenuOpen, setEmbeddedTerminalDockMenuOpen] = React.useState(false);
+    const [terminalRendererMenuOpen, setTerminalRendererMenuOpen] = React.useState(false);
 
     const seedExperimentalFeatureToggleDefaults = React.useCallback(() => {
         const defaults = buildUiFeatureToggleDefaults({ experimentalOnly: true });
@@ -271,6 +273,18 @@ export default React.memo(function FeaturesSettingsScreen() {
                 return t('terminalEmbedded.location.sidebar');
         }
     }, [embeddedTerminalDockLocation]);
+
+    const terminalRendererPreferenceLabel = React.useMemo(() => {
+        switch (terminalRendererPreference) {
+            case 'xterm-webview':
+                return t('terminalEmbedded.settings.rendererXtermWebView');
+            case 'native-experimental':
+                return t('terminalEmbedded.settings.rendererNativeExperimental');
+            case 'auto':
+            default:
+                return t('terminalEmbedded.settings.rendererAuto');
+        }
+    }, [terminalRendererPreference]);
 
     const applyLocalToggleChange = React.useCallback((featureId: FeatureId, next: boolean) => {
         const nextToggles: Record<string, boolean> = {
@@ -363,7 +377,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                             onValueChange={(next) => {
                                 setExperiments(next);
                                 if (next) {
-                                    // Requirement: toggling the master switch enables all experimental toggles by default.
+                                    // Seed each experimental toggle from its own registry default.
                                     seedExperimentalFeatureToggleDefaults();
                                 }
                             }}
@@ -435,6 +449,52 @@ export default React.memo(function FeaturesSettingsScreen() {
                                     setEmbeddedTerminalDockLocation(id);
                                 }
                                 setEmbeddedTerminalDockMenuOpen(false);
+                            }}
+                        />
+                    ) : null}
+
+                    {embeddedTerminalDockSettingVisible && Platform.OS !== 'web' ? (
+                        <DropdownMenu
+                            open={terminalRendererMenuOpen}
+                            onOpenChange={setTerminalRendererMenuOpen}
+                            variant="selectable"
+                            search={false}
+                            selectedId={terminalRendererPreference}
+                            showCategoryTitles={false}
+                            matchTriggerWidth={true}
+                            connectToTrigger={true}
+                            rowKind="item"
+                            itemTrigger={{
+                                title: t('terminalEmbedded.settings.rendererTitle'),
+                                subtitle: terminalRendererPreferenceLabel,
+                                icon: <Ionicons name="hardware-chip-outline" size={29} color={theme.colors.accent.indigo} />,
+                                itemProps: { testID: 'settings-terminal-renderer-preference' },
+                            }}
+                            items={[
+                                {
+                                    id: 'auto',
+                                    title: t('terminalEmbedded.settings.rendererAuto'),
+                                    subtitle: t('terminalEmbedded.settings.rendererAutoDescription'),
+                                    icon: <Ionicons name="sparkles-outline" size={18} color={theme.colors.text.secondary} />,
+                                },
+                                {
+                                    id: 'xterm-webview',
+                                    title: t('terminalEmbedded.settings.rendererXtermWebView'),
+                                    subtitle: t('terminalEmbedded.settings.rendererXtermWebViewDescription'),
+                                    icon: <Ionicons name="accessibility-outline" size={18} color={theme.colors.text.secondary} />,
+                                },
+                                {
+                                    id: 'native-experimental',
+                                    title: t('terminalEmbedded.settings.rendererNativeExperimental'),
+                                    subtitle: t('terminalEmbedded.settings.rendererNativeExperimentalDescription'),
+                                    icon: <Ionicons name="hardware-chip-outline" size={18} color={theme.colors.text.secondary} />,
+                                },
+                            ]}
+                            onSelect={(id) => {
+                                if (id === 'auto' || id === 'xterm-webview' || id === 'native-experimental') {
+                                    setTerminalRendererPreference(id);
+                                }
+                                setTerminalRendererMenuOpen(false);
                             }}
                         />
                     ) : null}

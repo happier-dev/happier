@@ -105,6 +105,21 @@ describe('chunkedBridge', () => {
         ).toBeNull();
     });
 
+    it('rejects non-object parsed messages without throwing', () => {
+        const invalidMessages = [null, 1, 'not-an-envelope'];
+
+        for (const message of invalidMessages) {
+            expect(() =>
+                decodeChunkedEnvelope({
+                    message: message as Parameters<typeof decodeChunkedEnvelope>[0]['message'],
+                }),
+            ).not.toThrow();
+            expect(decodeChunkedEnvelope({
+                message: message as Parameters<typeof decodeChunkedEnvelope>[0]['message'],
+            })).toBeNull();
+        }
+    });
+
     it('rejects chunk envelopes that declare too many parts', () => {
         expect(() =>
             decodeChunkedEnvelope({

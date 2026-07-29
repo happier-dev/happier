@@ -1,11 +1,16 @@
-import { ExtensionMarketplaceEntryV1Schema } from '@happier-dev/protocol';
-import { z } from 'zod';
+import type { MarketplaceIndexQueryResultV1 } from '@happier-dev/protocol';
 
 export type PluginMarketplaceCatalogEntry = Readonly<{
     id: string;
+    sourceId: string;
+    sourceKind: 'curated' | 'community-npm';
+    reviewStatus: 'approved' | 'withdrawn' | 'blocked' | 'unreviewed';
     title: string;
     description: string | null;
     version: string | null;
+    installable: boolean;
+    updateable: boolean;
+    warning?: 'withdrawn';
 }>;
 
 export type PluginMarketplaceCatalog = Readonly<{
@@ -15,52 +20,58 @@ export type PluginMarketplaceCatalog = Readonly<{
     entries: readonly PluginMarketplaceCatalogEntry[];
 }>;
 
-const PluginMarketplaceCatalogEntrySchema = z.object({
-    id: z.string().trim().min(1),
-    manifestId: z.string().trim().min(1),
-    title: z.string().trim().min(1),
-    version: z.string().trim().min(1).optional().nullable(),
-    description: z.string().trim().min(1).optional().nullable(),
-    sourceUrl: z.string().trim().min(1),
-    packageUrl: z.string().trim().min(1).optional().nullable(),
-    digest: z.string().trim().min(1).optional().nullable(),
-    categories: z.array(z.string().trim().min(1)).default([]),
-}).strict().transform((value) => ExtensionMarketplaceEntryV1Schema.parse(value));
-
-const PluginMarketplaceCatalogDocumentSchema = z.object({
-    t: z.literal('happier_plugin_marketplace_catalog_v1'),
-    schemaVersion: z.literal(1),
-    sourceUrl: z.string().trim().min(1),
-    title: z.string().trim().min(1),
-    description: z.string().trim().min(1).nullable().optional(),
-    entries: z.array(PluginMarketplaceCatalogEntrySchema).default([]),
-}).strict();
-
-export async function readPluginMarketplaceCatalog(sourceUrl: string): Promise<PluginMarketplaceCatalog> {
-    const response = await fetch(sourceUrl, {
-        headers: {
-            accept: 'application/json',
-        },
-    });
-
-    if (!response.ok) {
-        throw new Error(`Failed to load plugin catalog from ${sourceUrl}: ${response.status} ${response.statusText}`.trim());
-    }
-
-    const parsed = PluginMarketplaceCatalogDocumentSchema.safeParse(await response.json());
-    if (!parsed.success) {
-        throw new Error(`Plugin catalog from ${sourceUrl} is invalid`);
-    }
-
+export function projectDaemonMarketplaceIndex(result: MarketplaceIndexQueryResultV1): PluginMarketplaceCatalog {
     return {
-        sourceUrl: parsed.data.sourceUrl,
-        title: parsed.data.title,
-        description: parsed.data.description ?? null,
-        entries: parsed.data.entries.map((entry) => ({
-            id: entry.manifestId,
-            title: entry.title,
-            description: entry.description ?? null,
-            version: entry.version ?? null,
-        })),
+        sourceUrl: 'daemon:marketplace-index',
+        title: result.sources[0]?.source.title ?? '',
+        description: null,
+        entries: result.items.flatMap((entry) => {
+            if (entry.source.kind !== 'curated' && entry.source.kind !== 'community-npm') {
+                return [];
+            }
+
+            const curatedInstallable = entry.source.kind === 'curated'
+                && entry.review.status === 'approved'
+                && entry.review.reviewedAt !== null
+                && entry.admission.curatedInstall === 'allowed';
+            const communityInstallable = entry.source.kind === 'community-npm'
+                && entry.review.status === 'unreviewed'
+                && entry.admission.curatedInstall === 'full-review';
+            const installable = (curatedInstallable || communityInstallable)
+                && entry.freshness.state === 'fresh'
+                && (entry.artifactAccess.state === 'public' || entry.artifactAccess.state === 'available');
+            const updateable = (
+                (
+                    entry.source.kind === 'curated'
+                    && entry.review.status === 'approved'
+                    && entry.review.reviewedAt !== null
+                    && entry.admission.curatedUpdate === 'allowed'
+                )
+                || communityInstallable
+            )
+                && entry.freshness.state === 'fresh'
+                && (entry.artifactAccess.state === 'public' || entry.artifactAccess.state === 'available');
+            const withdrawn = entry.source.kind === 'curated'
+                && entry.review.status === 'withdrawn'
+                && entry.admission.curatedInstall === 'refused'
+                && entry.admission.curatedUpdate === 'refused'
+                && entry.admission.warning
+                && !entry.admission.disablesInstalledCode;
+
+            if (!installable && !withdrawn) return [];
+
+            return [{
+                id: entry.pluginId,
+                sourceId: entry.source.id,
+                sourceKind: entry.source.kind,
+                reviewStatus: entry.review.status,
+                title: entry.display.title,
+                description: entry.display.description,
+                version: entry.distribution.version,
+                installable,
+                updateable,
+                ...(withdrawn ? { warning: 'withdrawn' as const } : {}),
+            }];
+        }),
     };
 }

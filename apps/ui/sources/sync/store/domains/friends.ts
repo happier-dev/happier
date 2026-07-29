@@ -1,5 +1,6 @@
 import type { RelationshipUpdatedEvent, UserProfile } from '../../domains/social/friendTypes';
 import type { StoreGet, StoreSet } from './_shared';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 
 export type FriendsDomain = {
   friends: Record<string, UserProfile>;
@@ -70,11 +71,7 @@ export function createFriendsDomain<
       })),
     getUser: (userId) => get().users[userId], // Returns UserProfile | null | undefined
     assumeUsers: async (userIds) => {
-      // This will be implemented in sync.ts as it needs access to credentials
-      // Just a placeholder here for the interface
-      const { sync } = await import('../../sync');
-      return sync.assumeUsers(userIds);
+      return getSyncSingleton().assumeUsers(userIds);
     },
   };
 }
-

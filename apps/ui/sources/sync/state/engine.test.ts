@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol';
 
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { writeUiSessionStateField } from './engine';
@@ -18,7 +19,15 @@ describe('writeUiSessionStateField', () => {
         const result = await writeUiSessionStateField({
             sessionId: 's1',
             fieldId: 'intent.model',
-            value: { v: 1, modelId: 'gemini-2.5-pro', updatedAt: 12 },
+            value: SessionModelSelectionIntentV1Schema.parse({
+                v: 1,
+                updatedAt: 12,
+                selection: {
+                    agentTargetKey: 'backend:gemini',
+                    providerConnectionId: null,
+                    modelId: 'gemini-2.5-pro',
+                },
+            }),
             metadataReason: 'ui-model-override',
             updateSessionMetadataWithRetry: async (_sessionId, updater) => {
                 updates.push(updater(buildMetadata()));
@@ -29,7 +38,15 @@ describe('writeUiSessionStateField', () => {
         expect(result).toEqual({ ok: true, version: 7 });
         expect(updates).toEqual([
             expect.objectContaining({
-                modelOverrideV1: { v: 1, updatedAt: 12, modelId: 'gemini-2.5-pro' },
+                modelSelectionIntentV1: {
+                    v: 1,
+                    updatedAt: 12,
+                    selection: {
+                        agentTargetKey: 'backend:gemini',
+                        providerConnectionId: null,
+                        modelId: 'gemini-2.5-pro',
+                    },
+                },
             }),
         ]);
     });

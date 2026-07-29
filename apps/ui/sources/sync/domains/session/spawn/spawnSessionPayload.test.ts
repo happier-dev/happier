@@ -1,12 +1,48 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol';
 
 import {
-    buildCompatibleSpawnHappySessionRpcParams,
     buildSpawnHappySessionRpcParams,
-    shouldUseLegacySpawnHappySessionRpcParams,
+    buildTrustedHiddenSystemSessionSpawnHappySessionRpcParams,
+    type SpawnSessionOptions,
 } from './spawnSessionPayload';
 
 describe('buildSpawnHappySessionRpcParams', () => {
+    it('does not let ordinary session creation place startup instructions on the daemon wire', () => {
+        expectTypeOf<SpawnSessionOptions>()
+            .not.toHaveProperty('agentSessionStartupInstructionsV1');
+        const agentSessionStartupInstructionsV1 = {
+            v: 1 as const,
+            id: 'happier.global_voice_agent',
+            revision: 1,
+            instructions: 'Global Voice developer instructions.',
+        };
+
+        expect(buildSpawnHappySessionRpcParams({
+            machineId: 'machine-1',
+            directory: '/tmp/workspace',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            agentSessionStartupInstructionsV1,
+        } as any)).not.toHaveProperty('agentSessionStartupInstructionsV1');
+    });
+
+    it('preserves the V1 carrier only through the trusted hidden-system-session builder', () => {
+        const agentSessionStartupInstructionsV1 = {
+            v: 1 as const,
+            id: 'happier.global_voice_agent',
+            revision: 1,
+            instructions: 'Global Voice developer instructions.',
+        };
+
+        expect(buildTrustedHiddenSystemSessionSpawnHappySessionRpcParams({
+            machineId: 'machine-1',
+            directory: '/tmp/workspace',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        }, agentSessionStartupInstructionsV1)).toEqual(expect.objectContaining({
+            agentSessionStartupInstructionsV1,
+        }));
+    });
+
     it('includes configured ACP backend targets and omits removed workspace linkage fields', () => {
         const params = buildSpawnHappySessionRpcParams({
             machineId: 'machine-1',
@@ -58,8 +94,8 @@ describe('buildSpawnHappySessionRpcParams', () => {
             codexBackendMode: 'acp',
             runtimeDescriptorV1: expect.objectContaining({
                 v: 1,
-                providerId: 'codex',
-                provider: expect.objectContaining({
+                agentId: 'codex',
+                agent: expect.objectContaining({
                     backendMode: 'acp',
                 }),
             }),
@@ -74,7 +110,7 @@ describe('buildSpawnHappySessionRpcParams', () => {
             experimentalCodexAcp: true,
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
+                agentId: 'codex',
                 provider: {
                     backendMode: 'appServer',
                     providerSessionId: 'codex-session-2',
@@ -89,7 +125,7 @@ describe('buildSpawnHappySessionRpcParams', () => {
             codexBackendMode: 'appServer',
             runtimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
+                agentId: 'codex',
                 provider: {
                     backendMode: 'appServer',
                     providerSessionId: 'codex-session-2',
@@ -106,7 +142,7 @@ describe('buildSpawnHappySessionRpcParams', () => {
             backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             agentRuntimeDescriptorV1: {
                 v: 1,
-                providerId: 'codex',
+                agentId: 'codex',
                 provider: {
                     backendMode: 'appServer',
                     providerSessionId: 'legacy-thread',
@@ -138,8 +174,8 @@ describe('buildSpawnHappySessionRpcParams', () => {
             codexBackendMode: 'appServer',
             runtimeDescriptorV1: expect.objectContaining({
                 v: 1,
-                providerId: 'codex',
-                provider: expect.objectContaining({
+                agentId: 'codex',
+                agent: expect.objectContaining({
                     backendMode: 'appServer',
                     providerSessionId: 'codex-session-1',
                 }),
@@ -177,8 +213,8 @@ describe('buildSpawnHappySessionRpcParams', () => {
             codexBackendMode: 'acp',
             runtimeDescriptorV1: expect.objectContaining({
                 v: 1,
-                providerId: 'codex',
-                provider: expect.objectContaining({
+                agentId: 'codex',
+                agent: expect.objectContaining({
                     backendMode: 'acp',
                     providerSessionId: 'codex-session-canonical',
                 }),
@@ -199,6 +235,34 @@ describe('buildSpawnHappySessionRpcParams', () => {
         }));
     });
 
+    it('preserves spawnNonce while stripping the retired direct initialPrompt field', () => {
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'machine-1',
+            directory: '/tmp/workspace',
+            backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+            initialPrompt: '  first prompt  ',
+            spawnNonce: '  new-session-spawn-1  ',
+        } as any);
+
+        expect(params).toEqual(expect.objectContaining({
+            spawnNonce: 'new-session-spawn-1',
+        }));
+        expect(params).not.toHaveProperty('initialPrompt');
+    });
+
+    it('does not emit the UI-only spawn attempt key in daemon payloads', () => {
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'machine-1',
+            directory: '/tmp/workspace',
+            backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+            spawnNonce: 'new-session-spawn-1',
+        } as any);
+
+        expect(params).toEqual(expect.objectContaining({
+            spawnNonce: 'new-session-spawn-1',
+        }));
+    });
+
     it('omits legacy spawn token passthrough when present on a compatibility-shaped input', () => {
         const params = buildSpawnHappySessionRpcParams({
             machineId: 'machine-1',
@@ -210,38 +274,24 @@ describe('buildSpawnHappySessionRpcParams', () => {
         expect(params).not.toHaveProperty('token');
     });
 
-    it('uses the legacy spawn payload shape for older daemon CLI versions', () => {
-        const params = buildCompatibleSpawnHappySessionRpcParams({
-            daemonCliVersion: '0.0.9',
-            options: {
-                machineId: 'machine-1',
-                directory: '/tmp/workspace',
-                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-                permissionMode: 'safe-yolo',
-                permissionModeUpdatedAt: 123,
-                modelId: 'o3',
-                modelUpdatedAt: 456,
-                windowsRemoteSessionLaunchMode: 'console',
-            },
+    it('preserves provider connection identity in the modern spawn payload', () => {
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'machine-1',
+            directory: '/tmp/workspace',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            modelSelection: SessionModelSelectionV1Schema.parse({
+                v: 1,
+                updatedAt: 456,
+                ref: {
+                    agentTargetKey: 'backend:codex',
+                    providerConnectionId: 'pc_work',
+                    modelId: 'openai/gpt-5.5',
+                },
+            }),
         });
 
-        expect(params).toEqual(expect.objectContaining({
-            type: 'spawn-in-directory',
-            directory: '/tmp/workspace',
-            agent: 'claude',
-            permissionMode: 'safe-yolo',
-            permissionModeUpdatedAt: 123,
-            modelId: 'o3',
-            modelUpdatedAt: 456,
-            windowsRemoteSessionConsole: 'visible',
-        }));
-        expect(params).not.toHaveProperty('backendTarget');
+        expect(params.modelSelection?.ref.providerConnectionId).toBe('pc_work');
+        expect(params).not.toHaveProperty('modelId');
     });
 
-    it('detects older daemon versions that still require the legacy spawn contract', () => {
-        expect(shouldUseLegacySpawnHappySessionRpcParams('0.0.9')).toBe(true);
-        expect(shouldUseLegacySpawnHappySessionRpcParams('0.1.0-dev.5')).toBe(false);
-        expect(shouldUseLegacySpawnHappySessionRpcParams('0.2.0')).toBe(false);
-        expect(shouldUseLegacySpawnHappySessionRpcParams(null)).toBe(false);
-    });
 });

@@ -316,6 +316,51 @@ describe('Account Settings SavedSecret mutation owner', () => {
     ).toHaveLength(1);
   });
 
+  it('renews one Voice recipient approval without replacing or exposing its SavedSecret', () => {
+    const before = referencedSettings();
+    const renewedDigest = `sha256:${'c'.repeat(64)}`;
+    const result = applyAccountSettingsSavedSecretMutation(before, {
+      kind: 'approveVoiceCredentialRecipientContract',
+      target: {
+        settingsKey: 'voice',
+        providerId: 'openai_compat',
+        credentialSlotId: 'api_key',
+        machineId: null,
+      },
+      expectedSecretId: secret.id,
+      expectedSecretUpdatedAt: 1,
+      approvedRecipientContractDigest: renewedDigest,
+    });
+
+    expect(result.settings.secrets).toEqual(before.secrets);
+    expect(result.settings.voice).toMatchObject({
+      credentialBindings: [{
+        providerId: 'openai_compat',
+        approvedRecipientContractDigest: renewedDigest,
+        credentialBindings: {
+          account: { api_key: secret.id },
+        },
+      }],
+    });
+  });
+
+  it('rejects Voice recipient approval when the bound SavedSecret changed concurrently', () => {
+    expect(() => applyAccountSettingsSavedSecretMutation(referencedSettings(), {
+      kind: 'approveVoiceCredentialRecipientContract',
+      target: {
+        settingsKey: 'voice',
+        providerId: 'openai_compat',
+        credentialSlotId: 'api_key',
+        machineId: null,
+      },
+      expectedSecretId: secret.id,
+      expectedSecretUpdatedAt: 0,
+      approvedRecipientContractDigest: `sha256:${'d'.repeat(64)}`,
+    })).toThrow(expect.objectContaining({
+      code: 'saved_secret_conflict',
+    }));
+  });
+
   it('atomically removes one Voice binding and deletes its secret only when no sibling still references it', () => {
     const exclusive = {
       ...referencedSettings(),

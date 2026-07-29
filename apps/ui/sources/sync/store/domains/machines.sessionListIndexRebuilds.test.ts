@@ -5,9 +5,10 @@ import { resolveMachineSessionListIndexImpact } from './machines';
 import { resolveMachineSessionListIndexImpact as resolveMachineSessionIndexImpactFromHelper } from './machineSessionListIndexImpact';
 import type { MachineMetadata } from '../../domains/state/storageTypes';
 
-const { mmkvStore, invalidateCachedTransferRoutesForMachineSpy } = vi.hoisted(() => ({
+const { mmkvStore, invalidateCachedTransferRoutesForMachineSpy, saveMachineDisplayWarmCacheEntriesSpy } = vi.hoisted(() => ({
     mmkvStore: new Map<string, string>(),
     invalidateCachedTransferRoutesForMachineSpy: vi.fn(),
+    saveMachineDisplayWarmCacheEntriesSpy: vi.fn(),
 }));
 
 vi.mock('react-native-mmkv', () => {
@@ -33,6 +34,7 @@ afterEach(() => {
     vi.clearAllMocks();
     mmkvStore.clear();
     invalidateCachedTransferRoutesForMachineSpy.mockReset();
+    saveMachineDisplayWarmCacheEntriesSpy.mockReset();
 });
 
 const ONLINE = 'online' as const;
@@ -83,7 +85,7 @@ function mockMachineDomainBoundaries(profiles: readonly ServerProfileMockProfile
     }));
     vi.doMock('../../domains/state/warmCachePersistence', () => ({
         resolveWarmCacheAccountScope: vi.fn((fallback: string | null | undefined) => fallback ?? null),
-        saveMachineDisplayWarmCacheEntries: vi.fn(),
+        saveMachineDisplayWarmCacheEntries: saveMachineDisplayWarmCacheEntriesSpy,
     }));
 }
 
@@ -230,6 +232,79 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
                 daemonStateVersion: 2,
             },
         ]);
+
+        expect(invalidateCachedTransferRoutesForMachineSpy).toHaveBeenCalledWith({
+            serverId: 'server_a',
+            remoteMachineId: 'm1',
+        });
+    });
+
+    it('invalidates cached transfer routes when a full machine refresh advances daemonStateVersion', async () => {
+        mockMachineDomainBoundaries();
+
+        const { createMachinesDomain } = await import('./machines');
+
+        const previousMachine = {
+            id: 'm1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: {
+                peerMediation: {
+                    loopback: {
+                        endpoint: {
+                            v: 1,
+                            url: 'http://127.0.0.1:41001/peer-mediation/v1/probe',
+                            endpointFingerprint: 'before-restart',
+                        },
+                    },
+                },
+            },
+            daemonStateVersion: 1,
+        };
+        const initialState = {
+            sessions: {},
+            settings: {
+                groupInactiveSessionsByProject: false,
+                sessionListActiveGroupingV1: 'date' as const,
+                sessionListInactiveGroupingV1: 'date' as const,
+            },
+            sessionListRenderables: {},
+            sessionListIndexByServerId: {},
+            sessionListRowStateByServerId: {},
+            concurrentSessionListCacheByServerId: {},
+            machines: { m1: previousMachine },
+            machineDisplayById: {},
+            machineListByServerId: { server_a: [previousMachine] },
+            machineListStatusByServerId: { server_a: 'idle' },
+            profile: { id: 'profile-1' },
+            getProjectForSession: () => null,
+        };
+
+        const { domain } = createHarness(createMachinesDomain, initialState);
+
+        domain.applyMachines([{
+            ...previousMachine,
+            seq: 2,
+            updatedAt: 2,
+            activeAt: 2,
+            daemonState: {
+                peerMediation: {
+                    loopback: {
+                        endpoint: {
+                            v: 1,
+                            url: 'http://127.0.0.1:41002/peer-mediation/v1/probe',
+                            endpointFingerprint: 'after-restart',
+                        },
+                    },
+                },
+            },
+            daemonStateVersion: 2,
+        }], true, { sourceServerId: 'server_a' });
 
         expect(invalidateCachedTransferRoutesForMachineSpy).toHaveBeenCalledWith({
             serverId: 'server_a',
@@ -1159,5 +1234,119 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
 
         const activeServerCache = get().machineListByServerId.server_a ?? [];
         expect(activeServerCache.map((machine: any) => machine.id)).toEqual(['m-active']);
+    });
+
+    it('preserves machine and display record identity on a true no-op apply', async () => {
+        mockMachineDomainBoundaries();
+
+        const { createMachinesDomain } = await import('./machines');
+
+        const machine = {
+            id: 'm-stable',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: makeMachineMetadata({ displayName: 'Stable' }),
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        const display = {
+            id: 'm-stable',
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            revokedAt: null,
+            replacedByMachineId: null,
+            replacedAt: null,
+            replacementReason: null,
+            replacementSource: null,
+            replacementActorUserId: null,
+            installationId: null,
+            contentPublicKeyFingerprint: null,
+            metadataVersion: 1,
+            metadata: { displayName: 'Stable', host: 'host.local', homeDir: '/home/u' },
+        };
+        const initialState = {
+            sessions: {},
+            settings: {
+                groupInactiveSessionsByProject: false,
+                sessionListActiveGroupingV1: 'date' as const,
+                sessionListInactiveGroupingV1: 'date' as const,
+            },
+            sessionListRenderables: {},
+            sessionListIndexByServerId: {},
+            sessionListRowStateByServerId: {},
+            concurrentSessionListCacheByServerId: {},
+            machines: { [machine.id]: machine },
+            machineDisplayById: { [machine.id]: display },
+            machineListByServerId: { server_a: [machine] },
+            machineListStatusByServerId: { server_a: 'idle' },
+            profile: { id: 'account_a' },
+        };
+
+        const { get, domain } = createHarness(createMachinesDomain, initialState);
+        const previousMachines = get().machines;
+        const previousDisplays = get().machineDisplayById;
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        saveMachineDisplayWarmCacheEntriesSpy.mockClear();
+
+        domain.applyMachines([machine]);
+
+        expect(get().machines).toBe(previousMachines);
+        expect(get().machineDisplayById).toBe(previousDisplays);
+        expect(saveMachineDisplayWarmCacheEntriesSpy).not.toHaveBeenCalled();
+    });
+
+    it('debounces full-fleet machine display warm-cache persistence', async () => {
+        vi.useFakeTimers();
+        try {
+            mockMachineDomainBoundaries();
+
+            const { createMachinesDomain } = await import('./machines');
+            const machine = {
+                id: 'm-debounce',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                metadata: makeMachineMetadata({ displayName: 'Debounced' }),
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 0,
+            };
+            const initialState = {
+                sessions: {},
+                settings: {
+                    groupInactiveSessionsByProject: false,
+                    sessionListActiveGroupingV1: 'date' as const,
+                    sessionListInactiveGroupingV1: 'date' as const,
+                },
+                sessionListRenderables: {},
+                sessionListIndexByServerId: {},
+                sessionListRowStateByServerId: {},
+                concurrentSessionListCacheByServerId: {},
+                machines: {},
+                machineDisplayById: {},
+                machineListByServerId: {},
+                machineListStatusByServerId: {},
+                profile: { id: 'account_a' },
+            };
+
+            const { domain } = createHarness(createMachinesDomain, initialState);
+
+            domain.applyMachines([machine]);
+            domain.applyMachines([{ ...machine, updatedAt: 2, activeAt: 2 }]);
+
+            expect(saveMachineDisplayWarmCacheEntriesSpy).not.toHaveBeenCalled();
+            await vi.runAllTimersAsync();
+            expect(saveMachineDisplayWarmCacheEntriesSpy).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

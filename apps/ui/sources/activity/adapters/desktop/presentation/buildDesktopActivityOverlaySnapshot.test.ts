@@ -95,6 +95,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    pendingRequestObservedAt: 950,
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -109,6 +110,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
                     active: true,
                     presence: 'online',
                     thinking: true,
+                    thinkingAt: 950,
                     metadata: {
                         path: '/Users/tester/project/thinking',
                         host: 'tester.local',
@@ -182,6 +184,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    pendingRequestObservedAt: 950,
                     metadata: {
                         path: '/Users/tester/project/preview',
                         host: 'tester.local',
@@ -405,6 +408,134 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
                 ],
             }),
         ]);
+    });
+
+    it('preserves canonical permission identity when a newer unread renderable supplies attention', () => {
+        const canonicalSession = createSessionFixture({
+            id: 'hidden-global-permission',
+            serverId: 'server-1',
+            seq: 3,
+            lastViewedSessionSeq: 3,
+            active: true,
+            presence: 'online',
+            agentStateVersion: 7,
+            pendingPermissionRequestCount: 1,
+            pendingRequestObservedAt: 900,
+            agentState: {
+                requests: {
+                    'canonical-request-42': {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: {
+                            command: 'git status --short',
+                        },
+                        createdAt: 900,
+                    },
+                },
+            },
+            metadata: {
+                path: '/Users/tester/project/hidden-global-permission',
+                host: 'tester.local',
+                homeDir: '/Users/tester',
+                systemSessionV1: {
+                    v: 1,
+                    key: 'voice_conversation_retired',
+                    hidden: true,
+                },
+            },
+        });
+        const source = createOverlaySource({
+            sessions: [canonicalSession],
+        });
+        const newerUnreadRenderable = {
+            ...source.sessionListRenderablesById[canonicalSession.id]!,
+            seq: 4,
+            updatedAt: 950,
+            latestReadyEventSeq: 4,
+            hasUnreadMessages: true,
+            hasPendingPermissionRequests: true,
+            pendingRequestObservedAt: 900,
+            agentStateVersion: 7,
+        };
+
+        const snapshot = buildDesktopActivityOverlaySnapshot({
+            source: {
+                ...source,
+                sessionListRenderablesById: {
+                    [canonicalSession.id]: newerUnreadRenderable,
+                },
+            },
+            activityPolicy: resolveActivitySurfacePolicy({}),
+            desktopPolicy: createDesktopPolicy({
+                visibilityMode: 'active_sessions',
+            }),
+            nowMs: 1_000,
+        });
+
+        expect(snapshot.permissionRequests).toEqual([
+            expect.objectContaining({
+                requestId: 'canonical-request-42',
+                sessionId: canonicalSession.id,
+                serverId: 'server-1',
+                toolLabel: 'Bash',
+                summary: expect.stringContaining('git status --short'),
+                allowActionIdentifier: 'session.permission.respond',
+                denyActionIdentifier: 'session.permission.respond',
+            }),
+        ]);
+    });
+
+    it('keeps renderable-only request summaries openable without fabricating response actions', () => {
+        const canonicalSession = createSessionFixture({
+            id: 'hidden-summary-requests',
+            serverId: 'server-1',
+            seq: 4,
+            lastViewedSessionSeq: 4,
+            active: true,
+            presence: 'online',
+            agentStateVersion: 6,
+            agentState: null,
+            metadata: {
+                path: '/Users/tester/project/hidden-summary-requests',
+                host: 'tester.local',
+                homeDir: '/Users/tester',
+                systemSessionV1: {
+                    v: 1,
+                    key: 'voice_conversation_retired',
+                    hidden: true,
+                },
+            },
+        });
+        const source = createOverlaySource({
+            sessions: [canonicalSession],
+        });
+
+        const snapshot = buildDesktopActivityOverlaySnapshot({
+            source: {
+                ...source,
+                sessionListRenderablesById: {
+                    [canonicalSession.id]: {
+                        ...source.sessionListRenderablesById[canonicalSession.id]!,
+                        agentStateVersion: 7,
+                        hasPendingPermissionRequests: true,
+                        hasPendingUserActionRequests: true,
+                        pendingRequestObservedAt: 950,
+                    },
+                },
+            },
+            activityPolicy: resolveActivitySurfacePolicy({}),
+            desktopPolicy: createDesktopPolicy(),
+            nowMs: 1_000,
+        });
+
+        expect(snapshot.state).toBe('content');
+        expect(snapshot.primary).toMatchObject({
+            sessionId: canonicalSession.id,
+            serverId: 'server-1',
+            attentionState: 'permission_required',
+        });
+        expect(snapshot.permissionRequests).toEqual([]);
+        expect(snapshot.userQuestions).toEqual([]);
     });
 
     it('derives permission risk from real request snapshots into model actions', () => {

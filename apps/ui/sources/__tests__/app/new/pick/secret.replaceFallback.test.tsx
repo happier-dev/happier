@@ -13,6 +13,7 @@ import {
     installPickerCommonModuleMocks,
     parseJsonRouteParam,
 } from './testHarness';
+import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 enableReactActEnvironment();
 
@@ -57,6 +58,7 @@ installPickerCommonModuleMocks({
             Platform: { OS: 'ios' },
         }),
     reactNavigationNative: async () => ({
+        ...(await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock(),
         CommonActions: {
             setParams: (params: Record<string, unknown>) => ({ type: 'SET_PARAMS', payload: { params } }),
         },
@@ -82,7 +84,7 @@ installPickerCommonModuleMocks({
         (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettingMutable: () => [[], vi.fn()],
+                useSettingMutable: createUseSettingMutableMockFromReader(() => [[], vi.fn()]),
                 useSettings: () => ({
                     ...settingsDefaults,
                     lastUsedAgent: settingsState.current.lastUsedAgent,
@@ -106,6 +108,8 @@ vi.mock('@/components/secrets/SecretsList', () => ({
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     machineContributionRegistryProjectionDescribe: (...args: Parameters<MachineContributionRegistryProjectionDescribeFn>) =>
         machineContributionRegistryProjectionDescribe(...args),
+    getMachineContributionRegistryProjectionRevision: () => 0,
+    subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
 }));
 
 describe('SecretPickerScreen replace fallback', () => {
@@ -308,10 +312,9 @@ describe('SecretPickerScreen replace fallback', () => {
             supported: true,
             projection: {
                 v: 1,
-                providersById: {
+                agentsById: {
                     'acme.review.provider': {
                         id: 'acme.review.provider',
-                        providerId: 'acme.review.provider',
                         title: 'Acme Review Provider',
                         channel: 'plugin',
                         isBuiltIn: false,
@@ -322,7 +325,7 @@ describe('SecretPickerScreen replace fallback', () => {
                     'acme.review.backend': {
                         id: 'acme.review.backend',
                         backendId: 'acme.review.backend',
-                        providerId: 'acme.review.provider',
+                        agentId: 'acme.review.provider',
                         title: 'Acme Review Backend',
                     },
                 },

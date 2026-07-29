@@ -6,7 +6,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { DetectedClisList } from '@/components/machines/DetectedClisList';
 import { InstallableDepInstaller } from '@/components/machines/InstallableDepInstaller';
-import { ProviderSetupFlow } from '@/components/settings/providers/setup/ProviderSetupFlow';
+import { AgentSetupFlow } from '@/components/settings/agents/setup/AgentSetupFlow';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Modal } from '@/modal';
 import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
@@ -15,6 +15,7 @@ import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
 import { getInstallablesRegistryEntries, type InstallableAutoUpdateMode } from '@/capabilities/installablesRegistry';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { resolveInstallablePolicy, applyInstallablePolicyOverride } from '@happier-dev/protocol/installablesPolicy';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -41,6 +42,11 @@ export default function MachineInstallablesScreen() {
         enabled: Boolean(machineId && isOnline),
         request: CAPABILITIES_REQUEST_MACHINE_DETAILS,
     });
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: machineId ?? null,
+        serverId,
+        enabled: Boolean(machineId && isOnline),
+    });
 
     const capabilitiesSnapshot = React.useMemo(() => {
         const snapshot =
@@ -55,7 +61,9 @@ export default function MachineInstallablesScreen() {
     }, [detectedCapabilities]);
 
     const installables = React.useMemo(() => {
-        const entries = getInstallablesRegistryEntries();
+        const entries = getInstallablesRegistryEntries({
+            pluginProjection: daemonMergedProjection.inputs?.pluginProjectionV2 ?? undefined,
+        });
         const results = capabilitiesSnapshot?.response.results;
         return entries.map((entry) => {
             const enabled = entry.enabledWhen(settings as any);
@@ -69,7 +77,7 @@ export default function MachineInstallablesScreen() {
             });
             return { entry, enabled, status, detectResult, policy };
         });
-    }, [capabilitiesSnapshot, machineId, settings]);
+    }, [capabilitiesSnapshot, daemonMergedProjection.inputs?.pluginProjectionV2, machineId, settings]);
 
     React.useEffect(() => {
         if (!machineId) return;
@@ -118,7 +126,7 @@ export default function MachineInstallablesScreen() {
                     <DetectedClisList state={detectedCapabilities} layout="stacked" />
                 </ItemGroup>
 
-                <ProviderSetupFlow machineId={machineId ?? null} serverId={serverId} />
+                <AgentSetupFlow machineId={machineId ?? null} serverId={serverId} />
 
                 {installables.map(({ entry, enabled, status, policy }) => {
                     if (!enabled) return null;
@@ -133,7 +141,7 @@ export default function MachineInstallablesScreen() {
                             depTitle={entry.title}
                             depIconName={entry.iconName as any}
                             depStatus={status}
-                            capabilitiesStatus={detectedCapabilities.status}
+                            capabilitiesStatus={isOnline ? detectedCapabilities.status : 'idle'}
                             extraItems={
                                 <>
                                     <Item
@@ -174,7 +182,9 @@ export default function MachineInstallablesScreen() {
                                 description: t(entry.installModal.descriptionKey),
                             }}
                             refreshStatus={() => refreshDetectedCapabilities()}
-                            refreshLatestVersion={() => refreshDetectedCapabilities({ request: entry.buildLatestVersionDetectRequest(), timeoutMs: 12_000 })}
+                            refreshLatestVersion={isOnline
+                                ? () => refreshDetectedCapabilities({ request: entry.buildLatestVersionDetectRequest(), timeoutMs: 12_000 })
+                                : undefined}
                         />
                     );
                 })}

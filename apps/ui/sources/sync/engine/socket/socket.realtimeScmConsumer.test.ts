@@ -11,7 +11,6 @@ vi.mock('@/sync/runtime/syncTuning', () => ({
 
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { ScmWorkingSnapshot, Session } from '@/sync/domains/state/storageTypes';
-import type { NormalizedMessage } from '@/sync/typesRaw';
 import { storage } from '@/sync/domains/state/storage';
 import { resetSessionSurfaceVisibilityForTests } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
@@ -19,7 +18,8 @@ import {
   buildSessionRealtimeScmScopeFromSnapshot,
   registerSessionRealtimeScmConsumerScope,
 } from '@/sync/runtime/sessionRealtimeScmConsumers';
-import { handleUpdateContainer } from './socket';
+import { scmStatusSync } from '@/scm/scmStatusSync';
+import { handleEphemeralSocketUpdate, handleUpdateContainer } from './socket';
 
 const initialStorageState = storage.getInitialState();
 type HandleUpdateContainerParams = Parameters<typeof handleUpdateContainer>[0];
@@ -88,7 +88,7 @@ function buildRepoSnapshot(rootPath: string): ScmWorkingSnapshot {
   };
 }
 
-function buildPlainNewMessageUpdate(sessionId: string): ApiUpdateContainer {
+function buildPlainEditToolNewMessageUpdate(sessionId: string, filePath: string): ApiUpdateContainer {
   return {
     id: 'update-scm-message',
     seq: 2,
@@ -100,6 +100,7 @@ function buildPlainNewMessageUpdate(sessionId: string): ApiUpdateContainer {
         id: 'message-scm',
         seq: 2,
         localId: null,
+        messageRole: 'agent',
         createdAt: 2_000,
         updatedAt: 2_000,
         content: {
@@ -107,15 +108,52 @@ function buildPlainNewMessageUpdate(sessionId: string): ApiUpdateContainer {
           v: {
             role: 'agent',
             content: {
-              type: 'acp',
-              provider: 'codex',
-              data: { type: 'message', message: 'scm mutation output' },
+              type: 'output',
+              data: {
+                type: 'assistant',
+                uuid: 'uuid-edit',
+                message: {
+                  role: 'assistant',
+                  content: [
+                    {
+                      type: 'tool_use',
+                      id: 'toolu_edit_1',
+                      name: 'Edit',
+                      input: { file_path: filePath, old_string: 'a', new_string: 'b' },
+                    },
+                  ],
+                },
+              },
             },
           },
         },
       },
     },
   } satisfies ApiUpdateContainer;
+}
+
+function buildTranscriptStreamSegmentUpdate(sessionId: string, localId: string) {
+  return {
+    type: 'transcript-stream-segment',
+    sessionId,
+    message: {
+      localId,
+      content: {
+        t: 'plain',
+        v: {
+          role: 'agent',
+          content: {
+            type: 'acp',
+            agentId: 'codex',
+            data: { type: 'message', message: 'streaming segment text' },
+          },
+        },
+      },
+      messageRole: 'agent',
+      createdAt: 2_100,
+      updatedAt: 2_100,
+    },
+  };
 }
 
 function buildBaseParams(overrides: Partial<Omit<HandleUpdateContainerParams, 'updateData'>> = {}) {
@@ -160,10 +198,23 @@ function buildBaseParams(overrides: Partial<Omit<HandleUpdateContainerParams, 'u
   };
 }
 
+function mountRepoScmConsumerScope(scmConsumerSessionId: string, repoRoot: string): () => void {
+  const snapshot = buildRepoSnapshot(repoRoot);
+  storage.getState().updateSessionProjectScmSnapshot(scmConsumerSessionId, snapshot);
+  const mountedScope = buildSessionRealtimeScmScopeFromSnapshot(
+    storage.getState(),
+    scmConsumerSessionId,
+    snapshot,
+  );
+  if (!mountedScope) throw new Error('Expected mounted SCM scope fixture');
+  return registerSessionRealtimeScmConsumerScope(mountedScope);
+}
+
 describe('socket realtime SCM transcript consumers', () => {
   let unregisterScmConsumer: (() => void) | null = null;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     unregisterScmConsumer?.();
     unregisterScmConsumer = null;
     storage.setState(initialStorageState, true);
@@ -172,6 +223,8 @@ describe('socket realtime SCM transcript consumers', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     unregisterScmConsumer?.();
     unregisterScmConsumer = null;
     storage.setState(initialStorageState, true);
@@ -179,23 +232,19 @@ describe('socket realtime SCM transcript consumers', () => {
     resetSessionSurfaceVisibilityForTests();
   });
 
-  it('materializes hidden durable messages when an SCM consumer is mounted for the same project scope', async () => {
+  it('keeps hidden same-project durable messages projection-only while delivering the SCM mutation signal', async () => {
     const hiddenSessionId = 'hidden-scm-producer';
     const scmConsumerSessionId = 'visible-scm-consumer';
     storage.getState().applySessions([
       buildSession({ id: hiddenSessionId, machineId: 'machine-a', path: '/repo/packages/app' }),
       buildSession({ id: scmConsumerSessionId, machineId: 'machine-a', path: '/repo/packages/ui' }),
     ]);
-    const snapshot = buildRepoSnapshot('/repo');
-    storage.getState().updateSessionProjectScmSnapshot(scmConsumerSessionId, snapshot);
-    const mountedScope = buildSessionRealtimeScmScopeFromSnapshot(
-      storage.getState(),
-      scmConsumerSessionId,
-      snapshot,
-    );
-    expect(mountedScope).not.toBeNull();
-    if (!mountedScope) throw new Error('Expected mounted SCM scope fixture');
-    unregisterScmConsumer = registerSessionRealtimeScmConsumerScope(mountedScope);
+    unregisterScmConsumer = mountRepoScmConsumerScope(scmConsumerSessionId, '/repo');
+
+    // scmStatusSync executes daemon RPC snapshot fetches (system boundary); stub the refresh
+    // executor and assert the outcome call into the canonical refresh owner instead.
+    const invalidateFromMutation = vi.spyOn(scmStatusSync, 'invalidateFromMutation').mockImplementation(() => {});
+    const invalidateFromAutoRefresh = vi.spyOn(scmStatusSync, 'invalidateFromAutoRefresh').mockImplementation(() => {});
 
     const applyMessages = vi.fn();
     const markSessionTranscriptDeferred = vi.fn();
@@ -205,18 +254,84 @@ describe('socket realtime SCM transcript consumers', () => {
         applyMessages,
         markSessionTranscriptDeferred,
       }),
-      updateData: buildPlainNewMessageUpdate(hiddenSessionId),
+      updateData: buildPlainEditToolNewMessageUpdate(hiddenSessionId, '/repo/packages/app/src/index.ts'),
     });
 
-    expect(markSessionTranscriptDeferred).not.toHaveBeenCalled();
-    expect(applyMessages).toHaveBeenCalledTimes(1);
-    const [appliedSessionId, messages] = applyMessages.mock.calls[0] as [string, NormalizedMessage[]];
-    expect(appliedSessionId).toBe(hiddenSessionId);
-    expect(messages[0]).toMatchObject({
-      id: 'message-scm',
+    // Hidden session stays on the projection-only route: no transcript materialization.
+    expect(applyMessages).not.toHaveBeenCalled();
+    expect(markSessionTranscriptDeferred).toHaveBeenCalledWith(hiddenSessionId, expect.objectContaining({
+      updateType: 'new-message',
       seq: 2,
-      role: 'agent',
-      content: [{ type: 'text', text: 'scm mutation output' }],
+    }));
+
+    // The side channel feeds the existing debounced workspace-mutation ingestion.
+    await vi.advanceTimersByTimeAsync(300);
+    expect(invalidateFromMutation).toHaveBeenCalledWith(hiddenSessionId);
+    expect(invalidateFromAutoRefresh).not.toHaveBeenCalled();
+    expect(storage.getState().sessionMessages[hiddenSessionId]).toBeUndefined();
+  });
+
+  it('does not deliver the SCM mutation signal for hidden sessions outside the mounted project scope', async () => {
+    const unrelatedSessionId = 'hidden-unrelated-producer';
+    const scmConsumerSessionId = 'visible-scm-consumer';
+    storage.getState().applySessions([
+      buildSession({ id: unrelatedSessionId, machineId: 'machine-a', path: '/elsewhere/app' }),
+      buildSession({ id: scmConsumerSessionId, machineId: 'machine-a', path: '/repo/packages/ui' }),
+    ]);
+    unregisterScmConsumer = mountRepoScmConsumerScope(scmConsumerSessionId, '/repo');
+
+    const invalidateFromMutation = vi.spyOn(scmStatusSync, 'invalidateFromMutation').mockImplementation(() => {});
+    const invalidateFromAutoRefresh = vi.spyOn(scmStatusSync, 'invalidateFromAutoRefresh').mockImplementation(() => {});
+
+    const applyMessages = vi.fn();
+    await handleUpdateContainer({
+      ...buildBaseParams({ applyMessages }),
+      updateData: buildPlainEditToolNewMessageUpdate(unrelatedSessionId, '/elsewhere/app/src/index.ts'),
     });
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(applyMessages).not.toHaveBeenCalled();
+    expect(invalidateFromMutation).not.toHaveBeenCalled();
+    expect(invalidateFromAutoRefresh).not.toHaveBeenCalled();
+  });
+
+  it('drops hidden same-project ephemeral stream segments without decrypting or applying', async () => {
+    const hiddenSessionId = 'hidden-scm-producer';
+    const scmConsumerSessionId = 'visible-scm-consumer';
+    storage.getState().applySessions([
+      buildSession({ id: hiddenSessionId, machineId: 'machine-a', path: '/repo/packages/app' }),
+      buildSession({ id: scmConsumerSessionId, machineId: 'machine-a', path: '/repo/packages/ui' }),
+    ]);
+    unregisterScmConsumer = mountRepoScmConsumerScope(scmConsumerSessionId, '/repo');
+
+    const applyMessages = vi.fn();
+    const getSession = vi.fn((sessionId: string) => storage.getState().sessions[sessionId]);
+    const getSessionEncryption = vi.fn(() => null);
+    const buildEphemeralParams = () => ({
+      addActivityUpdate: vi.fn(),
+      addMachineActivityUpdate: vi.fn(),
+      getSessionEncryption,
+      getSession,
+      applyMessages,
+    });
+
+    // Hidden same-project session: the 25Hz segment hits the drop path before any
+    // session/decrypt/normalize work.
+    await handleEphemeralSocketUpdate({
+      update: buildTranscriptStreamSegmentUpdate(hiddenSessionId, 'segment-hidden'),
+      ...buildEphemeralParams(),
+    });
+    expect(applyMessages).not.toHaveBeenCalled();
+    expect(getSession).not.toHaveBeenCalled();
+    expect(getSessionEncryption).not.toHaveBeenCalled();
+
+    // Control: the mounted SCM consumer session itself stays a live consumer, proving the
+    // fixture is well-formed and only the hidden fan-out was removed.
+    await handleEphemeralSocketUpdate({
+      update: buildTranscriptStreamSegmentUpdate(scmConsumerSessionId, 'segment-visible'),
+      ...buildEphemeralParams(),
+    });
+    expect(applyMessages).toHaveBeenCalledTimes(1);
+    expect(applyMessages.mock.calls[0]?.[0]).toBe(scmConsumerSessionId);
   });
 });

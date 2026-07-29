@@ -51,6 +51,12 @@ export type AgentInputStatusBadge = Readonly<{
     label: string;
     testID?: string;
     accessibilityLabel?: string;
+    accessibilityHint?: string;
+    /**
+     * Set by badges that toggle a companion surface (e.g. a composer banner) so assistive tech can
+     * announce the collapsed/expanded state without the label having to spell out the action.
+     */
+    accessibilityState?: Readonly<{ expanded: boolean }>;
     tone?: AgentInputStatusBadgeTone;
     emphasis?: AgentInputStatusBadgeEmphasis;
     icon?: (tint: string) => React.ReactNode;

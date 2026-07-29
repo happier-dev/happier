@@ -79,6 +79,7 @@ export function getProfileSubtitle(params: {
 
 export function buildProfilesListGroups(params: {
     customProfiles: AIBackendProfile[];
+    builtInProfiles?: AIBackendProfile[];
     favoriteProfileIds: string[];
     enabledAgentIds?: readonly AgentId[];
     profileEnabledById?: ProfileEnabledById | null;
@@ -86,6 +87,7 @@ export function buildProfilesListGroups(params: {
 }): ProfileGroups {
     return buildProfileGroups({
         customProfiles: params.customProfiles,
+        builtInProfiles: params.builtInProfiles,
         favoriteProfileIds: params.favoriteProfileIds,
         enabledAgentIds: params.enabledAgentIds,
         profileEnabledById: params.profileEnabledById,

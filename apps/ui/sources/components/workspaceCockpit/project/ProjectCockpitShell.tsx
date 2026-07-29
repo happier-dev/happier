@@ -7,10 +7,14 @@ import { ProjectDetailsMainPanel } from '@/components/projects/detail/ProjectDet
 import { ProjectBrowseFilesSurface } from '@/components/projects/detail/surfaces/ProjectBrowseFilesSurface';
 import { ProjectGitSurface } from '@/components/projects/detail/surfaces/ProjectGitSurface';
 import { ProjectTerminalSurface } from '@/components/projects/detail/surfaces/ProjectTerminalSurface';
+import { ProjectRightPanelBrowserView } from '@/components/projects/detail/browser/ProjectRightPanelBrowserView';
+import { ProjectRightPanelServicesView } from '@/components/projects/detail/services/ProjectRightPanelServicesView';
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
+import { useServicesOpenInBrowser } from '@/components/sessions/localServices/useServicesOpenInBrowser';
 import { useProjectSurfaceActions } from '@/components/projects/detail/useProjectSurfaceActions';
 import { useProjectSurfaceController } from '@/components/projects/detail/useProjectSurfaceController';
+import { useProjectRouteSurfaceSync } from '@/components/projects/detail/useProjectRouteSurfaceSync';
 import type { ProjectMobileSurface } from './projectCockpitState';
 
 type ProjectCockpitShellProps = Readonly<{
@@ -19,21 +23,26 @@ type ProjectCockpitShellProps = Readonly<{
     activeRootPath: string;
     activeWorktreeId?: string | null;
     surface: ProjectMobileSurface;
+    isFocused: boolean;
     onSelectRootPath: (path: string) => void;
 }>;
 
 export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) => {
     const { theme } = useUnistyles();
-    const { navigateToSurface, syncSurface } = useProjectSurfaceController({
+    const { navigateToSurface } = useProjectSurfaceController({
         scopeId: props.scopeId,
         workspaceRef: props.workspaceRef,
         activeRootPath: props.activeRootPath,
         activeWorktreeId: props.activeWorktreeId,
     });
-
-    React.useEffect(() => {
-        syncSurface(props.surface);
-    }, [props.surface, syncSurface]);
+    useProjectRouteSurfaceSync({
+        scopeId: props.scopeId,
+        workspaceRef: props.workspaceRef,
+        activeRootPath: props.activeRootPath,
+        activeWorktreeId: props.activeWorktreeId,
+        isFocused: props.isFocused,
+        surface: props.surface,
+    });
 
     const workspaceCacheKey = React.useMemo(() => buildWorkspaceCacheKey({
         serverId: props.workspaceRef.serverId,
@@ -44,6 +53,19 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
     const navigateToBrowse = React.useCallback(() => {
         navigateToSurface('browse');
     }, [navigateToSurface]);
+
+    const switchToBrowserSurface = React.useCallback(() => {
+        navigateToSurface('browser');
+    }, [navigateToSurface]);
+    // The mobile browser is a separate full-screen surface with its own pane scope; open a service
+    // into that browser workspace, then switch the cockpit to it (only after a mappable target).
+    const openServiceInBrowser = useServicesOpenInBrowser({
+        scopeId: `${props.scopeId}:browser`,
+        scope: 'sessionMobile',
+        machineId: props.workspaceRef.machineId,
+        serverId: props.workspaceRef.serverId,
+        onAfterOpen: switchToBrowserSurface,
+    });
 
     const {
         openFileInDetails,
@@ -109,6 +131,31 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
                         machineId={props.workspaceRef.machineId}
                         rootPath={props.activeRootPath}
                         serverId={props.workspaceRef.serverId}
+                    />
+                </React.Suspense>
+            </View>
+        );
+    }
+
+    if (props.surface === 'browser') {
+        return (
+            <View testID="project-browser-screen" style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
+                <React.Suspense fallback={<ProjectCockpitLoadingFallback color={theme.colors.text.secondary} />}>
+                    <ProjectRightPanelBrowserView workspaceRefId={props.workspaceRef.id} scopeId={`${props.scopeId}:browser`} />
+                </React.Suspense>
+            </View>
+        );
+    }
+
+    if (props.surface === 'services') {
+        return (
+            <View testID="project-services-screen" style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
+                <React.Suspense fallback={<ProjectCockpitLoadingFallback color={theme.colors.text.secondary} />}>
+                    <ProjectRightPanelServicesView
+                        machineId={props.workspaceRef.machineId}
+                        serverId={props.workspaceRef.serverId}
+                        workspaceRoot={props.activeRootPath}
+                        onOpenServiceInBrowser={openServiceInBrowser}
                     />
                 </React.Suspense>
             </View>

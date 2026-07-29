@@ -10,26 +10,27 @@ type VoiceSurfacePrivacySettings = Readonly<{
     shareSessionSummary: boolean;
 }>;
 
-const EMPTY_SESSION_MESSAGES: Record<string, unknown> = {};
-
-function selectSessionMessages(state: any): Record<string, unknown> {
-    return state?.sessionMessages ?? EMPTY_SESSION_MESSAGES;
-}
-
 export function useVoiceSurfaceStoreState(params: Readonly<{
     activeControlSessionId: string | null;
-    localConversationMode: string | null;
     providerId: string;
     surfaceSessionId: string | null;
+    transcriptEnabled: boolean;
+    voiceSettings: unknown;
     voicePrivacy: VoiceSurfacePrivacySettings;
 }>) {
+    const activeControlSessionId =
+        typeof params.activeControlSessionId === 'string' ? params.activeControlSessionId.trim() : '';
     const surfaceSessionId = typeof params.surfaceSessionId === 'string' ? params.surfaceSessionId.trim() : '';
+    const selectActiveControlSession = React.useCallback(
+        (state: any) => (activeControlSessionId ? state?.sessions?.[activeControlSessionId] ?? null : null),
+        [activeControlSessionId],
+    );
     const selectCurrentSession = React.useCallback(
         (state: any) => (surfaceSessionId ? state?.sessions?.[surfaceSessionId] ?? null : null),
         [surfaceSessionId],
     );
+    const activeControlSession = useStoreSnapshot(storage as any, selectActiveControlSession);
     const currentSession = useStoreSnapshot(storage as any, selectCurrentSession);
-    const sessionMessages = useStoreSnapshot(storage as any, selectSessionMessages);
     const {
         openConversationSessionId,
         fallbackOpenConversationControlSessionId,
@@ -37,17 +38,17 @@ export function useVoiceSurfaceStoreState(params: Readonly<{
         visibleTranscriptEntries,
     } = useVoiceSurfaceConversationState({
         providerId: params.providerId,
-        localConversationMode: params.localConversationMode,
         activeControlSessionId: params.activeControlSessionId,
         surfaceSessionId: params.surfaceSessionId,
-        sessionMessages,
+        transcriptEnabled: params.transcriptEnabled,
+        voiceSettings: params.voiceSettings,
     });
 
     return {
+        activeControlSession,
         currentSession,
         fallbackOpenConversationControlSessionId,
         openConversationSessionId,
-        sessionLabelById: new Map<string, string>(),
         transcriptEntries,
         visibleTranscriptEntries,
     };

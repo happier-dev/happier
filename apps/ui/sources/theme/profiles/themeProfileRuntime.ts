@@ -21,9 +21,12 @@ import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { applyLocalSettings, localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { addBreadcrumbIfEnabled } from '@/utils/system/sentry';
-import { findThemeProfileById } from './themeProfilePersistence';
+import {
+    findActiveThemeProfileForMode,
+    setActiveThemeProfileForMode,
+} from './themeProfilePersistence';
 import { resolveThemeProfile } from './resolveThemeProfile';
-import type { ThemeProfilesLocalStateV1 } from './themeProfileTypes';
+import type { ThemeProfileMode, ThemeProfileSelectionByMode, ThemeProfilesLocalStateV1 } from './themeProfileTypes';
 
 type AppThemeName = 'light' | 'dark';
 
@@ -51,7 +54,7 @@ type ThemeRuntimeBreadcrumb = Readonly<{
     phase: 'resolved' | 'update-all-themes' | 'update-visual-theme' | 'set-adaptive-themes' | 'set-theme' | 'root-background';
     themePreference: ThemePreference;
     platform: string;
-    activeProfileId: string | null;
+    activeProfileIds: ThemeProfileSelectionByMode;
     systemTheme: AppThemeName | null;
     visualTheme?: AppThemeName;
     themeName?: AppThemeName;
@@ -71,6 +74,7 @@ type ThemeRuntimeStartupThemes = Readonly<{
 
 type ActivateThemeProfileInput = Readonly<{
     profileId: string | null;
+    profileMode?: ThemeProfileMode | 'all';
     themePreference?: ThemePreference;
     forceAnimate?: boolean;
     reduceMotion?: boolean;
@@ -110,14 +114,9 @@ const warnThemeRuntimeFallback = (error: unknown): void => {
 };
 
 export const resolveThemeRuntimeThemes = (themeProfiles: ThemeProfilesLocalStateV1): ThemeRuntimeThemes => {
-    const activeProfile = findThemeProfileById(themeProfiles, themeProfiles.activeProfileId);
-    if (!activeProfile) {
-        return canonicalBaseThemes;
-    }
-
     return {
-        light: resolveThemeProfile({ mode: 'light', profile: activeProfile }),
-        dark: resolveThemeProfile({ mode: 'dark', profile: activeProfile }),
+        light: resolveThemeProfile({ mode: 'light', profile: findActiveThemeProfileForMode(themeProfiles, 'light') }),
+        dark: resolveThemeProfile({ mode: 'dark', profile: findActiveThemeProfileForMode(themeProfiles, 'dark') }),
     };
 };
 
@@ -187,7 +186,7 @@ const isNativeRuntimePlatform = (platform: string): boolean => platform !== 'web
 
 const recordThemeRuntimeBreadcrumb = (
     input: ApplyThemeRuntimeSelectionInput,
-    breadcrumb: Omit<ThemeRuntimeBreadcrumb, 'themePreference' | 'platform' | 'activeProfileId' | 'systemTheme'> & Readonly<{
+    breadcrumb: Omit<ThemeRuntimeBreadcrumb, 'themePreference' | 'platform' | 'activeProfileIds' | 'systemTheme'> & Readonly<{
         platform: string;
         systemTheme: AppThemeName | null;
     }>,
@@ -195,7 +194,7 @@ const recordThemeRuntimeBreadcrumb = (
     const data: ThemeRuntimeBreadcrumb = {
         ...breadcrumb,
         themePreference: input.themePreference,
-        activeProfileId: input.themeProfiles.activeProfileId ?? null,
+        activeProfileIds: input.themeProfiles.activeProfileIds,
     };
     const record = input.recordBreadcrumb ?? ((nextBreadcrumb: ThemeRuntimeBreadcrumb) => {
         addBreadcrumbIfEnabled({
@@ -219,7 +218,7 @@ const applyThemesToUnistyles = (
 
     recordThemeRuntimeBreadcrumb(input, { phase: 'resolved', platform, systemTheme, visualTheme });
 
-    if (isNativeRuntimePlatform(platform)) {
+    if (isNativeRuntimePlatform(platform) && input.themePreference !== 'adaptive') {
         recordThemeRuntimeBreadcrumb(input, {
             phase: 'update-visual-theme',
             platform,
@@ -287,18 +286,43 @@ export const applyThemeRuntimeSelection = (input: ApplyThemeRuntimeSelectionInpu
     }
 };
 
+const resolveActivationModes = (input: Readonly<{
+    profileMode?: ThemeProfileMode | 'all';
+    themePreference?: ThemePreference;
+}>): readonly ThemeProfileMode[] => {
+    if (input.profileMode === 'light' || input.profileMode === 'dark') {
+        return [input.profileMode];
+    }
+    if (input.profileMode === 'all') {
+        return ['light', 'dark'];
+    }
+    const themePreference = input.themePreference;
+    if (themePreference === 'light' || themePreference === 'dark') {
+        return [themePreference];
+    }
+    return ['light', 'dark'];
+};
+
 export const activateThemeProfile = async (input: ActivateThemeProfileInput): Promise<void> => {
     const loadLocalSettings = input.loadLocalSettings ?? defaultLoadLocalSettings;
     const saveLocalSettings = input.saveLocalSettings ?? defaultSaveLocalSettings;
     const runThemePreferenceChange = input.runThemePreferenceChange ?? defaultRunThemePreferenceChange;
     const applySelection = input.applySelection ?? applyThemeRuntimeSelection;
     const applyStatusBarStyle = input.setStatusBarStyle ?? setStatusBarStyle;
-    const resolveNextThemeProfiles = (themeProfiles: ThemeProfilesLocalStateV1): ThemeProfilesLocalStateV1 => ({
-        ...themeProfiles,
-        activeProfileId: findThemeProfileById(themeProfiles, input.profileId) ? input.profileId : null,
-    });
     const currentSettings = loadLocalSettings();
-    const nextThemeProfiles = resolveNextThemeProfiles(currentSettings.themeProfiles);
+    const resolveNextThemeProfiles = (
+        themeProfiles: ThemeProfilesLocalStateV1,
+        fallbackThemePreference: ThemePreference,
+    ): ThemeProfilesLocalStateV1 => (
+        resolveActivationModes({
+            profileMode: input.profileMode,
+            themePreference: input.themePreference ?? fallbackThemePreference,
+        }).reduce(
+            (nextThemeProfiles, mode) => setActiveThemeProfileForMode(nextThemeProfiles, mode, input.profileId),
+            themeProfiles,
+        )
+    );
+    const nextThemeProfiles = resolveNextThemeProfiles(currentSettings.themeProfiles, currentSettings.themePreference);
     const currentSettingsForApply = {
         ...localSettingsDefaults,
         ...currentSettings,
@@ -325,7 +349,7 @@ export const activateThemeProfile = async (input: ActivateThemeProfileInput): Pr
             } satisfies LocalSettings;
             const latestNextSettings = applyLocalSettings(latestSettingsForApply, {
                 ...(input.themePreference ? { themePreference: input.themePreference } : {}),
-                themeProfiles: resolveNextThemeProfiles(latestSettings.themeProfiles),
+                themeProfiles: resolveNextThemeProfiles(latestSettings.themeProfiles, latestSettings.themePreference),
             });
 
             saveLocalSettings(latestNextSettings);

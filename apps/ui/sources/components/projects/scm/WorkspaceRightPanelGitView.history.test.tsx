@@ -118,8 +118,10 @@ describe('WorkspaceRightPanelGitView (history)', () => {
         expect(firstCall).toBeTruthy();
         const machineId = firstCall?.[0];
         const request = firstCall?.[1];
+        const options = firstCall?.[2];
         expect(machineId).toBe('m1');
         expect(request).toMatchObject({ cwd: '/repo', limit: 50, skip: 0 });
+        expect(options).toEqual({ serverId: 's1' });
     });
 
     it('hides the update tab when source control writes are disabled', async () => {

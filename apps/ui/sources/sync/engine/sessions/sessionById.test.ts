@@ -1,8 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
+import {
+  ExternalSessionOperationSharedPresentationV1Schema,
+  projectSessionSharedMetadataV1,
+  SessionOwnerMetadataV1Schema,
+  sealSessionOwnerMetadataV1,
+} from '@happier-dev/protocol';
 
+import { encodeBase64 } from '@/encryption/base64';
+import type { Session } from '@/sync/domains/state/storageTypes';
 import { fetchAndApplySessionById, type SessionByIdEncryption } from './sessionById';
 
 const onAgentRequest = vi.fn();
+const OWNER_METADATA_CIPHERTEXT =
+  'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==';
+const OWNER_TEST_CREDENTIALS = {
+  token: 't',
+  encryption: {
+    publicKey: encodeBase64(new Uint8Array(32).fill(41), 'base64'),
+    machineKey: encodeBase64(new Uint8Array(32).fill(42), 'base64'),
+  },
+} as const;
 
 vi.mock('@/voice/context/voiceHooks', () => ({
   voiceHooks: {
@@ -22,6 +39,313 @@ function createDeferred<T>(): {
 }
 
 describe('fetchAndApplySessionById', () => {
+  it('hydrates owner shared metadata, owner metadata, and full agent state without merging envelopes', async () => {
+    const machineKey = new Uint8Array(32).fill(21);
+    const credentials = {
+      token: 't',
+      encryption: {
+        publicKey: encodeBase64(new Uint8Array(32).fill(22), 'base64'),
+        machineKey: encodeBase64(machineKey, 'base64'),
+      },
+    } as const;
+    const privateLegacyMetadata = {
+      path: '/private/worktree',
+      machineId: 'machine-private',
+      externalSessionV1: {
+        v: 1,
+        agentId: 'codex',
+        machineId: 'machine-private',
+        remoteSessionId: 'native-private',
+        source: { kind: 'codexHome', home: 'local' },
+        linkedAtMs: 1,
+      },
+    };
+    const sharedMetadata = projectSessionSharedMetadataV1({
+      metadata: {
+        ...privateLegacyMetadata,
+        summary: { text: 'Safe title', updatedAt: 10 },
+      },
+      agentState: {
+        controlledByUser: false,
+        requests: {
+          privateRequest: { tool: 'dangerous-private-detail' },
+        },
+      },
+    });
+    const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
+      v: 1,
+      workspace: {
+        path: privateLegacyMetadata.path,
+        machineId: privateLegacyMetadata.machineId,
+      },
+      nativeSession: {
+        externalSessionV1: {
+          ...privateLegacyMetadata.externalSessionV1,
+          source: { kind: 'codexHome', home: 'user' },
+        },
+      },
+    });
+    const ownerMetadataCiphertext = sealSessionOwnerMetadataV1({
+      material: { type: 'dataKey', machineKey },
+      ownerMetadata,
+      randomBytes: (length) => new Uint8Array(length).fill(9),
+    });
+    const fullAgentState = {
+      controlledByUser: false,
+      requests: {
+        privateRequest: { tool: 'dangerous-private-detail' },
+      },
+    };
+    const applySessions = vi.fn();
+    const request = vi.fn(async (path: string) => {
+      if (path === '/v1/sessions/s_owner/turns') {
+        return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
+      }
+      expect(path).toBe('/v2/sessions/s_owner');
+      return new Response(JSON.stringify({
+        session: {
+          id: 's_owner',
+          createdAt: 1,
+          updatedAt: 2,
+          seq: 3,
+          active: true,
+          activeAt: 2,
+          encryptionMode: 'plain',
+          dataEncryptionKey: null,
+          metadataLayoutVersion: 1,
+          metadataVersion: 4,
+          metadata: JSON.stringify(sharedMetadata),
+          ownerMetadata: ownerMetadataCiphertext,
+          agentStateVersion: 5,
+          agentState: JSON.stringify(fullAgentState),
+          share: null,
+        },
+      }), { status: 200 });
+    });
+
+    const result = await fetchAndApplySessionById({
+      sessionId: 's_owner',
+      credentials,
+      encryption: {
+        decryptEncryptionKey: async () => null,
+        initializeSessions: async () => {},
+        getSessionEncryption: () => null,
+      },
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      request,
+      applySessions,
+      log: { log: () => {} },
+      includeMetadataTupleMutationSnapshot: true,
+    });
+
+    expect(result.ok).toBe(true);
+    const hydrated = applySessions.mock.calls[0]?.[0]?.[0];
+    expect(hydrated.metadata).toEqual(sharedMetadata);
+    expect(hydrated).not.toHaveProperty('ownerMetadata');
+    expect(hydrated.ownerMetadataView).toEqual(expect.objectContaining({
+      path: '/private/worktree',
+      machineId: 'machine-private',
+    }));
+    expect(hydrated.agentState).toEqual(fullAgentState);
+    expect(hydrated.metadata).not.toHaveProperty('path');
+    expect(hydrated.metadata).not.toHaveProperty('ownerMetadata');
+    expect(result.session).not.toHaveProperty('ownerMetadata');
+    expect(result.metadataTupleMutationSnapshot).toEqual({
+      mode: 'owner',
+      metadataLayoutVersion: 1,
+      metadataVersion: 4,
+      sharedMetadataCiphertext: JSON.stringify(sharedMetadata),
+      ownerMetadataCiphertext,
+      agentStateVersion: 5,
+      agentStateCiphertext: JSON.stringify(fullAgentState),
+      value: {
+        metadata: expect.objectContaining({
+          path: '/private/worktree',
+          machineId: 'machine-private',
+        }),
+        sharedMetadata,
+        ownerMetadata,
+        agentState: fullAgentState,
+      },
+    });
+    expect(JSON.stringify(hydrated)).not.toContain(ownerMetadataCiphertext);
+  });
+
+  it('hydrates a layout-v1 shared recipient without owner metadata or full Agent state', async () => {
+    const sharedMetadata = projectSessionSharedMetadataV1({
+      metadata: {
+        summary: { text: 'Shared title', updatedAt: 10 },
+      },
+    });
+    const decryptAgentState = vi.fn(async () => {
+      throw new Error('shared recipients must not request full Agent state');
+    });
+    const applySessions = vi.fn();
+    const request = vi.fn(async (path: string) => {
+      if (path === '/v1/sessions/s_shared/turns') {
+        return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
+      }
+      return new Response(JSON.stringify({
+        session: {
+          id: 's_shared',
+          createdAt: 1,
+          updatedAt: 2,
+          seq: 3,
+          active: true,
+          activeAt: 2,
+          encryptionMode: 'e2ee',
+          dataEncryptionKey: 'dek',
+          metadataLayoutVersion: 1,
+          metadataVersion: 4,
+          metadata: 'encrypted-shared-metadata',
+          agentStateVersion: 7,
+          agentState: null,
+          share: {
+            accessLevel: 'view',
+            canApprovePermissions: false,
+          },
+        },
+      }), { status: 200 });
+    });
+
+    const result = await fetchAndApplySessionById({
+      sessionId: 's_shared',
+      credentials: OWNER_TEST_CREDENTIALS as never,
+      encryption: {
+        decryptEncryptionKey: async () => new Uint8Array([1, 2, 3]),
+        initializeSessions: async () => {},
+        getSessionEncryption: () => ({
+          decryptMetadata: async () => null,
+          decryptMetadataPayload: async () => sharedMetadata,
+          decryptAgentState,
+        }),
+      },
+      sessionDataKeys: new Map(),
+      request,
+      applySessions,
+      log: { log: () => {} },
+      includeMetadataTupleMutationSnapshot: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(decryptAgentState).not.toHaveBeenCalled();
+    expect(applySessions).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 's_shared',
+        metadata: sharedMetadata,
+        ownerMetadataView: null,
+        agentState: null,
+        agentStateVersion: 7,
+      }),
+    ]);
+    expect(result.metadataTupleMutationSnapshot).toEqual({
+      mode: 'shared_editor',
+      metadataLayoutVersion: 1,
+      metadataVersion: 4,
+      sharedMetadataCiphertext: 'encrypted-shared-metadata',
+      value: {
+        metadata: sharedMetadata,
+        sharedMetadata,
+        ownerMetadata: null,
+        agentState: null,
+      },
+    });
+  });
+
+  it.each([
+    {
+      name: 'keeps a linked External Session on the legacy owner while activation is frozen',
+      expectedMode: 'legacy_owner' as const,
+      metadata: {
+        summary: { text: 'Legacy owner', updatedAt: 10 },
+        externalSessionV1: {
+          v: 1 as const,
+          agentId: 'codex',
+          machineId: 'machine-private-layout0',
+          remoteSessionId: 'native-private-layout0',
+          source: { kind: 'codexHome' as const, home: 'user' as const },
+        },
+      },
+    },
+    {
+      name: 'keeps an ordinary Session on the legacy owner',
+      expectedMode: 'legacy_owner' as const,
+      metadata: {
+        path: '/legacy',
+        host: 'owner',
+        summary: { text: 'Legacy owner', updatedAt: 10 },
+      },
+    },
+  ])('$name from the exact E2EE layout-0 tuple', async ({
+    expectedMode,
+    metadata,
+  }) => {
+    const fullAgentState = {
+      controlledByUser: true,
+      privateAgentSentinel: 'agent-private-layout0',
+    };
+    const applySessions = vi.fn();
+    const request = vi.fn(async () => new Response(JSON.stringify({
+      session: {
+        id: 's_layout0_owner',
+        createdAt: 1,
+        updatedAt: 2,
+        seq: 3,
+        active: true,
+        activeAt: 2,
+        encryptionMode: 'e2ee',
+        dataEncryptionKey: 'dek',
+        metadataLayoutVersion: 0,
+        metadataVersion: 4,
+        metadata: 'metadata-exact-layout0',
+        agentStateVersion: 7,
+        agentState: 'agent-exact-layout0',
+        share: null,
+      },
+    }), { status: 200 }));
+
+    const result = await fetchAndApplySessionById({
+      sessionId: 's_layout0_owner',
+      credentials: OWNER_TEST_CREDENTIALS as never,
+      encryption: {
+        decryptEncryptionKey: async () => new Uint8Array([1, 2, 3]),
+        initializeSessions: async () => {},
+        getSessionEncryption: () => ({
+          encryptRaw: async (payload) => JSON.stringify(payload),
+          decryptMetadata: async () => metadata,
+          decryptAgentState: async () => fullAgentState,
+        }),
+      },
+      sessionDataKeys: new Map(),
+      request,
+      applySessions,
+      log: { log: () => {} },
+      includeTurnsProjection: false,
+      includeMetadataTupleMutationSnapshot: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.metadataTupleMutationSnapshot).toEqual({
+      mode: expectedMode,
+      metadataLayoutVersion: 0,
+      metadataVersion: 4,
+      metadataCiphertext: 'metadata-exact-layout0',
+      ownerMetadata: null,
+      agentStateVersion: 7,
+      agentStateCiphertext: 'agent-exact-layout0',
+      value: {
+        metadata: expect.objectContaining(metadata),
+        agentState: fullAgentState,
+      },
+    });
+    expect(JSON.stringify(result.session)).not.toContain(
+      'metadata-exact-layout0',
+    );
+    expect(JSON.stringify(result.session)).not.toContain(
+      'agent-exact-layout0',
+    );
+  });
+
   it('accepts legacy-compatible single-session payloads when newer fields are omitted', async () => {
     const applySessions = vi.fn();
     const request = vi.fn(async () => new Response(JSON.stringify({
@@ -583,7 +907,22 @@ describe('fetchAndApplySessionById', () => {
     const applySessions = vi.fn();
     const decryptEncryptionKey = vi.fn(async () => new Uint8Array([1, 2, 3]));
     const initializeSessions = vi.fn(async () => {});
-    const decryptMetadata = vi.fn(async () => ({ readStateV1: null }));
+    const externalSessionOperationPresentationV1 =
+      ExternalSessionOperationSharedPresentationV1Schema.parse({
+        v: 1,
+        operationId: 'operation-public-safe-1',
+        revision: 4,
+        kind: 'materialize',
+        status: 'running',
+        phase: 'validating',
+      });
+    const decryptMetadataPayload = vi.fn(async () =>
+      projectSessionSharedMetadataV1({
+        metadata: { externalSessionOperationPresentationV1 },
+      }));
+    const decryptMetadata = vi.fn(async () => {
+      throw new Error('layout-v1 metadata must bypass the legacy parser');
+    });
     const decryptAgentState = vi.fn(async () => ({ controlledByUser: true }));
 
     const request = vi.fn(async () => new Response(JSON.stringify({
@@ -596,8 +935,10 @@ describe('fetchAndApplySessionById', () => {
         activeAt: 2,
         encryptionMode: 'e2ee',
         dataEncryptionKey: 'dek',
+        metadataLayoutVersion: 1,
         metadataVersion: 1,
         metadata: 'enc-meta',
+        ownerMetadata: OWNER_METADATA_CIPHERTEXT,
         agentStateVersion: 1,
         agentState: 'enc-state',
         share: null,
@@ -608,11 +949,15 @@ describe('fetchAndApplySessionById', () => {
 
     await fetchAndApplySessionById({
       sessionId: 's1',
-      credentials: { token: 't' } as any,
+      credentials: OWNER_TEST_CREDENTIALS as any,
       encryption: {
         decryptEncryptionKey,
         initializeSessions,
-        getSessionEncryption: () => ({ decryptMetadata, decryptAgentState } as any),
+        getSessionEncryption: () => ({
+          decryptMetadata,
+          decryptMetadataPayload,
+          decryptAgentState,
+        } as any),
       },
       sessionDataKeys,
       request,
@@ -623,15 +968,90 @@ describe('fetchAndApplySessionById', () => {
     expect(decryptEncryptionKey).toHaveBeenCalledWith('dek');
     expect(initializeSessions).toHaveBeenCalledWith(new Map([['s1', new Uint8Array([1, 2, 3])]]));
     expect(sessionDataKeys.get('s1')).toEqual(new Uint8Array([1, 2, 3]));
-    expect(decryptMetadata).toHaveBeenCalledWith(1, 'enc-meta');
+    expect(decryptMetadataPayload).toHaveBeenCalledWith(1, 'enc-meta');
+    expect(decryptMetadata).not.toHaveBeenCalled();
     expect(decryptAgentState).toHaveBeenCalledWith(1, 'enc-state');
+    expect(applySessions).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 's1',
+        metadata: expect.objectContaining({
+          externalSessionOperationPresentationV1,
+        }),
+      }),
+    ]);
+    const hydratedMetadata = JSON.stringify(
+      applySessions.mock.calls[0]?.[0]?.[0]?.metadata,
+    );
+    expect(hydratedMetadata).toContain('operation-public-safe-1');
+    expect(hydratedMetadata).not.toContain('operationClaimId');
+    expect(hydratedMetadata).not.toContain('canonicalOwnerEvidence');
+    expect(hydratedMetadata).not.toContain('privateStagingId');
+  });
+
+  it('does not repopulate active account key or session state after authority changes during key initialization', async () => {
+    let current = true;
+    let releaseInitialization!: () => void;
+    const initialization = new Promise<void>((resolve) => {
+      releaseInitialization = resolve;
+    });
+    const initializeSessions = vi.fn(async () => await initialization);
+    const getSessionEncryption = vi.fn(() => null);
+    const applySessions = vi.fn();
+    const sessionDataKeys = new Map<string, Uint8Array>();
+    const request = vi.fn(async () => new Response(JSON.stringify({
+      session: {
+        id: 'stale-account-session',
+        createdAt: 1,
+        updatedAt: 2,
+        seq: 3,
+        active: false,
+        activeAt: 2,
+        encryptionMode: 'e2ee',
+        dataEncryptionKey: 'account-a-envelope',
+        metadataVersion: 1,
+        metadata: 'encrypted-metadata',
+        agentStateVersion: 1,
+        agentState: 'encrypted-agent-state',
+        share: null,
+      },
+    }), { status: 200 }));
+
+    const hydration = fetchAndApplySessionById({
+      sessionId: 'stale-account-session',
+      credentials: { token: 'account-a-token', secret: 'account-a-secret' } as any,
+      encryption: {
+        decryptEncryptionKey: async () => new Uint8Array([1, 2, 3]),
+        initializeSessions,
+        getSessionEncryption,
+      },
+      sessionDataKeys,
+      request,
+      applySessions,
+      isCurrent: () => current,
+      log: { log: () => {} },
+    });
+    await vi.waitFor(() => expect(initializeSessions).toHaveBeenCalledTimes(1));
+    current = false;
+    releaseInitialization();
+
+    await expect(hydration).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'stale_response',
+    });
+    expect(sessionDataKeys.has('stale-account-session')).toBe(false);
+    expect(getSessionEncryption).not.toHaveBeenCalled();
+    expect(applySessions).not.toHaveBeenCalled();
   });
 
   it('reuses a cached session data key when the encrypted envelope is unchanged', async () => {
     const applySessions = vi.fn();
     const decryptEncryptionKey = vi.fn(async () => new Uint8Array([1, 2, 3]));
     const initializeSessions = vi.fn(async () => {});
-    const decryptMetadata = vi.fn(async () => ({ readStateV1: null }));
+    const sharedMetadata = projectSessionSharedMetadataV1({ metadata: {} });
+    const decryptMetadataPayload = vi.fn(async () => sharedMetadata);
+    const decryptMetadata = vi.fn(async () => {
+      throw new Error('layout-v1 metadata must bypass the legacy parser');
+    });
     const decryptAgentState = vi.fn(async () => ({ controlledByUser: true }));
     const cachedKey = new Uint8Array([7, 7, 7]);
 
@@ -645,8 +1065,10 @@ describe('fetchAndApplySessionById', () => {
         activeAt: 2,
         encryptionMode: 'e2ee',
         dataEncryptionKey: 'cached-envelope',
+        metadataLayoutVersion: 1,
         metadataVersion: 1,
         metadata: 'enc-meta',
+        ownerMetadata: OWNER_METADATA_CIPHERTEXT,
         agentStateVersion: 1,
         agentState: 'enc-state',
         share: null,
@@ -658,11 +1080,15 @@ describe('fetchAndApplySessionById', () => {
 
     await fetchAndApplySessionById({
       sessionId: 's_cached',
-      credentials: { token: 't' } as any,
+      credentials: OWNER_TEST_CREDENTIALS as any,
       encryption: {
         decryptEncryptionKey,
         initializeSessions,
-        getSessionEncryption: () => ({ decryptMetadata, decryptAgentState } as any),
+        getSessionEncryption: () => ({
+          decryptMetadata,
+          decryptMetadataPayload,
+          decryptAgentState,
+        } as any),
       },
       sessionDataKeys,
       sessionDataKeyEnvelopes,
@@ -678,7 +1104,7 @@ describe('fetchAndApplySessionById', () => {
     expect(applySessions).toHaveBeenCalledWith([
       expect.objectContaining({
         id: 's_cached',
-        metadata: { readStateV1: null },
+        metadata: sharedMetadata,
         agentState: { controlledByUser: true },
       }),
     ]);
@@ -686,9 +1112,13 @@ describe('fetchAndApplySessionById', () => {
 
   it('starts encrypted metadata and agent-state decrypts before awaiting either result', async () => {
     const applySessions = vi.fn();
-    const metadataDeferred = createDeferred<{ readStateV1: null }>();
+    const sharedMetadata = projectSessionSharedMetadataV1({ metadata: {} });
+    const metadataDeferred = createDeferred<typeof sharedMetadata>();
     const agentStateDeferred = createDeferred<{ controlledByUser: true }>();
-    const decryptMetadata = vi.fn(async () => metadataDeferred.promise);
+    const decryptMetadataPayload = vi.fn(async () => metadataDeferred.promise);
+    const decryptMetadata = vi.fn(async () => {
+      throw new Error('layout-v1 metadata must bypass the legacy parser');
+    });
     const decryptAgentState = vi.fn(async () => agentStateDeferred.promise);
 
     const request = vi.fn(async () => new Response(JSON.stringify({
@@ -701,8 +1131,10 @@ describe('fetchAndApplySessionById', () => {
         activeAt: 2,
         encryptionMode: 'e2ee',
         dataEncryptionKey: 'dek',
+        metadataLayoutVersion: 1,
         metadataVersion: 1,
         metadata: 'enc-meta',
+        ownerMetadata: OWNER_METADATA_CIPHERTEXT,
         agentStateVersion: 1,
         agentState: 'enc-state',
         share: null,
@@ -711,11 +1143,15 @@ describe('fetchAndApplySessionById', () => {
 
     const fetchPromise = fetchAndApplySessionById({
       sessionId: 's_parallel',
-      credentials: { token: 't' } as any,
+      credentials: OWNER_TEST_CREDENTIALS as any,
       encryption: {
         decryptEncryptionKey: async () => new Uint8Array([1, 2, 3]),
         initializeSessions: async () => {},
-        getSessionEncryption: () => ({ decryptMetadata, decryptAgentState } as any),
+        getSessionEncryption: () => ({
+          decryptMetadata,
+          decryptMetadataPayload,
+          decryptAgentState,
+        } as any),
       },
       sessionDataKeys: new Map<string, Uint8Array>(),
       request,
@@ -725,11 +1161,11 @@ describe('fetchAndApplySessionById', () => {
 
     try {
       await expect.poll(() => ({
-        metadata: decryptMetadata.mock.calls.length,
+        metadata: decryptMetadataPayload.mock.calls.length,
         agentState: decryptAgentState.mock.calls.length,
       }), { timeout: 100 }).toEqual({ metadata: 1, agentState: 1 });
     } finally {
-      metadataDeferred.resolve({ readStateV1: null });
+      metadataDeferred.resolve(sharedMetadata);
       agentStateDeferred.resolve({ controlledByUser: true });
       await fetchPromise;
     }
@@ -737,10 +1173,131 @@ describe('fetchAndApplySessionById', () => {
     expect(applySessions).toHaveBeenCalledWith([
       expect.objectContaining({
         id: 's_parallel',
-        metadata: expect.objectContaining({ readStateV1: null }),
+        metadata: sharedMetadata,
         agentState: { controlledByUser: true },
       }),
     ]);
+    expect(decryptMetadata).not.toHaveBeenCalled();
+  });
+
+  it('does not let deferred owner tuple decryption overwrite a newer applied tuple', async () => {
+    onAgentRequest.mockClear();
+    const staleSharedMetadata = projectSessionSharedMetadataV1({
+      metadata: {
+        summary: { text: 'Stale', updatedAt: 1 },
+      },
+    });
+    const newerSharedMetadata = projectSessionSharedMetadataV1({
+      metadata: {
+        summary: { text: 'Newer', updatedAt: 2 },
+      },
+    });
+    const metadataDeferred =
+      createDeferred<typeof staleSharedMetadata>();
+    const decryptMetadataPayload = vi.fn(
+      async () => metadataDeferred.promise,
+    );
+    const decryptAgentState = vi.fn(async () => ({
+      requests: {
+        staleRequest: {
+          tool: 'stale-tool',
+          arguments: {},
+          createdAt: 1,
+        },
+      },
+    }));
+    const applySessions = vi.fn();
+    let currentSession: Session | null = null;
+    const request = vi.fn(async () => new Response(JSON.stringify({
+      session: {
+        id: 's_stale_decrypt',
+        createdAt: 1,
+        updatedAt: 1,
+        seq: 1,
+        active: true,
+        activeAt: 1,
+        encryptionMode: 'e2ee',
+        dataEncryptionKey: 'dek',
+        metadataLayoutVersion: 1,
+        metadataVersion: 1,
+        metadata: 'enc-stale-metadata',
+        ownerMetadata: OWNER_METADATA_CIPHERTEXT,
+        agentStateVersion: 1,
+        agentState: 'enc-stale-agent-state',
+        share: null,
+      },
+    }), { status: 200 }));
+
+    const fetchPromise = fetchAndApplySessionById({
+      sessionId: 's_stale_decrypt',
+      credentials: OWNER_TEST_CREDENTIALS as never,
+      encryption: {
+        decryptEncryptionKey: async () =>
+          new Uint8Array([1, 2, 3]),
+        initializeSessions: async () => {},
+        getSessionEncryption: () => ({
+          decryptMetadata: async () => null,
+          decryptMetadataPayload,
+          decryptAgentState,
+        }),
+      },
+      sessionDataKeys: new Map(),
+      request,
+      applySessions,
+      getExistingSession: () => currentSession,
+      log: { log: () => {} },
+      includeTurnsProjection: false,
+      includeMetadataTupleMutationSnapshot: true,
+    });
+
+    await expect.poll(
+      () => decryptMetadataPayload.mock.calls.length,
+      { timeout: 100 },
+    ).toBe(1);
+    currentSession = {
+      id: 's_stale_decrypt',
+      createdAt: 1,
+      updatedAt: 2,
+      seq: 2,
+      active: true,
+      activeAt: 2,
+      encryptionMode: 'e2ee',
+      metadataLayoutVersion: 1,
+      metadataVersion: 2,
+      metadata: newerSharedMetadata as unknown as Session['metadata'],
+      ownerMetadataView: {
+        path: '/newer/private',
+        host: 'newer-host',
+        summary: { text: 'Newer', updatedAt: 2 },
+      },
+      agentStateVersion: 2,
+      agentState: {
+        requests: {
+          newerRequest: {
+            tool: 'newer-tool',
+            arguments: {},
+            createdAt: 2,
+          },
+        },
+      },
+      thinking: false,
+      thinkingAt: 0,
+      presence: 'online',
+    };
+    metadataDeferred.resolve(staleSharedMetadata);
+
+    await expect(fetchPromise).resolves.toMatchObject({
+      ok: false,
+      session: null,
+      errorCode: 'stale_response',
+    });
+    expect(applySessions).not.toHaveBeenCalled();
+    expect(onAgentRequest).not.toHaveBeenCalled();
+    expect(currentSession.metadata).toEqual(newerSharedMetadata);
+    expect(currentSession.ownerMetadataView).toMatchObject({
+      path: '/newer/private',
+    });
+    expect(currentSession.agentStateVersion).toBe(2);
   });
 
   it('coalesces concurrent session detail HTTP reads for the same request transport', async () => {

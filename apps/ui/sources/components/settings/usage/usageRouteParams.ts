@@ -1,5 +1,7 @@
 import type { Href } from 'expo-router';
 
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+
 import type {
     UsageCostMode,
     UsageDimension,
@@ -19,7 +21,7 @@ export type UsageRouteWritableParams = Readonly<Record<
 const VALID_METRICS = new Set<UsageMetric>(['tokens', 'cost']);
 const VALID_COST_MODES = new Set<UsageCostMode>(['auto', 'reported', 'estimated']);
 const VALID_DIMENSIONS = new Set<UsageDimension>([
-    'provider',
+    'agent',
     'model',
     'session',
     'project',
@@ -86,7 +88,7 @@ export function buildUsageSettingsRouteTarget(
     }
 
     return {
-        pathname: '/(app)/settings/usage',
+        pathname: SETTINGS_ROUTES.usage,
         params,
     };
 }

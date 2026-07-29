@@ -18,10 +18,12 @@ import {
     buildSessionListIndexWithServerScope,
 } from '../sessionListIndex/buildSessionListIndexWithServerScope';
 import { normalizeTrimmedString } from '@/sync/domains/session/listing/normalizeTrimmedString';
+import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 
 export type SessionListIndexFinalizationState = Readonly<{
     sessions: Record<string, Session>;
     sessionListRenderables: Record<string, SessionListRenderableSession>;
+    sessionListRenderableDelta?: SessionListRenderableDelta;
     sessionListRowStateByServerId: Readonly<Record<string, Readonly<Record<string, SessionListRenderableSession>>>>;
     sessionListIndexByServerId: Readonly<Record<string, SessionListIndexItem[] | null | undefined>>;
     concurrentSessionListCacheByServerId: ConcurrentSessionListCacheByServerId;
@@ -39,11 +41,23 @@ export type SessionListIndexFinalizationState = Readonly<{
 
 export type SessionListIndexFinalizationWarmCache<S extends SessionListIndexFinalizationState> = Readonly<{
     deferImmediateSaveWhenAlreadyWarm?: boolean;
-    scheduleDeferredSave?: () => void;
+    scheduleDeferredSave?: (state: S) => void;
     saveImmediately?: (
         state: S,
         previousEntries?: Record<string, SessionListCacheEntryV1>,
     ) => void;
+}>;
+
+export type SessionListRenderableDelta = Readonly<{
+    revision: number;
+    changedSessionIds: readonly string[];
+    removedSessionIds: readonly string[];
+    rebuiltSessionListIndex: boolean;
+}>;
+
+type SessionListRenderableDeltaPublication = Readonly<{
+    changedSessionIds: readonly string[];
+    removedSessionIds: readonly string[];
 }>;
 
 type MutableSessionListRowsByServerId = Record<string, Readonly<Record<string, SessionListRenderableSession>>>;
@@ -91,7 +105,7 @@ function partitionSessionListRenderablesByOwnerServer(params: Readonly<{
     for (const sessionId in params.sessionListRenderables) {
         const renderable = params.sessionListRenderables[sessionId];
         const ownerServerId = normalizeTrimmedString(params.sessions[sessionId]?.serverId);
-        if (!ownerServerId || ownerServerId === params.activeServerId) {
+        if (!ownerServerId || areServerProfileIdentifiersEquivalent(ownerServerId, params.activeServerId)) {
             continue;
         }
 
@@ -125,6 +139,120 @@ function hasRecordEntries<T>(record: Record<string, T> | null | undefined): reco
     return Boolean(record && Object.keys(record).length > 0);
 }
 
+function areSessionListRowsProjectionCurrent(
+    expectedRows: Readonly<Record<string, SessionListRenderableSession>>,
+    actualRows: Readonly<Record<string, SessionListRenderableSession>> | null | undefined,
+): boolean {
+    if (actualRows === expectedRows) {
+        return true;
+    }
+    if (!actualRows || typeof actualRows !== 'object') {
+        return Object.keys(expectedRows).length === 0;
+    }
+
+    const expectedIds = Object.keys(expectedRows);
+    const actualIds = Object.keys(actualRows);
+    if (expectedIds.length !== actualIds.length) {
+        return false;
+    }
+    for (const sessionId of expectedIds) {
+        if (actualRows[sessionId] !== expectedRows[sessionId]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function isSessionListIndexProjectionCurrent(
+    expectedRows: Readonly<Record<string, SessionListRenderableSession>>,
+    actualIndex: ReadonlyArray<SessionListIndexItem> | null | undefined,
+): boolean {
+    if (!Array.isArray(actualIndex)) {
+        return false;
+    }
+
+    const expectedUserFacingSessionIds = new Set<string>();
+    for (const sessionId of Object.keys(expectedRows)) {
+        const row = expectedRows[sessionId];
+        if (row && isUserFacingSession(row)) {
+            expectedUserFacingSessionIds.add(sessionId);
+        }
+    }
+
+    let actualSessionCount = 0;
+    for (const item of actualIndex) {
+        if (item?.type !== 'session') {
+            continue;
+        }
+        actualSessionCount += 1;
+        if (!expectedUserFacingSessionIds.has(item.sessionId)) {
+            return false;
+        }
+    }
+
+    return actualSessionCount === expectedUserFacingSessionIds.size;
+}
+
+export function doesActiveSessionListProjectionNeedRepair(
+    state: SessionListIndexFinalizationState,
+): boolean {
+    const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+    if (!activeServerId) {
+        return false;
+    }
+
+    const { activeServerRenderables } = partitionSessionListRenderablesByOwnerServer({
+        sessions: state.sessions,
+        sessionListRenderables: state.sessionListRenderables,
+        concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId,
+        activeServerId,
+    });
+    const activeRows = state.sessionListRowStateByServerId?.[activeServerId] ?? null;
+    if (!areSessionListRowsProjectionCurrent(activeServerRenderables, activeRows)) {
+        return true;
+    }
+
+    return !isSessionListIndexProjectionCurrent(
+        activeServerRenderables,
+        state.sessionListIndexByServerId?.[activeServerId],
+    );
+}
+
+export function doesActiveSessionListIndexProjectionNeedRepair(
+    state: SessionListIndexFinalizationState,
+): boolean {
+    const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+    if (!activeServerId) {
+        return false;
+    }
+
+    const { activeServerRenderables } = partitionSessionListRenderablesByOwnerServer({
+        sessions: state.sessions,
+        sessionListRenderables: state.sessionListRenderables,
+        concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId,
+        activeServerId,
+    });
+
+    return !isSessionListIndexProjectionCurrent(
+        activeServerRenderables,
+        state.sessionListIndexByServerId?.[activeServerId],
+    );
+}
+
+function buildNextSessionListRenderableDelta(input: Readonly<{
+    previous: SessionListRenderableDelta | undefined;
+    changedSessionIds: readonly string[];
+    removedSessionIds: readonly string[];
+    rebuiltSessionListIndex: boolean;
+}>): SessionListRenderableDelta {
+    return {
+        revision: (input.previous?.revision ?? 0) + 1,
+        changedSessionIds: input.changedSessionIds,
+        removedSessionIds: input.removedSessionIds,
+        rebuiltSessionListIndex: input.rebuiltSessionListIndex,
+    };
+}
+
 export function finalizeSessionListIndexUpdate<S extends SessionListIndexFinalizationState>(
     state: S,
     nextStateBase: S,
@@ -137,6 +265,7 @@ export function finalizeSessionListIndexUpdate<S extends SessionListIndexFinaliz
         fields?: () => Record<string, number>;
     }>,
     warmCache?: SessionListIndexFinalizationWarmCache<S>,
+    renderableDelta?: SessionListRenderableDeltaPublication,
 ): S {
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
     const previousIndexByServerId = nextStateBase.sessionListIndexByServerId ?? state.sessionListIndexByServerId ?? {};
@@ -183,6 +312,7 @@ export function finalizeSessionListIndexUpdate<S extends SessionListIndexFinaliz
     const previousRowStateByServerId = nextStateBase.sessionListRowStateByServerId ?? state.sessionListRowStateByServerId ?? {};
     let nextSessionListRowStateByServerId = previousRowStateByServerId as MutableSessionListRowsByServerId;
     let nextSessionListIndexByServerId = previousIndexByServerId as MutableSessionListIndexByServerId;
+    let didSessionListIndexChange = false;
 
     const writeServerScopedRows = (
         serverId: string,
@@ -205,6 +335,7 @@ export function finalizeSessionListIndexUpdate<S extends SessionListIndexFinaliz
                 nextSessionListIndexByServerId = { ...previousIndexByServerId };
             }
             nextSessionListIndexByServerId[serverId] = index;
+            didSessionListIndexChange = true;
         }
     };
 
@@ -220,6 +351,7 @@ export function finalizeSessionListIndexUpdate<S extends SessionListIndexFinaliz
                 nextSessionListIndexByServerId = { ...previousIndexByServerId };
             }
             delete nextSessionListIndexByServerId[serverId];
+            didSessionListIndexChange = true;
         }
     };
 
@@ -255,7 +387,11 @@ export function finalizeSessionListIndexUpdate<S extends SessionListIndexFinaliz
         ...Object.keys(previousIndexByServerId),
     ]);
     for (const serverId of candidateServerIds) {
-        if (!serverId || areServerProfileIdentifiersEquivalent(serverId, activeServerId)) {
+        if (!serverId || serverId === activeServerId) {
+            continue;
+        }
+        if (activeServerId && areServerProfileIdentifiersEquivalent(serverId, activeServerId)) {
+            deleteServerScopedProjection(serverId);
             continue;
         }
         if (serverId in foreignServerRenderablesByServerId) {
@@ -270,6 +406,16 @@ export function finalizeSessionListIndexUpdate<S extends SessionListIndexFinaliz
 
     const nextState = {
         ...nextStateBase,
+        ...(renderableDelta
+            ? {
+                sessionListRenderableDelta: buildNextSessionListRenderableDelta({
+                    previous: state.sessionListRenderableDelta,
+                    changedSessionIds: renderableDelta.changedSessionIds,
+                    removedSessionIds: renderableDelta.removedSessionIds,
+                    rebuiltSessionListIndex: didSessionListIndexChange,
+                }),
+            }
+            : {}),
         sessionListRowStateByServerId: nextSessionListRowStateByServerId,
         sessionListIndexByServerId: nextSessionListIndexByServerId,
     };
@@ -289,7 +435,7 @@ export function finalizeSessionListIndexUpdate<S extends SessionListIndexFinaliz
                 ...extraFields,
                 immediate: 1,
             });
-            warmCache.scheduleDeferredSave();
+            warmCache.scheduleDeferredSave(nextState as S);
         } else {
             measureSessionListIndexFinalizationPhase(
                 telemetry?.warmCacheEventName ?? 'sync.store.sessions.apply.warmCache',
@@ -308,7 +454,7 @@ export function finalizeSessionListIndexUpdate<S extends SessionListIndexFinaliz
             renderables: Object.keys(nextState.sessionListRenderables).length,
             ...extraFields,
         });
-        warmCache.scheduleDeferredSave();
+        warmCache.scheduleDeferredSave(nextState as S);
     }
 
     return nextState as S;

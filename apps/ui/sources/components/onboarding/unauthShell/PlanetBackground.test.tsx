@@ -99,4 +99,24 @@ describe('PlanetBackground', () => {
             top: 20,
         });
     });
+
+    it('falls back to cover for the horizon composition when the configured width-based size would letterbox (F-W13-3)', async () => {
+        const { resolveHorizonPlanetBackgroundSize } = await import('./PlanetBackground');
+        const { stageVisualTokens } = await import('../tour/stage/stageVisualTokens');
+        const configured = stageVisualTokens.horizon.planetBackgroundSize;
+
+        // Unmeasured: keep the configured token value (wide panes are the norm).
+        expect(resolveHorizonPlanetBackgroundSize(null)).toBe(configured);
+        expect(resolveHorizonPlanetBackgroundSize({ width: 0, height: 900 })).toBe(configured);
+
+        // Wide stage pane (1440x900 split -> ~1000x900): the width-based size
+        // already fills the height - configured geometry is preserved.
+        expect(resolveHorizonPlanetBackgroundSize({ width: 1000, height: 900 })).toBe(configured);
+
+        // Narrow-tall pane (720-1000px band, e.g. 900x900 split -> ~460x900):
+        // 142% of the width is far shorter than the pane - cover instead of
+        // letterboxed horizontal bands.
+        expect(resolveHorizonPlanetBackgroundSize({ width: 460, height: 900 })).toBe('cover');
+        expect(resolveHorizonPlanetBackgroundSize({ width: 240, height: 900 })).toBe('cover');
+    });
 });

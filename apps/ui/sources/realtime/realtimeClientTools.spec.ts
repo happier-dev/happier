@@ -4,7 +4,6 @@ import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { installRealtimeCommonModuleMocks } from './realtimeTestHelpers';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
-const trackPermissionResponse = vi.fn();
 const executeAction = vi.fn();
 
 const state: any = {
@@ -36,19 +35,14 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   }),
 }));
 
-vi.mock('@/track', () => ({
-  trackPermissionResponse: (...args: any[]) => trackPermissionResponse(...args),
-}));
-
 vi.mock('@/sync/sync', () => ({
   sync: {
     sendMessage: vi.fn(),
   },
 }));
 
-describe('realtimeClientTools permission handling', () => {
+describe('realtimeClientTools action projection', () => {
   beforeEach(() => {
-    trackPermissionResponse.mockReset();
     executeAction.mockReset();
     executeAction.mockResolvedValue({ ok: true, result: { ok: true } });
     state.sessions.s1.agentState.requests = {
@@ -61,27 +55,11 @@ describe('realtimeClientTools permission handling', () => {
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
   });
 
-  it('requires explicit requestId when multiple permission requests are active', async () => {
+  it('does not expose speech-driven permission approval as a provider tool', async () => {
     const { realtimeClientTools } = await import('./realtimeClientTools');
 
-    const result = await realtimeClientTools.processPermissionRequest({ decision: 'allow' });
-
-    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'multiple_permission_requests' });
+    expect(realtimeClientTools).not.toHaveProperty('processPermissionRequest');
     expect(executeAction).not.toHaveBeenCalled();
-  });
-
-  it('allows explicit requestId selection', async () => {
-    const { realtimeClientTools } = await import('./realtimeClientTools');
-
-    const result = await realtimeClientTools.processPermissionRequest({ decision: 'allow', requestId: 'req_b' });
-
-    expect(JSON.parse(result)).toMatchObject({ ok: true });
-    expect(executeAction).toHaveBeenCalledWith(
-      'session.permission.respond',
-      expect.objectContaining({ sessionId: 's1', requestId: 'req_b', decision: 'allow' }),
-      expect.anything(),
-    );
-    expect(trackPermissionResponse).toHaveBeenCalledWith(true);
   });
 
   it('routes structured user-action answers through the shared voice handlers', async () => {
@@ -102,9 +80,25 @@ describe('realtimeClientTools permission handling', () => {
       'session.user_action.answer',
       expect.objectContaining({
         sessionId: 's1',
-        answers: [{ question: 'Continue?', answer: 'Yes' }],
+        requestId: 'req_question',
+        answers: [{ question: 'Continue?', values: ['Yes'] }],
       }),
-      expect.anything(),
+      expect.objectContaining({ surface: 'voice' }),
     );
+  });
+
+  it('projects a read-only-only tool map for provider SDKs without observable mutation delivery', async () => {
+    const { realtimeReadOnlyClientTools } = await import('./realtimeClientTools');
+    const { getActionSpec, listVoiceToolActionSpecs } = await import('@happier-dev/protocol');
+
+    expect(Object.keys(realtimeReadOnlyClientTools).length).toBeGreaterThan(0);
+    for (const spec of listVoiceToolActionSpecs()) {
+      const toolName = String(spec.bindings?.voiceClientToolName ?? '').trim();
+      if (!toolName) continue;
+      const effect = getActionSpec(spec.id).sideEffectClass;
+      expect(Object.hasOwn(realtimeReadOnlyClientTools, toolName)).toBe(
+        effect === 'none' || effect === 'read',
+      );
+    }
   });
 });

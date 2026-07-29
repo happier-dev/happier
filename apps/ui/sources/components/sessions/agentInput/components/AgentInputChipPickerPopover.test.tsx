@@ -205,7 +205,8 @@ describe('AgentInputChipPickerPopover', () => {
         const { AgentInputChipPickerPopover } = await import('./AgentInputChipPickerPopover');
         const onSelect = vi.fn();
         const onRequestClose = vi.fn();
-        const anchorRef = { current: { nodeType: 'View' } } as any;
+        const anchorFocus = vi.fn();
+        const anchorRef = { current: { nodeType: 'View', focus: anchorFocus } } as any;
         capturedPopoverSurfaceProps = null;
         popoverScopeRenderCount = 0;
 
@@ -225,6 +226,7 @@ describe('AgentInputChipPickerPopover', () => {
         expect(capturedSelectionPopoverProps?.anchorRef).toBe(anchorRef);
         expect(capturedSelectionPopoverProps?.maxWidthCap).toBe(720);
         expect(capturedSelectionPopoverProps?.portalTopBottomLayout).toBeUndefined();
+        expect(capturedSelectionPopoverProps?.autoFocusOnOpen).toBe(true);
         expect(capturedPopoverSurfaceProps?.scrollEnabled).toBe(true);
         expect(popoverScopeRenderCount).toBe(1);
 
@@ -233,9 +235,11 @@ describe('AgentInputChipPickerPopover', () => {
 
         expect(screen.findByTestId('agent-input-chip-picker.option:two')).toBeTruthy();
         await screen.pressByTestIdAsync('agent-input-chip-picker.option:two');
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(onSelect).toHaveBeenCalledWith('two');
         expect(onRequestClose).toHaveBeenCalled();
+        expect(anchorFocus).toHaveBeenCalledTimes(1);
     });
 
     it('selects immediately in detailed mode for pure selection options that request auto-close', async () => {

@@ -59,6 +59,22 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 describe('BaseModal (native)', () => {
+    it('exposes a named modal-isolated dialog surface', async () => {
+        const { BaseModal } = await import('./BaseModal');
+
+        const screen = await renderScreen(
+            React.createElement(BaseModal, {
+                visible: true,
+                accessibilityLabel: 'Move session',
+                children: React.createElement('Child'),
+            }),
+        );
+
+        const modalSurface = screen.findAll((node) => node.props?.role === 'dialog')?.[0];
+        expect(modalSurface?.props.accessibilityLabel).toBe('Move session');
+        expect(modalSurface?.props.accessibilityViewIsModal).toBe(true);
+    });
+
     it('pads the keyboard-aware modal frame by the safe area insets', async () => {
         const { BaseModal } = await import('./BaseModal');
 

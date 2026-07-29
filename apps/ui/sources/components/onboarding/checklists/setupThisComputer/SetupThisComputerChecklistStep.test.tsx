@@ -491,8 +491,10 @@ describe('SetupThisComputerChecklistStep', () => {
         expect(taskHookMock.value.start).toHaveBeenCalledTimes(1);
         expect(primaryRef.current?.disabled).toBe(true);
 
+        const pendingNode = screen.findByTestId('setup-this-computer-checklist-row-setup.thisComputer.stage.installTools-status-slot');
+        expect(pendingNode?.findAll((node) => node.children.includes('1'))).toHaveLength(1);
         const statusIcons = screen.findAllByType('Ionicons' as never).map((icon) => icon.props.name);
-        expect(statusIcons).toContain('ellipse-outline');
+        expect(statusIcons).not.toContain('ellipse-outline');
     });
 
     it('does not trigger an infinite update loop when onWizardPrimaryChange updates state', async () => {

@@ -17,7 +17,7 @@ describe('newSessionLaunchAttempt', () => {
         expect(attempt).toMatchObject({
             attemptId: 'attempt-stable',
             spawnNonce: 'spawn-stable',
-            firstTurnLocalId: 'first-turn-stable',
+            firstTurnLocalId: 'spawn-first-turn:spawn-stable',
             attachmentMessageLocalId: 'attachment-message-stable',
             scopeKey: 'machine:m1|server:server-a|path:/repo',
             createdSessionId: null,
@@ -48,7 +48,7 @@ describe('newSessionLaunchAttempt', () => {
         expect(failed).toMatchObject({
             attemptId: 'attempt-stable',
             spawnNonce: 'spawn-stable',
-            firstTurnLocalId: 'first-turn-stable',
+            firstTurnLocalId: 'spawn-first-turn:spawn-stable',
             attachmentMessageLocalId: 'attachment-message-stable',
             scopeKey: 'machine:m1|server:server-a|path:/repo',
             createdSessionId: 'session-created',
@@ -58,6 +58,24 @@ describe('newSessionLaunchAttempt', () => {
                     retryable: true,
                 }),
             },
+        });
+    });
+
+    it('moves first-turn identity with canonical custody when a prior nonce is adopted', () => {
+        const attempt = launchAttemptModule.createNewSessionLaunchAttempt({
+            prompt: 'Investigate checkout failures',
+            displayText: 'Investigate checkout failures',
+            scopeKey: 'machine:m1|server:server-a|path:/repo',
+            spawnNonce: 'new-attempt-nonce',
+        });
+
+        expect(launchAttemptModule.adoptNewSessionLaunchAttemptCustody(attempt, {
+            userAttemptId: 'original-attempt',
+            spawnNonce: 'original-nonce',
+        })).toMatchObject({
+            attemptId: 'original-attempt',
+            spawnNonce: 'original-nonce',
+            firstTurnLocalId: 'spawn-first-turn:original-nonce',
         });
     });
 
@@ -78,12 +96,11 @@ describe('newSessionLaunchAttempt', () => {
         expect(launchAttemptApi.shouldSpawnForNewSessionLaunchAttempt(attempt)).toBe(false);
     });
 
-    it('matches attempts only against the launch scope and spawn identity they were created for', () => {
+    it('matches attempts against their launch scope', () => {
         const attempt = launchAttemptModule.createNewSessionLaunchAttempt({
             prompt: '',
             displayText: '',
             scopeKey: 'machine:m1|server:server-a|path:/repo',
-            spawnAttemptKey: 'new-session.launch:{"prompt":"a"}',
             createId: (prefix) => `${prefix}-stable`,
         });
 
@@ -94,17 +111,10 @@ describe('newSessionLaunchAttempt', () => {
         expect(launchAttemptApi.isNewSessionLaunchAttemptInScope(
             attempt,
             'machine:m1|server:server-a|path:/repo',
-            'new-session.launch:{"prompt":"a"}',
         )).toBe(true);
         expect(launchAttemptApi.isNewSessionLaunchAttemptInScope(
             attempt,
             'machine:m1|server:server-b|path:/repo',
-            'new-session.launch:{"prompt":"a"}',
-        )).toBe(false);
-        expect(launchAttemptApi.isNewSessionLaunchAttemptInScope(
-            attempt,
-            'machine:m1|server:server-a|path:/repo',
-            'new-session.launch:{"prompt":"b"}',
         )).toBe(false);
     });
 });

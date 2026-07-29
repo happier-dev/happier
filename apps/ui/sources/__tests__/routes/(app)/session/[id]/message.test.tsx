@@ -13,7 +13,10 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
+vi.mock('react-native-reanimated', async () => {
+  const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+  return createReanimatedModuleMock();
+});
 
 let mockSession: any = null;
 let mockMessagesLoaded = false;
@@ -99,7 +102,8 @@ installSessionRouteCommonModuleMocks({
   },
 });
 
-vi.mock('@/sync/store/hooks', () => ({
+vi.mock('@/sync/store/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/sync/store/hooks')>()),
   useSessionMessages: () => ({ messages: mockCommittedMessages, isLoaded: mockMessagesLoaded }),
   useSessionServerId: () => null,
 }));
@@ -114,6 +118,8 @@ vi.mock('@/sync/sync', () => ({
       await ensureSessionVisibleDeferred.promise;
     },
     loadOlderMessages: (sessionId: string) => syncLoadOlderMessagesSpy(sessionId),
+    getAcceptedExternalSessionTailCursor: () => null,
+    subscribeAcceptedExternalSessionTailCursor: () => () => {},
   },
 }));
 

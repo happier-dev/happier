@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { useScopedPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
 import { PluginSurfacePlacementStack } from '@/components/plugins/surfaces';
 import type { RuntimeActionExecute } from '@happier-dev/protocol';
 import {
@@ -164,6 +164,7 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
             <PluginSurfacePlacementStack
                 placement="services.panel"
                 pluginUiProjection={pluginProjection.pluginUiProjection}
+                projectionInteractionEnabled={pluginProjection.interactionEnabled}
                 machineId={machineId ?? pluginProjection.machineId}
                 serverId={serverId ?? pluginProjection.serverId}
                 platform={pluginProjection.platform}

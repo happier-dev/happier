@@ -11,13 +11,11 @@ type SessionEntryRenderResetSharedEffects = Readonly<{
     entryRestoreLocalStateReset: LifecycleEffectOf<'session-entry-entry-restore-local-state-reset'>;
     entryRestoreTimeoutCleanup: LifecycleEffectOf<'session-entry-entry-restore-timeout-cleanup'>;
     measurementReset: LifecycleEffectOf<'session-entry-measurement-reset'>;
-    nativeBottomPinCommandCacheReset: LifecycleEffectOf<'session-entry-native-bottom-pin-command-cache-reset'>;
     nativeEntrySettleReset: LifecycleEffectOf<'session-entry-native-entry-settle-confirmation-reset'>;
     nativeExplicitJumpReset: LifecycleEffectOf<'session-entry-native-explicit-jump-confirmation-reset'>;
     nativeGestureMomentumMirrorReset: LifecycleEffectOf<'session-entry-native-gesture-momentum-mirror-reset'>;
     nativeIndexScrollCommandCacheReset: LifecycleEffectOf<'session-entry-native-index-scroll-command-cache-reset'>;
     nativePrependInvalidation: LifecycleEffectOf<'session-entry-native-prepend-transaction-invalidation'>;
-    nativeStreamAppendRecordReset: LifecycleEffectOf<'session-entry-native-stream-append-content-version-record-reset'>;
     olderPaginationReset: LifecycleEffectOf<'session-entry-older-pagination-reset'>;
     webDomObservationReset: LifecycleEffectOf<'session-entry-web-dom-observation-reset'>;
 }>;
@@ -96,12 +94,6 @@ export function resolveSessionEntryRenderResetEffects(params: Readonly<{
             params.sessionId,
             'Session-entry lifecycle did not emit measurement reset effect',
         ),
-        nativeBottomPinCommandCacheReset: findRequiredEffect(
-            params.effects,
-            'session-entry-native-bottom-pin-command-cache-reset',
-            params.sessionId,
-            'Session-entry lifecycle did not emit native bottom-pin command cache reset effect',
-        ),
         nativeEntrySettleReset: findRequiredEffect(
             params.effects,
             'session-entry-native-entry-settle-confirmation-reset',
@@ -131,12 +123,6 @@ export function resolveSessionEntryRenderResetEffects(params: Readonly<{
             'session-entry-native-prepend-transaction-invalidation',
             params.sessionId,
             'Session-entry lifecycle did not emit native prepend transaction invalidation effect',
-        ),
-        nativeStreamAppendRecordReset: findRequiredEffect(
-            params.effects,
-            'session-entry-native-stream-append-content-version-record-reset',
-            params.sessionId,
-            'Session-entry lifecycle did not emit native stream-append content-version record reset effect',
         ),
         olderPaginationReset: findRequiredEffect(
             params.effects,

@@ -10,6 +10,7 @@ import { sync } from '@/sync/sync';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { hasAuthoritativeSessionRouteData } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';
 
 type SessionRouteHydrationStateRecord = Readonly<{
     routeKey: string;
@@ -29,7 +30,7 @@ function areRouteServerIdsEqual(leftRaw: unknown, rightRaw: unknown): boolean {
 
 function hasAuthoritativeHydratedSessionForRoute(sessionId: string, serverId?: string | null): boolean {
     const session = storage.getState().sessions[sessionId] ?? null;
-    if (!session || session.metadata == null) {
+    if (!session || !hasAuthoritativeSessionRouteData(session)) {
         return false;
     }
     if (serverId && !areRouteServerIdsEqual(String(session.serverId ?? '').trim(), serverId)) {

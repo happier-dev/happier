@@ -36,6 +36,7 @@ describe('AgentInputChipPickerDetailPane', () => {
         vi.useFakeTimers();
 
         const renderDetailContent = vi.fn(() => React.createElement('View', { testID: 'detail:heavy-model-picker' }));
+        const onRequestClose = vi.fn();
         const deferredOption: AgentInputChipPickerOption = {
             id: 'engine:claude',
             label: 'Claude',
@@ -51,7 +52,7 @@ describe('AgentInputChipPickerDetailPane', () => {
                 onApply={() => {}}
                 applyLabel="Use"
                 onSelectDetailOption={() => {}}
-                onRequestClose={() => {}}
+                onRequestClose={onRequestClose}
             />,
         );
 
@@ -64,6 +65,7 @@ describe('AgentInputChipPickerDetailPane', () => {
         });
 
         expect(renderDetailContent).toHaveBeenCalledTimes(1);
+        expect(renderDetailContent).toHaveBeenCalledWith({ onRequestClose });
         expect(screen.findByTestId('detail:heavy-model-picker')).toBeTruthy();
 
         act(() => {
@@ -76,7 +78,7 @@ describe('AgentInputChipPickerDetailPane', () => {
                 onApply={() => {}}
                 applyLabel="Use"
                 onSelectDetailOption={() => {}}
-                onRequestClose={() => {}}
+                onRequestClose={onRequestClose}
             />,
         );
 

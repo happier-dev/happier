@@ -20,16 +20,10 @@ const onboardingVisible = (stepId: WizardStepId) => (context: WizardContext): bo
         case 'scan_code':
             return context.canScanQr && context.scanStepEnabled;
         case 'relay_select':
-        case 'confirm_relay_lock':
-        case 'host_relay_local':
-        case 'relay_access':
-        case 'relay_access_prereqs':
-        case 'background_service_handoff':
         case 'auth':
         case 'auth_restore':
         case 'auth_secret_key':
         case 'auth_lost_access':
-        case 'done':
             return true;
         case 'host_relay_remote':
             return context.platform === 'desktop' && context.relaySelection.choiceId === 'remoteComputer';
@@ -78,7 +72,7 @@ const setupVisible = (stepId: WizardStepId) => (context: WizardContext): boolean
         case 'remote_ssh_setup':
             return context.setupAction === 'remote';
         case 'providers_optional':
-            return context.setupAction === 'local' || context.setupAction === 'remote';
+            return context.setupAction === 'local' || context.setupAction === 'relayLocal' || context.setupAction === 'remote';
         case 'done':
             return context.setupAction != null;
         default:
@@ -165,7 +159,7 @@ const wizardStepRegistryEntries = [
         subtitleKey: 'setupOnboarding.resumeIntentBody',
         kind: 'auth',
         surface: 'onboarding',
-        canSkip: true,
+        canSkip: false,
         visibleWhen: onboardingVisible('auth'),
     },
     {
@@ -307,8 +301,8 @@ const wizardStepRegistryEntries = [
     },
     {
         id: 'providers_optional',
-        titleKey: 'settingsProviders.setup.startTitle',
-        subtitleKey: 'settingsProviders.setup.selectionFooter',
+        titleKey: 'settingsAgents.setup.startTitle',
+        subtitleKey: 'settingsAgents.setup.selectionFooter',
         kind: 'finish',
         surface: 'setup',
         canSkip: true,

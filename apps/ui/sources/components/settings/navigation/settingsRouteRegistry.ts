@@ -1,6 +1,12 @@
+import * as React from 'react';
+import { Platform, Pressable } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackNavigationOptions } from '@react-navigation/native-stack';
+import { usePathname, useRouter } from 'expo-router';
 
 import type { TranslationKeyNoParams } from '@/text';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type Translate = (key: TranslationKeyNoParams) => string;
 
@@ -31,8 +37,9 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'appearance/themes/export', titleKey: 'settingsAppearance.themeProfiles.exportProfile' },
     { name: 'attachments', titleKey: 'settings.attachments' },
     { name: 'connect/claude', headerShown: false },
-    { name: 'connected-services', titleKey: 'settings.connectedServices' },
+    { name: 'connected-services/index', titleKey: 'settings.connectedServices' },
     { name: 'connected-services/[serviceId]', titleKey: 'connectedServices.fallbackName' },
+    { name: 'connected-services/account', titleKey: 'connectedServices.profile.profileId' },
     { name: 'connected-services/provider-state-sharing', titleKey: 'connectedServices.providerStateSharing.title' },
     { name: 'connected-services/group', titleKey: 'connectedServices.detail.groupDetail.routeTitle' },
     { name: 'connected-services/oauth', titleKey: 'connectedServices.detail.addOauthProfileTitle' },
@@ -40,6 +47,7 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'desktop', titleKey: 'settingsDesktop.title' },
     { name: 'diagnosis', titleKey: 'diagnosis.title' },
     { name: 'features', titleKey: 'settings.features' },
+    { name: 'external-sessions', titleKey: 'externalSessions.settingsTitle' },
     { name: 'keyboard', titleKey: 'settingsKeyboard.title' },
     { name: 'language', titleKey: 'settingsLanguage.currentLanguage' },
     { name: 'machines', titleKey: 'settings.machines' },
@@ -51,12 +59,13 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'notifications', titleKey: 'settings.notifications' },
     { name: 'notifications/push', titleKey: 'settingsNotifications.push.troubleshootTitle' },
     { name: 'pets', titleKey: 'settingsPets.title' },
-    { name: 'plugins', titleKey: 'settingsPlugins.title' },
+    { name: 'plugins/index', titleKey: 'settingsPlugins.title' },
     { name: 'plugins/[pluginId]', titleKey: 'settingsPlugins.detailTitle' },
+    { name: 'plugins/panels', titleKey: 'settingsPlugins.appPanelsTitle' },
     { name: 'profiles', titleKey: 'settingsFeatures.profiles' },
-    { name: 'prompts', titleKey: 'settings.prompts' },
+    { name: 'prompts/index', titleKey: 'settings.prompts' },
     { name: 'prompts/assets', titleKey: 'promptLibrary.externalAssets' },
-    { name: 'prompts/docs', titleKey: 'promptLibrary.prompts' },
+    { name: 'prompts/docs/index', titleKey: 'promptLibrary.prompts' },
     { name: 'prompts/docs/[id]', titleKey: 'promptLibrary.editPrompt' },
     { name: 'prompts/docs/[id]/export', titleKey: 'promptLibrary.externalAssetsExportTitle' },
     { name: 'prompts/docs/new', titleKey: 'promptLibrary.newPrompt' },
@@ -64,7 +73,7 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'prompts/library', headerShown: false },
     { name: 'prompts/registries', titleKey: 'promptLibrary.registries' },
     { name: 'prompts/registries/item', titleKey: 'promptLibrary.registries' },
-    { name: 'prompts/skills', titleKey: 'promptLibrary.skills' },
+    { name: 'prompts/skills/index', titleKey: 'promptLibrary.skills' },
     { name: 'prompts/skills/[id]', titleKey: 'promptLibrary.editSkill' },
     { name: 'prompts/skills/[id]/export', titleKey: 'promptLibrary.externalAssetsExportTitle' },
     { name: 'prompts/skills/[id]/files/edit', titleKey: 'promptLibrary.editSupportingFile' },
@@ -73,14 +82,19 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'prompts/stacks', titleKey: 'promptLibrary.stacks' },
     { name: 'prompts/stacks/coding', titleKey: 'promptLibrary.codingStack' },
     { name: 'prompts/stacks/pick', titleKey: 'promptLibrary.addToStack' },
-    { name: 'prompts/stacks/profiles', titleKey: 'promptLibrary.profileStacks' },
+    { name: 'prompts/stacks/profiles/index', titleKey: 'promptLibrary.profileStacks' },
     { name: 'prompts/stacks/profiles/[id]', titleKey: 'promptLibrary.profileStacks' },
     { name: 'prompts/stacks/voice', titleKey: 'promptLibrary.voiceStack' },
     { name: 'prompts/templates', titleKey: 'promptLibrary.templates' },
     { name: 'prompts/templates/[id]', titleKey: 'promptLibrary.editTemplate' },
     { name: 'prompts/templates/new', titleKey: 'promptLibrary.newTemplate' },
-    { name: 'providers', titleKey: 'settingsProviders.title' },
-    { name: 'providers/[providerId]', titleKey: 'settingsProviders.title' },
+    { name: 'agents/index', titleKey: 'settingsAgents.title' },
+    { name: 'agents/[agentId]', titleKey: 'settingsAgents.title' },
+    { name: 'agents/[agentId]/models', titleKey: 'settingsAgents.models' },
+    { name: 'providers/index', titleKey: 'settingsProviders.title' },
+    { name: 'providers/[connectionId]', titleKey: 'settingsProviders.detailTitle' },
+    { name: 'providers/[connectionId]/models', titleKey: 'settingsProviders.models.manage' },
+    { name: 'providers/new', titleKey: 'settingsProviders.addCustom' },
     { name: 'remote-hosts', titleKey: 'settings.remoteHostsTitle' },
     { name: 'report-issue', titleKey: 'settings.reportIssue' },
     { name: 'secrets', titleKey: 'settings.secrets' },
@@ -101,16 +115,108 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'system-status', titleKey: 'settings.systemStatus' },
     { name: 'usage', titleKey: 'settings.usage' },
     { name: 'voice', titleKey: 'settings.voiceAssistant' },
+    { name: 'voice-history', titleKey: 'settingsVoice.history.title' },
 ] as const;
 
-export function getSettingsStackScreenDefinitions(t: Translate): readonly SettingsStackScreenDefinition[] {
+export function resolveSettingsRouteParentPathname(pathname: string | null | undefined): string | null {
+    if (typeof pathname !== 'string') return null;
+    const normalizedPathname = pathname.trim().replace(/\/+$/, '') || '/';
+    if (normalizedPathname === '/settings') return null;
+    if (!normalizedPathname.startsWith('/settings/')) return null;
+
+    const parentPathname = normalizedPathname.slice(0, normalizedPathname.lastIndexOf('/'));
+    return parentPathname === '' ? '/settings' : parentPathname;
+}
+
+/**
+ * Whether the within-settings "back" arrow should be shown for the current route.
+ *
+ * - The settings index has no parent → never shows.
+ * - In modal presentation (`hideOnTopLevel`), top-level categories (parent === '/settings')
+ *   are reachable from the nav rail, so the redundant back arrow is hidden; only deeper
+ *   sub-screens keep it.
+ * - In full-screen (phone) presentation, every non-index screen keeps the back arrow.
+ */
+export function shouldShowSettingsParentBackButton(params: Readonly<{
+    pathname: string | null | undefined;
+    hideOnTopLevel: boolean;
+}>): boolean {
+    const parentPathname = resolveSettingsRouteParentPathname(params.pathname);
+    if (!parentPathname) return false;
+    if (params.hideOnTopLevel && parentPathname === '/settings') return false;
+    return true;
+}
+
+function SettingsParentBackButton({
+    accessibilityLabel,
+    tintColor,
+    hideOnTopLevel,
+}: Readonly<{
+    accessibilityLabel: string;
+    tintColor?: string;
+    hideOnTopLevel: boolean;
+}>): React.ReactElement | null {
+    const pathname = usePathname();
+    const router = useRouter();
+
+    if (!shouldShowSettingsParentBackButton({ pathname, hideOnTopLevel })) {
+        return null;
+    }
+
+    const parentPathname = resolveSettingsRouteParentPathname(pathname);
+
+    return React.createElement(Pressable, {
+        accessibilityLabel,
+        accessibilityRole: 'button',
+        hitSlop: 8,
+        onPress: () => {
+            if (parentPathname) {
+                const result = runGuardedNavigation(() => router.navigate(parentPathname as never));
+                if (result !== true) {
+                    fireAndForget(result, { tag: 'SettingsParentBackButton.back' });
+                }
+            }
+        },
+        style: {
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginLeft: Platform.select({ ios: -8, default: 0 }) as number,
+            paddingHorizontal: 8,
+            paddingVertical: 6,
+        },
+    }, React.createElement(Ionicons, {
+        color: tintColor,
+        name: Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back',
+        size: 28,
+    }));
+}
+
+export function getSettingsStackScreenDefinitions(
+    t: Translate,
+    config?: Readonly<{ isModalPresentation?: boolean }>,
+): readonly SettingsStackScreenDefinition[] {
+    const isModalPresentation = config?.isModalPresentation ?? false;
     return SETTINGS_ROUTE_CHROME_DEFINITIONS.map((definition) => {
         const options: NativeStackNavigationOptions = {
             headerBackTitle: t(definition.headerBackTitleKey ?? 'common.back'),
             headerShown: definition.headerShown ?? true,
         };
+        if (isModalPresentation) {
+            // In modal mode the navigator header is removed entirely; the close and (sub-screen)
+            // back affordances are rendered as floating controls by SettingsShell instead.
+            options.headerShown = false;
+            return { name: definition.name, options };
+        }
         if (definition.titleKey) {
             options.headerTitle = t(definition.titleKey);
+        }
+        if (definition.name !== 'index' && options.headerShown !== false) {
+            const accessibilityLabel = t('common.back');
+            options.headerLeft = ({ tintColor }) => React.createElement(SettingsParentBackButton, {
+                accessibilityLabel,
+                tintColor,
+                hideOnTopLevel: false,
+            });
         }
         return {
             name: definition.name,

@@ -3,9 +3,16 @@ import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Octicons } from '@expo/vector-icons';
 
-import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/SegmentedTabBar';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { RightSidebarIconTabBar } from '@/components/appShell/rightSidebar/RightSidebarIconTabBar';
+import {
+    resolveProjectRightSidebarTabs,
+    resolveRightSidebarActiveTab,
+} from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
+import type { RightSidebarPluginTabDefinition } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
+import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
+import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { t } from '@/text';
@@ -13,11 +20,16 @@ import { useDeviceType } from '@/utils/platform/responsive';
 
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import type { ProjectRightTabId } from './resolveProjectRightTabId';
+import { useServicesOpenInBrowser } from '@/components/sessions/localServices/useServicesOpenInBrowser';
+import { ProjectRightPanelBrowserView } from './browser/ProjectRightPanelBrowserView';
+import { ProjectRightPanelServicesView } from './services/ProjectRightPanelServicesView';
 import { ProjectBrowseFilesSurface } from './surfaces/ProjectBrowseFilesSurface';
 import { ProjectGitSurface } from './surfaces/ProjectGitSurface';
 import { useProjectSurfaceActions } from './useProjectSurfaceActions';
 import { useProjectSurfaceController } from './useProjectSurfaceController';
+import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
+
+type ProjectRightTabId = string;
 
 export type ProjectRightPanelProps = Readonly<{
     workspaceRef: WorkspaceRefV1;
@@ -48,8 +60,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 10,
     },
-    segmentedContainer: {
+    tabBarContainer: {
         flex: 1,
+        alignItems: 'center',
     },
     closeButton: {
         width: 34,
@@ -76,19 +89,36 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
     const pane = useAppPaneScope(props.scopeId);
     const scopeState = pane.scopeState;
     const headerPaddingTop = 10;
-    const { activeTab, setActiveTab } = useProjectSurfaceController({
+    const pluginProjection = useScopedPluginUiProjection({
+        machineId: props.workspaceRef.machineId,
+        serverId: props.workspaceRef.serverId,
+    });
+    const pluginRightSidebarPlacements = React.useMemo(() => (
+        pluginProjection.pluginUiProjection
+            ? selectPluginRightSidebarTabPlacements(pluginProjection.pluginUiProjection, 'project')
+            : []
+    ), [pluginProjection.pluginUiProjection]);
+    const rightPanelTabs = React.useMemo(() => resolveProjectRightSidebarTabs({
+        presentation: deviceType === 'phone' ? 'mobile' : 'desktop',
+        pluginPlacements: pluginRightSidebarPlacements,
+        projectionGeneration: pluginProjection.pluginUiProjection?.generation ?? null,
+    }), [deviceType, pluginProjection.pluginUiProjection?.generation, pluginRightSidebarPlacements]);
+    const availableTabIds = React.useMemo(() => new Set(rightPanelTabs.map((tab) => tab.id)), [rightPanelTabs]);
+    const controller = useProjectSurfaceController({
         scopeId: props.scopeId,
         workspaceRef: props.workspaceRef,
         activeRootPath: props.activeRootPath,
         activeWorktreeId: props.activeWorktreeId,
     });
+    const activeTab = resolveRightSidebarActiveTab<ProjectRightTabId>(controller.activeTab, rightPanelTabs);
+    const setActiveTab = controller.setActiveTab;
 
     React.useEffect(() => {
         if (!scopeState?.right.isOpen) return;
-        if (!scopeState.right.activeTabId) {
-            pane.setRightTab('git');
+        if (scopeState.right.activeTabId !== activeTab) {
+            pane.setRightTab(activeTab);
         }
-    }, [pane, scopeState?.right.activeTabId, scopeState?.right.isOpen]);
+    }, [activeTab, pane, scopeState?.right.activeTabId, scopeState?.right.isOpen]);
 
     const {
         openFileInDetails,
@@ -105,22 +135,24 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
         onRevealInFilesTreeNavigate: () => setActiveTab('files'),
     });
 
-    const rightPanelTabs = React.useMemo((): ReadonlyArray<SegmentedTab<ProjectRightTabId>> => ([
-        { id: 'git', label: t('settings.sourceControl') },
-        { id: 'files', label: t('common.files') },
-    ]), []);
-
     const workspaceCacheKey = React.useMemo(() => buildWorkspaceCacheKey({
         serverId: props.workspaceRef.serverId,
         machineId: props.workspaceRef.machineId,
         rootPath: props.activeRootPath,
     }), [props.activeRootPath, props.workspaceRef.machineId, props.workspaceRef.serverId]);
 
+    const openServiceInBrowser = useServicesOpenInBrowser({
+        scopeId: props.scopeId,
+        scope: 'workspaceDetails',
+        machineId: props.workspaceRef.machineId,
+        serverId: props.workspaceRef.serverId,
+    });
+
     return (
         <View testID="project-right-panel-root" style={styles.container}>
             <View style={[styles.header, { paddingTop: headerPaddingTop + insets.top }]}>
-                <View style={styles.segmentedContainer}>
-                    <SegmentedTabBar
+                <View style={styles.tabBarContainer}>
+                    <RightSidebarIconTabBar
                         tabs={rightPanelTabs}
                         activeTabId={activeTab}
                         onSelectTab={setActiveTab}
@@ -170,6 +202,45 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
                             />
                         </React.Suspense>
                     </RetainedPanelSurface>
+                    {availableTabIds.has('browser') ? (
+                        <RetainedPanelSurface isActive={activeTab === 'browser'} testID="project-rightpanel-surface-browser">
+                            <React.Suspense fallback={<PaneLoadingFallback color={theme.colors.text.secondary} />}>
+                                <ProjectRightPanelBrowserView workspaceRefId={props.workspaceRef.id} />
+                            </React.Suspense>
+                        </RetainedPanelSurface>
+                    ) : null}
+                    {availableTabIds.has('services') ? (
+                        <RetainedPanelSurface isActive={activeTab === 'services'} testID="project-rightpanel-surface-services">
+                            <React.Suspense fallback={<PaneLoadingFallback color={theme.colors.text.secondary} />}>
+                                <ProjectRightPanelServicesView
+                                    machineId={props.workspaceRef.machineId}
+                                    serverId={props.workspaceRef.serverId}
+                                    workspaceRoot={props.activeRootPath}
+                                    onOpenServiceInBrowser={openServiceInBrowser}
+                                />
+                            </React.Suspense>
+                        </RetainedPanelSurface>
+                    ) : null}
+                    {rightPanelTabs
+                        .filter((tab): tab is RightSidebarPluginTabDefinition => tab.owner === 'plugin')
+                        .map((tab) => tab.disabledReason ? null : (
+                            <RetainedPanelSurface
+                                key={tab.retentionKey}
+                                isActive={activeTab === tab.id}
+                                testID={`project-rightpanel-surface-${tab.id}`}
+                            >
+                                <React.Suspense fallback={<PaneLoadingFallback color={theme.colors.text.secondary} />}>
+                                    <PluginSurfacePlacementHost
+                                        placement={tab.placement}
+                                        machineId={pluginProjection.machineId}
+                                        serverId={pluginProjection.serverId}
+                                        pluginUiProjection={pluginProjection.pluginUiProjection}
+                                        projectionInteractionEnabled={pluginProjection.interactionEnabled}
+                                        platform={pluginProjection.platform}
+                                    />
+                                </React.Suspense>
+                            </RetainedPanelSurface>
+                        ))}
                 </View>
             </View>
         </View>

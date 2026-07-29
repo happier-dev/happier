@@ -2,7 +2,8 @@ import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 
-import { uploadBulkPayloadFromFileViaDirectImport } from '../plumbing/directTransferImportUpload';
+import { uploadBulkPayloadFromFileWithCarrierFallbacks } from '../plumbing/uploadBulkPayloadFromFileWithCarrierFallbacks';
+import type { TransferFinalizeRecoveryFailure } from '../plumbing/directTransferFinalizeRecovery';
 import { downloadBulkPayloadViaDirectExportToDestination } from '../plumbing/directTransferExportDownload';
 import { downloadBulkPayloadViaServerRelayToDestination } from '../plumbing/downloadBulkPayloadViaServerRelayToDestination';
 
@@ -68,7 +69,7 @@ type WorkspaceFileUploadChunkResponse =
     | Readonly<{ success: true }>
     | WorkspaceRpcFailure;
 
-type WorkspaceFileUploadFinalizeResponse =
+export type WorkspaceFileUploadFinalizeResponse =
     | Readonly<{ success: true; path: string; sizeBytes: number; sha256: string }>
     | WorkspaceRpcFailure;
 
@@ -152,19 +153,53 @@ export async function uploadDaemonWorkspaceFileFromReader(params: Readonly<{
     request: WorkspaceFileUploadInitRequest;
     signal?: AbortSignal | null;
     onProgress?: ((progress: Readonly<{ uploadedBytes: number; totalBytes: number }>) => void) | null;
-}>): Promise<WorkspaceFileUploadFinalizeResponse | TransferFailureResponse> {
+}>): Promise<
+    WorkspaceFileUploadFinalizeResponse
+    | TransferFailureResponse
+    | TransferFinalizeRecoveryFailure<WorkspaceFileUploadFinalizeResponse>
+> {
     const absolutePath = resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, requestPath: params.request.path });
-    return await uploadBulkPayloadFromFileViaDirectImport<WorkspaceFileUploadFinalizeResponse>({
+    const transferClient = createWorkspaceFileTransferRpcCaller({
+        machineId: params.machineId,
+        ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+    });
+
+    return await uploadBulkPayloadFromFileWithCarrierFallbacks<WorkspaceFileUploadFinalizeResponse>({
         machineId: params.machineId,
         ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
         fileReader: params.fileReader,
-        request: {
+        directImportRequest: {
             t: 'session_file_upload_v1',
             workingDirectory: params.rootPath,
             path: absolutePath,
             sizeBytes: params.fileReader.sizeBytes,
             overwrite: params.request.overwrite === true,
             ...(typeof params.request.sha256 === 'string' ? { sha256: params.request.sha256 } : {}),
+        },
+        relay: {
+            init: async () => await transferClient.call<
+                WorkspaceFileUploadInitResponse,
+                WorkspaceFileUploadInitRequest & Readonly<{ t: 'session_file_upload_v1' }>
+            >({
+                request: {
+                    ...params.request,
+                    t: 'session_file_upload_v1',
+                    path: absolutePath,
+                },
+                machineMethod: RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT,
+            }),
+            sendChunk: async (request) => await transferClient.call<WorkspaceFileUploadChunkResponse, typeof request>({
+                request,
+                machineMethod: RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK,
+            }),
+            finalize: async (request) => await transferClient.call<WorkspaceFileUploadFinalizeResponse, typeof request>({
+                request,
+                machineMethod: RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE,
+            }),
+            abort: async (request) => await transferClient.call<WorkspaceFileUploadAbortResponse, typeof request>({
+                request,
+                machineMethod: RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT,
+            }),
         },
         onProgress: params.onProgress ?? null,
         signal: params.signal ?? null,
@@ -232,6 +267,11 @@ export async function downloadDaemonWorkspaceFileToDestination(params: Readonly<
     if (directExportResult.ok) {
         return directExportResult;
     }
+    if (params.signal?.aborted) {
+        await params.destination.cleanup();
+        return { ok: false, error: 'Download canceled' };
+    }
+    await params.destination.cleanup();
 
     const relayResult = await downloadBulkPayloadViaServerRelayToDestination({
         machineId: params.machineId,
@@ -275,6 +315,11 @@ export async function downloadDaemonWorkspaceFileToDestination(params: Readonly<
     if (relayResult.ok) {
         return relayResult;
     }
+    if (params.signal?.aborted) {
+        await params.destination.cleanup();
+        return { ok: false, error: 'Download canceled' };
+    }
+    await params.destination.cleanup();
     return await downloadBulkPayloadViaMachineRpcToDestination({
         destination: params.destination,
         init: async (request) => {

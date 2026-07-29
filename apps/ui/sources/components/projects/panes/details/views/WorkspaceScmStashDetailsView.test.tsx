@@ -38,12 +38,14 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
 
-const machineScmStashListSpy = vi.fn<(machineId: string, request: any) => Promise<any>>(async () => ({
+type MachineScmStashCallSpy = (machineId: string, request: any, options?: any) => Promise<any>;
+
+const machineScmStashListSpy = vi.fn<MachineScmStashCallSpy>(async () => ({
     success: true,
     stashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() }],
     totalCount: 1,
 }));
-const machineScmStashShowSpy = vi.fn<(machineId: string, request: any) => Promise<any>>(async (_machineId, request) => ({
+const machineScmStashShowSpy = vi.fn<MachineScmStashCallSpy>(async (_machineId, request) => ({
     success: true,
     diff: [
         `diff --git a/${request.stashRef}.ts b/${request.stashRef}.ts`,
@@ -57,14 +59,14 @@ const machineScmStashShowSpy = vi.fn<(machineId: string, request: any) => Promis
     ].join('\n'),
     truncated: false,
 }));
-const machineScmStashPopSpy = vi.fn<(machineId: string, request: any) => Promise<any>>(async () => ({ success: true }));
-const machineScmStashDropSpy = vi.fn<(machineId: string, request: any) => Promise<any>>(async () => ({ success: true }));
+const machineScmStashPopSpy = vi.fn<MachineScmStashCallSpy>(async () => ({ success: true }));
+const machineScmStashDropSpy = vi.fn<MachineScmStashCallSpy>(async () => ({ success: true }));
 
 vi.mock('@/sync/ops/scm/machineScm', () => ({
-    machineScmStashList: (machineId: string, request: any) => machineScmStashListSpy(machineId, request),
-    machineScmStashShow: (machineId: string, request: any) => machineScmStashShowSpy(machineId, request),
-    machineScmStashPop: (machineId: string, request: any) => machineScmStashPopSpy(machineId, request),
-    machineScmStashDrop: (machineId: string, request: any) => machineScmStashDropSpy(machineId, request),
+    machineScmStashList: (...args: Parameters<MachineScmStashCallSpy>) => machineScmStashListSpy(...args),
+    machineScmStashShow: (...args: Parameters<MachineScmStashCallSpy>) => machineScmStashShowSpy(...args),
+    machineScmStashPop: (...args: Parameters<MachineScmStashCallSpy>) => machineScmStashPopSpy(...args),
+    machineScmStashDrop: (...args: Parameters<MachineScmStashCallSpy>) => machineScmStashDropSpy(...args),
 }));
 
 const diffFilesListSpy = vi.fn();
@@ -168,8 +170,8 @@ describe('WorkspaceScmStashDetailsView', () => {
 
         await settle();
 
-        expect(machineScmStashListSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo' }));
-        expect(machineScmStashShowSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{0}' }));
+        expect(machineScmStashListSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo' }), { serverId: 's1' });
+        expect(machineScmStashShowSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{0}' }), { serverId: 's1' });
         expect(diffFilesListSpy).toHaveBeenCalled();
     });
 
@@ -193,14 +195,14 @@ describe('WorkspaceScmStashDetailsView', () => {
             restoreButton.props.onPress?.();
             await settle();
         });
-        expect(machineScmStashPopSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{0}' }));
+        expect(machineScmStashPopSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{0}' }), { serverId: 's1' });
 
         const discardButton = screen.tree.findByProps({ accessibilityLabel: 'files.stash.discard' });
         await act(async () => {
             discardButton.props.onPress?.();
             await settle();
         });
-        expect(machineScmStashDropSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{0}' }));
+        expect(machineScmStashDropSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{0}' }), { serverId: 's1' });
     });
 
     it('switches between stashes from the dropdown trigger and shows stash metadata in the subtitle', async () => {
@@ -248,7 +250,7 @@ describe('WorkspaceScmStashDetailsView', () => {
             await settle();
         });
 
-        expect(machineScmStashShowSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{1}' }));
+        expect(machineScmStashShowSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{1}' }), { serverId: 's1' });
         const updatedSelector = screen.tree.findByProps({ title: 'files.stash.detailsTitle' });
         expect(String(updatedSelector.props.subtitle ?? '')).toContain('stash@{1}');
     });

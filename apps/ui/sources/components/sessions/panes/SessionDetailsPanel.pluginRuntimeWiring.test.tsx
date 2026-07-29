@@ -55,6 +55,8 @@ installSessionDetailsPanelCommonModuleMocks({
         return createStorageModuleStub({
             useLocalSetting: () => null,
             useLocalSettingMutable: () => [false, vi.fn()],
+            useEndpointStatus: () => 'online',
+            useMachineCliDetectionTarget: () => ({ daemonStateVersion: 10, isOnline: true }),
         });
     },
 });
@@ -142,6 +144,8 @@ vi.mock('@/sync/store/hooks', () => ({
 }));
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+    getMachineContributionRegistryProjectionRevision: () => 0,
+    subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machineContributionRegistryProjectionDescribe: (...args: readonly unknown[]) =>
         testState.machineContributionRegistryProjectionDescribe(...args),
 }));
@@ -219,35 +223,6 @@ function localPreviewProjection(): PluginUiProjectionModel {
     };
 }
 
-function revokedArtifactsProjection(params: Readonly<{
-    pluginId: string;
-    reactNativeDigest: string;
-    embeddedWebDigest: string;
-}>): PluginUiProjectionModel {
-    return {
-        ...EMPTY_PLUGIN_UI_PROJECTION,
-        generation: 11,
-        uiArtifactsById: {
-            [`uiArtifact:${params.pluginId}:native-ios`]: {
-                id: `uiArtifact:${params.pluginId}:native-ios`,
-                pluginId: params.pluginId,
-                contributionKind: 'uiArtifact',
-                artifactId: 'native-ios',
-                integrity: { digest: params.reactNativeDigest },
-                revokedAt: '2026-06-15T10:00:00.000Z',
-            },
-            [`uiArtifact:${params.pluginId}:embedded-web`]: {
-                id: `uiArtifact:${params.pluginId}:embedded-web`,
-                pluginId: params.pluginId,
-                contributionKind: 'uiArtifact',
-                artifactId: 'embedded-web',
-                integrity: { digest: params.embeddedWebDigest },
-                revokedAt: '2026-06-15T10:00:00.000Z',
-            },
-        },
-    };
-}
-
 async function flushEffects() {
     await flushHookEffects({ cycles: 8, turns: 3 });
 }
@@ -262,6 +237,10 @@ describe('SessionDetailsPanel plugin runtime wiring', () => {
             surfaceId: 'sessionSurface:acme.preview:preview-pane',
         };
         testState.machineContributionRegistryProjectionDescribe.mockReset();
+        testState.machineContributionRegistryProjectionDescribe.mockResolvedValue({
+            supported: false,
+            reason: 'not-supported',
+        });
         testState.useLocalServicePreviewState.mockReset();
         testState.useLocalServicePreviewState.mockReturnValue(null);
         testState.usePeerMediationObservabilityStore.mockReset();
@@ -499,46 +478,4 @@ describe('SessionDetailsPanel plugin runtime wiring', () => {
         expect(screen.findByTestId('session-browser-pane-supplemental-diagnostics')).toBeTruthy();
     });
 
-    it('evicts cached plugin UI executable bytes when the applied projection marks artifacts revoked', async () => {
-        const pluginId = 'acme.revoked';
-        const reactNativeDigest = 'sha256:revoked-rn-session-runtime';
-        const embeddedWebDigest = 'sha256:revoked-embedded-session-runtime';
-        const { getInstalledPluginReactNativeBundleCache } = await import('@/components/plugins/reactNative/bundleCache');
-        const reactNativeCache = getInstalledPluginReactNativeBundleCache();
-        const reactNativeIdentity = {
-            pluginId,
-            contributionId: 'native-preview',
-            artifactDigest: reactNativeDigest,
-            hostAppVersion: '2.0.0',
-            hostUiApiVersion: '1.0.0',
-            reactVersion: '19.0.0',
-            reactNativeVersion: '0.83.4',
-            platform: 'ios',
-            channel: 'internal',
-            nativeCapabilitiesDigest: 'sha256:native-capabilities',
-            projectionGeneration: 10,
-        } as const;
-        reactNativeCache.putInstalledArtifact({
-            identity: reactNativeIdentity,
-            bytes: new Uint8Array([1, 2, 3]),
-            format: 'plainJs',
-        });
-        expect(reactNativeCache.readInstalledArtifact(reactNativeIdentity)).not.toBeNull();
-        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-
-        await renderScreen(
-            <SessionDetailsPanel
-                sessionId="s1"
-                scopeId="session:s1"
-                pluginUiProjection={revokedArtifactsProjection({
-                    pluginId,
-                    reactNativeDigest,
-                    embeddedWebDigest,
-                })}
-            />,
-        );
-        await flushEffects();
-
-        expect(reactNativeCache.readInstalledArtifact(reactNativeIdentity)).toBeNull();
-    });
 });

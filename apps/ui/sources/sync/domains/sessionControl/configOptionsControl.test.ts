@@ -19,11 +19,11 @@ describe('computeSessionConfigOptionControls', () => {
         expect(computeSessionConfigOptionControls({ agentId: 'opencode', metadata: createMetadata() })).toBeNull();
     });
 
-    it('returns null when provider does not match the session agent', () => {
+    it('returns null when the metadata agent does not match the session agent', () => {
         const metadata = createMetadata({
             acpConfigOptionsV1: {
                 v: 1,
-                provider: 'qwen',
+                agentId: 'qwen',
                 updatedAt: 1,
                 configOptions: [{ id: 'telemetry', name: 'Telemetry', type: 'boolean', currentValue: 'false' }],
             },
@@ -36,7 +36,7 @@ describe('computeSessionConfigOptionControls', () => {
         const metadata = createMetadata({
             sessionConfigOptionsV1: {
                 v: 1,
-                provider: 'opencode',
+                agentId: 'opencode',
                 updatedAt: 1,
                 configOptions: [{ id: 'telemetry', name: 'Telemetry', type: 'boolean', currentValue: 'false' }],
             },
@@ -61,7 +61,7 @@ describe('computeSessionConfigOptionControls', () => {
         const metadata = createMetadata({
             sessionConfigOptionsV1: {
                 v: 1,
-                provider: 'opencode',
+                agentId: 'opencode',
                 updatedAt: 1,
                 configOptions: [{
                     id: 'reasoning_effort',
@@ -95,7 +95,7 @@ describe('computeSessionConfigOptionControls', () => {
         const metadata = createMetadata({
             sessionConfigOptionsV1: {
                 v: 1,
-                provider: 'opencode',
+                agentId: 'opencode',
                 updatedAt: 1,
                 configOptions: [{
                     id: 'reasoning_effort',
@@ -123,25 +123,198 @@ describe('computeSessionConfigOptionControls', () => {
         });
     });
 
+    it('preserves grouped config choices for the control while validating selections across groups', () => {
+        const metadata = createMetadata({
+            sessionConfigOptionsV1: {
+                v: 1,
+                agentId: 'opencode',
+                updatedAt: 1,
+                configOptions: [{
+                    id: 'model',
+                    name: 'Model',
+                    type: 'select',
+                    currentValue: 'model-1',
+                    groups: [{
+                        id: 'curated',
+                        name: 'Curated',
+                        options: [{ value: 'model-1', name: 'Model 1' }],
+                    }, {
+                        id: 'external',
+                        name: 'External',
+                        options: [{ value: 'model-2', name: 'Model 2' }],
+                    }],
+                }],
+            },
+            sessionConfigOptionOverridesV1: {
+                v: 1,
+                updatedAt: 2,
+                overrides: { model: { updatedAt: 2, value: 'model-2' } },
+            },
+        });
+
+        expect(computeSessionConfigOptionControls({ agentId: 'opencode', metadata })).toEqual([
+            expect.objectContaining({
+                option: expect.objectContaining({
+                    id: 'model',
+                    groups: [
+                        expect.objectContaining({ id: 'curated' }),
+                        expect.objectContaining({ id: 'external' }),
+                    ],
+                }),
+                requestedValue: 'model-2',
+                effectiveValue: 'model-2',
+                isPending: true,
+            }),
+        ]);
+    });
+
+    it('preserves opaque whitespace config values when selecting a grouped choice', () => {
+        const metadata = createMetadata({
+            sessionConfigOptionsV1: {
+                v: 1,
+                agentId: 'opencode',
+                updatedAt: 1,
+                configOptions: [{
+                    id: ' model ',
+                    name: 'Model',
+                    type: 'select',
+                    currentValue: ' model-1 ',
+                    groups: [{
+                        id: ' curated ',
+                        name: 'Curated',
+                        options: [{ value: ' model-1 ', name: 'Model 1' }],
+                    }, {
+                        id: ' external ',
+                        name: 'External',
+                        options: [{ value: ' model-2 ', name: 'Model 2' }],
+                    }],
+                }],
+            },
+            sessionConfigOptionOverridesV1: {
+                v: 1,
+                updatedAt: 2,
+                overrides: { ' model ': { updatedAt: 2, value: ' model-2 ' } },
+            },
+        });
+
+        expect(computeSessionConfigOptionControls({ agentId: 'opencode', metadata })).toEqual([
+            expect.objectContaining({
+                option: expect.objectContaining({
+                    id: ' model ',
+                    currentValue: ' model-1 ',
+                    groups: [
+                        expect.objectContaining({ id: ' curated ', options: [expect.objectContaining({ value: ' model-1 ' })] }),
+                        expect.objectContaining({ id: ' external ', options: [expect.objectContaining({ value: ' model-2 ' })] }),
+                    ],
+                }),
+                requestedValue: ' model-2 ',
+                effectiveValue: ' model-2 ',
+                isPending: true,
+            }),
+        ]);
+    });
+
+    it('keeps usable groups when the SDK includes an empty group', () => {
+        const metadata = createMetadata({
+            sessionConfigOptionsV1: {
+                v: 1,
+                agentId: 'opencode',
+                updatedAt: 1,
+                configOptions: [{
+                    id: 'model',
+                    name: 'Model',
+                    type: 'select',
+                    currentValue: 'model-1',
+                    groups: [{
+                        id: 'recent',
+                        name: 'Recent',
+                        options: [],
+                    }, {
+                        id: 'curated',
+                        name: 'Curated',
+                        options: [{ value: 'model-1', name: 'Model 1' }],
+                    }],
+                }],
+            },
+        });
+
+        expect(computeSessionConfigOptionControls({ agentId: 'opencode', metadata })).toEqual([
+            expect.objectContaining({
+                option: expect.objectContaining({
+                    id: 'model',
+                    groups: [expect.objectContaining({ id: 'curated' })],
+                }),
+                effectiveValue: 'model-1',
+            }),
+        ]);
+    });
+
+    it('hides ambiguous duplicate group, choice, and config identifiers', () => {
+        const metadata = createMetadata({
+            sessionConfigOptionsV1: {
+                v: 1,
+                agentId: 'opencode',
+                updatedAt: 1,
+                configOptions: [{
+                    id: 'telemetry',
+                    name: 'Telemetry',
+                    type: 'boolean',
+                    currentValue: 'false',
+                }, {
+                    id: 'model',
+                    name: 'Model',
+                    type: 'select',
+                    currentValue: 'model-1',
+                    groups: [{ id: 'catalog', name: 'Catalog', options: [{ value: 'model-1', name: 'Model 1' }] }, {
+                        id: 'catalog', name: 'Other catalog', options: [{ value: 'model-2', name: 'Model 2' }],
+                    }],
+                }, {
+                    id: 'effort',
+                    name: 'Effort',
+                    type: 'select',
+                    currentValue: 'low',
+                    groups: [{
+                        id: 'levels',
+                        name: 'Levels',
+                        options: [{ value: 'low', name: 'Low' }, { value: 'low', name: 'Low duplicate' }],
+                    }],
+                }, {
+                    id: 'duplicate',
+                    name: 'First duplicate',
+                    type: 'boolean',
+                    currentValue: 'false',
+                }, {
+                    id: 'duplicate',
+                    name: 'Second duplicate',
+                    type: 'boolean',
+                    currentValue: 'true',
+                }],
+            },
+        });
+
+        expect(computeSessionConfigOptionControls({ agentId: 'opencode', metadata })?.map((control) => control.option.id))
+            .toEqual(['telemetry']);
+    });
+
     it('hides config options that would duplicate the dedicated Mode/Model controls', () => {
         const metadata = createMetadata({
             sessionModesV1: {
                 v: 1,
-                provider: 'opencode',
+                agentId: 'opencode',
                 updatedAt: 1,
                 currentModeId: 'build',
                 availableModes: [{ id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' }],
             },
             sessionModelsV1: {
                 v: 1,
-                provider: 'opencode',
+                agentId: 'opencode',
                 updatedAt: 1,
                 currentModelId: 'm1',
                 availableModels: [{ id: 'm1', name: 'Model 1' }],
             },
             sessionConfigOptionsV1: {
                 v: 1,
-                provider: 'opencode',
+                agentId: 'opencode',
                 updatedAt: 1,
                 configOptions: [
                     { id: 'mode', name: 'Mode', type: 'select', currentValue: 'build', options: [{ value: 'build', name: 'Build' }] },
@@ -159,7 +332,7 @@ describe('computeSessionConfigOptionControls', () => {
         const metadata = createMetadata({
             sessionConfigOptionsV1: {
                 v: 1,
-                provider: 'opencode',
+                agentId: 'opencode',
                 updatedAt: 1,
                 configOptions: [
                     { id: 'good', name: 'Good', type: 'string', currentValue: 'enabled' },
@@ -188,7 +361,7 @@ describe('computeSessionConfigOptionControls', () => {
         const metadata = createMetadata({
             sessionConfigOptionsV1: {
                 v: 1,
-                provider: 'opencode',
+                agentId: 'opencode',
                 updatedAt: 1,
                 configOptions: [
                     { id: 'booleanFlag', name: 'Boolean flag', type: 'boolean', currentValue: false },
@@ -226,7 +399,7 @@ describe('computeSessionConfigOptionControls', () => {
         const metadata = createMetadata({
             acpConfigOptionsV1: {
                 v: 1,
-                provider: 'opencode',
+                agentId: 'opencode',
                 updatedAt: 1,
                 configOptions: [{ id: 'telemetry', name: 'Telemetry', type: 'boolean', currentValue: 'false' }],
             },
@@ -245,7 +418,7 @@ describe('computeSessionConfigOptionControls', () => {
         const metadata = createMetadata({
             sessionConfigOptionsV1: {
                 v: 1,
-                provider: 'opencode',
+                agentId: 'opencode',
                 updatedAt: 1,
                 configOptions: [{ id: 'telemetry', name: 'Telemetry', type: 'boolean', currentValue: 'false' }],
             },

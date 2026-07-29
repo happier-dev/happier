@@ -6,25 +6,35 @@ import {
     Pressable,
     View,
     type GestureResponderEvent,
-    type LayoutChangeEvent } from 'react-native';
-import { GestureDetector,
+    type LayoutChangeEvent,
+} from 'react-native';
+import {
+    GestureDetector,
     Swipeable,
     type ComposedGesture,
-    type GestureType } from 'react-native-gesture-handler';
-import { Ionicons,
-    Octicons } from '@expo/vector-icons';
-import { StyleSheet,
-    useUnistyles } from 'react-native-unistyles';
+    type GestureType,
+} from 'react-native-gesture-handler';
+import {
+    Ionicons,
+    Octicons,
+} from '@expo/vector-icons';
+import {
+    StyleSheet,
+    useUnistyles,
+} from 'react-native-unistyles';
 
-import { Text,
-    Text as RNText } from '@/components/ui/text/Text';
+import {
+    Text,
+    Text as RNText,
+} from '@/components/ui/text/Text';
 import {
     WEB_START_ELLIPSIS_CONTAINER_TEXT_STYLE,
     WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE,
-    } from '@/components/ui/text/webStartEllipsisTextStyles';
+} from '@/components/ui/text/webStartEllipsisTextStyles';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
-import { DEFAULT_AGENT_ID,
+import {
+    DEFAULT_AGENT_ID,
     getAgentCore,
 } from '@/agents/catalog/catalog';
 import { Typography } from '@/constants/Typography';
@@ -47,6 +57,7 @@ import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyF
 import {
     resolveSessionRowAttentionState,
     resolveSessionRowPresentation,
+    type SessionRowAttentionState,
 } from './row/resolveSessionRowPresentation';
 import {
     normalizeSessionListActiveColorMode,
@@ -96,8 +107,14 @@ import {
     createCopySessionDebugInformationMenuItem,
     SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID,
 } from '@/components/sessions/debug/sessionDebugMenuItem';
-import { storage,
-    useLocalSetting } from '@/sync/domains/state/storage';
+import {
+    storage,
+    useLocalSetting,
+} from '@/sync/domains/state/storage';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
+import type { ExternalSessionRuntimePresentation } from '../presentation/externalSessionRuntimePresentation';
+import type { ExternalSessionIdentityPresentation } from '../presentation/externalSessionIdentityPresentation';
 
 const AVATAR_SIZE_DEFAULT = 48;
 const AVATAR_SIZE_COMPACT = 30;
@@ -166,6 +183,8 @@ export type SessionItemProps = SessionItemBaseProps & Readonly<{
 
 type SessionItemContentProps = Omit<SessionItemBaseProps, 'subtitleOverride'> & Readonly<{
     sessionStatus: SessionStatus;
+    externalSessionRuntime: ExternalSessionRuntimePresentation | null;
+    externalSessionIdentity: ExternalSessionIdentityPresentation | null;
     sessionNameResolved: string;
     sessionSubtitle: string;
     isSessionIdentityLoading: boolean;
@@ -762,6 +781,8 @@ const SessionItemContent = React.memo(
         nativeContextMenuOpen,
         onNativeContextMenuOpenChange,
         sessionStatus,
+        externalSessionRuntime,
+        externalSessionIdentity,
         sessionNameResolved,
         sessionSubtitle,
         isSessionIdentityLoading,
@@ -780,9 +801,19 @@ const SessionItemContent = React.memo(
         const devModeEnabled = isSessionDebugInformationEnabled(localDevModeEnabled);
         const resolvedSession = session;
         const sessionId = String(resolvedSession?.id ?? '').trim();
+        const resolvedSessionMetadata = React.useMemo(
+            () => 'agentState' in resolvedSession
+                ? readSessionOwnerMetadataView(resolvedSession)
+                : resolvedSession.metadata,
+            [resolvedSession],
+        );
         const agentId = React.useMemo(
-            () => resolveAgentIdFromSessionMetadata(resolvedSession.metadata) ?? DEFAULT_AGENT_ID,
-            [resolvedSession.metadata],
+            () => (
+                'agentState' in resolvedSession
+                    ? readSessionPresentationAgentId(resolvedSession)
+                    : resolveAgentIdFromSessionMetadata(resolvedSessionMetadata)
+            ) ?? DEFAULT_AGENT_ID,
+            [resolvedSession, resolvedSessionMetadata],
         );
         const resolvedSelectionKey = selectionKey ?? '';
         const rowSelection = useOptionalSessionListSelectionRow(resolvedSelectionKey);
@@ -849,9 +880,12 @@ const SessionItemContent = React.memo(
         const resolveSessionDebugInformation = React.useCallback(() => {
             const fullSession = storage.getState().sessions[resolvedSession.id];
             const debugSession = fullSession ?? resolvedSession;
-            const debugMetadata = debugSession.metadata ?? resolvedSession.metadata;
+            const debugMetadata = fullSession
+                ? readSessionOwnerMetadataView(fullSession)
+                : (resolvedSession.metadataLayoutVersion ?? 0) === 0
+                    ? resolvedSession.metadata
+                    : null;
             const debugAgentId = resolveAgentIdFromSessionMetadata(debugMetadata)
-                ?? resolveAgentIdFromSessionMetadata(resolvedSession.metadata)
                 ?? DEFAULT_AGENT_ID;
             const debugAgentCore = getAgentCore(debugAgentId);
             const providerSessionId = resolveProviderSessionIdForDebug({
@@ -1261,6 +1295,7 @@ const SessionItemContent = React.memo(
             lastRuntimeIssue: resolvedSession.lastRuntimeIssue ?? null,
             active: resolvedSession.active,
             activeAt: resolvedSession.activeAt,
+            archivedAt: resolvedSession.archivedAt,
             presence: resolvedSession.presence,
             thinking: resolvedSession.thinking,
             thinkingAt: resolvedSession.thinkingAt,
@@ -1268,10 +1303,10 @@ const SessionItemContent = React.memo(
             seq: resolvedSession.seq,
             meaningfulActivityAt: resolvedSession.meaningfulActivityAt ?? null,
             latestTurnStatusObservedAt: resolvedSession.latestTurnStatusObservedAt ?? null,
+            runtimeActivityState: resolvedSession.runtimeActivityState ?? 'unknown',
             runtimeActivityActiveCount: resolvedSession.runtimeActivityActiveCount ?? null,
             runtimeActivityObservedAt: resolvedSession.runtimeActivityObservedAt ?? null,
-            runtimeActivityExpiresAt: resolvedSession.runtimeActivityExpiresAt ?? null,
-            runtimeActivitySourceClass: resolvedSession.runtimeActivitySourceClass ?? null,
+            runtimeActivityRevision: resolvedSession.runtimeActivityRevision ?? null,
             latestReadyEventSeq: resolvedSession.latestReadyEventSeq ?? null,
             lastViewedSessionSeq: resolvedSession.lastViewedSessionSeq ?? null,
             pendingRequestObservedAt: resolvedSession.pendingRequestObservedAt ?? null,
@@ -1295,13 +1330,41 @@ const SessionItemContent = React.memo(
             requestedSecondaryLineMode,
             hasPathSubtitle: Boolean(sessionSubtitle),
             workingRetained: presentsRetainedWorking,
+            backgroundActive: sessionStatus.state === 'background_active',
         });
-        const effectiveSecondaryLineMode: SessionListSecondaryLineMode = rowPresentation.secondaryLine === 'path' ? 'path' : 'status';
-        const statusLineText = rowPresentation.statusTextKey ? t(rowPresentation.statusTextKey) : sessionStatus.statusText;
-        const rowStatusColor = (() => {
+        const externalAttentionState: SessionRowAttentionState | null = externalSessionRuntime
+            ? externalSessionRuntime.externalAgent.indicator === 'working'
+                ? 'working'
+                : externalSessionRuntime.externalAgent.indicator === 'action'
+                    ? 'action_required'
+                    : externalSessionRuntime.externalAgent.indicator === 'ready'
+                        ? 'ready'
+                        : 'quiet'
+            : null;
+        const statusAttentionState = externalAttentionState ?? rowAttentionState;
+        const statusAttentionIndicator = externalSessionRuntime?.externalAgent.indicator
+            ?? rowPresentation.attentionIndicator;
+        const effectiveSecondaryLineMode: SessionListSecondaryLineMode = externalSessionRuntime
+            ? 'status'
+            : rowPresentation.secondaryLine === 'path'
+                ? 'path'
+                : 'status';
+        const externalAgentStatusText = externalSessionRuntime
+            ? t(externalSessionRuntime.externalAgent.labelKey)
+            : null;
+        const externalIdentityText = externalSessionIdentity
+            ? [externalSessionIdentity.agentLabel, externalSessionIdentity.rowMetadataLabel]
+                .filter((value): value is string => Boolean(value))
+                .join(' · ')
+            : '';
+        const statusLineText = externalAgentStatusText
+            ? [externalAgentStatusText, externalIdentityText].filter(Boolean).join(' · ')
+            : rowPresentation.statusTextKey
+                ? t(rowPresentation.statusTextKey)
+                : sessionStatus.statusText;
+        const baseRowStatusColor = (() => {
             switch (rowAttentionState) {
                 case 'working':
-                case 'backgroundActive':
                     return theme.colors.state.info.foreground;
                 case 'ready':
                     return theme.colors.state.success.foreground;
@@ -1318,20 +1381,32 @@ const SessionItemContent = React.memo(
                     return theme.colors.text.secondary;
             }
         })();
-        const rowAttentionAccessibilityLabel =
-            rowAttentionState === 'failed'
+        const rowStatusColor = externalSessionRuntime
+            ? externalSessionRuntime.externalAgent.tone === 'live'
+                ? theme.colors.state.info.foreground
+                : externalSessionRuntime.externalAgent.tone === 'ready'
+                    ? theme.colors.state.success.foreground
+                    : externalSessionRuntime.externalAgent.tone === 'attention'
+                        || externalSessionRuntime.externalAgent.tone === 'warning'
+                        ? theme.colors.state.warning.foreground
+                        : theme.colors.text.secondary
+            : rowPresentation.statusTextKey === 'status.backgroundActive'
+                ? theme.colors.text.secondary
+                : baseRowStatusColor;
+        const rowAttentionAccessibilityLabel = externalAgentStatusText
+            ? externalAgentStatusText
+            : rowAttentionState === 'failed'
                 ? t('status.error')
                 : rowPresentation.attentionIndicator === 'working'
-                    || rowPresentation.attentionIndicator === 'background'
                     || rowPresentation.attentionIndicator === 'permission'
                     || rowPresentation.attentionIndicator === 'action'
                     ? statusLineText
-                    : rowPresentation.statusTextKey
+                    : rowPresentation.statusTextKey && rowPresentation.statusTextKey !== 'status.backgroundActive'
                         ? statusLineText
                         : undefined;
         const effectiveSubtitleEllipsizeMode = subtitleEllipsizeMode ?? 'head';
-        const shouldShowStatusSecondaryLine = rowPresentation.secondaryLine === 'status' && statusLineText.trim().length > 0;
-        const shouldShowPathSecondaryLine = rowPresentation.secondaryLine === 'path' && Boolean(sessionSubtitle);
+        const shouldShowStatusSecondaryLine = effectiveSecondaryLineMode === 'status' && statusLineText.trim().length > 0;
+        const shouldShowPathSecondaryLine = effectiveSecondaryLineMode === 'path' && Boolean(sessionSubtitle);
         const shouldUsePathSubtitleStartEllipsis = shouldShowPathSecondaryLine && effectiveSubtitleEllipsizeMode === 'head';
         const shouldUseWebPathSubtitleStartEllipsis = shouldUsePathSubtitleStartEllipsis && isWeb;
         const shouldShowIdentitySubtitleSkeleton = !isMinimal && isSessionIdentityLoading && requestedSecondaryLineMode === 'path';
@@ -1341,7 +1416,7 @@ const SessionItemContent = React.memo(
             || shouldShowPathSecondaryLine
         );
         const shouldEmphasizeTitle = rowPresentation.titleTone === 'emphasized';
-        const trailingAttentionIndicator = isMinimal ? rowPresentation.attentionIndicator : 'none';
+        const trailingAttentionIndicator = isMinimal ? statusAttentionIndicator : 'none';
         const showTrailingAttentionIndicator = trailingAttentionIndicator !== 'none';
         const trailingAttentionReplacesTime = trailingAttentionIndicator === 'working';
         const showTrailingActivityTime = Boolean(activityTimeLabel) && !trailingAttentionReplacesTime;
@@ -1512,7 +1587,7 @@ const SessionItemContent = React.memo(
                                 id={avatarId}
                                 size={avatarSize}
                                 monochrome={resolvedSession.active !== true || !sessionStatus.isConnected}
-                                flavor={resolvedSession.metadata?.flavor}
+                                flavor={agentId}
                                 hasUnreadMessages={false}
                             />
                         ) : (
@@ -1596,11 +1671,11 @@ const SessionItemContent = React.memo(
                                         compact ? styles.secondaryStatusDotContainerCompact : null,
                                     ]}
                                 >
-                                    {rowPresentation.attentionIndicator !== 'none' ? (
+                                    {statusAttentionIndicator !== 'none' ? (
                                         <SessionRowAttentionIndicator
-                                            indicator={rowPresentation.attentionIndicator}
+                                            indicator={statusAttentionIndicator}
                                             sessionId={`${resolvedSession.id}-secondary`}
-                                            attentionState={rowAttentionState}
+                                            attentionState={statusAttentionState}
                                             accessibilityLabel={rowAttentionAccessibilityLabel}
                                             workingMode={workingIndicatorMode}
                                             animationEnabled={attentionIndicatorAnimationEnabled}
@@ -1799,7 +1874,7 @@ const SessionItemContent = React.memo(
                                 <SessionRowAttentionIndicator
                                     indicator={trailingAttentionIndicator}
                                     sessionId={`${resolvedSession.id}-trailing`}
-                                    attentionState={rowAttentionState}
+                                    attentionState={statusAttentionState}
                                     accessibilityLabel={rowAttentionAccessibilityLabel}
                                     workingMode={workingIndicatorMode}
                                     workingSpinnerTone="neutral"
@@ -1972,6 +2047,8 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
             secondaryLineMode={itemProps.secondaryLineMode ?? rowViewModel.secondaryLineMode}
             activityTimeLabel={rowViewModel.activityTimeLabel}
             sessionStatus={sessionStatus}
+            externalSessionRuntime={rowViewModel.externalSessionRuntime}
+            externalSessionIdentity={rowViewModel.externalSessionIdentity}
             sessionNameResolved={sessionNameResolved}
             sessionSubtitle={itemProps.subtitleOverride ?? rowViewModel.subtitleOverride ?? getSessionSubtitle(session)}
             isSessionIdentityLoading={rowViewModel.isIdentityLoading}

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ManagedEndpointSupervisor, ManagedEndpointSupervisorState } from '@happier-dev/connection-supervisor';
 
 import type { PauseController } from '@/utils/timing/pauseController';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 // Sync imports persistence, which instantiates MMKV. Mock it for deterministic tests.
 const kvStore = vi.hoisted(() => new Map<string, string>());
@@ -121,6 +122,109 @@ describe('sync AppState pause/resume', () => {
 
     afterEach(() => {
         vi.unstubAllGlobals();
+    });
+
+    it('rearms only current-scope durable outbox sessions once without mounting a session route', async () => {
+        const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const { storage } = await import('./domains/state/storage');
+        const { savePendingOutboxMessage } = await import('./domains/state/pendingOutboxPersistence');
+        const profile = upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+        const activeScope = {
+            serverId: String(getActiveServerSnapshot().serverId ?? profile.id),
+            accountId: 'account-a',
+        } as const;
+        const otherScope = { ...activeScope, accountId: 'account-b' } as const;
+        storage.getState().activateProfileScope(activeScope);
+
+        const save = (sessionId: string, localId: string, scope: ServerAccountScope) => {
+            savePendingOutboxMessage({
+                sessionId,
+                localId,
+                createdAt: 100,
+                text: localId,
+                rawRecord: { role: 'user' },
+                request: {
+                    v: 1,
+                    body: JSON.stringify({
+                        localId,
+                        content: { t: 'plain', v: { role: 'user' } },
+                        messageRole: 'user',
+                    }),
+                },
+            }, scope);
+        };
+        save('session-b', 'local-b', activeScope);
+        save('session-a', 'local-a', activeScope);
+        save('other-account-session', 'other-local', otherScope);
+
+        const { sync } = await import('./sync');
+        let releaseReplay!: () => void;
+        const replayBarrier = new Promise<void>((resolve) => {
+            releaseReplay = resolve;
+        });
+        const fetchPendingMessages = vi.spyOn(sync, 'fetchPendingMessages')
+            .mockImplementation(async () => replayBarrier);
+
+        const first = (sync as any).rearmPendingOutboxForActiveScope() as Promise<void>;
+        const second = (sync as any).rearmPendingOutboxForActiveScope() as Promise<void>;
+        await Promise.resolve();
+
+        expect(second).toBe(first);
+        expect(fetchPendingMessages.mock.calls).toEqual([
+            ['session-a', activeScope],
+            ['session-b', activeScope],
+        ]);
+
+        releaseReplay();
+        await first;
+    });
+
+    it('invokes durable outbox rearm from both bootstrap and the foreground resume pipeline', async () => {
+        const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const { storage } = await import('./domains/state/storage');
+        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+        storage.getState().activateProfileScope({
+            serverId: String(getActiveServerSnapshot().serverId ?? ''),
+            accountId: 'account-a',
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = { token: 'token', secret: 'secret' };
+        (sync as any).serverID = 'account-a';
+        const rearm = vi.spyOn(sync as any, 'rearmPendingOutboxForActiveScope').mockResolvedValue(undefined);
+        const syncUnit = {
+            invalidateCoalesced: vi.fn(),
+            awaitQueue: vi.fn(async () => undefined),
+        };
+        for (const field of [
+            'settingsSync',
+            'profileSync',
+            'accountPetsSync',
+            'sessionsSync',
+            'machinesSync',
+            'purchasesSync',
+            'artifactsSync',
+            'automationsSync',
+            'todosSync',
+            'friendsSync',
+            'friendRequestsSync',
+            'feedSync',
+            'pushTokenSync',
+            'nativeUpdateSync',
+        ]) {
+            (sync as any)[field] = syncUnit;
+        }
+
+        await (sync as any).bootstrapSync();
+        expect(rearm).toHaveBeenCalledTimes(1);
+
+        storage.setState((state) => ({
+            ...state,
+            profile: { ...(state.profile ?? {}), id: 'account-a' },
+        }), true);
+        vi.spyOn(sync as any, 'resumeViaChanges').mockResolvedValue('aborted');
+        await sync.resumeSync('app-foreground');
+        expect(rearm).toHaveBeenCalledTimes(2);
     });
 
     it('pauses on background and resumes on active (disconnect/connect socket + invalidate endpoint)', async () => {

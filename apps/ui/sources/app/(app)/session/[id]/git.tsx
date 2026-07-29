@@ -41,6 +41,7 @@ export default function SessionGitScreenRoute() {
     const openRight = pane.openRight;
     const closeRight = pane.closeRight;
     const setRightTab = pane.setRightTab;
+    const initializedRightPaneSessionRef = React.useRef<string | null>(null);
 
     const detailsState = pane.scopeState?.details ?? null;
     const detailsSelection = React.useMemo(() => resolveFullscreenDetailsRouteSelection({
@@ -53,6 +54,8 @@ export default function SessionGitScreenRoute() {
     React.useEffect(() => {
         if (!isFocused) return;
         if (!sessionId) return;
+        if (initializedRightPaneSessionRef.current === sessionId) return;
+        initializedRightPaneSessionRef.current = sessionId;
         openRight({ tabId: 'git' });
         if (pane.scopeState?.right?.activeTabId !== 'git') {
             setRightTab('git');

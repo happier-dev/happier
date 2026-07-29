@@ -39,7 +39,7 @@ describe('permissionModeOptions', () => {
             host: 'h',
             acpSessionModesV1: {
                 v: 1,
-                provider: 'codex',
+                agentId: 'codex',
                 updatedAt: 1,
                 currentModeId: 'code',
                 availableModes: [

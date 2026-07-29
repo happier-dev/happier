@@ -14,16 +14,15 @@ import { computeTurnEndpointDelayMs, type TurnEndpointPolicy } from '@/voice/run
  *  - `SemanticEndpointDetector` is the pluggable contract a future on-device
  *    EOU model (e.g. Pipecat smart-turn-v3 via onnxruntime, or the machine-
  *    scoped DaemonVoiceInference controller) implements.
- *  - `createNoopSemanticEndpointDetector()` is the default: it always returns
- *    `undecided`, so the policy falls back to today's pure-silence delay. This
- *    keeps behavior identical until a real detector is wired in, mirroring the
- *    existing bridge-absent graceful fallback.
+ *  - `createNoopSemanticEndpointDetector()` is the explicit model-unavailable
+ *    implementation. `createStructuralEndpointHeuristic()` is the host fallback:
+ *    it may delay clearly unfinished syntax but never claims semantic completion.
  *  - `resolveSemanticEndpointDelayMs(...)` is the single composition point the
  *    endpoint policy calls: it blends the detector verdict with the silence
  *    policy into a final wait, bounded by a hard-max ceiling.
  *
  * EXTENSION POINT: to plug in a real model, implement `SemanticEndpointDetector`
- * and inject it where `createNoopSemanticEndpointDetector()` is used. Do NOT add
+ * and inject it at the endpoint controller boundary. Do NOT add
  * a heavy model here — keep this layer pure and synchronous; an async model
  * should resolve its verdict before calling `resolveSemanticEndpointDelayMs`.
  */
@@ -38,9 +37,13 @@ export type SemanticEndpointInput = Readonly<{
 }>;
 
 export type SemanticEndpointVerdict =
-    | Readonly<{ kind: 'complete'; confidence: number }>
-    | Readonly<{ kind: 'incomplete'; confidence: number }>
-    | Readonly<{ kind: 'undecided' }>;
+    | Readonly<{ kind: 'complete'; reason: 'model_complete'; confidence: number }>
+    | Readonly<{
+        kind: 'incomplete';
+        reason: 'model_incomplete' | 'unbalanced_delimiter' | 'continuation_punctuation' | 'continuation_word';
+        confidence: number;
+    }>
+    | Readonly<{ kind: 'undecided'; reason: 'detector_unavailable' | 'no_structural_decision'; confidence: null }>;
 
 export type SemanticEndpointDetector = Readonly<{
     evaluate: (input: SemanticEndpointInput) => SemanticEndpointVerdict;
@@ -52,7 +55,60 @@ export type SemanticEndpointDetector = Readonly<{
  */
 export function createNoopSemanticEndpointDetector(): SemanticEndpointDetector {
     return {
-        evaluate: () => ({ kind: 'undecided' }),
+        evaluate: () => ({ kind: 'undecided', reason: 'detector_unavailable', confidence: null }),
+    };
+}
+
+const CONTINUATION_WORDS = new Set([
+    'and', 'as', 'because', 'but', 'if', 'or', 'so', 'than', 'that', 'then',
+    'though', 'to', 'unless', 'until', 'when', 'where', 'while', 'with',
+]);
+
+function hasUnbalancedPairs(value: string): boolean {
+    const pairs: ReadonlyArray<readonly [string, string]> = [['(', ')'], ['[', ']'], ['{', '}']];
+    return pairs.some(([open, close]) => {
+        let depth = 0;
+        for (const character of value) {
+            if (character === open) depth += 1;
+            if (character === close) depth -= 1;
+            if (depth < 0) return true;
+        }
+        return depth !== 0;
+    });
+}
+
+/**
+ * Conservative structural host fallback for the endpointing role. It only decides when
+ * the transcript exposes a strong structural signal; ambiguous text remains
+ * `undecided` and therefore uses the existing acoustic policy. This is not
+ * presented as a semantic model and is replaced by a ready model-backed role
+ * once the runtime/model catalog can actually execute one.
+ */
+export function createStructuralEndpointHeuristic(): SemanticEndpointDetector {
+    return {
+        evaluate(input) {
+            const transcript = String(input.transcript ?? '').trim();
+            if (!transcript) return { kind: 'undecided', reason: 'no_structural_decision', confidence: null };
+            if (hasUnbalancedPairs(transcript)) {
+                return { kind: 'incomplete', reason: 'unbalanced_delimiter', confidence: 0.78 };
+            }
+            if (/(?:\.{3,}|…|[,;:\-–—])$/u.test(transcript)) {
+                return { kind: 'incomplete', reason: 'continuation_punctuation', confidence: 0.74 };
+            }
+            const normalizedWords = transcript
+                .toLocaleLowerCase()
+                .replace(/[^\p{L}\p{N}'’-]+/gu, ' ')
+                .trim()
+                .split(/\s+/u);
+            const lastWord = normalizedWords.at(-1) ?? '';
+            if (CONTINUATION_WORDS.has(lastWord)) {
+                return { kind: 'incomplete', reason: 'continuation_word', confidence: 0.7 };
+            }
+            // Punctuation is formatting, not proof of intent. A host heuristic
+            // may safely delay an obviously unfinished turn, but only a real
+            // model-backed detector may accelerate completion.
+            return { kind: 'undecided', reason: 'no_structural_decision', confidence: null };
+        },
     };
 }
 

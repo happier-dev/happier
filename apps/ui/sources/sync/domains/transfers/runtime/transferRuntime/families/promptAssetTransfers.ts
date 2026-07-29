@@ -22,10 +22,18 @@ import { assertRpcResponseWithSuccess } from '@/sync/runtime/assertRpcResponseWi
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
 import { uploadBulkPayloadFromFileViaDirectImport } from '../plumbing/directTransferImportUpload';
+import {
+    DIRECT_IMPORT_CLEANUP_FAILED_ERROR_CODE,
+    isDirectImportTerminalFinalizeErrorCode,
+} from '../plumbing/directTransferImportClient';
 import { prepareBulkJsonPayloadForUpload, uploadBulkJsonPayload } from '../plumbing/uploadBulkJsonPayload';
 import { downloadJsonPayloadViaMachineTransferCarriers } from '../carriers/createJsonMachineRpcCarrierDownloads';
 import { throwUnsupportedMachineTransferResponse } from '../carriers/throwUnsupportedMachineTransferResponse';
 import { resolvePreferScopedMachineRpc } from '../routing/resolvePreferScopedMachineRpc';
+import {
+    isTransferFinalizeRecoveryFailure,
+    type TransferFinalizeRecoveryFailure,
+} from '../plumbing/directTransferFinalizeRecovery';
 
 type MachinePromptAssetsTransferOpts = Readonly<{
     serverId?: string | null;
@@ -205,7 +213,10 @@ export async function uploadDaemonPromptAsset(
     machineId: string,
     input: PromptAssetWriteRequest,
     opts?: MachinePromptAssetsTransferOpts,
-): Promise<PromptAssetMutationResponseV1> {
+): Promise<
+    PromptAssetMutationResponseV1
+    | TransferFinalizeRecoveryFailure<PromptAssetMutationResponseV1>
+> {
     const payload = PromptAssetWriteRequestSchema.parse(input);
     const preferScoped = await resolvePreferScopedMachineRpc({
         machineId,
@@ -232,10 +243,24 @@ export async function uploadDaemonPromptAsset(
                 const parsed = PromptAssetMutationResponseV1Schema.safeParse(response.finalized.result);
                 return parsed.success ? parsed.data : null;
             },
+            timeoutMs: opts?.timeoutMs ?? null,
         });
 
         if ('ok' in directImportResult) {
             return directImportResult;
+        }
+        if (isTransferFinalizeRecoveryFailure<PromptAssetMutationResponseV1>(directImportResult)) {
+            return directImportResult;
+        }
+        if (
+            directImportResult.errorCode === DIRECT_IMPORT_CLEANUP_FAILED_ERROR_CODE
+            || isDirectImportTerminalFinalizeErrorCode(directImportResult.errorCode)
+        ) {
+            return {
+                ok: false,
+                errorCode: 'internal_error',
+                error: directImportResult.error,
+            };
         }
     }
 

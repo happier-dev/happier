@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 const fixturesDir = path.dirname(fileURLToPath(import.meta.url));
 
 describe('UI demo fixtures', () => {
-    it('provides truthful remote-launch and direct-session fixture builders', async () => {
+    it('provides truthful remote-launch and external-session fixture builders', async () => {
         const sessionFixturesPath = path.join(fixturesDir, 'demoSessionFixtures.ts');
         const externalSessionFixturesPath = path.join(fixturesDir, 'demoExternalSessionFixtures.ts');
         const newSessionFixturesPath = path.join(fixturesDir, 'demoNewSessionFixtures.ts');
@@ -37,8 +37,8 @@ describe('UI demo fixtures', () => {
         expect(sessionMetadata.opencodeServerBaseUrlExplicit).toBe(true);
         expect(sessionMetadata.runtimeDescriptorV1).toMatchObject({
             v: 1,
-            providerId: 'opencode',
-            provider: {
+            agentId: 'opencode',
+            agent: {
                 backendMode: 'server',
                 providerSessionId: sessionMetadata.opencodeSessionId,
             },

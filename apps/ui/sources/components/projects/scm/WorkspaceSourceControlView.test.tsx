@@ -40,7 +40,6 @@ const machineScmRemotePushSpy = vi.fn<MachineScmRemotePush>(async () => ({ succe
 type MachineScmCommitCreate = typeof machineScmCommitCreate;
 const machineScmCommitCreateSpy = vi.fn<MachineScmCommitCreate>(async () => ({ success: true, commitSha: 'abc' }));
 
-vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('@expo/vector-icons', async () => {
     const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
@@ -63,6 +62,13 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', async () => {
                 })
                 : props.trigger,
         ),
+    };
+});
+
+vi.mock('@/components/workspaces/scm/changes/ScmChangeOverflowMenu', async () => {
+    const React = await import('react');
+    return {
+        ScmChangeOverflowMenu: (props: any) => React.createElement('ScmChangeOverflowMenu', props),
     };
 });
 
@@ -118,6 +124,18 @@ vi.mock('react-native', async () => {
         },
     });
 });
+
+vi.mock('@legendapp/list/react-native', () => ({
+    LegendList: (props: any) => {
+        const data = Array.isArray(props.data) ? props.data : [];
+        const items = data.map((item: unknown, index: number) => React.createElement(
+            'FlatListItem',
+            { key: props.keyExtractor?.(item, index) ?? String(index) },
+            props.renderItem?.({ item, index }),
+        ));
+        return React.createElement('FlatList', props, props.ListHeaderComponent, ...items);
+    },
+}));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => scmWriteEnabledMock,
@@ -447,6 +465,8 @@ describe('WorkspaceSourceControlView', () => {
             await Promise.resolve();
         });
 
+        expect(machineScmStashListSpy).toHaveBeenCalledWith('m1', { cwd: '/repo' }, { serverId: 'server' });
+
         const stashRow = tree.findByProps({ testID: 'workspace-scm-open-stash' });
         const stashRowChildren = React.Children.toArray(stashRow.props.children);
         const trailingSummary = stashRowChildren[1];
@@ -461,7 +481,7 @@ describe('WorkspaceSourceControlView', () => {
         expect(trailingCount.props.children).toBe('2');
     });
 
-    it('renders commit composer and stage toggles when write operations are enabled', async () => {
+    it('reveals stage toggles after entering selection mode when write operations are enabled', async () => {
         workspaceSnapshotMock = createSnapshot();
         commitSelectionPaths = [];
         commitSelectionPatches = [];
@@ -481,6 +501,14 @@ describe('WorkspaceSourceControlView', () => {
 
         expect(tree.findByProps({ testID: 'scm-commit-message' })).toBeTruthy();
         expect(tree.findByProps({ testID: 'scm-commit-submit' })).toBeTruthy();
+        // Stage toggles are opt-in: hidden until the user enters selection mode.
+        expect(tree.findAllByProps({ testID: 'scm-commit-selection-toggle-src_a.ts' })).toHaveLength(0);
+
+        const enterSelection = tree.findByProps({ testID: 'scm-commit-enter-selection' });
+        act(() => {
+            enterSelection.props.onPress();
+        });
+
         expect(tree.findByProps({ testID: 'scm-commit-selection-toggle-src_a.ts' })).toBeTruthy();
     });
 
@@ -529,7 +557,7 @@ describe('WorkspaceSourceControlView', () => {
             cwd: '/repo',
             remote: 'origin',
             branch: 'main',
-        });
+        }, { serverId: 'server' });
         expect(refreshSpy).toHaveBeenCalled();
     });
 
@@ -675,7 +703,7 @@ describe('WorkspaceSourceControlView', () => {
         expect(clearWorkspaceScmCommitSelectionPatchesSpy).toHaveBeenCalled();
     });
 
-    it('discards a changed file via machine RPC when the discard button is pressed', async () => {
+    it('discards a changed file via machine RPC through the overflow menu', async () => {
         workspaceSnapshotMock = createSnapshot();
         commitSelectionPaths = [];
         commitSelectionPatches = [];
@@ -694,19 +722,23 @@ describe('WorkspaceSourceControlView', () => {
             />
         )).tree;
 
-        const discardButton = tree.findByProps({ testID: 'workspace-scm-discard-src_a.ts' });
+        // Revert now lives in the overflow menu (no inline discard button on the row).
+        const overflowMenu = tree
+            .findAllByType('ScmChangeOverflowMenu' as never)
+            .find((node) => node.props.filePath === 'src/a.ts');
+        expect(typeof overflowMenu?.props.onDiscard).toBe('function');
+
         await act(async () => {
-            discardButton.props.onPress?.({ stopPropagation: vi.fn() });
-            await Promise.resolve();
+            overflowMenu!.props.onDiscard();
+            for (let i = 0; i < 8; i++) {
+                await Promise.resolve();
+            }
         });
 
         expect(machineScmChangeDiscardSpy).toHaveBeenCalledTimes(1);
         const firstCall = machineScmChangeDiscardSpy.mock.calls[0];
-        expect(firstCall).toBeTruthy();
-        const machineId = firstCall?.[0];
-        const request = firstCall?.[1];
-        expect(machineId).toBe('m1');
-        expect(request).toMatchObject({
+        expect(firstCall?.[0]).toBe('m1');
+        expect(firstCall?.[1]).toMatchObject({
             cwd: '/repo',
             entries: [{ path: 'src/a.ts', kind: 'modified' }],
         });

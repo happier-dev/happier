@@ -1,11 +1,6 @@
-import { z } from 'zod';
+import { HappierMetaEnvelopeSchema, type HappierMetaEnvelope } from '@happier-dev/protocol';
 
-const HappierMetaEnvelopeSchema = z.object({
-    kind: z.string(),
-    payload: z.unknown(),
-});
-
-export type HappierMetaEnvelope = z.infer<typeof HappierMetaEnvelopeSchema>;
+export type { HappierMetaEnvelope };
 
 export function parseHappierMetaEnvelope(meta: unknown, key = 'happier'): HappierMetaEnvelope | null {
     if (!meta || typeof meta !== 'object') return null;

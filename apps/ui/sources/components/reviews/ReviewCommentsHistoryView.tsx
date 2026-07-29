@@ -14,7 +14,6 @@ function isHistoryComment(comment: ReviewCommentV1): boolean {
 export type ReviewCommentsHistoryViewProps = Readonly<{
     comments: readonly ReviewCommentV1[];
     labels: ReviewCommentLabels;
-    directWriteGranted: boolean;
     testID?: string;
 }>;
 
@@ -23,7 +22,6 @@ export function ReviewCommentsHistoryView(props: ReviewCommentsHistoryViewProps)
         <ReviewCommentsList
             comments={props.comments.filter(isHistoryComment)}
             labels={props.labels}
-            directWriteGranted={props.directWriteGranted}
             testID={props.testID}
         />
     );

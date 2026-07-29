@@ -22,6 +22,7 @@ const settingsViewMultiServerMachinesState = vi.hoisted(() => ({
         linkedProviders: [],
         connectedServices: [],
         connectedServicesV2: [],
+        connectedServiceCredentialRevisionsV1: [],
     },
 }));
 
@@ -197,10 +198,6 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (fn: any) => [false, fn],
 }));
 
-vi.mock('@/sync/api/account/apiVendorTokens', () => ({
-    disconnectVendorToken: vi.fn(async () => {}),
-}));
-
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
 }));
@@ -212,7 +209,7 @@ vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'gemini'],
     DEFAULT_AGENT_ID: 'agent_default',
-    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', label: 'Anthropic', connectRoute: null } }),
+    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', labelKey: 'agentInput.agent.claude', connectRoute: null } }),
     getAgentIconSource: () => null,
     getAgentIconTintColor: () => null,
     resolveAgentIdFromConnectedServiceId: () => null,
@@ -263,6 +260,6 @@ describe('SettingsView (multi-server machines)', () => {
             await pressTestInstanceAsync(machinesEntry!);
         });
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/machines');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/machines');
     });
 });

@@ -29,7 +29,6 @@ vi.mock('expo-router', async () => {
   };
 });
 
-vi.mock('react-native-reanimated', () => ({}));
 vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
 vi.mock('@shopify/react-native-skia', () => ({}));
 vi.mock('@/components/navigation/shell/HomeHeader', () => ({ HomeHeaderNotAuth: () => null }));

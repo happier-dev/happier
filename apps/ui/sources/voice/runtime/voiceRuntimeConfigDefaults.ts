@@ -5,7 +5,6 @@ import {
 } from '@happier-dev/protocol';
 
 export const VOICE_RUNTIME_CONFIG_DEFAULTS = {
-    listeningStartTimeoutMs: 5_000,
     realtimeConversationHandleReadyTimeoutMs: 500,
     realtimeStartAbortGraceMs: 1_000,
     realtimeWatchdogPollMs: 3_000,
@@ -19,6 +18,8 @@ export const VOICE_RUNTIME_CONFIG_DEFAULTS = {
      * folder; only the timing/retry policy lives here.
      */
     realtime: {
+        /** Maximum time for a provider connection or its initial context handshake to settle. */
+        connectionReadyTimeoutMs: 30_000,
         /**
          * Bounded-backoff reconnect on a TRANSIENT realtime WS/transport drop.
          * Each transient drop routes through the machine's recoverable-error path
@@ -66,6 +67,14 @@ export const VOICE_RUNTIME_CONFIG_DEFAULTS = {
      * magic numbers and the values cannot drift.
      */
     turnTaking: {
+        interruption: {
+            /** Hard bound for provisional duck/pause before fail-safe false-alarm restoration. */
+            candidateMaxMs: 3_000,
+            /** Maximum playable PCM tail retained while a candidate is evaluated. */
+            retainedOutputMaxMs: 1_500,
+            /** Audible acknowledgement without fully silencing duck-capable remote output. */
+            duckGain: 0.18,
+        },
         /** Two-stage endpointing debounce layered above the acoustic VAD. */
         endpointHysteresis: {
             /** Sustained detection required before a turn is confirmed (false-start debounce). */

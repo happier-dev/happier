@@ -7,9 +7,12 @@ import {
   sessionRpcWithServerScope,
 } from './localVoiceEngine.testHarness';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { runVoiceAgentTurnWithTools } from './runVoiceAgentTurnWithTools';
 
 describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
-  registerLocalVoiceEngineHarnessHooks();
+  // This owner is stateless; retaining its module graph avoids charging the
+  // large shared Voice harness import to every individual permission assertion.
+  registerLocalVoiceEngineHarnessHooks({ resetModulesBetweenTests: false });
 
   it('does not treat neutral approve-or-deny wording as a deny command', async () => {
     const storage = await getStorage();
@@ -78,13 +81,12 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
       actions: [],
     }));
 
-    const { runVoiceAgentTurnWithTools } = await import('./runVoiceAgentTurnWithTools');
-
     const result = await runVoiceAgentTurnWithTools({
       sessionId: 'voice-hidden-s1',
       userText: 'Describe the pending permission request and ask me to approve or deny it.',
+      durableLocalId: 'test-durable-local-id',
       currentToolSessionId: 's1',
-      voiceAgentSessions: { sendTurn },
+      voiceAgentSessions: { sendTurn, commitUserTranscript: vi.fn(async () => {}) },
     });
 
     expect(sendTurn).toHaveBeenCalledTimes(1);
@@ -93,7 +95,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     expect(result.assistantTurns).toEqual(['The coding session needs permission. Should I approve or deny it?']);
   });
 
-  it('handles a direct approval utterance deterministically when there is a single pending permission request', async () => {
+  it('never turns a spoken approval utterance into a permission response', async () => {
     const storage = await getStorage();
     storage.__setState({
       settings: {
@@ -156,32 +158,47 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
 
     sessionRpcWithServerScope.mockResolvedValue({ ok: true });
     const sendTurn = vi.fn(async () => ({
-      assistantText: 'model fallback should not run',
+      assistantText: 'Use the permission approval control in the session.',
       actions: [],
     }));
-
-    const { runVoiceAgentTurnWithTools } = await import('./runVoiceAgentTurnWithTools');
 
     const result = await runVoiceAgentTurnWithTools({
       sessionId: 'voice-hidden-s1',
       userText: 'Approve the pending write permission request.',
+      durableLocalId: 'test-durable-local-id',
       currentToolSessionId: 's1',
-      voiceAgentSessions: { sendTurn },
+      voiceAgentSessions: { sendTurn, commitUserTranscript: vi.fn(async () => {}) },
     });
 
-    expect(sendTurn).not.toHaveBeenCalled();
-    expect(sessionRpcWithServerScope).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 's1',
-        method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
-        payload: { id: 'perm_voice_1', approved: true },
-      }),
-    );
-    expect(result.totalActions).toBe(1);
-    expect(result.assistantTurns).toEqual(['Approved the pending permission request.']);
+    expect(sendTurn).toHaveBeenCalledTimes(1);
+    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
+    expect(result.totalActions).toBe(0);
+    expect(result.assistantTurns).toEqual(['Use the permission approval control in the session.']);
+  });
+
+  it('rejects a model-generated permission response action without calling the permission RPC', async () => {
+    const sendTurn = vi.fn()
+      .mockResolvedValueOnce({
+        assistantText: '',
+        actions: [{ t: 'processPermissionRequest', args: { decision: 'allow' } }],
+      })
+      .mockResolvedValueOnce({
+        assistantText: 'Use the permission approval control in the session.',
+        actions: [],
+      });
+
+    const result = await runVoiceAgentTurnWithTools({
+      sessionId: 'voice-hidden-s1',
+      userText: 'Approve it.',
+      durableLocalId: 'test-durable-local-id',
+      currentToolSessionId: 's1',
+      voiceAgentSessions: { sendTurn, commitUserTranscript: vi.fn(async () => {}) },
+    });
+
+    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
     expect(result.toolResultBatches[0]?.[0]).toMatchObject({
       t: 'processPermissionRequest',
-      result: { ok: true, status: 'done', sessionId: 's1', requestId: 'perm_voice_1' },
+      result: { ok: false, errorCode: 'tool_not_supported' },
     });
   });
 
@@ -245,17 +262,22 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
       assistantText: 'model fallback should not run',
       actions: [],
     }));
-
-    const { runVoiceAgentTurnWithTools } = await import('./runVoiceAgentTurnWithTools');
+    const commitUserTranscript = vi.fn(async () => {});
 
     const result = await runVoiceAgentTurnWithTools({
       sessionId: 'voice-hidden-s1',
       userText: 'Deny the pending permission request.',
+      durableLocalId: ' opaque-permission-id ',
       currentToolSessionId: 's1',
-      voiceAgentSessions: { sendTurn },
+      voiceAgentSessions: { sendTurn, commitUserTranscript },
     });
 
     expect(sendTurn).not.toHaveBeenCalled();
+    expect(commitUserTranscript).toHaveBeenCalledWith(
+      'voice-hidden-s1',
+      'Deny the pending permission request.',
+      ' opaque-permission-id ',
+    );
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 's1',
@@ -263,9 +285,12 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
         payload: {
           id: 'req_question',
           approved: false,
-          answers: { 'May I create QA_DENY_PATH.txt?': `No, don't create it` },
+          answers: { 'May I create QA_DENY_PATH.txt?': [`No, don't create it`] },
         },
       }),
+    );
+    expect(commitUserTranscript.mock.invocationCallOrder[0]).toBeLessThan(
+      sessionRpcWithServerScope.mock.invocationCallOrder[0]!,
     );
     expect(result.totalActions).toBe(1);
     expect(result.assistantTurns).toEqual(['Denied the pending request.']);
@@ -275,143 +300,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     });
   });
 
-  it('keeps direct permission shortcuts bound to currentToolSessionId even when the global voice target store is stale', async () => {
-    const storage = await getStorage();
-    storage.__setState({
-      settings: {
-        ...storage.getState().settings,
-      },
-      sessions: {
-        ...storage.getState().sessions,
-        s1: {
-          id: 's1',
-          presence: 'online',
-          active: true,
-          updatedAt: 1,
-          agentState: null,
-          metadata: { path: '/tmp/project-a', host: 'test-machine' },
-        },
-        s_stale: {
-          id: 's_stale',
-          presence: 'online',
-          active: true,
-          updatedAt: 1,
-          agentState: null,
-          metadata: { path: '/tmp/project-b', host: 'test-machine' },
-        },
-      },
-      sessionMessages: {
-        ...storage.getState().sessionMessages,
-        s1: {
-          messages: [
-            {
-              kind: 'tool-call',
-              id: 'tool_perm_target',
-              localId: null,
-              createdAt: 1,
-              children: [],
-              tool: {
-                id: 'tool_perm_target',
-                name: 'write',
-                description: 'Write a file',
-                state: 'completed',
-                input: { filePath: '/tmp/voice-permission-test.txt', content: 'hello' },
-                createdAt: 1,
-                startedAt: 1,
-                completedAt: 2,
-                result: {},
-                permission: {
-                  id: 'perm_voice_target',
-                  kind: 'permission',
-                  status: 'pending',
-                },
-              },
-            },
-          ],
-        },
-        s_stale: {
-          messages: [
-            {
-              kind: 'tool-call',
-              id: 'tool_perm_stale',
-              localId: null,
-              createdAt: 1,
-              children: [],
-              tool: {
-                id: 'tool_perm_stale',
-                name: 'write',
-                description: 'Write a file',
-                state: 'completed',
-                input: { filePath: '/tmp/voice-permission-stale.txt', content: 'stale' },
-                createdAt: 1,
-                startedAt: 1,
-                completedAt: 2,
-                result: {},
-                permission: {
-                  id: 'perm_voice_stale',
-                  kind: 'permission',
-                  status: 'pending',
-                },
-              },
-            },
-          ],
-        },
-      },
-      concurrentSessionListCacheByServerId: {
-        'server-a': {
-          serverName: null,
-          sessions: {
-            s1: {
-              id: 's1',
-              presence: 'online',
-              active: true,
-            },
-            s_stale: {
-              id: 's_stale',
-              presence: 'online',
-              active: true,
-            },
-          },
-        },
-      },
-    });
-
-    useVoiceTargetStore.setState({
-      scope: 'global',
-      primaryActionSessionId: 's_stale',
-      lastFocusedSessionId: null,
-    } as any);
-
-    sessionRpcWithServerScope.mockResolvedValue({ ok: true });
-    const sendTurn = vi.fn(async () => ({
-      assistantText: 'model fallback should not run',
-      actions: [],
-    }));
-
-    const { runVoiceAgentTurnWithTools } = await import('./runVoiceAgentTurnWithTools');
-
-    const result = await runVoiceAgentTurnWithTools({
-      sessionId: 'voice-hidden-s1',
-      userText: 'Approve the pending write permission request.',
-      currentToolSessionId: 's1',
-      voiceAgentSessions: { sendTurn },
-    });
-
-    expect(sendTurn).not.toHaveBeenCalled();
-    expect(sessionRpcWithServerScope).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 's1',
-        method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
-        payload: { id: 'perm_voice_target', approved: true },
-      }),
-    );
-    expect(result.toolResultBatches[0]?.[0]).toMatchObject({
-      t: 'processPermissionRequest',
-      result: { ok: true, status: 'done', sessionId: 's1', requestId: 'perm_voice_target' },
-    });
-  });
-
-  it('requires disambiguation instead of approving a request from another session', async () => {
+  it('does not approve a request from another session', async () => {
     const storage = await getStorage();
     storage.__setState({
       settings: {
@@ -479,23 +368,22 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     });
 
     const sendTurn = vi.fn(async () => ({
-      assistantText: 'model fallback should not run',
+      assistantText: 'Open that session to review its permission request.',
       actions: [],
     }));
-
-    const { runVoiceAgentTurnWithTools } = await import('./runVoiceAgentTurnWithTools');
 
     const result = await runVoiceAgentTurnWithTools({
       sessionId: 'voice-hidden-s1',
       userText: 'Approve the pending write permission request.',
+      durableLocalId: 'test-durable-local-id',
       currentToolSessionId: 'sys_voice',
-      voiceAgentSessions: { sendTurn },
+      voiceAgentSessions: { sendTurn, commitUserTranscript: vi.fn(async () => {}) },
     });
 
-    expect(sendTurn).not.toHaveBeenCalled();
+    expect(sendTurn).toHaveBeenCalledTimes(1);
     expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
     expect(result.totalActions).toBe(0);
-    expect(result.assistantTurns[0]).toContain('current session');
+    expect(result.assistantTurns).toEqual(['Open that session to review its permission request.']);
   });
 
   it('does not treat compound approval requests as direct shortcuts', async () => {
@@ -564,13 +452,12 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
       actions: [],
     }));
 
-    const { runVoiceAgentTurnWithTools } = await import('./runVoiceAgentTurnWithTools');
-
     const result = await runVoiceAgentTurnWithTools({
       sessionId: 'voice-hidden-s1',
       userText: 'Approve the pending write permission request and then summarize it.',
+      durableLocalId: 'test-durable-local-id',
       currentToolSessionId: 's1',
-      voiceAgentSessions: { sendTurn },
+      voiceAgentSessions: { sendTurn, commitUserTranscript: vi.fn(async () => {}) },
     });
 
     expect(sendTurn).toHaveBeenCalledTimes(1);

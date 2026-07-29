@@ -34,6 +34,13 @@ function createSession(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe('buildTranscriptRenderSignature', () => {
+    it('includes the session sequence cursor because transcript row hydration can change without another prop identity bump', () => {
+        const before = createSession({ seq: 4 });
+        const after = createSession({ seq: 5 });
+
+        expect(buildTranscriptRenderSignature(after)).not.toBe(buildTranscriptRenderSignature(before));
+    });
+
     it('ignores session-list freshness fields that do not affect transcript rendering', () => {
         const before = createSession();
         const after = createSession({

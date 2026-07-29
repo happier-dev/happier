@@ -40,12 +40,12 @@ vi.mock('@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDr
     DaemonVoiceInferenceExecutionDropdown: (props: any) => React.createElement('ExecutionDropdown', props),
 }));
 
-vi.mock('@/voice/settings/panels/daemonInference/DaemonVoiceInferenceModelSection', () => ({
-    DaemonVoiceInferenceModelSection: (props: any) => React.createElement('DaemonModelSection', props),
+vi.mock('@/voice/settings/panels/modelCatalog/DaemonModelPackRow', () => ({
+    SelectedDaemonModelPackRow: (props: any) => React.createElement('DaemonModelSection', props),
 }));
 
 describe('LocalNeuralTtsSettings (web)', () => {
-    it('clamps stored web device execution to daemon controls and hides stale browser Kokoro asset-pack management', async () => {
+    it('preserves stored web device authority while hiding device selection and stale browser Kokoro management', async () => {
         const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.web');
 
         let tree!: ReactTestRenderer;
@@ -57,31 +57,17 @@ describe('LocalNeuralTtsSettings (web)', () => {
         }))).tree;
 
         const executionDropdown = tree.root.findByType('ExecutionDropdown');
-        expect(executionDropdown.props.execution).toBe('daemon');
+        expect(executionDropdown.props.execution).toBe('device');
         expect(executionDropdown.props.allowDeviceSelection).toBe(false);
 
         const daemonModelSections = tree.root.findAllByType('DaemonModelSection');
         expect(daemonModelSections).toHaveLength(1);
-        expect(daemonModelSections[0]?.props.packId).toBe('kokoro-tts-en-v1');
-        expect(daemonModelSections[0]?.props.kind).toBe('tts');
+        expect(daemonModelSections[0]?.props.packId).toBe('kokoro-82m-v1.0-onnx-q8-wasm');
+        expect(daemonModelSections[0]?.props.kind).toBe('tts_sherpa');
         expect(tree.root.findAll((node) => node.props?.title === 'settingsVoice.local.kokoro.model.title')).toHaveLength(0);
         expect(tree.root.findAll((node) => node.props?.title === 'settingsVoice.local.kokoro.web.cache.title')).toHaveLength(0);
         expect(tree.root.findAll((node) => node.props?.title === 'settingsVoice.local.kokoro.runtime.title')).toHaveLength(0);
         expect(tree.root.findAll((node) => node.props?.title === 'settingsVoice.local.kokoro.assetPack.title')).toHaveLength(0);
-    });
-
-    it('passes daemon relay diagnostics to the daemon model section', async () => {
-        const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.web');
-
-        const { tree } = await renderScreen(React.createElement(LocalNeuralTtsSettings, {
-            cfgKokoro: { model: 'kokoro', assetId: 'kokoro-82m-v1.0-onnx-q8-wasm', voiceId: 'af_heart', speed: 1, execution: 'auto' },
-            setKokoro: vi.fn(),
-            networkTimeoutMs: 15_000,
-            popoverBoundaryRef: null,
-            daemonRouteDiagnosticReason: 'daemon_relay_disabled',
-        }));
-
-        expect(tree.root.findByType('DaemonModelSection').props.daemonRouteDiagnosticReason).toBe('daemon_relay_disabled');
     });
 
     it('keeps only daemon-relevant voice controls on web after browser Kokoro deletion', async () => {

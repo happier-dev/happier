@@ -1,3 +1,3 @@
-import { ConnectedServiceGroupDetailView } from '@/components/settings/connectedServices/group/ConnectedServiceGroupDetailView';
+import { ConnectedAccountLegacyRouteRedirect } from '@/components/settings/connectedServices/account/ConnectedAccountLegacyRouteRedirect';
 
-export default ConnectedServiceGroupDetailView;
+export default ConnectedAccountLegacyRouteRedirect;

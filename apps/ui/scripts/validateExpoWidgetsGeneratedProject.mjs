@@ -70,6 +70,92 @@ function collectProductBundleIdentifiers(pbxprojRaw) {
     .filter(Boolean);
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function collectPbxObjects(pbxprojRaw) {
+  const lines = pbxprojRaw.split(/\r?\n/);
+  const objects = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const startMatch = lines[index].match(
+      /^\s*(?<id>[A-Fa-f0-9]{24}) \/\* (?<label>.*?) \*\/ = \{(?<rest>.*)$/,
+    );
+    if (!startMatch?.groups) continue;
+
+    const bodyLines = [startMatch.groups.rest];
+    if (!startMatch.groups.rest.trim().endsWith('};')) {
+      for (index += 1; index < lines.length; index += 1) {
+        bodyLines.push(lines[index]);
+        if (/^\s*\};\s*$/.test(lines[index])) break;
+      }
+    }
+
+    const body = bodyLines.join('\n');
+    const isa = body.match(/\bisa\s*=\s*(?<isa>[A-Za-z0-9_]+);/)?.groups?.isa ?? '';
+    objects.push({
+      id: startMatch.groups.id,
+      label: startMatch.groups.label,
+      body,
+      isa,
+    });
+  }
+
+  return objects;
+}
+
+function pbxFieldEquals(body, fieldName, value) {
+  return new RegExp(`\\b${escapeRegExp(fieldName)}\\s*=\\s*"?${escapeRegExp(value)}"?;`).test(body);
+}
+
+function assertExactlyOnePbxObject({ objects, isa, description }) {
+  if (objects.length !== 1) {
+    const ids = objects.map((object) => object.id).join(',') || 'none';
+    throw new Error(
+      `Generated Xcode project must contain exactly one ${isa} for ${description}; found ${objects.length}: ${ids}.`,
+    );
+  }
+}
+
+function assertUniqueWidgetTargetGraph(pbxprojRaw, targetName) {
+  const objects = collectPbxObjects(pbxprojRaw);
+  const nativeTargets = objects.filter(
+    (object) =>
+      object.isa === 'PBXNativeTarget' &&
+      pbxFieldEquals(object.body, 'name', targetName) &&
+      pbxFieldEquals(object.body, 'productType', 'com.apple.product-type.app-extension'),
+  );
+  const productReferences = objects.filter(
+    (object) =>
+      object.isa === 'PBXFileReference' &&
+      object.label === `${targetName}.appex` &&
+      pbxFieldEquals(object.body, 'path', `${targetName}.appex`) &&
+      /wrapper\.app-extension/.test(object.body),
+  );
+  const embedBuildFiles = objects.filter(
+    (object) =>
+      object.isa === 'PBXBuildFile' &&
+      object.label === `${targetName}.appex in Embed Foundation Extensions`,
+  );
+
+  assertExactlyOnePbxObject({
+    objects: nativeTargets,
+    isa: 'PBXNativeTarget',
+    description: `widget target '${targetName}'`,
+  });
+  assertExactlyOnePbxObject({
+    objects: productReferences,
+    isa: 'PBXFileReference',
+    description: `widget product '${targetName}.appex'`,
+  });
+  assertExactlyOnePbxObject({
+    objects: embedBuildFiles,
+    isa: 'PBXBuildFile',
+    description: `embedded widget product '${targetName}.appex'`,
+  });
+}
+
 function resolveWidgetBundleIdentifier(pbxprojRaw, targetName) {
   const bundleIdentifiers = collectProductBundleIdentifiers(pbxprojRaw);
   const widgetBundleIdentifiers = bundleIdentifiers.filter((bundleIdentifier) =>
@@ -145,6 +231,7 @@ export async function assertExpoWidgetsGeneratedProject({
     /com\.apple\.widgetkit-extension/,
     'Generated widget target Info.plist is missing the WidgetKit extension point identifier.',
   );
+  assertUniqueWidgetTargetGraph(pbxprojRaw, targetName);
 
   for (const widgetName of requiredWidgetNames) {
     await assertReadableFile(join(paths.targetDir, `${widgetName}.swift`));

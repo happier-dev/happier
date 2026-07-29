@@ -147,10 +147,6 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (fn: any) => [false, fn],
 }));
 
-vi.mock('@/sync/api/account/apiVendorTokens', () => ({
-    disconnectVendorToken: vi.fn(async () => {}),
-}));
-
 vi.mock('@/sync/domains/profiles/profile', () => ({
     getDisplayName: () => 'Test User',
     getAvatarUrl: () => null,
@@ -168,7 +164,7 @@ vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'kiro', 'customAcp'],
     DEFAULT_AGENT_ID: 'codex',
-    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', label: 'Anthropic', connectRoute: null } }),
+    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', labelKey: 'agentInput.agent.claude', connectRoute: null } }),
     getAgentIconSource: () => null,
     getAgentIconTintColor: () => null,
     resolveAgentIdFromConnectedServiceId: () => null,

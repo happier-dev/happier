@@ -159,8 +159,8 @@ vi.mock('@/utils/sessions/machineUtils', () => ({
     isMachineOnline: () => true,
 }));
 
-vi.mock('@/scm/registry/scmUiBackendRegistry', () => ({
-    scmUiBackendRegistry: {
+vi.mock('@/scm/registry/scmUiBackendRegistry', () => {
+    const scmUiBackendRegistry = {
         getPluginForSnapshot: () => ({
             displayName: 'Git',
             commitActionConfig: () => ({ label: 'Commit' }),
@@ -168,8 +168,12 @@ vi.mock('@/scm/registry/scmUiBackendRegistry', () => ({
             inferRemoteTarget: () => ({ remote: 'origin', branch: 'main' }),
             mapCapabilitiesToUiPolicy: () => ({ supportedDiffAreas: ['pending'] }),
         }),
-    },
-}));
+    };
+    return {
+        scmUiBackendRegistry,
+        createScmUiBackendRegistry: () => scmUiBackendRegistry,
+    };
+});
 
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: {

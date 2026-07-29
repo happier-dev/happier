@@ -16,6 +16,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
     getCachedServerFeaturesSnapshot,
     getServerFeaturesSnapshot,
+    getServerFeaturesSnapshotRetryDelayMs,
     type ServerFeaturesSnapshot,
 } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
@@ -48,16 +49,28 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
 
         let cancelled = false;
         let requestToken = 0;
+        let requestGeneration = 0;
         let lastRequestedServerId = '\u0000';
+        let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-        const loadForServerId = async (serverId: string | undefined) => {
+        const loadForServerId = async (serverId: string | undefined, generation: number) => {
             const token = requestToken + 1;
             requestToken = token;
             const next = await getServerFeaturesSnapshot({
                 serverId,
             });
-            if (!cancelled && token === requestToken) {
+            if (!cancelled && token === requestToken && generation === requestGeneration) {
                 setSnapshot(next);
+                const retryDelayMs = getServerFeaturesSnapshotRetryDelayMs({ serverId, snapshot: next });
+                if (retryDelayMs !== null) {
+                    retryTimer = setTimeout(() => {
+                        if (cancelled || generation !== requestGeneration) return;
+                        retryTimer = null;
+                        fireAndForget(loadForServerId(serverId, generation), {
+                            tag: 'useServerFeaturesRuntimeSnapshot.retryTransientError',
+                        });
+                    }, retryDelayMs);
+                }
             }
         };
 
@@ -65,8 +78,13 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
             const normalizedServerId = typeof serverId === 'string' ? serverId.trim() : '';
             const nextKey = normalizedServerId || '(active)';
             if (nextKey === lastRequestedServerId) return;
+            if (retryTimer) {
+                clearTimeout(retryTimer);
+                retryTimer = null;
+            }
             lastRequestedServerId = nextKey;
-            fireAndForget(loadForServerId(normalizedServerId || undefined), { tag });
+            requestGeneration += 1;
+            fireAndForget(loadForServerId(normalizedServerId || undefined, requestGeneration), { tag });
         };
 
         const unsubscribe = subscribeActiveServer((active) => {
@@ -92,6 +110,7 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
 
         return () => {
             cancelled = true;
+            if (retryTimer) clearTimeout(retryTimer);
             unsubscribe();
         };
     }, [enabled]);
@@ -120,6 +139,7 @@ export function useServerFeaturesSnapshotForServerId(
 
         let cancelled = false;
         let requestToken = 0;
+        let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
         const load = async (serverId: string) => {
             const token = requestToken + 1;
@@ -127,6 +147,15 @@ export function useServerFeaturesSnapshotForServerId(
             const next = await getServerFeaturesSnapshot({ serverId });
             if (!cancelled && token === requestToken) {
                 setSnapshot(next);
+                const retryDelayMs = getServerFeaturesSnapshotRetryDelayMs({ serverId, snapshot: next });
+                if (retryDelayMs !== null) {
+                    retryTimer = setTimeout(() => {
+                        if (cancelled) return;
+                        fireAndForget(load(serverId), {
+                            tag: 'useServerFeaturesSnapshotForServerId.retryTransientError',
+                        });
+                    }, retryDelayMs);
+                }
             }
         };
 
@@ -134,6 +163,7 @@ export function useServerFeaturesSnapshotForServerId(
             setSnapshot({ status: 'loading' });
             return () => {
                 cancelled = true;
+                if (retryTimer) clearTimeout(retryTimer);
             };
         }
 
@@ -143,6 +173,7 @@ export function useServerFeaturesSnapshotForServerId(
 
         return () => {
             cancelled = true;
+            if (retryTimer) clearTimeout(retryTimer);
         };
     }, [enabled, serverId]);
 
@@ -165,12 +196,23 @@ function normalizeServerIds(raw: ReadonlyArray<string>): string[] {
     return out;
 }
 
+const EMPTY_NORMALIZED_SERVER_IDS: string[] = [];
+
+function buildNormalizedServerIdsKey(raw: ReadonlyArray<string>): string {
+    return normalizeServerIds(raw).join('\u0000');
+}
+
+function readNormalizedServerIdsFromKey(key: string): string[] {
+    return key ? key.split('\u0000') : EMPTY_NORMALIZED_SERVER_IDS;
+}
+
 export function useServerFeaturesMainSelectionSnapshot(
     serverIdsRaw: ReadonlyArray<string>,
     options?: Readonly<{ enabled?: boolean }>,
 ): ServerFeaturesMainSelectionSnapshot {
     const enabled = options?.enabled ?? true;
-    const serverIds = React.useMemo(() => normalizeServerIds(serverIdsRaw), [serverIdsRaw]);
+    const serverIdsKey = React.useMemo(() => buildNormalizedServerIdsKey(serverIdsRaw), [serverIdsRaw]);
+    const serverIds = React.useMemo(() => readNormalizedServerIdsFromKey(serverIdsKey), [serverIdsKey]);
 
     const [state, setState] = React.useState<ServerFeaturesMainSelectionSnapshot>(() => {
         if (!enabled) {
@@ -197,19 +239,21 @@ export function useServerFeaturesMainSelectionSnapshot(
     React.useEffect(() => {
         let cancelled = false;
         let requestToken = 0;
+        let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const cleanup = () => {
+            cancelled = true;
+            if (retryTimer) clearTimeout(retryTimer);
+        };
 
         if (!enabled) {
             setState({ status: 'ready', serverIds, snapshotsByServerId: {} });
-            return () => {
-                cancelled = true;
-            };
+            return cleanup;
         }
 
         if (serverIds.length === 0) {
             setState({ status: 'ready', serverIds, snapshotsByServerId: {} });
-            return () => {
-                cancelled = true;
-            };
+            return cleanup;
         }
 
         const load = async (serverIds: string[]) => {
@@ -227,6 +271,19 @@ export function useServerFeaturesMainSelectionSnapshot(
                 snapshotsByServerId[id] = snapshot;
             }
             setState({ status: 'ready', serverIds, snapshotsByServerId });
+            const retryDelayMs = results.reduce<number | null>((current, [serverId, snapshot]) => {
+                const next = getServerFeaturesSnapshotRetryDelayMs({ serverId, snapshot });
+                if (next === null) return current;
+                return current === null ? next : Math.min(current, next);
+            }, null);
+            if (retryDelayMs !== null) {
+                retryTimer = setTimeout(() => {
+                    if (cancelled) return;
+                    fireAndForget(load(serverIds), {
+                        tag: 'useServerFeaturesMainSelectionSnapshot.retryTransientError',
+                    });
+                }, retryDelayMs);
+            }
         };
 
         // Recompute state from cache on any selection change.
@@ -240,17 +297,16 @@ export function useServerFeaturesMainSelectionSnapshot(
 
         if (missing.length === 0) {
             setState({ status: 'ready', serverIds, snapshotsByServerId });
-            return () => {
-                cancelled = true;
-            };
+            if (Object.values(snapshotsByServerId).some((snapshot) => snapshot.status === 'error')) {
+                fireAndForget(load(serverIds), { tag: 'useServerFeaturesMainSelectionSnapshot.retryTransientError' });
+            }
+            return cleanup;
         }
 
         setState({ status: 'loading', serverIds, snapshotsByServerId });
         fireAndForget(load(serverIds), { tag: 'useServerFeaturesMainSelectionSnapshot.initialLoad' });
 
-        return () => {
-            cancelled = true;
-        };
+        return cleanup;
     }, [enabled, serverIds]);
 
     return state;

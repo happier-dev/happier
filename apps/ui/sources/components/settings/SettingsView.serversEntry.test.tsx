@@ -6,6 +6,7 @@ import {
     renderSettingsView,
     standardCleanup,
 } from '@/dev/testkit';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -33,12 +34,23 @@ function createPropPassthroughNode(name: string) {
     return (props: any) => React.createElement(name, props);
 }
 
+async function renderSettledSettingsView() {
+    const { SettingsView } = await import('./SettingsView');
+    const screen = await renderSettingsView(React.createElement(SettingsView));
+    for (let stage = 0; stage < 4; stage += 1) {
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        });
+    }
+    return screen;
+}
+
 function createSettingsViewStorageOverrides() {
     return {
         useEntitlement: () => false,
         // Boundary mock: this suite only reads a boolean local setting toggle.
         useLocalSettingMutable: (() => [false, vi.fn()]) as any,
-        useSetting: (key: string) => {
+        useSetting: createUseSettingMock({ fallback: (key) => {
             if (key === 'serverSelectionGroups') return [];
             if (key === 'serverSelectionActiveTargetKind') return null;
             if (key === 'serverSelectionActiveTargetId') return null;
@@ -47,7 +59,7 @@ function createSettingsViewStorageOverrides() {
             if (key === 'useProfiles') return false;
             if (key === 'sessionUseTmux') return false;
             return null;
-        },
+        } }),
         useAllMachines: () => [],
         useMachineListByServerId: () => ({}),
         useMachineListStatusByServerId: () => ({}),
@@ -185,10 +197,6 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (fn: any) => [false, fn],
 }));
 
-vi.mock('@/sync/api/account/apiVendorTokens', () => ({
-    disconnectVendorToken: vi.fn(async () => {}),
-}));
-
 vi.mock('@/sync/domains/profiles/profile', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/profiles/profile')>();
     return {
@@ -210,7 +218,7 @@ vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'gemini'],
     DEFAULT_AGENT_ID: 'agent_default',
-    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', label: 'Anthropic', connectRoute: null } }),
+    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', labelKey: 'agentInput.agent.claude', connectRoute: null } }),
     getAgentIconSource: () => null,
     getAgentIconTintColor: () => null,
     resolveAgentIdFromConnectedServiceId: () => null,
@@ -266,8 +274,7 @@ afterEach(() => {
 
 describe('SettingsView', () => {
     it('includes a first-class Relays entry that routes to /server', async () => {
-        const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(React.createElement(SettingsView));
+        const screen = await renderSettledSettingsView();
 
         expect(screen.findRowByTitle('settings.servers')).toBeTruthy();
 
@@ -278,9 +285,8 @@ describe('SettingsView', () => {
         expect(shared.routerPushSpy).toHaveBeenCalledWith('/server');
     });
 
-    it('includes a System Status entry that routes to /(app)/settings/system-status', async () => {
-        const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(React.createElement(SettingsView));
+    it('includes a System Status entry that routes to /settings/system-status', async () => {
+        const screen = await renderSettledSettingsView();
 
         expect(screen.findRowByTitle('settings.systemStatus')).toBeTruthy();
 
@@ -288,13 +294,12 @@ describe('SettingsView', () => {
             screen.pressRowByTitle('settings.systemStatus');
         });
 
-        expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/system-status');
+        expect(shared.routerPushSpy).toHaveBeenCalledWith('/settings/system-status');
     });
 
     it('includes a Desktop app entry that routes to /settings/desktop on Tauri desktop', async () => {
         tauriDesktopState.value = true;
-        const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(React.createElement(SettingsView));
+        const screen = await renderSettledSettingsView();
 
         expect(screen.findRowByTitle('settingsDesktop.title')).toBeTruthy();
 
@@ -307,15 +312,13 @@ describe('SettingsView', () => {
 
     it('hides the Desktop app entry on non-Tauri builds', async () => {
         tauriDesktopState.value = false;
-        const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(React.createElement(SettingsView));
+        const screen = await renderSettledSettingsView();
 
         expect(screen.findRowByTitle('settingsDesktop.title')).toBeNull();
     });
 
     it('blurs the active element before routing to Features on web', async () => {
-        const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(React.createElement(SettingsView));
+        const screen = await renderSettledSettingsView();
 
         expect(screen.findRowByTitle('settings.featuresTitle')).toBeTruthy();
 
@@ -325,12 +328,11 @@ describe('SettingsView', () => {
 
         expect(shared.deferOnWebSpy).toHaveBeenCalledTimes(1);
         expect(shared.navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
-        expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/features');
+        expect(shared.routerPushSpy).toHaveBeenCalledWith('/settings/features');
     });
 
     it('routes to the in-app bug report composer by default when Report issue is pressed', async () => {
-        const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(React.createElement(SettingsView));
+        const screen = await renderSettledSettingsView();
 
         expect(screen.findRowByTitle('settings.reportIssue')).toBeTruthy();
 
@@ -338,7 +340,7 @@ describe('SettingsView', () => {
             await screen.pressRowByTitle('settings.reportIssue');
         });
 
-        expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/report-issue');
+        expect(shared.routerPushSpy).toHaveBeenCalledWith('/settings/report-issue');
         expect(shared.linkingOpenURLSpy).not.toHaveBeenCalled();
     });
 
@@ -348,8 +350,7 @@ describe('SettingsView', () => {
         shared.linkingCanOpenURLSpy.mockResolvedValue(true);
 
         try {
-            const { SettingsView } = await import('./SettingsView');
-            const screen = await renderSettingsView(React.createElement(SettingsView));
+            const screen = await renderSettledSettingsView();
 
             expect(screen.findRowByTitle('settings.reportIssue')).toBeTruthy();
 
@@ -359,7 +360,7 @@ describe('SettingsView', () => {
 
             expect(shared.linkingCanOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
             expect(shared.linkingOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
-            expect(shared.routerPushSpy).not.toHaveBeenCalledWith('/(app)/settings/report-issue');
+            expect(shared.routerPushSpy).not.toHaveBeenCalledWith('/settings/report-issue');
         } finally {
             if (previousUrl === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
             else process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = previousUrl;
@@ -372,8 +373,7 @@ describe('SettingsView', () => {
         shared.linkingCanOpenURLSpy.mockResolvedValue(false);
 
         try {
-            const { SettingsView } = await import('./SettingsView');
-            const screen = await renderSettingsView(React.createElement(SettingsView));
+            const screen = await renderSettledSettingsView();
 
             expect(screen.findRowByTitle('settings.reportIssue')).toBeTruthy();
 
@@ -383,7 +383,7 @@ describe('SettingsView', () => {
 
             expect(shared.linkingCanOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
             expect(shared.linkingOpenURLSpy).not.toHaveBeenCalled();
-            expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/report-issue');
+            expect(shared.routerPushSpy).toHaveBeenCalledWith('/settings/report-issue');
         } finally {
             if (previousUrl === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
             else process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = previousUrl;
@@ -391,8 +391,7 @@ describe('SettingsView', () => {
     });
 
     it('renders the GitHub repository as subtitle, not right-side detail', async () => {
-        const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(React.createElement(SettingsView));
+        const screen = await renderSettledSettingsView();
         const githubItem = screen.findRowByTitle('settings.github');
 
         expect(githubItem).toBeTruthy();
@@ -402,8 +401,7 @@ describe('SettingsView', () => {
 
     it('shows Rate us right below What’s New and triggers store review only when pressed', async () => {
         shared.canRequestReviewSpy.mockResolvedValue(true);
-        const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(React.createElement(SettingsView));
+        const screen = await renderSettledSettingsView();
 
         const aboutGroup = screen.findGroup('settings.about');
         expect(aboutGroup).toBeTruthy();
@@ -425,8 +423,7 @@ describe('SettingsView', () => {
 
     it('hides Rate us when store-review action is unavailable', async () => {
         shared.canRequestReviewSpy.mockResolvedValue(false);
-        const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(React.createElement(SettingsView));
+        const screen = await renderSettledSettingsView();
 
         expect(screen.findRowByTitle('settings.rateUs')).toBeNull();
     });

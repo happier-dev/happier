@@ -1,5 +1,8 @@
 export type TranscriptJumpTargetRole = 'user' | 'assistant' | 'tool' | 'system' | 'unknown';
 
+/** One explicit target-navigation lifecycle shared by the host, landing adapter, and renderer. */
+export type TranscriptExplicitJumpOperationId = symbol;
+
 export type TranscriptJumpTarget =
     | { kind: 'seq'; seq: number }
     | {

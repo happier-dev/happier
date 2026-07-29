@@ -11,7 +11,7 @@ import { resolveKokoroDaemonTtsPackId } from '@/voice/kokoro/assets/resolveKokor
 import { getKokoroSherpaVoiceCatalogForSpeakerCount } from '@/voice/kokoro/voices/kokoroSherpaVoiceMapping';
 import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
-import { DaemonVoiceInferenceModelSection } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceModelSection';
+import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 
 type KokoroVoiceSummary = Readonly<{
@@ -76,10 +76,9 @@ export function LocalNeuralTtsSettings(props: {
                 allowDeviceSelection={executionPolicy.allowDeviceSelection}
             />
 
-            <DaemonVoiceInferenceModelSection
+            <SelectedDaemonModelPackRow
                 packId={daemonPackId}
-                kind="tts"
-                daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+                kind="tts_sherpa"
             />
 
             <DropdownMenu

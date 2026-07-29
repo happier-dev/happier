@@ -3,8 +3,9 @@ import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settin
 import { THEME_PROFILE_ID_PREFIX, THEME_PROFILE_MAX_PROFILES } from '@/theme/profiles/themeProfileConstants';
 import { isReservedThemeProfileId, isRouteSafeThemeProfileId, sanitizeThemeProfileName, sanitizeThemeProfileOverridesForV1TrustBoundary } from '@/theme/profiles/themeProfileImportExport';
 import { inferThemeProfileAssetAppearance, isThemeProfileAssetAppearance } from '@/theme/profiles/themeProfileAssetAppearance';
-import type { ThemeProfilesLocalStateV1, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
+import type { ThemeProfileMode, ThemeProfilesLocalStateV1, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 import { activateThemeProfile } from '@/theme/profiles/themeProfileRuntime';
+import { clearActiveThemeProfileReferences } from '@/theme/profiles/themeProfilePersistence';
 
 export const createThemeProfileId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -62,12 +63,13 @@ export const removeThemeProfile = (
     state: ThemeProfilesLocalStateV1,
     profileId: string,
 ): ThemeProfilesLocalStateV1 => ({
-    activeProfileId: state.activeProfileId === profileId ? null : state.activeProfileId,
+    ...clearActiveThemeProfileReferences(state, profileId),
     profiles: state.profiles.filter((entry) => entry.id !== profileId),
 });
 
 export const activateThemeProfileFromSettingsScreen = async (input: Readonly<{
     profileId: string | null;
+    profileMode?: ThemeProfileMode | 'all';
     themePreference: ThemePreference;
     nextThemePreference?: ThemePreference;
     themeProfiles: ThemeProfilesLocalStateV1;
@@ -78,6 +80,7 @@ export const activateThemeProfileFromSettingsScreen = async (input: Readonly<{
 }>): Promise<void> => {
     await activateThemeProfile({
         profileId: input.profileId,
+        profileMode: input.profileMode,
         themePreference: input.nextThemePreference,
         forceAnimate: input.forceAnimate,
         reduceMotion: input.reduceMotion,

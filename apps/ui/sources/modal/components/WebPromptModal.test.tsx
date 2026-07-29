@@ -60,6 +60,7 @@ describe('WebPromptModal', () => {
         const [baseModalProps] = baseModalSpy.mock.calls.at(-1)!;
         expect(baseModalProps.closeOnBackdrop).toBe(false);
         expect(baseModalProps.showBackdrop).toBe(true);
+        expect(baseModalProps.accessibilityLabel).toBe('Create commit');
 
         const modalCardFrame = React.Children.toArray(baseModalProps.children).find((child: any) => child.type === ModalCardFrame);
         expect(modalCardFrame).toBeDefined();

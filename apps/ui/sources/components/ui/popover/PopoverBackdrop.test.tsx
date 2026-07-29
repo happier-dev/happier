@@ -37,6 +37,7 @@ describe('PopoverBackdrop', () => {
                 backdrop={{ enabled: true }}
                 backdropBlocksOutsidePointerEvents
                 backdropOutsidePointerEventsMode="above-anchor"
+                backdropPointerEventsEnabled
                 backdropEffect="none"
                 backdropBlurOnWeb={undefined}
                 backdropSpotlight={false}

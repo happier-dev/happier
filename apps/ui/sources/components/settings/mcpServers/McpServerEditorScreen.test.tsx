@@ -29,7 +29,10 @@ const routerBackSpy = vi.fn();
 const routerReplaceSpy = vi.fn();
 const navigationDispatchSpy = vi.fn();
 const navigationSetOptionsSpy = vi.fn();
-const navigationBeforeRemoveHandlers: Array<(event: any) => void | Promise<void>> = [];
+const navigationPreventRemove = vi.hoisted(() => ({
+    enabled: false,
+    callback: null as null | ((event: { data: { action: unknown } }) => void),
+}));
 const promptUnsavedChangesAlertSpy = vi.hoisted(
     () => vi.fn<typeof promptUnsavedChangesAlert>(),
 );
@@ -96,7 +99,8 @@ function resetLiveSettings() {
     modalConfirmSpy.mockReset();
     navigationDispatchSpy.mockReset();
     navigationSetOptionsSpy.mockReset();
-    navigationBeforeRemoveHandlers.length = 0;
+    navigationPreventRemove.enabled = false;
+    navigationPreventRemove.callback = null;
     promptUnsavedChangesAlertSpy.mockReset();
     promptUnsavedChangesAlertSpy.mockResolvedValue('discard');
 }
@@ -136,12 +140,6 @@ const mcpServersCommonModuleMockOptions = {
                 canGoBack: () => navigationCanGoBack,
                 dispatch: navigationDispatchSpy,
                 setOptions: navigationSetOptionsSpy,
-                addListener: (event: string, handler: (evt: any) => void | Promise<void>) => {
-                    if (event === 'beforeRemove') {
-                        navigationBeforeRemoveHandlers.push(handler);
-                    }
-                    return () => {};
-                },
             },
         });
 
@@ -187,6 +185,16 @@ const mcpServersCommonModuleMockOptions = {
         };
     },
 };
+
+vi.mock('@react-navigation/native', () => ({
+    usePreventRemove: (
+        enabled: boolean,
+        callback: (event: { data: { action: unknown } }) => void,
+    ) => {
+        navigationPreventRemove.enabled = enabled;
+        navigationPreventRemove.callback = callback;
+    },
+}));
 
 installMcpServersCommonModuleMocks(mcpServersCommonModuleMockOptions);
 
@@ -292,7 +300,8 @@ describe('McpServerEditorScreen', () => {
             screen.changeTextByTestId('mcp.server.editor.name', 'server_edited');
         });
 
-        expect(navigationBeforeRemoveHandlers.length).toBeGreaterThan(0);
+        expect(navigationPreventRemove.enabled).toBe(true);
+        expect(navigationPreventRemove.callback).not.toBeNull();
 
         const lastHeaderRightCall = navigationSetOptionsSpy.mock.calls
             .map((call) => call[0])
@@ -304,20 +313,13 @@ describe('McpServerEditorScreen', () => {
         expect(React.isValidElement(headerRightNode)).toBe(true);
         expect((headerRightNode as any).props.disabled).toBe(false);
 
-        const preventDefaultSpy = vi.fn();
         const action = { type: 'GO_BACK' };
 
-        const beforeRemove = navigationBeforeRemoveHandlers[navigationBeforeRemoveHandlers.length - 1];
-
         await act(async () => {
-            await beforeRemove?.({
-                preventDefault: preventDefaultSpy,
-                data: { action },
-            });
+            navigationPreventRemove.callback?.({ data: { action } });
             await flushHookEffects({ cycles: 1, turns: 3 });
         });
 
-        expect(preventDefaultSpy).toHaveBeenCalled();
         expect(promptUnsavedChangesAlertSpy).toHaveBeenCalled();
         expect(navigationDispatchSpy).toHaveBeenCalledWith(action);
     });
@@ -331,19 +333,13 @@ describe('McpServerEditorScreen', () => {
             screen.changeTextByTestId('mcp.server.editor.name', 'server_edited');
         });
 
-        const preventDefaultSpy = vi.fn();
         const action = { type: 'GO_BACK' };
-        const beforeRemove = navigationBeforeRemoveHandlers[navigationBeforeRemoveHandlers.length - 1];
 
         await act(async () => {
-            await beforeRemove?.({
-                preventDefault: preventDefaultSpy,
-                data: { action },
-            });
+            navigationPreventRemove.callback?.({ data: { action } });
             await flushHookEffects({ cycles: 1, turns: 3 });
         });
 
-        expect(preventDefaultSpy).toHaveBeenCalled();
         expect(promptUnsavedChangesAlertSpy).toHaveBeenCalled();
         expect(setMcpSettingsSpy).toHaveBeenCalled();
         expect(navigationDispatchSpy).toHaveBeenCalledWith(action);

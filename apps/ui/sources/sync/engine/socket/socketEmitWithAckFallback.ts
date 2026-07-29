@@ -1,4 +1,5 @@
 import { isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
+import { raceSocketIoAckTimeout } from '@/sync/runtime/socketIoAckTimeout';
 
 export async function socketEmitWithAckFallback<TAck>(params: {
     emitWithAck: (event: string, payload: any, opts?: { timeoutMs?: number }) => Promise<TAck>;
@@ -11,7 +12,10 @@ export async function socketEmitWithAckFallback<TAck>(params: {
 }): Promise<TAck | null> {
     const ack: TAck | null = await (async () => {
         try {
-            return await params.emitWithAck(params.event, params.payload, { timeoutMs: params.timeoutMs });
+            return await raceSocketIoAckTimeout(
+                params.emitWithAck(params.event, params.payload, { timeoutMs: params.timeoutMs }),
+                params.timeoutMs,
+            );
         } catch (error) {
             if (isTerminalAuthError(error)) {
                 throw error;

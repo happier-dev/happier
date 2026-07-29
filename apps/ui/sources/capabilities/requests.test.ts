@@ -53,7 +53,7 @@ describe('CAPABILITIES_REQUEST_MACHINE_DETAILS', () => {
         expect(overrides['cli.kiro-cli']).toBeUndefined();
     });
 
-    it('projects login-status overrides from canonical provider auth metadata detect keys', async () => {
+    it('projects login-status overrides from canonical provider ids even when binary detect keys differ', async () => {
         agentsPackageState.AGENT_LOCAL_CLI_CONFIG.codex.detectKey = 'codex-alt';
 
         vi.resetModules();
@@ -76,11 +76,11 @@ describe('CAPABILITIES_REQUEST_MACHINE_DETAILS', () => {
         }));
         const { CAPABILITIES_REQUEST_MACHINE_DETAILS: request } = await import('./requests');
 
-        expect(request.overrides?.['cli.codex-alt']).toMatchObject({
+        expect(request.overrides?.['cli.codex']).toMatchObject({
             params: {
                 includeLoginStatus: true,
             },
         });
-        expect(request.overrides?.['cli.codex']).toBeUndefined();
+        expect(request.overrides?.['cli.codex-alt']).toBeUndefined();
     });
 });

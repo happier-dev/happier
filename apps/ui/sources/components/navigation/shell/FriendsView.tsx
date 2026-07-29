@@ -29,6 +29,7 @@ import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFr
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -259,7 +260,7 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
                 {sharedSessions.length > 0 && (
                     <ItemGroup title={t('friends.sharedSessions')}>
                         {sharedSessions.map((session) => {
-                            const title = session.metadata?.name || session.metadata?.path || session.id;
+                            const title = getSessionName(session);
                             const subtitle = session.ownerProfile?.username ? `@${session.ownerProfile.username}` : undefined;
                             return (
                                 <Item

@@ -10,12 +10,14 @@ import {
   ExecutionRunTurnStreamCancelResponseSchema,
   ExecutionRunTurnStreamReadResponseSchema,
   ExecutionRunTurnStreamStartResponseSchema,
+  ExecutionRunUserTranscriptCommitResponseSchema,
 } from '@happier-dev/protocol';
-import type { VoiceAssistantAction } from '@happier-dev/protocol';
+import type { ExecutionRunUserTranscriptDirective, VoiceAssistantAction } from '@happier-dev/protocol';
 
 import type { VoiceAgentClient, VoiceAgentHandle, VoiceAgentStartParams, VoiceAgentStartResult, VoiceAgentTurnStreamEvent } from './types';
 import { resolveVoiceAgentBootstrapTimeoutMs } from './resolveVoiceAgentBootstrapTimeoutMs';
 import { streamVoiceAgentTurn } from './streamVoiceAgentTurn';
+import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
 
 type SafeParseSuccess<T> = { success: true; data: T };
 type SafeParseFailure = { success: false; error: unknown };
@@ -53,7 +55,7 @@ function normalizeVoiceAgentProfileId(value: unknown): string | null {
 export class DaemonVoiceAgentClient implements VoiceAgentClient {
   private resolveStartTimeoutMs(params: Readonly<{ bootstrapTimeoutMs?: number }>): number {
     const settings: any = storage.getState().settings;
-    const localConversationSettings = settings?.voice?.adapters?.local_conversation ?? null;
+    const localConversationSettings = readLocalConversationSettingsFromAccountSettings(settings);
     const raw = Number(localConversationSettings?.networkTimeoutMs ?? NaN);
     const networkTimeoutMs = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 15_000;
     const explicitBootstrapTimeoutMs = Number(params.bootstrapTimeoutMs);
@@ -72,7 +74,7 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
     const startPayload = {
       intent: 'voice_agent',
       backendTarget: { kind: 'builtInAgent', agentId: backendId },
-      permissionMode: params.permissionPolicy,
+      permissionMode: params.permissionIntent,
       retentionPolicy: params.retentionPolicy ?? 'ephemeral',
       runClass: 'long_lived',
       ioMode: 'streaming',
@@ -120,10 +122,17 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
   }
 
   async sendTurn(
-    params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string; displayUserText?: string; signal?: AbortSignal }>,
+    params: Readonly<{
+      sessionId: string;
+      voiceAgentId: string;
+      userText: string;
+      displayUserText?: string;
+      signal?: AbortSignal;
+      userTranscript?: ExecutionRunUserTranscriptDirective;
+    }>,
   ): Promise<{ assistantText: string; actions?: VoiceAssistantAction[] }> {
     // The non-streaming daemon turn shares the single canonical turn read-loop. We omit
-    // `onTextDelta` (no incremental UI deltas in the non-streaming path) but reuse the same
+    // No output observer is needed in this non-streaming path, but reuse the same
     // poll / timeout / abort / cancel semantics from streamVoiceAgentTurn so there is exactly
     // one parser and one abort path for daemon turns.
     const handle: VoiceAgentHandle = {
@@ -138,7 +147,12 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
       handle,
       userText: params.userText,
       displayUserText: typeof params.displayUserText === 'string' ? params.displayUserText : params.userText,
-      ...(params.signal ? { options: { signal: params.signal } } : {}),
+      ...((params.signal || params.userTranscript) ? {
+        options: {
+          ...(params.signal ? { signal: params.signal } : {}),
+          ...(params.userTranscript ? { userTranscript: params.userTranscript } : {}),
+        },
+      } : {}),
     });
   }
 
@@ -163,10 +177,19 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
     return { assistantText };
   }
 
-  async startTurnStream(params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string; displayUserText?: string; resume?: boolean }>): Promise<{ streamId: string }> {
+  async startTurnStream(params: Readonly<{
+    sessionId: string;
+    voiceAgentId: string;
+    userText: string;
+    displayUserText?: string;
+    resume?: boolean;
+    userTranscript?: ExecutionRunUserTranscriptDirective;
+  }>): Promise<{ streamId: string }> {
     const res: any = await sessionRpcWithServerScope({
       sessionId: params.sessionId,
-      method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
+      method: params.userTranscript
+        ? SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2
+        : SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
       payload: {
         runId: params.voiceAgentId,
         message: params.userText,
@@ -174,10 +197,32 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
           ? { displayMessage: params.displayUserText }
           : {}),
         ...(params.resume === true ? { resume: true } : {}),
+        ...(params.userTranscript ? { userTranscript: params.userTranscript } : {}),
       },
     });
     throwIfRpcError(res);
     return ensureOk(res, ExecutionRunTurnStreamStartResponseSchema);
+  }
+
+  async commitUserTranscript(params: Readonly<{
+    sessionId: string;
+    voiceAgentId: string;
+    text: string;
+    displayText?: string;
+    localId: string;
+  }>): Promise<{ ok: true }> {
+    const res: any = await sessionRpcWithServerScope({
+      sessionId: params.sessionId,
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1,
+      payload: {
+        runId: params.voiceAgentId,
+        message: params.text,
+        ...(typeof params.displayText === 'string' ? { displayMessage: params.displayText } : {}),
+        localId: params.localId,
+      },
+    });
+    throwIfRpcError(res);
+    return ensureOk(res, ExecutionRunUserTranscriptCommitResponseSchema);
   }
 
   async readTurnStream(

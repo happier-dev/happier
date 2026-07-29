@@ -32,6 +32,10 @@ import {
     findTranscriptExecutionRunState,
 } from '@/sync/domains/session/subagents/executionRuns/deriveExecutionRunSubagents';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import {
+    deriveTranscriptInteraction,
+    deriveTranscriptInteractionFromSession,
+} from '@/utils/sessions/deriveTranscriptInteraction';
 
 type LoadState =
     | { status: 'loading' }
@@ -43,6 +47,8 @@ type LoadState =
         structuredMeta?: unknown;
         source: 'session_rpc' | 'transcript_fallback' | 'daemon_fallback';
     };
+
+const FAIL_CLOSED_TRANSCRIPT_INTERACTION = deriveTranscriptInteraction({ kind: 'public' });
 
 function isSessionEncryptionNotFoundError(input: unknown): boolean {
     if (!input || typeof input !== 'object') return false;
@@ -189,6 +195,14 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
     }, [state]);
     const transcriptToolRouteId = React.useMemo(() => buildToolCallMessageRouteId({ toolId: transcriptToolId }), [transcriptToolId]);
     const session = useSession(props.sessionId);
+    const interaction = React.useMemo(() => session
+        ? deriveTranscriptInteractionFromSession({
+            accessLevel: session.accessLevel,
+            canApprovePermissions: session.canApprovePermissions,
+            active: session.active,
+            presence: session.presence,
+        })
+        : FAIL_CLOSED_TRANSCRIPT_INTERACTION, [session]);
     const resolvedTranscriptMessageId = useResolvedSessionMessageRouteId(props.sessionId, transcriptToolRouteId ?? '');
     const transcriptMessageFromStore = useMessage(props.sessionId, resolvedTranscriptMessageId ?? transcriptToolRouteId ?? '');
     const transcriptMessage = transcriptMessageFromStore ?? transcriptFallback?.message ?? null;
@@ -199,8 +213,12 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
         if (!meta || typeof meta !== 'object') return null;
         const kind = typeof (meta as { kind?: unknown }).kind === 'string' ? (meta as { kind: string }).kind : '';
         if (!kind) return null;
-        return renderExecutionRunStructuredMeta({ meta: { kind, payload: (meta as { payload?: unknown }).payload }, sessionId: props.sessionId });
-    }, [props.sessionId, state]);
+        return renderExecutionRunStructuredMeta({
+            meta: { kind, payload: (meta as { payload?: unknown }).payload },
+            sessionId: props.sessionId,
+            interaction,
+        });
+    }, [interaction, props.sessionId, state]);
     const canMutateRunViaSessionRpc = state.status === 'loaded' && state.source === 'session_rpc';
     const canShowSendComposer = props.showSendComposer !== false
         && state.status === 'loaded'

@@ -1,12 +1,33 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
+import { getStorage } from '@/sync/domains/state/storage';
 import { writeVoiceConversationBindingMetadata } from './voiceConversationBindingMetadata';
 import { createVoiceSessionBindingStore } from './voiceConversationBindingStore';
 import { resolveVoiceSessionComposerRouting } from './voiceSessionComposerRouting';
 
+const initialStorageState = getStorage().getState();
+
+function setCurrentConversationSession(conversationSessionId: string, metadata: unknown = {}): void {
+    getStorage().setState((state: any) => ({
+        ...state,
+        sessions: {
+            ...state.sessions,
+            [conversationSessionId]: {
+                id: conversationSessionId,
+                metadata,
+            },
+        },
+    }));
+}
+
 describe('resolveVoiceSessionComposerRouting', () => {
+    afterEach(() => {
+        getStorage().setState(initialStorageState, true);
+    });
+
     it('returns a synthetic binding route for hidden voice conversation sessions backed by adapter text', () => {
         const store = createVoiceSessionBindingStore();
+        setCurrentConversationSession('carrier-s1');
         store.getState().bind({
             adapterId: 'realtime_elevenlabs',
             controlSessionId: 'voice-global',
@@ -31,6 +52,7 @@ describe('resolveVoiceSessionComposerRouting', () => {
 
     it('routes native hidden voice sessions through the adapter text path', () => {
         const store = createVoiceSessionBindingStore();
+        setCurrentConversationSession('carrier-s1');
         store.getState().bind({
             adapterId: 'local_conversation',
             controlSessionId: 'voice-global',
@@ -55,22 +77,24 @@ describe('resolveVoiceSessionComposerRouting', () => {
 
     it('rehydrates routing from persisted voice binding metadata when runtime bindings are empty', () => {
         const store = createVoiceSessionBindingStore();
+        const sessionMetadata = writeVoiceConversationBindingMetadata(
+            { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
+            {
+                adapterId: 'realtime_elevenlabs',
+                controlSessionId: 'voice-global',
+                conversationSessionId: 'carrier-s1',
+                transcriptMode: 'synthetic',
+                targetSessionId: 's1',
+                updatedAt: 123,
+            },
+        );
+        setCurrentConversationSession('carrier-s1', sessionMetadata);
 
         expect(
             resolveVoiceSessionComposerRouting({
                 conversationSessionId: 'carrier-s1',
                 store,
-                sessionMetadata: writeVoiceConversationBindingMetadata(
-                    { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
-                    {
-                        adapterId: 'realtime_elevenlabs',
-                        controlSessionId: 'voice-global',
-                        conversationSessionId: 'carrier-s1',
-                        transcriptMode: 'synthetic',
-                        targetSessionId: 's1',
-                        updatedAt: 123,
-                    },
-                ),
+                sessionMetadata,
             }),
         ).toEqual({
             kind: 'adapter_text',
@@ -104,6 +128,7 @@ describe('resolveVoiceSessionComposerRouting', () => {
                 updatedAt: 1,
             },
         );
+        setCurrentConversationSession('carrier-memo', sessionMetadata);
 
         const first = resolveVoiceSessionComposerRouting({ conversationSessionId: 'carrier-memo', sessionMetadata });
         const second = resolveVoiceSessionComposerRouting({ conversationSessionId: 'carrier-memo', sessionMetadata });

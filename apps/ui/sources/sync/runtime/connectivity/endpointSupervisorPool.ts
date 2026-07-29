@@ -30,6 +30,17 @@ type EndpointSupervisorHandle = Readonly<{
     release: (options?: Readonly<{ immediate?: boolean }>) => Promise<void>;
 }>;
 
+const VITEST_RUNTIME_CLEANUPS_KEY = Symbol.for('happier.vitest.runtimeCleanups');
+
+type RuntimeCleanupRegistryForTests = Map<string, () => Promise<void> | void>;
+
+function registerRuntimeCleanupForTests(id: string, cleanup: () => Promise<void> | void): void {
+    const globalWithRegistry = globalThis as unknown as {
+        [key: symbol]: RuntimeCleanupRegistryForTests | undefined;
+    };
+    globalWithRegistry[VITEST_RUNTIME_CLEANUPS_KEY]?.set(id, cleanup);
+}
+
 const entriesByKey = new Map<string, EndpointSupervisorPoolEntry>();
 let appStateSubscription: { remove: () => void } | null = null;
 let visibilityDetach: (() => void) | null = null;
@@ -366,3 +377,5 @@ export async function acquireEndpointSupervisorForServer(params: Readonly<{
 export async function resetEndpointSupervisorPoolForTests(): Promise<void> {
     await stopAllEndpointSupervisorsForTests();
 }
+
+registerRuntimeCleanupForTests('resetEndpointSupervisorPoolForTests', resetEndpointSupervisorPoolForTests);

@@ -16,6 +16,7 @@ import {
 } from '../api/capabilities/capabilitiesProtocol';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { ServerFetchAbortedForServerSwitchError } from '@/sync/http/client';
+import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
 
 export type {
     CapabilitiesDescribeResponse,
@@ -59,6 +60,9 @@ export async function machineCapabilitiesDetect(
     request: CapabilitiesDetectRequest,
     options?: { timeoutMs?: number; serverId?: string | null },
 ): Promise<MachineCapabilitiesDetectResult> {
+    if (isDemoModeActive()) {
+        return { supported: false, reason: 'not-supported' };
+    }
     try {
         const timeoutMs = typeof options?.timeoutMs === 'number' ? options.timeoutMs : 2500;
         const result = await Promise.race([

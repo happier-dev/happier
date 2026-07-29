@@ -1,4 +1,5 @@
 export type TranscriptFreshnessGate = {
+    isFresh: (params: { id: string; createdAt: number }) => boolean;
     consumeFreshness: (params: { id: string; createdAt: number }) => boolean;
     markSeen: (id: string) => void;
     isSeen: (id: string) => boolean;
@@ -18,7 +19,7 @@ export function createTranscriptFreshnessGate(opts: {
         }
     };
 
-    const consumeFreshness = (params: { id: string; createdAt: number }) => {
+    const isFresh = (params: { id: string; createdAt: number }) => {
         const id = params.id;
         if (typeof id !== 'string' || id.length === 0) return false;
         if (seen.has(id)) return false;
@@ -31,9 +32,14 @@ export function createTranscriptFreshnessGate(opts: {
         const age = now - createdAt;
         if (age > freshnessMs) return false;
 
-        seen.add(id);
         return true;
     };
 
-    return { consumeFreshness, markSeen, isSeen };
+    const consumeFreshness = (params: { id: string; createdAt: number }) => {
+        if (!isFresh(params)) return false;
+        seen.add(params.id);
+        return true;
+    };
+
+    return { isFresh, consumeFreshness, markSeen, isSeen };
 }

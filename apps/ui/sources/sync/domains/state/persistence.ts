@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import type { Settings } from '../settings/settings';
 import { voiceSettingsParse } from '../settings/voiceSettings';
+import {
+    parseCurrentWriterPredecessorVoiceProjection,
+} from '../settings/voiceSettingsPersistence';
+import { readLegacyVoiceSettingsMigrationSource } from '@/voice/settings/migrations/legacyAdapters';
 import { LocalSettings, localSettingsDefaults, localSettingsParse } from '../settings/localSettings';
 import {
     migrateThemeProfileLocalStateTokenIds,
@@ -23,7 +27,6 @@ import {
 } from '@/sync/domains/automations/automationDraft';
 import { ReviewCommentDraftSchema } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
 import { SessionActionDraftSchema } from '@/sync/domains/sessionActions/sessionActionDraftMeta';
-import { PROVIDER_SETTINGS_SHAPE } from '@/agents/providers/registry/providerSettingArtifacts';
 import {
     normalizeBackendNewSessionOptionStateByTargetKey,
     type BackendNewSessionOptionStateByTargetKey,
@@ -33,14 +36,20 @@ import {
 } from '@/sync/domains/scope/serverAccountScope';
 import {
     AcpConfigOptionOverridesV1Schema,
+    ExternalSessionRefreshCursorV1Schema,
+    SessionModelSelectionV1Schema,
+    SessionModelSelectionResolutionError,
     SessionMcpSelectionV1Schema,
     WindowsRemoteSessionLaunchModeSchema,
     readBackendTargetRefV2,
+    readPersistedAgentContributionIdentityV1,
+    writePersistedBackendTargetRefV2,
     normalizeCodexBackendMode,
     type CodexBackendMode,
     type AcpConfigOptionOverridesV1,
     type BackendTargetRefV2,
     type SessionMcpSelectionV1,
+    type SessionModelSelectionV1,
     type WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
 import { getPersistenceStorage } from './persistenceStorage';
@@ -88,7 +97,6 @@ export {
 
 const pendingSettingsSchemaByKey: Readonly<Record<string, z.ZodTypeAny>> = Object.freeze({
     ...ACCOUNT_SETTING_ARTIFACTS.shape,
-    ...PROVIDER_SETTINGS_SHAPE,
 });
 
 function deviceAnalyticsIdKey(): string {
@@ -133,6 +141,8 @@ function sessionModelModeUpdatedAtsKey(): string {
 
 export interface NewSessionDraft {
     input: string;
+    /** Opaque identity of the unresolved user launch intent. */
+    launchUserAttemptId?: string;
     selectedMachineId: string | null;
     selectedPath: string | null;
     targetServerId?: string | null;
@@ -158,7 +168,9 @@ export interface NewSessionDraft {
     backendTarget?: BackendTargetRefV2 | null;
     transcriptStorage?: 'persisted' | 'direct';
     permissionMode: PermissionMode;
-    modelMode: ModelMode;
+    modelSelection?: SessionModelSelectionV1 | null;
+    /** Read-only compatibility input. New writes persist `modelSelection` only. */
+    modelMode?: ModelMode;
     /**
      * ACP-only session mode selection (e.g. "plan") for the new-session wizard.
      * UI-only draft state (not sent to server unless supported by the selected agent).
@@ -250,6 +262,33 @@ function parseDraftSecretStringOrNull(value: unknown): SecretString | null | und
     return undefined;
 }
 
+type DraftJsonValue = null | boolean | number | string | DraftJsonValue[] | { [key: string]: DraftJsonValue };
+
+function parseDraftJsonValue(value: unknown): DraftJsonValue | undefined {
+    if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+        return value;
+    }
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : undefined;
+    }
+    if (Array.isArray(value)) {
+        const items: DraftJsonValue[] = [];
+        for (const item of value) {
+            const parsed = parseDraftJsonValue(item);
+            if (parsed !== undefined) items.push(parsed);
+        }
+        return items;
+    }
+    if (!value || typeof value !== 'object') return undefined;
+
+    const out: Record<string, DraftJsonValue> = {};
+    for (const [key, rawNestedValue] of Object.entries(value as Record<string, unknown>)) {
+        const parsed = parseDraftJsonValue(rawNestedValue);
+        if (parsed !== undefined) out[key] = parsed;
+    }
+    return out;
+}
+
 function parseDraftBackendNewSessionOptionStateByTargetKey(
     input: unknown,
 ): BackendNewSessionOptionStateByTargetKey | null {
@@ -266,10 +305,8 @@ function parseDraftBackendNewSessionOptionStateByTargetKey(
             const key = typeof rawKey === 'string' ? rawKey.trim() : '';
             if (!key) continue;
 
-            // Only salvage JSON-safe primitives; objects can be added later if needed.
-            if (rawValue === null || typeof rawValue === 'boolean' || typeof rawValue === 'number' || typeof rawValue === 'string') {
-                options[key] = rawValue;
-            }
+            const parsedValue = parseDraftJsonValue(rawValue);
+            if (parsedValue !== undefined) options[key] = parsedValue;
         }
 
         if (Object.keys(options).length > 0) out[targetKey] = options;
@@ -321,6 +358,11 @@ export function parsePendingSettings(raw: unknown): Partial<Settings> {
         // single invalid nested field. Pending settings must follow the same rule so we do not
         // lose unsynced voice deltas (e.g. BYO API keys) on restart.
         if (key === 'voice') {
+            const currentWriterProjection = parseCurrentWriterPredecessorVoiceProjection(rawValue);
+            if (currentWriterProjection) {
+                (out as any).voice = currentWriterProjection;
+                continue;
+            }
             const parsedVoice = voiceSettingsParse(rawValue);
             if (parsedVoice) (out as any).voice = stripSynthesizedVoiceExecutionDefaults(rawValue, parsedVoice);
             continue;
@@ -345,31 +387,36 @@ function stripSynthesizedVoiceExecutionDefaults(rawValue: unknown, parsedVoice: 
 
     const sanitized = JSON.parse(JSON.stringify(parsedVoice)) as Settings['voice'];
     const rawVoice = rawValue as Record<string, unknown>;
-    const rawAdapters =
-        rawVoice.adapters && typeof rawVoice.adapters === 'object' && !Array.isArray(rawVoice.adapters)
-            ? (rawVoice.adapters as Record<string, unknown>)
-            : null;
-    const parsedAdapters =
-        sanitized.adapters && typeof sanitized.adapters === 'object' && !Array.isArray(sanitized.adapters)
-            ? (sanitized.adapters as Record<string, unknown>)
-            : null;
+    const rawProviders = rawVoice.providers && typeof rawVoice.providers === 'object' && !Array.isArray(rawVoice.providers)
+        ? rawVoice.providers as Record<string, unknown>
+        : null;
+    const rawLegacyAdapters = readLegacyVoiceSettingsMigrationSource(rawVoice).adapters;
+    const parsedProviders = sanitized.providers && typeof sanitized.providers === 'object' && !Array.isArray(sanitized.providers)
+        ? sanitized.providers as Record<string, unknown>
+        : null;
 
-    if (!rawAdapters || !parsedAdapters) {
+    if ((!rawProviders && !rawLegacyAdapters) || !parsedProviders) {
         return sanitized;
     }
 
-    for (const adapterId of ['local_direct', 'local_conversation']) {
-        const rawAdapter =
-            rawAdapters[adapterId] && typeof rawAdapters[adapterId] === 'object' && !Array.isArray(rawAdapters[adapterId])
-                ? (rawAdapters[adapterId] as Record<string, unknown>)
+    for (const providerId of ['local_direct', 'local_conversation']) {
+        const rawEnvelope = rawProviders?.[providerId] && typeof rawProviders[providerId] === 'object'
+            ? rawProviders[providerId] as Record<string, unknown>
+            : null;
+        const rawConfig = rawEnvelope?.config && typeof rawEnvelope.config === 'object' && !Array.isArray(rawEnvelope.config)
+            ? rawEnvelope.config as Record<string, unknown>
+            : rawLegacyAdapters?.[providerId] && typeof rawLegacyAdapters[providerId] === 'object' && !Array.isArray(rawLegacyAdapters[providerId])
+                ? rawLegacyAdapters[providerId] as Record<string, unknown>
                 : null;
-        const parsedAdapter =
-            parsedAdapters[adapterId] && typeof parsedAdapters[adapterId] === 'object' && !Array.isArray(parsedAdapters[adapterId])
-                ? (parsedAdapters[adapterId] as Record<string, unknown>)
-                : null;
-        if (!rawAdapter || !parsedAdapter) continue;
-        stripSynthesizedLocalNeuralExecutionFromSection(rawAdapter, parsedAdapter, 'tts');
-        stripSynthesizedLocalNeuralExecutionFromSection(rawAdapter, parsedAdapter, 'stt');
+        const parsedEnvelope = parsedProviders[providerId] && typeof parsedProviders[providerId] === 'object'
+            ? parsedProviders[providerId] as Record<string, unknown>
+            : null;
+        const parsedConfig = parsedEnvelope?.config && typeof parsedEnvelope.config === 'object' && !Array.isArray(parsedEnvelope.config)
+            ? parsedEnvelope.config as Record<string, unknown>
+            : null;
+        if (!rawConfig || !parsedConfig) continue;
+        stripSynthesizedLocalNeuralExecutionFromSection(rawConfig, parsedConfig, 'tts');
+        stripSynthesizedLocalNeuralExecutionFromSection(rawConfig, parsedConfig, 'stt');
     }
 
     return sanitized;
@@ -503,6 +550,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
         }
 
         const input = typeof parsed.input === 'string' ? parsed.input : '';
+        const launchUserAttemptId = parseDraftTrimmedString((parsed as any).launchUserAttemptId);
         const selectedMachineId = typeof parsed.selectedMachineId === 'string' ? parsed.selectedMachineId : null;
         const selectedPath = typeof parsed.selectedPath === 'string' ? parsed.selectedPath : null;
         const targetServerId = parseDraftTrimmedString((parsed as any).targetServerId);
@@ -521,22 +569,82 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             parsed.sessionOnlySecretValueEncByProfileIdByEnvVarName,
             parseDraftSecretStringOrNull,
         );
-        const agentType: AgentId = isAgentId(parsed.agentType) && !isLegacyCompatAgentType(parsed.agentType)
-            ? parsed.agentType
-            : DEFAULT_AGENT_ID;
         const backendTarget = (() => {
             try {
-                return readBackendTargetRefV2((parsed as any).backendTarget);
+                if ((parsed as any).backendTarget !== undefined) {
+                    return readBackendTargetRefV2((parsed as any).backendTarget);
+                }
+                const importedAgentIdentity = readPersistedAgentContributionIdentityV1(
+                    (parsed as any).agentType,
+                );
+                if (importedAgentIdentity) {
+                    return readBackendTargetRefV2({
+                        kind: 'agent',
+                        identity: importedAgentIdentity,
+                    });
+                }
+                return undefined;
             } catch {
                 return undefined;
             }
         })();
+        const agentTypeCandidate = backendTarget && isAgentId(backendTarget.backendId)
+            ? backendTarget.backendId
+            : parsed.agentType;
+        const agentType: AgentId = isAgentId(agentTypeCandidate) && !isLegacyCompatAgentType(agentTypeCandidate)
+            ? agentTypeCandidate
+            : DEFAULT_AGENT_ID;
         const permissionMode: PermissionMode = isPermissionMode(parsed.permissionMode)
             ? parsed.permissionMode
             : 'default';
-        const modelMode: ModelMode = isModelMode(parsed.modelMode)
-            ? String(parsed.modelMode).trim()
-            : 'default';
+        const modelSelection = (() => {
+            const targetKey = resolveBackendTargetKeyV2(
+                backendTarget ?? { kind: 'backend', backendId: agentType },
+            );
+            const rawCanonicalSelection = (parsed as any).modelSelection;
+            if (rawCanonicalSelection === null) return null;
+            const canonical = SessionModelSelectionV1Schema.safeParse(rawCanonicalSelection);
+            if (canonical.success) {
+                const canonicalSelectionTargetKey = (() => {
+                    if (canonical.data.ref.agentTargetKey === targetKey) return targetKey;
+                    try {
+                        return resolveBackendTargetKeyV2(
+                            readBackendTargetRefV2(canonical.data.ref.agentTargetKey as any),
+                        );
+                    } catch {
+                        return canonical.data.ref.agentTargetKey;
+                    }
+                })();
+                if (canonicalSelectionTargetKey !== targetKey) {
+                    throw new SessionModelSelectionResolutionError('model_selection_agent_target_mismatch');
+                }
+                return {
+                    ...canonical.data,
+                    ref: {
+                        ...canonical.data.ref,
+                        agentTargetKey: targetKey,
+                    },
+                };
+            }
+            if (rawCanonicalSelection !== undefined) {
+                throw new Error('Invalid persisted new-session model selection');
+            }
+            const legacyModelMode: ModelMode = isModelMode(parsed.modelMode)
+                ? String(parsed.modelMode).trim()
+                : 'default';
+            if (legacyModelMode === 'default') return null;
+            return SessionModelSelectionV1Schema.parse({
+                v: 1,
+                updatedAt: typeof parsed.updatedAt === 'number' && Number.isFinite(parsed.updatedAt)
+                    ? Math.max(0, parsed.updatedAt)
+                    : 0,
+                ref: {
+                    agentTargetKey: targetKey,
+                    providerConnectionId: null,
+                    modelId: legacyModelMode,
+                },
+            });
+        })();
         const rawAcpSessionModeId = (parsed as any).acpSessionModeId;
         const acpSessionModeId = rawAcpSessionModeId === null
             ? null
@@ -577,6 +685,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
 
         return {
             input,
+            ...(launchUserAttemptId ? { launchUserAttemptId } : {}),
             selectedMachineId,
             selectedPath,
             ...(targetServerId ? { targetServerId } : {}),
@@ -591,7 +700,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             ...(backendTarget ? { backendTarget } : {}),
             ...(transcriptStorage ? { transcriptStorage } : {}),
             permissionMode,
-            modelMode,
+            modelSelection,
             acpSessionModeId,
             ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
             ...(codexBackendMode ? { codexBackendMode } : {}),
@@ -609,7 +718,31 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
 
 export function saveNewSessionDraft(draft: NewSessionDraft, scope?: ServerAccountScope | null) {
     const mmkv = getPersistenceStorage();
-    mmkv.set(newSessionDraftKey(scope), JSON.stringify(draft));
+    const { modelMode: _legacyModelMode, ...canonicalDraft } = draft;
+    const persistedBackendTarget = canonicalDraft.backendTarget
+        ? writePersistedBackendTargetRefV2(canonicalDraft.backendTarget)
+        : null;
+    const writesStructuredAgentIdentity = persistedBackendTarget?.kind === 'agent';
+    const {
+        agentType: _runtimeAgentType,
+        backendTarget: _runtimeBackendTarget,
+        ...persistedDraft
+    } = canonicalDraft;
+    const modelSelection = canonicalDraft.modelSelection && canonicalDraft.backendTarget
+        ? {
+            ...canonicalDraft.modelSelection,
+            ref: {
+                ...canonicalDraft.modelSelection.ref,
+                agentTargetKey: resolveBackendTargetKeyV2(canonicalDraft.backendTarget),
+            },
+        }
+        : canonicalDraft.modelSelection ?? null;
+    mmkv.set(newSessionDraftKey(scope), JSON.stringify({
+        ...persistedDraft,
+        ...(!writesStructuredAgentIdentity ? { agentType: canonicalDraft.agentType } : {}),
+        ...(persistedBackendTarget ? { backendTarget: persistedBackendTarget } : {}),
+        modelSelection,
+    }));
 }
 
 export function clearNewSessionDraft(scope?: ServerAccountScope | null) {
@@ -960,8 +1093,13 @@ export function loadExternalSessionTailCursor(sessionIdRaw: string, scopeRaw?: C
 
     if (!scope.serverScope) return null;
 
-    const raw = mmkv.getString(externalSessionTailCursorKey(accountId, sessionId, scope.serverScope, scope.instanceId));
-    return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : null;
+    const key = externalSessionTailCursorKey(accountId, sessionId, scope.serverScope, scope.instanceId);
+    const parsed = ExternalSessionRefreshCursorV1Schema.safeParse(mmkv.getString(key));
+    if (!parsed.success) {
+        mmkv.delete(key);
+        return null;
+    }
+    return parsed.data;
 }
 
 export function saveExternalSessionTailCursor(
@@ -978,12 +1116,12 @@ export function saveExternalSessionTailCursor(
     if (!scope.serverScope) return;
 
     const key = externalSessionTailCursorKey(accountId, sessionId, scope.serverScope, scope.instanceId);
-    const cursor = typeof cursorRaw === 'string' ? cursorRaw.trim() : '';
-    if (!cursor) {
+    const cursor = ExternalSessionRefreshCursorV1Schema.safeParse(cursorRaw);
+    if (!cursor.success) {
         mmkv.delete(key);
         return;
     }
-    mmkv.set(key, cursor);
+    mmkv.set(key, cursor.data);
 }
 
 export function loadLastChangesCursorByAccountId(): Record<string, number> {

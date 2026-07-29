@@ -23,9 +23,6 @@ export type TranscriptViewportRejectedWrite = Readonly<{
 }>;
 
 export type TranscriptViewportCommandExecutionAdapter = Readonly<{
-    clearWebPrependRestoreWindow: (outcome: TranscriptViewportTransactionOutcome) => void;
-    hasWebPrependRestoreWindow: () => boolean;
-    isWeb: boolean;
     perform: (command: TranscriptViewportCommand) => boolean;
     recordRejectedWrite: (write: TranscriptViewportRejectedWrite) => void;
 }>;
@@ -103,20 +100,7 @@ export function createTranscriptViewportCommandController(): TranscriptViewportC
         if (commandOwner === 'explicit') {
             ownership.preempt('explicit');
             ownership.closeTransaction('explicit', 'confirmed');
-            // Explicit writes (jump-to-bottom, jump-to-seq, nav-rail/panel jumps) move the
-            // viewport away from any pending web prepend anchor. Clear the restore window at
-            // this single chokepoint so a stale content-growth restore cannot re-assert the
-            // old mid-transcript position after the explicit write lands.
-            if (adapter.isWeb && adapter.hasWebPrependRestoreWindow()) {
-                adapter.clearWebPrependRestoreWindow('preempted');
-            }
         } else {
-            if (adapter.isWeb && ownership.activeOwner() === 'prepend' && !adapter.hasWebPrependRestoreWindow()) {
-                ownership.closeTransaction('prepend', 'abandoned-identity');
-            }
-            if (adapter.isWeb && commandOwner === 'prepend' && ownership.activeOwner() === 'follow') {
-                ownership.openTransaction('prepend');
-            }
             if (!ownership.canWrite(commandOwner)) {
                 adapter.recordRejectedWrite({
                     command,

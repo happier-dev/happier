@@ -11,6 +11,7 @@ export type SelectableMenuItem = Readonly<{
      */
     title: string;
     subtitle?: string;
+    accessibilityLabel?: string;
     /** Optional custom presentation for title/subtitle (web/native Text-compatible). */
     titleNode?: React.ReactNode;
     subtitleNode?: React.ReactNode;

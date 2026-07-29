@@ -1,10 +1,22 @@
-import React from 'react';
-import { Pressable, View, useWindowDimensions } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
-import { Text, TextInput } from '@/components/ui/text/Text';
+import * as React from 'react';
+import { Platform, Pressable, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Switch } from '@/components/ui/forms/Switch';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import {
+    SelectionList,
+    type SelectionListHeightBehavior,
+    type SelectionListOption,
+    type SelectionListSectionDescriptor,
+} from '@/components/ui/selectionList';
+import { Text, TextInput } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
+import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import type {
     SessionConfigOptionControl,
     SessionConfigOptionValueId,
@@ -14,20 +26,29 @@ import {
     resolveBooleanConfigOptionNextValue,
     resolveBooleanConfigOptionValue,
 } from '@/sync/domains/sessionControl/configOptionsControl';
-import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
-import { Typography } from '@/constants/Typography';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type WebHoverablePressableState = Readonly<{
     pressed: boolean;
     hovered?: boolean;
 }>;
 
-export type OptionPickerOption = Readonly<{
-    value: string;
+const CUSTOM_EDITOR_ESCAPE_PRIORITY = ESCAPE_LAYER_PRIORITIES.modal + 1;
+
+export type OptionPickerOption<TValue = string> = Readonly<{
+    value: TValue;
     label: string;
+    icon?: React.ReactNode;
+    trailingStatusIcon?: React.ReactNode;
     description?: string;
+    accessibilityLabel?: string;
+    disabled?: boolean;
+}>;
+
+export type OptionPickerSection<TValue = string> = Readonly<{
+    id: string;
+    title?: string;
+    options: ReadonlyArray<OptionPickerOption<TValue>>;
 }>;
 
 export type OptionPickerProbeState = Readonly<{
@@ -38,136 +59,89 @@ export type OptionPickerProbeState = Readonly<{
     refreshingAccessibilityLabel?: string;
 }>;
 
-export type OptionPickerFavoriteOptions = Readonly<{
+export type OptionPickerFavoriteOptions<TValue = string> = Readonly<{
+    /** Stable value keys, never display labels. */
     values: ReadonlySet<string>;
-    isFavoritable?: (option: OptionPickerOption) => boolean;
-    onToggle: (option: OptionPickerOption) => void;
-    getAccessibilityLabel?: (option: OptionPickerOption, isFavorite: boolean) => string;
+    isFavoritable?: (option: OptionPickerOption<TValue>) => boolean;
+    onToggle: (option: OptionPickerOption<TValue>) => void;
+    getAccessibilityLabel?: (option: OptionPickerOption<TValue>, isFavorite: boolean) => string;
 }>;
 
-export type OptionPickerOverlayProps = Readonly<{
+type CustomValueEnabled<TValue> = Readonly<{
+    canEnterCustomValue: true;
+    onSubmitCustomValue?: (value: string) => void | Promise<void>;
+    /**
+     * Converts a typed selection into its editable model id. The stable
+     * typed value/key remains the selection identity; this string is only
+     * presentation input for an unlisted current value.
+     */
+    getCustomValue?: (value: TValue) => string | null;
+}>;
+
+type CustomValueCompatibility<TValue> = TValue extends string
+    ? Readonly<{
+        canEnterCustomValue: boolean;
+        onSubmitCustomValue?: (value: string) => void | Promise<void>;
+        getCustomValue?: (value: TValue) => string | null;
+      }>
+    : Readonly<{ canEnterCustomValue: false; onSubmitCustomValue?: never; getCustomValue?: never }>
+        | CustomValueEnabled<TValue>;
+
+export type OptionPickerOverlayProps<TValue = string> = Readonly<{
     title: string;
     effectiveLabel?: string;
     notes?: ReadonlyArray<string>;
     summary?: React.ReactNode;
     summaryTestID?: string;
     headerAccessory?: React.ReactNode;
-    options: ReadonlyArray<OptionPickerOption>;
-    selectedValue: string;
+    options: ReadonlyArray<OptionPickerOption<TValue>>;
+    sections?: ReadonlyArray<OptionPickerSection<TValue>>;
+    selectedValue: TValue;
+    getValueKey?: (value: TValue) => string;
     emptyText: string;
-    canEnterCustomValue: boolean;
     customLabel?: string;
     customDescription?: string;
     searchPlaceholder?: string;
     optionTestIDPrefix?: string;
     refreshTestID?: string;
-    favoriteOptions?: OptionPickerFavoriteOptions;
+    favoriteOptions?: OptionPickerFavoriteOptions<TValue>;
     selectedOptionControls?: ReadonlyArray<SessionConfigOptionControl>;
     onSelectOptionControlValue?: (configId: string, valueId: SessionConfigOptionValueId) => void;
-    onSelect: (value: string) => void;
-    onSubmitCustomValue?: (value: string) => void | Promise<void>;
+    onSelect: (value: TValue) => void;
     probe?: OptionPickerProbeState;
-}>;
+    fillAvailableSpace?: boolean;
+    showTitle?: boolean;
+    maxHeight?: number;
+    heightBehavior?: SelectionListHeightBehavior;
+    autoFocusInputOnWeb?: boolean;
+    onRequestClose?: () => void;
+    favoriteActionVisibility?: 'selected-or-favorite' | 'all';
+}> & CustomValueCompatibility<TValue>;
 
-const MOBILE_SINGLE_COLUMN_WIDTH = 560;
+function defaultValueKey<TValue>(value: TValue): string {
+    if (typeof value !== 'string') {
+        throw new Error('OptionPickerOverlay requires getValueKey for non-string values');
+    }
+    return value;
+}
 
-export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
-    const styles = stylesheet;
-    const { theme } = useUnistyles();
-    const { width: windowWidth } = useWindowDimensions();
-    const transientStyles = React.useMemo(() => ({
-        optionCardSelected: { backgroundColor: theme.colors.surface.selected },
-        optionCardHovered: { backgroundColor: theme.colors.surface.pressed },
-        optionCardPressed: { opacity: 0.86 },
-        refreshIconButtonPressed: { backgroundColor: theme.colors.surface.pressed },
-        refreshIconButtonDisabled: { opacity: 0.6 },
-    }), [
-        theme.colors.surface.pressed,
-        theme.colors.surface.selected,
-    ]);
-    const [query, setQuery] = React.useState('');
-    const optionValues = React.useMemo(() => {
-        return new Set(props.options.map((option) => option.value));
-    }, [props.options]);
-
-    const probe = props.probe;
-    const shouldRenderProbeControl = probe ? typeof probe.onRefresh === 'function' || probe.phase !== 'idle' : false;
-    const showSearch = props.options.length >= 10;
-    const normalizedQuery = query.trim().toLowerCase();
-    const notes = props.notes ?? [];
-    const optionTestIDPrefix = props.optionTestIDPrefix ?? 'model-picker-overlay-option';
-    const refreshTestID = props.refreshTestID ?? 'model-picker-overlay-refresh';
-    const selectedIndicatorColor = theme.dark ? theme.colors.text.primary : theme.colors.button.primary.background;
-    const selectedValue = props.selectedValue.trim();
-    const selectedCustomValue = props.canEnterCustomValue && selectedValue.length > 0 && !optionValues.has(selectedValue)
-        ? selectedValue
-        : '';
-    const [customValue, setCustomValue] = React.useState(selectedCustomValue);
-    const [customEditorVisible, setCustomEditorVisible] = React.useState(selectedCustomValue.length > 0);
-    const customEditorOpenReasonRef = React.useRef<'selected-custom' | 'manual' | null>(
-        selectedCustomValue.length > 0 ? 'selected-custom' : null,
-    );
-    const lastCommittedCustomValueRef = React.useRef<string>(selectedCustomValue.trim());
-    const previousSelectedValueRef = React.useRef(selectedValue);
-    const probeHintText = React.useMemo(() => {
-        if (!probe || probe.phase === 'idle') return null;
-        if (props.options.length > 1 || props.canEnterCustomValue) return null;
-        return probe.phase === 'loading'
-            ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
-            : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'));
-    }, [
-        probe,
-        props.canEnterCustomValue,
-        props.options.length,
-    ]);
-
-    React.useEffect(() => {
-        const previousSelectedValue = previousSelectedValueRef.current;
-        previousSelectedValueRef.current = selectedValue;
-
-        if (selectedCustomValue.length > 0) {
-            setCustomValue(selectedCustomValue);
-            setCustomEditorVisible(true);
-            customEditorOpenReasonRef.current = 'selected-custom';
-            lastCommittedCustomValueRef.current = selectedCustomValue.trim();
-            return;
-        }
-        if (optionValues.has(selectedValue)) {
-            if (customEditorOpenReasonRef.current === 'selected-custom') {
-                customEditorOpenReasonRef.current = null;
-                setCustomEditorVisible(false);
-                return;
-            }
-            if (customEditorVisible && previousSelectedValue === selectedValue) {
-                return;
-            }
-            customEditorOpenReasonRef.current = null;
-            setCustomEditorVisible(false);
-        }
-    }, [customEditorVisible, optionValues, selectedCustomValue, selectedValue]);
-
-    const filteredOptions = React.useMemo(() => {
-        if (!showSearch || !normalizedQuery) return props.options;
-        return props.options.filter((opt) => {
-            const haystack = `${opt.label} ${opt.value} ${opt.description ?? ''}`.toLowerCase();
-            return haystack.includes(normalizedQuery);
-        });
-    }, [normalizedQuery, props.options, showSearch]);
-    const optionColumnCount = filteredOptions.length <= 1 || windowWidth < MOBILE_SINGLE_COLUMN_WIDTH ? 1 : 2;
-
-    const renderSelectedOptionControls = React.useCallback(() => {
-        if ((props.selectedOptionControls?.length ?? 0) === 0) {
-            return null;
-        }
-
-        return (
-            <View style={styles.inlineSelectedControls}>
-                {props.selectedOptionControls?.map((control) => {
+function SelectedOptionControls(props: Readonly<{
+    controls: ReadonlyArray<SessionConfigOptionControl>;
+    onSelect?: (configId: string, valueId: SessionConfigOptionValueId) => void;
+}>) {
+    if (props.controls.length === 0) return null;
+    return (
+        <View style={styles.inlineSelectedControls}>
+            {props.controls.map((control) => {
                 const option = control.option;
-                const effectiveValue = control.effectiveValue;
-
+                const controlAccessibilityLabel = t('modelPickerOverlay.optionControlA11y', {
+                    name: option.name,
+                });
                 if (isBooleanConfigOptionType(option.type)) {
-                    const boolValue = resolveBooleanConfigOptionValue(option, String(effectiveValue) as SessionConfigOptionValueId);
+                    const boolValue = resolveBooleanConfigOptionValue(
+                        option,
+                        String(control.effectiveValue) as SessionConfigOptionValueId,
+                    );
                     return (
                         <View
                             key={option.id}
@@ -176,14 +150,13 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                         >
                             <View style={styles.selectedControlTextBlock}>
                                 <Text style={styles.selectedControlTitle}>{option.name}</Text>
-                                {option.description ? (
-                                    <Text style={styles.selectedControlDescription}>{option.description}</Text>
-                                ) : null}
+                                {option.description ? <Text style={styles.selectedControlDescription}>{option.description}</Text> : null}
                             </View>
                             <Switch
                                 testID={`model-picker-overlay-selected-option-control-switch:${option.id}`}
+                                accessibilityLabel={controlAccessibilityLabel}
                                 value={boolValue}
-                                onValueChange={(next) => props.onSelectOptionControlValue?.(
+                                onValueChange={(next) => props.onSelect?.(
                                     option.id,
                                     resolveBooleanConfigOptionNextValue(option, next),
                                 )}
@@ -193,11 +166,6 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                     );
                 }
 
-                const tabs = option.options?.map((choice) => ({
-                    id: choice.value,
-                    label: choice.name,
-                })) ?? [];
-
                 return (
                     <View
                         key={option.id}
@@ -205,118 +173,336 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                         style={styles.selectedControlGroup}
                     >
                         <Text style={styles.selectedControlTitle}>{option.name}</Text>
-                        {option.description ? (
-                            <Text style={styles.selectedControlDescription}>{option.description}</Text>
-                        ) : null}
+                        {option.description ? <Text style={styles.selectedControlDescription}>{option.description}</Text> : null}
                         <SegmentedTabBar
-                            tabs={tabs}
-                            activeTabId={effectiveValue}
-                            onSelectTab={(tabId) => props.onSelectOptionControlValue?.(option.id, tabId as SessionConfigOptionValueId)}
+                            tabs={(option.options ?? []).map((choice) => ({ id: choice.value, label: choice.name }))}
+                            activeTabId={control.effectiveValue}
+                            onSelectTab={(tabId) => props.onSelect?.(option.id, tabId as SessionConfigOptionValueId)}
                             testIDPrefix={`model-picker-overlay-selected-option-control-option:${option.id}`}
+                            accessibilityLabel={controlAccessibilityLabel}
                             compact
                             activeLabelStyle={Typography.default('semiBold')}
                         />
                     </View>
                 );
-                })}
-            </View>
-        );
-    }, [
-        props.onSelectOptionControlValue,
-        props.selectedOptionControls,
-        styles.inlineSelectedControls,
-        styles.selectedControlDescription,
-        styles.selectedControlGroup,
-        styles.selectedControlRow,
-        styles.selectedControlTextBlock,
-        styles.selectedControlTitle,
-    ]);
+            })}
+        </View>
+    );
+}
 
-    const handleSelectOption = React.useCallback((nextValue: string) => {
+function OptionTrailingAccessory<TValue>(props: Readonly<{
+    option: OptionPickerOption<TValue>;
+    valueKey: string;
+    selected: boolean;
+    favorite: boolean;
+    canToggleFavorite: boolean;
+    optionTestIDPrefix: string;
+    favoriteOptions?: OptionPickerFavoriteOptions<TValue>;
+}>) {
+    const { theme } = useUnistyles();
+    const actionLabel = props.favorite
+        ? t('profiles.actions.removeFromFavorites')
+        : t('profiles.actions.addToFavorites');
+    const accessibilityLabel = props.favoriteOptions?.getAccessibilityLabel?.(props.option, props.favorite)
+        ?? `${props.option.accessibilityLabel ?? props.option.label}, ${actionLabel}`;
+    return (
+        <View
+            testID={props.selected ? `model-picker-overlay-option-selected-indicator:${props.valueKey}` : undefined}
+            pointerEvents="box-none"
+            style={styles.optionCardIndicator}
+        >
+            {props.selected || props.option.trailingStatusIcon ? (
+                <View
+                    testID={`model-picker-overlay-option-selection-status:${props.valueKey}`}
+                    pointerEvents="none"
+                    style={styles.optionSelectionStatus}
+                >
+                    {props.selected ? (
+                        <View style={styles.optionSelectionMark}>
+                            <Ionicons name="checkmark-outline" size={14} color={theme.colors.text.primary} />
+                        </View>
+                    ) : null}
+                    {props.option.trailingStatusIcon ? (
+                        <View
+                            testID={`${props.optionTestIDPrefix}-status-icon:${props.valueKey}`}
+                            style={styles.optionCardStatusIcon}
+                        >
+                            {normalizeNodeForView(props.option.trailingStatusIcon)}
+                        </View>
+                    ) : null}
+                </View>
+            ) : null}
+            {props.canToggleFavorite ? (
+                <IconButton
+                    testID={`${props.optionTestIDPrefix}-favorite:${props.valueKey}`}
+                    iconName={props.favorite ? 'star' : 'star-outline'}
+                    accessibilityLabel={accessibilityLabel}
+                    tooltip={actionLabel}
+                    size={44}
+                    iconSize={18}
+                    tone={props.favorite ? 'primary' : 'default'}
+                    variant="plain"
+                    onPress={() => props.favoriteOptions?.onToggle(props.option)}
+                />
+            ) : null}
+        </View>
+    );
+}
+
+export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayProps<TValue>) {
+    const { theme } = useUnistyles();
+    const getValueKey = props.getValueKey ?? defaultValueKey<TValue>;
+    const selectedValueKey = getValueKey(props.selectedValue);
+    const notes = props.notes ?? [];
+    const optionTestIDPrefix = props.optionTestIDPrefix ?? 'model-picker-overlay-option';
+    const refreshTestID = props.refreshTestID ?? 'model-picker-overlay-refresh';
+    // SelectionList treats root identity changes as scope replacement. Keep
+    // non-structural parent rerenders from dispatching a replacement.
+    const defaultSections = React.useMemo<ReadonlyArray<OptionPickerSection<TValue>>>(() => [
+        { id: 'options', options: props.options },
+    ], [props.options]);
+    const sourceSections = props.sections ?? defaultSections;
+    const totalOptionCount = sourceSections.reduce((sum, section) => sum + section.options.length, 0);
+    const optionKeys = React.useMemo(() => new Set(
+        sourceSections.flatMap((section) => section.options.map((option) => getValueKey(option.value))),
+    ), [getValueKey, sourceSections]);
+
+    const selectedString = (
+        props.canEnterCustomValue && props.getCustomValue
+            ? props.getCustomValue(props.selectedValue) ?? ''
+            : typeof props.selectedValue === 'string'
+                ? props.selectedValue
+                : ''
+    ).trim();
+    const selectedCustomValue = props.canEnterCustomValue
+        && selectedString.length > 0
+        && !optionKeys.has(selectedValueKey)
+        ? selectedString
+        : '';
+    const [customValue, setCustomValue] = React.useState(selectedCustomValue);
+    const [customEditorVisible, setCustomEditorVisible] = React.useState(selectedCustomValue.length > 0);
+    const customTriggerRef = React.useRef<React.ElementRef<typeof Pressable>>(null);
+    const customInputRef = React.useRef<React.ElementRef<typeof TextInput>>(null);
+    const focusCustomInputOnOpenRef = React.useRef(false);
+    const returnFocusToCustomTriggerRef = React.useRef(false);
+    const customEditorOpenReasonRef = React.useRef<'selected-custom' | 'manual' | null>(
+        selectedCustomValue.length > 0 ? 'selected-custom' : null,
+    );
+    const dismissedSelectedCustomValueKeyRef = React.useRef<string | null>(null);
+    const lastCommittedCustomValueRef = React.useRef(selectedCustomValue);
+    const previousSelectedValueKeyRef = React.useRef(selectedValueKey);
+
+    React.useEffect(() => {
+        const previousSelectedValueKey = previousSelectedValueKeyRef.current;
+        previousSelectedValueKeyRef.current = selectedValueKey;
+        if (selectedCustomValue.length > 0) {
+            setCustomValue(selectedCustomValue);
+            if (dismissedSelectedCustomValueKeyRef.current === selectedValueKey) {
+                customEditorOpenReasonRef.current = null;
+                lastCommittedCustomValueRef.current = selectedCustomValue;
+                return;
+            }
+            dismissedSelectedCustomValueKeyRef.current = null;
+            setCustomEditorVisible(true);
+            customEditorOpenReasonRef.current = 'selected-custom';
+            lastCommittedCustomValueRef.current = selectedCustomValue;
+            return;
+        }
+        if (!optionKeys.has(selectedValueKey)) return;
+        dismissedSelectedCustomValueKeyRef.current = null;
+        if (customEditorOpenReasonRef.current === 'selected-custom') {
+            customEditorOpenReasonRef.current = null;
+            setCustomEditorVisible(false);
+            return;
+        }
+        if (customEditorVisible && previousSelectedValueKey === selectedValueKey) return;
         customEditorOpenReasonRef.current = null;
         setCustomEditorVisible(false);
-        props.onSelect(nextValue);
-    }, [props]);
+    }, [customEditorVisible, optionKeys, selectedCustomValue, selectedValueKey]);
+
+    React.useEffect(() => {
+        if (customEditorVisible && focusCustomInputOnOpenRef.current) {
+            focusCustomInputOnOpenRef.current = false;
+            customInputRef.current?.focus?.();
+            return;
+        }
+        if (!customEditorVisible && returnFocusToCustomTriggerRef.current) {
+            returnFocusToCustomTriggerRef.current = false;
+            customTriggerRef.current?.focus?.();
+        }
+    }, [customEditorVisible]);
+
+    const dismissCustomEditor = React.useCallback(() => {
+        customEditorOpenReasonRef.current = null;
+        dismissedSelectedCustomValueKeyRef.current = selectedCustomValue.length > 0
+            ? selectedValueKey
+            : null;
+        returnFocusToCustomTriggerRef.current = true;
+        setCustomEditorVisible(false);
+    }, [selectedCustomValue, selectedValueKey]);
+    useEscapeLayer({
+        enabled: Platform.OS === 'web' && customEditorVisible,
+        // The input editor is nested inside popovers and can also appear inside
+        // modal surfaces. Its first Escape closes only this editor; the next
+        // Escape remains available to the enclosing layer.
+        priority: CUSTOM_EDITOR_ESCAPE_PRIORITY,
+        allowEditableTarget: true,
+        onEscape: () => {
+            dismissCustomEditor();
+            return true;
+        },
+    });
+    const handleCustomEditorKeyDown = React.useCallback((event: any) => {
+        if (Platform.OS !== 'web') return;
+        const key = event?.nativeEvent?.key ?? event?.key;
+        if (key !== 'Escape') return;
+        event?.preventDefault?.();
+        dismissCustomEditor();
+    }, [dismissCustomEditor]);
+    const customEditorWebKeyProps = Platform.OS === 'web'
+        ? ({ onKeyDown: handleCustomEditorKeyDown } as Record<string, unknown>)
+        : {};
+
+    const selectionSections = React.useMemo<ReadonlyArray<SelectionListSectionDescriptor>>(() => {
+        const seen = new Set<string>();
+        return sourceSections.map((section) => ({
+            kind: 'static' as const,
+            id: section.id,
+            title: section.title,
+            virtualization: 'auto' as const,
+            options: section.options.flatMap((option): SelectionListOption[] => {
+                const valueKey = getValueKey(option.value);
+                if (seen.has(valueKey)) return [];
+                seen.add(valueKey);
+                const selected = valueKey === selectedValueKey;
+                const favorite = props.favoriteOptions?.values.has(valueKey) === true;
+                const canToggleFavorite = (
+                    props.favoriteActionVisibility === 'all'
+                    || selected
+                    || favorite
+                )
+                    && Boolean(props.favoriteOptions)
+                    && (props.favoriteOptions?.isFavoritable?.(option) ?? true);
+                return [{
+                    id: valueKey,
+                    testID: `${optionTestIDPrefix}:${valueKey}`,
+                    label: option.label,
+                    subtitle: option.description,
+                    accessibilityLabel: option.accessibilityLabel,
+                    disabled: option.disabled,
+                    icon: option.icon ? (
+                        <View
+                            testID={`${optionTestIDPrefix}-icon:${valueKey}`}
+                            style={styles.optionCardIconSlot}
+                        >
+                            {normalizeNodeForView(option.icon)}
+                        </View>
+                    ) : undefined,
+                    rightAccessory: selected || option.trailingStatusIcon || canToggleFavorite ? (
+                        <OptionTrailingAccessory
+                            option={option}
+                            valueKey={valueKey}
+                            selected={selected}
+                            favorite={favorite}
+                            canToggleFavorite={canToggleFavorite}
+                            optionTestIDPrefix={optionTestIDPrefix}
+                            favoriteOptions={props.favoriteOptions}
+                        />
+                    ) : undefined,
+                    rightAccessoryOutsidePressable: canToggleFavorite,
+                }];
+            }),
+        }));
+    }, [
+        getValueKey,
+        optionTestIDPrefix,
+        props.favoriteActionVisibility,
+        props.favoriteOptions,
+        selectedValueKey,
+        sourceSections,
+    ]);
+    const optionByKey = React.useMemo(() => new Map(
+        sourceSections.flatMap((section) => section.options.map((option) => [getValueKey(option.value), option] as const)),
+    ), [getValueKey, sourceSections]);
+    const selectionRootStep = React.useMemo(() => ({
+        id: 'options',
+        inputPlaceholder: totalOptionCount >= 10
+            ? (props.searchPlaceholder ?? t('modelPickerOverlay.searchPlaceholder'))
+            : undefined,
+        emptyStateLabel: props.emptyText,
+        sections: selectionSections,
+    }), [props.emptyText, props.searchPlaceholder, selectionSections, totalOptionCount]);
+
+    const probe = props.probe;
+    const shouldRenderProbeControl = probe ? typeof probe.onRefresh === 'function' || probe.phase !== 'idle' : false;
+    const refreshAccessibilityLabel = probe?.refreshAccessibilityLabel ?? t('modelPickerOverlay.refreshModelsA11y');
+    const probeHintText = probe && probe.phase !== 'idle' && totalOptionCount <= 1 && !props.canEnterCustomValue
+        ? (probe.phase === 'loading'
+            ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
+            : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y')))
+        : null;
 
     const commitCustomValue = React.useCallback((raw: string) => {
         const normalized = raw.trim();
-        if (!normalized) return;
-        if (lastCommittedCustomValueRef.current === normalized) return;
+        if (!normalized || lastCommittedCustomValueRef.current === normalized) return;
         lastCommittedCustomValueRef.current = normalized;
-        if (props.onSubmitCustomValue) {
-            void props.onSubmitCustomValue(normalized);
-            return;
-        }
-        props.onSelect(normalized);
-    }, [props]);
+        props.onSubmitCustomValue?.(normalized);
+    }, [props.onSubmitCustomValue]);
+    const customEntryHeader = (
+        <View style={styles.customEntryHeader}>
+            <View style={styles.customEntryTextBlock}>
+                <Text style={[styles.optionCardTitle, customEditorVisible ? styles.optionCardTitleSelected : null]}>
+                    {props.customLabel ?? t('modelPickerOverlay.customTitle')}
+                </Text>
+                {props.customDescription ? <Text style={styles.optionCardDescription}>{props.customDescription}</Text> : null}
+            </View>
+            {customEditorVisible ? <Ionicons name="checkmark-outline" size={14} color={theme.colors.text.primary} /> : null}
+        </View>
+    );
 
-    const handleCustomValueChange = React.useCallback((next: string) => {
-        setCustomValue(next);
-        commitCustomValue(next);
-    }, [commitCustomValue]);
-
-    const selectedTileValue = customEditorVisible ? null : props.selectedValue;
     return (
-        <View testID="model-picker-overlay" style={styles.section}>
-            <View style={[styles.row, styles.titleRowContainer]}>
+        <View
+            testID="model-picker-overlay"
+            style={[styles.section, props.fillAvailableSpace ? styles.sectionFill : null]}
+        >
+            {props.showTitle !== false
+                || props.summary
+                || props.effectiveLabel
+                || notes.length > 0
+                || probeHintText
+                || props.headerAccessory
+                || shouldRenderProbeControl ? (
+            <View style={styles.titleRowContainer}>
                 <View style={styles.titleRow}>
-                    <Text style={styles.title}>{props.title}</Text>
+                    {props.showTitle !== false ? <Text style={styles.title}>{props.title}</Text> : null}
                     {props.summary ? (
-                        <View
-                            testID={props.summaryTestID ?? 'model-picker-overlay-summary'}
-                            style={styles.effectiveBlock}
-                        >
-                            {typeof props.summary === 'string'
-                                ? <Text style={styles.noteText}>{props.summary}</Text>
-                                : props.summary}
+                        <View testID={props.summaryTestID ?? 'model-picker-overlay-summary'} style={styles.effectiveBlock}>
+                            {typeof props.summary === 'string' ? <Text style={styles.noteText}>{props.summary}</Text> : props.summary}
+                            {notes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>)}
+                            {probeHintText ? <Text style={styles.noteText}>{probeHintText}</Text> : null}
                         </View>
-                    ) : (props.effectiveLabel || notes.length > 0) ? (
+                    ) : (props.effectiveLabel || notes.length > 0 || probeHintText) ? (
                         <View testID="model-picker-overlay-summary" style={styles.effectiveBlock}>
-                            {props.effectiveLabel ? (
-                                <Text style={styles.noteText}>{t('modelPickerOverlay.effectiveLabel', { label: props.effectiveLabel })}</Text>
-                            ) : null}
-                            {notes.map((note, idx) => (
-                                <Text key={idx} style={styles.noteText}>{note}</Text>
-                            ))}
-                            {probeHintText ? (
-                                <Text style={styles.noteText}>{probeHintText}</Text>
-                            ) : null}
+                            {props.effectiveLabel ? <Text style={styles.noteText}>{t('modelPickerOverlay.effectiveLabel', { label: props.effectiveLabel })}</Text> : null}
+                            {notes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>)}
+                            {probeHintText ? <Text style={styles.noteText}>{probeHintText}</Text> : null}
                         </View>
                     ) : null}
                 </View>
                 {props.headerAccessory || shouldRenderProbeControl ? (
                     <View style={styles.titleRowActions}>
-                        {props.headerAccessory ? (
-                            <View style={styles.headerAccessory}>
-                                {props.headerAccessory}
-                            </View>
-                        ) : null}
+                        {props.headerAccessory ? <View style={styles.headerAccessory}>{props.headerAccessory}</View> : null}
                         {shouldRenderProbeControl && probe ? (
-                            typeof probe.onRefresh === 'function' ? (
-                                <Pressable
+                            probe.phase === 'idle' && typeof probe.onRefresh === 'function' ? (
+                                <IconButton
                                     testID={refreshTestID}
-                                    onPress={probe.phase === 'idle' ? probe.onRefresh : undefined}
-                                    style={({ pressed }) => [
-                                        styles.refreshIconButton,
-                                        pressed && probe.phase === 'idle' ? transientStyles.refreshIconButtonPressed : null,
-                                        probe.phase !== 'idle' ? transientStyles.refreshIconButtonDisabled : null,
-                                    ]}
-                                    accessibilityRole="button"
-                                    accessibilityLabel={probe.refreshAccessibilityLabel ?? t('modelPickerOverlay.refreshModelsA11y')}
-                                    hitSlop={6}
-                                >
-                                    {probe.phase === 'idle' ? (
-                                        <Ionicons name="refresh-outline" size={18} color={theme.colors.text.secondary} />
-                                    ) : (
-                                        <ActivitySpinner
-                                            size="small"
-                                            color={theme.colors.text.secondary}
-                                            accessibilityLabel={probe.phase === 'loading'
-                                                ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
-                                                : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
-                                        />
-                                    )}
-                                </Pressable>
+                                    iconName="refresh-outline"
+                                    accessibilityLabel={refreshAccessibilityLabel}
+                                    tooltip={refreshAccessibilityLabel}
+                                    size={44}
+                                    iconSize={18}
+                                    onPress={probe.onRefresh}
+                                />
                             ) : probe.phase !== 'idle' ? (
                                 <View style={styles.refreshIconButton}>
                                     <ActivitySpinner
@@ -332,390 +518,136 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                     </View>
                 ) : null}
             </View>
-            {(filteredOptions.length > 0 || props.canEnterCustomValue) ? (
-                <>
-                        {showSearch ? (
-                            <View style={[styles.searchContainer, styles.row]}>
-                                <TextInput
-                                    testID="model-picker-overlay-search"
-                                    value={query}
-                                    onChangeText={setQuery}
-                                    placeholder={props.searchPlaceholder ?? t('modelPickerOverlay.searchPlaceholder')}
-                                    placeholderTextColor={theme.colors.input.placeholder}
-                                    autoCorrect={false}
-                                    autoCapitalize="none"
-                                    style={styles.searchInput as any}
+            ) : null}
+
+            {totalOptionCount > 0 ? (
+                <SelectionList
+                    testID="model-picker-overlay-selection-list"
+                    inputTestID="model-picker-overlay-search"
+                    rootStep={selectionRootStep}
+                    listAccessibilityLabel={props.title}
+                    selectedOptionId={customEditorVisible ? null : selectedValueKey}
+                    onSelect={(id) => {
+                        const option = optionByKey.get(id);
+                        if (!option || option.disabled) return;
+                        customEditorOpenReasonRef.current = null;
+                        dismissedSelectedCustomValueKeyRef.current = null;
+                        setCustomEditorVisible(false);
+                        props.onSelect(option.value);
+                    }}
+                    onRequestClose={props.onRequestClose ?? (() => {})}
+                    keyboardHintsEnabled={false}
+                    autoFocusInputOnWeb={props.autoFocusInputOnWeb ?? false}
+                    disableTransitions
+                    fillAvailableSpace={props.fillAvailableSpace}
+                    maxHeight={props.maxHeight}
+                    heightBehavior={props.heightBehavior}
+                />
+            ) : !props.canEnterCustomValue ? (
+                <Text style={styles.emptyText}>{props.emptyText}</Text>
+            ) : null}
+
+            {!customEditorVisible
+                && optionKeys.has(selectedValueKey)
+                && (props.selectedOptionControls?.length ?? 0) > 0 ? (
+                    <View testID="model-picker-overlay-selected-controls" style={styles.selectedControlsPanel}>
+                        <SelectedOptionControls
+                            controls={props.selectedOptionControls ?? []}
+                            onSelect={props.onSelectOptionControlValue}
+                        />
+                    </View>
+                ) : null}
+
+            {props.canEnterCustomValue ? (
+                customEditorVisible ? (
+                    <View
+                        testID="model-picker-overlay-custom"
+                        style={[styles.customEntryRow, styles.customEntrySelected]}
+                    >
+                        {customEntryHeader}
+                        <View style={styles.customEditor}>
+                            <TextInput
+                                ref={customInputRef}
+                                testID="model-picker-overlay-custom-input"
+                                accessibilityLabel={t('modelPickerOverlay.customInputA11y')}
+                                value={customValue}
+                                onChangeText={(next) => {
+                                    setCustomValue(next);
+                                    commitCustomValue(next);
+                                }}
+                                placeholder={t('agentInput.model.customPlaceholder')}
+                                placeholderTextColor={theme.colors.input.placeholder}
+                                autoCorrect={false}
+                                autoCapitalize="none"
+                                onSubmitEditing={() => commitCustomValue(customValue)}
+                                {...customEditorWebKeyProps}
+                                style={styles.customEditorInput}
                             />
                         </View>
-                    ) : null}
-
-                    {filteredOptions.length > 0 ? (
-                        <View testID="model-picker-overlay-grid" style={styles.cardsGrid}>
-                            {Array.from({ length: optionColumnCount }, (_, colIdx) => (
-                                <View
-                                    key={colIdx}
-                                    testID={`model-picker-overlay-column:${colIdx}`}
-                                    style={styles.cardsColumn}
-                                >
-                                    {filteredOptions
-                                        .filter((_, i) => i % optionColumnCount === colIdx)
-                                        .map((option) => {
-                                            const isSelected = selectedTileValue === option.value;
-                                            const isFavorite = props.favoriteOptions?.values.has(option.value) === true;
-                                            const canToggleFavorite = (isSelected || isFavorite)
-                                                && Boolean(props.favoriteOptions)
-                                                && (props.favoriteOptions?.isFavoritable?.(option) ?? true);
-                                            return (
-                                                <Pressable
-                                                    key={option.value}
-                                                    testID={`${optionTestIDPrefix}:${option.value}`}
-                                                    onPress={() => handleSelectOption(option.value)}
-                                                    style={(state) => {
-                                                        const { pressed } = state;
-                                                        // RN Web exposes `hovered` in the Pressable state callback, but `react-native` types do not model it.
-                                                        const hovered = (state as WebHoverablePressableState).hovered === true;
-                                                        return [
-                                                            styles.optionCard,
-                                                            isSelected ? transientStyles.optionCardSelected : null,
-                                                            !isSelected && hovered ? transientStyles.optionCardHovered : null,
-                                                            pressed ? transientStyles.optionCardPressed : null,
-                                                        ];
-                                                    }}
-                                                >
-                                                    <View
-                                                        testID={isSelected ? `model-picker-overlay-option-selected-indicator:${option.value}` : undefined}
-                                                        pointerEvents="box-none"
-                                                        style={styles.optionCardIndicator}
-                                                    >
-                                                        {isSelected ? (
-                                                            <Ionicons
-                                                                name="checkmark-outline"
-                                                                size={14}
-                                                                color={theme.colors.text.primary}
-                                                                style={styles.optionCardIndicatorIcon}
-                                                            />
-                                                        ) : null}
-                                                        {canToggleFavorite ? (
-                                                            <Pressable
-                                                                testID={`${optionTestIDPrefix}-favorite:${option.value}`}
-                                                                accessibilityRole="button"
-                                                                accessibilityLabel={
-                                                                    props.favoriteOptions?.getAccessibilityLabel?.(option, isFavorite)
-                                                                    ?? (isFavorite
-                                                                        ? t('profiles.actions.removeFromFavorites')
-                                                                        : t('profiles.actions.addToFavorites'))
-                                                                }
-                                                                hitSlop={8}
-                                                                onPress={(event) => {
-                                                                    event?.stopPropagation?.();
-                                                                    props.favoriteOptions?.onToggle(option);
-                                                                }}
-                                                                style={styles.optionFavoriteButton}
-                                                            >
-                                                                <Ionicons
-                                                                    name={isFavorite ? 'star' : 'star-outline'}
-                                                                    size={15}
-                                                                    color={isFavorite ? selectedIndicatorColor : theme.colors.text.secondary}
-                                                                />
-                                                            </Pressable>
-                                                        ) : null}
-                                                    </View>
-                                                    <View style={styles.optionCardHeader}>
-                                                        <Text style={[styles.optionCardTitle, isSelected ? styles.optionCardTitleSelected : null]}>
-                                                            {option.label}
-                                                        </Text>
-                                                    </View>
-                                                    {option.description ? (
-                                                        <Text style={styles.optionCardDescription}>
-                                                            {option.description}
-                                                        </Text>
-                                                    ) : null}
-                                                    {isSelected ? renderSelectedOptionControls() : null}
-                                                </Pressable>
-                                            );
-                                        })}
-                                </View>
-                            ))}
-                        </View>
-                    ) : null}
-                    {props.canEnterCustomValue ? (
-                        <Pressable
-                            testID="model-picker-overlay-custom"
-                            onPress={() => {
-                                if (customEditorVisible) return;
-                                customEditorOpenReasonRef.current = selectedCustomValue.length > 0 ? 'selected-custom' : 'manual';
-                                setCustomEditorVisible(true);
-                                if (selectedCustomValue.length > 0) {
-                                    setCustomValue(selectedCustomValue);
-                                }
-                            }}
-                            style={(state) => {
-                                const { pressed } = state;
-                                // RN Web exposes `hovered` in the Pressable state callback, but `react-native` types do not model it.
-                                const hovered = (state as WebHoverablePressableState).hovered === true;
-                                return [
-                                    styles.customEntryRow,
-                                    customEditorVisible ? transientStyles.optionCardSelected : null,
-                                    !customEditorVisible && hovered ? transientStyles.optionCardHovered : null,
-                                    pressed && !customEditorVisible ? transientStyles.optionCardPressed : null,
-                                ];
-                            }}
-                        >
-                            <View style={styles.optionCardHeader}>
-                                <View style={styles.customEntryTextBlock}>
-                                    <Text style={[styles.optionCardTitle, customEditorVisible ? styles.optionCardTitleSelected : null]}>
-                                        {props.customLabel ?? t('modelPickerOverlay.customTitle')}
-                                    </Text>
-                                    {props.customDescription ? (
-                                        <Text style={styles.optionCardDescription}>
-                                            {props.customDescription}
-                                        </Text>
-                                    ) : null}
-                                </View>
-                                <View style={styles.customEntryIconSlot}>
-                                    {customEditorVisible ? (
-                                        <Ionicons
-                                            name="checkmark-outline"
-                                            size={14}
-                                            color={theme.colors.text.primary}
-                                            style={styles.optionCardIndicatorIcon}
-                                        />
-                                    ) : null}
-                                </View>
-                            </View>
-                            {customEditorVisible ? (
-                                <View style={styles.customEditor}>
-                                    <TextInput
-                                        testID="model-picker-overlay-custom-input"
-                                        value={customValue}
-                                        onChangeText={handleCustomValueChange}
-                                        placeholder={t('agentInput.model.customPlaceholder')}
-                                        placeholderTextColor={theme.colors.input?.placeholder ?? theme.colors.text.secondary}
-                                        autoCorrect={false}
-                                        autoCapitalize="none"
-                                        onSubmitEditing={() => commitCustomValue(customValue)}
-                                        style={[styles.searchInput, styles.customEditorInput] as any}
-                                    />
-                                </View>
-                            ) : null}
-                        </Pressable>
-                    ) : null}
-                </>
-            ) : (
-                <Text style={styles.emptyText}>{props.emptyText}</Text>
-            )}
+                    </View>
+                ) : (
+                    <Pressable
+                        ref={customTriggerRef}
+                        testID="model-picker-overlay-custom"
+                        accessibilityRole="button"
+                        accessibilityLabel={props.customLabel ?? t('modelPickerOverlay.customTitle')}
+                        onPress={() => {
+                            dismissedSelectedCustomValueKeyRef.current = null;
+                            customEditorOpenReasonRef.current = selectedCustomValue.length > 0 ? 'selected-custom' : 'manual';
+                            focusCustomInputOnOpenRef.current = true;
+                            setCustomEditorVisible(true);
+                            if (selectedCustomValue.length > 0) setCustomValue(selectedCustomValue);
+                        }}
+                        style={(state) => [
+                            styles.customEntryRow,
+                            (state as WebHoverablePressableState).hovered === true ? styles.customEntryHovered : null,
+                            state.pressed ? styles.customEntryPressed : null,
+                        ]}
+                    >
+                        {customEntryHeader}
+                    </Pressable>
+                )
+            ) : null}
         </View>
     );
 }
 
-const stylesheet = StyleSheet.create((theme) => ({
-    section: {
-        paddingVertical: 0,
-        gap: 6,
-    },
-    row: {
-        gap: 0,
-        paddingLeft: 7,
-    },
-    titleRowContainer: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-    },
-    titleRow: {
+const styles = StyleSheet.create((theme) => ({
+    section: { gap: 6 },
+    sectionFill: {
         flex: 1,
-        minWidth: 0,
-        paddingHorizontal: 0,
-        paddingBottom: 0,
+        minHeight: 0,
     },
-    titleRowActions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'flex-end',
-        flexShrink: 0,
-        gap: 4,
-        marginLeft: 8,
-    },
-    headerAccessory: {
-        flexShrink: 0,
-    },
-    title: {
-        flex: 1,
-        fontSize: 12,
-        color: theme.colors.text.secondary,
-        textTransform: 'uppercase',
-        position: 'relative',
-    },
-    effectiveBlock: {
-        paddingTop: 0,
-        paddingHorizontal: 0,
-        paddingBottom: 0,
-        gap: 0,
-    },
-    refreshIconButton: {
-        minWidth: 28,
-        height: 28,
-        borderRadius: 9,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: 'transparent',
-        flexShrink: 0,
-    },
-    noteText: {
-        fontSize: 11,
-        color: theme.colors.text.tertiary,
-    },
-    searchContainer: {
-        paddingHorizontal: 0,
-        paddingTop: 2,
-        paddingBottom: 2,
-    },
-    cardsGrid: {
-        flexDirection: 'row',
-        gap: 4,
-    },
-    cardsColumn: {
-        flex: 1,
-        gap: 8,
-    },
-    optionCard: {
-        position: 'relative',
-        borderRadius: 12,
-        paddingHorizontal: 7,
-        paddingVertical: 7,
-        backgroundColor: theme.colors.surface.base,
-    },
-    optionCardHeader: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        justifyContent: 'space-between',
-        gap: 6,
-        paddingRight: 32,
-    },
-    optionCardTitle: {
-        flex: 1,
-        fontSize: 14,
-        color: theme.colors.text.primary,
-    },
-    optionCardTitleSelected: {
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.primary,
-    },
-    optionCardIndicator: {
-        position: 'absolute',
-        top: 7,
-        right: 7,
-        zIndex: 2,
-        elevation: 2,
-        alignItems: 'flex-end',
-        justifyContent: 'flex-start',
-        gap: 6,
-    },
-    optionCardIndicatorIcon: {
-        height: 12,
-    },
-    optionFavoriteButton: {
-        width: 20,
-        height: 20,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    optionCardDescription: {
-        fontSize: 12,
-        color: theme.colors.text.secondary,
-        paddingRight: 32,
-    },
-    inlineSelectedControls: {
-        marginTop: 10,
-        gap: 10,
-        paddingTop: 0,
-    },
-    selectedControlGroup: {
-        gap: 3,
-    },
-    selectedControlRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 8,
-    },
-    selectedControlTextBlock: {
-        flex: 1,
-        gap: 1,
-    },
-    selectedControlTitle: {
-        fontSize: 9,
-        ...Typography.default('semiBold'),
-        textTransform: 'uppercase',
-        color: theme.colors.text.secondary,
-    },
-    selectedControlDescription: {
-        fontSize: 9,
-        color: theme.colors.text.secondary,
-    },
-    searchInput: {
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        paddingHorizontal: 10,
-        paddingVertical: 7,
-        fontSize: 12,
-        color: theme.colors.text.primary,
-    },
-    customEditor: {
-        paddingHorizontal: 0,
-        paddingTop: 4,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    customEditorInput: {
-        flex: 1,
-    },
-    customEntryRow: {
-        position: 'relative',
-        borderRadius: 12,
-        paddingHorizontal: 7,
-        paddingVertical: 7,
-        backgroundColor: theme.colors.surface.base,
-        marginTop: 4,
-        marginHorizontal: 0
-    },
-    customEntryHeader: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        justifyContent: 'space-between',
-        gap: 12,
-    },
-    customEntryIconSlot: {
-        width: 18,
-        height: 18,
-        alignItems: 'center',
-        justifyContent: 'flex-start',
-        marginTop: 2,
-    },
-    customEntryTextBlock: {
-        flex: 1,
-    },
-    customEntryTitle: {
-        fontSize: 12,
-        lineHeight: 15,
-        fontWeight: '700',
-        color: theme.colors.text.primary,
-    },
-    customEntryDescription: {
-        fontSize: 10,
-        lineHeight: 13,
-        color: theme.colors.text.secondary,
-    },
-    rowPressed: {
-        opacity: 0.85,
-    },
-    emptyText: {
-        fontSize: 11,
-        color: theme.colors.text.secondary,
-        paddingHorizontal: 0,
-        paddingVertical: 8,
-    },
+    titleRowContainer: { flexDirection: 'row', alignItems: 'flex-start', paddingLeft: 7 },
+    titleRow: { flex: 1, minWidth: 0 },
+    titleRowActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', flexShrink: 0, gap: 4, marginLeft: 8 },
+    headerAccessory: { flexShrink: 0 },
+    title: { flex: 1, fontSize: 12, color: theme.colors.text.secondary, textTransform: 'uppercase' },
+    effectiveBlock: { gap: 0 },
+    noteText: { fontSize: 11, color: theme.colors.text.tertiary },
+    refreshIconButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.colors.border.default },
+    optionCardIconSlot: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+    optionSelectionStatus: { alignItems: 'center', justifyContent: 'flex-start', gap: 2 },
+    optionSelectionMark: { width: 20, height: 14, alignItems: 'center', justifyContent: 'center' },
+    optionCardStatusIcon: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
+    optionCardTitle: { fontSize: 14, color: theme.colors.text.primary },
+    optionCardTitleSelected: { ...Typography.default('semiBold') },
+    optionCardDescription: { fontSize: 12, color: theme.colors.text.secondary },
+    optionCardIndicator: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6, zIndex: 2, elevation: 2 },
+    selectedControlsPanel: { borderRadius: 12, paddingHorizontal: 7, paddingVertical: 7, backgroundColor: theme.colors.surface.selected },
+    inlineSelectedControls: { gap: 10 },
+    selectedControlGroup: { gap: 3 },
+    selectedControlRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+    selectedControlTextBlock: { flex: 1, gap: 1 },
+    selectedControlTitle: { fontSize: 9, ...Typography.default('semiBold'), textTransform: 'uppercase', color: theme.colors.text.secondary },
+    selectedControlDescription: { fontSize: 9, color: theme.colors.text.secondary },
+    customEntryRow: { borderRadius: 12, paddingHorizontal: 7, paddingVertical: 7, backgroundColor: theme.colors.surface.base, minHeight: 44 },
+    customEntrySelected: { backgroundColor: theme.colors.surface.selected },
+    customEntryHovered: { backgroundColor: theme.colors.surface.pressed },
+    customEntryPressed: { opacity: 0.86 },
+    customEntryHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
+    customEntryTextBlock: { flex: 1, minWidth: 0 },
+    customEditor: { paddingTop: 4 },
+    customEditorInput: { minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border.default, paddingHorizontal: 10, paddingVertical: 7, fontSize: 12, color: theme.colors.text.primary },
+    emptyText: { fontSize: 11, color: theme.colors.text.secondary, paddingHorizontal: 7, paddingVertical: 8 },
 }));

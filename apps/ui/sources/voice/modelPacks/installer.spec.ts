@@ -349,7 +349,7 @@ describe('modelPacks installer (native)', () => {
     await expect(
       ensureModelPackInstalled(
         {
-          packId: 'kokoro-tts-en-v1',
+          packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
           mode: 'require_installed',
           manifestUrl: null,
           timeoutMs: 5000,
@@ -364,7 +364,7 @@ describe('modelPacks installer (native)', () => {
     await expect(
       ensureModelPackInstalled(
         {
-          packId: 'kokoro-tts-en-v1',
+          packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
           mode: 'download_if_missing',
           manifestUrl: null,
           timeoutMs: 5000,
@@ -377,7 +377,7 @@ describe('modelPacks installer (native)', () => {
 
   it('reports not installed when pack.json is missing', async () => {
     const summary = await getModelPackInstallSummary(
-      { packId: 'kokoro-tts-en-v1' },
+      { packId: 'kokoro-82m-v1.0-onnx-q8-wasm' },
       { fs: createMemFs().fs },
     );
 
@@ -387,7 +387,7 @@ describe('modelPacks installer (native)', () => {
 
   it('removes without throwing when the directory is missing', async () => {
     await expect(
-      removeModelPack({ packId: 'kokoro-tts-en-v1' }, { fs: createMemFs().fs }),
+      removeModelPack({ packId: 'kokoro-82m-v1.0-onnx-q8-wasm' }, { fs: createMemFs().fs }),
     ).resolves.toBeUndefined();
   });
 });

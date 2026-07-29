@@ -80,7 +80,9 @@ export function redactVoicePathLikeData(input: unknown): unknown {
     const seen = new Set<object>();
 
     const walk = (value: unknown, depth: number, parentKey: string | null): unknown => {
-        if (depth > 20) return value;
+        // Provider-bound redaction must fail closed at the traversal guard. An
+        // untouched deep subtree could otherwise carry paths beyond the limit.
+        if (depth > 20) return null;
         if (typeof value === 'string') {
             if (isPathBearingFieldKey(parentKey) && value.trim()) {
                 return REDACTED_PATH_TOKEN;

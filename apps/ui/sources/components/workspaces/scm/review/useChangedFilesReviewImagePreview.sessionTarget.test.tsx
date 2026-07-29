@@ -196,7 +196,6 @@ describe('useChangedFilesReviewImagePreview', () => {
                 uri: 'blob:preview',
                 byteLength: 3,
                 mimeType: 'image/png',
-                svgXml: null,
                 revoke: vi.fn(),
             },
         });
@@ -232,7 +231,6 @@ describe('useChangedFilesReviewImagePreview', () => {
 
         expect(createSessionFilePreviewSourceSpy).toHaveBeenCalledWith(expect.objectContaining({
             scope: expect.objectContaining({
-                workspaceCacheKey: 'server-1:m1:/repo',
                 machineId: 'm1',
                 rootPath: '/repo',
                 serverId: 'server-1',

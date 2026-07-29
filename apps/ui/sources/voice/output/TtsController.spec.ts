@@ -78,6 +78,31 @@ describe('createTtsPlaybackController — ordered ack\'d playback queue', () => 
         expect(events).toEqual(['play:0', 'play:1']);
     });
 
+    it('does not let delayed remote confirmation postpone the next ready chunk', async () => {
+        const played: number[] = [];
+        let releaseFirstConfirmation: (() => void) | null = null;
+        const controller = createTtsPlaybackController({
+            playChunk: async (c) => { played.push(c.chunkIndex); },
+            confirmPlayback: async (c) => {
+                if (c.chunkIndex === 0) {
+                    await new Promise<void>((resolve) => { releaseFirstConfirmation = resolve; });
+                }
+            },
+        });
+
+        const handle = controller.speak();
+        controller.enqueue(chunk('g1', 0, false));
+        controller.enqueue(chunk('g1', 1, true));
+
+        await vi.waitFor(() => expect(played).toEqual([0, 1]));
+        let done = false;
+        void handle.done.then(() => { done = true; });
+        await Promise.resolve();
+        expect(done).toBe(false);
+        releaseFirstConfirmation!();
+        await handle.done;
+    });
+
     it('abort() stops the queue and resolves done without playing remaining chunks', async () => {
         const played: number[] = [];
         let releaseFirst: (() => void) | null = null;

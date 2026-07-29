@@ -8,9 +8,9 @@ export type SettingsBelowFoldSectionsProps = Readonly<{
     appVersion: string;
     attachmentsUploadsEnabled: boolean;
     automationsNeedLocalEnablement: boolean;
-    connectedServicesEnabled: boolean;
     devModeEnabled: boolean;
     executionRunsEnabled: boolean;
+    externalSessionsEnabled: boolean;
     handleGitHub: () => void | Promise<void>;
     handleReportIssue: () => void | Promise<void>;
     handleVersionClick: () => void;

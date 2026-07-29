@@ -1,29 +1,48 @@
 import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
-import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/sync/domains/settings/voiceSettings';
+import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/voice/adapters/local/settings';
+import { resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
 import { normalizeTurnEndpointPolicy } from '@/voice/runtime/input/TurnEndpointDetector';
 import {
   createTurnEndpointController, type TurnEndpointController, type TurnEndpointSignal, } from '@/voice/runtime/input/TurnEndpointController';
-import {
-  createNativeVadController, type NativeVadController, } from '@/voice/runtime/input/NativeVadController';
 import {
   createWebVadController, type WebVadController, } from '@/voice/runtime/input/WebVadController';
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { Platform } from 'react-native';
+import {
+  getSharedVoiceAudioSessionCoordinator,
+  type VoiceAudioSessionCoordinator,
+  type VoiceAudioSessionLease,
+} from '@happier-dev/audio-stream-native';
 
-import type { SttController, SttStartParams } from './sttController';
+import type { SttController, SttStartParams, SttStopResult } from './sttController';
 
 type DeviceSttHandle = {
   sessionId: string;
-  transcript: string;
+  latestInterimText: string;
+  finalSegments: string[];
+  terminalResult: SttStopResult | null;
   module: any;
   resolveEnd: () => void;
   endPromise: Promise<void>;
   subscriptions: { remove(): void }[];
   audioStarted: boolean;
+  acceptsRecognizerEvents: boolean;
   /** Detaches the D8 abort listener; idempotent and safe after teardown. */
   abortCleanup: () => void;
   recognizerStopRequested: boolean;
+  audioSessionLease: VoiceAudioSessionLease | null;
+  audioSessionReleaseAttempt: Promise<void> | null;
+  speechCandidateActive: boolean;
+  cleanupAttempt: Promise<void> | null;
+};
+
+type DeviceSttStartReservation = {
+  cancelled: boolean;
+  cancellation: Promise<void>;
+  cancel: () => void;
+  settled: Promise<void>;
+  resolveSettled: () => void;
 };
 
 export type DeviceSttController = SttController;
@@ -31,14 +50,28 @@ export type DeviceSttController = SttController;
 export type CreateDeviceSttControllerDeps = {
   getSettings: () => any;
   onEndpointSignal?: (signal: TurnEndpointSignal) => void;
+  onSpeechCandidateStart?: (input: Readonly<{ sessionId: string; source: 'device_recognizer' }>) => void;
+  onSpeechCandidateFalseAlarm?: (input: Readonly<{ sessionId: string; source: 'device_recognizer' }>) => void;
   endpointController?: TurnEndpointController;
-  nativeVadController?: NativeVadController;
   webVadController?: WebVadController;
+  getAudioSessionCoordinator?: () => VoiceAudioSessionCoordinator | null;
   /** Stop wait before forcing finalize; defaults to the recognizer end timeout. */
   stopTimeoutMs?: number;
 };
 
 const DEFAULT_STOP_TIMEOUT_MS = 5_000;
+
+function safelyNotifyObserver(notify: () => void): void {
+  try {
+    notify();
+  } catch {
+    // Observers cannot take ownership of provider state or resource cleanup.
+  }
+}
+
+function isEmptyRecognitionTerminalReason(reason: string): boolean {
+  return reason === 'no-speech' || reason === 'speech-timeout';
+}
 
 /**
  * Resolve whether to request continuous recognition for this platform/turn.
@@ -70,6 +103,8 @@ function resolveDeviceContinuousRecognition(args: Readonly<{
 
 export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): DeviceSttController {
   let handle: DeviceSttHandle | null = null;
+  let startReservation: DeviceSttStartReservation | null = null;
+  let completedResult: SttStopResult | null = null;
 
   const isDomRuntime = (): boolean => typeof window !== 'undefined' && typeof document !== 'undefined';
   const normalizeSessionId = (sessionId: string | null | undefined): string | null => normalizeNonEmptyString(sessionId);
@@ -78,27 +113,17 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     : DEFAULT_STOP_TIMEOUT_MS;
 
   const resolveAdapterSettings = () => {
-    const settings = deps.getSettings();
-    const voice = settings?.voice ?? null;
-    const providerId = normalizeNonEmptyString(voice?.providerId);
-    return providerId === 'local_direct'
-      ? voice?.adapters?.local_direct
-      : voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct;
+    return resolveLocalVoiceAdapterSettings(deps.getSettings()).config;
   };
 
   const endpointController = deps.endpointController ?? createTurnEndpointController({
     onSignal: (signal) => {
-      deps.onEndpointSignal?.(signal);
-    },
-  });
-  const nativeVadController = deps.nativeVadController ?? createNativeVadController({
-    onEndpointSignal: (signal) => {
-      deps.onEndpointSignal?.(signal);
+      safelyNotifyObserver(() => deps.onEndpointSignal?.(signal));
     },
   });
   const webVadController = deps.webVadController ?? createWebVadController({
     onEndpointSignal: (signal) => {
-      deps.onEndpointSignal?.(signal);
+      safelyNotifyObserver(() => deps.onEndpointSignal?.(signal));
     },
   });
 
@@ -110,33 +135,165 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     });
   };
 
-  const cleanupListeners = () => {
-    const subscriptions = handle?.subscriptions ?? [];
+  const releaseAudioSessionLease = async (target: DeviceSttHandle): Promise<void> => {
+    if (!target.audioSessionLease) return;
+    if (target.audioSessionReleaseAttempt) return await target.audioSessionReleaseAttempt;
+    const lease = target.audioSessionLease;
+    const attempt = lease.release();
+    target.audioSessionReleaseAttempt = attempt;
     try {
-      subscriptions.forEach((subscription) => subscription.remove());
-    } catch {
-      // ignore
+      await attempt;
+      if (target.audioSessionLease === lease) target.audioSessionLease = null;
+    } finally {
+      if (target.audioSessionReleaseAttempt === attempt) target.audioSessionReleaseAttempt = null;
+    }
+  };
+
+  const cleanupCaptureOwners = async (target: DeviceSttHandle): Promise<void> => {
+    const failures: unknown[] = [];
+    try {
+      await webVadController.stopSession(target.sessionId);
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await releaseAudioSessionLease(target);
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, 'Device STT capture-owner cleanup failed.');
+  };
+
+  const cleanupHandle = async (target: DeviceSttHandle): Promise<void> => {
+    if (target.cleanupAttempt) return await target.cleanupAttempt;
+    const attempt = (async () => {
+      target.acceptsRecognizerEvents = false;
+      endpointController.clearSession(target.sessionId);
+      target.abortCleanup();
+      try {
+        target.subscriptions.forEach((subscription) => subscription.remove());
+      } catch {
+        // ignore
+      }
+      await cleanupCaptureOwners(target);
+      if (target.terminalResult) completedResult = target.terminalResult;
+      if (handle === target) handle = null;
+    })();
+    target.cleanupAttempt = attempt;
+    try {
+      await attempt;
+    } catch (error) {
+      if (target.cleanupAttempt === attempt) target.cleanupAttempt = null;
+      throw error;
     }
   };
 
   const start = async ({ micSession, sink, signal }: SttStartParams) => {
     if (signal?.aborted) {
+      completedResult = {
+        error: createVoiceMachineError({ kind: 'turn_aborted', reason: 'turn_aborted' }),
+      };
       return;
     }
+    if (handle || startReservation) {
+      throw new Error('device_stt_already_started');
+    }
+    let resolveReservation!: () => void;
+    let resolveCancellation!: () => void;
+    const reservation: DeviceSttStartReservation = {
+      cancelled: false,
+      cancellation: new Promise<void>((resolve) => { resolveCancellation = resolve; }),
+      cancel: () => {
+        if (reservation.cancelled) return;
+        reservation.cancelled = true;
+        resolveCancellation();
+      },
+      settled: new Promise<void>((resolve) => { resolveReservation = resolve; }),
+      resolveSettled: () => resolveReservation(),
+    };
+    startReservation = reservation;
+    const onSetupAbort = () => {
+      reservation.cancel();
+    };
+    signal?.addEventListener('abort', onSetupAbort, { once: true });
+
+    const recordSetupCancellation = () => {
+      if (!signal?.aborted) return;
+      completedResult = {
+        error: createVoiceMachineError({ kind: 'turn_aborted', reason: 'turn_aborted' }),
+      };
+    };
+
+    const runSetupStage = async <T,>(
+      startStage: () => Promise<T>,
+      cleanupLateValue?: (value: T) => void | Promise<void>,
+    ): Promise<Readonly<{ cancelled: true }> | Readonly<{ cancelled: false; value: T }>> => {
+      if (signal?.aborted || reservation.cancelled) {
+        return { cancelled: true };
+      }
+
+      const operation = startStage();
+      const operationOutcome = operation.then(
+        (value) => ({ kind: 'resolved' as const, value }),
+        (error: unknown) => ({ kind: 'rejected' as const, error }),
+      );
+      const outcome = await Promise.race([
+        operationOutcome,
+        reservation.cancellation.then(() => ({ kind: 'cancelled' as const })),
+      ]);
+
+      if (outcome.kind === 'cancelled') {
+        void operationOutcome.then(async (lateOutcome) => {
+          if (lateOutcome.kind === 'resolved' && cleanupLateValue) {
+            await cleanupLateValue(lateOutcome.value);
+          }
+        }).catch(() => {});
+        return { cancelled: true };
+      }
+      if (outcome.kind === 'rejected') {
+        throw outcome.error;
+      }
+      if (signal?.aborted || reservation.cancelled) {
+        if (cleanupLateValue) {
+          const cleanup = Promise.resolve(cleanupLateValue(outcome.value));
+          void cleanup.catch(() => {});
+        }
+        return { cancelled: true };
+      }
+      return { cancelled: false, value: outcome.value };
+    };
+
+    try {
     if (!micSession) {
       throw new Error('mic_session_required');
     }
 
-    const microphonePermission = await requestMicrophonePermission();
+    const microphonePermissionStage = await runSetupStage(requestMicrophonePermission);
+    if (microphonePermissionStage.cancelled) {
+      recordSetupCancellation();
+      return;
+    }
+    const microphonePermission = microphonePermissionStage.value;
     if (!microphonePermission.granted) {
       showMicrophonePermissionDeniedAlert(microphonePermission.canAskAgain);
       throw new Error('mic_permission_denied');
     }
 
-    const { ExpoSpeechRecognitionModule } = await import('expo-speech-recognition');
+    const recognitionModuleStage = await runSetupStage(() => import('expo-speech-recognition'));
+    if (recognitionModuleStage.cancelled) {
+      recordSetupCancellation();
+      return;
+    }
+    const { ExpoSpeechRecognitionModule } = recognitionModuleStage.value;
 
     if (typeof ExpoSpeechRecognitionModule?.isRecognitionAvailable === 'function' && !ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
-      sink.onError(createVoiceMachineError({ kind: 'provider_error', reason: 'device_stt_unavailable' }));
+      const unavailableError = createVoiceMachineError({
+        kind: 'provider_error',
+        reason: 'device_stt_unavailable',
+      });
+      completedResult = { error: unavailableError };
+      safelyNotifyObserver(() => sink.onError(unavailableError));
       return;
     }
 
@@ -144,7 +301,14 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     // Prefer DOM detection over Platform.OS so web builds remain resilient even if Platform.OS is surprising.
     if (Platform.OS !== 'web' && !isDomRuntime()) {
       try {
-        const permissionsResponse = await ExpoSpeechRecognitionModule.requestPermissionsAsync?.();
+        const permissionsStage = await runSetupStage(async () => {
+          return await ExpoSpeechRecognitionModule.requestPermissionsAsync?.();
+        });
+        if (permissionsStage.cancelled) {
+          recordSetupCancellation();
+          return;
+        }
+        const permissionsResponse = permissionsStage.value;
         if (permissionsResponse && permissionsResponse.granted === false) {
           throw new Error('mic_permission_denied');
         }
@@ -156,14 +320,12 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
       }
     }
 
-    // Single canonical acquisition for the turn: the recognizer reuses the
-    // already-active capture session (WebVAD also consumes this same stream).
-    await micSession.ensureActive();
-
-    cleanupListeners();
     endpointController.clearSession();
-    await nativeVadController.stopSession();
-    await webVadController.stopSession();
+    const previousVadStopStage = await runSetupStage(() => webVadController.stopSession());
+    if (previousVadStopStage.cancelled) {
+      recordSetupCancellation();
+      return;
+    }
 
     let resolveEnd: null | (() => void) = null;
     const endPromise = new Promise<void>((resolve) => {
@@ -173,48 +335,106 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     // Capture a stable session key for guards; the runtime owner correlates the
     // active capture, so the controller keys its own handle off a synthetic id.
     const sessionKey = normalizeSessionId(`device-${Date.now()}-${Math.random()}`) ?? 'device-capture';
+    const platformOs = Platform.OS;
+    const dom = isDomRuntime();
+    const usesProviderManagedNativeCapture = platformOs !== 'web' && !dom;
+    let audioSessionLease: VoiceAudioSessionLease | null = null;
+    if (usesProviderManagedNativeCapture) {
+      const coordinator = (deps.getAudioSessionCoordinator ?? getSharedVoiceAudioSessionCoordinator)();
+      if (!coordinator) {
+        const audioSessionUnavailableError = createVoiceMachineError({
+          kind: 'provider_error',
+          reason: 'device_stt_audio_session_unavailable',
+        });
+        safelyNotifyObserver(() => sink.onError(audioSessionUnavailableError));
+        throw new Error('device_stt_audio_session_unavailable');
+      }
+      try {
+        const audioSessionStage = await runSetupStage(
+          () => coordinator.acquire({
+            ownerId: `device-stt:${sessionKey}`,
+            mode: 'dictation',
+            input: true,
+            output: false,
+            aec: 'off',
+            capture: 'provider_managed_exclusive',
+          }),
+          (lateLease) => lateLease.release(),
+        );
+        if (audioSessionStage.cancelled) {
+          recordSetupCancellation();
+          return;
+        }
+        audioSessionLease = audioSessionStage.value;
+      } catch (error) {
+        const audioSessionAcquireError = createVoiceMachineError({
+          kind: 'provider_error',
+          reason: 'device_stt_audio_session_acquire_failed',
+        });
+        safelyNotifyObserver(() => sink.onError(audioSessionAcquireError));
+        throw error;
+      }
+    } else {
+      // Browser WebVAD and Web Speech share the browser-owned mic session.
+      const micStage = await runSetupStage(() => micSession.ensureActive());
+      if (micStage.cancelled) {
+        recordSetupCancellation();
+        return;
+      }
+    }
 
     const nextHandle: DeviceSttHandle = {
       sessionId: sessionKey,
-      transcript: '',
+      latestInterimText: '',
+      finalSegments: [],
+      terminalResult: null,
       module: ExpoSpeechRecognitionModule,
       resolveEnd: () => resolveEnd?.(),
       endPromise,
       subscriptions: [],
       audioStarted: false,
+      acceptsRecognizerEvents: true,
       abortCleanup: () => {},
       recognizerStopRequested: false,
+      audioSessionLease,
+      audioSessionReleaseAttempt: null,
+      speechCandidateActive: false,
+      cleanupAttempt: null,
     };
 
-    handle = nextHandle;
-    endpointController.startSession(sessionKey);
-    const handsFreeTurnEndpointPolicy = resolveHandsFreeTurnEndpointPolicy();
-    const platformOs = Platform.OS;
-    const dom = isDomRuntime();
-    const usesFallbackTurnCapture = platformOs === 'web' || dom;
-    const usesNativeVad = usesFallbackTurnCapture
-      ? false
-      : await nativeVadController.startSession({
-        sessionId: sessionKey,
-        minSpeechMs: handsFreeTurnEndpointPolicy.minSpeechMs,
-        redemptionMs: handsFreeTurnEndpointPolicy.silenceMs,
-      });
-    const usesWebVad = platformOs === 'web' && await webVadController.startSession({
-      sessionId: sessionKey,
-      minSpeechMs: handsFreeTurnEndpointPolicy.minSpeechMs,
-      redemptionMs: handsFreeTurnEndpointPolicy.silenceMs,
-      // Drive WebVAD off the canonical capture stream + shared AudioContext so
-      // web hands-free runs on one mic acquisition instead of a self-opened one.
-      micSession,
-    });
-    const usesVad = usesNativeVad || usesWebVad;
+    try {
+      endpointController.startSession(sessionKey);
+      const handsFreeTurnEndpointPolicy = resolveHandsFreeTurnEndpointPolicy();
+      let useHeuristicFinalEndpoint = platformOs !== 'web';
+      if (platformOs === 'web') {
+        const vadStage = await runSetupStage(
+          () => webVadController.startSession({
+            sessionId: sessionKey,
+            minSpeechMs: handsFreeTurnEndpointPolicy.minSpeechMs,
+            redemptionMs: handsFreeTurnEndpointPolicy.silenceMs,
+            // Drive WebVAD off the canonical capture stream + shared AudioContext so
+            // web hands-free runs on one mic acquisition instead of a self-opened one.
+            micSession,
+          }),
+          () => webVadController.stopSession(sessionKey),
+        );
+        if (vadStage.cancelled) {
+          endpointController.clearSession(sessionKey);
+          void webVadController.stopSession(sessionKey).catch(() => {});
+          nextHandle.resolveEnd();
+          recordSetupCancellation();
+          return;
+        }
+        useHeuristicFinalEndpoint = !vadStage.value;
+      }
+      handle = nextHandle;
 
     const markAudioStarted = () => {
-      if (!handle || handle.sessionId !== sessionKey || handle.audioStarted) {
+      if (!nextHandle.acceptsRecognizerEvents || handle !== nextHandle || nextHandle.audioStarted) {
         return;
       }
-      handle.audioStarted = true;
-      sink.onAudioStarted();
+      nextHandle.audioStarted = true;
+      safelyNotifyObserver(() => sink.onAudioStarted());
     };
 
     const stopRecognizerOnce = () => {
@@ -229,45 +449,145 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
       }
     };
 
+    const markSpeechCandidateStarted = () => {
+      if (nextHandle.speechCandidateActive) return;
+      nextHandle.speechCandidateActive = true;
+      safelyNotifyObserver(() => deps.onSpeechCandidateStart?.({
+        sessionId: sessionKey,
+        source: 'device_recognizer',
+      }));
+    };
+
+    const resolveSpeechCandidateFalseAlarm = () => {
+      if (!nextHandle.speechCandidateActive) return;
+      nextHandle.speechCandidateActive = false;
+      safelyNotifyObserver(() => deps.onSpeechCandidateFalseAlarm?.({
+        sessionId: sessionKey,
+        source: 'device_recognizer',
+      }));
+    };
+
+    const committedTranscript = (): string => nextHandle.finalSegments.join(' ').trim();
+
+    const resolveTerminalResult = (): SttStopResult => {
+      const finalText = committedTranscript();
+      if (finalText) return { finalText };
+      if (nextHandle.latestInterimText) {
+        return {
+          error: createVoiceMachineError({
+            kind: 'provider_error',
+            reason: 'device_stt_finalization_failed',
+          }),
+        };
+      }
+      return { finalText: '' };
+    };
+
+    const acceptsRecognizerEvent = (): boolean => {
+      return nextHandle.acceptsRecognizerEvents && handle === nextHandle;
+    };
+
+    const finalizeTranscriptEndpoint = (transcript: string) => {
+      safelyNotifyObserver(() => sink.onFinal(transcript));
+      if (!useHeuristicFinalEndpoint) return;
+      safelyNotifyObserver(() => sink.onEndpoint('silence'));
+      safelyNotifyObserver(() => endpointController.signalHeuristicTranscriptFinalized({
+        sessionId: sessionKey,
+        transcript,
+        policy: handsFreeTurnEndpointPolicy,
+      }));
+    };
+
     nextHandle.subscriptions.push(
       ExpoSpeechRecognitionModule.addListener('audiostart', () => {
+        if (!acceptsRecognizerEvent()) return;
         markAudioStarted();
       })
     );
 
     nextHandle.subscriptions.push(
+      ExpoSpeechRecognitionModule.addListener('speechstart', () => {
+        if (!acceptsRecognizerEvent()) return;
+        markSpeechCandidateStarted();
+      })
+    );
+
+    nextHandle.subscriptions.push(
+      ExpoSpeechRecognitionModule.addListener('nomatch', () => {
+        if (!acceptsRecognizerEvent()) return;
+        resolveSpeechCandidateFalseAlarm();
+      })
+    );
+
+    nextHandle.subscriptions.push(
       ExpoSpeechRecognitionModule.addListener('result', (event: any) => {
+        if (!acceptsRecognizerEvent()) return;
         const results = Array.isArray(event?.results) ? event.results : [];
         const transcript = typeof results?.[0]?.transcript === 'string' ? results[0].transcript.trim() : '';
         markAudioStarted();
         if (!transcript) return;
+        markSpeechCandidateStarted();
 
-        nextHandle.transcript = transcript;
         if (event?.isFinal) {
-          sink.onFinal(transcript);
-          sink.onEndpoint('silence');
-          endpointController.signalHeuristicTranscriptFinalized({
-            sessionId: sessionKey,
-            transcript,
-            policy: handsFreeTurnEndpointPolicy,
-          });
+          nextHandle.finalSegments.push(transcript);
+          nextHandle.latestInterimText = '';
+          finalizeTranscriptEndpoint(committedTranscript());
         } else {
-          sink.onPartial(transcript);
+          nextHandle.latestInterimText = transcript;
+          safelyNotifyObserver(() => sink.onPartial(transcript));
         }
       })
     );
 
     nextHandle.subscriptions.push(
       ExpoSpeechRecognitionModule.addListener('end', () => {
-        nextHandle.resolveEnd();
+        if (!acceptsRecognizerEvent()) return;
+        nextHandle.acceptsRecognizerEvents = false;
+        let shouldPublishFinalizationFailure = false;
+        try {
+          if (!nextHandle.terminalResult) {
+            nextHandle.terminalResult = resolveTerminalResult();
+            shouldPublishFinalizationFailure = 'error' in nextHandle.terminalResult
+              && nextHandle.terminalResult.error.reason === 'device_stt_finalization_failed';
+          }
+          if (!committedTranscript()) {
+            resolveSpeechCandidateFalseAlarm();
+          }
+        } catch {
+          // Observer failures cannot strand the provider-owned native lease.
+        } finally {
+          void releaseAudioSessionLease(nextHandle).catch(() => {}).then(() => {
+            const terminalResult = nextHandle.terminalResult;
+            if (!shouldPublishFinalizationFailure || !terminalResult || !('error' in terminalResult)) {
+              return;
+            }
+            safelyNotifyObserver(() => sink.onError(terminalResult.error));
+          });
+          nextHandle.resolveEnd();
+        }
       })
     );
 
     nextHandle.subscriptions.push(
       ExpoSpeechRecognitionModule.addListener('error', (event: any) => {
+        if (!acceptsRecognizerEvent()) return;
+        nextHandle.acceptsRecognizerEvents = false;
         const reason = normalizeNonEmptyString(event?.error) ?? 'device_stt_error';
-        sink.onError(createVoiceMachineError({ kind: 'provider_error', reason }));
-        nextHandle.resolveEnd();
+        resolveSpeechCandidateFalseAlarm();
+        const finalText = committedTranscript();
+        const providerError = createVoiceMachineError({ kind: 'provider_error', reason });
+        const shouldPublishProviderError = !finalText && !isEmptyRecognitionTerminalReason(reason);
+        nextHandle.terminalResult ??= finalText
+          ? { finalText }
+          : shouldPublishProviderError
+            ? { error: providerError }
+            : { finalText: '' };
+        void cleanupHandle(nextHandle).catch(() => {}).then(() => {
+          nextHandle.resolveEnd();
+          if (shouldPublishProviderError) {
+            safelyNotifyObserver(() => sink.onError(providerError));
+          }
+        });
       })
     );
 
@@ -278,7 +598,14 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     // detached on stop()/abort so it does not leak on the (possibly long-lived)
     // signal.
     const onAbort = () => {
+      if (!acceptsRecognizerEvent()) return;
+      nextHandle.acceptsRecognizerEvents = false;
+      nextHandle.terminalResult ??= {
+        error: createVoiceMachineError({ kind: 'turn_aborted', reason: 'turn_aborted' }),
+      };
+      resolveSpeechCandidateFalseAlarm();
       stopRecognizerOnce();
+      void cleanupHandle(nextHandle).catch(() => {});
       nextHandle.resolveEnd();
     };
     if (signal) {
@@ -292,20 +619,18 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
       };
     }
 
-    // The signal may have aborted during async setup (permissions, ensureActive,
-    // VAD start) before the listener attached above; do not start a recognizer we
+    // The signal may have aborted during async setup (permissions, exclusive
+    // lease acquisition, or web VAD start) before the listener attached above;
+    // do not start a recognizer we
     // were already told to abort.
-    if (signal?.aborted) {
-      nextHandle.abortCleanup();
-      try {
-        nextHandle.subscriptions.forEach((subscription) => subscription.remove());
-      } catch {
-        // ignore
+    if (signal?.aborted || reservation.cancelled) {
+      nextHandle.acceptsRecognizerEvents = false;
+      if (signal?.aborted) {
+        nextHandle.terminalResult ??= {
+          error: createVoiceMachineError({ kind: 'turn_aborted', reason: 'turn_aborted' }),
+        };
       }
-      handle = null;
-      endpointController.clearSession(sessionKey);
-      await nativeVadController.stopSession(sessionKey);
-      await webVadController.stopSession(sessionKey);
+      await cleanupHandle(nextHandle);
       nextHandle.resolveEnd();
       return;
     }
@@ -315,7 +640,6 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
       ? settings.voice.assistantLanguage.trim()
       : undefined;
 
-    try {
       ExpoSpeechRecognitionModule.start({
         ...(language ? { lang: language } : {}),
         interimResults: true,
@@ -323,27 +647,42 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
         continuous: resolveDeviceContinuousRecognition({ platformOs, isDomRuntime: dom }),
       } as any);
     } catch (error) {
-      nextHandle.abortCleanup();
-      handle = null;
-      endpointController.clearSession(sessionKey);
-      await nativeVadController.stopSession(sessionKey);
-      await webVadController.stopSession(sessionKey);
-      sink.onError(createVoiceMachineError({ kind: 'provider_error', reason: 'device_stt_start_failed' }));
+      const startError = createVoiceMachineError({
+        kind: 'provider_error',
+        reason: 'device_stt_start_failed',
+      });
+      safelyNotifyObserver(() => sink.onError(startError));
+      nextHandle.resolveEnd();
+      try {
+        await cleanupHandle(nextHandle);
+      } catch (releaseError) {
+        throw new AggregateError([error, releaseError], 'Device STT startup and audio-session release both failed.');
+      }
       throw error;
+    }
+    } finally {
+      try {
+        signal?.removeEventListener('abort', onSetupAbort);
+      } catch {
+        // ignore
+      }
+      if (startReservation === reservation) startReservation = null;
+      reservation.resolveSettled();
     }
   };
 
   const stop = async () => {
+    const pendingStart = startReservation;
+    if (pendingStart) {
+      pendingStart.cancel();
+      await pendingStart.settled;
+    }
     const current = handle;
     if (!current) {
-      return { finalText: '' };
+      const result = completedResult ?? { finalText: '' };
+      completedResult = null;
+      return result;
     }
-    const sessionKey = current.sessionId;
-
-    endpointController.clearSession(sessionKey);
-    const stopNativeVad = nativeVadController.stopSession(sessionKey);
-    const stopWebVad = webVadController.stopSession(sessionKey);
-
     if (!current.recognizerStopRequested) {
       current.recognizerStopRequested = true;
       try {
@@ -355,20 +694,24 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
 
     await Promise.race([current.endPromise, new Promise<void>((resolve) => setTimeout(resolve, stopTimeoutMs))]);
 
-    const text = current.transcript.trim();
-    const subscriptions = current.subscriptions;
-    handle = null;
-    current.abortCleanup();
+    current.terminalResult ??= (() => {
+      const finalText = current.finalSegments.join(' ').trim();
+      if (finalText) return { finalText };
+      if (current.latestInterimText) {
+        return {
+          error: createVoiceMachineError({
+            kind: 'provider_error',
+            reason: 'device_stt_finalization_failed',
+          }),
+        };
+      }
+      return { finalText: '' };
+    })();
+    const result = current.terminalResult;
+    await cleanupHandle(current);
+    completedResult = null;
 
-    try {
-      subscriptions.forEach((subscription) => subscription.remove());
-    } catch {
-      // ignore
-    }
-    await stopNativeVad;
-    await stopWebVad;
-
-    return { finalText: text };
+    return result;
   };
 
   return {

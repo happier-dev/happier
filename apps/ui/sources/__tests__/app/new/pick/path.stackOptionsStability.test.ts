@@ -14,6 +14,7 @@ import {
     PICKER_NAV_STATE,
     type PickerStackOptionsInput,
 } from './testHarness';
+import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 enableReactActEnvironment();
 
@@ -96,12 +97,12 @@ installPickerCommonModuleMocks({
             overrides: {
                 useAllMachines: () => stableMachines,
                 useAllSessionListRenderables: () => stableSessions,
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'usePathPickerSearch') return false;
                     if (key === 'recentMachinePaths') return stableRecentMachinePaths;
                     return null;
-                },
-                useSettingMutable: () => [stableFavoriteDirectories, vi.fn()],
+                } }),
+                useSettingMutable: createUseSettingMutableMockFromReader(() => [stableFavoriteDirectories, vi.fn()]),
             },
         }),
     expoRouter: async () => {

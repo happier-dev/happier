@@ -10,9 +10,8 @@ vi.mock('@/assets/images/logotype-dark.png', () => ({ default: 'logotype-dark' }
 vi.mock('@/components/onboarding', () => ({
     OnboardingWizardSurface: () => null,
     PreAuthOnboardingWizardEntry: () => null,
-    resolvePostAuthSetupRoute: () => '/',
 }));
-vi.mock('@/components/onboarding/PreAuthOnboardingWizardEntry', () => ({
+vi.mock('@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry', () => ({
     PreAuthOnboardingWizardEntry: () => null,
 }));
 vi.mock('@/modal/components/BaseModal', () => ({
@@ -73,6 +72,14 @@ vi.mock('@/components/navigation/connectionStatus/useConnectionHealth', () => ({
     useConnectionHealth: () => ({ onlineCount: connectionHealthState.value }),
 }));
 
+// Canonical predicate for "the account already has a machine (online OR offline)". Mocked
+// here — like the sibling store-derived hooks in this file — to drive the machine-existence
+// scenarios; the real `useAllMachines()`-backed behavior is covered in index.journeyHinge.spec.
+const machineSetupSatisfiedState = vi.hoisted(() => ({ value: false }));
+vi.mock('@/components/onboarding/state/useMachineSetupStepSatisfied', () => ({
+    useMachineSetupStepSatisfied: () => machineSetupSatisfiedState.value,
+}));
+
 const localDaemonStatus = vi.hoisted(() => ({
     value: {
         serviceInstalled: false,
@@ -115,6 +122,7 @@ describe('/ (welcome) setup continuation', () => {
         isAuthenticated = true;
         tauriDesktopState.value = true;
         connectionHealthState.value = 0;
+        machineSetupSatisfiedState.value = false;
         pendingTerminalConnectState.value = null;
         getPendingSetupIntentMock.mockReset();
         getPendingSetupIntentMock.mockReturnValue({
@@ -174,12 +182,12 @@ describe('/ (welcome) setup continuation', () => {
 
         expect(expoRouterMock.spies.replace).not.toHaveBeenCalledWith('/setup');
         expect(screen.findByTestId('setupWizard.surface')).toBeTruthy();
-        expect(screen.findByTestId('setupWizard-web-machine-setup-handoff-terminal')).toBeTruthy();
+        expect(screen.findByTestId('setupWizard-machine-arrival-stack')).toBeTruthy();
     });
 
     it('mounts the authenticated home shell on web when no post-auth setup wizard is needed', async () => {
         tauriDesktopState.value = false;
-        connectionHealthState.value = 1;
+        machineSetupSatisfiedState.value = true;
         getPendingSetupIntentMock.mockReturnValue(null);
 
         const Screen = (await import('@/app/(app)/index')).default;
@@ -203,9 +211,24 @@ describe('/ (welcome) setup continuation', () => {
         expect(modal.props.showBackdrop).toBe(true);
     });
 
-    it('skips the post-auth setup wizard on web when another machine is already online (clears pending continuation)', async () => {
+    it('skips the post-auth setup wizard on web when a machine already exists (clears pending continuation)', async () => {
         tauriDesktopState.value = false;
-        connectionHealthState.value = 1;
+        machineSetupSatisfiedState.value = true;
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
+        expect(clearPendingSetupIntentMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not auto-open the post-auth setup wizard on web when the account already has an OFFLINE machine (settles the pending continuation)', async () => {
+        tauriDesktopState.value = false;
+        // No machine is ONLINE (onlineCount stays 0), but one exists offline.
+        connectionHealthState.value = 0;
+        machineSetupSatisfiedState.value = true;
+        // Default beforeEach intent is an awaiting_auth continuation.
 
         const Screen = (await import('@/app/(app)/index')).default;
         const screen = await renderScreen(React.createElement(Screen));
@@ -302,9 +325,30 @@ describe('/ (welcome) setup continuation', () => {
         expect(setPendingSetupIntentMock).toHaveBeenCalledWith(expect.objectContaining({ phase: 'post_auth', branch: 'thisComputer' }));
     });
 
-    it('does not auto-open the setup wizard overlay on web when at least one machine is online and there is no pending setup intent', async () => {
+    it('does not auto-open the setup wizard on desktop when the account already has a machine, even with an unconfigured local daemon', async () => {
+        // Binding decision: once ANY machine exists the machine-setup step never
+        // auto-displays again — including the desktop local-daemon-health auto-open.
+        tauriDesktopState.value = true;
+        machineSetupSatisfiedState.value = true;
+        getPendingSetupIntentMock.mockReturnValue(null);
+        localDaemonStatus.value = {
+            serviceInstalled: false,
+            daemonRunning: false,
+            needsAuth: true,
+            machineId: null,
+        };
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 3 });
+
+        expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
+        expect(setPendingSetupIntentMock).not.toHaveBeenCalledWith(expect.objectContaining({ phase: 'post_auth' }));
+    });
+
+    it('does not auto-open the setup wizard overlay on web when at least one machine exists and there is no pending setup intent', async () => {
         tauriDesktopState.value = false;
-        connectionHealthState.value = 1;
+        machineSetupSatisfiedState.value = true;
         getPendingSetupIntentMock.mockReturnValue(null);
         localDaemonStatus.value = {
             serviceInstalled: false,
@@ -383,6 +427,50 @@ describe('/ (welcome) setup continuation', () => {
         await flushHookEffects({ cycles: 1, turns: 3 });
 
         expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
+    });
+
+    it('ignores voice fixture query markers in production without dismissing setup', async () => {
+        const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
+        const previousDebug = process.env.EXPO_PUBLIC_DEBUG;
+        (globalThis as { __DEV__?: boolean }).__DEV__ = false;
+        process.env.EXPO_PUBLIC_DEBUG = '0';
+        tauriDesktopState.value = false;
+        expoRouterMock.state.router.setParams({ happier_voice_e2e_fixture: 'local_auto_return_listening' });
+
+        try {
+            const Screen = (await import('@/app/(app)/index')).default;
+            const screen = await renderScreen(React.createElement(Screen));
+            await flushHookEffects({ cycles: 1, turns: 3 });
+
+            expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(1);
+            expect(setPendingSetupIntentMock).not.toHaveBeenCalledWith(expect.objectContaining({ phase: 'dismissed' }));
+        } finally {
+            (globalThis as { __DEV__?: boolean }).__DEV__ = previousDev;
+            if (previousDebug === undefined) delete process.env.EXPO_PUBLIC_DEBUG;
+            else process.env.EXPO_PUBLIC_DEBUG = previousDebug;
+        }
+    });
+
+    it('ignores persisted voice fixture markers in production without dismissing setup', async () => {
+        const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
+        const previousDebug = process.env.EXPO_PUBLIC_DEBUG;
+        (globalThis as { __DEV__?: boolean }).__DEV__ = false;
+        process.env.EXPO_PUBLIC_DEBUG = '0';
+        tauriDesktopState.value = false;
+        globalThis.localStorage?.setItem('happier.voice.e2e.fixture', 'local_auto_return_listening');
+
+        try {
+            const Screen = (await import('@/app/(app)/index')).default;
+            const screen = await renderScreen(React.createElement(Screen));
+            await flushHookEffects({ cycles: 1, turns: 3 });
+
+            expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(1);
+            expect(setPendingSetupIntentMock).not.toHaveBeenCalledWith(expect.objectContaining({ phase: 'dismissed' }));
+        } finally {
+            (globalThis as { __DEV__?: boolean }).__DEV__ = previousDev;
+            if (previousDebug === undefined) delete process.env.EXPO_PUBLIC_DEBUG;
+            else process.env.EXPO_PUBLIC_DEBUG = previousDebug;
+        }
     });
 
     it('does not open the post-auth setup wizard while a terminal connect approval is pending', async () => {

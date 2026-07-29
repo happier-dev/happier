@@ -53,6 +53,12 @@ const getStateSpy = vi.hoisted(() => vi.fn());
 const hydrateReadyState = vi.hoisted(() => ({
     ready: true,
 }));
+const settingsState = vi.hoisted(() => ({
+    value: {
+        profiles: undefined,
+        providerSettingsV1: undefined,
+    },
+}));
 const stackOptionsCapture = createStackOptionsCapture();
 
 vi.mock('@expo/vector-icons', () => ({
@@ -162,7 +168,7 @@ installAutomationAppRouteCommonModuleMocks({
         return createStorageModuleStub({
             useAutomation: () => automationState.value,
             useSession: () => sessionState.value,
-            useSettings: () => ({}),
+            useSettings: () => settingsState.value,
             storage: Object.assign(
                 ((selector?: (value: ReturnType<typeof readSnapshot>) => unknown) => {
                     const snapshot = readSnapshot();
@@ -298,7 +304,15 @@ describe('AutomationEditScreen route', () => {
             selectedProfileId: 'profile-1',
             transcriptStorage: 'direct',
             permissionMode: 'acceptEdits',
-            modelMode: 'gpt-5',
+            modelSelection: {
+                v: 1,
+                updatedAt: 0,
+                ref: {
+                    agentTargetKey: 'backend:codex',
+                    providerConnectionId: null,
+                    modelId: 'gpt-5',
+                },
+            },
             automationDraft: expect.objectContaining({
                 enabled: true,
                 name: 'Nightly',
@@ -359,14 +373,14 @@ describe('AutomationEditScreen route', () => {
         await settle();
 
         expect(latestUnavailableNoticeProps.value).toEqual(expect.objectContaining({
-            reason: 'automations.create.missingResumeKey',
+            reason: 'session.inactiveNotResumableNoticeTitle',
         }));
         expect(latestAutomationSettingsFormProps.value).toBeNull();
         expect(latestContextSectionProps.value).toBeNull();
         expect(latestAgentInputProps.value).toBeNull();
     });
 
-    it('renders the inherited existing-session context section when editing an existing-session automation', async () => {
+    it('hydrates the shared composer with inherited existing-session context when editing an automation', async () => {
         const transport = await import('@/sync/domains/automations/automationTemplateTransport');
         const codec = await import('@/sync/domains/automations/automationTemplateCodec');
         automationState.value = {
@@ -421,7 +435,8 @@ describe('AutomationEditScreen route', () => {
             directory: '/repo/project',
             prompt: 'Resume the review',
             displayText: 'Resume the review',
-            permissionMode: 'readOnly',
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            permissionMode: 'read-only',
             permissionModeUpdatedAt: 12,
             modelId: 'claude-sonnet-4-6',
             modelUpdatedAt: 34,
@@ -431,24 +446,10 @@ describe('AutomationEditScreen route', () => {
         await renderScreen(React.createElement(EditRoute));
         await settle();
 
-        expect(latestContextSectionProps.value).toEqual(expect.objectContaining({
-            context: expect.objectContaining({
-                draft: expect.objectContaining({
-                    existingSessionId: 'session-1',
-                    directory: '/repo/project',
-                    permissionMode: 'readOnly',
-                    permissionModeUpdatedAt: 12,
-                    modelId: 'claude-sonnet-4-6',
-                    modelUpdatedAt: 34,
-                }),
-                availability: expect.objectContaining({
-                    kind: 'ready',
-                    machineId: 'm-target',
-                }),
-            }),
-        }));
         expect(latestAgentInputProps.value).toEqual(expect.objectContaining({
-            permissionMode: 'readOnly',
+            sessionId: 'session-1',
+            currentPath: '/repo/project',
+            permissionMode: 'read-only',
             modelMode: 'claude-sonnet-4-6',
         }));
     });
@@ -600,7 +601,12 @@ describe('AutomationEditScreen route', () => {
                 prompt: 'Follow up with the latest review summary',
                 displayText: 'Follow up with the latest review summary',
                 permissionMode: 'acceptEdits',
-                modelId: 'gpt-5',
+                modelSelection: expect.objectContaining({
+                    ref: expect.objectContaining({
+                        agentTargetKey: 'backend:review-bot:configured:review-bot',
+                        modelId: 'gpt-5',
+                    }),
+                }),
                 existingSessionId: 's1',
             }),
             fallbackDraft: expect.objectContaining({
@@ -612,8 +618,15 @@ describe('AutomationEditScreen route', () => {
                 profileId: 'profile-1',
                 permissionMode: 'safe-yolo',
                 permissionModeUpdatedAt: 123,
-                modelId: 'gpt-5',
-                modelUpdatedAt: 456,
+                modelSelection: {
+                    v: 1,
+                    updatedAt: 456,
+                    ref: {
+                        agentTargetKey: 'backend:review-bot:configured:review-bot',
+                        providerConnectionId: null,
+                        modelId: 'gpt-5',
+                    },
+                },
                 codexBackendMode: 'acp',
                 automation: null,
                 existingSessionId: 's1',

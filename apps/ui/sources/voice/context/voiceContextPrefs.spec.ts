@@ -14,6 +14,8 @@ describe('getVoiceContextFormatterPrefs', () => {
             shareToolNames: true,
             shareToolArgs: true,
             shareFilePaths: false,
+            sharePermissionRequests: true,
+            shareDeviceInventory: true,
           },
           ui: {
             updates: {
@@ -29,5 +31,13 @@ describe('getVoiceContextFormatterPrefs', () => {
 
     expect(prefs.voiceShareSessionSummary).toBe(true);
     expect(prefs.voiceShareRecentMessages).toBe(true);
+    expect(prefs.voiceSharePermissionRequests).toBe(true);
+    expect(prefs.voiceShareDeviceInventory).toBe(true);
+  });
+
+  it('fails permission-request sharing closed when no valid voice privacy setting is present', () => {
+    const prefs = getVoiceContextFormatterPrefs({ settings: null });
+
+    expect(prefs.voiceSharePermissionRequests).toBe(false);
   });
 });

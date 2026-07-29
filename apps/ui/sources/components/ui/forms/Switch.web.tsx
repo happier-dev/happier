@@ -14,6 +14,13 @@ const COMPACT_THUMB_SIZE = 14;
 const COMPACT_PADDING = 2;
 
 const stylesheet = StyleSheet.create(() => ({
+    control: {
+        minWidth: 44,
+        minHeight: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 22,
+    },
     track: {
         width: TRACK_WIDTH,
         height: TRACK_HEIGHT,
@@ -51,6 +58,13 @@ export const Switch = ({ value, disabled, onValueChange, style, compact, ...rest
     const thumbS = compact ? COMPACT_THUMB_SIZE : THUMB_SIZE;
     const pad = compact ? COMPACT_PADDING : PADDING;
     const translateX = value ? trackW - thumbS - pad * 2 : 0;
+    const handleKeyDown = React.useCallback((event: any) => {
+        if (disabled) return;
+        const key = event?.nativeEvent?.key ?? event?.key;
+        if (key !== ' ' && key !== 'Spacebar' && key !== 'Enter') return;
+        event?.preventDefault?.();
+        onValueChange?.(!value);
+    }, [disabled, onValueChange, value]);
 
     return (
         <Pressable
@@ -61,8 +75,10 @@ export const Switch = ({ value, disabled, onValueChange, style, compact, ...rest
             aria-disabled={disabled ? true : undefined}
             disabled={disabled}
             onPress={() => onValueChange?.(!value)}
+            {...({ onKeyDown: handleKeyDown } as Record<string, unknown>)}
             style={({ pressed }) => [
                 style as any,
+                styles.control,
                 { opacity: disabled ? 0.6 : pressed ? 0.85 : 1 },
             ]}
         >

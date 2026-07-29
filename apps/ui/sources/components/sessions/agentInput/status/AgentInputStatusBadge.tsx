@@ -2,8 +2,7 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
+import { StatusPill, type StatusPillVariant } from '@/components/ui/status/StatusPill';
 
 import type { AgentInputStatusBadge as AgentInputStatusBadgeDescriptor, AgentInputStatusBadgeTone } from '../agentInputContracts';
 
@@ -11,79 +10,53 @@ type AgentInputStatusBadgeProps = AgentInputStatusBadgeDescriptor & Readonly<{
     anchorRef?: React.RefObject<any>;
 }>;
 
-type ToneTokens = Readonly<{
-    background: string;
-    border: string;
-    foreground: string;
-}>;
-
-function resolveToneTokens(theme: ReturnType<typeof useUnistyles>['theme'], tone: AgentInputStatusBadgeTone): ToneTokens {
-    if (tone === 'active') {
-        return {
-            background: theme.colors.state.info.background,
-            border: theme.colors.state.info.border,
-            foreground: theme.colors.text.primary,
-        };
-    }
-    if (tone === 'paused') {
-        return {
-            background: theme.colors.state.neutral.background,
-            border: theme.colors.state.neutral.border,
-            foreground: theme.colors.text.secondary,
-        };
-    }
-    if (tone === 'warning') {
-        return {
-            background: theme.colors.state.warning.background,
-            border: theme.colors.state.warning.border,
-            foreground: theme.colors.text.primary,
-        };
-    }
-    if (tone === 'complete') {
-        return {
-            background: theme.colors.state.success.background,
-            border: theme.colors.state.success.border,
-            foreground: theme.colors.text.primary,
-        };
-    }
-    return {
-        background: theme.colors.surface.elevated,
-        border: theme.colors.border.default,
-        foreground: theme.colors.text.secondary,
-    };
+/**
+ * Composer status tones map onto the app-wide pill variants; `StatusPill` owns the chrome (fill,
+ * radius, padding, label type) so composer badges cannot drift from every other pill in the app.
+ */
+function resolvePillVariant(tone: AgentInputStatusBadgeTone): StatusPillVariant {
+    if (tone === 'active') return 'info';
+    if (tone === 'complete') return 'success';
+    if (tone === 'warning') return 'warning';
+    // `paused` reads as a muted, inactive state — the neutral pill, same as `neutral`.
+    return 'neutral';
 }
 
 export function AgentInputStatusBadge(props: AgentInputStatusBadgeProps) {
     const { theme } = useUnistyles();
     const tone = props.tone ?? 'neutral';
     const emphasis = props.emphasis ?? 'prominent';
-    const tokens = resolveToneTokens(theme, tone);
-    const content = (pressed: boolean) => (
-        <View
-            style={[
-                styles.badge,
-                emphasis === 'quiet' && styles.quietBadge,
-                {
-                    backgroundColor: emphasis === 'quiet'
-                        ? 'transparent'
-                        : pressed && props.onPress ? theme.colors.surface.pressed : tokens.background,
-                    borderColor: emphasis === 'quiet' ? 'transparent' : tokens.border,
-                },
-            ]}
-        >
-            {props.icon ? (
-                <View style={styles.icon}>
-                    {props.icon(tokens.foreground)}
-                </View>
-            ) : null}
-            <Text
-                numberOfLines={1}
-                ellipsizeMode="tail"
-                style={[styles.label, { color: tokens.foreground }]}
-            >
-                {props.label}
-            </Text>
-        </View>
+    const variant = resolvePillVariant(tone);
+    const accent = theme.colors.state[variant].foreground;
+    // The state hue lives in the fill and the leading glyph; the label stays in a neutral text role.
+    // Painting the label the accent too would read as one colour but measures 2.09:1 on the light
+    // warning tint — under half the 4.5:1 AA floor for 11px text.
+    //
+    // Between the two neutral roles, the muted one is the calmer choice but only survives on light:
+    // `text.secondary` measures 4.96:1 light / 3.46:1 dark on that same tint. Dark themes need
+    // brighter ink to sit equally quiet, so each side takes the most recessive role that still
+    // clears AA.
+    const labelColor = theme.dark === true
+        ? theme.colors.text.primary
+        : theme.colors.text.secondary;
+
+    const pill = (
+        <StatusPill
+            variant={variant}
+            chrome={emphasis === 'quiet' ? 'plain' : 'pill'}
+            label={props.label}
+            // Composer badges carry sentence-case phrases ("Account rotation pending"), not the
+            // 2–8 character tokens the micro-label type is tracked for.
+            labelVariant="phrase"
+            labelNumberOfLines={1}
+            foregroundColor={labelColor}
+            leading={props.icon ? props.icon(accent) : undefined}
+            hideDot
+            // Chrome (fill, radius, type, no border) stays the app-wide pill; only the vertical
+            // rhythm is local. The composer status row sits beside 11px text and interactive
+            // chips, where the pill's default 2px vertical padding reads squat around a glyph.
+            style={emphasis === 'quiet' ? undefined : styles.pillDensity}
+        />
     );
 
     if (!props.onPress) {
@@ -92,9 +65,11 @@ export function AgentInputStatusBadge(props: AgentInputStatusBadgeProps) {
                 ref={props.anchorRef}
                 testID={props.testID}
                 accessibilityLabel={props.accessibilityLabel}
+                accessibilityHint={props.accessibilityHint}
+                accessibilityState={props.accessibilityState}
                 style={styles.wrapper}
             >
-                {content(false)}
+                {pill}
             </View>
         );
     }
@@ -105,10 +80,15 @@ export function AgentInputStatusBadge(props: AgentInputStatusBadgeProps) {
             testID={props.testID}
             accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel ?? props.label}
+            accessibilityHint={props.accessibilityHint}
+            accessibilityState={props.accessibilityState}
+            // The pill is short; a symmetric slop brings it up to a comfortable target without
+            // inflating a control that shares a row with plain 11px status text.
+            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
             onPress={props.onPress}
-            style={styles.wrapper}
+            style={({ pressed }) => [styles.wrapper, pressed ? styles.wrapperPressed : null]}
         >
-            {({ pressed }) => content(Boolean(pressed))}
+            {pill}
         </Pressable>
     );
 }
@@ -118,25 +98,10 @@ const styles = StyleSheet.create(() => ({
         maxWidth: '70%',
         flexShrink: 1,
     },
-    badge: {
-        minHeight: 22,
-        borderRadius: 6,
-        borderWidth: StyleSheet.hairlineWidth,
-        paddingHorizontal: 8,
-        flexDirection: 'row',
-        alignItems: 'center',
-        flexShrink: 1,
+    wrapperPressed: {
+        opacity: 0.6,
     },
-    quietBadge: {
-        borderWidth: 0,
-        paddingHorizontal: 2,
-    },
-    icon: {
-        marginRight: 5,
-    },
-    label: {
-        fontSize: 11,
-        ...Typography.default(),
-        flexShrink: 1,
+    pillDensity: {
+        paddingVertical: 4,
     },
 }));

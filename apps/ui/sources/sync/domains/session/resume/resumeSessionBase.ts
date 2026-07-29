@@ -1,7 +1,7 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { ResumeSessionOptions } from '@/sync/ops';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
-import { canContinueSessionWithFreshSpawn, canResumeSessionWithOptions, getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
+import { canResumeOrContinueSessionWithOptions, getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
 import { deriveAcpBackendIdFromFlavor } from '@/agents/runtime/acpFlavor';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
@@ -10,6 +10,7 @@ import type { PermissionModeOverrideForSpawn } from '@/sync/domains/permissions/
 import type { ModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { normalizeOptionalNumber, normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export type ResumeSessionBaseOptions = ResumeSessionOptions;
 
@@ -33,35 +34,33 @@ export function buildResumeSessionBaseOptionsFromSession(opts: {
     modelOverride?: ModelOverrideForSpawn | null;
 }): ResumeSessionBaseOptions | null {
     const { sessionId, session, resumeCapabilityOptions, resumeTargetOverride, permissionOverride, modelOverride } = opts;
+    const metadata = readSessionOwnerMetadataView(session);
 
     const reachableTarget = readMachineControlTargetForSession(sessionId);
     const machineId = normalizeNonEmptyString(resumeTargetOverride?.machineId)
         ?? normalizeNonEmptyString(reachableTarget?.machineId);
     const directory = normalizeNonEmptyString(resumeTargetOverride?.directory)
         ?? normalizeNonEmptyString(reachableTarget?.basePath);
-    const flavor = session.metadata?.flavor;
+    const flavor = metadata?.flavor;
     if (!machineId || !directory) return null;
 
     const configuredAcpBackendIdFromMetadata =
-        typeof session.metadata?.acpConfiguredBackendV1?.backendId === 'string'
-            ? session.metadata.acpConfiguredBackendV1.backendId.trim()
+        typeof metadata?.acpConfiguredBackendV1?.backendId === 'string'
+            ? metadata.acpConfiguredBackendV1.backendId.trim()
             : '';
     const configuredAcpBackendIdFromFlavor = deriveAcpBackendIdFromFlavor(flavor);
     const configuredAcpBackendId =
         configuredAcpBackendIdFromFlavor !== null
             ? (configuredAcpBackendIdFromMetadata.length > 0 ? configuredAcpBackendIdFromMetadata : configuredAcpBackendIdFromFlavor)
             : null;
-    const connectedServices = normalizeSessionAuthoringConnectedServices(session.metadata?.connectedServices);
-    const connectedServicesUpdatedAt = normalizeOptionalNumber(session.metadata?.connectedServicesUpdatedAt);
+    const connectedServices = normalizeSessionAuthoringConnectedServices(metadata?.connectedServices);
+    const connectedServicesUpdatedAt = normalizeOptionalNumber(metadata?.connectedServicesUpdatedAt);
 
     // Note: vendor resume IDs can be missing even for otherwise-resumable sessions.
     // Wake/resume still needs to work (e.g. pending-queue wake) and should attach the vendor id only when present.
     // A provider session that never started (no vendor resume id persisted) is still
     // continuable by a fresh spawn against the same Happier session (QA A-F5).
-    if (
-        !canResumeSessionWithOptions(session.metadata, resumeCapabilityOptions)
-        && !canContinueSessionWithFreshSpawn(session.metadata, resumeCapabilityOptions)
-    ) return null;
+    if (!canResumeOrContinueSessionWithOptions(metadata, resumeCapabilityOptions)) return null;
 
     if (configuredAcpBackendId !== null) {
         return {
@@ -76,11 +75,11 @@ export function buildResumeSessionBaseOptionsFromSession(opts: {
         };
     }
 
-    const agentId = resolveAgentIdFromSessionMetadata(session.metadata) ?? resolveAgentIdFromFlavor(flavor);
+    const agentId = resolveAgentIdFromSessionMetadata(metadata) ?? resolveAgentIdFromFlavor(flavor);
     if (!agentId) return null;
 
-    const resume = getAgentVendorResumeId(session.metadata, agentId, resumeCapabilityOptions);
-    const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(session.metadata);
+    const resume = getAgentVendorResumeId(metadata, agentId, resumeCapabilityOptions);
+    const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(metadata);
 
     return {
         sessionId,

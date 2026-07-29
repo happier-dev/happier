@@ -201,6 +201,8 @@ describe('ScmCommitComposerCard', () => {
                 commitAllowed
                 commitBlockedMessage={null}
                 onCommitFromMessage={() => {}}
+                commitSelectionAvailable
+                selectionModeActive
                 selectionCount={2}
                 onClearSelection={onClear}
                 onSelectAllSelection={onSelectAll}
@@ -216,5 +218,85 @@ describe('ScmCommitComposerCard', () => {
 
         await pressTestInstanceAsync(allButton);
         expect(onSelectAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows a "Select files to commit" entry button and enters selection mode on press', async () => {
+        const onEnter = vi.fn();
+        const { ScmCommitComposerCard } = await import('./ScmCommitComposerCard');
+
+        const screen = (await renderScreen(
+            <ScmCommitComposerCard
+                theme={theme}
+                commitActionLabel="Commit"
+                draftMessage=""
+                onDraftMessageChange={() => {}}
+                busy={false}
+                status={null}
+                commitAllowed
+                commitBlockedMessage={null}
+                onCommitFromMessage={() => {}}
+                commitSelectionAvailable
+                onEnterSelectionMode={onEnter}
+                variant="railFooter"
+            />
+        )).tree;
+
+        const enterButton = screen.findByProps({ testID: 'scm-commit-enter-selection' });
+        expect(enterButton).toBeTruthy();
+        expect(screen.findAllByProps({ testID: 'scm-commit-selection-summary' })).toHaveLength(0);
+
+        await pressTestInstanceAsync(enterButton);
+        expect(onEnter).toHaveBeenCalledTimes(1);
+    });
+
+    it('hides the entry button and exits selection mode via Done when nothing is selected', async () => {
+        const onExit = vi.fn();
+        const { ScmCommitComposerCard } = await import('./ScmCommitComposerCard');
+
+        const screen = (await renderScreen(
+            <ScmCommitComposerCard
+                theme={theme}
+                commitActionLabel="Commit"
+                draftMessage=""
+                onDraftMessageChange={() => {}}
+                busy={false}
+                status={null}
+                commitAllowed
+                commitBlockedMessage={null}
+                onCommitFromMessage={() => {}}
+                commitSelectionAvailable
+                selectionModeActive
+                selectionCount={0}
+                onExitSelectionMode={onExit}
+                variant="railFooter"
+            />
+        )).tree;
+
+        expect(screen.findAllByProps({ testID: 'scm-commit-enter-selection' })).toHaveLength(0);
+        const doneButton = screen.findByProps({ testID: 'scm-commit-exit-selection' });
+        await pressTestInstanceAsync(doneButton);
+        expect(onExit).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not render selection affordances when commit selection is unavailable', async () => {
+        const { ScmCommitComposerCard } = await import('./ScmCommitComposerCard');
+
+        const screen = (await renderScreen(
+            <ScmCommitComposerCard
+                theme={theme}
+                commitActionLabel="Commit"
+                draftMessage=""
+                onDraftMessageChange={() => {}}
+                busy={false}
+                status={null}
+                commitAllowed
+                commitBlockedMessage={null}
+                onCommitFromMessage={() => {}}
+                variant="railFooter"
+            />
+        )).tree;
+
+        expect(screen.findAllByProps({ testID: 'scm-commit-enter-selection' })).toHaveLength(0);
+        expect(screen.findAllByProps({ testID: 'scm-commit-selection-summary' })).toHaveLength(0);
     });
 });

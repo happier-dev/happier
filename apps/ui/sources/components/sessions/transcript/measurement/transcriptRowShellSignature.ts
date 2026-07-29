@@ -1,6 +1,7 @@
 import type { ChatListItem } from '@/components/sessions/chatListItems';
 import type { TranscriptTurn } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurns';
 import type { TranscriptToolGroupUnitItem } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurnUnits';
+import type { TranscriptWindowGapItem } from '@/components/sessions/transcript/viewport/window/transcriptTargetWindowTypes';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 
@@ -18,7 +19,8 @@ export type TranscriptRowShellItem =
         id: string;
         turn: TranscriptTurn;
     }
-    | TranscriptToolGroupUnitItem;
+    | TranscriptToolGroupUnitItem
+    | TranscriptWindowGapItem;
 
 function isToolGroupUnitItem(item: TranscriptRowShellItem): item is TranscriptToolGroupUnitItem {
     return (
@@ -56,8 +58,10 @@ export function resolveTranscriptRowItemType(params: Readonly<{
     if (isToolGroupUnitItem(item)) return item.kind;
     if (item.kind === 'pending-queue') return 'pending-action';
     if (item.kind === 'pending-user-action') return 'pending-action';
+    if (item.kind === 'external-session-operation') return 'pending-action';
     if (item.kind === 'action-draft') return 'pending-action';
     if (item.kind === 'fork-divider') return 'fork-divider';
+    if (item.kind === 'transcript-window-gap') return 'transcript-window-gap';
     if (item.kind === 'turn') {
         if (item.turn.content.some((content) => content.kind === 'tool_calls')) return 'turn:tool';
         const messageIds = collectMessageIdsFromTurn(item.turn);
@@ -257,7 +261,7 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
         ...base,
         structuralKey: buildStableJsonSignature(item),
         expansionKey: 'tools:none|thinking:none',
-        rowState: item.kind === 'pending-queue' || item.kind === 'pending-user-action' || item.kind === 'action-draft'
+        rowState: item.kind === 'pending-queue' || item.kind === 'pending-user-action' || item.kind === 'external-session-operation' || item.kind === 'action-draft'
             ? 'pending-action'
             : 'stable',
     };
@@ -297,7 +301,7 @@ function turnContainsMessageId(turn: TranscriptTurn, messageId: string): boolean
     return false;
 }
 
-function collectMessageIdsFromTurn(turn: TranscriptTurn): string[] {
+export function collectMessageIdsFromTurn(turn: TranscriptTurn): string[] {
     const ids: string[] = [];
     if (turn.userMessageId) ids.push(turn.userMessageId);
     for (const content of turn.content) {
@@ -313,11 +317,10 @@ function collectMessageIdsFromTurn(turn: TranscriptTurn): string[] {
 }
 
 /**
- * C1 (T2): the FlashList recycle type must be SHAPE-only, never SIZE-based. A length-gated
- * short/long split flips the type mid-stream (at the old 512-char threshold), remounting the cell
- * into a different recycle pool and stranding it at an unmeasured estimate for >=1 frame — the prime
- * overlap trigger. Thinking is kept as a genuinely distinct rendered shell shape; only the size flip
- * was the bug. See `.reviews/2026-06-14-091335-transcript-deep-audit/subagents/19-design-C1-measurement.md`.
+ * C1 (T2): recycle identity is SHAPE-only, never SIZE-based. A length-gated short/long
+ * split flips identity mid-stream (at the old 512-char threshold), remounting the row
+ * into a different recycle pool and briefly replacing measured geometry with an estimate.
+ * Thinking remains a genuinely distinct rendered shell shape; only the size flip was the bug.
  */
 function resolveMessageRowType(message: Message | null, activeThinkingMessageId: string | null): string {
     if (!message) return 'message:agent';
@@ -461,7 +464,14 @@ function resolveMessageRowState(params: Readonly<{
     const { message } = params;
     if (!message) return 'stable';
     if (message.kind === 'agent-text' && (message.isThinking === true || message.id === params.activeThinkingMessageId)) {
-        return 'thinking';
+        // `rowState: 'thinking'` is a GROWING classification — the measurement reconciler holds a
+        // monotonic height floor for growing rows and never releases it on a content change. Deriving
+        // it from `message.isThinking` alone made it PERMANENT: every historical thinking block stayed
+        // growing-classified for the life of the transcript and stranded its tallest measured height
+        // as a self-fulfilling `minHeight`. Only a LIVE thinking block still grows.
+        const isLiveThinking = message.id === params.activeThinkingMessageId
+            || (params.sessionActive && params.isLatestCommittedActivity);
+        return isLiveThinking ? 'thinking' : 'stable';
     }
     if (message.kind === 'tool-call') {
         const toolStatusKind = resolveToolStatusIndicatorKind(message.tool);

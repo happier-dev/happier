@@ -58,6 +58,8 @@ describe('Item web testID forwarding', () => {
         expect(row?.props.testID).toBe('settings-appearance-themePreference-cycle');
         expect(row?.props['data-testid']).toBe('settings-appearance-themePreference-cycle');
         expect(row?.props.accessibilityRole).toBeUndefined();
+        expect(row?.props.role).toBe('button');
+        expect(row?.props.accessibilityLabel).toBe('Appearance. Adaptive');
         expect(row?.props.tabIndex).toBe(0);
         const detail = screen.findByTestId('settings-appearance-themePreference-detail');
         expect(detail?.props.children).toBe('Adaptive');
@@ -83,6 +85,33 @@ describe('Item web testID forwarding', () => {
 
         expect(findClosestPressableAncestor(action as renderer.ReactTestInstance)).toBe(row);
         expect(row?.props.accessibilityRole).toBeUndefined();
+        expect(row?.props.role).toBeUndefined();
+    });
+
+    it('keeps a split navigation row named and button-semantic when its right-side action is a sibling', async () => {
+        const { Item } = await import('./Item');
+        const screen = await renderScreen(
+            <Item
+                testID="provider-connection-row"
+                title="Work Ollama"
+                subtitle="Ollama · 1 model"
+                onPress={() => {}}
+                rightElement={(
+                    <Pressable testID="provider-connection-toggle" onPress={() => {}}>
+                        <Text>Enabled</Text>
+                    </Pressable>
+                )}
+                rightElementOutsidePressable
+            />,
+        );
+
+        const row = screen.findByTestId('provider-connection-row');
+        const action = screen.findByTestId('provider-connection-toggle');
+
+        expect(findClosestPressableAncestor(action as renderer.ReactTestInstance)).toBeNull();
+        expect(row?.props.role).toBe('button');
+        expect(row?.props.accessibilityLabel).toBe('Work Ollama. Ollama · 1 model');
+        expect(row?.props.tabIndex).toBe(0);
     });
 
     it('forwards testID as data-testid on non-interactive web rows', async () => {
@@ -111,5 +140,51 @@ describe('Item web testID forwarding', () => {
         const row = screen.findByTestId('settings-notifications-sounds-account-happier');
         expect(row).toBeTruthy();
         expect(row?.props['aria-selected']).toBe(true);
+    });
+
+    it('exposes checked radio semantics and activates a radio row with Space without swallowing the event', async () => {
+        const { Item } = await import('./Item');
+        const onPress = vi.fn();
+        const screen = await renderScreen(<Item
+                    testID="voice-provider-openai"
+                    title="OpenAI"
+                    accessibilityRole="radio"
+                    webRole="radio"
+                    selected
+                    onPress={onPress}
+                />);
+
+        const row = screen.findByTestId('voice-provider-openai');
+        expect(row?.props.role).toBe('radio');
+        expect(row?.props.accessibilityState).toEqual({ checked: true });
+        expect(row?.props['aria-selected']).toBeUndefined();
+        const preventDefault = vi.fn();
+        const stopPropagation = vi.fn();
+        row?.props.onKeyDown?.({ key: ' ', preventDefault, stopPropagation });
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(stopPropagation).not.toHaveBeenCalled();
+        expect(onPress).toHaveBeenCalledTimes(1);
+    });
+
+    it('preserves named checked and disabled semantics for a visible unavailable radio option', async () => {
+        const { Item } = await import('./Item');
+        const screen = await renderScreen(<Item
+                    testID="voice-provider-hosted"
+                    title="Hosted voice"
+                    subtitle="Unavailable on this server"
+                    accessibilityRole="radio"
+                    webRole="radio"
+                    selected={false}
+                    disabled
+                />);
+
+        const row = screen.findByTestId('voice-provider-hosted');
+        expect(row?.props.role).toBe('radio');
+        expect(row?.props.accessibilityLabel).toBe('Hosted voice. Unavailable on this server');
+        expect(row?.props.accessibilityState).toEqual({ checked: false, disabled: true });
+        expect(row?.props['aria-checked']).toBe(false);
+        expect(row?.props['aria-disabled']).toBe(true);
+        expect(row?.props.onPress).toBeUndefined();
+        expect(row?.props.tabIndex).toBe(-1);
     });
 });

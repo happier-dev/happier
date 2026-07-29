@@ -38,18 +38,27 @@ const textMock = createTextModuleMock({
 vi.mock('@/text', () => textMock);
 
 describe('useAuthEntryOptions', () => {
-    let activeServerListener: ((snapshot: { serverUrl: string }) => void) | null = null;
-    let currentActiveServerSnapshot: { serverUrl: string };
+    type TestActiveServerSnapshot = Readonly<{
+        serverId: string;
+        serverUrl: string;
+        generation: number;
+    }>;
+    let activeServerListener: ((snapshot: TestActiveServerSnapshot) => void) | null = null;
+    let currentActiveServerSnapshot: TestActiveServerSnapshot;
 
     beforeEach(() => {
         getServerFeaturesSnapshotMock.mockReset();
         getActiveServerSnapshotMock.mockReset();
         subscribeActiveServerMock.mockReset();
         getAuthProviderMock.mockReset();
-        currentActiveServerSnapshot = { serverUrl: 'http://api.example.test' };
+        currentActiveServerSnapshot = {
+            serverId: 'server-example',
+            serverUrl: 'http://api.example.test',
+            generation: 1,
+        };
         getActiveServerSnapshotMock.mockImplementation(() => currentActiveServerSnapshot);
         activeServerListener = null;
-        subscribeActiveServerMock.mockImplementation((listener: (snapshot: { serverUrl: string }) => void) => {
+        subscribeActiveServerMock.mockImplementation((listener: (snapshot: TestActiveServerSnapshot) => void) => {
             activeServerListener = listener;
             return () => {
                 if (activeServerListener === listener) {
@@ -156,8 +165,12 @@ describe('useAuthEntryOptions', () => {
         expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(1);
 
         await act(async () => {
-            currentActiveServerSnapshot = { serverUrl: 'http://api.other.test' };
-            activeServerListener?.({ serverUrl: 'http://api.other.test' });
+            currentActiveServerSnapshot = {
+                serverId: 'server-other',
+                serverUrl: 'http://api.other.test',
+                generation: 2,
+            };
+            activeServerListener?.(currentActiveServerSnapshot);
         });
         await flushHookEffects({ cycles: 2, turns: 2 });
 
@@ -168,11 +181,102 @@ describe('useAuthEntryOptions', () => {
         expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(2);
     });
 
+    it('re-checks an unavailable relay when the same active URL is restored with a new generation', async () => {
+        getServerFeaturesSnapshotMock.mockResolvedValue({ status: 'error', reason: 'network' });
+
+        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
+        const hook = await renderHook(() => useAuthEntryOptions());
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        await act(async () => {
+            hook.getCurrent().retryServerCheck();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(hook.getCurrent().serverAvailability).toBe('unavailable');
+        expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(2);
+
+        getServerFeaturesSnapshotMock.mockResolvedValue({
+            status: 'ready',
+            features: { capabilities: { auth: { methods: [] } } },
+        });
+        await act(async () => {
+            currentActiveServerSnapshot = {
+                ...currentActiveServerSnapshot,
+                generation: currentActiveServerSnapshot.generation + 1,
+            };
+            activeServerListener?.(currentActiveServerSnapshot);
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(3);
+        expect(hook.getCurrent().serverAvailability).toBe('legacy');
+        expect(hook.getCurrent().showAuthActions).toBe(true);
+    });
+
+    it('consumes a forced retry once when a successful identity-bearing response advances the server generation', async () => {
+        let allowReadyResponse = false;
+        let identityGenerationBumpsRemaining = 3;
+        getServerFeaturesSnapshotMock.mockImplementation(async (params?: { force?: boolean }) => {
+            if (!allowReadyResponse) {
+                return { status: 'error', reason: 'network' };
+            }
+
+            if (params?.force === true && identityGenerationBumpsRemaining > 0) {
+                identityGenerationBumpsRemaining -= 1;
+                currentActiveServerSnapshot = {
+                    ...currentActiveServerSnapshot,
+                    generation: currentActiveServerSnapshot.generation + 1,
+                };
+                activeServerListener?.(currentActiveServerSnapshot);
+            }
+            return {
+                status: 'ready',
+                features: { capabilities: { auth: { methods: [] } } },
+            };
+        });
+
+        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
+        const hook = await renderHook(() => useAuthEntryOptions());
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        await act(async () => {
+            hook.getCurrent().retryServerCheck();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(hook.getCurrent().serverAvailability).toBe('unavailable');
+
+        allowReadyResponse = true;
+        await act(async () => {
+            hook.getCurrent().retryServerCheck();
+        });
+        await flushHookEffects({ cycles: 8, turns: 4 });
+
+        expect(hook.getCurrent().serverAvailability).toBe('legacy');
+        expect(hook.getCurrent().showAuthActions).toBe(true);
+        expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(4);
+        expect(getServerFeaturesSnapshotMock.mock.calls.map(([params]) => params?.force)).toEqual([
+            false,
+            true,
+            true,
+            false,
+        ]);
+        expect(identityGenerationBumpsRemaining).toBe(2);
+    });
+
     it('syncs to the latest active server on mount when the server changed before the subscription effect attached', async () => {
-        let currentSnapshot = { serverUrl: 'http://api.example.test' };
+        let currentSnapshot: TestActiveServerSnapshot = {
+            serverId: 'server-example',
+            serverUrl: 'http://api.example.test',
+            generation: 1,
+        };
         getActiveServerSnapshotMock.mockImplementation(() => currentSnapshot);
-        subscribeActiveServerMock.mockImplementationOnce((_listener: (snapshot: { serverUrl: string }) => void) => {
-            currentSnapshot = { serverUrl: 'http://api.override.test' };
+        subscribeActiveServerMock.mockImplementationOnce((_listener: (snapshot: TestActiveServerSnapshot) => void) => {
+            currentSnapshot = {
+                serverId: 'server-override',
+                serverUrl: 'http://api.override.test',
+                generation: 2,
+            };
             return () => {};
         });
         getServerFeaturesSnapshotMock.mockResolvedValue({

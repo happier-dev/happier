@@ -5,17 +5,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
 import { useKeyboardHandler, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Animated, { runOnJS, useSharedValue } from 'react-native-reanimated';
-import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
-import { LegendList } from '@legendapp/list';
+import { LegendList } from '@legendapp/list/react-native';
 
-type ListType = 'flash' | 'flat' | 'legend';
+type ListType = 'flat' | 'legend';
 type PaddingType = 'animated' | 'non-animated' | 'header-footer';
 type DemoMessage = Readonly<{ id: string; text: string }>;
 
 export default function InvertedListTest() {
     const [messages, setMessages] = useState<DemoMessage[]>([]);
     const [inputText, setInputText] = useState('');
-    const [listType, setListType] = useState<ListType>('flash');
+    const [listType, setListType] = useState<ListType>('legend');
     const [paddingType, setPaddingType] = useState<PaddingType>('non-animated');
     const insets = useSafeAreaInsets();
     const { height } = useReanimatedKeyboardAnimation();
@@ -72,12 +71,6 @@ export default function InvertedListTest() {
                     <View>
                         <Text style={styles.controlLabel}>List Implementation:</Text>
                         <View style={styles.buttonRow}>
-                            <TouchableOpacity
-                                onPress={() => setListType('flash')}
-                                style={[styles.button, listType === 'flash' ? styles.buttonActive : styles.buttonInactive]}
-                            >
-                                <Text style={[styles.buttonText, listType === 'flash' ? styles.buttonTextActive : styles.buttonTextInactive]}>FlashList</Text>
-                            </TouchableOpacity>
                             <TouchableOpacity
                                 onPress={() => setListType('flat')}
                                 style={[styles.button, listType === 'flat' ? styles.buttonActive : styles.buttonInactive]}
@@ -138,24 +131,7 @@ export default function InvertedListTest() {
                                     paddingType === 'animated' ? animatedPaddingValue : 0
                     };
                     
-                    if (listType === 'flash') {
-                        return (
-                            <ListContainer style={containerStyle as any}>
-                                <FlashList
-                                    data={messages}
-                                    renderItem={renderItem}
-                                    keyExtractor={(item: DemoMessage) => item.id}
-                                    maintainVisibleContentPosition={{
-                                        autoscrollToBottomThreshold: 0.2,
-                                        autoscrollToTopThreshold: 100,
-                                        startRenderingFromBottom: true
-                                    }}
-                                    ListEmptyComponent={ListEmptyComponent}
-                                    ListHeaderComponent={ListHeaderComponent}
-                                />
-                            </ListContainer>
-                        );
-                    } else if (listType === 'flat') {
+                    if (listType === 'flat') {
                         return (
                             <ListContainer style={containerStyle as any}>
                                 <FlatList
@@ -172,21 +148,20 @@ export default function InvertedListTest() {
                                 />
                             </ListContainer>
                         );
-                    } else {
-                        return (
-                            <ListContainer style={containerStyle as any}>
-                                <LegendList
-                                    data={messages}
-                                    renderItem={renderItem}
-                                    keyExtractor={(item: DemoMessage) => item.id}
-                                    maintainVisibleContentPosition={true}
-                                    maintainScrollAtEnd={true}
-                                    ListEmptyComponent={ListEmptyComponent}
-                                    ListHeaderComponent={ListHeaderComponent}
-                                />
-                            </ListContainer>
-                        );
                     }
+                    return (
+                        <ListContainer style={containerStyle as any}>
+                            <LegendList
+                                data={messages}
+                                renderItem={renderItem}
+                                keyExtractor={(item: DemoMessage) => item.id}
+                                maintainVisibleContentPosition={true}
+                                maintainScrollAtEnd={true}
+                                ListEmptyComponent={ListEmptyComponent}
+                                ListHeaderComponent={ListHeaderComponent}
+                            />
+                        </ListContainer>
+                    );
                 })()}
 
                 <View style={[styles.inputContainer, { paddingBottom: insets.bottom + 4 }]}>

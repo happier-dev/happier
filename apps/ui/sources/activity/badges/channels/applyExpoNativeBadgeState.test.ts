@@ -42,6 +42,26 @@ describe('applyExpoNativeBadgeState', () => {
         expect(setBadgeCountAsync).toHaveBeenCalledWith(0);
     });
 
+    it('recovers from a stalled native badge update instead of dropping every later update', async () => {
+        vi.useFakeTimers();
+        try {
+            const { applyExpoNativeBadgeState } = await import('./applyExpoNativeBadgeState');
+            setBadgeCountAsync.mockImplementationOnce(() => new Promise(() => {}));
+
+            const stalled = applyExpoNativeBadgeState({ count: 1, showNonNumericDot: false });
+            await vi.advanceTimersByTimeAsync(30_000);
+            expect(await stalled).toBe(false);
+
+            // The in-flight guard must have cleared, otherwise later counts are silently dropped
+            // for the lifetime of the process.
+            setBadgeCountAsync.mockResolvedValue(true);
+            await expect(applyExpoNativeBadgeState({ count: 2, showNonNumericDot: false })).resolves.toBe(true);
+            expect(setBadgeCountAsync).toHaveBeenLastCalledWith(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('returns false when the native platform refuses the badge update', async () => {
         setBadgeCountAsync.mockResolvedValueOnce(false);
         const { applyExpoNativeBadgeState } = await import('./applyExpoNativeBadgeState');

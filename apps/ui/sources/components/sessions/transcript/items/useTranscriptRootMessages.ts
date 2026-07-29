@@ -47,8 +47,15 @@ export function useTranscriptRootMessages(sessionId: string) {
 
     React.useEffect(() => {
         if (!forkContextNeedsPrefetch) return;
+        // Wait for the child's own transcript load to settle first: the sync-side prefetch
+        // gate requires every closer segment's pagination state to be RESOLVED (no more
+        // older pages), and a prefetch fired before the child's initial page lands is
+        // silently skipped with nothing retrying (live native S-F 2026-07-11: a fork with
+        // an empty child never displayed the pre-fork parent transcript). `isLoaded`
+        // flipping true re-fires this effect against the settled state.
+        if (!isLoaded) return;
         fireAndForget(sync.prefetchForkedTranscriptContext(sessionId), { tag: 'ChatList.prefetchForkedTranscriptContext' });
-    }, [forkContextNeedsPrefetch, sessionId]);
+    }, [forkContextNeedsPrefetch, isLoaded, sessionId]);
 
     const forkAwareMessageDescriptors = React.useMemo(() => {
         if (!forkedTranscriptEnabled || !fork) return null;

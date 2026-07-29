@@ -22,6 +22,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { useArtifacts, useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { PromptDocSelectionGroup } from '@/components/settings/prompts/shared/PromptDocSelectionGroup';
+import { usePromptEditorDraftField } from '@/components/settings/prompts/shared/usePromptEditorDraftField';
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -90,30 +91,77 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
     [artifacts],
   );
 
-  const [title, setTitle] = React.useState('');
-  const [token, setToken] = React.useState('');
-  const [targetArtifactId, setTargetArtifactId] = React.useState<string>('');
-  const [behavior, setBehavior] = React.useState<'insert' | 'insert_on_send' | 'insert_and_send'>('insert');
-  const [allowArgs, setAllowArgs] = React.useState<boolean>(false);
+  const {
+    value: title,
+    setValue: setTitle,
+    setPristineValue: setPristineTitle,
+    applyExternalValue: applyExternalTitle,
+  } = usePromptEditorDraftField('');
+  const {
+    value: token,
+    setValue: setToken,
+    setPristineValue: setPristineToken,
+    applyExternalValue: applyExternalToken,
+  } = usePromptEditorDraftField('');
+  const {
+    value: targetArtifactId,
+    setValue: setTargetArtifactId,
+    setPristineValue: setPristineTargetArtifactId,
+    applyExternalValue: applyExternalTargetArtifactId,
+  } = usePromptEditorDraftField<string>('');
+  const {
+    value: behavior,
+    setValue: setBehavior,
+    setPristineValue: setPristineBehavior,
+    applyExternalValue: applyExternalBehavior,
+  } = usePromptEditorDraftField<'insert' | 'insert_on_send' | 'insert_and_send'>('insert');
+  const {
+    value: allowArgs,
+    setValue: setAllowArgs,
+    setPristineValue: setPristineAllowArgs,
+    applyExternalValue: applyExternalAllowArgs,
+  } = usePromptEditorDraftField<boolean>(false);
   const [saving, setSaving] = React.useState(false);
   const [targetMenuOpen, setTargetMenuOpen] = React.useState(false);
+  const loadedInvocationIdRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
     if (!existingEntry) {
-      setTitle('');
-      setToken('');
-      setTargetArtifactId('');
-      setBehavior('insert');
-      setAllowArgs(false);
+      loadedInvocationIdRef.current = null;
+      setPristineTitle('');
+      setPristineToken('');
+      setPristineTargetArtifactId('');
+      setPristineBehavior('insert');
+      setPristineAllowArgs(false);
       return;
     }
 
-    setTitle(existingEntry.title);
-    setToken(existingEntry.token);
-    setTargetArtifactId(existingEntry.target.artifactId);
-    setBehavior(existingEntry.behavior);
-    setAllowArgs(existingEntry.allowArgs);
-  }, [existingEntry]);
+    const preserveDirty = loadedInvocationIdRef.current === existingEntry.id;
+    const applyOptions = { preserveDirty };
+    applyExternalTitle(existingEntry.title, applyOptions);
+    applyExternalToken(existingEntry.token, applyOptions);
+    applyExternalTargetArtifactId(existingEntry.target.artifactId, applyOptions);
+    applyExternalBehavior(existingEntry.behavior, applyOptions);
+    applyExternalAllowArgs(existingEntry.allowArgs, applyOptions);
+    loadedInvocationIdRef.current = existingEntry.id;
+  }, [
+    applyExternalAllowArgs,
+    applyExternalBehavior,
+    applyExternalTargetArtifactId,
+    applyExternalTitle,
+    applyExternalToken,
+    existingEntry?.allowArgs,
+    existingEntry?.behavior,
+    existingEntry?.id,
+    existingEntry?.target.artifactId,
+    existingEntry?.title,
+    existingEntry?.token,
+    setPristineAllowArgs,
+    setPristineBehavior,
+    setPristineTargetArtifactId,
+    setPristineTitle,
+    setPristineToken,
+  ]);
 
   const canSave = title.trim().length > 0 && token.trim().length > 0 && targetArtifactId.trim().length > 0 && !saving;
 

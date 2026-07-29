@@ -2,6 +2,16 @@ import {
   decodePeerTcpTunnelBinaryFrameV2,
   encodePeerTcpTunnelBinaryFrameV2,
   PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+  PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1,
+  createPeerApplicationEncryptionAadV1,
+  createPeerApplicationEncryptionNonceV1,
+  createSpeechTranscriptionApplicationAuthorityDigestV1,
+  decodeBase64 as decodeProtocolBase64,
+  decodePeerApplicationEncryptedFrameV1,
+  deriveBoxPublicKeyFromSeed,
+  encodeBase64 as encodeProtocolBase64,
+  encodePeerApplicationEncryptedFrameV1,
+  openEncryptedDataKeyEnvelopeV1,
   type DaemonVoiceInferenceSttStreamStartRequest,
   type PeerTcpTunnelFrameV1,
   type PeerTcpTunnelOpenResponseV1,
@@ -10,6 +20,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { encodeBase64 } from '@/encryption/base64';
+import { openAes256GcmBytes, sealAes256GcmBytes } from '@/encryption/aes256GcmBytes';
 
 import {
   createDaemonSpeechStreamCarrierAdapter,
@@ -124,7 +135,161 @@ describe('DaemonSpeechStreamTunnelTransport', () => {
     }));
   });
 
-  it('passes PCM bytes to the raw binary substream API when it is available', async () => {
+  it('installs relay encryption before PCM and exposes only authenticated ciphertext on the carrier', async () => {
+    const transportMod = await loadModule('./DaemonSpeechStreamTunnelTransport');
+    const createTransport = transportMod.createDaemonSpeechStreamTunnelTransport;
+    expect(createTransport).toBeTypeOf('function');
+    if (typeof createTransport !== 'function') return;
+    const binding = {
+      v: 1 as const,
+      suite: 'aes-256-gcm' as const,
+      flowKind: 'voice_media' as const,
+      routeKind: 'server_relay' as const,
+      authorityDigest: 'sha256:acdb52b3d7de70428b1c54fbb340ab675b98d6900d2b86ababad20baa7aed6ca',
+      accountId: 'account-1',
+      machineId: 'machine-1',
+      tunnelId: 'tun_voice',
+      applicationKind: 'speech_transcription' as const,
+      applicationAttemptId: 'request-1',
+      applicationAuthorityDigest:
+        createSpeechTranscriptionApplicationAuthorityDigestV1('request-1'),
+    };
+    const recipientSecretKeySeed = new Uint8Array(32).fill(9);
+    const recipientPublicKeyBase64Url = encodeProtocolBase64(
+      deriveBoxPublicKeyFromSeed(recipientSecretKeySeed),
+      'base64url',
+    );
+    let handler: ((event: any) => void) | null = null;
+    let installedKey: Uint8Array | null = null;
+    let sendError: unknown = null;
+    const sentPayloads: Uint8Array[] = [];
+    const onRelayAuthenticatedEvidence = vi.fn();
+    const sendSubstreamDataFrame = vi.fn(async (substreamId: string, outbound: any) => {
+      try {
+      sentPayloads.push(new Uint8Array(outbound.payloadBytes));
+      const encrypted = decodePeerApplicationEncryptedFrameV1(outbound.payloadBytes);
+      if (!encrypted) throw new Error('expected encrypted frame');
+      if (encrypted.kind === 'install') {
+        installedKey = openEncryptedDataKeyEnvelopeV1({
+          envelope: decodeProtocolBase64(encrypted.encryptedDataKeyEnvelopeBase64Url!, 'base64url'),
+          recipientSecretKeyOrSeed: recipientSecretKeySeed,
+        });
+      }
+      if (!installedKey) throw new Error('expected installed key');
+      const requestNonce = createPeerApplicationEncryptionNonceV1({
+        direction: 'client_to_daemon', phase: encrypted.kind, sequence: outbound.sequence,
+      });
+      const requestPlaintext = await openAes256GcmBytes({
+        key: installedKey,
+        nonce: requestNonce,
+        aad: createPeerApplicationEncryptionAadV1({
+          authorityDigest: binding.authorityDigest,
+          accountId: binding.accountId,
+          machineId: binding.machineId,
+          tunnelId: binding.tunnelId,
+          applicationKind: binding.applicationKind,
+          applicationAttemptId: binding.applicationAttemptId,
+          applicationAuthorityDigest: binding.applicationAuthorityDigest,
+          direction: 'client_to_daemon',
+          streamId: 'stream-1', generation: 3, substreamId,
+          sequence: outbound.sequence, phase: encrypted.kind,
+        }),
+        ciphertext: decodeProtocolBase64(encrypted.ciphertextBase64Url, 'base64url'),
+      });
+      if (encrypted.kind === 'data') expect([...requestPlaintext]).toEqual([0, 0, 1, 0]);
+      const responsePlaintext = encrypted.kind === 'install'
+        ? new TextEncoder().encode(PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1)
+        : encrypted.kind === 'finish'
+          ? new TextEncoder().encode(JSON.stringify({
+              ok: true, streamId: 'stream-1', generation: 3, ackSeq: 0,
+              finalText: 'hello', language: 'en', modelPackId: 'stt-pack-1', events: [],
+            }))
+          : new TextEncoder().encode(JSON.stringify({
+              ok: true, streamId: 'stream-1', generation: 3, ackSeq: 0, events: [],
+            }));
+      const responseNonce = createPeerApplicationEncryptionNonceV1({
+        direction: 'daemon_to_client', phase: encrypted.kind, sequence: outbound.sequence,
+      });
+      const responseCiphertext = await sealAes256GcmBytes({
+        key: installedKey,
+        nonce: responseNonce,
+        aad: createPeerApplicationEncryptionAadV1({
+          authorityDigest: binding.authorityDigest,
+          accountId: binding.accountId,
+          machineId: binding.machineId,
+          tunnelId: binding.tunnelId,
+          applicationKind: binding.applicationKind,
+          applicationAttemptId: binding.applicationAttemptId,
+          applicationAuthorityDigest: binding.applicationAuthorityDigest,
+          direction: 'daemon_to_client',
+          streamId: 'stream-1', generation: 3, substreamId,
+          sequence: outbound.sequence, phase: encrypted.kind,
+        }),
+        plaintext: responsePlaintext,
+      });
+      handler?.({
+        substreamId,
+        frame: {
+          v: 1, kind: 'data', tunnelId: 'tun_voice', direction: 'daemon_to_client',
+          sequence: outbound.sequence,
+          payloadBase64: encodeBase64(encodePeerApplicationEncryptedFrameV1({
+            v: 1,
+            kind: encrypted.kind,
+            nonceBase64Url: encodeProtocolBase64(responseNonce, 'base64url'),
+            ciphertextBase64Url: encodeProtocolBase64(responseCiphertext, 'base64url'),
+          })),
+        },
+      });
+      } catch (error) {
+        sendError = error;
+        throw error;
+      }
+    });
+    const transport = createTransport({
+      tunnelId: 'tun_voice',
+      peerApplicationEncryption: binding,
+      stream: {
+        sendFrame: vi.fn(),
+        sendSubstreamDataFrame,
+        onSubstreamFrame: vi.fn((next) => { handler = next; return () => { handler = null; }; }),
+      },
+      onRelayAuthenticatedEvidence,
+      controlTransport: {
+        start: vi.fn(async (payload: DaemonVoiceInferenceSttStreamStartRequest) => ({
+          ...startResponse(payload),
+          peerApplicationEncryption: { v: 1 as const, suite: 'aes-256-gcm' as const, recipientPublicKeyBase64Url },
+        })),
+        finish: vi.fn(),
+        cancel: vi.fn(async () => ({ ok: true as const })),
+      },
+    });
+    const startResult = await transport.start({
+      requestId: 'request-encrypted',
+      packId: null,
+      language: null,
+      streamingMode: 'runtime',
+      format: { sampleRateHz: 16_000, channelCount: 1, bitsPerSample: 16, ffmpegCodec: 'pcm_s16le' },
+    });
+    expect(sendError).toBeNull();
+    expect(startResult).toMatchObject({ ok: true, peerApplicationEncryption: { suite: 'aes-256-gcm' } });
+    expect(onRelayAuthenticatedEvidence).toHaveBeenLastCalledWith({ phase: 'install' });
+    const carrierFrame = createDaemonSpeechStreamCarrierAdapter({ routeKind: 'server_relay', binaryCapable: true })
+      .encodeInputAppendFrame({ streamId: 'stream-1', generation: 3, seq: 0, pcm16Bytes: new Uint8Array([0, 0, 1, 0]) });
+    await expect(transport.chunk({
+      streamId: 'stream-1', generation: 3, seq: 0, carrierFrame, compatibilityTransport: null,
+    })).resolves.toMatchObject({ ok: true, ackSeq: 0 });
+    expect(onRelayAuthenticatedEvidence).toHaveBeenLastCalledWith({ phase: 'data', ackSeq: 0 });
+    expect(sentPayloads).toHaveLength(2);
+    expect([...sentPayloads[1]!]).not.toEqual([0, 0, 1, 0]);
+    expect(new TextDecoder().decode(sentPayloads[1]!)).not.toContain('AAAAAQ');
+    await expect(transport.finish({ streamId: 'stream-1', generation: 3, finalSeq: 0 }))
+      .resolves.toMatchObject({ ok: true, finalText: 'hello' });
+    expect(onRelayAuthenticatedEvidence).toHaveBeenLastCalledWith({ phase: 'finish', ackSeq: 0 });
+    expect(onRelayAuthenticatedEvidence).toHaveBeenCalledTimes(3);
+    expect(sentPayloads).toHaveLength(3);
+  });
+
+  it('fails closed before sending PCM when the binary substream has no response owner', async () => {
     const transportMod = await loadModule('./DaemonSpeechStreamTunnelTransport');
     const createTransport = transportMod.createDaemonSpeechStreamTunnelTransport;
     expect(createTransport).toBeTypeOf('function');
@@ -179,21 +344,71 @@ describe('DaemonSpeechStreamTunnelTransport', () => {
       seq: 5,
       carrierFrame,
       compatibilityTransport: null,
-    })).resolves.toMatchObject({
-      ok: true,
-      streamId: 'stream-1',
-      generation: 3,
-      ackSeq: 5,
+    })).resolves.toEqual({
+      ok: false,
+      error: 'daemon_voice_inference_substream_response_unavailable',
+      errorCode: 'internal_error',
     });
 
-    expect(sendSubstreamDataFrame).toHaveBeenCalledWith('daemon.voiceInference.stt.stream-1.3', {
-      tunnelId: 'tun_voice',
-      direction: 'client_to_daemon',
-      sequence: 5,
-      payloadBytes: pcmBytes,
-    });
+    expect(sendSubstreamDataFrame).not.toHaveBeenCalled();
     expect(sendSubstreamFrame).not.toHaveBeenCalled();
     expect(compatibilityChunk).not.toHaveBeenCalled();
+  });
+
+  it('rejects a matching application-substream abort immediately instead of waiting for response timeout', async () => {
+    const transportMod = await loadModule('./DaemonSpeechStreamTunnelTransport');
+    const createTransport = transportMod.createDaemonSpeechStreamTunnelTransport;
+    expect(createTransport).toBeTypeOf('function');
+    if (typeof createTransport !== 'function') return;
+
+    let substreamHandler: ((event: Readonly<{
+      substreamId: string;
+      frame: Exclude<PeerTcpTunnelFrameV1, { kind: 'open' }>;
+    }>) => void) | null = null;
+    const transport = createTransport({
+      tunnelId: 'tun_voice',
+      stream: {
+        sendFrame: vi.fn(),
+        sendSubstreamDataFrame: vi.fn(async () => {
+          queueMicrotask(() => substreamHandler?.({
+            substreamId: 'daemon.voiceInference.stt.stream-1.3',
+            frame: {
+              v: 1,
+              kind: 'abort',
+              tunnelId: 'tun_voice',
+              reasonCode: 'application_dispatch_failed',
+            },
+          }));
+        }),
+        onSubstreamFrame: (handler: typeof substreamHandler) => {
+          substreamHandler = handler;
+          return () => { substreamHandler = null; };
+        },
+      },
+      controlTransport: {
+        start: async (payload: DaemonVoiceInferenceSttStreamStartRequest) => startResponse(payload),
+        finish: vi.fn(),
+        cancel: vi.fn(),
+      },
+      responseTimeoutMs: 5_000,
+    });
+    const carrierFrame = createDaemonSpeechStreamCarrierAdapter({
+      routeKind: 'loopback_direct',
+      binaryCapable: true,
+    }).encodeInputAppendFrame({
+      streamId: 'stream-1',
+      generation: 3,
+      seq: 0,
+      pcm16Bytes: new Uint8Array([0, 0]),
+    });
+
+    await expect(transport.chunk({
+      streamId: 'stream-1',
+      generation: 3,
+      seq: 0,
+      carrierFrame,
+      compatibilityTransport: null,
+    })).rejects.toThrow('daemon_voice_inference_substream_aborted:application_dispatch_failed');
   });
 
   it('resolves binary substream chunks with daemon-to-client partial and endpoint events', async () => {

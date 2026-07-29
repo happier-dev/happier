@@ -8,7 +8,7 @@ type ActionSettingsApprovalControlValue = 'off' | 'ask_first' | 'allowed';
 type ActionSettingsBooleanControlValue = 'off' | 'on';
 type ActionSettingsTargetControlKind = 'approval' | 'switch' | 'unavailable';
 type ActionSettingsTargetControlState =
-    | Readonly<{ kind: 'approval'; value: ActionSettingsApprovalControlValue; approvalSurface: keyof ActionSurfaces }>
+    | Readonly<{ kind: 'approval'; value: ActionSettingsApprovalControlValue; approvalSurface: keyof ActionSurfaces; floored: boolean }>
     | Readonly<{ kind: 'switch'; value: ActionSettingsBooleanControlValue }>
     | Readonly<{ kind: 'unavailable'; value: 'off' }>;
 
@@ -58,6 +58,7 @@ describe('resolveActionSettingsTargetControlState', () => {
             kind: 'approval',
             value: 'allowed',
             approvalSurface: 'mcp',
+            floored: false,
         });
     });
 
@@ -105,6 +106,77 @@ describe('resolveActionSettingsTargetControlState', () => {
             kind: 'switch',
             value: 'on',
         });
+    });
+
+    it('clamps a floored agent action to ask_first and marks it floored (CON-5)', () => {
+        const resolveControlState = expectResolveControlStateExport();
+
+        // `prompt_doc.update` is the LIVE-1 fixture: danger + agent with no persisted override.
+        const state = resolveControlState({
+            settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            actionId: 'prompt_doc.update' as ActionId,
+            targetId: 'agent',
+        });
+
+        expect(state).toEqual({
+            kind: 'approval',
+            value: 'ask_first',
+            approvalSurface: 'agent',
+            floored: true,
+        });
+    });
+
+    it('does not floor read-only agent actions or non-agent surfaces (CON-5)', () => {
+        const resolveControlState = expectResolveControlStateExport();
+
+        // Read-only agent verb: not floored.
+        const readOnly = resolveControlState({
+            settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            actionId: 'browser.automation.snapshot' as ActionId,
+            targetId: 'agent',
+        });
+        expect(readOnly).toMatchObject({ kind: 'approval', floored: false });
+    });
+
+    it('preserves a disabled floored agent target as stricter than ask_first (LIVE-1)', () => {
+        const resolveControlState = expectResolveControlStateExport();
+        const settings = actionSettingsTargets.setActionTargetSelected({
+            settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            actionId: 'prompt_doc.update' as ActionId,
+            targetId: 'agent',
+            selected: false,
+        });
+
+        expect(resolveControlState({
+            settings,
+            actionId: 'prompt_doc.update' as ActionId,
+            targetId: 'agent',
+        })).toEqual({
+            kind: 'approval',
+            value: 'off',
+            approvalSurface: 'agent',
+            floored: true,
+        });
+    });
+
+    it('refuses to persist allowed for a floored agent action (CON-5)', () => {
+        const applyControlState = expectApplyControlStateExport();
+
+        const next = applyControlState({
+            settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            actionId: 'prompt_doc.update' as ActionId,
+            targetId: 'agent',
+            value: 'allowed',
+        });
+
+        const resolveControlState = expectResolveControlStateExport();
+        const state = resolveControlState({
+            settings: next,
+            actionId: 'prompt_doc.update' as ActionId,
+            targetId: 'agent',
+        });
+        // Even though the caller asked for `allowed`, the floor clamps the effective state to ask_first.
+        expect(state).toMatchObject({ value: 'ask_first', floored: true });
     });
 
     it('does not expose approval controls for approval actions', () => {

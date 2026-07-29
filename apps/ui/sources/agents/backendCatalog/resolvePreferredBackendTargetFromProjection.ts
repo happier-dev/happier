@@ -1,4 +1,8 @@
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import {
+    readBackendTargetRefV2,
+    type BackendTargetRefV2,
+    type BackendTargetRefV2Input,
+} from '@happier-dev/protocol';
 
 import { isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
@@ -6,6 +10,7 @@ import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from './getResolvedBackendCatalogEntries';
 import { isLegacyCompatAgentType } from './legacyCompatAgents';
 import type { DaemonMergedProjectionInputs } from './loadDaemonMergedProjectionInputs';
+import { resolveBackendTargetKeyV2 } from './backendTargetKeyV2';
 import { resolvePreferredBackendTarget } from './resolvePreferredBackendTarget';
 
 function hasNonEmptyRecord(value: Readonly<Record<string, boolean>> | null | undefined): boolean {
@@ -60,6 +65,28 @@ function entryIsCanonicalProjectionEntry(
     return canonicalBackendIds.has(entry.backendId);
 }
 
+function buildCanonicalAvailableTargetsFromResolvedEntries(
+    entries: readonly ResolvedBackendCatalogEntry[],
+): ReadonlyArray<BackendTargetRefV2> {
+    const targets: BackendTargetRefV2[] = [];
+    const seenTargetKeys = new Set<string>();
+
+    const pushTarget = (target: BackendTargetRefV2) => {
+        const targetKey = resolveBackendTargetKeyV2(target);
+        if (seenTargetKeys.has(targetKey)) {
+            return;
+        }
+        seenTargetKeys.add(targetKey);
+        targets.push(target);
+    };
+
+    for (const entry of entries) {
+        pushTarget(entry.backendTarget);
+    }
+
+    return targets;
+}
+
 function resolveAvailableBackendTargets(params: Readonly<{
     enabledAgentIds?: ReadonlyArray<unknown>;
     enabledBuiltInAgentIds: ReadonlyArray<AgentId>;
@@ -87,6 +114,7 @@ function resolveAvailableBackendTargets(params: Readonly<{
         enabledAgentIds: params.enabledBuiltInAgentIds,
         acpCatalogSettingsV1: params.acpCatalogSettingsV1 as any,
         backendEnabledByTargetKey: params.backendEnabledByTargetKey ?? undefined,
+        collapseConfiguredBackendProviderSentinels: hasMergedProjectionInputs,
         discoveredBackendIds: params.daemonMergedProjectionInputs?.discoveredBackendIds,
         mergedProviderProjectionById: params.daemonMergedProjectionInputs?.mergedProviderProjectionById,
         mergedBackendProjectionById: params.daemonMergedProjectionInputs?.mergedBackendProjectionById,
@@ -99,14 +127,52 @@ function resolveAvailableBackendTargets(params: Readonly<{
         })()
         : entries;
 
-    return filteredEntries.map((entry) => entry.backendTarget);
+    return buildCanonicalAvailableTargetsFromResolvedEntries(filteredEntries);
 }
 
-function isDiscoveredPluginBackendTarget(target: BackendTargetRefV2): boolean {
-    return target.kind === 'backend'
-        && !target.configuredBackendId
-        && !isLegacyCompatAgentType(target.backendId)
-        && !isAgentId(target.backendId);
+function resolveProjectedBuiltInBackendTarget(
+    target: BackendTargetRefV2,
+    entries: readonly ResolvedBackendCatalogEntry[],
+): BackendTargetRefV2 {
+    const targetKey = resolveBackendTargetKeyV2(target);
+    for (const entry of entries) {
+        if (entry.backendTargetKey === targetKey) {
+            return entry.backendTarget;
+        }
+    }
+
+    if (!isAgentId(target.backendId)) {
+        return target;
+    }
+
+    const projectedEntry = entries.find((entry) => entry.builtInAgentId === target.backendId);
+    return projectedEntry?.backendTarget ?? target;
+}
+
+function normalizePersistedBackendTargetFromProjection(
+    value: unknown,
+    entries: readonly ResolvedBackendCatalogEntry[],
+): unknown {
+    let parsed: BackendTargetRefV2;
+    try {
+        parsed = readBackendTargetRefV2(value as BackendTargetRefV2Input);
+    } catch {
+        return value;
+    }
+
+    const targetKey = resolveBackendTargetKeyV2(parsed);
+    for (const entry of entries) {
+        if (entry.backendTargetKey === targetKey) {
+            return entry.backendTarget;
+        }
+        if ((entry.compatibilityBackendTargets ?? []).some(
+            (compatibilityTarget) => resolveBackendTargetKeyV2(compatibilityTarget) === targetKey,
+        )) {
+            return entry.backendTarget;
+        }
+    }
+
+    return parsed;
 }
 
 function normalizeBackendTargetForUi(target: BackendTargetRefV2): BackendTargetRefV2 {
@@ -128,6 +194,21 @@ export function resolvePreferredBackendTargetFromProjection(params: Readonly<{
         enabledAgentIds: params.enabledAgentIds,
         backendEnabledByTargetKey: params.backendEnabledByTargetKey ?? undefined,
     });
+    const entries = getResolvedBackendCatalogEntries({
+        enabledAgentIds: enabledBuiltInAgentIds,
+        acpCatalogSettingsV1: params.acpCatalogSettingsV1 as any,
+        backendEnabledByTargetKey: params.backendEnabledByTargetKey ?? undefined,
+        collapseConfiguredBackendProviderSentinels: Boolean(params.daemonMergedProjectionInputs),
+        discoveredBackendIds: params.daemonMergedProjectionInputs?.discoveredBackendIds,
+        mergedProviderProjectionById: params.daemonMergedProjectionInputs?.mergedProviderProjectionById,
+        mergedBackendProjectionById: params.daemonMergedProjectionInputs?.mergedBackendProjectionById,
+    });
+    const filteredEntries = params.daemonMergedProjectionInputs
+        ? (() => {
+            const canonicalBackendIds = buildCanonicalProjectionBackendIdSet(params.daemonMergedProjectionInputs);
+            return entries.filter((entry) => entryIsCanonicalProjectionEntry(entry, canonicalBackendIds));
+        })()
+        : entries;
     const availableBackendTargets = resolveAvailableBackendTargets({
         enabledAgentIds: params.enabledAgentIds,
         enabledBuiltInAgentIds,
@@ -138,11 +219,14 @@ export function resolvePreferredBackendTargetFromProjection(params: Readonly<{
 
     const resolved = resolvePreferredBackendTarget({
         lastUsedAgent: params.lastUsedAgent,
-        lastUsedBackendTarget: params.lastUsedBackendTarget,
+        lastUsedBackendTarget: normalizePersistedBackendTargetFromProjection(
+            params.lastUsedBackendTarget,
+            filteredEntries,
+        ),
         defaultBuiltInAgentId: params.defaultBuiltInAgentId,
         ...(availableBackendTargets ? { availableBackendTargets } : {}),
     });
 
     // Treat `sourceKind` as a compat-only hint, not a canonical UI identity carrier.
-    return normalizeBackendTargetForUi(resolved);
+    return normalizeBackendTargetForUi(resolveProjectedBuiltInBackendTarget(resolved, filteredEntries));
 }

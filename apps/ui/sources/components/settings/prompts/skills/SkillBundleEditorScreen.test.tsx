@@ -196,6 +196,12 @@ describe('SkillBundleEditorScreen', () => {
         fetchArtifactWithBodySpy.mockClear();
         setPromptFoldersSpy.mockClear();
         latestFocusEffect = undefined;
+        promptFoldersState.value = {
+            v: 1,
+            folders: [
+                { id: 'folder-1', name: 'Ops', parentId: null },
+            ],
+        };
         artifactBodiesState.value = {
             'bundle-1': {
                 id: 'bundle-1',
@@ -372,5 +378,33 @@ describe('SkillBundleEditorScreen', () => {
         });
 
         expect(screen.findByTestId('skillBundle.supportingFile.1')?.props.title).toBe('templates/checklist.md');
+    });
+
+    it('preserves dirty skill fields when prompt-folder settings refresh', async () => {
+        const screen = await renderSkillBundleEditor('bundle-1');
+
+        await act(async () => {
+            screen.changeTextByTestId('skillBundle.title', 'Draft skill title');
+            screen.changeTextByTestId('skillBundle.editor', 'draft skill markdown');
+            screen.changeTextByTestId('skillBundle.folderName', 'Draft folder');
+            screen.changeTextByTestId('skillBundle.tags', 'draft, tag');
+        });
+
+        promptFoldersState.value = {
+            v: 1,
+            folders: [
+                { id: 'folder-1', name: 'Renamed Ops', parentId: null },
+            ],
+        };
+
+        await act(async () => {
+            screen.changeTextByTestId('skillBundle.tags', 'draft, tag updated');
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(screen.findByTestId('skillBundle.title')?.props.value).toBe('Draft skill title');
+        expect(screen.findByTestId('skillBundle.editor')?.props.value).toBe('draft skill markdown');
+        expect(screen.findByTestId('skillBundle.folderName')?.props.value).toBe('Draft folder');
+        expect(screen.findByTestId('skillBundle.tags')?.props.value).toBe('draft, tag updated');
     });
 });

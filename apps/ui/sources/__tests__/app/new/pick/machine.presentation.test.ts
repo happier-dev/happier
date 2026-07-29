@@ -1,6 +1,7 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+    renderHook,
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
@@ -11,6 +12,7 @@ import {
     enableReactActEnvironment,
     installPickerCommonModuleMocks,
 } from './testHarness';
+import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 enableReactActEnvironment();
 
@@ -45,8 +47,8 @@ installPickerCommonModuleMocks({
             overrides: {
                 useAllMachines: () => [],
                 useAllSessionListRenderables: () => [],
-                useSetting: () => false,
-                useSettingMutable: () => [[], vi.fn()],
+                useSetting: createUseSettingMock({ fallback: () => false }),
+                useSettingMutable: createUseSettingMutableMockFromReader(() => [[], vi.fn()]),
             },
         }),
 });
@@ -99,5 +101,17 @@ describe('MachinePickerScreen (iOS presentation)', () => {
         expect(typeof backButton?.props?.onPress).toBe('function');
         backButton?.props?.onPress?.();
         expect(navigationMock.goBack).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the navigation options stable across an unrelated rerender', async () => {
+        const { useMachinePickerScreenModel } = await import(
+            '@/components/sessions/new/hooks/machines/useMachinePickerScreenModel'
+        );
+        const hook = await renderHook(() => useMachinePickerScreenModel());
+        const firstOptions = hook.getCurrent().screenOptions;
+
+        await hook.rerender();
+
+        expect(hook.getCurrent().screenOptions).toBe(firstOptions);
     });
 });

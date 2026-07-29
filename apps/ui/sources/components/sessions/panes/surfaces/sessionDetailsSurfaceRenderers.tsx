@@ -24,6 +24,7 @@ import {
     renderProviderSessionDetailsTab,
 } from '@/agents/registry/sessionSubagentUiBehavior';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/actions';
 import { selectPluginSessionSurfacePlacementById } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import type { PeerMediationObservabilityUiStore } from '@/sync/domains/machines/peer/mediation/observability';
@@ -47,6 +48,8 @@ type SessionDetailsSurfaceRendererOptions = Readonly<{
     machineId?: string | null;
     serverId?: string | null;
     pluginUiProjection?: PluginUiProjectionModel | null;
+    pluginUiInteractionEnabled?: boolean;
+    pluginBrowserProjection?: PluginBrowserProjectionModel | null;
     localServicePreviewState?: LocalServicePreviewState | null;
     peerMediationObservabilityState?: PeerMediationObservabilityUiStore | null;
     peerMediationObservabilityScope?: PeerMediationObservabilityScopeV1 | null;
@@ -189,6 +192,9 @@ export function createSessionDetailsSurfaceRenderers(
             machineId: options.machineId,
             serverId: options.serverId,
             pluginUiProjection: options.pluginUiProjection,
+            pluginUiInteractionEnabled: options.pluginUiInteractionEnabled,
+            pluginBrowserProjection: options.pluginBrowserProjection,
+            pluginBrowserActionSessionId: options.sessionId,
             // OWNER-PLATFORM: the browser renderer resolves Tauri-aware; never the leaked
             // local-preview platform (B-RC1 / DV-PLATFORM-CLOSURE).
             platform: resolveBrowserSurfacePlatform(options.platform),

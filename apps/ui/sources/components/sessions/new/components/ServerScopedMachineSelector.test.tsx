@@ -64,7 +64,6 @@ describe('ServerScopedMachineSelector', () => {
             serverId: 'server-b',
             serverName: 'Server B',
             active: true,
-            spawnReadinessStatus: 'ready',
             metadata: { host: 'host-1', displayName: 'Machine 1', homeDir: '/home/me' },
         } as ServerScopedMachine;
 
@@ -100,7 +99,7 @@ describe('ServerScopedMachineSelector', () => {
         }));
     });
 
-    it('keeps a broadly online machine selectable while exact spawn readiness is unresolved', async () => {
+    it('keeps a structurally ready machine selectable without synthetic spawn readiness', async () => {
         const { ServerScopedMachineSelector } = await import('./ServerScopedMachineSelector');
         const onSelect = vi.fn();
         const machine = {
@@ -108,7 +107,6 @@ describe('ServerScopedMachineSelector', () => {
             serverId: 'server-b',
             serverName: 'Server B',
             active: true,
-            spawnReadinessStatus: 'unknown',
             metadata: { host: 'host-1', displayName: 'Machine 1', homeDir: '/home/me' },
         } as ServerScopedMachine;
 
@@ -139,17 +137,21 @@ describe('ServerScopedMachineSelector', () => {
         expect(onSelect).toHaveBeenCalledWith(machine);
     });
 
-    it.each(['rpcUnavailable', 'keyUnavailable'] as const)(
-        'marks transport-online machines unavailable when exact spawn readiness is %s',
-        async (spawnReadinessStatus) => {
+    it.each([
+        ['revoked', { revokedAt: Date.now() }, 'common.unavailable'],
+        ['replaced', { replacedByMachineId: 'machine-current' }, 'common.unavailable'],
+        ['offline', { active: false, activeAt: 0 }, 'status.offline'],
+    ] as const)(
+        'marks structurally %s machines unavailable',
+        async (stateName, machineState, expectedDetail) => {
         const { ServerScopedMachineSelector } = await import('./ServerScopedMachineSelector');
         const onSelect = vi.fn();
         const machine = {
-            id: `machine-${spawnReadinessStatus}`,
+            id: `machine-${stateName}`,
             serverId: 'server-b',
             serverName: 'Server B',
             active: true,
-            spawnReadinessStatus,
+            ...machineState,
             metadata: { host: 'host-1', displayName: 'Machine 1', homeDir: '/home/me' },
         } as ServerScopedMachine;
 
@@ -169,9 +171,9 @@ describe('ServerScopedMachineSelector', () => {
             testIdPrefix: 'new-session-machine',
         }));
 
-        const item = capturedItemProps.find((props) => props.testID === `new-session-machine-option:machine-${spawnReadinessStatus}`);
+        const item = capturedItemProps.find((props) => props.testID === `new-session-machine-option:machine-${stateName}`);
         expect(item).toEqual(expect.objectContaining({
-            detail: 'common.unavailable',
+            detail: expectedDetail,
             disabled: true,
         }));
 

@@ -120,7 +120,7 @@ export const ConnectedServiceQuotaSummaryCardSection = React.memo(function Conne
                         {props.isRefreshing ? (
                             <ActivitySpinner size="small" color={theme.colors.accent.blue} />
                         ) : null}
-                        <Text style={styles.statusText}>{props.isRefreshing ? t('common.loading') : t('usage.noData')}</Text>
+                        <Text style={styles.statusText}>{props.isRefreshing ? t('common.loading') : t('usage.noData.title')}</Text>
                     </View>
                 </PanelCard>
             ) : (

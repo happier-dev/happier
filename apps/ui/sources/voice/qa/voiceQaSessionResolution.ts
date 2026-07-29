@@ -1,8 +1,13 @@
 import { storage } from '@/sync/domains/state/storage';
-import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
+import {
+    readLocalConversationVoiceSettings,
+    voiceSettingsParse,
+} from '@/sync/domains/settings/voiceSettings';
 import { resolveVoiceOperationalSessionId } from '@/voice/binding/resolveVoiceOperationalSessionId';
 import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
 import { isVoiceConversationSystemSessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
 import { useVoiceQaStore, type VoiceQaProvider } from './voiceQaStore';
 
@@ -43,8 +48,11 @@ export function formatVoiceQaPermissionModeLabel(mode: unknown): string {
 }
 
 export function resolveConfiguredVoiceQaProvider(settings: any): VoiceQaProvider {
-    const providerId = String(settings?.voice?.providerId ?? 'off').trim();
-    if (providerId === 'realtime_elevenlabs') return 'realtime_elevenlabs';
+    const providerId = normalizeVoiceQaText(settings?.voice?.providerId);
+    const provider = providerId ? createDefaultVoiceProviderRegistry().get(providerId) : null;
+    if (provider?.kind === 'voice.conversation-provider.v1' && provider.roles.includes('realtime_conversation')) {
+        return 'realtime_conversation';
+    }
     return 'local_voice_agent';
 }
 
@@ -52,9 +60,9 @@ export function isHiddenVoiceQaConversationSessionId(sessionId: string | null | 
     const normalizedSessionId = normalizeVoiceQaText(sessionId);
     if (!normalizedSessionId) return false;
     const state = storage.getState() as any;
-    const lookupSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, normalizedSessionId);
-    const session = state?.sessions?.[normalizedSessionId] ?? null;
-    return isVoiceConversationSystemSessionMetadata(lookupSessionMetadata ?? session?.metadata ?? null);
+    return isVoiceConversationSystemSessionMetadata(
+        readVoiceSessionOwnerMetadataFromState(state, normalizedSessionId),
+    );
 }
 
 export function resolveEffectiveVoiceQaSessionId(
@@ -92,8 +100,9 @@ export function resolveEffectiveVoiceQaTargetSessionId(
 }
 
 export function assertLocalVoiceAgentSupportedForQa(settings: any): void {
-    const providerId = String(settings?.voice?.providerId ?? '').trim();
-    const conversationMode = String(settings?.voice?.adapters?.local_conversation?.conversationMode ?? '').trim();
+    const voice = voiceSettingsParse(settings?.voice);
+    const providerId = String(voice.providerId ?? '').trim();
+    const conversationMode = readLocalConversationVoiceSettings(voice).conversationMode;
     if (providerId !== 'local_conversation' || conversationMode !== 'agent') {
         throw new Error('voice_qa_local_agent_requires_local_conversation_agent_mode');
     }

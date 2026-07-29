@@ -3,6 +3,7 @@ import { Platform, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Modal } from '@/modal';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
@@ -31,7 +32,7 @@ export const TranscriptRollbackActionButton = React.memo((props: {
         }),
         [sessionServerId],
     );
-    const hitSlop = Platform.OS === 'web' ? undefined : 15;
+    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
 
     const handlePress = React.useCallback(async () => {
         if (isRollingBack) return;
@@ -62,11 +63,16 @@ export const TranscriptRollbackActionButton = React.memo((props: {
             onPress={handlePress}
             onHoverIn={props.onHoverIn}
             onHoverOut={props.onHoverOut}
-            hitSlop={hitSlop}
             accessibilityRole="button"
             accessibilityLabel={accessibilityLabel}
             style={({ pressed }) => [
                 props.style,
+                {
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minHeight: minimumInteractiveTargetSize,
+                    minWidth: minimumInteractiveTargetSize,
+                },
                 (pressed || isRollingBack) ? props.pressedStyle : null,
             ]}
         >

@@ -14,6 +14,7 @@ import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanoni
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
 import { createNotAuthenticatedError } from './authErrors';
+import { buildRetryLaterProbeResultFromResponse } from './retryLaterProbeResult';
 import { readServerReachabilityBackgroundRetryMs, readServerReachabilityProbeTimeoutMs } from './serverReachabilityTuning';
 
 export class ServerReachabilityWaitTimeoutError extends Error {
@@ -21,6 +22,15 @@ export class ServerReachabilityWaitTimeoutError extends Error {
         super('Timed out waiting for server reachability');
         this.name = 'ServerReachabilityWaitTimeoutError';
     }
+}
+
+const DEFAULT_SERVER_RESTARTING_RETRY_AFTER_MS = 10_000;
+
+function normalizeServerRestartingRetryAfterMs(value: unknown): number {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+        return DEFAULT_SERVER_RESTARTING_RETRY_AFTER_MS;
+    }
+    return Math.floor(value);
 }
 
 let networkAllowed = true;
@@ -98,23 +108,6 @@ function createExternallyDisconnectableTransport(): TransportController {
     };
 }
 
-function parseRetryAfterMs(headers: Headers): number | undefined {
-    const raw = headers.get('Retry-After') ?? headers.get('retry-after');
-    if (!raw) return undefined;
-    const trimmed = raw.trim();
-    if (!trimmed) return undefined;
-    const seconds = Number.parseInt(trimmed, 10);
-    if (Number.isFinite(seconds) && seconds > 0) {
-        return seconds * 1000;
-    }
-    const timestamp = Date.parse(trimmed);
-    if (Number.isFinite(timestamp)) {
-        const deltaMs = timestamp - Date.now();
-        if (deltaMs > 0) return deltaMs;
-    }
-    return undefined;
-}
-
 async function runtimeFetchWithTimeout(
     input: RequestInfo | URL,
     init: RequestInit,
@@ -155,17 +148,10 @@ async function probeServerReadiness(params: Readonly<{ endpoint: string; token: 
             readServerReachabilityProbeTimeoutMs(),
         );
         if (healthResponse.status === 429) {
-            return {
-                status: 'retry_later',
-                retryAfterMs: parseRetryAfterMs(healthResponse.headers),
-                errorMessage: `Health check returned ${healthResponse.status}`,
-            };
+            return buildRetryLaterProbeResultFromResponse(healthResponse, `Health check returned ${healthResponse.status}`);
         }
         if (healthResponse.status >= 500) {
-            return {
-                status: 'retry_later',
-                errorMessage: `Health check returned ${healthResponse.status}`,
-            };
+            return buildRetryLaterProbeResultFromResponse(healthResponse, `Health check returned ${healthResponse.status}`);
         }
         if (!healthResponse.ok) {
             return {
@@ -216,6 +202,17 @@ type ReachabilitySupervisorEntry = {
 const entriesByServerUrl = new Map<string, ReachabilitySupervisorEntry>();
 
 let didInstallOnlineListener = false;
+
+const VITEST_RUNTIME_CLEANUPS_KEY = Symbol.for('happier.vitest.runtimeCleanups');
+
+type RuntimeCleanupRegistryForTests = Map<string, () => Promise<void> | void>;
+
+function registerRuntimeCleanupForTests(id: string, cleanup: () => Promise<void> | void): void {
+    const globalWithRegistry = globalThis as unknown as {
+        [key: symbol]: RuntimeCleanupRegistryForTests | undefined;
+    };
+    globalWithRegistry[VITEST_RUNTIME_CLEANUPS_KEY]?.set(id, cleanup);
+}
 
 function ensureOnlineListenerInstalled(): void {
     if (didInstallOnlineListener) return;
@@ -456,7 +453,11 @@ export async function invalidateServerReachabilitySupervisor(params: Readonly<{
     entry.lastInvalidateAt = now;
 
     const run = (async () => {
-        if (entry.state.phase === 'online' || entry.state.phase === 'connecting') {
+        if (entry.state.phase === 'online' || entry.state.phase === 'connecting' || entry.state.phase === 'offline') {
+            // Explicit invalidation is used after out-of-band evidence such as a Socket.IO transport drop.
+            // Force a fresh probe even if the synthetic reachability transport still thinks it is online.
+            await entry.supervisor.stop();
+            await entry.supervisor.start();
             return;
         }
         if (entry.state.phase === 'idle' || entry.state.phase === 'shutting_down') {
@@ -467,11 +468,6 @@ export async function invalidateServerReachabilitySupervisor(params: Readonly<{
             await entry.supervisor.stop();
             await entry.supervisor.start();
             return;
-        }
-        // Offline: intentionally bypass the existing backoff schedule when explicitly invalidated.
-        if (entry.state.phase === 'offline') {
-            await entry.supervisor.stop();
-            await entry.supervisor.start();
         }
     })();
 
@@ -504,6 +500,20 @@ export function reportServerUnreachable(serverUrl: string, error: unknown): void
         reason: 'network_error',
         error,
     });
+}
+
+export function reportServerRestarting(serverUrl: string, retryAfterMs?: number): void {
+    const entry = entriesByServerUrl.get(canonicalizeServerUrl(serverUrl));
+    if (!entry) return;
+    if (typeof entry.supervisor.reportProbeResult !== 'function') return;
+    const scope = entry.supervisor.captureProbeReportScope?.();
+    if (!scope) return;
+    entry.supervisor.reportProbeResult({
+        status: 'retry_later',
+        retryAfterMs: normalizeServerRestartingRetryAfterMs(retryAfterMs),
+        reason: 'server_restarting',
+        errorMessage: 'Server restart in progress',
+    }, scope);
 }
 
 export function reportServerAuthFailed(
@@ -570,3 +580,5 @@ export async function resetServerReachabilitySupervisors(): Promise<void> {
     await stopServerReachabilitySupervisors();
     entriesByServerUrl.clear();
 }
+
+registerRuntimeCleanupForTests('resetServerReachabilitySupervisors', resetServerReachabilitySupervisors);

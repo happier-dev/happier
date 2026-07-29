@@ -1,9 +1,21 @@
-import type { ExecutionRunReplaySeedRequest, ExecutionRunResumeHandle, VoiceAssistantAction } from '@happier-dev/protocol';
+import type {
+  ExecutionRunUserTranscriptDirective,
+  ExecutionRunReplaySeedRequest,
+  ExecutionRunResumeHandle,
+  VoiceAgentOutputEventV1,
+  VoiceAssistantAction,
+} from '@happier-dev/protocol';
+import type { PermissionIntent } from '@happier-dev/agents';
 
-export type VoiceAgentPermissionPolicy = 'no_tools' | 'read_only';
 export type VoiceAgentAgentSource = 'session' | 'agent';
 export type VoiceAgentVerbosity = 'short' | 'balanced';
 export type VoiceAgentTranscriptPersistenceMode = 'ephemeral' | 'persistent';
+
+export type VoiceAgentSendTurnOptions = Readonly<{
+  onOutputEvent?: (event: VoiceAgentOutputEventV1) => void | Promise<void>;
+  signal?: AbortSignal;
+  userTranscript?: ExecutionRunUserTranscriptDirective;
+}>;
 
 export type VoiceAgentStartParams = Readonly<{
   sessionId: string;
@@ -17,7 +29,7 @@ export type VoiceAgentStartParams = Readonly<{
    * Daemon-only: forces commits to use a separate vendor session even when commitModelId matches chatModelId.
    */
   commitIsolation?: boolean;
-  permissionPolicy: VoiceAgentPermissionPolicy;
+  permissionIntent: PermissionIntent;
   idleTtlSeconds: number;
   initialContext: string;
   /**
@@ -66,14 +78,50 @@ export type VoiceAgentStartResult = Readonly<{
   effective?: {
     chatModelId: string;
     commitModelId: string;
-    permissionPolicy: VoiceAgentPermissionPolicy;
+    permissionIntent: PermissionIntent;
   };
 }>;
 
 export type VoiceAgentTurnStreamEvent =
+  | Readonly<{ t: 'voice_output'; output: VoiceAgentOutputEventV1 }>
   | Readonly<{ t: 'delta'; textDelta: string }>
   | Readonly<{ t: 'done'; assistantText: string; actions?: VoiceAssistantAction[] }>
-  | Readonly<{ t: 'error'; error: string; errorCode?: string }>;
+  | Readonly<{ t: 'error'; error: string; errorCode?: string }>
+  | Readonly<{ t: 'cancelled' }>;
+
+const PROCESS_LOCAL_VOICE_AGENT_ACTION_EFFECT_ID = Symbol.for(
+  'happier.voice.processLocalVoiceAgentActionEffectId',
+);
+
+/**
+ * Carries canonical stream identity through the current UI process's internal turn response
+ * without adding a field to the public VoiceAssistantAction protocol shape. This metadata is not
+ * persisted and provides no cross-restart guarantee. Transport normalization preserves the action
+ * object reference, while JSON/protocol consumers continue to see only `{ t, args }`.
+ */
+export type VoiceAgentActionWithEffectId = VoiceAssistantAction & Readonly<{
+  [PROCESS_LOCAL_VOICE_AGENT_ACTION_EFFECT_ID]?: string;
+}>;
+
+export function attachVoiceAgentActionEffectId(
+  action: VoiceAssistantAction,
+  effectId: string,
+): VoiceAgentActionWithEffectId {
+  const actionWithEffectId = { ...action } as VoiceAgentActionWithEffectId;
+  Object.defineProperty(actionWithEffectId, PROCESS_LOCAL_VOICE_AGENT_ACTION_EFFECT_ID, {
+    configurable: false,
+    enumerable: false,
+    value: effectId,
+    writable: false,
+  });
+  return actionWithEffectId;
+}
+
+export function readVoiceAgentActionEffectId(action: unknown): string | null {
+  if (!action || typeof action !== 'object') return null;
+  const effectId = (action as VoiceAgentActionWithEffectId)[PROCESS_LOCAL_VOICE_AGENT_ACTION_EFFECT_ID];
+  return typeof effectId === 'string' && effectId.trim().length > 0 ? effectId : null;
+}
 
 export type VoiceAgentHandle = Readonly<{
   client: VoiceAgentClient;
@@ -96,18 +144,33 @@ export interface VoiceAgentClient {
        * the read loop and cancels the daemon turn stream, instead of letting it poll to timeout.
        */
       signal?: AbortSignal;
+      userTranscript?: ExecutionRunUserTranscriptDirective;
     }>,
   ): Promise<{ assistantText: string; actions?: VoiceAssistantAction[] }>;
   welcome(
     params: Readonly<{ sessionId: string; voiceAgentId: string; welcomeText?: string }>,
   ): Promise<{ assistantText: string }>;
   startTurnStream(
-    params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string; displayUserText?: string; resume?: boolean }>,
+    params: Readonly<{
+      sessionId: string;
+      voiceAgentId: string;
+      userText: string;
+      displayUserText?: string;
+      resume?: boolean;
+      userTranscript?: ExecutionRunUserTranscriptDirective;
+    }>,
   ): Promise<{ streamId: string }>;
   readTurnStream(
     params: Readonly<{ sessionId: string; voiceAgentId: string; streamId: string; cursor: number; maxEvents?: number }>,
   ): Promise<{ streamId: string; events: VoiceAgentTurnStreamEvent[]; nextCursor: number; done: boolean }>;
   cancelTurnStream(params: Readonly<{ sessionId: string; voiceAgentId: string; streamId: string }>): Promise<{ ok: true }>;
+  commitUserTranscript?(params: Readonly<{
+    sessionId: string;
+    voiceAgentId: string;
+    text: string;
+    displayText?: string;
+    localId: string;
+  }>): Promise<{ ok: true }>;
   commit(params: Readonly<{ sessionId: string; voiceAgentId: string; kind: 'session_instruction'; maxChars?: number }>): Promise<{ commitText: string }>;
   stop(params: Readonly<{ sessionId: string; voiceAgentId: string }>): Promise<{ ok: true }>;
 }

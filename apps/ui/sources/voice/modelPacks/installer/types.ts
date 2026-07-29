@@ -8,6 +8,7 @@ export type UpdatePolicy = 'none' | 'manual_update_if_available';
  */
 export type ExpoFsFile = {
   readonly uri: string;
+  readonly name: string;
   readonly exists: boolean;
   /** Byte size of the file (0 when absent), used for resume offsets without reading bytes. */
   readonly size?: number;
@@ -22,10 +23,12 @@ export type ExpoFsFile = {
 /** Minimal structural view of the Expo `Directory` handle. Mirrors `expo-file-system`'s `Directory`. */
 export type ExpoFsDirectory = {
   uri: string;
+  readonly name: string;
   readonly exists: boolean;
   create?: (options?: { intermediates?: boolean; idempotent?: boolean }) => void;
   delete?: (options?: { idempotent?: boolean }) => void;
   move: (destination: ExpoFsDirectory | { uri: string }) => void;
+  list: () => (ExpoFsDirectory | ExpoFsFile)[];
 };
 
 export type ExpoFsDirectoryCtor = new (...args: unknown[]) => ExpoFsDirectory;
@@ -43,4 +46,3 @@ export type InstallerOverrides = {
 };
 
 export type Progress = { loaded: number; total: number };
-

@@ -208,12 +208,6 @@ vi.mock('@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode', () => ({
     readMachineWindowsRemoteSessionLaunchMode: () => undefined,
     resolveEffectiveWindowsRemoteSessionLaunchMode: () => ({ mode: 'visible' }),
 }));
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['codex'],
-    DEFAULT_AGENT_ID: 'codex',
-    getAgentCore: () => ({ cli: { detectKey: 'codex' } }),
-    isAgentId: () => true,
-}));
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: () => null,
 }));

@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { SessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { useSignalSessionCockpitDismiss } from '@/hooks/session/useSignalSessionCockpitDismiss';
 import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 
 import type { SessionMobileSurface } from './sessionCockpitState';
@@ -20,17 +21,21 @@ type SessionCockpitShellProps = Readonly<{
     routeHydrationState?: SessionRouteHydrationState | null;
 }>;
 
-export const SessionCockpitShell = React.memo((props: SessionCockpitShellProps) => (
-    <SessionCockpitTabNavigator
-        sessionId={props.sessionId}
-        scopeId={props.scopeId}
-        initialSurface={props.surface}
-        safeAreaPadding={props.safeAreaPadding}
-        jumpToSeq={props.jumpToSeq}
-        paneUrlState={props.paneUrlState}
-        initialAttachmentDrafts={props.initialAttachmentDrafts}
-        terminalTabAvailable={props.terminalTabAvailable}
-        routeServerId={props.routeServerId}
-        routeHydrationState={props.routeHydrationState}
-    />
-));
+export const SessionCockpitShell = React.memo((props: SessionCockpitShellProps) => {
+    useSignalSessionCockpitDismiss(props.sessionId);
+
+    return (
+        <SessionCockpitTabNavigator
+            sessionId={props.sessionId}
+            scopeId={props.scopeId}
+            initialSurface={props.surface}
+            safeAreaPadding={props.safeAreaPadding}
+            jumpToSeq={props.jumpToSeq}
+            paneUrlState={props.paneUrlState}
+            initialAttachmentDrafts={props.initialAttachmentDrafts}
+            terminalTabAvailable={props.terminalTabAvailable}
+            routeServerId={props.routeServerId}
+            routeHydrationState={props.routeHydrationState}
+        />
+    );
+});

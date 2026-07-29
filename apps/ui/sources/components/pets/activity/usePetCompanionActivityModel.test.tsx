@@ -526,8 +526,8 @@ describe('usePetCompanionActivityModel', () => {
                 v: 1,
                 scope: 'primary_session',
                 status: 'failed',
-                code: 'provider_status_error',
-                source: 'provider_status_error',
+                code: 'agent_status_error',
+                source: 'agent_status_error',
                 occurredAt: 3_000,
             },
         } as const;

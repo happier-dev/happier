@@ -8,13 +8,10 @@ import {
     type VoiceAgentRunMetadataV1,
 } from '@happier-dev/protocol';
 
-import {
-    resolveSessionListPreferredSessionMetadataFromState,
-    type SessionMetadataLike,
-} from '@/sync/domains/session/listing/sessionListLookupState';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
 export { VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION };
 export { doesVoiceAgentRunMetadataMatchBackendTarget };
@@ -23,9 +20,7 @@ export type { VoiceAgentRunMetadataV1 };
 function readVoiceAgentRunMetadata(sessionId: string | null): VoiceAgentRunMetadataV1 | null {
   if (!sessionId) return null;
   const state: any = storage.getState();
-  const meta = resolveSessionListPreferredSessionMetadataFromState(state, sessionId) as
-    | (SessionMetadataLike & Readonly<{ voiceAgentRunV1?: unknown }>)
-    | null;
+  const meta = readVoiceSessionOwnerMetadataFromState(state, sessionId);
   return parseVoiceAgentRunMetadataV1(meta?.voiceAgentRunV1 ?? null);
 }
 

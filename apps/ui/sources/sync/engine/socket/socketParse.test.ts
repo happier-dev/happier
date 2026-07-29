@@ -98,7 +98,7 @@ describe('socketParse', () => {
                         role: 'agent',
                         content: {
                             type: 'acp',
-                            provider: 'codex',
+                            agentId: 'codex',
                             data: { type: 'message', message: 'Hello' },
                         },
                         meta: {
@@ -123,25 +123,105 @@ describe('socketParse', () => {
         expect((res as any)?.message?.localId).toBe('segment-1');
     });
 
-    it('parses canonical direct-session transcript delta ephemerals', () => {
+    it('parses transcript stream segment snapshots with a live-stream tick anchor', () => {
+        const res = parseEphemeralUpdate({
+            type: 'transcript-stream-segment',
+            sessionId: 's1',
+            message: {
+                localId: 'segment-1',
+                messageRole: 'agent',
+                tick: 25,
+                content: { t: 'encrypted', c: 'cipher' },
+                createdAt: 1_000,
+                updatedAt: 1_010,
+            },
+        });
+
+        expect(res).not.toBeNull();
+        expect(res?.type).toBe('transcript-stream-segment');
+        expect((res as any)?.message?.tick).toBe(25);
+    });
+
+    it('parses transcript stream segment delta ephemerals with chaining fields', () => {
+        const res = parseEphemeralUpdate({
+            type: 'transcript-stream-segment-delta',
+            sessionId: 's1',
+            message: {
+                localId: 'segment-1',
+                messageRole: 'agent',
+                tick: 2,
+                baseLength: 5,
+                content: { t: 'encrypted', c: 'cipher-of-delta' },
+                createdAt: 1_000,
+                updatedAt: 1_040,
+            },
+        });
+
+        expect(res).not.toBeNull();
+        expect(res?.type).toBe('transcript-stream-segment-delta');
+        expect((res as any)?.message?.tick).toBe(2);
+        expect((res as any)?.message?.baseLength).toBe(5);
+    });
+
+    it('rejects transcript stream segment deltas without chaining fields', () => {
+        const res = parseEphemeralUpdate({
+            type: 'transcript-stream-segment-delta',
+            sessionId: 's1',
+            message: {
+                localId: 'segment-1',
+                messageRole: 'agent',
+                content: { t: 'encrypted', c: 'cipher' },
+                createdAt: 1_000,
+                updatedAt: 1_040,
+            },
+        });
+
+        expect(res).toBeNull();
+    });
+
+    it('parses content-free qualified external-session invalidations', () => {
+        const res = parseEphemeralUpdate({
+            v: 1,
+            type: 'external-session-transcript-invalidated',
+            binding: {
+                v: 1,
+                machineId: 'm1',
+                sessionId: 's1',
+                link: { generation: 'link-1', remoteSessionId: 'remote-1' },
+                source: {
+                    qualifiedIdentity: {
+                        v: 1,
+                        agent: { pluginId: 'happier.claude', localId: 'claude' },
+                        source: { kind: 'claudeConfig', contractVersion: 1 },
+                    },
+                    generation: 'source-1',
+                },
+                contributionGeneration: 'contribution-1',
+                cursorIdentity: `external_session_cursor_binding_v1:${'a'.repeat(64)}`,
+            },
+        });
+
+        expect(res).not.toBeNull();
+        expect(res?.type).toBe('external-session-transcript-invalidated');
+        expect((res as any)?.binding.sessionId).toBe('s1');
+        expect((res as any)?.binding).not.toHaveProperty('items');
+    });
+
+    it('rejects transcript-bearing direct-session deltas', () => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
         const res = parseEphemeralUpdate({
             type: 'direct-session-transcript-delta',
             sessionId: 's1',
-            items: [
-                {
-                    id: 'direct-msg-1',
-                    createdAtMs: 1,
-                    raw: { role: 'user', content: { type: 'text', text: 'hello direct' } },
-                },
-            ],
+            items: [{ id: 'secret', createdAtMs: 1, raw: { text: 'plaintext' } }],
+            fromCursor: 'tail-0',
             nextCursor: 'tail-1',
             truncated: false,
         });
 
-        expect(res).not.toBeNull();
-        expect(res?.type).toBe('direct-session-transcript-delta');
-        expect((res as any)?.sessionId).toBe('s1');
-        expect((res as any)?.nextCursor).toBe('tail-1');
+        expect(res).toBeNull();
+        expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+        consoleErrorSpy.mockRestore();
     });
 
     it('rejects stale legacy direct-session transcript ephemeral names', () => {

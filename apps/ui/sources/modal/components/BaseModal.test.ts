@@ -144,12 +144,14 @@ describe('BaseModal (web)', () => {
         expect((portalHosts[0] as any).props['data-happy-modal-card-boundary']).toBeDefined();
     });
 
-    it('labels the web dialog shell for accessibility', async () => {
+    it('uses the caller-provided accessible label for the web dialog shell', async () => {
         const { BaseModal } = await import('./BaseModal');
-        const screen = await renderBaseModalScreen(BaseModal);
+        const screen = await renderBaseModalScreen(BaseModal, {
+            accessibilityLabel: 'Move session',
+        });
 
         const dialogShell = screen.findAll((node) => (node.props as any)?.role === 'dialog')?.[0];
-        expect((dialogShell?.props as any)?.['aria-label']).toBe('common.dialog');
+        expect((dialogShell?.props as any)?.['aria-label']).toBe('Move session');
     });
 
     it('renders a scrollable modal overlay container so the overlay owns overflow (no nested scroll hosts by default)', async () => {

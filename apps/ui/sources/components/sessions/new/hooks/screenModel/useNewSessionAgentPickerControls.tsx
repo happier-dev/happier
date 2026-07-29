@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
-import { buildAcpConfigOptionOverridesV1, type BackendTargetRefV2 } from '@happier-dev/protocol';
+import { buildAcpConfigOptionOverridesV1, type BackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { NewSessionProfileAvailabilityReason } from '@/components/sessions/new/modules/newSessionAgentSelection';
@@ -13,21 +13,23 @@ import type { OptionPickerProbeState } from '@/components/sessions/pickers/Optio
 import type { RememberedEngineSelectionsByScopeV1 } from '@/sync/domains/session/authoring/rememberedEngineSelections';
 import {
     favoriteModelSelectionMatchesBackend,
+    getFavoriteModelRef,
     normalizeFavoriteModelId,
     toggleFavoriteModelSelection,
     type FavoriteModelSelectionV1,
 } from '@/sync/domains/models/favoriteModelSelections';
 import { buildNewSessionAgentPickerOptions } from './buildNewSessionAgentPickerOptions';
 import {
-    buildFavoriteBackendIdentity,
     FAVORITE_MODELS_AGENT_PICKER_OPTION_ID,
     type FavoriteModelTogglePayload,
 } from './newSessionFavoriteModelsPickerOption';
+import { buildFavoriteBackendIdentity } from '@/sync/domains/models/favoriteModelBackendIdentity';
 import {
     resolveNewSessionAgentPickerEntryByTargetKey,
     resolveNewSessionAgentPickerSingleSelectFallbackEntry,
 } from './resolveNewSessionAgentPickerDispatch';
 import { useNewSessionAgentPickerEngineSelectionState } from './useNewSessionAgentPickerEngineSelectionState';
+import type { SessionModelPickerExperimentalConfirmationController } from '@/components/sessions/modelPicker/SessionModelPicker';
 
 export function useNewSessionAgentPickerControls(params: Readonly<{
     useProfiles: boolean;
@@ -41,6 +43,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     selectedBackendTargetKey: string;
     setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV2>>;
     modelMode: ModelMode;
+    modelSelection?: SessionModelSelectionV1 | null;
     setModelMode: React.Dispatch<React.SetStateAction<ModelMode>>;
     acpSessionModeId: string | null;
     setAcpSessionModeId: React.Dispatch<React.SetStateAction<string | null>>;
@@ -67,6 +70,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
      * This is used to make the model refresh button also refresh CLI detection.
      */
     refreshProbe?: OptionPickerProbeState | null;
+    experimentalConfirmation?: SessionModelPickerExperimentalConfirmationController;
 }>): Readonly<{
     agentPickerOptions?: ReadonlyArray<AgentInputChipPickerOption>;
     agentPickerSelectedOptionId?: string | null;
@@ -80,6 +84,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         selectedBackendEntry: params.selectedBackendEntry,
         selectedBackendTargetKey: params.selectedBackendTargetKey,
         modelMode: params.modelMode,
+        modelSelection: params.modelSelection ?? null,
         acpSessionModeId: params.acpSessionModeId,
         sessionConfigOptionOverrides: params.sessionConfigOptionOverrides,
         setBackendTarget: params.setBackendTarget,
@@ -115,9 +120,14 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         params.setFavoriteModelSelections(toggleFavoriteModelSelection({
             favorites: params.favoriteModelSelections ?? [],
             backend: buildFavoriteBackendIdentity(entry),
-            modelId: model.modelId,
+            modelRef: model.modelSelection?.ref ?? {
+                agentTargetKey: entry.backendTargetKey,
+                providerConnectionId: null,
+                modelId: model.modelId,
+            },
             modelLabel: model.modelLabel,
             backendLabel: entry.title,
+            providerDisplaySnapshot: model.providerDisplaySnapshot,
             addedAtMs: Date.now(),
         }));
     }, [
@@ -127,12 +137,13 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
 
     const handleSelectFavoriteModel = React.useCallback((
         entry: ResolvedBackendCatalogEntry,
-        modelId: string,
+        modelSelection: SessionModelSelectionV1,
         configOverrides?: Readonly<Record<string, string>>,
     ) => {
         const nextSelection = {
             ...getEngineSelectionForTargetKey(entry.backendTargetKey),
-            modelId,
+            modelId: modelSelection.ref.modelId,
+            modelSelection,
             ...(configOverrides ? { configOverrides } : {}),
         };
         selectEngineSelection(entry, nextSelection);
@@ -140,14 +151,15 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
 
     const handleSelectFavoriteModelOptionValue = React.useCallback((
         entry: ResolvedBackendCatalogEntry,
-        modelId: string,
+        modelSelection: SessionModelSelectionV1,
         configId: string,
         valueId: string,
     ) => {
         const currentSelection = getEngineSelectionForTargetKey(entry.backendTargetKey);
         selectEngineSelection(entry, {
             ...currentSelection,
-            modelId,
+            modelId: modelSelection.ref.modelId,
+            modelSelection,
             configOverrides: {
                 ...currentSelection.configOverrides,
                 [configId]: valueId,
@@ -157,10 +169,12 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
 
     const handleRemoveFavoriteModelSelection = React.useCallback((favorite: FavoriteModelSelectionV1) => {
         if (!params.setFavoriteModelSelections) return;
-        const favoriteModelId = normalizeFavoriteModelId(favorite.modelId);
+        const favoriteRef = getFavoriteModelRef(favorite);
+        const favoriteModelId = normalizeFavoriteModelId(favoriteRef.modelId);
         params.setFavoriteModelSelections((params.favoriteModelSelections ?? []).filter((candidate) => (
-            normalizeFavoriteModelId(candidate.modelId) !== favoriteModelId
-            || !favoriteModelSelectionMatchesBackend(candidate, favorite)
+            normalizeFavoriteModelId(getFavoriteModelRef(candidate).modelId) !== favoriteModelId
+            || getFavoriteModelRef(candidate).providerConnectionId !== favoriteRef.providerConnectionId
+            || getFavoriteModelRef(candidate).agentTargetKey !== favoriteRef.agentTargetKey
         )));
     }, [
         params.favoriteModelSelections,
@@ -185,6 +199,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         selectedPath: params.selectedPath,
         selectedBackendTargetKey,
         selectedModelId: String(params.modelMode),
+        selectedModelSelection: params.modelSelection ?? null,
         settings: params.settings,
         refreshProbe: params.refreshProbe,
         favoriteModelSelections: params.favoriteModelSelections ?? [],
@@ -196,6 +211,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         onToggleFavoriteBackendTarget: params.setFavoriteBackendTargetKeys ? handleToggleFavoriteBackendTarget : undefined,
         onRemoveFavoriteModelSelection: handleRemoveFavoriteModelSelection,
         onRememberAgentPickerView: params.onRememberAgentPickerView,
+        experimentalConfirmation: params.experimentalConfirmation,
     }), [
         getEngineSelectionForTargetKey,
         handleSelectFavoriteModelOptionValue,
@@ -206,6 +222,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         params.getCompatibleProfileBackendEntries,
         params.isBackendEntrySelectable,
         params.modelMode,
+        params.modelSelection,
         params.profileMap,
         params.refreshProbe,
         params.resolvedBackendEntries,
@@ -217,6 +234,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         params.settings,
         params.useProfiles,
         params.onRememberAgentPickerView,
+        params.experimentalConfirmation,
         handleSelectFavoriteModel,
         handleRemoveFavoriteModelSelection,
         handleToggleFavoriteBackendTarget,

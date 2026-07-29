@@ -15,6 +15,7 @@ export const DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT: VoiceConversationRunti
     adapterId: null,
     controlSessionId: null,
     state: 'disconnected',
+    reconnecting: false,
     micMuted: false,
     error: null,
 };
@@ -29,7 +30,12 @@ function areVoiceMachineErrorsEqual(
     if (!a || !b) {
         return false;
     }
-    return a.kind === b.kind && a.reason === b.reason && a.recoverable === b.recoverable;
+    return a.kind === b.kind
+        && a.reason === b.reason
+        && a.phase === b.phase
+        && a.retryPolicy === b.retryPolicy
+        && a.recoveryAction === b.recoveryAction
+        && a.presentation === b.presentation;
 }
 
 function areVoiceConversationRuntimeSnapshotsEqual(
@@ -40,6 +46,7 @@ function areVoiceConversationRuntimeSnapshotsEqual(
         a.adapterId === b.adapterId
         && a.controlSessionId === b.controlSessionId
         && a.state === b.state
+        && a.reconnecting === b.reconnecting
         && a.micMuted === b.micMuted
         && areVoiceMachineErrorsEqual(a.error, b.error)
     );

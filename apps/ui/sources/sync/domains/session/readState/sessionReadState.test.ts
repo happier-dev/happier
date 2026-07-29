@@ -4,11 +4,13 @@ import { deriveSessionReadState, resolveSessionReadStateAction } from './session
 
 const storageState = vi.hoisted(() => ({
     sessionMessages: {} as Record<string, unknown>,
+    sessionListRenderables: {} as Record<string, unknown>,
 }));
 const readStorageState = () => storageState as any;
 
 beforeEach(async () => {
     storageState.sessionMessages = {};
+    storageState.sessionListRenderables = {};
     const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
     registerStorageStateReader(readStorageState);
 });
@@ -51,6 +53,46 @@ describe('sessionReadState', () => {
             kind: 'mark-unread',
             visible: true,
             targetState: 'unread',
+        });
+    });
+
+    it('derives unread state from a direct renderable unread projection', () => {
+        const session = {
+            id: 's1',
+            seq: 742,
+            lastViewedSessionSeq: 742,
+            latestTurnStatus: 'completed' as const,
+            hasUnreadMessages: true,
+            metadata: null,
+        };
+
+        expect(deriveSessionReadState(session)).toBe('unread');
+        expect(resolveSessionReadStateAction(session)).toEqual({
+            kind: 'mark-read',
+            visible: true,
+            targetState: 'read',
+        });
+    });
+
+    it('derives unread state from a registered row renderable when the session shell is stale', () => {
+        storageState.sessionListRenderables = {
+            s1: {
+                hasUnreadMessages: true,
+            },
+        };
+        const session = {
+            id: 's1',
+            seq: 742,
+            lastViewedSessionSeq: 742,
+            latestTurnStatus: 'completed' as const,
+            metadata: null,
+        };
+
+        expect(deriveSessionReadState(session)).toBe('unread');
+        expect(resolveSessionReadStateAction(session)).toEqual({
+            kind: 'mark-read',
+            visible: true,
+            targetState: 'read',
         });
     });
 
@@ -104,6 +146,77 @@ describe('sessionReadState', () => {
         });
     });
 
+    it('ignores provider maintenance events when deriving unread and read-state actions', () => {
+        storageState.sessionMessages = {
+            s1: {
+                isLoaded: true,
+                messageIdsOldestFirst: ['m1'],
+                messagesById: {
+                    m1: {
+                        id: 'm1',
+                        kind: 'agent-event',
+                        seq: 5,
+                        localId: null,
+                        createdAt: 1,
+                        event: {
+                            type: 'agent-state-sharing-degraded',
+                            serviceId: 'anthropic',
+                            requestedStateMode: 'shared',
+                            effectiveStateMode: 'isolated',
+                            code: 'state_symlink_unavailable',
+                        },
+                    },
+                },
+            },
+        };
+        const session = {
+            id: 's1',
+            seq: 5,
+            lastViewedSessionSeq: 4,
+            latestTurnStatus: 'in_progress' as const,
+            metadata: null,
+        };
+
+        expect(deriveSessionReadState(session)).toBe('empty');
+        expect(resolveSessionReadStateAction(session)).toEqual({
+            kind: 'none',
+            visible: false,
+        });
+    });
+
+    it('does not let partial stored transcript slices suppress terminal session activity', () => {
+        storageState.sessionMessages = {
+            s1: {
+                isLoaded: false,
+                messageIdsOldestFirst: ['old'],
+                messagesById: {
+                    old: {
+                        id: 'old',
+                        kind: 'agent-text',
+                        seq: 110,
+                        localId: null,
+                        createdAt: 1,
+                        text: 'older visible message',
+                    },
+                },
+            },
+        };
+        const session = {
+            id: 's1',
+            seq: 742,
+            lastViewedSessionSeq: 741,
+            latestTurnStatus: 'completed' as const,
+            metadata: null,
+        };
+
+        expect(deriveSessionReadState(session)).toBe('unread');
+        expect(resolveSessionReadStateAction(session)).toEqual({
+            kind: 'mark-read',
+            visible: true,
+            targetState: 'read',
+        });
+    });
+
     it('falls back to legacy readStateV1 when the top-level cursor is missing', () => {
         const session = {
             seq: 3,
@@ -124,6 +237,61 @@ describe('sessionReadState', () => {
         });
     });
 
+    it('reads layout-v1 private cursor state only from the owner compatibility view', () => {
+        const session = {
+            seq: 3,
+            lastViewedSessionSeq: null,
+            latestTurnStatus: 'completed' as const,
+            metadataLayoutVersion: 1,
+            metadata: {
+                v: 1,
+                readStateV1: { v: 1 as const, sessionSeq: 0, pendingActivityAt: 0, updatedAt: 1 },
+            },
+            ownerMetadataView: {
+                readStateV1: { v: 1 as const, sessionSeq: 3, pendingActivityAt: 0, updatedAt: 2 },
+            },
+        };
+
+        expect(deriveSessionReadState(session)).toBe('read');
+        expect(resolveSessionReadStateAction(session)).toEqual({
+            kind: 'mark-unread',
+            visible: true,
+            targetState: 'unread',
+        });
+    });
+
+    it('does not use injected layout-v1 shared cursor or direct-session attention state', () => {
+        const session = {
+            seq: 3,
+            lastViewedSessionSeq: null,
+            latestTurnStatus: 'completed' as const,
+            metadataLayoutVersion: 1,
+            metadata: {
+                v: 1,
+                readStateV1: { v: 1 as const, sessionSeq: 3, pendingActivityAt: 0, updatedAt: 1 },
+                externalSessionV1: {
+                    v: 1,
+                    agentId: 'codex',
+                    machineId: 'shared-machine',
+                    remoteSessionId: 'shared-remote',
+                },
+                externalSessionAttentionV1: {
+                    v: 1,
+                    observedProgressToken: '1:message',
+                    viewedProgressToken: '1:message',
+                },
+            },
+            ownerMetadataView: null,
+        };
+
+        expect(deriveSessionReadState(session)).toBe('unread');
+        expect(resolveSessionReadStateAction(session)).toEqual({
+            kind: 'mark-read',
+            visible: true,
+            targetState: 'read',
+        });
+    });
+
     it('uses direct-session attention before cursor state', () => {
         const session = {
             seq: 0,
@@ -131,7 +299,7 @@ describe('sessionReadState', () => {
             metadata: {
                 externalSessionV1: {
                     v: 1,
-                    providerId: 'codex',
+                    agentId: 'codex',
                     machineId: 'machine-1',
                     remoteSessionId: 'remote-1',
                     source: { kind: 'codexHome', home: 'user' },

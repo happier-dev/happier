@@ -7,6 +7,8 @@ import {
     resolveVoiceRunMetadataSessionId,
 } from '@/voice/agent/voiceAgentRunState';
 import { readVoiceAgentRunMetadataFromSession } from '@/voice/persistence/voiceAgentRunMetadata';
+import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
+import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 
 function readPersistedWelcomedEpoch(metadataSessionId: string | null): number | undefined {
     if (!metadataSessionId) return undefined;
@@ -23,8 +25,8 @@ export function createVoiceWelcomePolicy(args: Readonly<{
     return {
         ensureRunningAndMaybeWelcome: async (sessionId: string) => {
             const settings: any = storage.getState().settings;
-            const agentCfg = settings?.voice?.adapters?.local_conversation?.agent ?? null;
-            const welcomeCfg = agentCfg?.welcome ?? null;
+            const agentCfg = readLocalConversationSettingsFromAccountSettings(settings).agent;
+            const welcomeCfg = voiceSettingsParse(settings?.voice).welcome;
             const welcomeEnabled = welcomeCfg?.enabled === true;
             const welcomeMode = welcomeCfg?.mode === 'on_first_turn' ? 'on_first_turn' : 'immediate';
             if (!welcomeEnabled || welcomeMode !== 'immediate') {

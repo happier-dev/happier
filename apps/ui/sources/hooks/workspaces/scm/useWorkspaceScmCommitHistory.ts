@@ -4,6 +4,7 @@ import { machineScmLogList } from '@/sync/ops/scm/machineScm';
 import { usePagedScmCommitHistory } from '@/scm/history/usePagedScmCommitHistory';
 
 export function useWorkspaceScmCommitHistory(input: Readonly<{
+    serverId: string;
     machineId: string;
     rootPath: string;
     readLogEnabled: boolean;
@@ -15,7 +16,7 @@ export function useWorkspaceScmCommitHistory(input: Readonly<{
                 cwd: input.rootPath,
                 limit,
                 skip,
-            });
-        }, [input.machineId, input.rootPath]),
+            }, { serverId: input.serverId });
+        }, [input.machineId, input.rootPath, input.serverId]),
     });
 }

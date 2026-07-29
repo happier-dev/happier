@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
-import { buildProviderUniverseBackendTargetKey } from '@/agents/providers/registry/providerUniverse';
+import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 
 const mocks = vi.hoisted(() => ({
     tracking: {
@@ -17,7 +17,11 @@ vi.mock('@/track', () => ({
 
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
-import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
+import {
+    readLocalConversationVoiceSettings,
+    voiceSettingsDefaults,
+    writeLocalConversationVoiceSettings,
+} from '@/sync/domains/settings/voiceSettings';
 
 import {
     emitAccountSettingChangedEvents,
@@ -61,60 +65,25 @@ describe('emitAccountSettingChangedEvents', () => {
         expect(mocks.tracking.flush).toHaveBeenCalledTimes(1);
     });
 
-    it('captures provider-owned settings using canonical provider analytics serializers', () => {
+    it('does not emit the opaque provider settings subtree', () => {
         emitAccountSettingChangedEvents({
             previousSettings: settingsDefaults,
             nextSettings: {
                 ...settingsDefaults,
-                opencodeServerBaseUrl: 'https://example.com/',
-            },
-            source: 'ui',
-        });
-
-        expect(mocks.tracking.capture).toHaveBeenCalledWith(
-            'setting_changed',
-            expect.objectContaining({
-                setting_key: 'opencodeServerBaseUrl',
-                scope: 'account_setting',
-                identity_scope: 'person',
-                source: 'ui',
-                prev_value: false,
-                next_value: true,
-            }),
-        );
-        expect(mocks.tracking.flush).toHaveBeenCalledTimes(1);
-    });
-
-    it('captures per-active-server provider edits under the logical provider field key', () => {
-        emitAccountSettingChangedEvents({
-            previousSettings: settingsDefaults,
-            nextSettings: {
-                ...settingsDefaults,
-                opencodeServerBaseUrlByServerIdV1: {
-                    server1: 'https://example.com/',
+                providerSettingsV1: {
+                    v: 1,
+                    providers: { opencode: { serverBaseUrl: 'https://example.com/' } },
                 },
             },
             source: 'ui',
         });
 
-        expect(mocks.tracking.capture).toHaveBeenCalledWith(
-            'setting_changed',
-            expect.objectContaining({
-                setting_key: 'opencodeServerBaseUrl',
-                scope: 'account_setting',
-                identity_scope: 'person',
-                source: 'ui',
-                prev_value: false,
-                next_value: true,
-            }),
-        );
-        expect(
-            mocks.tracking.capture.mock.calls.some(([, payload]) => payload?.setting_key === 'opencodeServerBaseUrlByServerIdV1'),
-        ).toBe(false);
+        expect(mocks.tracking.capture).not.toHaveBeenCalled();
+        expect(mocks.tracking.flush).not.toHaveBeenCalled();
     });
 
     it('captures structured account settings through canonical analytics property serializers', () => {
-        const claudeTargetKey = buildProviderUniverseBackendTargetKey('claude');
+        const claudeTargetKey = buildAgentUniverseBackendTargetKey('claude');
         const nextSettings = {
             ...settingsDefaults,
             backendEnabledByTargetKey: {
@@ -171,22 +140,19 @@ describe('emitAccountSettingChangedEvents', () => {
     });
 
     it('captures structured voice settings through canonical account analytics serializers', () => {
+        const localConversation = readLocalConversationVoiceSettings(voiceSettingsDefaults);
         const nextSettings = {
             ...settingsDefaults,
-            voice: {
-                ...voiceSettingsDefaults,
-                providerId: 'local_conversation',
-                adapters: {
-                    ...voiceSettingsDefaults.adapters,
-                    local_conversation: {
-                        ...voiceSettingsDefaults.adapters.local_conversation,
-                        agent: {
-                            ...voiceSettingsDefaults.adapters.local_conversation.agent,
-                            backend: 'openai_compat',
-                        },
+            voice: writeLocalConversationVoiceSettings(
+                { ...voiceSettingsDefaults, providerId: 'local_conversation' },
+                {
+                    ...localConversation,
+                    agent: {
+                        ...localConversation.agent,
+                        backend: 'openai_compat',
                     },
                 },
-            },
+            ),
         };
 
         emitAccountSettingChangedEvents({
@@ -202,7 +168,7 @@ describe('emitAccountSettingChangedEvents', () => {
                 scope: 'account_setting',
                 identity_scope: 'person',
                 source: 'ui',
-                prev_value: 'realtime_elevenlabs',
+                prev_value: 'off',
                 next_value: 'local_conversation',
             }),
         );

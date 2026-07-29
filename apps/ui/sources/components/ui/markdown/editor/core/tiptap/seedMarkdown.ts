@@ -28,6 +28,7 @@ import type { Editor } from '@tiptap/core';
 
 import { encodeRiskyMarkdown } from '../eligibility/encodeRiskyMarkdown';
 import { normalizeSoftBreaks } from './normalizeSoftBreaks';
+import { runWithPreservedTiptapViewState } from './preserveTiptapViewState';
 
 /**
  * Seeds `editor` from a markdown string, applying the risky-markdown pre-pass
@@ -37,10 +38,24 @@ import { normalizeSoftBreaks } from './normalizeSoftBreaks';
  * contentType: 'markdown' })` — use it everywhere a live editor is seeded from
  * markdown so the encode is never skipped.
  */
-export function seedMarkdown(editor: Editor, markdown: string): void {
-    editor.commands.setContent(encodeRiskyMarkdown(markdown), { contentType: 'markdown' });
-    // Mirror Orca's setContent path: re-run the post-parse paragraph split so
-    // multi-line paragraphs emitted by `marked` become per-line blocks for
-    // block ops (cut/Enter/selection). Idempotent on already-clean docs.
-    normalizeSoftBreaks(editor);
+export type SeedMarkdownOptions = Readonly<{
+    /** Preserve caret/scroll across host-applied external document replacement. */
+    preserveViewState?: boolean;
+}>;
+
+export function seedMarkdown(editor: Editor, markdown: string, options?: SeedMarkdownOptions): void {
+    const applySeed = () => {
+        editor.commands.setContent(encodeRiskyMarkdown(markdown), { contentType: 'markdown' });
+        // Mirror Orca's setContent path: re-run the post-parse paragraph split so
+        // multi-line paragraphs emitted by `marked` become per-line blocks for
+        // block ops (cut/Enter/selection). Idempotent on already-clean docs.
+        normalizeSoftBreaks(editor);
+    };
+
+    if (options?.preserveViewState === true) {
+        runWithPreservedTiptapViewState(editor, applySeed);
+        return;
+    }
+
+    applySeed();
 }

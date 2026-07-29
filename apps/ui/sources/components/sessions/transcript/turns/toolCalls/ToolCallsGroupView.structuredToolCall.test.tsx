@@ -10,6 +10,7 @@ import {
 import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 import { createReducer } from '@/sync/reducer/reducer';
 import { installToolCallsGroupViewCommonModuleMocks } from './toolCallsGroupViewTestHelpers';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -26,12 +27,12 @@ installToolCallsGroupViewCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: (key: string) => {
+                useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'toolViewTimelineChromeMode') return toolChromeMode;
                     if (key === 'transcriptToolCallsCollapsedPreviewCount') return collapsedPreviewCount;
                     if (key === 'transcriptToolCallsGroupShowBackground') return false;
                     return null;
-                },
+                } }),
                 useSessionMessagesById: () => ({}),
                 useSessionMessagesReducerState: () => createReducer(),
             },

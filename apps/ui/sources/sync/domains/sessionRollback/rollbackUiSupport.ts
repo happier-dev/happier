@@ -6,6 +6,7 @@ import {
     type SessionRollbackTarget,
     type TurnChangeSet,
 } from '@happier-dev/protocol';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export type TranscriptRollbackAction = Readonly<{
     target: SessionRollbackTarget;
@@ -41,6 +42,17 @@ function listTrustedRuntimeTurnStartSeqs(session: Session | null | undefined): R
     return startSeqs;
 }
 
+function hasConversationRollbackCapability(session: Session | null | undefined): boolean {
+    if (!session || session.accessLevel === 'view') return false;
+    const metadata = readSessionOwnerMetadataView(session);
+    const agentId = inferAgentIdFromSessionMetadata(metadata);
+    return evaluateAgentSessionCapabilitySupport({
+        agentId,
+        capability: 'sessionRollback.conversation',
+        metadata,
+    }) === 'supported';
+}
+
 export function resolveConversationRollbackSupport(params: Readonly<{
     session: Session | null | undefined;
 }>): Readonly<{
@@ -48,17 +60,18 @@ export function resolveConversationRollbackSupport(params: Readonly<{
     supportsRollbackToPoint: boolean;
 }> {
     const session = params.session ?? null;
-    if (!session || session.active !== true) {
+    if (!session || session.active !== true || session.accessLevel === 'view') {
         return {
             supportsLatestTurnRollback: false,
             supportsRollbackToPoint: false,
         };
     }
-    const agentId = inferAgentIdFromSessionMetadata(session.metadata);
+    const metadata = readSessionOwnerMetadataView(session);
+    const agentId = inferAgentIdFromSessionMetadata(metadata);
     const conversationSupport = evaluateAgentSessionCapabilitySupport({
         agentId,
         capability: 'sessionRollback.conversation',
-        metadata: session.metadata,
+        metadata,
     });
     return {
         supportsLatestTurnRollback: conversationSupport === 'supported',
@@ -68,9 +81,17 @@ export function resolveConversationRollbackSupport(params: Readonly<{
 
 export function canRollbackConversation(params: Readonly<{
     session: Session | null | undefined;
+    target?: SessionRollbackTarget;
 }>): boolean {
+    const target = params.target ?? { type: 'latest_turn' };
+    if (target.type === 'before_user_message') {
+        const userMessageSeq = readFiniteSeq(target.userMessageSeq);
+        return userMessageSeq != null
+            && hasConversationRollbackCapability(params.session)
+            && listTrustedRuntimeTurnStartSeqs(params.session).has(userMessageSeq);
+    }
     const support = resolveConversationRollbackSupport(params);
-    return support.supportsLatestTurnRollback || support.supportsRollbackToPoint;
+    return support.supportsLatestTurnRollback;
 }
 
 export function readSessionRollbackRangesV1(metadata: Record<string, unknown> | null | undefined): readonly SessionRollbackRangeV1[] {
@@ -174,10 +195,11 @@ export function resolveTranscriptRollbackActions(params: Readonly<{
     const support = resolveConversationRollbackSupport({ session: params.session });
     const sessionId = params.session?.id ?? null;
     const turnChangeSets = params.turnChangeSets ?? [];
-    const conversationRollbackSupported = support.supportsRollbackToPoint || support.supportsLatestTurnRollback;
-    if (support.supportsRollbackToPoint) {
-        const trustedStartSeqs = listTrustedRuntimeTurnStartSeqs(params.session);
-        if (trustedStartSeqs.size === 0) return EMPTY_TRANSCRIPT_ROLLBACK_ACTIONS;
+    const capabilitySupportsConversationRollback = hasConversationRollbackCapability(params.session);
+    const conversationRollbackSupported = support.supportsRollbackToPoint
+        || support.supportsLatestTurnRollback
+        || capabilitySupportsConversationRollback;
+    if (capabilitySupportsConversationRollback) {
         const actions: Record<string, TranscriptRollbackAction> = {};
         for (const messageId of params.messageIdsOldestFirst) {
             const message = params.messagesById[messageId];
@@ -185,11 +207,11 @@ export function resolveTranscriptRollbackActions(params: Readonly<{
             if (isMessageRolledBack({ message, rollbackRanges: params.rollbackRanges })) continue;
             const seq = readFiniteSeq(message.seq);
             if (seq == null) continue;
-            if (!trustedStartSeqs.has(seq)) continue;
             const action = {
                 target: { type: 'before_user_message', userMessageSeq: seq },
                 restoredDraftText: message.text,
             } satisfies TranscriptRollbackAction;
+            if (!canRollbackConversation({ session: params.session, target: action.target })) continue;
             actions[messageId] = withCheckpointRollbackEvidence(
                 action,
                 sessionId

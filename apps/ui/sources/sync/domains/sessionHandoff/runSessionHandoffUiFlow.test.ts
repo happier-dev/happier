@@ -5,10 +5,12 @@ const modalShowMock = vi.hoisted(() => vi.fn());
 const modalHideMock = vi.hoisted(() => vi.fn());
 const modalUpdateMock = vi.hoisted(() => vi.fn());
 const modalConfirmMock = vi.hoisted(() => vi.fn());
+const modalAlertMock = vi.hoisted(() => vi.fn());
 const executeSessionHandoffActionMock = vi.hoisted(() => vi.fn());
 const openSessionHandoffProgressModalMock = vi.hoisted(() => vi.fn());
 const openSessionHandoffFailureRecoveryModalMock = vi.hoisted(() => vi.fn());
 const performSessionHandoffRecoveryActionMock = vi.hoisted(() => vi.fn());
+const randomUUIDMock = vi.hoisted(() => vi.fn());
 
 installSessionHandoffCommonModuleMocks({
     modal: async () => {
@@ -19,10 +21,15 @@ installSessionHandoffCommonModuleMocks({
                 hide: (...args: unknown[]) => modalHideMock(...args),
                 update: (...args: unknown[]) => modalUpdateMock(...args),
                 confirm: (...args: unknown[]) => modalConfirmMock(...args),
+                alert: (...args: unknown[]) => modalAlertMock(...args),
             },
         }).module;
     },
 });
+
+vi.mock('@/platform/randomUUID', () => ({
+  randomUUID: () => randomUUIDMock(),
+}));
 
 vi.mock('./executeSessionHandoffAction', () => ({
   executeSessionHandoffAction: (...args: unknown[]) => executeSessionHandoffActionMock(...args),
@@ -47,10 +54,13 @@ describe('runSessionHandoffUiFlow', () => {
     modalHideMock.mockReset();
     modalUpdateMock.mockReset();
     modalConfirmMock.mockReset();
+    modalAlertMock.mockReset();
     executeSessionHandoffActionMock.mockReset();
     openSessionHandoffProgressModalMock.mockReset();
     openSessionHandoffFailureRecoveryModalMock.mockReset();
     performSessionHandoffRecoveryActionMock.mockReset();
+    randomUUIDMock.mockReset();
+    randomUUIDMock.mockReturnValue('resume_attempt_1');
     openSessionHandoffProgressModalMock.mockReturnValue('modal_1');
   });
 
@@ -146,6 +156,152 @@ describe('runSessionHandoffUiFlow', () => {
 
     actionResolution.current?.({ ok: true, handoffId: 'handoff_1' });
     await expect(flowPromise).resolves.toEqual({ ok: true, handoffId: 'handoff_1' });
+  });
+
+  it('keeps hydrated interrupted handoff status passive and sends one exact revision-bound Resume only after the user presses it', async () => {
+    const actionResolution: {
+      current: ((value: { ok: true; handoffId: string }) => void) | null;
+    } = { current: null };
+    executeSessionHandoffActionMock.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        actionResolution.current = resolve as typeof actionResolution.current;
+      }),
+    );
+    const execute = vi.fn().mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        handoffId: 'handoff_interrupted_1',
+        jobId: 'prepare_job_1',
+        transitionRevision: 8,
+        status: {
+          handoffId: 'handoff_interrupted_1',
+          jobId: 'prepare_job_1',
+          status: 'in_progress',
+          phase: 'staging_target',
+          recoveryActions: [],
+        },
+      },
+    });
+
+    const { runSessionHandoffUiFlow } = await import('./runSessionHandoffUiFlow');
+    const { publishSessionHandoffProgress } = await import('./sessionHandoffProgressEvents');
+    const flowPromise = runSessionHandoffUiFlow({
+      execute: execute as any,
+      sessionId: 'sess_1',
+      targetMachineId: 'machine_target',
+      context: { defaultSessionId: 'sess_1', surface: 'ui', placement: 'session_info' } as any,
+    });
+
+    publishSessionHandoffProgress({
+      sessionId: 'sess_1',
+      targetMachineId: 'machine_target',
+      transitionRevision: 7,
+      status: {
+        handoffId: 'handoff_interrupted_1',
+        jobId: 'prepare_job_1',
+        status: 'awaiting_user_resume',
+        phase: 'staging_target',
+        recoveryActions: [],
+      },
+    });
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(randomUUIDMock).not.toHaveBeenCalled();
+    const interruptedUpdate = modalUpdateMock.mock.calls.at(-1)?.[1] as {
+      onResume?: () => Promise<void>;
+    };
+    expect(interruptedUpdate.onResume).toEqual(expect.any(Function));
+
+    await Promise.all([
+      interruptedUpdate.onResume?.(),
+      interruptedUpdate.onResume?.(),
+    ]);
+
+    expect(randomUUIDMock).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(
+      'session.handoff.prepare_target.resume',
+      {
+        handoffId: 'handoff_interrupted_1',
+        jobId: 'prepare_job_1',
+        expectedRevision: 7,
+        attemptId: 'resume_attempt_1',
+      },
+      { defaultSessionId: 'sess_1', surface: 'ui', placement: 'session_info' },
+    );
+    expect(modalUpdateMock).toHaveBeenLastCalledWith('modal_1', {
+      status: expect.objectContaining({
+        handoffId: 'handoff_interrupted_1',
+        status: 'in_progress',
+      }),
+      onResume: undefined,
+    });
+    expect(modalAlertMock).not.toHaveBeenCalled();
+
+    actionResolution.current?.({ ok: true, handoffId: 'handoff_interrupted_1' });
+    await flowPromise;
+  });
+
+  it('surfaces a typed stale Resume rejection and does not report progress', async () => {
+    const actionResolution: {
+      current: ((value: { ok: true; handoffId: string }) => void) | null;
+    } = { current: null };
+    executeSessionHandoffActionMock.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        actionResolution.current = resolve as typeof actionResolution.current;
+      }),
+    );
+    const execute = vi.fn().mockResolvedValue({
+      ok: true,
+      result: {
+        ok: false,
+        error: {
+          code: 'stale_revision',
+          message: 'The interrupted handoff changed before Resume was accepted.',
+        },
+      },
+    });
+
+    const { runSessionHandoffUiFlow } = await import('./runSessionHandoffUiFlow');
+    const { publishSessionHandoffProgress } = await import('./sessionHandoffProgressEvents');
+    const flowPromise = runSessionHandoffUiFlow({
+      execute: execute as any,
+      sessionId: 'sess_1',
+      targetMachineId: 'machine_target',
+      context: { defaultSessionId: 'sess_1', surface: 'ui', placement: 'session_info' } as any,
+    });
+
+    publishSessionHandoffProgress({
+      sessionId: 'sess_1',
+      targetMachineId: 'machine_target',
+      transitionRevision: 7,
+      status: {
+        handoffId: 'handoff_interrupted_1',
+        jobId: 'prepare_job_1',
+        status: 'awaiting_user_resume',
+        phase: 'staging_target',
+        recoveryActions: [],
+      },
+    });
+    const interruptedUpdate = modalUpdateMock.mock.calls.at(-1)?.[1] as {
+      onResume?: () => Promise<void>;
+    };
+    await interruptedUpdate.onResume?.();
+
+    expect(modalAlertMock).toHaveBeenCalledWith(
+      'sessionHandoff.failure.title',
+      'The interrupted handoff changed before Resume was accepted.',
+    );
+    expect(modalUpdateMock).not.toHaveBeenCalledWith(
+      'modal_1',
+      expect.objectContaining({
+        status: expect.objectContaining({ status: 'in_progress' }),
+      }),
+    );
+
+    actionResolution.current?.({ ok: true, handoffId: 'handoff_interrupted_1' });
+    await flowPromise;
   });
 
   it('offers retry when the handoff fails and reruns the handoff when confirmed', async () => {
@@ -263,7 +419,7 @@ describe('runSessionHandoffUiFlow', () => {
     expect(result).toEqual({ ok: false, handled: true });
   });
 
-  it('surfaces recovery action failures through the retry confirm with the recovery error', async () => {
+  it('keeps recovery failures inside the committed recovery phase', async () => {
     executeSessionHandoffActionMock.mockResolvedValueOnce({
       ok: false,
       error: 'resume_failed',
@@ -281,9 +437,10 @@ describe('runSessionHandoffUiFlow', () => {
         },
       },
     });
-    openSessionHandoffFailureRecoveryModalMock.mockResolvedValueOnce('restart_on_source');
+    openSessionHandoffFailureRecoveryModalMock
+      .mockResolvedValueOnce('restart_on_source')
+      .mockResolvedValueOnce(null);
     performSessionHandoffRecoveryActionMock.mockResolvedValueOnce({ ok: false, error: 'source_resume_failed' });
-    modalConfirmMock.mockResolvedValueOnce(false);
 
     const { runSessionHandoffUiFlow } = await import('./runSessionHandoffUiFlow');
     const result = await runSessionHandoffUiFlow({
@@ -309,14 +466,42 @@ describe('runSessionHandoffUiFlow', () => {
       },
       action: 'restart_on_source',
     });
-    expect(modalConfirmMock).toHaveBeenCalledWith(
-      'sessionHandoff.failure.title',
-      'source_resume_failed',
-      {
-        cancelText: 'common.cancel',
-        confirmText: 'common.retry',
-      },
+    expect(openSessionHandoffFailureRecoveryModalMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ details: 'source_resume_failed' }),
     );
+    expect(modalConfirmMock).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: false, handled: true });
+  });
+
+  it('contains an unexpected recovery rejection without rerunning the whole handoff', async () => {
+    executeSessionHandoffActionMock.mockResolvedValueOnce({
+      ok: false,
+      error: 'cleanup_pending',
+      recovery: {
+        handoffId: 'handoff_committed',
+        actions: ['retry_source_cleanup'],
+      },
+    });
+    openSessionHandoffFailureRecoveryModalMock
+      .mockResolvedValueOnce('retry_source_cleanup')
+      .mockResolvedValueOnce(null);
+    performSessionHandoffRecoveryActionMock.mockRejectedValueOnce(new Error('finalizer rejected'));
+
+    const { runSessionHandoffUiFlow } = await import('./runSessionHandoffUiFlow');
+    await expect(runSessionHandoffUiFlow({
+      execute: vi.fn() as any,
+      sessionId: 'sess_committed',
+      targetMachineId: 'machine_target',
+      context: { defaultSessionId: 'sess_committed', surface: 'ui', placement: 'session_info' } as any,
+    })).resolves.toEqual({ ok: false, handled: true });
+
+    expect(executeSessionHandoffActionMock).toHaveBeenCalledTimes(1);
+    expect(performSessionHandoffRecoveryActionMock).toHaveBeenCalledTimes(1);
+    expect(openSessionHandoffFailureRecoveryModalMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ details: 'finalizer rejected' }),
+    );
+    expect(modalConfirmMock).not.toHaveBeenCalled();
   });
 });

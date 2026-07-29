@@ -14,6 +14,17 @@ test('UI postinstall installs enriched-markdown web WASM before verifying the pa
     );
 });
 
+test('UI postinstall verifies the Sentry native replay patch after applying patches', () => {
+    const tasks = resolveUiPostinstallTasks({ env: { HAPPIER_UI_VENDOR_WEB_ASSETS: '0' } });
+
+    assert.ok(tasks.includes('patch-package'));
+    assert.ok(tasks.includes('verify-sentry-native-replay-postinit-patch'));
+    assert.ok(
+        tasks.indexOf('patch-package')
+        < tasks.indexOf('verify-sentry-native-replay-postinit-patch'),
+    );
+});
+
 test('UI postinstall vendors the TipTap WebView bundle with other web assets', () => {
     const tasks = resolveUiPostinstallTasks({ env: { HAPPIER_UI_VENDOR_WEB_ASSETS: '1' } });
 

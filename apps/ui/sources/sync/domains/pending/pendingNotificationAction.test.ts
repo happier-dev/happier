@@ -17,6 +17,14 @@ async function activateScope(scope: { serverId: string; accountId: string }) {
     registerStorageStateReader(() => ({ profileScope: scope } as unknown as StorageState));
 }
 
+async function activateServerWithoutAccount(serverUrl: string) {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+
+    upsertAndActivateServer({ serverUrl, source: 'manual', scope: 'device', replaceEquivalentStoredUrl: true });
+    registerStorageStateReader(() => ({ profileScope: null } as unknown as StorageState));
+}
+
 describe('pendingNotificationAction', () => {
     it('keeps pending notification actions isolated by active server', async () => {
         const {
@@ -143,5 +151,54 @@ describe('pendingNotificationAction', () => {
             requestId: 'r_legacy',
             action: 'allow',
         });
+    });
+
+    it('rehydrates cross-server pending notification actions before the target account scope is active', async () => {
+        const mod = await import('./pendingNotificationAction');
+
+        await activateServerAccount('https://action-source.example.test', 'account-a');
+        mod.clearPendingNotificationAction();
+        mod.setPendingNotificationAction({
+            serverUrl: 'https://action-target.example.test',
+            sessionId: 's_cross',
+            requestId: 'r_cross',
+            action: 'deny',
+        });
+
+        expect(mod.getPendingNotificationAction()).toBeNull();
+
+        await activateServerWithoutAccount('https://action-target.example.test');
+        expect(mod.getPendingNotificationAction()).toEqual({
+            serverUrl: 'https://action-target.example.test',
+            sessionId: 's_cross',
+            requestId: 'r_cross',
+            action: 'deny',
+        });
+
+        mod.clearPendingNotificationAction();
+        expect(mod.getPendingNotificationAction()).toBeNull();
+    });
+
+    it('does not promote server-scoped pending notification actions into an active account scope', async () => {
+        const mod = await import('./pendingNotificationAction');
+
+        await activateServerWithoutAccount('https://action-shared-fallback.example.test');
+        mod.clearPendingNotificationAction();
+        mod.setPendingNotificationAction({
+            serverUrl: 'https://action-shared-fallback.example.test',
+            sessionId: 's_server_scoped',
+            requestId: 'r_server_scoped',
+            action: 'allow',
+        });
+
+        expect(mod.getPendingNotificationAction()).toEqual({
+            serverUrl: 'https://action-shared-fallback.example.test',
+            sessionId: 's_server_scoped',
+            requestId: 'r_server_scoped',
+            action: 'allow',
+        });
+
+        await activateServerAccount('https://action-shared-fallback.example.test', 'account-b');
+        expect(mod.getPendingNotificationAction()).toBeNull();
     });
 });

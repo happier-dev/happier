@@ -7,8 +7,18 @@ import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockStat
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+// The Legend renderer (default transcript renderer) schedules landing verification through
+// requestAnimationFrame; this suite's bare environment does not provide one.
+if (typeof (globalThis as any).requestAnimationFrame !== 'function') {
+    (globalThis as any).requestAnimationFrame = (callback: (time: number) => void) => (
+        setTimeout(() => callback(Date.now()), 0) as unknown as number
+    );
+    (globalThis as any).cancelAnimationFrame = (handle: number) => {
+        clearTimeout(handle as unknown as ReturnType<typeof setTimeout>);
+    };
+}
+
 let capturedHeaderSpacerHeight: number | null = null;
-let transcriptListImplementationSetting: 'flash_v2' | 'flatlist_legacy' = 'flash_v2';
 
 function unwrapStyle(style: unknown): Record<string, unknown> | null {
     if (!style) return null;
@@ -36,22 +46,36 @@ function extractFirstNumericHeight(node: unknown): number | null {
     return null;
 }
 
-vi.mock('@shopify/flash-list', () => ({
-    FlashList: (props: any) => {
-        const headerCandidate = props.ListHeaderComponent ?? null;
-        const header =
-            typeof headerCandidate === 'function'
-                ? headerCandidate()
-                : (headerCandidate && typeof headerCandidate === 'object' && typeof (headerCandidate as any).type === 'function')
-                    ? (headerCandidate as any).type((headerCandidate as any).props)
-                    : (headerCandidate
-                        && typeof headerCandidate === 'object'
-                        && typeof (headerCandidate as any).type === 'object'
-                        && typeof (headerCandidate as any).type.type === 'function')
-                        ? (headerCandidate as any).type.type((headerCandidate as any).props)
-                    : headerCandidate;
-        capturedHeaderSpacerHeight = extractFirstNumericHeight(header);
-        return React.createElement('FlashList', props, header);
+vi.mock('@legendapp/list/react-native', () => ({
+    LegendList: (props: any) => {
+        const unwrapSlot = (candidate: any): any => {
+            if (!candidate) return null;
+            if (typeof candidate === 'function') return unwrapSlot(candidate());
+            if (typeof candidate === 'object' && typeof candidate.type === 'function') {
+                return unwrapSlot(candidate.type(candidate.props));
+            }
+            if (typeof candidate === 'object' && typeof candidate.type === 'object' && typeof candidate.type?.type === 'function') {
+                return unwrapSlot(candidate.type.type(candidate.props));
+            }
+            return candidate;
+        };
+        const collectSlotHeight = (candidate: any): number | null => {
+            const unwrapped = unwrapSlot(candidate);
+            if (!unwrapped) return null;
+            const direct = extractFirstNumericHeight(unwrapped);
+            if (typeof direct === 'number') return direct;
+            const children = React.Children.toArray(unwrapped.props?.children ?? []);
+            for (const child of children) {
+                const fromChild = collectSlotHeight(child);
+                if (typeof fromChild === 'number') return fromChild;
+            }
+            return null;
+        };
+        // The Legend adapter re-projects the shell header slot to the visual bottom
+        // (ListFooterComponent) on newest-first native frames; check both slots.
+        capturedHeaderSpacerHeight =
+            collectSlotHeight(props.ListHeaderComponent) ?? collectSlotHeight(props.ListFooterComponent);
+        return React.createElement('LegendList', props);
     },
 }));
 
@@ -69,10 +93,7 @@ installTranscriptCommonModuleMocks({
     },
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useSetting: (key: string) =>
-                key === 'transcriptListImplementation' ? transcriptListImplementationSetting : undefined,
-        });
+        return createStorageModuleStub({});
     },
 });
 
@@ -98,7 +119,6 @@ describe('TranscriptList safe area', () => {
     beforeEach(() => {
         resetTranscriptCommonModuleMockState();
         capturedHeaderSpacerHeight = null;
-        transcriptListImplementationSetting = 'flash_v2';
     });
 
     it('uses a compact transcript gutter instead of chrome-safe area inside the list header', async () => {
@@ -106,6 +126,7 @@ describe('TranscriptList safe area', () => {
         await renderScreen(
             <TranscriptList
                 sessionId="s1"
+                datasetKey="public:s1:1"
                 metadata={null}
                 messages={[{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' } as any]}
                 interaction={{ canSendMessages: true, canApprovePermissions: true }}

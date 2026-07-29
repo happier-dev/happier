@@ -283,7 +283,7 @@ describe('ToolCallsGroupRow', () => {
               }),
             }),
           ],
-          status: 'completed',
+          status: 'permission_canceled',
         }),
       ]),
     );

@@ -1,8 +1,5 @@
 import { randomUUID } from '@/platform/randomUUID';
-import {
-    normalizeSpawnAttemptKey,
-    readOrCreateSpawnAttemptNonce,
-} from '@/sync/domains/session/spawn/spawnAttemptNonceStore';
+import { buildSpawnedFirstTurnLocalId } from '@happier-dev/protocol';
 
 export type NewSessionLaunchAttemptStatus =
     | 'idle'
@@ -28,10 +25,8 @@ export type NewSessionLaunchAttemptPhaseError = Readonly<{
 export type NewSessionLaunchAttempt = Readonly<{
     attemptId: string;
     spawnNonce: string;
-    spawnAttemptKey: string | null;
     scopeKey: string;
     createdSessionId: string | null;
-    daemonInitialPromptUsed: boolean;
     firstTurnLocalId: string;
     attachmentMessageLocalId: string;
     status: NewSessionLaunchAttemptStatus;
@@ -48,7 +43,8 @@ type CreateNewSessionLaunchAttemptParams = Readonly<{
     displayText: string;
     scopeKey: string;
     meta?: unknown;
-    spawnAttemptKey?: string | null;
+    attemptId?: string | null;
+    spawnNonce?: string | null;
     createId?: (prefix: string) => string;
 }>;
 
@@ -64,19 +60,19 @@ function defaultCreateId(prefix: string): string {
 
 export function createNewSessionLaunchAttempt(params: CreateNewSessionLaunchAttemptParams): NewSessionLaunchAttempt {
     const createId = params.createId ?? defaultCreateId;
-    const spawnAttemptKey = normalizeSpawnAttemptKey(params.spawnAttemptKey);
+    const attemptId = typeof params.attemptId === 'string' && params.attemptId.trim().length > 0
+        ? params.attemptId.trim()
+        : createId('attempt');
+    const spawnNonce = typeof params.spawnNonce === 'string' && params.spawnNonce.trim().length > 0
+        ? params.spawnNonce.trim()
+        : createId('spawn');
     return {
-        attemptId: createId('attempt'),
-        spawnNonce: readOrCreateSpawnAttemptNonce({
-            spawnAttemptKey,
-            seedNonce: createId('spawn'),
-        }),
-        spawnAttemptKey,
+        attemptId,
+        spawnNonce,
         scopeKey: params.scopeKey,
-        firstTurnLocalId: createId('first-turn'),
+        firstTurnLocalId: buildSpawnedFirstTurnLocalId(spawnNonce) ?? createId('first-turn'),
         attachmentMessageLocalId: createId('attachment-message'),
         createdSessionId: null,
-        daemonInitialPromptUsed: false,
         status: 'idle',
         prompt: {
             prompt: params.prompt,
@@ -87,13 +83,28 @@ export function createNewSessionLaunchAttempt(params: CreateNewSessionLaunchAtte
     };
 }
 
-export function markNewSessionLaunchAttemptDaemonInitialPromptUsed(
+export function adoptNewSessionLaunchAttemptCustody(
     attempt: NewSessionLaunchAttempt,
+    params: Readonly<{
+        userAttemptId: string;
+        spawnNonce: string;
+        createdSessionId?: string | null;
+        firstTurnLocalId?: string | null;
+        attachmentMessageLocalId?: string | null;
+    }>,
 ): NewSessionLaunchAttempt {
-    if (attempt.daemonInitialPromptUsed) return attempt;
     return {
         ...attempt,
-        daemonInitialPromptUsed: true,
+        attemptId: params.userAttemptId,
+        spawnNonce: params.spawnNonce,
+        createdSessionId: params.createdSessionId ?? attempt.createdSessionId,
+        firstTurnLocalId:
+            params.firstTurnLocalId
+            ?? buildSpawnedFirstTurnLocalId(params.spawnNonce)
+            ?? attempt.firstTurnLocalId,
+        attachmentMessageLocalId:
+            params.attachmentMessageLocalId
+            ?? attempt.attachmentMessageLocalId,
     };
 }
 
@@ -172,9 +183,7 @@ export function isNewSessionLaunchAttemptPendingBeforeSession(
 export function isNewSessionLaunchAttemptInScope(
     attempt: NewSessionLaunchAttempt | null,
     scopeKey: string,
-    spawnAttemptKey: string | null,
 ): attempt is NewSessionLaunchAttempt {
     return !!attempt
-        && attempt.scopeKey === scopeKey
-        && attempt.spawnAttemptKey === normalizeSpawnAttemptKey(spawnAttemptKey);
+        && attempt.scopeKey === scopeKey;
 }

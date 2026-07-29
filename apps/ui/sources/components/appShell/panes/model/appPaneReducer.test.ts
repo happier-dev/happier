@@ -144,6 +144,87 @@ describe('appPaneReduce', () => {
         expect(getDetailsView(state, 'session:1').activeTabKey).toBe('terminal:project:wr_1:terminal');
     });
 
+    it('replaces a details tab in place while preserving tab-local state and group position', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+        state = appPaneReduce(state, {
+            type: 'openDetailsTab',
+            scopeId: 'session:1',
+            tab: createTerminalTab({
+                key: 'terminal:project:wr_1:terminal',
+                cwd: '/repo/.worktrees/feature-a',
+            }),
+            openAs: 'pinned',
+        });
+        state = appPaneReduce(state, {
+            type: 'setDetailsTabState',
+            scopeId: 'session:1',
+            tabKey: 'terminal:project:wr_1:terminal',
+            nextState: { scrollbackCursor: 42 },
+        });
+
+        state = appPaneReduce(state, {
+            type: 'replaceDetailsTab',
+            scopeId: 'session:1',
+            tabKey: 'terminal:project:wr_1:terminal',
+            tab: createTerminalTab({
+                key: 'terminal:project:wr_1:terminal-retargeted',
+                cwd: '/repo/.worktrees/feature-b',
+            }),
+            openAs: 'pinned',
+        });
+
+        const details = state.scopes['session:1']?.details;
+        expect(details?.tabsByKey['terminal:project:wr_1:terminal']).toBeUndefined();
+        expect(details?.tabState['terminal:project:wr_1:terminal']).toBeUndefined();
+        expect(details?.tabsByKey['terminal:project:wr_1:terminal-retargeted']).toMatchObject({
+            isPinned: true,
+            isPreview: false,
+            resource: {
+                kind: 'terminal',
+                cwd: '/repo/.worktrees/feature-b',
+            },
+        });
+        expect(details?.tabState['terminal:project:wr_1:terminal-retargeted']).toEqual({
+            scrollbackCursor: 42,
+        });
+        expect(getDetailsView(state, 'session:1').tabs.map((tab) => tab.key)).toEqual([
+            'terminal:project:wr_1:terminal-retargeted',
+        ]);
+        expect(getDetailsView(state, 'session:1').activeTabKey).toBe('terminal:project:wr_1:terminal-retargeted');
+    });
+
+    it('replaces an active preview details tab without falling back to the pinned launchpad tab', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+        state = appPaneReduce(state, {
+            type: 'openDetailsTab',
+            scopeId: 'session:1',
+            tab: { key: 'browser:launchpad', kind: 'browser-view', title: 'Open Browser', resource: { kind: 'browser-view', mode: 'launchpad' } },
+            openAs: 'pinned',
+        });
+        state = appPaneReduce(state, {
+            type: 'openDetailsTab',
+            scopeId: 'session:1',
+            tab: { key: 'browser:view:preview', kind: 'browser-view', title: 'Session Inspector', resource: { kind: 'browser-view', target: 'preview' } },
+            openAs: 'preview',
+        });
+
+        state = appPaneReduce(state, {
+            type: 'replaceDetailsTab',
+            scopeId: 'session:1',
+            tabKey: 'browser:view:preview',
+            tab: { key: 'browser:view:preview', kind: 'browser-view', title: 'example.com', resource: { kind: 'browser-view', target: 'external' } },
+            openAs: 'preview',
+        });
+
+        expect(getDetailsView(state, 'session:1').tabs.map((tab) => [tab.key, tab.title, tab.isPreview, tab.isPinned])).toEqual([
+            ['browser:launchpad', 'Open Browser', false, true],
+            ['browser:view:preview', 'example.com', true, false],
+        ]);
+        expect(getDetailsView(state, 'session:1').activeTabKey).toBe('browser:view:preview');
+    });
+
     it('supports split-capable details workspaces with focused groups', () => {
         let state = createAppPaneState({ maxScopesInMemory: 3 });
         state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
@@ -340,6 +421,27 @@ describe('appPaneReduce', () => {
         expect(state.scopes['session:1']?.right.tabState.git).toEqual({ commitMessageDraft: 'wip: draft' });
     });
 
+    it('treats repeated right tab state writes with the same serializable value as a no-op', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+        state = appPaneReduce(state, { type: 'openRight', scopeId: 'session:1', tabId: 'git' });
+        state = appPaneReduce(state, {
+            type: 'setRightTabState',
+            scopeId: 'session:1',
+            tabId: 'git',
+            nextState: { activeSubTabId: 'commit', commitMessageDraft: 'wip: draft' },
+        });
+
+        const repeated = appPaneReduce(state, {
+            type: 'setRightTabState',
+            scopeId: 'session:1',
+            tabId: 'git',
+            nextState: { activeSubTabId: 'commit', commitMessageDraft: 'wip: draft' },
+        });
+
+        expect(repeated).toBe(state);
+    });
+
     it('treats reopening the same right tab as a no-op', () => {
         let state = createAppPaneState({ maxScopesInMemory: 3 });
         state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
@@ -348,6 +450,49 @@ describe('appPaneReduce', () => {
         const reopened = appPaneReduce(state, { type: 'openRight', scopeId: 'session:1', tabId: 'files' });
 
         expect(reopened).toBe(state);
+    });
+
+    it('treats reopening the same active pinned details tab as a no-op', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+        const tab = createTerminalTab({
+            key: 'terminal:project:wr_1:terminal',
+            cwd: '/repo',
+        });
+        state = appPaneReduce(state, { type: 'openDetailsTab', scopeId: 'session:1', tab, openAs: 'pinned' });
+
+        const reopened = appPaneReduce(state, { type: 'openDetailsTab', scopeId: 'session:1', tab, openAs: 'pinned' });
+
+        expect(reopened).toBe(state);
+    });
+
+    it('treats repeated details tab state writes with the same serializable value as a no-op', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+        state = appPaneReduce(state, {
+            type: 'openDetailsTab',
+            scopeId: 'session:1',
+            tab: createTerminalTab({
+                key: 'terminal:project:wr_1:terminal',
+                cwd: '/repo',
+            }),
+            openAs: 'pinned',
+        });
+        state = appPaneReduce(state, {
+            type: 'setDetailsTabState',
+            scopeId: 'session:1',
+            tabKey: 'terminal:project:wr_1:terminal',
+            nextState: { panel: { scrollbackCursor: 42 }, history: ['echo hello'] },
+        });
+
+        const repeated = appPaneReduce(state, {
+            type: 'setDetailsTabState',
+            scopeId: 'session:1',
+            tabKey: 'terminal:project:wr_1:terminal',
+            nextState: { panel: { scrollbackCursor: 42 }, history: ['echo hello'] },
+        });
+
+        expect(repeated).toBe(state);
     });
 
     it('retains bottom tab state across open/close cycles', () => {
@@ -362,6 +507,27 @@ describe('appPaneReduce', () => {
         state = appPaneReduce(state, { type: 'openBottom', scopeId: 'session:1', tabId: 'terminal' });
 
         expect(state.scopes['session:1']?.bottom.tabState.terminal).toEqual({ history: ['echo hello'] });
+    });
+
+    it('treats repeated bottom tab state writes with the same serializable value as a no-op', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+        state = appPaneReduce(state, { type: 'openBottom', scopeId: 'session:1', tabId: 'terminal' });
+        state = appPaneReduce(state, {
+            type: 'setBottomTabState',
+            scopeId: 'session:1',
+            tabId: 'terminal',
+            nextState: { history: ['echo hello'] },
+        });
+
+        const repeated = appPaneReduce(state, {
+            type: 'setBottomTabState',
+            scopeId: 'session:1',
+            tabId: 'terminal',
+            nextState: { history: ['echo hello'] },
+        });
+
+        expect(repeated).toBe(state);
     });
 
     it('ignores semantically identical persisted empty scopes when merging after activation', () => {

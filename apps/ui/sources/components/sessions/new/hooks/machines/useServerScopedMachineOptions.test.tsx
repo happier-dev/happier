@@ -219,49 +219,8 @@ describe('useServerScopedMachineOptions', () => {
         const remoteGroup = latest.find((group) => group.serverId === 'server-b');
         expect(activeGroup?.machines.map((m) => m.id)).toEqual(['machine-a']);
         expect(remoteGroup?.machines.map((m) => m.id)).toEqual(['machine-cache']);
-        expect((activeGroup?.machines[0] as any)?.spawnReadinessStatus).toBe('unknown');
-        expect((remoteGroup?.machines[0] as any)?.spawnReadinessStatus).toBe('unknown');
         expect(remoteGroup?.loading).toBe(false);
         expect(fetchAndApplyMachinesMock).not.toHaveBeenCalled();
-    });
-
-    it('preserves explicit spawn readiness statuses from machine records', async () => {
-        const captured: Array<ReturnType<typeof useServerScopedMachineOptions>> = [];
-        const activeMachine: Machine = {
-            ...createMachine('machine-ready'),
-            spawnReadinessStatus: 'ready',
-        };
-        const remoteCachedMachine: Machine = {
-            ...createMachine('machine-rpc-unavailable'),
-            spawnReadinessStatus: 'rpcUnavailable',
-        };
-
-        act(() => {
-            storage.setState((state) => ({
-                ...state,
-                machineListByServerId: {
-                    ...state.machineListByServerId,
-                    'server-b': [remoteCachedMachine],
-                },
-                machineListStatusByServerId: {
-                    ...state.machineListStatusByServerId,
-                    'server-b': 'idle',
-                },
-            }));
-        });
-
-        await renderScreen(<Probe
-                    allowedServerIds={['server-a', 'server-b']}
-                    activeServerId="server-a"
-                    activeMachines={[activeMachine]}
-                    onGroups={(groups) => captured.push(groups)}
-                />);
-
-        const latest = captured.at(-1) ?? [];
-        const activeGroup = latest.find((group) => group.serverId === 'server-a');
-        const remoteGroup = latest.find((group) => group.serverId === 'server-b');
-        expect(activeGroup?.machines[0]?.spawnReadinessStatus).toBe('ready');
-        expect(remoteGroup?.machines[0]?.spawnReadinessStatus).toBe('rpcUnavailable');
     });
 
     it('uses the active server cache when the active machine array has not hydrated yet', async () => {

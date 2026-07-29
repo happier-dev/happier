@@ -8,6 +8,7 @@ import {
     resolveDaemonVoiceInferenceTtsLatencyBudgetMs,
     resolveDaemonVoiceInferenceTtsLatencyDemotionThreshold,
 } from './daemonVoiceInferenceConfig';
+import { createDaemonVoiceInferenceClientError } from './daemonVoiceInferenceErrors';
 
 type DaemonVoiceInferenceLatencyState = {
     consecutiveOverBudgetCount: number;
@@ -106,17 +107,6 @@ function isDaemonVoiceInferenceTtsLatencyDemoted(sessionId: string | null | unde
     return latencyStateBySessionId.get(normalizedSessionId)?.demoted === true;
 }
 
-export function clampLocalNeuralExecutionForActivePlatform(
-    requestedExecution: LocalNeuralExecution | null | undefined,
-    platformOs: string = Platform.OS,
-): LocalNeuralExecution {
-    const normalizedExecution = requestedExecution ?? 'auto';
-    if (platformOs === 'web' && normalizedExecution === 'device') {
-        return 'daemon';
-    }
-    return normalizedExecution;
-}
-
 export type LocalNeuralExecutionPolicy = Readonly<{
     allowDeviceSelection: boolean;
     preferredExecution: 'device' | 'daemon';
@@ -130,7 +120,7 @@ export function resolveLocalNeuralExecutionPolicy(params: Readonly<{
 }>): LocalNeuralExecutionPolicy {
     const platformOs = params.platformOs ?? Platform.OS;
     const requestedExecution = params.requestedExecution ?? 'auto';
-    const selectableExecution = clampLocalNeuralExecutionForActivePlatform(requestedExecution, platformOs);
+    const selectableExecution = requestedExecution;
     const preferredExecution = selectableExecution === 'auto'
         ? platformOs === 'web'
             ? 'daemon'
@@ -156,20 +146,37 @@ export async function resolveDaemonVoiceInferenceExecution(params: Readonly<{
     const executionPolicy = resolveLocalNeuralExecutionPolicy({
         requestedExecution: params.requestedExecution,
     });
-    if (executionPolicy.selectableExecution === 'device') {
+    if (executionPolicy.requestedExecution === 'device') {
         return 'device';
     }
 
-    if ((params.surface ?? 'tts') === 'tts' && isDaemonVoiceInferenceTtsLatencyDemoted(params.sessionId)) {
+    if (
+        executionPolicy.requestedExecution === 'auto'
+        && executionPolicy.allowDeviceSelection
+        && (params.surface ?? 'tts') === 'tts'
+        && isDaemonVoiceInferenceTtsLatencyDemoted(params.sessionId)
+    ) {
         return 'device';
     }
 
-    const daemonInferenceEnabled = await isRuntimeFeatureEnabled({
-        featureId: 'voice.daemonInference',
-    }).catch(() => false);
+    if (executionPolicy.preferredExecution === 'device') {
+        return 'device';
+    }
+
+    let daemonInferenceEnabled: boolean;
+    try {
+        daemonInferenceEnabled = await isRuntimeFeatureEnabled({
+            featureId: 'voice.daemonInference',
+        });
+    } catch {
+        throw createDaemonVoiceInferenceClientError(
+            'internal_error',
+            'daemon_voice_inference_feature_probe_failed',
+        );
+    }
     if (!daemonInferenceEnabled) {
-        return 'device';
+        throw createDaemonVoiceInferenceClientError('feature_disabled');
     }
 
-    return executionPolicy.preferredExecution;
+    return 'daemon';
 }

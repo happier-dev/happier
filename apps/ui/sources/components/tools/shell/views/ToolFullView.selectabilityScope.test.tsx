@@ -67,7 +67,12 @@ describe('ToolFullView (text selection scope)', () => {
       description: 'Run echo hello',
     });
 
-    const screen = await renderScreen(React.createElement(ToolFullView, { tool, metadata: null, messages: [] }));
+    const screen = await renderScreen(React.createElement(ToolFullView, {
+        tool,
+        owningMessageId: 'tool-message-1',
+        metadata: null,
+        messages: [],
+    }));
 
     const hostTextNodes = screen.findAllByType('Text' as any);
     const target = hostTextNodes.find((n) => Array.isArray(n.props.children) ? n.props.children.includes('select me') : n.props.children === 'select me');

@@ -126,7 +126,7 @@ describe('sync sidechain paging', () => {
                             role: 'agent',
                             content: {
                                 type: 'acp',
-                                provider: 'claude',
+                                agentId: 'claude',
                                 data: { type: 'message', message: 'child', sidechainId: 'tool_task_1' },
                             },
                         },

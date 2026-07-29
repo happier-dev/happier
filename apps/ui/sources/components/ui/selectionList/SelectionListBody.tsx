@@ -10,13 +10,14 @@
  *  - `SelectionListOptionRow`              — option row + animated transitions
  *  - `SelectionListDynamicSectionRows`     — skeleton/error/notFound/emptyHint
  *                                            rows + per-section composition
- *  - `SelectionListFlatFlashList`          — flat single-FlashList path + flattening
+ *  - `SelectionListVirtualizedBody`          — flat single virtualized list path + flattening
  *  - `selectionListVirtualizationPolicy`   — eligibility decisions + dev warning
  *
  * This file is the body's composition shell. It decides between three
  * rendering paths based on virtualization policy:
  *   - 0 eligible sections → ScrollView with edge fades
- *   - ≥2 eligible OR stale-eligible → single flat FlashList
+ *   - any eligible section with neighboring sections, or stale-eligible →
+ *     single flat virtualized list
  *   - exactly 1 eligible (non-stale) → per-section `SelectionListVirtualizedSection`
  *
  * R9 (blocker 1): when the body contains only non-virtualized sections, wrap
@@ -26,7 +27,7 @@
  * own scroll. Without this wrapper, lists below the virtualization threshold
  * (up to 50 rows) clip silently when their natural height exceeds maxHeight.
  *
- * Skipped when ANY section is virtualized — FlashList provides its own
+ * Skipped when ANY section is virtualized — virtualized list provides its own
  * scrollable host and a wrapping ScrollView would steal gestures.
  */
 
@@ -34,7 +35,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { SelectionListBodyFlatFlashList } from './SelectionListFlatFlashList';
+import { SelectionListBodyVirtualized } from './SelectionListVirtualizedBody';
 import { SelectionListBodyScrollFrame } from './SelectionListBodyScrollFrame';
 import {
     renderSelectionListSectionNodes,
@@ -42,7 +43,7 @@ import {
 } from './SelectionListDynamicSectionRows';
 import { SelectionListEmptyState } from './SelectionListEmptyState';
 import {
-    planHasMultipleVirtualizedSections,
+    planRequiresFlatVirtualizedList,
     planHasVirtualizedSection,
     resolveVirtualizedSectionIds,
 } from './selectionListVirtualizationPolicy';
@@ -50,6 +51,7 @@ import { selectionListTestId } from './_shared';
 import type { SectionRenderPlan } from './SelectionListRenderPlan';
 import type {
     SelectionListOption,
+    SelectionListPagination,
     SelectionListStep,
 } from './_types';
 
@@ -58,14 +60,14 @@ import type {
 // in the focused sub-modules listed above.
 export {
     planHasVirtualizedSection,
-    planHasMultipleVirtualizedSections,
+    planRequiresFlatVirtualizedList,
     resolveVirtualizedSectionIds,
     resetSelectionListMultiVirtualizationWarningCache,
 } from './selectionListVirtualizationPolicy';
 export {
-    flattenRenderPlanForFlashList,
-    type SelectionListBodyFlashListItem,
-} from './SelectionListFlatFlashList';
+    flattenRenderPlanForVirtualizedList,
+    type SelectionListBodyVirtualizedItem,
+} from './SelectionListVirtualizedBody';
 
 const stylesheet = StyleSheet.create(() => ({
     body: {
@@ -75,7 +77,12 @@ const stylesheet = StyleSheet.create(() => ({
     },
 }));
 
-type ListboxAriaProps = Readonly<{ id: string; role: 'listbox' }>;
+type ListboxAriaProps = Readonly<{
+    id: string;
+    role: 'listbox';
+    accessibilityLabel?: string;
+    'aria-label'?: string;
+}>;
 
 export type SelectionListBodyProps = Readonly<{
     step: SelectionListStep;
@@ -85,9 +92,11 @@ export type SelectionListBodyProps = Readonly<{
     focusedOptionId: string | null;
     scrollTargetOptionId?: string | null;
     listboxId: string;
+    accessibilityLabel?: string;
     onSelect: (id: string, option: SelectionListOption) => void;
     onPushStep: (step: SelectionListStep) => void;
     showsVerticalScrollIndicator?: boolean;
+    pagination?: SelectionListPagination;
     /**
      * FR3-1 / FR3-8 — when `'measure'`, the body is rendered as an
      * identity-free mirror used by `SelectionListAnimatedHeight` for height
@@ -106,14 +115,35 @@ export function SelectionListBody(props: SelectionListBodyProps): React.ReactEle
     const styles = stylesheet;
     const plan = props.plan;
     const isMeasure = props.mode === 'measure';
+    const optionPositions = React.useMemo(() => {
+        const byId = new Map<string, number>();
+        let position = 0;
+        for (const section of plan) {
+            for (const option of section.options) {
+                position += 1;
+                byId.set(option.id, position);
+            }
+        }
+        return { byId, setSize: position };
+    }, [plan]);
     // FR3-1 / FR3-8 — in measure mode every identity / accessibility prop on
     // host elements the body owns is suppressed so the hidden measure mirror
     // never duplicates listbox / option ids in the live DOM. We still render
     // identical layout (same components, same heights) so the measure host
     // reports the correct natural height.
+    const accessibilityLabel = props.accessibilityLabel?.trim();
     const listboxAria: ListboxAriaProps | null = isMeasure
         ? null
-        : { id: props.listboxId, role: 'listbox' };
+        : {
+            id: props.listboxId,
+            role: 'listbox',
+            ...(accessibilityLabel
+                ? {
+                    accessibilityLabel,
+                    'aria-label': accessibilityLabel,
+                }
+                : {}),
+        };
     const bodyTestId = isMeasure
         ? undefined
         : selectionListTestId(props.rootTestID, 'body');
@@ -127,12 +157,13 @@ export function SelectionListBody(props: SelectionListBodyProps): React.ReactEle
         : null;
     // RV-9: branch the body on virtualization-eligibility.
     //   - 0 eligible → ScrollView path (small lists scroll past maxHeight)
-    //   - 1 eligible → SelectionListVirtualizedSection (existing path; one
-    //     FlashList owns the scroll)
-    //   - ≥2 eligible → single flat FlashList covering the entire body
-    //     (avoids the nested FlashList-in-ScrollView anti-pattern)
-    const ownsScrollViaFlashList = planHasVirtualizedSection(plan);
-    const useFlatFlashListPath = planHasMultipleVirtualizedSections(plan);
+    //   - 1 eligible and no neighboring sections →
+    //     SelectionListVirtualizedSection (one virtualized list owns the body)
+    //   - eligible with neighbors → single flat virtualized list covering the body
+    //     (avoids competing section/body scroll owners)
+    const ownsScrollViaVirtualizedList = planHasVirtualizedSection(plan);
+    const useFlatVirtualizedListPath = props.pagination !== undefined
+        || planRequiresFlatVirtualizedList(plan);
 
     if (plan.length === 0) {
         return (
@@ -154,9 +185,9 @@ export function SelectionListBody(props: SelectionListBodyProps): React.ReactEle
         );
     }
 
-    if (useFlatFlashListPath) {
+    if (useFlatVirtualizedListPath) {
         return (
-            <SelectionListBodyFlatFlashList
+            <SelectionListBodyVirtualized
                 rootTestID={props.rootTestID}
                 listboxAria={listboxAria}
                 plan={plan}
@@ -167,6 +198,7 @@ export function SelectionListBody(props: SelectionListBodyProps): React.ReactEle
                 onPushStep={props.onPushStep}
                 measureMode={isMeasure}
                 showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
+                pagination={props.pagination}
             />
         );
     }
@@ -180,6 +212,8 @@ export function SelectionListBody(props: SelectionListBodyProps): React.ReactEle
         focusedOptionId: props.focusedOptionId,
         onSelect: props.onSelect,
         onPushStep: props.onPushStep,
+        optionPositionById: optionPositions.byId,
+        optionSetSize: optionPositions.setSize,
         measureMode: isMeasure,
         showsVerticalScrollIndicator: props.showsVerticalScrollIndicator === true,
     };
@@ -189,7 +223,7 @@ export function SelectionListBody(props: SelectionListBodyProps): React.ReactEle
         sectionRenderCtx,
     );
 
-    if (!ownsScrollViaFlashList) {
+    if (!ownsScrollViaVirtualizedList) {
         if (isMeasure) {
             // In measure mode skip the BodyScrollWithEdgeFades wrapper entirely
             // — its testIDs and listbox role are identity props and the

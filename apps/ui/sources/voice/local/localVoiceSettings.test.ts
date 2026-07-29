@@ -14,15 +14,17 @@ describe('localVoiceSettings', () => {
       resolveLocalVoiceAdapterSettings({
         voice: {
           providerId: ' local_direct ',
-          adapters: {
-            local_direct: { sentinel: 'direct' },
-            local_conversation: { sentinel: 'conversation' },
+          providers: {
+            local_direct: {
+              schemaVersion: 1,
+              config: { networkTimeoutMs: 12_345 },
+            },
           },
         },
       }),
-    ).toEqual({
+    ).toMatchObject({
       adapterId: 'local_direct',
-      config: { sentinel: 'direct' },
+      config: { networkTimeoutMs: 12_345 },
     });
   });
 
@@ -31,11 +33,11 @@ describe('localVoiceSettings', () => {
       resolveLocalSttProvider({
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               stt: { provider: ' device ' },
               handsFree: { enabled: true },
-            },
+            } },
           },
         },
       }),
@@ -45,11 +47,11 @@ describe('localVoiceSettings', () => {
       isHandsFreeDeviceSttEnabled({
         voice: {
           providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
+          providers: {
+            local_conversation: { schemaVersion: 1, config: {
               stt: { provider: ' device ' },
               handsFree: { enabled: true },
-            },
+            } },
           },
         },
       }),
@@ -83,5 +85,74 @@ describe('localVoiceSettings', () => {
         voice: 'alloy',
       },
     });
+  });
+
+  it('migrates legacy Google speech fields into versioned provider envelopes without retaining vendor fields', () => {
+    const stt = parseLocalVoiceSttSettings({
+      provider: 'google_gemini',
+      googleGemini: { model: 'gemini-test', language: 'fr' },
+    });
+    const tts = parseLocalVoiceTtsSettings({
+      provider: 'google_cloud',
+      googleCloud: { voiceName: 'fr-FR-Test-A', languageCode: 'fr-FR', format: 'wav' },
+    });
+
+    expect(stt).toMatchObject({
+      provider: 'google_gemini',
+      providers: {
+        google_gemini: {
+          schemaVersion: 1,
+          config: { model: 'gemini-test', language: 'fr' },
+        },
+      },
+    });
+    expect(tts).toMatchObject({
+      provider: 'google_cloud',
+      providers: {
+        google_cloud: {
+          schemaVersion: 1,
+          config: { voiceName: 'fr-FR-Test-A', languageCode: 'fr-FR', format: 'wav' },
+        },
+      },
+    });
+    expect(stt).not.toHaveProperty('googleGemini');
+    expect(tts).not.toHaveProperty('googleCloud');
+  });
+
+  it('preserves unknown provider envelopes inertly across disable and reinstall parsing', () => {
+    const stored = {
+      provider: 'acme_speech',
+      providers: {
+        acme_speech: {
+          schemaVersion: 7,
+          config: { model: 'acme-v7', nested: { enabled: true } },
+        },
+      },
+    };
+
+    const whileDisabled = parseLocalVoiceSttSettings(stored);
+    const afterReinstall = parseLocalVoiceSttSettings(JSON.parse(JSON.stringify(whileDisabled)));
+
+    expect(whileDisabled.provider).toBe('acme_speech');
+    expect(whileDisabled.providers.acme_speech).toEqual(stored.providers.acme_speech);
+    expect(afterReinstall).toEqual(whileDisabled);
+  });
+
+  it('rejects provider records that exceed the host storage bounds', () => {
+    const tooManyProviders = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [
+      `provider_${index}`,
+      { schemaVersion: 1, config: {} },
+    ]));
+    expect(() => parseLocalVoiceSttSettings({
+      provider: 'openai_compat',
+      providers: tooManyProviders,
+    })).toThrow();
+
+    expect(() => parseLocalVoiceTtsSettings({
+      provider: 'openai_compat',
+      providers: {
+        acme_speech: { schemaVersion: 1, config: { payload: 'é'.repeat(140_000) } },
+      },
+    })).toThrow();
   });
 });

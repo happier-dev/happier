@@ -34,3 +34,5 @@ export function buildTranscriptRenderSignature(session: object): string {
 
     return buildStableJsonSignature(signatureValue);
 }
+
+export const buildSessionTranscriptRenderSignature = buildTranscriptRenderSignature;

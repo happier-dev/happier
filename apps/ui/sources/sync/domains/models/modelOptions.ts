@@ -1,13 +1,17 @@
 import type { ModelMode } from '../permissions/permissionTypes';
 import { t } from '@/text';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 import type { Metadata } from '../state/storageTypes';
 import type { AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import {
     getAgentStaticModels,
+    isFreeformModelIdAllowed,
     LEGACY_ACP_SESSION_MODELS_STATE_KEY,
     readMetadataAliasValue,
+    resolveModelSelectionIntentFromSessionMetadata,
     SESSION_MODELS_STATE_KEY,
+    type AgentModelConfig,
 } from '@happier-dev/agents';
 
 export type AgentType = AgentId;
@@ -27,10 +31,19 @@ export type PreflightModelList = Readonly<{
         modelOptions?: readonly AcpConfigOption[];
     }>>;
     supportsFreeform: boolean;
+    unavailable?: boolean;
 }>;
 
+export function createUnavailablePreflightModelList(): PreflightModelList {
+    return {
+        availableModels: [],
+        supportsFreeform: false,
+        unavailable: true,
+    };
+}
+
 type SessionModelListState = Readonly<{
-    provider?: string;
+    agentId?: string;
     availableModels?: Array<{
         id?: unknown;
         name?: unknown;
@@ -87,10 +100,9 @@ function mergeModelOptionsWithCatalog(params: Readonly<{
 function appendSelectedFreeformModelOption(params: Readonly<{
     options: readonly ModelOption[];
     selectedModelId: string;
-    supportsFreeform: boolean;
+    modelConfig: AgentModelConfig;
 }>): readonly ModelOption[] {
-    if (!params.supportsFreeform) return params.options;
-    if (!params.selectedModelId) return params.options;
+    if (!isFreeformModelIdAllowed(params.modelConfig, params.selectedModelId)) return params.options;
     if (params.options.some((option) => option.value === params.selectedModelId)) return params.options;
     return [
         ...params.options,
@@ -106,24 +118,45 @@ function readSessionModelListState(metadata: Metadata | null | undefined): Sessi
     ) ?? null;
 }
 
-function readSelectedModelOverrideId(metadata: Metadata | null | undefined): string {
-    const metadataModelOverrideRaw = (metadata as any)?.modelOverrideV1 as { modelId?: unknown } | undefined;
-    return typeof metadataModelOverrideRaw?.modelId === 'string' ? metadataModelOverrideRaw.modelId.trim() : '';
+function readSelectedModelOverrideId(agentType: AgentType, metadata: Metadata | null | undefined): string {
+    const intent = resolveModelSelectionIntentFromSessionMetadata(
+        metadata,
+        buildAgentUniverseBackendTargetKey(agentType),
+    );
+    return typeof intent?.selection?.modelId === 'string' ? intent.selection.modelId.trim() : '';
 }
 
 function supportsDynamicSessionModelList(agentType: AgentType): boolean {
     return getAgentCore(agentType).model.dynamicProbe !== 'static-only';
 }
 
+function normalizeTargetKey(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function isPreflightListCurrentForTarget(params: Readonly<{
+    preflightTargetKey?: string | null;
+    currentTargetKey?: string | null;
+}>): boolean {
+    const preflightTargetKey = normalizeTargetKey(params.preflightTargetKey);
+    const currentTargetKey = normalizeTargetKey(params.currentTargetKey);
+    if (!currentTargetKey) return true;
+    return Boolean(preflightTargetKey) && preflightTargetKey === currentTargetKey;
+}
+
 export function getModelOptionsForPreflightModelList(list: PreflightModelList): readonly ModelOption[] {
     const dynamic = (list.availableModels ?? [])
-        .filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string')
-        .map((m) => ({
-            value: String(m.id),
-            label: String(m.name),
-            description: typeof m.description === 'string' ? m.description : '',
-            ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0 ? { modelOptions: m.modelOptions } : {}),
-        }));
+        .flatMap((m) => {
+            const value = typeof m?.id === 'string' ? m.id.trim() : '';
+            const label = typeof m?.name === 'string' ? m.name.trim() : '';
+            if (!value || !label) return [];
+            return [{
+                value,
+                label,
+                description: typeof m.description === 'string' ? m.description : '',
+                ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0 ? { modelOptions: m.modelOptions } : {}),
+            }];
+        });
 
     const withDefault: ModelOption[] = [
         { value: 'default', label: getModelLabel('default'), description: '' },
@@ -140,7 +173,7 @@ export function hasDynamicModelListForSession(agentType: AgentType, metadata: Me
     const state = readSessionModelListState(metadata);
     return Boolean(
         state &&
-        state.provider === agentType &&
+        state.agentId === agentType &&
         Array.isArray(state.availableModels) &&
         state.availableModels.length > 0,
     );
@@ -217,24 +250,33 @@ export function getModelOptionsForAgentType(agentType: AgentType): readonly Mode
 export function getModelOptionsForAgentTypeOrPreflight(params: {
     agentType: AgentType;
     preflight: PreflightModelList | null | undefined;
+    preflightTargetKey?: string | null;
+    currentTargetKey?: string | null;
 }): readonly ModelOption[] {
+    if (!isPreflightListCurrentForTarget(params)) {
+        return getModelOptionsForAgentType(params.agentType);
+    }
+    if (params.preflight?.unavailable === true) {
+        return [];
+    }
     if (params.preflight && Array.isArray(params.preflight.availableModels) && params.preflight.availableModels.length > 0) {
         const preflightOptions = getModelOptionsForPreflightModelList(params.preflight);
         const catalogOptions = getModelOptionsForAgentType(params.agentType);
         return mergeModelOptionsWithCatalog({
             options: preflightOptions,
             catalogOptions,
-            appendMissingCatalogOptions: true,
+            appendMissingCatalogOptions: params.preflight.supportsFreeform === true,
         });
     }
     return getModelOptionsForAgentType(params.agentType);
 }
 
 function resolveModelOptionsForSession(agentType: AgentType, metadata: Metadata | null | undefined): readonly ModelOption[] {
+    const modelConfig = getAgentCore(agentType).model;
     const supportsFreeform = supportsFreeformModelSelectionForSession(agentType, metadata);
-    const selectedModelId = readSelectedModelOverrideId(metadata);
+    const selectedModelId = readSelectedModelOverrideId(agentType, metadata);
     const state = supportsDynamicSessionModelList(agentType) ? readSessionModelListState(metadata) : null;
-    if (state && state.provider === agentType && Array.isArray(state.availableModels) && state.availableModels.length > 0) {
+    if (state && state.agentId === agentType && Array.isArray(state.availableModels) && state.availableModels.length > 0) {
         const catalogOptions = getModelOptionsForAgentType(agentType);
 
         const dynamic = state.availableModels
@@ -264,7 +306,7 @@ function resolveModelOptionsForSession(agentType: AgentType, metadata: Metadata 
                 appendMissingCatalogOptions: supportsFreeform,
             }),
             selectedModelId,
-            supportsFreeform,
+            modelConfig,
         });
     }
 
@@ -273,7 +315,7 @@ function resolveModelOptionsForSession(agentType: AgentType, metadata: Metadata 
     return appendSelectedFreeformModelOption({
         options: base,
         selectedModelId,
-        supportsFreeform,
+        modelConfig,
     });
 }
 
@@ -287,7 +329,7 @@ export function isModelSelectableForSession(agentType: AgentType, metadata: Meta
 
     const allowed = getSelectableModelIdsForSession(agentType, metadata);
     if ((allowed as readonly string[]).includes(normalized)) return true;
-    return supportsFreeformModelSelectionForSession(agentType, metadata);
+    return isFreeformModelIdAllowed(getAgentCore(agentType).model, normalized);
 }
 
 export function getModelOptionsForSession(agentType: AgentType, metadata: Metadata | null | undefined): readonly ModelOption[] {
@@ -299,10 +341,10 @@ export function getModelOptionsForSession(agentType: AgentType, metadata: Metada
  * suffixes: Claude models a 1M context window as `<id>[1m]`, so a selected variant id
  * must still resolve to its base catalog option (label, description, modelOptions).
  */
-export function findModelOptionForEffectiveModelId(
-    options: readonly ModelOption[],
+export function findModelOptionForEffectiveModelId<T extends Readonly<{ value: string }>>(
+    options: readonly T[],
     effectiveModelId: string | null | undefined,
-): ModelOption | null {
+): T | null {
     const raw = typeof effectiveModelId === 'string' ? effectiveModelId.trim() : '';
     if (!raw) return null;
     const exact = options.find((option) => option.value === raw);

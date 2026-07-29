@@ -1,19 +1,15 @@
-import { sync } from '@/sync/sync';
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { resolveKokoroDaemonTtsPackId } from '@/voice/kokoro/assets/resolveKokoroDaemonTtsPackId';
 import { resolveKokoroOperationTimeoutMs } from '@/voice/kokoro/config/kokoroConfig';
 import { speakDeviceText } from '@/voice/local/speakDeviceText';
-import { speakGoogleCloudText } from '@/voice/output/GoogleCloudTtsController';
 import { speakKokoroText } from '@/voice/output/KokoroTtsController';
 import { speakOpenAiCompatText } from '@/voice/output/TtsController';
 import { DaemonTtsController } from '@/voice/runtime/daemonInference/DaemonTtsController';
-import {
-    resolveDaemonVoiceInferenceExecution,
-    resolveLocalNeuralExecutionPolicy,
-} from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
+import { resolveDaemonVoiceInferenceExecution } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import type { VoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
+import { readLocalSpeechProviderEnvelope } from '@/sync/domains/settings/voiceLocalSpeechProviderSettings';
 
 export type LocalVoiceTtsRequest = Readonly<{
     sessionId?: string | null;
@@ -25,15 +21,16 @@ export type LocalVoiceTtsRequest = Readonly<{
     onSpeaking: () => void;
     /**
      * Surface a non-fallback TTS synthesis/playback failure to the runtime as a
-     * recoverable `tts_failed` machine error (audit Finding 7). Optional so
-     * callers that treat TTS as pure best-effort can omit it.
+     * recoverable `tts_failed` machine error. Callers that omit the callback
+     * receive the same typed fields on the rejected error.
      */
     onTtsFailed?: (error: VoiceMachineError) => void;
 }>;
 
 /** True when an error is an abort/interrupt rather than a genuine synth failure. */
 function isTtsAbortError(error: unknown): boolean {
-    const candidate = error as { name?: unknown; message?: unknown } | null;
+    const candidate = error as { code?: unknown; name?: unknown; message?: unknown } | null;
+    if (candidate?.code === 'cancelled') return true;
     if (candidate?.name === 'AbortError') return true;
     const message = typeof candidate?.message === 'string'
         ? candidate.message
@@ -48,10 +45,15 @@ function reportTtsFailure(ctx: LocalVoiceTtsRequest, error: unknown): void {
     if (isTtsAbortError(error)) {
         return;
     }
-    ctx.onTtsFailed?.(createVoiceMachineError({
+    const machineError = createVoiceMachineError({
         kind: 'tts_failed',
         reason: error instanceof Error && error.message ? error.message : 'tts_failed',
-    }));
+    });
+    if (ctx.onTtsFailed) {
+        ctx.onTtsFailed(machineError);
+        return;
+    }
+    throw Object.assign(new Error(machineError.reason), machineError);
 }
 
 export type LocalVoiceTtsProviderId = VoiceLocalTtsSettings['provider'];
@@ -94,9 +96,7 @@ async function speakWithDeviceSpeech(ctx: LocalVoiceTtsRequest): Promise<void> {
             abortController.abort();
         });
         try {
-            // `onSpeaking` fires inside speakDeviceText only after we commit to
-            // speaking (and not when the signal is already aborted), so the
-            // `speaking` transition happens only once audio actually starts.
+            // `onSpeaking` fires from Expo Speech's actual playback-start event.
             await speakDeviceText(ctx.text, ctx.onSpeaking, { signal: abortController.signal });
         } catch (error) {
             reportTtsFailure(ctx, error);
@@ -113,43 +113,21 @@ async function speakWithLocalNeuralDeviceRuntime(
         speed: number;
         voiceId: string;
     }>,
-): Promise<boolean> {
-    ctx.onSpeaking();
-    return await speakKokoroText({
-        text: ctx.text,
-        assetSetId: params.assetSetId,
-        voiceId: params.voiceId,
-        speed: params.speed,
-        timeoutMs: resolveKokoroOperationTimeoutMs(ctx.networkTimeoutMs),
-        registerPlaybackStopper: ctx.registerPlaybackStopper,
-    })
-        .then(() => true)
-        .catch(() => false);
+): Promise<void> {
+    try {
+        await speakKokoroText({
+            text: ctx.text,
+            assetSetId: params.assetSetId,
+            voiceId: params.voiceId,
+            speed: params.speed,
+            timeoutMs: resolveKokoroOperationTimeoutMs(ctx.networkTimeoutMs),
+            registerPlaybackStopper: ctx.registerPlaybackStopper,
+            onPlaybackStarted: ctx.onSpeaking,
+        });
+    } catch (error) {
+        reportTtsFailure(ctx, error);
+    }
 }
-
-function readDaemonVoiceInferenceErrorCode(error: unknown): string {
-    return error && typeof error === 'object' && 'code' in error
-        ? String((error as { code?: unknown }).code ?? '')
-        : '';
-}
-
-function shouldFallbackFromDaemonLocalNeuralTtsError(error: unknown): boolean {
-    const code = readDaemonVoiceInferenceErrorCode(error);
-    return code === 'feature_disabled'
-        || code === 'machine_unreachable'
-        || code === 'runtime_unavailable'
-        || code === 'model_not_installed'
-        || code === 'request_timeout'
-        || code === 'unsupported_codec'
-        || code === 'download_failed'
-        || code === 'internal_error';
-}
-
-function isDaemonLocalNeuralTtsCancelled(error: unknown): boolean {
-    return readDaemonVoiceInferenceErrorCode(error) === 'cancelled';
-}
-
-type DaemonLocalNeuralTtsAttemptResult = 'ok' | 'fallback' | 'cancelled';
 
 async function speakWithLocalNeuralDaemonRuntime(
     ctx: LocalVoiceTtsRequest,
@@ -158,106 +136,47 @@ async function speakWithLocalNeuralDaemonRuntime(
         speed: number;
         voiceId: string;
     }>,
-): Promise<DaemonLocalNeuralTtsAttemptResult> {
-    return await new DaemonTtsController().speak({
-        sessionId: ctx.sessionId ?? null,
-        text: ctx.text,
-        packId: resolveKokoroDaemonTtsPackId(params.assetSetId),
-        voiceId: params.voiceId,
-        speed: params.speed,
-        registerPlaybackStopper: ctx.registerPlaybackStopper,
-        onSpeaking: ctx.onSpeaking,
-    })
-        .then(() => 'ok' as const)
-        .catch((error) => {
-            if (isDaemonLocalNeuralTtsCancelled(error)) {
-                return 'cancelled';
-            }
-            if (shouldFallbackFromDaemonLocalNeuralTtsError(error)) {
-                return 'fallback';
-            }
-            // Daemon TTS is a best-effort path; if it fails for an unexpected reason
-            // (e.g. daemon down, network error, or a non-RPC exception), fall back to
-            // device speech instead of bubbling the error to the voice runtime.
-            return 'fallback';
+): Promise<void> {
+    try {
+        await new DaemonTtsController().speak({
+            sessionId: ctx.sessionId ?? null,
+            text: ctx.text,
+            packId: resolveKokoroDaemonTtsPackId(params.assetSetId),
+            voiceId: params.voiceId,
+            speed: params.speed,
+            registerPlaybackStopper: ctx.registerPlaybackStopper,
+            onSpeaking: ctx.onSpeaking,
         });
+    } catch (error) {
+        reportTtsFailure(ctx, error);
+    }
 }
 
 async function speakWithLocalNeuralTts(ctx: LocalVoiceTtsRequest): Promise<void> {
     const localNeural = normalizeLocalNeuralTtsSettings(ctx.tts);
     if (localNeural.model !== 'kokoro') {
+        reportTtsFailure(ctx, new Error('local_neural_tts_model_unavailable'));
         return;
     }
 
-    const executionPolicy = resolveLocalNeuralExecutionPolicy({
-        requestedExecution: localNeural.execution,
-    });
-    const resolvedExecution = await resolveDaemonVoiceInferenceExecution({
-        requestedExecution: localNeural.execution,
-        sessionId: ctx.sessionId ?? null,
-        surface: 'tts',
-    });
+    let resolvedExecution: 'device' | 'daemon';
+    try {
+        resolvedExecution = await resolveDaemonVoiceInferenceExecution({
+            requestedExecution: localNeural.execution,
+            sessionId: ctx.sessionId ?? null,
+            surface: 'tts',
+        });
+    } catch (error) {
+        reportTtsFailure(ctx, error);
+        return;
+    }
 
     if (resolvedExecution === 'daemon') {
-        const attempt = await speakWithLocalNeuralDaemonRuntime(ctx, localNeural);
-        if (attempt === 'ok' || attempt === 'cancelled') {
-            return;
-        }
-
-        if (executionPolicy.allowDeviceSelection) {
-            const ok = await speakWithLocalNeuralDeviceRuntime(ctx, localNeural);
-            if (ok) {
-                return;
-            }
-        }
-
-        await speakWithDeviceSpeech(ctx);
+        await speakWithLocalNeuralDaemonRuntime(ctx, localNeural);
         return;
     }
 
-    const ok = executionPolicy.preferredExecution === 'device'
-        ? await speakWithLocalNeuralDeviceRuntime(ctx, localNeural)
-        : false;
-
-    if (ok) {
-        return;
-    }
-
-    await speakWithDeviceSpeech(ctx);
-}
-
-async function speakWithGoogleCloudTts(ctx: LocalVoiceTtsRequest): Promise<void> {
-    const googleCloud = (ctx.tts.googleCloud ?? null) as any;
-    const apiKey = googleCloud?.apiKey ? (sync.decryptSecretValue(googleCloud.apiKey) ?? null) : null;
-    if (!apiKey) {
-        return;
-    }
-
-    const voiceName = typeof googleCloud?.voiceName === 'string' && googleCloud.voiceName.trim() ? googleCloud.voiceName.trim() : null;
-    const languageCode =
-        typeof googleCloud?.languageCode === 'string' && googleCloud.languageCode.trim() ? googleCloud.languageCode.trim() : null;
-    const androidCertSha1 =
-        typeof googleCloud?.androidCertSha1 === 'string' && googleCloud.androidCertSha1.trim()
-            ? googleCloud.androidCertSha1.trim()
-            : null;
-    const format = googleCloud?.format === 'wav' ? 'wav' : 'mp3';
-    const speakingRate =
-        typeof googleCloud?.speakingRate === 'number' && Number.isFinite(googleCloud.speakingRate) ? googleCloud.speakingRate : null;
-    const pitch = typeof googleCloud?.pitch === 'number' && Number.isFinite(googleCloud.pitch) ? googleCloud.pitch : null;
-
-    ctx.onSpeaking();
-    await speakGoogleCloudText({
-        apiKey,
-        androidCertSha1,
-        input: ctx.text,
-        voiceName,
-        languageCode,
-        format,
-        speakingRate,
-        pitch,
-        timeoutMs: ctx.networkTimeoutMs,
-        registerPlaybackStopper: ctx.registerPlaybackStopper,
-    }).catch((error) => reportTtsFailure(ctx, error));
+    await speakWithLocalNeuralDeviceRuntime(ctx, localNeural);
 }
 
 async function speakWithOpenAiCompatTts(ctx: LocalVoiceTtsRequest): Promise<void> {
@@ -265,29 +184,70 @@ async function speakWithOpenAiCompatTts(ctx: LocalVoiceTtsRequest): Promise<void
     if (!baseUrl) {
         return;
     }
-    const apiKey = ctx.tts.openaiCompat.apiKey ? (sync.decryptSecretValue(ctx.tts.openaiCompat.apiKey) ?? null) : null;
     const model = ctx.tts.openaiCompat.model ?? 'tts-1';
     const voice = ctx.tts.openaiCompat.voice ?? 'alloy';
     const format = (ctx.tts.openaiCompat.format ?? 'mp3') as 'mp3' | 'wav';
 
-    ctx.onSpeaking();
     await speakOpenAiCompatText({
         baseUrl,
-        apiKey,
+        insecureLocalOriginConsent: ctx.tts.openaiCompat.insecureLocalOriginConsent ?? null,
+        insecureLocalConsentMachineId: ctx.tts.openaiCompat.insecureLocalConsentMachineId ?? null,
+        credentialKind: 'tts_api_key',
         model,
         voice,
         format,
         input: ctx.text,
-        timeoutMs: ctx.networkTimeoutMs,
         registerPlaybackStopper: ctx.registerPlaybackStopper,
+        onPlaybackStarted: ctx.onSpeaking,
     }).catch((error) => reportTtsFailure(ctx, error));
 }
 
-export function createDefaultLocalVoiceTtsProviderControllers(): Record<LocalVoiceTtsProviderId, LocalVoiceTtsProviderController> {
-    return {
-        device: { speak: speakWithDeviceSpeech },
-        google_cloud: { speak: speakWithGoogleCloudTts },
-        local_neural: { speak: speakWithLocalNeuralTts },
-        openai_compat: { speak: speakWithOpenAiCompatTts },
-    };
+export async function speakWithBundledSpeechTts(
+    providerId: string,
+    ctx: LocalVoiceTtsRequest,
+): Promise<boolean> {
+    // Loading the complete first-party registry while the built-in TTS controller
+    // module initializes creates a registry -> runtime -> TTS cycle. Resolve the
+    // optional bundled leaf only when a selected non-built-in provider is used.
+    const [registryModule, runtimeModule, descriptorModule] = await Promise.all([
+        import('@/voice/registry/defaultRegistry'),
+        import('@/voice/runtime/bundledSpeech/bundledSpeechRuntime'),
+        import('@/voice/settings/panels/bundledSpeech/descriptor'),
+    ]);
+    const registry = registryModule.createDefaultVoiceProviderRegistry();
+    const contribution = registry.get(providerId);
+    if (
+        contribution?.source.kind !== 'bundled'
+        || contribution.kind !== 'voice.speech-engine.v1'
+        || (contribution.role !== 'tts' && contribution.role !== 'both')
+    ) {
+        return false;
+    }
+    const descriptor = descriptorModule.readBundledSpeechSettingsDescriptorFromEntry(
+        providerId,
+        contribution,
+    );
+    if (!descriptor || descriptor.role !== 'tts') return false;
+    const runtime = runtimeModule.createBundledSpeechRuntime({ registry });
+    const envelope = readLocalSpeechProviderEnvelope(ctx.tts, providerId);
+    await runtime.speak(providerId, {
+        text: ctx.text,
+        providerConfig: envelope === null
+            ? descriptor.defaultConfig
+            : envelope.schemaVersion === descriptor.schemaVersion
+                ? envelope.config
+                : null,
+        registerPlaybackStopper: ctx.registerPlaybackStopper,
+        onPlaybackStarted: ctx.onSpeaking,
+    }).catch((error) => reportTtsFailure(ctx, error));
+    return true;
+}
+
+export function createDefaultLocalVoiceTtsProviderControllers(): ReadonlyMap<string, LocalVoiceTtsProviderController> {
+    const entries: Array<readonly [string, LocalVoiceTtsProviderController]> = [
+        ['device', { speak: speakWithDeviceSpeech }],
+        ['local_neural', { speak: speakWithLocalNeuralTts }],
+        ['openai_compat', { speak: speakWithOpenAiCompatTts }],
+    ];
+    return new Map(entries);
 }

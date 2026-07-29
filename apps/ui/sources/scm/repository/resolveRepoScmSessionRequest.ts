@@ -4,6 +4,7 @@ import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/proje
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 function normalizeNonEmptyString(value: unknown): string | null {
     if (typeof value !== 'string') {
@@ -33,6 +34,7 @@ export function resolveRepoScmSessionRequest(input: Readonly<{
     }
 
     const workspaceContext = readSessionWorkspaceContext(state, sessionId);
+    const ownerMetadata = readSessionOwnerMetadataView(session);
     const repoPath = workspaceContext.projectPath ?? workspaceContext.workspacePath;
     const normalizedRepoPath = normalizeNonEmptyString(repoPath);
     if (!normalizedRepoPath) {
@@ -40,13 +42,13 @@ export function resolveRepoScmSessionRequest(input: Readonly<{
     }
 
     const reachableMachineId = readMachineTargetForSession(sessionId)?.machineId ?? null;
-    const sessionMachineId = resolveSessionMachineId(session.metadata);
+    const sessionMachineId = resolveSessionMachineId(ownerMetadata);
     const projectMachineId = normalizeNonEmptyString(workspaceContext.projectMachineId);
     const machineId =
         reachableMachineId
         ?? sessionMachineId
         ?? projectMachineId
-        ?? resolveProjectMachineScopeId(session.metadata ?? {});
+        ?? resolveProjectMachineScopeId(ownerMetadata ?? {});
 
     const machineHomeDir =
         machineId && machineId !== 'unknown'
@@ -54,7 +56,7 @@ export function resolveRepoScmSessionRequest(input: Readonly<{
             : undefined;
     const resolvedPath = resolveAbsolutePath(
         normalizedRepoPath,
-        session.metadata?.homeDir ?? machineHomeDir
+        ownerMetadata?.homeDir ?? machineHomeDir
     );
 
     return {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { getModelOverrideForSpawn } from './modelOverride';
 import type { Session } from '../state/storageTypes';
+import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol';
 
 function buildSession(overrides: Partial<Session> = {}): Session {
     return {
@@ -30,7 +31,7 @@ function buildSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('getModelOverrideForSpawn', () => {
-    it('returns null when local modelModeUpdatedAt is missing', () => {
+    it('returns the persisted selection when local modelModeUpdatedAt is missing', () => {
         expect(
             getModelOverrideForSpawn(
                 buildSession({
@@ -41,11 +42,41 @@ describe('getModelOverrideForSpawn', () => {
                         modelOverrideV1: { v: 1, updatedAt: 1, modelId: 'o4-mini' },
                     },
                 }),
+                'backend:codex',
             ),
-        ).toBeNull();
+        ).toEqual({
+            modelSelection: {
+                v: 1,
+                updatedAt: 1,
+                ref: { agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'o4-mini' },
+            },
+        });
     });
 
-    it('returns null when local modelModeUpdatedAt is not newer than metadata', () => {
+    it('ignores a non-finite local timestamp in favor of persisted metadata', () => {
+        expect(
+            getModelOverrideForSpawn(
+                buildSession({
+                    modelMode: 'local-model',
+                    modelModeUpdatedAt: Number.NaN,
+                    metadata: {
+                        path: '/repo',
+                        host: 'localhost',
+                        modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'persisted-model' },
+                    },
+                }),
+                'backend:codex',
+            ),
+        ).toEqual({
+            modelSelection: {
+                v: 1,
+                updatedAt: 10,
+                ref: { agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'persisted-model' },
+            },
+        });
+    });
+
+    it('returns the persisted selection when local state is not newer than metadata', () => {
         expect(
             getModelOverrideForSpawn(
                 buildSession({
@@ -56,8 +87,15 @@ describe('getModelOverrideForSpawn', () => {
                         modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'o4-mini' },
                     },
                 }),
+                'backend:codex',
             ),
-        ).toBeNull();
+        ).toEqual({
+            modelSelection: {
+                v: 1,
+                updatedAt: 10,
+                ref: { agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'o4-mini' },
+            },
+        });
     });
 
     it('returns null when local mode is default (do not pass --model default)', () => {
@@ -72,6 +110,7 @@ describe('getModelOverrideForSpawn', () => {
                         modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'o4-mini' },
                     },
                 }),
+                'backend:codex',
             ),
         ).toBeNull();
     });
@@ -88,10 +127,14 @@ describe('getModelOverrideForSpawn', () => {
                         modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'o4-mini' },
                     },
                 }),
+                'backend:codex',
             ),
         ).toEqual({
-            modelId: 'o3',
-            modelUpdatedAt: 11,
+            modelSelection: {
+                v: 1,
+                updatedAt: 11,
+                ref: { agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'o3' },
+            },
         });
     });
 
@@ -103,10 +146,14 @@ describe('getModelOverrideForSpawn', () => {
                     modelModeUpdatedAt: 11,
                     metadata: { path: '/repo', host: 'localhost' },
                 }),
+                'backend:codex',
             ),
         ).toEqual({
-            modelId: 'o3',
-            modelUpdatedAt: 11,
+            modelSelection: {
+                v: 1,
+                updatedAt: 11,
+                ref: { agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'o3' },
+            },
         });
     });
 
@@ -122,7 +169,157 @@ describe('getModelOverrideForSpawn', () => {
                         modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'o4-mini' },
                     },
                 }),
+                'backend:codex',
             ),
         ).toBeNull();
+    });
+
+    it('returns a provider-bound canonical metadata selection without losing connection identity', () => {
+        expect(getModelOverrideForSpawn(buildSession({
+            modelModeUpdatedAt: 10,
+            metadata: {
+                path: '/repo',
+                host: 'localhost',
+                modelSelectionIntentV1: SessionModelSelectionIntentV1Schema.parse({
+                    v: 1,
+                    updatedAt: 12,
+                    selection: {
+                        agentTargetKey: 'backend:codex',
+                        providerConnectionId: 'pc_work',
+                        modelId: 'openai/gpt-5.5',
+                    },
+                }),
+            },
+        }), 'backend:codex')).toEqual({
+            modelSelection: {
+                v: 1,
+                updatedAt: 12,
+                ref: {
+                    agentTargetKey: 'backend:codex',
+                    providerConnectionId: 'pc_work',
+                    modelId: 'openai/gpt-5.5',
+                },
+            },
+        });
+    });
+
+    it('does not reinterpret a newer same-id presentation value as a native selection', () => {
+        expect(getModelOverrideForSpawn(buildSession({
+            modelMode: 'shared-id',
+            modelModeUpdatedAt: 30,
+            metadata: {
+                path: '/repo',
+                host: 'localhost',
+                modelSelectionIntentV1: SessionModelSelectionIntentV1Schema.parse({
+                    v: 1,
+                    updatedAt: 20,
+                    selection: {
+                        agentTargetKey: 'backend:codex',
+                        providerConnectionId: 'pc_01J00000000000000000000000',
+                        modelId: 'shared-id',
+                    },
+                }),
+            },
+        }), 'backend:codex')).toEqual({
+            modelSelection: {
+                v: 1,
+                updatedAt: 20,
+                ref: {
+                    agentTargetKey: 'backend:codex',
+                    providerConnectionId: 'pc_01J00000000000000000000000',
+                    modelId: 'shared-id',
+                },
+            },
+        });
+    });
+
+    it('does not let a newer different-id presentation value downgrade a Provider-bound selection', () => {
+        expect(getModelOverrideForSpawn(buildSession({
+            modelMode: 'native-presentation-model',
+            modelModeUpdatedAt: 30,
+            metadata: {
+                path: '/repo',
+                host: 'localhost',
+                modelSelectionIntentV1: SessionModelSelectionIntentV1Schema.parse({
+                    v: 1,
+                    updatedAt: 20,
+                    selection: {
+                        agentTargetKey: 'backend:codex',
+                        providerConnectionId: 'pc_01J00000000000000000000000',
+                        modelId: 'provider-model',
+                    },
+                }),
+            },
+        }), 'backend:codex')).toEqual({
+            modelSelection: {
+                v: 1,
+                updatedAt: 20,
+                ref: {
+                    agentTargetKey: 'backend:codex',
+                    providerConnectionId: 'pc_01J00000000000000000000000',
+                    modelId: 'provider-model',
+                },
+            },
+        });
+    });
+
+    it('does not let a newer local default erase a Provider-bound selection', () => {
+        expect(getModelOverrideForSpawn(buildSession({
+            modelMode: 'default',
+            modelModeUpdatedAt: 30,
+            metadata: {
+                path: '/repo',
+                host: 'localhost',
+                modelSelectionIntentV1: SessionModelSelectionIntentV1Schema.parse({
+                    v: 1,
+                    updatedAt: 20,
+                    selection: {
+                        agentTargetKey: 'backend:codex',
+                        providerConnectionId: 'pc_01J00000000000000000000000',
+                        modelId: 'provider-model',
+                    },
+                }),
+            },
+        }), 'backend:codex')).toEqual({
+            modelSelection: {
+                v: 1,
+                updatedAt: 20,
+                ref: {
+                    agentTargetKey: 'backend:codex',
+                    providerConnectionId: 'pc_01J00000000000000000000000',
+                    modelId: 'provider-model',
+                },
+            },
+        });
+    });
+
+    it('keeps timestamp arbitration for a newer local presentation over native canonical metadata', () => {
+        expect(getModelOverrideForSpawn(buildSession({
+            modelMode: 'newer-native-model',
+            modelModeUpdatedAt: 30,
+            metadata: {
+                path: '/repo',
+                host: 'localhost',
+                modelSelectionIntentV1: SessionModelSelectionIntentV1Schema.parse({
+                    v: 1,
+                    updatedAt: 20,
+                    selection: {
+                        agentTargetKey: 'backend:codex',
+                        providerConnectionId: null,
+                        modelId: 'older-native-model',
+                    },
+                }),
+            },
+        }), 'backend:codex')).toEqual({
+            modelSelection: {
+                v: 1,
+                updatedAt: 30,
+                ref: {
+                    agentTargetKey: 'backend:codex',
+                    providerConnectionId: null,
+                    modelId: 'newer-native-model',
+                },
+            },
+        });
     });
 });

@@ -7,7 +7,9 @@ import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { t } from '@/text';
 import { shadowLevelStyle } from '@/shadowElevation';
 
-import type { UsageRecapCardAccentTone, UsageRecapCardModel } from './buildUsageRecapCardModels';
+import type { UsageRecapCardModel } from './buildUsageRecapCardModels';
+import { usageSignatureAccent } from './usageAccent';
+import { formatIdentifierLabel } from './sections/shared';
 import { UsageActivitySquareMatrix, UsageProgressMeter, UsageRankBars } from './UsageMiniVisuals';
 
 const styles = StyleSheet.create((theme) => ({
@@ -22,26 +24,14 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
-function resolveAccentColor(accentTone: UsageRecapCardAccentTone, theme: ReturnType<typeof useUnistyles>['theme']): string {
-    if (accentTone === 'blue') {
-        return theme.colors.accent.blue;
-    }
-    if (accentTone === 'purple') {
-        return theme.colors.accent.purple;
-    }
-    if (accentTone === 'green') {
-        return theme.colors.accent.green;
-    }
-    return theme.colors.accent.orange;
-}
-
 export function UsageRecapCard(props: Readonly<{
     card: UsageRecapCardModel;
     onShare?: () => void;
 }>): React.ReactElement {
     const { card, onShare } = props;
     const { theme } = useUnistyles();
-    const accentColor = resolveAccentColor(card.accentTone, theme);
+    // ONE-accent system (D-1): every recap meter uses the signature accent.
+    const accentColor = usageSignatureAccent(theme);
 
     const headerAccessory = typeof onShare === 'function'
         ? (
@@ -87,7 +77,7 @@ export function UsageRecapCard(props: Readonly<{
         <MetricCard
             testID={card.testID}
             label={card.label}
-            value={card.value}
+            value={formatIdentifierLabel(card.value)}
             subtitle={card.subtitle}
             valueTone={card.valueTone}
             visual={visual}

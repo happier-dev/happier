@@ -66,4 +66,40 @@ describe('normalizeNodeForView', () => {
 
         expect(normalized).toBe(node);
     });
+
+    it('preserves a single child as a single node (React.Children.only contract)', async () => {
+        const { normalizeNodeForView } = await import('./normalizeNodeForView');
+        function Box(_props: any) { return null; }
+        Box.displayName = 'Box';
+
+        // Mirrors RNGH's GestureDetector web wrapper, which calls
+        // React.Children.only(children); collapsing a single child to a
+        // one-element ARRAY would make it throw.
+        const inner = React.createElement(Box);
+        const node = React.createElement(Box, null, inner);
+        const normalized = normalizeNodeForView(node) as React.ReactElement;
+        const children = (normalized.props as { children?: React.ReactNode }).children;
+
+        expect(Array.isArray(children)).toBe(false);
+        expect(() => React.Children.only(children)).not.toThrow();
+    });
+
+    it('fans out multiple children to an array, preserves Fragment children, and tolerates empty children', async () => {
+        const { normalizeNodeForView } = await import('./normalizeNodeForView');
+        function Box(_props: any) { return null; }
+        Box.displayName = 'Box';
+
+        const multi = React.createElement(Box, null, React.createElement(Box, { key: 'a' }), React.createElement(Box, { key: 'b' }));
+        const normalizedMulti = normalizeNodeForView(multi) as React.ReactElement;
+        const multiChildren = (normalizedMulti.props as { children?: React.ReactNode }).children;
+        expect(Array.isArray(multiChildren)).toBe(true);
+        expect(React.Children.count(multiChildren)).toBe(2);
+
+        const nullChildren = React.createElement(Box, { children: null });
+        expect(() => normalizeNodeForView(nullChildren)).not.toThrow();
+
+        const frag = React.createElement(React.Fragment, null, React.createElement(Box, { key: 'a' }), React.createElement(Box, { key: 'b' }));
+        const normalizedFrag = normalizeNodeForView(frag) as React.ReactElement;
+        expect(React.Children.count((normalizedFrag.props as { children?: React.ReactNode }).children)).toBe(2);
+    });
 });

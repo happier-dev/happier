@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import { useSharedValue } from 'react-native-reanimated';
 
-import { TokenStorage } from '@/auth/storage/tokenStorage';
 import {
     measureWindowBounds,
     TREE_DROP_OVERLAY_KIND_NONE,
@@ -16,14 +15,16 @@ import {
     type TreeViewportMetrics,
 } from '@/components/ui/treeDragDrop';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
-import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import type { SessionFoldersV1 } from '@/sync/domains/session/folders';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type {
     SessionListOrderingModeV1,
     SessionListOrderingSectionMode,
 } from '@/sync/domains/session/listing/sessionListOrderingRules';
-import { setSessionFolderAssignment } from '@/sync/ops/sessionOrganization';
+import {
+    resolveSessionOrganizationMutationScope,
+    writeSessionOrganizationFolderAssignment,
+} from '@/sync/ops/sessionOrganization';
 
 import { applySessionListTreeDropOperation } from './commit/applySessionListTreeDropOperation';
 import { commitSessionListDragIntent } from './drag/commitSessionListDragIntent';
@@ -294,14 +295,16 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         folderId: string | null;
     }>) => {
         if (!folderActionsEnabledRef.current) return;
-        const serverProfile = getServerProfileById(assignment.serverId);
-        if (!serverProfile) throw new Error('Missing server profile for session folder assignment');
-        const credentials = await TokenStorage.getCredentialsForServerUrl(serverProfile.serverUrl, { serverId: serverProfile.id });
-        if (!credentials) throw new Error('Missing server credentials for session folder assignment');
-        await setSessionFolderAssignment({
-            credentials,
-            serverId: assignment.serverId,
-            serverUrl: serverProfile.serverUrl,
+        const result = await resolveSessionOrganizationMutationScope(assignment.serverId);
+        if (!result.ok) {
+            throw new Error(
+                result.reason === 'credentialsUnavailable'
+                    ? 'Missing server credentials for session folder assignment'
+                    : 'Missing server profile for session folder assignment',
+            );
+        }
+        await writeSessionOrganizationFolderAssignment({
+            scope: result.scope,
             sessionId: assignment.sessionId,
             folderId: assignment.folderId,
         });
@@ -322,6 +325,7 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
                 sessionListFolderSortModeV1: folderSortModeRef.current,
                 sessionListOrderingModeV1: sessionListOrderingModeV1Ref.current,
                 sessionListSectionModeV1: sessionListSectionModeV1Ref.current,
+                isFolderOrganizationEnabled: () => folderActionsEnabledRef.current,
                 now: () => Date.now(),
                 setSessionFoldersV1: setSessionFoldersV1Ref.current,
                 setSessionListGroupOrderV1: setSessionListGroupOrderV1Ref.current,
@@ -493,6 +497,7 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
                 sessionListFolderSortModeV1: folderSortModeRef.current,
                 sessionListOrderingModeV1: sessionListOrderingModeV1Ref.current,
                 sessionListSectionModeV1: sessionListSectionModeV1Ref.current,
+                isFolderOrganizationEnabled: () => folderActionsEnabledRef.current,
                 now: () => Date.now(),
                 setSessionFoldersV1: setSessionFoldersV1Ref.current,
                 setSessionListGroupOrderV1: setSessionListGroupOrderV1Ref.current,

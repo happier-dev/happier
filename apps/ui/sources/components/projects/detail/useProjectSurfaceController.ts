@@ -1,16 +1,21 @@
 import * as React from 'react';
-import { useRouter } from 'expo-router';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import {
+    resolveRightSidebarMobileSurface,
+    resolveProjectRightSidebarTabs,
+} from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
 import { useDeviceType } from '@/utils/platform/responsive';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import { PROJECT_ROUTE_ROOT_SENTINEL } from './projectRouteState';
-import { resolveProjectRightTabId, type ProjectRightTabId } from './resolveProjectRightTabId';
+import { resolveProjectRouteSelectionQuery } from './projectRouteState';
+import { resolveProjectRightTabId } from './resolveProjectRightTabId';
 import {
+    normalizeProjectMobileSurface,
     resolveProjectRightTabIdForSurface,
     resolveProjectRoutePathForSurface,
     type ProjectMobileSurface,
 } from '@/components/workspaceCockpit/project/projectCockpitState';
+import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
 
 export function useProjectSurfaceController(params: Readonly<{
     scopeId: string;
@@ -18,23 +23,25 @@ export function useProjectSurfaceController(params: Readonly<{
     activeRootPath: string;
     activeWorktreeId?: string | null;
 }>) {
-    const router = useRouter();
+    const routerRef = useProjectRouteRouterRef();
     const deviceType = useDeviceType();
     const pane = useAppPaneScope(params.scopeId);
-    const activeTab = resolveProjectRightTabId(pane.scopeState?.right.activeTabId);
-    const rawWorktreeId = params.activeRootPath === params.workspaceRef.rootPath
-        ? PROJECT_ROUTE_ROOT_SENTINEL
-        : params.activeWorktreeId ?? null;
+    const activeTab = pane.scopeState?.right.activeTabId ?? resolveProjectRightTabId(null);
+    const routeSelectionQuery = React.useMemo(() => resolveProjectRouteSelectionQuery({
+        activeRootPath: params.activeRootPath,
+        defaultRootPath: params.workspaceRef.rootPath,
+        activeWorktreeId: params.activeWorktreeId,
+    }), [params.activeRootPath, params.activeWorktreeId, params.workspaceRef.rootPath]);
 
     const navigateToSurface = React.useCallback((surface: ProjectMobileSurface) => {
-        router.replace(resolveProjectRoutePathForSurface({
+        routerRef.current.replace(resolveProjectRoutePathForSurface({
             workspaceRefId: params.workspaceRef.id,
             surface,
-            rawWorktreeId,
+            ...routeSelectionQuery,
         }));
-    }, [params.workspaceRef.id, rawWorktreeId, router]);
+    }, [params.workspaceRef.id, routeSelectionQuery, routerRef]);
 
-    const setActiveTab = React.useCallback((tabId: ProjectRightTabId) => {
+    const setActiveTab = React.useCallback((tabId: string) => {
         pane.openRight({ tabId });
         pane.setRightTab(tabId);
         if (deviceType !== 'phone') {
@@ -43,7 +50,16 @@ export function useProjectSurfaceController(params: Readonly<{
         if (activeTab === tabId) {
             return;
         }
-        navigateToSurface(tabId === 'git' ? 'git' : 'browse');
+        const tab = resolveProjectRightSidebarTabs({ presentation: 'mobile' }).find((entry) => entry.id === tabId);
+        // The registry surface vocabulary is shared across scopes (it also carries plugin and
+        // session-only surfaces), so narrow through the project's own owner rather than
+        // re-listing the project surfaces here.
+        const mobileSurface = normalizeProjectMobileSurface(
+            tab ? resolveRightSidebarMobileSurface(tab, 'project') : null,
+        );
+        if (mobileSurface) {
+            navigateToSurface(mobileSurface);
+        }
     }, [activeTab, deviceType, navigateToSurface, pane]);
 
     const syncSurface = React.useCallback((surface: ProjectMobileSurface) => {

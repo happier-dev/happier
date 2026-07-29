@@ -71,6 +71,7 @@ export async function readStoredSessionMessage(params: Readonly<{
             id: message.id,
             seq: message.seq,
             localId: message.localId ?? null,
+            messageRole: message.messageRole ?? null,
             content,
             createdAt: message.createdAt,
         };
@@ -80,5 +81,11 @@ export async function readStoredSessionMessage(params: Readonly<{
         return null;
     }
 
-    return await params.decryptMessage(message);
+    const decrypted = await params.decryptMessage(message);
+    return decrypted
+        ? {
+            ...decrypted,
+            messageRole: decrypted.messageRole ?? message.messageRole ?? null,
+        }
+        : null;
 }

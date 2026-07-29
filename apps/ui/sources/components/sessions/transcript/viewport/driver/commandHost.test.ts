@@ -1,7 +1,7 @@
 import type { MutableRefObject } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { resetFlashListChatListHarness } from '@/dev/testkit';
+import { resetChatListHarness } from '@/dev/testkit';
 import type { TranscriptViewportTelemetryEvent } from '@/components/sessions/transcript/scroll/transcriptViewportTelemetry';
 import type {
     LastNativeRestoreIndexCommand,
@@ -32,11 +32,11 @@ const { createTranscriptViewportCommandHost } = await import(
 );
 
 function setPlatform(platformOs: 'web' | 'ios'): void {
-    resetFlashListChatListHarness({ platformOs });
+    resetChatListHarness({ platformOs });
     platformMockState.os = platformOs;
 }
 
-type ScrollToIndexCall = { index: number; animated?: boolean; viewOffset?: number; viewPosition?: number };
+type ScrollToIndexCall = Parameters<ScrollableChatListRef['scrollToIndex']>[0];
 type ScrollToOffsetCall = { offset: number; animated?: boolean };
 
 type FakeScrollNode = ScrollableChatListRef & {
@@ -171,42 +171,29 @@ function buildDriverDeps(
         listContentHeightRef: { current: overrides.listContentHeight ?? 1200 },
         listLayoutHeightRef: { current: overrides.listLayoutHeight ?? 500 },
         listDataRef: { current: overrides.listData ?? { length: 5 } },
-        itemsRef: { current: { length: 5 } },
-        composerInsetHeightRef: { current: 0 },
-        nativeHotTailHeightRef: { current: 0 },
         lastPinOffsetForIntentRef: { current: null },
-        lastNativePinOffsetRef: { current: null },
         webDomObservation: createWebDomScrollObservation(),
         lastNativeRestoreIndexCommandRef: makeRef<LastNativeRestoreIndexCommand | null>(null),
         nativeMountSettleStable: true,
         telemetryPlatform: overrides.telemetryPlatform ?? 'ios',
-        shouldUseNativeHotColdSplit: false,
-        webHotColdCountsRef: { current: { coldCount: 0, hotCount: 0 } },
-        clearWebPrependRangeReserve: vi.fn(),
-        resolveRestoreAnchorIndex: () => null,
-        resolveJumpToSeqIndex: () => null,
+        resolveRendererDataTarget: () => null,
         resolveWebScrollMetrics: () => overrides.webMetrics ?? null,
         recordViewportTelemetryEvent: (event) => {
             recorded.push(event as RecordedTelemetry);
         },
         recordRestoreDecisionTelemetry: vi.fn(),
         resolveWebViewportTelemetryDiagnostics: () => ({ diag: true }),
-        resolveInvertedBottomPinCarveTelemetryFields: () => ({ carve: true }),
     };
     return { deps, node, recorded };
 }
 
 function createHost(params: Readonly<{
-    clearWebPrependRestoreWindow?: (outcome: string) => void;
     controller: ReturnType<typeof createTranscriptViewportCommandController>;
     deps: TranscriptViewportDriverDeps;
-    hasWebPrependRestoreWindow?: () => boolean;
 }>) {
     return createTranscriptViewportCommandHost({
-        clearWebPrependRestoreWindow: params.clearWebPrependRestoreWindow ?? (() => {}),
         controller: params.controller,
         driverDeps: params.deps,
-        hasWebPrependRestoreWindow: params.hasWebPrependRestoreWindow ?? (() => false),
         isWeb: () => platformMockState.os === 'web',
     });
 }
@@ -268,8 +255,8 @@ describe('transcript viewport command host', () => {
             mode: 'jump-to-bottom',
             force: true,
         }, true)).toBe(true);
-        expect(bundle.node.indexCalls).toEqual([
-            expect.objectContaining({ index: 0, animated: true }),
+        expect(bundle.node.offsetCalls).toEqual([
+            expect.objectContaining({ offset: 700, animated: true }),
         ]);
 
         expect(host.executeWithAnimation({
@@ -278,47 +265,8 @@ describe('transcript viewport command host', () => {
             reason: 'already-at-bottom',
             mode: 'follow-bottom',
         }, true)).toBe(false);
-        expect(bundle.node.indexCalls).toHaveLength(1);
+        expect(bundle.node.offsetCalls).toHaveLength(1);
         expect(bundle.recorded.filter((event) => event.type === 'scroll-write')).toHaveLength(1);
-    });
-
-    it('restoreWebPrependAnchor returns detailed web restore result through the command host', () => {
-        setPlatform('web');
-        const controller = createTranscriptViewportCommandController();
-        controller.resetForSession({ openEntryTransaction: false, sessionId: BASE_SESSION });
-        const metrics = createFakeWebScrollMetrics({ anchorTop: 80, scrollTop: 100 });
-        const bundle = buildDriverDeps({ telemetryPlatform: 'web', webMetrics: metrics });
-        const host = createHost({
-            controller,
-            deps: bundle.deps,
-            hasWebPrependRestoreWindow: () => true,
-        });
-
-        const result = host.restoreWebPrependAnchor({
-            sessionId: BASE_SESSION,
-            anchor: {
-                metrics,
-                anchorTestId: 'transcript-item-row-2',
-                anchorTop: 50,
-                itemTestId: null,
-                itemTop: null,
-                stabilizeForMs: 0,
-                userIntentAtMs: 0,
-                expiresAtMs: Date.now() + 1000,
-            },
-        });
-
-        expect(result).toEqual({ didAdjustScroll: true, strategy: 'anchor' });
-        expect(metrics.element.scrollTop).toBe(130);
-        expect(lastWrite(bundle.recorded, 'scroll-write')).toMatchObject({
-            type: 'scroll-write',
-            writer: 'web-dom-restore',
-            reason: 'prepend-restore',
-            mode: 'restore-anchor',
-            targetOffsetY: 130,
-            layoutHeight: 400,
-            contentHeight: 1000,
-        });
     });
 
     it('restoreWebVisibleAnchor returns detailed web restore result through the command host', () => {
@@ -391,7 +339,22 @@ describe('transcript viewport command host', () => {
 
         expect(result).toEqual({ didAdjustScroll: false, status: 'scroll_requested' });
         expect(getLayout).not.toHaveBeenCalled();
-        expect(node.indexCalls).toEqual([{ index: 1, animated: false }]);
+        expect(node.indexCalls).toEqual([{
+            index: 1,
+            animated: false,
+            viewOffset: 40,
+            viewPosition: 0,
+            context: {
+                anchor: {
+                    itemId: 'old-runtime-m2',
+                    itemOffsetPx: 40,
+                    kind: 'message',
+                    messageId: 'server-m2',
+                    reason: 'entry-restore',
+                },
+                kind: 'entry-placement',
+            },
+        }]);
         expect(node.offsetCalls).toHaveLength(0);
         expect(metrics.element.scrollTop).toBe(0);
         expect(lastWrite(bundle.recorded, 'scroll-write')).toBeUndefined();

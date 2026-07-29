@@ -11,13 +11,12 @@ import {
     resolveSessionRightSidebarTabs,
 } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
 import type { RightSidebarPluginTabDefinition } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
-import { useScopedPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { SessionRightPanelAgentsView } from '@/components/sessions/panes/agents/SessionRightPanelAgentsView';
 import { SessionTranscriptNavigationPane } from '@/components/sessions/panes/SessionTranscriptNavigationPane';
-import { useTranscriptNavigationPaneSnapshot } from '@/components/sessions/transcript/navigation/transcriptNavigationPaneStore';
 import { t } from '@/text';
 import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '../shell/sessionScreenTestIds';
 import { SessionRightPanelBrowserView } from './browser/SessionRightPanelBrowserView';
@@ -93,7 +92,6 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
     const insets = useChromeSafeAreaInsets();
     const pane = useAppPaneScope(props.scopeId);
     const scopeState = pane.scopeState;
-    const transcriptNavigationPaneSnapshot = useTranscriptNavigationPaneSnapshot(props.sessionId);
     const headerPaddingTop = 10;
     const { sidebarTabAvailable: terminalTabAvailable } = useSessionTerminalAvailability();
     const sessionScreenTestIdsEnabled = useSessionScreenTestIdsEnabled();
@@ -132,6 +130,15 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
             pane.setRightTab(activeTab);
         }
     }, [activeTab, pane, scopeState?.right.activeTabId, scopeState?.right.isOpen]);
+
+    const closeNavigationPane = props.onRequestClose ?? pane.closeRight;
+    // On `screen` presentation this panel IS a route of its own and the transcript lives on
+    // another one, so a navigation jump has to bring the transcript back before it can land.
+    // Beside a mounted transcript (the desktop pane) there is nothing to reveal, and closing
+    // the pane on every jump would throw the reader's navigation list away.
+    const revealTranscriptForNavigationJump = props.presentation === 'screen'
+        ? closeNavigationPane
+        : undefined;
 
     const { openFileInDetails, openFileInDetailsPinned } = useSessionFileDetailsOpener(props.scopeId);
     const availableTabIds = React.useMemo(() => new Set(rightPanelTabs.map((tab) => tab.id)), [rightPanelTabs]);
@@ -218,10 +225,8 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
                         testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-surface-navigation')}
                     >
                         <SessionTranscriptNavigationPane
-                            activeEntryId={transcriptNavigationPaneSnapshot.activeEntryId}
-                            entries={transcriptNavigationPaneSnapshot.entries}
-                            onEntryPress={transcriptNavigationPaneSnapshot.onEntryPress ?? (() => {})}
-                            onRequestClose={props.onRequestClose ?? pane.closeRight}
+                            onRequestClose={closeNavigationPane}
+                            onRevealTranscript={revealTranscriptForNavigationJump}
                             sessionId={props.sessionId}
                             testIDPrefix="session-transcript-navigation"
                         />
@@ -277,6 +282,7 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
                                         machineId={pluginProjection.machineId}
                                         serverId={pluginProjection.serverId}
                                         pluginUiProjection={pluginProjection.pluginUiProjection}
+                                        projectionInteractionEnabled={pluginProjection.interactionEnabled}
                                         platform={pluginProjection.platform}
                                     />
                                 </React.Suspense>

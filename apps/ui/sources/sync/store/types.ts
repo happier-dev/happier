@@ -39,7 +39,8 @@ import type { SessionActionDraft } from '../domains/sessionActions/sessionAction
 import type { SessionActionDraftStatus } from '../domains/sessionActions/sessionActionDraftTypes';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import type { WorkspaceScopeBase } from '../domains/workspaces/workspaceScope';
-import type { SessionFoldersDomain } from './domains/sessionFolders';
+import type { SessionOrganizationDomain } from './domains/sessionOrganization';
+import type { SessionListRenderableDelta } from './domains/sessionListIndexFinalization';
 
 export type KnownEntitlements = 'voice' | 'pro';
 export type SessionModelMode = NonNullable<Session['modelMode']>;
@@ -73,6 +74,7 @@ export interface ProfileDomainSlice {
 export interface SessionsDomainSlice {
     sessions: Record<string, Session>;
     sessionListRenderables: Record<string, SessionListRenderableSession>;
+    sessionListRenderableDelta: SessionListRenderableDelta;
     sessionListRowStateByServerId: Readonly<Record<string, Readonly<Record<string, SessionListRenderableSession>>>>;
     sessionListIndexByServerId: Readonly<Record<string, SessionListIndexItem[] | null | undefined>>;
     concurrentSessionListCacheByServerId: ConcurrentSessionListCacheByServerId;
@@ -127,6 +129,8 @@ export interface SessionsDomainSlice {
     clearSessionActionDrafts: (sessionId: string) => void;
     markSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionOptimisticThinking: (sessionId: string) => void;
+    markSessionResuming: (sessionId: string) => void;
+    clearSessionResuming: (sessionId: string) => void;
     clearSessionThinkingGrace: (sessionId: string) => void;
     applySessionTerminalLifecycle: (sessionId: string, turnCompletedAt: number | null) => void;
     markSessionViewed: (sessionId: string) => void;
@@ -152,6 +156,7 @@ export interface MessagesDomainSlice {
     sessionMessages: Record<string, SessionMessages>;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => { changed: string[]; hasReadyEvent: boolean };
     applyMessagesLoaded: (sessionId: string) => void;
+    evictSessionMessages: (sessionId: string) => void;
     resetSessionMessages: (sessionId: string) => void;
     isMutableToolCall: (sessionId: string, callId: string) => boolean;
 }
@@ -159,10 +164,25 @@ export interface MessagesDomainSlice {
 export interface PendingDomainSlice {
     sessionPending: Record<string, SessionPending>;
     applyPendingLoaded: (sessionId: string) => void;
+    applyPendingSnapshot: (sessionId: string, snapshot: Readonly<{
+        messages: PendingMessage[];
+        discarded: DiscardedPendingMessage[];
+    }>) => void;
     applyPendingMessages: (sessionId: string, messages: PendingMessage[]) => void;
     applyDiscardedPendingMessages: (sessionId: string, messages: DiscardedPendingMessage[]) => void;
+    pruneServerPendingMessages: (sessionId: string) => void;
     upsertPendingMessage: (sessionId: string, message: PendingMessage) => void;
     removePendingMessage: (sessionId: string, pendingId: string) => void;
+}
+
+export interface TranscriptLoadingDomainSlice {
+    sessionCatchUpNewerInFlight: Record<string, number>;
+    sessionTailContiguousFloorSeq: Record<string, number>;
+    isSessionCatchingUpNewer: (sessionId: string) => boolean;
+    beginSessionCatchUpNewer: (sessionId: string) => void;
+    endSessionCatchUpNewer: (sessionId: string) => void;
+    getSessionTailContiguousFloorSeq: (sessionId: string) => number | null;
+    setSessionTailContiguousFloorSeq: (sessionId: string, floorSeq: number | null) => void;
 }
 
 export interface RealtimeDomainSlice {
@@ -250,6 +270,13 @@ export interface ProjectDomainSlice {
     updateSessionProjectScmSnapshotError: (
         sessionId: string,
         error: import('../runtime/orchestration/projectManager').ProjectScmSnapshotError | null
+    ) => void;
+    publishSessionProjectScmSnapshots: (
+        publishes: ReadonlyArray<Readonly<{
+            sessionId: string;
+            snapshot: ScmWorkingSnapshot;
+            status: ScmStatus | null;
+        }>>,
     ) => void;
     getSessionProjectScmTouchedPaths: (sessionId: string) => string[];
     markSessionProjectScmTouchedPaths: (sessionId: string, paths: string[]) => void;
@@ -341,10 +368,11 @@ export interface BootstrapSlice {
 export type StorageState = SettingsDomainSlice
     & ProfileDomainSlice
     & SessionsDomainSlice
-    & SessionFoldersDomain
+    & SessionOrganizationDomain
     & MachinesDomainSlice
     & MessagesDomainSlice
     & PendingDomainSlice
+    & TranscriptLoadingDomainSlice
     & RealtimeDomainSlice
     & TodosDomainSlice
     & ArtifactsDomainSlice

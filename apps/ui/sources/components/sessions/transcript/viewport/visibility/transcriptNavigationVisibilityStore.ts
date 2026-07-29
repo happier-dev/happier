@@ -11,6 +11,17 @@ export type NavigationVisibilityStore = Readonly<{
     set: (next: NavigationVisibilitySnapshot | null) => void;
     subscribe: (listener: () => void) => () => void;
     subscriberCount: () => number;
+    /**
+     * Notifies when consumer presence may have changed (a rail/pane mounted or
+     * unmounted). Publication is subscriber-gated, so the arrival of the FIRST
+     * consumer is itself a publish trigger: without it the store stays empty
+     * until the next scroll/layout/content-size change and a reader who opens
+     * the navigation surface sees no current position at all.
+     *
+     * Presence watchers are deliberately NOT data subscribers: watching must not
+     * make `hasSubscribers()` true, or the gate would never close.
+     */
+    subscribeSubscriberPresence: (listener: () => void) => () => void;
 }>;
 
 export const EMPTY_TRANSCRIPT_NAVIGATION_VISIBILITY_SNAPSHOT: NavigationVisibilitySnapshot = Object.freeze({
@@ -61,6 +72,13 @@ export function createTranscriptNavigationVisibilityStore(
 ): NavigationVisibilityStore {
     let snapshot = normalizeSnapshot(initialSnapshot);
     const listeners = new Set<() => void>();
+    const presenceListeners = new Set<() => void>();
+
+    function notifyPresence() {
+        for (const listener of presenceListeners) {
+            listener();
+        }
+    }
 
     return {
         get() {
@@ -79,12 +97,20 @@ export function createTranscriptNavigationVisibilityStore(
         },
         subscribe(listener) {
             listeners.add(listener);
+            notifyPresence();
             return () => {
-                listeners.delete(listener);
+                if (!listeners.delete(listener)) return;
+                notifyPresence();
             };
         },
         subscriberCount() {
             return listeners.size;
+        },
+        subscribeSubscriberPresence(listener) {
+            presenceListeners.add(listener);
+            return () => {
+                presenceListeners.delete(listener);
+            };
         },
     };
 }
@@ -120,17 +146,86 @@ export const transcriptNavigationVisibilityStore = createTranscriptNavigationVis
 
 const noopSubscribe = () => () => {};
 
+function resolveStore(
+    storeOrSessionId: NavigationVisibilityStore | string,
+): NavigationVisibilityStore {
+    return typeof storeOrSessionId === 'string'
+        ? getTranscriptNavigationVisibilityStore(storeOrSessionId)
+        : storeOrSessionId;
+}
+
 export function useTranscriptNavigationVisibilitySnapshot(
     storeOrSessionId: NavigationVisibilityStore | string = transcriptNavigationVisibilityStore,
     options: Readonly<{ enabled?: boolean }> = {},
 ): NavigationVisibilitySnapshot {
     const enabled = options.enabled !== false;
-    const store = typeof storeOrSessionId === 'string'
-        ? getTranscriptNavigationVisibilityStore(storeOrSessionId)
-        : storeOrSessionId;
+    const store = resolveStore(storeOrSessionId);
     return React.useSyncExternalStore(
         enabled ? store.subscribe : noopSubscribe,
         enabled ? store.get : () => EMPTY_TRANSCRIPT_NAVIGATION_VISIBILITY_SNAPSHOT,
         enabled ? store.get : () => EMPTY_TRANSCRIPT_NAVIGATION_VISIBILITY_SNAPSHOT,
     );
+}
+
+/**
+ * Reactive consumer presence for the session's visibility store.
+ *
+ * The host owns publication but must not own the anchor: it needs to know only
+ * WHETHER a navigation surface is listening, which changes at mount/unmount
+ * rate. Reading `hasSubscribers()` during render instead leaves the host blind
+ * to a consumer that arrives later — the store then stays empty until the next
+ * scroll, so opening the navigation panel shows no current position.
+ */
+export function useTranscriptNavigationVisibilityHasSubscribers(
+    storeOrSessionId: NavigationVisibilityStore | string,
+): boolean {
+    const store = resolveStore(storeOrSessionId);
+    const subscribe = React.useCallback(
+        (listener: () => void) => store.subscribeSubscriberPresence(listener),
+        [store],
+    );
+    const read = React.useCallback(() => store.hasSubscribers(), [store]);
+    return React.useSyncExternalStore(subscribe, read, read);
+}
+
+/**
+ * Turn-boundary-rate subscription: a primitive, so a consumer only re-renders
+ * when the reader actually crosses into another anchor — not on every frame
+ * that merely re-derives the same current turn.
+ *
+ * This and {@link useTranscriptNavigationVisibleAnchorIds} are the navigation
+ * surfaces' own subscription point — the rail and the pane both read the
+ * current anchor here, never from a host-published snapshot.
+ */
+export function useTranscriptNavigationCurrentAnchorId(
+    storeOrSessionId: NavigationVisibilityStore | string,
+    options: Readonly<{ enabled?: boolean }> = {},
+): string | null {
+    const enabled = options.enabled !== false;
+    const store = resolveStore(storeOrSessionId);
+    const read = React.useCallback(
+        () => (enabled ? store.get().currentAnchorId : null),
+        [enabled, store],
+    );
+    return React.useSyncExternalStore(enabled ? store.subscribe : noopSubscribe, read, read);
+}
+
+/**
+ * Frame-rate subscription: the visible set changes as rows enter and leave the
+ * renderer window. The store only notifies when the id list actually differs, so
+ * the returned array identity is stable between real changes.
+ */
+export function useTranscriptNavigationVisibleAnchorIds(
+    storeOrSessionId: NavigationVisibilityStore | string,
+    options: Readonly<{ enabled?: boolean }> = {},
+): readonly string[] {
+    const enabled = options.enabled !== false;
+    const store = resolveStore(storeOrSessionId);
+    const read = React.useCallback(
+        () => (enabled
+            ? store.get().visibleAnchorIds
+            : EMPTY_TRANSCRIPT_NAVIGATION_VISIBILITY_SNAPSHOT.visibleAnchorIds),
+        [enabled, store],
+    );
+    return React.useSyncExternalStore(enabled ? store.subscribe : noopSubscribe, read, read);
 }

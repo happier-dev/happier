@@ -27,7 +27,7 @@ const sessionMachineReachabilityState = vi.hoisted(() => ({
 const externalSessionRuntimeState = vi.hoisted(() => ({
     externalSessionLink: null as null | {
         v: 1;
-        providerId: string;
+        agentId: string;
         machineId: string;
         remoteSessionId: string;
         source: 'provider';
@@ -413,6 +413,7 @@ describe('SessionRightPanelAgentsView', () => {
         await act(async () => {
             screen.pressByTestId('session-subagents-launch-section-toggle');
         });
+        await flushHookEffects();
 
         await act(async () => {
             screen.pressByTestId('session-subagent-launch-claude-team');
@@ -508,6 +509,7 @@ describe('SessionRightPanelAgentsView', () => {
             metadata: {
                 flavor: 'claude',
                 claudeSessionId: 'claude-session-1',
+                claudeTranscriptPath: '/tmp/claude-session-1.jsonl',
             },
         };
         sessionExecutionRunsSupportedState.supported = true;
@@ -572,7 +574,7 @@ describe('SessionRightPanelAgentsView', () => {
                 flavor: 'claude',
                 externalSessionV1: {
                     v: 1,
-                    providerId: 'claude',
+                    agentId: 'claude',
                     machineId: 'machine-1',
                     remoteSessionId: 'remote-session-1',
                     source: 'provider',
@@ -581,7 +583,7 @@ describe('SessionRightPanelAgentsView', () => {
         };
         externalSessionRuntimeState.externalSessionLink = {
             v: 1,
-            providerId: 'claude',
+            agentId: 'claude',
             machineId: 'machine-1',
             remoteSessionId: 'remote-session-1',
             source: 'provider',

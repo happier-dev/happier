@@ -24,12 +24,30 @@ export type SessionMediaInlineImageUnavailableSummary = Readonly<{
     failureCode: string;
 }>;
 
+export type SessionMediaInlineVideoAvailableSummary = Readonly<{
+    id: string;
+    status?: 'available';
+    mediaKind: 'video';
+    name: string;
+    path: string;
+    mimeType: 'video/webm';
+    sizeBytes: number;
+    sha256?: string;
+    category: 'attachment' | 'generated' | 'tool-artifact';
+    role: 'input' | 'output';
+}>;
+
+export type SessionMediaInlineMediaSummary =
+    | (SessionMediaInlineImageSummary & Readonly<{ mediaKind: 'image' }>)
+    | SessionMediaInlineVideoAvailableSummary;
+
 export type SessionMediaInlineImageSummary =
     | SessionMediaInlineImageAvailableSummary
     | SessionMediaInlineImageUnavailableSummary;
 
 export type ParsedSessionMediaMessageMeta = Readonly<{
     inlineImages: readonly SessionMediaInlineImageSummary[];
+    inlineMedia: readonly SessionMediaInlineMediaSummary[];
 }>;
 
 function isSafeSessionMediaPath(path: string): boolean {
@@ -65,14 +83,32 @@ export function parseSessionMediaMessageMeta(value: unknown): ParsedSessionMedia
     if (!isRecord(value.payload) || !Array.isArray(value.payload.media)) return null;
 
     const inlineImages: SessionMediaInlineImageSummary[] = [];
+    const inlineMedia: SessionMediaInlineMediaSummary[] = [];
     for (const rawItem of value.payload.media) {
         if (!isRecord(rawItem)) continue;
         const parsedItem = SessionMediaItemV1Schema.safeParse(sanitizeAdvisoryDimensions(rawItem));
         if (!parsedItem.success) continue;
         const item = parsedItem.data;
-        if (item.mediaKind !== 'image') continue;
         if (!isSafeSessionMediaPath(item.path)) continue;
-        inlineImages.push({
+
+        if (item.mediaKind === 'video') {
+            if (item.mimeType !== 'video/webm') continue;
+            inlineMedia.push({
+                id: item.id,
+                status: 'available',
+                mediaKind: 'video',
+                name: item.name,
+                path: item.path,
+                mimeType: item.mimeType,
+                sizeBytes: item.sizeBytes,
+                ...(item.sha256 ? { sha256: item.sha256 } : {}),
+                category: item.category,
+                role: item.role,
+            });
+            continue;
+        }
+
+        const imageSummary: SessionMediaInlineImageAvailableSummary = {
             id: item.id,
             status: 'available',
             name: item.name,
@@ -85,14 +121,16 @@ export function parseSessionMediaMessageMeta(value: unknown): ParsedSessionMedia
                 : {}),
             category: item.category,
             role: item.role,
-        });
+        };
+        inlineImages.push(imageSummary);
+        inlineMedia.push({ ...imageSummary, mediaKind: 'image' });
     }
     for (const rawFailure of Array.isArray(value.payload.failures) ? value.payload.failures : []) {
         const parsedFailure = SessionMediaFailureV1Schema.safeParse(rawFailure);
         if (!parsedFailure.success) continue;
         const failure = parsedFailure.data;
         if (failure.mediaKind !== 'image') continue;
-        inlineImages.push({
+        const imageFailure: SessionMediaInlineImageUnavailableSummary = {
             id: `failure-${failure.index}`,
             status: 'unavailable',
             name: failure.name,
@@ -100,8 +138,10 @@ export function parseSessionMediaMessageMeta(value: unknown): ParsedSessionMedia
             category: failure.category,
             role: failure.role,
             failureCode: failure.code,
-        });
+        };
+        inlineImages.push(imageFailure);
+        inlineMedia.push({ ...imageFailure, mediaKind: 'image' });
     }
 
-    return inlineImages.length > 0 ? { inlineImages } : null;
+    return inlineMedia.length > 0 ? { inlineImages, inlineMedia } : null;
 }

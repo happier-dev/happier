@@ -1,14 +1,15 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 import { useSetting } from '@/sync/domains/state/storage';
+import type { TranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 
 export function useTranscriptExpansionState(params: Readonly<{
-    deferAutoPinAfterLocalTranscriptInteraction: () => void;
-    prepareWebToolGroupLocalHeightChange: () => 'anchor' | 'bottom' | 'none';
+    recordLocalTranscriptInteractionIntent: () => void;
+    prepareLocalHeightChange: (mutation: TranscriptRowLayoutMutation) => 'anchor' | 'bottom' | 'none';
 }>) {
     const {
-        deferAutoPinAfterLocalTranscriptInteraction,
-        prepareWebToolGroupLocalHeightChange,
+        recordLocalTranscriptInteractionIntent,
+        prepareLocalHeightChange,
     } = params;
     const sessionThinkingDisplayMode = useSetting('sessionThinkingDisplayMode');
     const sessionThinkingInlinePresentation = useSetting('sessionThinkingInlinePresentation');
@@ -61,23 +62,33 @@ export function useTranscriptExpansionState(params: Readonly<{
         });
     }, [thinkingDefaultExpanded]);
 
+    const prepareExpansionStateChange = React.useCallback((mutation: TranscriptRowLayoutMutation) => {
+        const heightPolicy = prepareLocalHeightChange(mutation);
+        if (Platform.OS !== 'web' || heightPolicy !== 'bottom') {
+            recordLocalTranscriptInteractionIntent();
+        }
+    }, [prepareLocalHeightChange, recordLocalTranscriptInteractionIntent]);
+
     const setToolCallsGroupExpanded = React.useCallback((request: {
         toolCallsGroupId: string;
         toolMessageIds: readonly string[];
         expanded: boolean;
     }) => {
-        const webHeightPolicy = prepareWebToolGroupLocalHeightChange();
-        if (Platform.OS !== 'web' || webHeightPolicy !== 'bottom') {
-            deferAutoPinAfterLocalTranscriptInteraction();
-        }
+        prepareExpansionStateChange({
+            reason: request.expanded ? 'expand' : 'collapse',
+            sourceId: request.toolCallsGroupId,
+        });
         applyToolCallsGroupExpanded(request);
-    }, [applyToolCallsGroupExpanded, deferAutoPinAfterLocalTranscriptInteraction, prepareWebToolGroupLocalHeightChange]);
+    }, [applyToolCallsGroupExpanded, prepareExpansionStateChange]);
 
     const setThinkingExpanded = React.useCallback((messageId: string, expanded: boolean) => {
         if (resolveThinkingExpanded(messageId) === expanded) return;
-        deferAutoPinAfterLocalTranscriptInteraction();
+        prepareExpansionStateChange({
+            reason: expanded ? 'expand' : 'collapse',
+            sourceId: messageId,
+        });
         applyThinkingExpanded(messageId, expanded);
-    }, [applyThinkingExpanded, deferAutoPinAfterLocalTranscriptInteraction, resolveThinkingExpanded]);
+    }, [applyThinkingExpanded, prepareExpansionStateChange, resolveThinkingExpanded]);
 
     return {
         applyToolCallsGroupExpanded,

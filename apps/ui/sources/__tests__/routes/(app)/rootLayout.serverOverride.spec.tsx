@@ -1,7 +1,9 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+    createDeferred,
     flushHookEffects,
     renderScreen,
     standardCleanup,
@@ -13,7 +15,6 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
 
 let historyReplaceStateSpy = vi.fn();
 const routerPushSpy = vi.fn();
@@ -21,8 +22,22 @@ const routerReplaceSpy = vi.fn();
 
 const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: string; source: string; scope: string; refreshAuth: unknown }) => true);
 const refreshFromActiveServerSpy = vi.fn(async () => {});
+let isAuthenticated = true;
 let activeServerUrl = 'https://api.happier.dev';
 let pendingTerminalConnect: Readonly<{ publicKeyB64Url: string; serverUrl: string }> | null = null;
+let exitDemoForCleanup: (() => void) | null = null;
+let endJourneyForCleanup: (() => void) | null = null;
+
+async function beginJourneyDemo(): Promise<void> {
+    const [demoMode, journeySession] = await Promise.all([
+        import('@/demoMode/runtime/enterExitDemoMode'),
+        import('@/components/onboarding/tour/state/journeySession'),
+    ]);
+    demoMode.enterDemoMode();
+    journeySession.beginOnboardingJourneySession();
+    exitDemoForCleanup = demoMode.exitDemoMode;
+    endJourneyForCleanup = journeySession.endOnboardingJourneySession;
+}
 
 function installWebLocation(params: Readonly<{ href: string }>) {
     const locationState = {
@@ -97,7 +112,7 @@ installRootLayoutRouteCommonModuleMocks({
 });
 
 vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ isAuthenticated: true, refreshFromActiveServer: refreshFromActiveServerSpy }),
+    useAuth: () => ({ isAuthenticated, refreshFromActiveServer: refreshFromActiveServerSpy }),
 }));
 
 vi.mock('@/auth/routing/authRouting', () => ({
@@ -169,6 +184,12 @@ vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
 }));
 
 afterEach(() => {
+    standardCleanup();
+    exitDemoForCleanup?.();
+    endJourneyForCleanup?.();
+    exitDemoForCleanup = null;
+    endJourneyForCleanup = null;
+    isAuthenticated = true;
     activeServerUrl = 'https://api.happier.dev';
     historyReplaceStateSpy.mockReset();
     routerPushSpy.mockReset();
@@ -180,7 +201,6 @@ afterEach(() => {
     delete (globalThis as any).document;
     vi.restoreAllMocks();
     vi.resetModules();
-    standardCleanup();
 });
 
 async function renderRootLayout() {
@@ -190,6 +210,131 @@ async function renderRootLayout() {
 }
 
 describe('App RootLayout server override', () => {
+    it('keeps the journey mounted and defers the authenticated override switch while that journey owns the demo server', async () => {
+        installWebLocation({
+            href: 'https://app.example.test/?server=http%3A%2F%2Flocalhost%3A53288',
+        });
+        activeServerUrl = 'http://127.0.0.1:4099';
+        isAuthenticated = false;
+        await beginJourneyDemo();
+        const switchDeferred = createDeferred<boolean>();
+        upsertActivateAndSwitchServerSpy.mockImplementationOnce(async () => switchDeferred.promise);
+        const lifecycle = { mounts: 0, unmounts: 0 };
+
+        function JourneyProbe(): React.ReactElement {
+            React.useEffect(() => {
+                lifecycle.mounts += 1;
+                return () => {
+                    lifecycle.unmounts += 1;
+                };
+            }, []);
+            return React.createElement('JourneyProbe');
+        }
+
+        const { RootLayoutRedirectGate } = await import('@/components/navigation/root/RootLayoutRedirectGate');
+        const renderGate = () => React.createElement(
+            RootLayoutRedirectGate,
+            null,
+            React.createElement(JourneyProbe),
+        );
+        const screen = await renderScreen(renderGate());
+        await flushHookEffects();
+
+        isAuthenticated = true;
+        await screen.update(renderGate());
+        await flushHookEffects();
+
+        expect.soft(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
+        expect.soft(lifecycle).toEqual({ mounts: 1, unmounts: 0 });
+        expect.soft(screen.findAllByType('JourneyProbe' as never)).toHaveLength(1);
+
+        await act(async () => {
+            switchDeferred.resolve(true);
+            await switchDeferred.promise;
+        });
+    });
+
+    it('commits same-server override cleanup after demo teardown without unmounting the still-active journey', async () => {
+        installWebLocation({
+            href: 'https://app.example.test/?server=http%3A%2F%2Flocalhost%3A53288',
+        });
+        activeServerUrl = 'http://127.0.0.1:4099';
+        isAuthenticated = false;
+        await beginJourneyDemo();
+        const lifecycle = { mounts: 0, unmounts: 0 };
+
+        function JourneyProbe(): React.ReactElement {
+            React.useEffect(() => {
+                lifecycle.mounts += 1;
+                return () => {
+                    lifecycle.unmounts += 1;
+                };
+            }, []);
+            return React.createElement('JourneyProbe');
+        }
+
+        const { RootLayoutRedirectGate } = await import('@/components/navigation/root/RootLayoutRedirectGate');
+        const renderGate = () => React.createElement(
+            RootLayoutRedirectGate,
+            null,
+            React.createElement(JourneyProbe),
+        );
+        const screen = await renderScreen(renderGate());
+        await flushHookEffects();
+
+        isAuthenticated = true;
+        await screen.update(renderGate());
+        await flushHookEffects();
+        expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
+
+        activeServerUrl = 'http://localhost:53288';
+        exitDemoForCleanup?.();
+        exitDemoForCleanup = null;
+        await screen.update(renderGate());
+        await flushHookEffects();
+
+        expect(refreshFromActiveServerSpy).toHaveBeenCalledTimes(1);
+        expect(historyReplaceStateSpy).toHaveBeenCalledWith(null, '', '/');
+        expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
+        expect(lifecycle).toEqual({ mounts: 1, unmounts: 0 });
+        expect(screen.findAllByType('JourneyProbe' as never)).toHaveLength(1);
+    });
+
+    it('still applies an ordinary authenticated cross-server override outside a journey demo', async () => {
+        installWebLocation({
+            href: 'https://app.example.test/?server=https%3A%2F%2Fstack.example.test',
+        });
+        activeServerUrl = 'https://api.happier.dev';
+        isAuthenticated = false;
+        const switchDeferred = createDeferred<boolean>();
+        upsertActivateAndSwitchServerSpy.mockImplementationOnce(async () => switchDeferred.promise);
+
+        const { RootLayoutRedirectGate } = await import('@/components/navigation/root/RootLayoutRedirectGate');
+        const renderGate = () => React.createElement(
+            RootLayoutRedirectGate,
+            null,
+            React.createElement('ProtectedShell'),
+        );
+        const screen = await renderScreen(renderGate());
+        await flushHookEffects();
+
+        isAuthenticated = true;
+        await screen.update(renderGate());
+        await flushHookEffects();
+
+        expect(upsertActivateAndSwitchServerSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverUrl: 'https://stack.example.test',
+            source: 'url',
+            scope: 'device',
+        }));
+        expect(screen.findAllByType('ProtectedShell' as never)).toHaveLength(0);
+
+        await act(async () => {
+            switchDeferred.resolve(true);
+            await switchDeferred.promise;
+        });
+    });
+
     it('renders safely when `?server=` is present on web routes', async () => {
         // Minimal web globals: enough for readServerUrlOverrideFromWebLocation().
         const { historyReplaceStateSpy } = installWebLocation({

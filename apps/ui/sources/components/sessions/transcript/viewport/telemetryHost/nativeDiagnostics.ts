@@ -2,6 +2,7 @@ import type {
     TranscriptViewportTelemetryBottomFollowMode,
     TranscriptViewportTelemetryLayoutCacheClearReason,
     TranscriptViewportTelemetryLayoutCacheClearState,
+    TranscriptViewportTelemetryListOrientation,
     TranscriptViewportTelemetryNativeBlankWindowSignature,
     TranscriptViewportTelemetryScrollToIndexFailureState,
     TranscriptViewportTelemetryTransactionState,
@@ -11,11 +12,6 @@ import type { NativeVisibleWindowSnapshot } from './nativeVisibleWindow';
 
 export function resolveNativeTelemetryDiagnostics(params: Readonly<{
     bottomFollowMode: TranscriptViewportTelemetryBottomFollowMode;
-    carveTelemetry: Readonly<{
-        active: boolean;
-        coldCount: number;
-        hotCount: number;
-    }>;
     contentHeight?: number;
     dragSessionTrusted: boolean;
     entryRestoreState: TranscriptViewportTelemetryTransactionState;
@@ -26,13 +22,12 @@ export function resolveNativeTelemetryDiagnostics(params: Readonly<{
     layoutHeight?: number;
     listDataLength: number;
     nativeMomentumActive: boolean;
-    mvcpPolicy: unknown;
+    orientation: TranscriptViewportTelemetryListOrientation;
     observedOffset: Readonly<{
         canonicalOffsetY?: number;
         distanceFromLiveTailPx?: number;
         isAtRawLiveTail?: boolean;
     }> | null;
-    pauseOffsetCorrection: boolean;
     prependState: TranscriptViewportTelemetryTransactionState;
     rawOffsetY?: number;
     refContentHeight?: number;
@@ -50,8 +45,6 @@ export function resolveNativeTelemetryDiagnostics(params: Readonly<{
     const isAtRawBottom =
         readTelemetryBoolean(params.source.isAtRawBottom)
         ?? params.observedOffset?.isAtRawLiveTail;
-    const coldCount = params.carveTelemetry.active ? params.carveTelemetry.coldCount : params.listDataLength;
-    const hotCount = params.carveTelemetry.active ? params.carveTelemetry.hotCount : 0;
     const nativeBlankWindowSignature: TranscriptViewportTelemetryNativeBlankWindowSignature | undefined =
         params.visibleSnapshot.hasVisibleRows === false &&
         params.listDataLength > 0 &&
@@ -67,7 +60,7 @@ export function resolveNativeTelemetryDiagnostics(params: Readonly<{
     const scrollToIndexFailureState: TranscriptViewportTelemetryScrollToIndexFailureState = 'none';
 
     return {
-        orientation: 'inverted',
+        orientation: params.orientation,
         ...(params.rawOffsetY !== undefined ? { rawOffsetY: params.rawOffsetY } : {}),
         ...(canonicalOffsetY !== undefined ? { canonicalOffsetY } : {}),
         ...(params.layoutHeight !== undefined ? { layoutHeight: params.layoutHeight } : {}),
@@ -80,8 +73,6 @@ export function resolveNativeTelemetryDiagnostics(params: Readonly<{
         bottomFollowMode: params.bottomFollowMode,
         dragSessionTrusted: params.dragSessionTrusted,
         nativeMomentumActive: params.nativeMomentumActive,
-        mvcpPolicy: params.mvcpPolicy,
-        pauseOffsetCorrection: params.pauseOffsetCorrection,
         ...(isAtRawBottom !== undefined ? { isAtRawBottom } : {}),
         hasVisibleRows: params.visibleSnapshot.hasVisibleRows,
         ...(params.visibleSnapshot.firstVisibleItemId ? { firstVisibleItemId: params.visibleSnapshot.firstVisibleItemId } : {}),
@@ -107,8 +98,6 @@ export function resolveNativeTelemetryDiagnostics(params: Readonly<{
         ...(nativeBlankWindowSignature ? { nativeBlankWindowSignature } : {}),
         listDataLength: params.listDataLength,
         fullItemCount: params.fullItemCount,
-        coldCount,
-        hotCount,
         entryRestoreState: params.entryRestoreState,
         prependState: params.prependState,
         layoutCacheClearState,

@@ -1,5 +1,5 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -8,10 +8,6 @@ import { renderScreen } from '@/dev/testkit';
 
 vi.mock('@/voice/session/VoiceSessionRuntime', () => ({
   VoiceSessionRuntime: () => React.createElement('VoiceSessionRuntimeMock', null),
-}));
-
-vi.mock('./RealtimeVoiceSession', () => ({
-  RealtimeVoiceSession: () => React.createElement('RealtimeVoiceSessionMock', null),
 }));
 
 describe('RealtimeProvider.web', () => {
@@ -23,5 +19,6 @@ describe('RealtimeProvider.web', () => {
     await act(async () => {});
 
     expect(screen.findAllByType('VoiceSessionRuntimeMock' as any)).toHaveLength(1);
+    expect(screen.findAllByType('Child' as any)).toHaveLength(1);
   });
 });

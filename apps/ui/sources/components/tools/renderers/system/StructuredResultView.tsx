@@ -5,7 +5,7 @@ import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
 import { maybeParseJson } from '../../normalization/parse/parseJson';
-import { tailTextWithEllipsis } from '../../normalization/parse/stdStreams';
+import { extractStdStreams, tailTextWithEllipsis } from '../../normalization/parse/stdStreams';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
@@ -22,10 +22,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asString(value: unknown): string | null {
     return typeof value === 'string' ? value : null;
-}
-
-function asNumber(value: unknown): number | null {
-    return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function coerceStringArray(value: unknown): string[] | null {
@@ -53,18 +49,6 @@ function coerceTextFromBlockArray(value: unknown): string | null {
     }
     if (parts.length === 0) return null;
     return parts.join('\n');
-}
-
-function getStdStreams(result: unknown): { stdout?: string; stderr?: string; exitCode?: number } | null {
-    const parsed = maybeParseJson(result);
-    const obj = asRecord(parsed);
-    if (!obj) return null;
-
-    const stdout = asString(obj.stdout) ?? asString(obj.out) ?? undefined;
-    const stderr = asString(obj.stderr) ?? asString(obj.err) ?? undefined;
-    const exitCode = asNumber(obj.exitCode) ?? asNumber(obj.code) ?? undefined;
-    if (!stdout && !stderr && typeof exitCode !== 'number') return null;
-    return { stdout, stderr, exitCode };
 }
 
 function getDiff(result: unknown): string | null {
@@ -120,7 +104,7 @@ export const StructuredResultView = React.memo<ToolViewProps>(({ tool }) => {
     if (tool.state !== 'completed' && tool.state !== 'running') return null;
     if (!tool.result) return null;
 
-    const streams = getStdStreams(tool.result);
+    const streams = extractStdStreams(tool.result);
     const diff = getDiff(tool.result);
     const paths = getPaths(tool.result);
     const text = getText(tool.result);

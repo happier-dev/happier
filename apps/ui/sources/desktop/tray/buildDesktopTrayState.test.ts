@@ -90,4 +90,21 @@ describe('buildDesktopTrayState', () => {
             detail: 'status.online · 2/2',
         });
     });
+
+    it('maps planned server restarts to the existing connecting tray state', () => {
+        expect(buildDesktopTrayState({
+            health: {
+                kind: 'server_restarting',
+                machineCount: 2,
+                onlineCount: 2,
+                statusLabelKey: 'status.connecting',
+                machineLabelKey: 'status.online',
+            },
+            t: translate,
+        })).toEqual({
+            status: 'connecting',
+            label: 'status.connecting',
+            detail: 'status.online · 2/2',
+        });
+    });
 });
