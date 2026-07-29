@@ -13,7 +13,7 @@ import type { VoiceLabStateSpec } from './voiceLabModel';
  * One clock for the whole lab.
  *
  * Every concept animates from these shared values on the UI thread. Nothing here
- * touches React state, so mounting five concepts side by side still costs one
+ * touches React state, so mounting nine concepts side by side still costs one
  * frame callback and zero re-renders per frame — the same discipline the
  * production `VoiceLevelVisualizer` already follows and that
  * `VoiceSurfaceLevelRenderCount.test.tsx` pins.
@@ -24,9 +24,9 @@ import type { VoiceLabStateSpec } from './voiceLabModel';
  *     seconds, not a fixed per-frame coefficient. A per-frame coefficient
  *     converges in half the wall-clock time on a 120 Hz display, which is how a
  *     voice meter ends up feeling different on a MacBook and an iPhone.
- *  2. **Idle costs zero frames, not cheap frames.** The callback is inactive
- *     whenever the presence is not live. A surface that is on screen for eight
- *     hours must actually stop.
+ *  2. **One shared preview clock.** The callback stays active while animated
+ *     preview is enabled, regardless of how many concepts mount. Freeze-frame
+ *     and reduced-motion previews deactivate it entirely.
  *  3. **Breath is gated off by real signal.** Ambient motion exists to say
  *     "alive"; the moment real amplitude drives the shape it would only fight it.
  */

@@ -2699,6 +2699,24 @@ export function createCodexAppServerRuntime(
       : {}),
   });
 
+  const connectedServiceRequestPreservesAppliedBinding = (
+    request: CodexConnectedServiceAuthGenerationRequest,
+  ): boolean => {
+    const current = latestConnectedServiceRuntimeIdentity;
+    const providerAccountId = trimStringValue(request.credential.oauth.providerAccountId);
+    if (!current || !providerAccountId) return false;
+    return current.providerAccountId === providerAccountId
+      && current.profileId === resolveCodexAppliedProfileId({
+        credential: request.credential,
+        selection: request.selection,
+        expected: request.expected,
+      })
+      && current.groupId === resolveCodexAppliedGroupId({
+        selection: request.selection,
+        expected: request.expected,
+      });
+  };
+
   const readAccountLabelForAppliedAccount = async (
     providerAccountId: string,
   ): Promise<string | null> => {
@@ -2723,6 +2741,17 @@ export function createCodexAppServerRuntime(
         ok: false,
         errorCode: 'invalid_request',
         error: 'invalid_request',
+      };
+    }
+    if (
+      (pendingTurn !== null || realtimeConversation.hasRetainedAttemptAuthority())
+      && !connectedServiceRequestPreservesAppliedBinding(request)
+    ) {
+      return {
+        ok: false,
+        errorCode: 'auth_identity_change_restart_required',
+        error: 'auth_identity_change_restart_required',
+        recovery: 'restart_resume',
       };
     }
     const codexHome = resolveCodexHome(readRuntimeProcessEnv());
@@ -2870,7 +2899,8 @@ export function createCodexAppServerRuntime(
       },
       runtime: {
         safeToProbe: true,
-        safeToApply: pendingTurn === null && !realtimeConversation.isActive(),
+        safeToApply: pendingTurn === null
+          && !realtimeConversation.hasRetainedAttemptAuthority(),
         inProviderTurn: pendingTurn !== null,
         profileId: identity.profileId,
         ...(identity.groupId ? { groupId: identity.groupId } : {}),

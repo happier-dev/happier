@@ -6,6 +6,8 @@ import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindi
 import type { VoiceAdapterController } from '@/voice/session/types';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
+import { OPENAI_REALTIME_DEFAULT_SETTINGS } from '../../../../../../packages/plugins/openai/src/protocol/voice/index';
+import { XAI_REALTIME_DEFAULT_SETTINGS } from '../../../../../../packages/plugins/xai/src/protocol/voice/index';
 import { installVoiceSurfaceCommonModuleMocks } from './voiceSurfaceTestHelpers';
 
 
@@ -472,6 +474,50 @@ describe('VoiceSurface', () => {
 
     const disclosure = screen.findByProps({ testID: 'voice-surface-data:sidebar' });
     expect(disclosure.props.accessibilityLabel).toBe('voiceSurface.a11y.providerDataDisclosure');
+    await pressTestInstanceAsync(disclosure, 'voiceSurface.a11y.providerDataDisclosure');
+    expect(routerPushSpy).toHaveBeenCalledWith({
+      pathname: '/settings/voice',
+      params: { focus: 'provider' },
+    });
+  });
+
+  it.each([
+    ['realtime_openai', OPENAI_REALTIME_DEFAULT_SETTINGS],
+    ['realtime_grok', XAI_REALTIME_DEFAULT_SETTINGS],
+  ] as const)('surfaces the manifest data affordance for selected %s', async (providerId, config) => {
+    vi.resetModules();
+    routerPushSpy.mockReset();
+    voiceSettingState.current = {
+      providerId,
+      ui: {
+        activityFeedEnabled: false,
+        scopeDefault: 'global',
+        surfaceLocation: 'auto',
+      },
+      providers: {
+        [providerId]: {
+          schemaVersion: 1,
+          config,
+        },
+      },
+    };
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: providerId,
+      sessionId: null,
+      status: 'disconnected',
+      mode: 'idle',
+      canStop: false,
+    });
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+    const screen = await renderVoiceSurfaceWithAdapter(
+      React.createElement(VoiceSurface, { variant: 'sidebar' }),
+      createGlobalSurfaceTestAdapter(providerId),
+    );
+
+    const disclosure = screen.findByProps({ testID: 'voice-surface-data:sidebar' });
     await pressTestInstanceAsync(disclosure, 'voiceSurface.a11y.providerDataDisclosure');
     expect(routerPushSpy).toHaveBeenCalledWith({
       pathname: '/settings/voice',

@@ -220,6 +220,15 @@ function BundledSpeechSettings(props: Readonly<{
           />
         );
       })}
+      {props.descriptor.privacyDisclosureKey ? (
+        <Item
+          testID={`voice-speech-provider-data:${props.descriptor.providerId}`}
+          mode="info"
+          title={t('settingsVoice.realtimeProviders.links.privacy.title')}
+          subtitle={translateDescriptorKey(props.descriptor.privacyDisclosureKey)}
+          showChevron={false}
+        />
+      ) : null}
     </>
   );
 }

@@ -42,7 +42,7 @@ describe('resolveVoiceProviderAvailability', () => {
             local: {
                 browserSpeech: { support: 'unavailable' },
                 daemon: { featureEnabled: false, route: 'unavailable', modelState: 'unknown' },
-                nativeDevice: { requested: true },
+                nativeDevice: { requested: true, speechRecognition: 'available' },
             },
         });
 
@@ -284,7 +284,7 @@ describe('resolveVoiceProviderAvailability', () => {
             local: {
                 browserSpeech: { support: 'unavailable' },
                 daemon: { featureEnabled: true, route: 'direct', modelState: 'ready', pcmCapture: 'available' },
-                nativeDevice: { requested: true },
+                nativeDevice: { requested: true, speechRecognition: 'available' },
             },
         });
 
@@ -315,7 +315,7 @@ describe('resolveVoiceProviderAvailability', () => {
                     modelState: 'ready',
                     pcmCapture: 'unavailable',
                 },
-                nativeDevice: { requested: true },
+                nativeDevice: { requested: true, speechRecognition: 'available' },
             },
         });
 
@@ -334,7 +334,7 @@ describe('resolveVoiceProviderAvailability', () => {
         });
     });
 
-    it('keeps native defaults native-device capable while using supplied daemon capability', () => {
+    it('keeps unknown native-device recognition fail-closed while using supplied daemon capability', () => {
         const availability = resolveVoiceProviderAvailability({
             happierVoiceSupported: true,
             platformOs: 'ios',
@@ -356,10 +356,10 @@ describe('resolveVoiceProviderAvailability', () => {
             reason: null,
         });
         expect(availability.local.paths.nativeDevice).toMatchObject({
-            selectable: true,
-            runnable: true,
-            readiness: 'ready',
-            reason: null,
+            selectable: false,
+            runnable: false,
+            readiness: 'unknown',
+            reason: 'native_device_speech_recognition_unknown',
         });
     });
 

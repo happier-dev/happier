@@ -97,6 +97,9 @@ describe('BundledSpeechSettings', () => {
     const model = rendered.tree.root.findAllByType('DropdownMenu' as never)
       .find((row) => row.props.searchPlaceholder === 'settingsVoice.local.googleGeminiStt.model.searchPlaceholder');
     expect(model).toBeTruthy();
+    expect(rendered.tree.root.findByProps({
+      testID: 'voice-speech-provider-data:google_gemini',
+    }).props.subtitle).toBe('settingsVoice.realtimeProviders.google.privacyDisclosure');
     await act(async () => model!.props.onSelect('gemini-test'));
     expect(setStt).toHaveBeenCalledWith(expect.objectContaining({
       provider: 'google_gemini',

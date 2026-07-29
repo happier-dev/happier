@@ -57,6 +57,9 @@ import type { EngineSpec, RuntimeDiscovery, RuntimeKindSpec } from './index.js';
 import type { AgentRuntimeKindOverrides } from './runtimeKinds.js';
 import type { AgentCore } from './types.js';
 import {
+  clearSessionStateFieldFromMetadata as clearSessionStateFieldFromMetadataOwner,
+} from './session/state/index.js';
+import {
   getAgentCliSetupRecommendedIds as getAgentCliSetupRecommendedIdsFromProviderRuntime,
   getAgentCliSetupSupportedIds as getAgentCliSetupSupportedIdsFromProviderRuntime,
 } from './cli/runtime.js';
@@ -118,6 +121,10 @@ describe('agents package exports', () => {
     expect(agents).not.toHaveProperty('bridgeTranscriptSourceHandoffGap');
   });
 
+  it('re-exports the canonical session-state field clearer used by host runtime consumers', () => {
+    expect(agents.clearSessionStateFieldFromMetadata).toBe(clearSessionStateFieldFromMetadataOwner);
+  });
+
   it('does not expose session-state metadata writer helpers from the package root', () => {
     const rootOnlyMetadataWriterNames = [
       'applyAcpConfigOptionIntentSessionMetadata',
@@ -129,7 +136,6 @@ describe('agents package exports', () => {
       'applyProviderSessionIdSessionMetadata',
       'buildRuntimeDescriptorSessionMetadata',
       'buildProviderSessionIdSessionMetadata',
-      'clearSessionStateFieldFromMetadata',
       'hasSessionStateFieldMetadataBinding',
       'writeSessionStateFieldToMetadata',
       'publishSessionStateFieldMutationToMetadata',

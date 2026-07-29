@@ -24,6 +24,14 @@ export const PLUGIN_MANIFEST = Object.freeze({
           interruptionPolicy: 'provider_immediate',
         },
       },
+      settings: {
+        schemaVersion: 1,
+        fields: [],
+        privacyDisclosure: {
+          key: 'settingsVoice.realtimeProviders.xai.privacyDisclosure',
+          fallback: 'Audio and conversation content are sent from this device to xAI through the xAI Realtime connection. Happier uses the xAI API key saved in your Happier account secrets only for the bounded client-auth and voice-catalog operations. xAI processes the live conversation under that account and may retain received data according to the account settings and xAI’s terms. If resumption is enabled, Happier saves the provider conversation ID; forgetting it removes Happier’s saved ID and does not delete data held by xAI. Happier’s server and relay do not carry live audio. Voice context-sharing controls are separate from this provider processing.',
+        },
+      },
       accountMediation: {
         credentialSlots: [{ id: 'api_key', scope: 'account' }],
         operations: [

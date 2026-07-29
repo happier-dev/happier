@@ -4,6 +4,7 @@ import { externalSessionOperationTranslations } from './externalSessionOperation
 import { externalSessionSettingsTranslations } from './externalSessionSettingsTranslations';
 import { pluginPermissionTranslations } from './pluginPermissionTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
+import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
 
 /**
  * Chinese (Simplified) translations for the Happier app
@@ -602,7 +603,7 @@ export const zhHans = {
         discarded: '暂存上传已丢弃。',
         unavailable: '此暂存上传已不可用。',
     },
-    voice: voiceReadinessTranslations,
+    voice: voiceReadinessTranslations['zh-Hans'],
     pluginPermissions: pluginPermissionTranslations['zh-Hans'],
     pluginSurfaces: {
         offlineSnapshot: {
@@ -9426,11 +9427,12 @@ settingsSession: {
       byoSubtitle: "使用您自己的 ElevenLabs API 密钥和代理",
     },
     realtimeProviders: {
+      ...voiceProviderPrivacyTranslations['zh-Hans'],
       codex: {
         sectionTitle: "Codex Live 账号",
         accountTitle: "全局语音账号",
         accountSubtitle: "选择全局 Codex Voice 使用的确切已连接服务账号或账号组。直接语音始终使用当前打开的会话。",
-        privacyDisclosure: "音频和 Codex Live 对话会通过 WebRTC 从此设备发送至 OpenAI。所选 Codex 会话在所选机器上运行。OpenAI 可能会接收有限的启动和会话上下文以及委派的 Codex 结果，以便对话继续并朗读回复。Happier 的服务器和中继不承载 Codex Live 音频；Happier daemon/app-server 仍会处理信令、会话生命周期、委派、工具和权限控制。提供商运营的网络中继可能会参与传输。",
+        privacyDisclosure: "音频和 Codex Live 对话会通过 WebRTC 从此设备发送至 OpenAI。所选 Codex 会话和已连接服务账户通过所选机器运行。OpenAI 可能会接收有限的启动和会话上下文以及委派的 Codex 结果，以便对话继续并朗读回复。Happier 的服务器和中继不承载 Codex Live 音频；Happier daemon/app-server 仍会处理信令、会话生命周期、委派、工具和权限控制。提供商运营的网络中继可能会参与传输。Codex 或 OpenAI 可能会根据所选账户和提供商政策，在提供商原生运行时存储中保留开发者指令、实时对话材料及相关诊断；Happier 不会删除或改写这些提供商原生数据。",
       },
     },
     ui: {

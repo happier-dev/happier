@@ -2,6 +2,7 @@ import {
   createRecipientContractDigestV1,
   normalizeRecipientContractV1,
   PluginVoiceProviderContributionV1Schema,
+  VoiceProviderSettingsJsonValueV1Schema,
   VoiceBundledUiDescriptorV1Schema,
   type RecipientContractV1,
   type VoiceBundledUiDescriptorV1,
@@ -37,6 +38,11 @@ const VoiceProviderSettingsProjectionSchema = z.object({
     }
   }).optional(),
 }).strict();
+
+const VoiceProviderSettingsJsonObjectV1Schema = z.record(
+  z.string(),
+  VoiceProviderSettingsJsonValueV1Schema,
+);
 
 export type VoiceProviderSettingsProjection = z.infer<typeof VoiceProviderSettingsProjectionSchema>;
 
@@ -201,6 +207,31 @@ function projectBundledAccountCredentialSlot(
   });
 }
 
+function createBundledDisclosureSettingsOverlay(
+  declared: ExternalVoiceProviderSettingsDescriptor,
+  internal: NonNullable<BundledVoiceConversationUiEntry['internal']['providerSettings']>,
+): ExternalVoiceProviderSettingsDescriptor | null {
+  if (
+    declared.fields.length !== 0
+    || declared.connectedServicesBinding !== null
+    || declared.privacyDisclosure === null
+    || internal.schemaVersion !== declared.schemaVersion
+  ) return null;
+  const parsedDefault = VoiceProviderSettingsJsonObjectV1Schema.safeParse(internal.defaultConfig);
+  if (!parsedDefault.success) return null;
+  return Object.freeze({
+    schemaVersion: declared.schemaVersion,
+    fields: Object.freeze([]),
+    privacyDisclosure: declared.privacyDisclosure,
+    connectedServicesBinding: null,
+    defaultConfig: parsedDefault.data,
+    parseConfig(config: unknown) {
+      const parsed = VoiceProviderSettingsJsonValueV1Schema.safeParse(internal.parseConfig(config));
+      return parsed.success ? parsed.data : null;
+    },
+  });
+}
+
 function normalizeContribution(
   raw: VoiceUiRuntimeContribution | BundledVoiceUiEntry,
   sourceKind: 'built_in' | 'bundled',
@@ -249,13 +280,36 @@ function normalizeContribution(
     && publicDeclaration.data.kind === 'conversation'
     ? publicDeclaration.data
     : null;
-  const publicProviderSettings = publicConversationDeclaration?.settings
+  const declaredProviderSettings = publicConversationDeclaration?.settings
     ? createExternalVoiceProviderSettingsDescriptor(publicConversationDeclaration.settings)
     : null;
+  const internalProviderSettings = raw.kind === 'voice.conversation-provider.v1'
+    && 'internal' in raw
+    ? raw.internal?.providerSettings ?? null
+    : null;
+  const hasDisclosureOnlyInternalSettings = Boolean(publicConversationDeclaration?.settings
+    && publicConversationDeclaration.settings.fields.length === 0
+    && !publicConversationDeclaration.settings.connectedServicesBinding
+    && publicConversationDeclaration.settings.privacyDisclosure
+    && declaredProviderSettings
+    && internalProviderSettings);
+  const disclosureOnlySettings = hasDisclosureOnlyInternalSettings
+    && declaredProviderSettings
+    && internalProviderSettings
+    ? createBundledDisclosureSettingsOverlay(declaredProviderSettings, internalProviderSettings)
+    : null;
+  if (hasDisclosureOnlyInternalSettings && !disclosureOnlySettings) {
+    throw Object.assign(new Error('invalid_voice_provider_settings'), {
+      code: 'invalid_voice_provider_settings',
+    });
+  }
+  const publicProviderSettings = hasDisclosureOnlyInternalSettings
+    ? disclosureOnlySettings
+    : declaredProviderSettings;
   const accountCredentialSlot = sourceKind === 'bundled' && publicConversationDeclaration
     ? projectBundledAccountCredentialSlot(raw.pluginId, publicConversationDeclaration)
     : null;
-  const effectiveProjectSettings = publicProviderSettings
+  const effectiveProjectSettings = publicProviderSettings && !disclosureOnlySettings
     ? (
         envelope: Readonly<{ schemaVersion: number; config: unknown }> | null,
       ) => {

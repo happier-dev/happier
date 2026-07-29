@@ -4,6 +4,7 @@ import { externalSessionOperationTranslations } from './externalSessionOperation
 import { externalSessionSettingsTranslations } from './externalSessionSettingsTranslations';
 import { pluginPermissionTranslations } from './pluginPermissionTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
+import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Crea un server, importa il JSON dell’host o installa un preset consigliato.',
@@ -602,7 +603,7 @@ export const it = {
         discarded: 'Il caricamento preparato è stato eliminato.',
         unavailable: 'Questo caricamento preparato non è più disponibile.',
     },
-    voice: voiceReadinessTranslations,
+    voice: voiceReadinessTranslations.it,
     pluginPermissions: pluginPermissionTranslations.it,
     pluginSurfaces: {
         offlineSnapshot: {
@@ -10037,11 +10038,12 @@ settingsSession: {
       byoSubtitle: "Usa la tua chiave API e il tuo agente ElevenLabs",
     },
     realtimeProviders: {
+      ...voiceProviderPrivacyTranslations.it,
       codex: {
         sectionTitle: "Account Codex Live",
         accountTitle: "Account Voce globale",
         accountSubtitle: "Scegli l'account o il gruppo di account esatto dei Servizi connessi usato da Codex Voice globale. La Voce diretta usa sempre la sessione aperta.",
-        privacyDisclosure: "L'audio e la conversazione Codex Live vengono inviati da questo dispositivo a OpenAI tramite WebRTC. La sessione Codex selezionata viene eseguita sulla macchina selezionata. OpenAI può ricevere un contesto di avvio e di sessione limitato e i risultati Codex delegati, così la conversazione può continuare e le risposte possono essere pronunciate. Il server e il relay di Happier non trasportano l'audio Codex Live; il daemon/app-server di Happier gestisce comunque segnalazione, ciclo di vita della sessione, delega, strumenti e controllo delle autorizzazioni. Possono intervenire relay di rete gestiti dal provider.",
+        privacyDisclosure: "L'audio e la conversazione Codex Live vengono inviati da questo dispositivo a OpenAI tramite WebRTC. La sessione Codex e l'account Connected Services selezionati operano tramite la macchina selezionata. OpenAI può ricevere un contesto di avvio e di sessione limitato e i risultati Codex delegati, così la conversazione può continuare e le risposte possono essere pronunciate. Il server e il relay di Happier non trasportano l'audio Codex Live; il daemon/app-server di Happier gestisce comunque segnalazione, ciclo di vita della sessione, delega, strumenti e controllo delle autorizzazioni. Possono intervenire relay di rete gestiti dal provider. Codex o OpenAI possono conservare istruzioni dello sviluppatore, materiale della conversazione in tempo reale e diagnostica correlata nell'archiviazione nativa del runtime del provider secondo le politiche dell'account e del provider selezionati; Happier non elimina né riscrive questi dati del provider.",
       },
     },
     ui: {

@@ -44,6 +44,7 @@ export type GoogleVoiceSettingsSpec = Readonly<{
   titleKey: string;
   subtitleKey: string;
   detailKey: string;
+  privacyDisclosureKey: string;
   iconName: 'logo-google';
   credential: Readonly<{
     kind: 'api_key';
@@ -76,6 +77,7 @@ const GOOGLE_GEMINI_SETTINGS = Object.freeze({
   titleKey: 'settingsVoice.local.googleGeminiStt.provider.title',
   subtitleKey: 'settingsVoice.local.googleGeminiStt.provider.subtitle',
   detailKey: 'settingsVoice.local.googleGeminiStt.provider.detail',
+  privacyDisclosureKey: 'settingsVoice.realtimeProviders.google.privacyDisclosure',
   iconName: 'logo-google' as const,
   credential: Object.freeze({
     kind: 'api_key' as const,
@@ -141,6 +143,7 @@ const GOOGLE_CLOUD_SETTINGS = Object.freeze({
   titleKey: 'settingsVoice.local.googleCloudTts.provider.title',
   subtitleKey: 'settingsVoice.local.googleCloudTts.provider.subtitle',
   detailKey: 'settingsVoice.local.googleCloudTts.provider.detail',
+  privacyDisclosureKey: 'settingsVoice.realtimeProviders.google.privacyDisclosure',
   iconName: 'logo-google' as const,
   credential: Object.freeze({
     kind: 'api_key' as const,

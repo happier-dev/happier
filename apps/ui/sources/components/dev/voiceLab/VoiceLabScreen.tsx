@@ -30,7 +30,7 @@ import type { VoiceLabSurface } from './conceptTypes';
  *
  * An isolated exploration surface. It does not import, wrap, or modify the
  * production Voice surface, and the production surface does not know it exists.
- * Its whole job is to make five structurally different directions comparable
+ * Its whole job is to make nine structurally different directions comparable
  * under identical state, theme, motion, and surrounding product.
  *
  * The scenario player is the important control: static frames cannot prove feel,
@@ -362,8 +362,8 @@ export function VoiceLabScreen() {
                 is the wrong order for a lab. */}
             <ScrollView contentContainerStyle={{ padding: 22, gap: 22 }}>
                 {/*
-                  * One provider for the whole page — five concepts on screen must
-                  * cost ONE frame callback, not five. This is the discipline the
+                  * One provider for the whole page — nine concepts on screen must
+                  * cost ONE frame callback, not nine. This is the discipline the
                   * production surface already keeps and the thing most likely to
                   * be lost when a concept graduates.
                   */}
@@ -442,7 +442,8 @@ export function VoiceLabScreen() {
                         Reduced motion follows the system preference and is read through the app’s canonical
                         `useReducedMotionPreference` hook — toggle it in macOS Accessibility to see every concept’s
                         reduced interpretation. Audio level is synthesised on the UI thread and never enters React
-                        state, so five concepts mounted at once still cost zero re-renders per frame.
+                        state, so nine mounted concepts share one frame callback and the shared
+                        energy loop causes zero React re-renders per frame.
                     </Text>
                     {lastAction ? (
                         <Text style={{ ...Typography.default(), fontSize: 12, color: tokens.inkFaint }}>

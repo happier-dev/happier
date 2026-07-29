@@ -206,11 +206,15 @@ const VoiceProviderSettingsV1Schema = z.object({
   privacyDisclosure: PluginLocalizedStringV2Schema.optional(),
   connectedServicesBinding: VoiceProviderConnectedServicesBindingV1Schema.optional(),
 }).strict().superRefine((settings, context) => {
-  if (settings.fields.length === 0 && !settings.connectedServicesBinding) {
+  if (
+    settings.fields.length === 0
+    && !settings.connectedServicesBinding
+    && !settings.privacyDisclosure
+  ) {
     context.addIssue({
       code: 'custom',
       path: ['fields'],
-      message: 'Voice provider settings must declare at least one field.',
+      message: 'Voice provider settings must declare a field, Connected Services binding, or privacy disclosure.',
     });
   }
   if (settings.connectedServicesBinding && settings.schemaVersion !== 2) {

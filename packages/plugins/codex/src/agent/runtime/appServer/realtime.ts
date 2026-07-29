@@ -27,6 +27,7 @@ const DEFAULT_SETTLEMENT_TIMEOUT_MS = 15_000;
 
 type CodexAppServerRealtimeConversation = AgentSessionRealtimeConversation & Readonly<{
   isActive(): boolean;
+  hasRetainedAttemptAuthority(): boolean;
   dispose(): Promise<void>;
 }>;
 
@@ -376,9 +377,15 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
     target.stopRequested = true;
     target.stopPromise = (async () => {
       try {
-        await target.client.request('thread/realtime/stop', {
+        const response = await target.client.request('thread/realtime/stop', {
           threadId: target.threadId,
         });
+        if (!isExactEmptyResponse(response)) {
+          return diagnostic(
+            'codex_realtime_stop_response_invalid',
+            'Codex Realtime Voice returned an invalid stop response.',
+          );
+        }
         return null;
       } catch {
         return diagnostic(
@@ -487,12 +494,22 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
             ),
           },
       );
-      publishTerminal(target, {
-        kind: 'terminal',
-        reason: terminalReason,
-        ...(terminalDiagnostic ? { diagnostic: terminalDiagnostic } : {}),
-      });
-      return await cleanup;
+      const stopDiagnostic = await cleanup;
+      publishTerminal(
+        target,
+        stopDiagnostic && terminalReason === 'stopped'
+          ? {
+            kind: 'terminal',
+            reason: 'error',
+            diagnostic: stopDiagnostic,
+          }
+          : {
+            kind: 'terminal',
+            reason: terminalReason,
+            ...(terminalDiagnostic ? { diagnostic: terminalDiagnostic } : {}),
+          },
+      );
+      return stopDiagnostic;
     }
     return target.stopPromise ? await target.stopPromise : null;
   };
@@ -999,6 +1016,9 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
     start,
     isActive() {
       return attempt !== null && attempt.phase !== 'terminal';
+    },
+    hasRetainedAttemptAuthority() {
+      return attempt !== null;
     },
     async dispose() {
       const current = attempt;

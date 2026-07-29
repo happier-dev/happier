@@ -132,6 +132,7 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
   const saveExport = props.saveExportArtifact ?? saveVoiceHistoryExportArtifact;
   const [snapshot, setSnapshot] = React.useState<VoiceHistorySnapshot>(EMPTY_SNAPSHOT);
   const [query, setQuery] = React.useState('');
+  const queryRef = React.useRef('');
   const [loadState, setLoadState] = React.useState<InitialLoadState>('loading');
   const [loadingOlder, setLoadingOlder] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
@@ -174,6 +175,7 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
   }, [consumer]);
 
   const onSearchChange = React.useCallback((nextQuery: string) => {
+    queryRef.current = nextQuery;
     setQuery(nextQuery);
     setSnapshot(consumer.read(nextQuery));
     setActionMessage(null);
@@ -184,13 +186,14 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
     setLoadingOlder(true);
     setActionMessage(null);
     try {
-      setSnapshot(await consumer.loadOlder(query));
+      await consumer.loadOlder(queryRef.current);
+      setSnapshot(consumer.read(queryRef.current));
     } catch (error) {
       showOperationError(error, t('settingsVoice.history.loadOlderFailed'));
     } finally {
       setLoadingOlder(false);
     }
-  }, [consumer, loadingOlder, query, showOperationError]);
+  }, [consumer, loadingOlder, showOperationError]);
 
   const exportAll = React.useCallback(async () => {
     if (exporting) return;
@@ -199,14 +202,14 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
     try {
       const artifact = await consumer.exportHistory({ range: 'all' });
       await saveExport(artifact);
-      setSnapshot(consumer.read(query));
+      setSnapshot(consumer.read(queryRef.current));
       setActionMessage(t('settingsVoice.history.exportSucceeded'));
     } catch (error) {
       showOperationError(error, t('settingsVoice.history.exportFailed'));
     } finally {
       setExporting(false);
     }
-  }, [consumer, exporting, query, saveExport, showOperationError]);
+  }, [consumer, exporting, saveExport, showOperationError]);
 
   const clear = React.useCallback(async () => {
     if (clearing) return;
@@ -224,6 +227,7 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
     setActionMessage(null);
     try {
       await consumer.clear();
+      queryRef.current = '';
       setQuery('');
       setSnapshot(consumer.read());
       setLoadState('ready');

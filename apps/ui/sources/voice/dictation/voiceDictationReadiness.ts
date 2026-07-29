@@ -17,6 +17,12 @@ import type {
   VoiceDaemonModelAvailability,
   VoiceDaemonRuntimeAvailability,
 } from '@/voice/settings/resolveVoiceProviderAvailability';
+import {
+  resolveVoiceProviderAvailability,
+} from '@/voice/settings/resolveVoiceProviderAvailability';
+import type {
+  VoiceProviderLocalAvailability,
+} from '@/voice/settings/voiceProviderLocalAvailability';
 
 import {
   createVoiceDictationRuntimeSettingsSnapshot,
@@ -67,6 +73,33 @@ function projectOpenAiEndpointFact(
   }
 }
 
+function projectDeviceSttReadiness(input: Readonly<{
+  platform: VoiceRuntimePlatform;
+  localAvailability: VoiceProviderLocalAvailability;
+}>): VoiceRoleReadiness | null {
+  const local = resolveVoiceProviderAvailability({
+    happierVoiceSupported: true,
+    platformOs: input.platform,
+    local: input.localAvailability,
+  });
+  const path = input.platform === 'web'
+    ? local.local.paths.browserSpeech
+    : local.local.paths.nativeDevice;
+  if (path.runnable) return null;
+
+  const code = path.readiness === 'unknown'
+    ? 'device_stt_availability_unknown'
+    : 'device_stt_unavailable';
+  return Object.freeze({
+    role: 'dictation_stt',
+    providerId: 'device',
+    status: 'unavailable',
+    code,
+    reasonKey: `voice.readiness.${code}`,
+    recoveryAction: 'switch_provider',
+  });
+}
+
 /**
  * Passive readiness projection. It reads only already-loaded settings,
  * machine, runtime, and model facts; it never opens a microphone, sends audio,
@@ -78,10 +111,11 @@ export function resolveVoiceDictationReadiness(input: Readonly<{
   platform: VoiceRuntimePlatform | 'unknown';
   executionMachineId: string | null;
   daemon: DictationDaemonFacts;
+  localAvailability: VoiceProviderLocalAvailability;
 }>): VoiceRoleReadiness {
   const runtimeSettings = createVoiceDictationRuntimeSettingsSnapshot(input.settings);
   const providerId = resolveLocalSttProvider(runtimeSettings);
-  return resolveVoiceRoleReadiness({
+  const readiness = resolveVoiceRoleReadiness({
     registry: input.registry,
     role: 'dictation_stt',
     providerId,
@@ -100,4 +134,11 @@ export function resolveVoiceDictationReadiness(input: Readonly<{
       credential: 'unknown',
     },
   });
+  if (providerId !== 'device' || readiness.status !== 'ready' || input.platform === 'unknown') {
+    return readiness;
+  }
+  return projectDeviceSttReadiness({
+    platform: input.platform,
+    localAvailability: input.localAvailability,
+  }) ?? readiness;
 }

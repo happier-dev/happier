@@ -1,5 +1,7 @@
 import { Platform } from 'react-native';
 
+import type { DeviceSpeechRecognitionAvailability } from '@/voice/input/deviceSpeechRecognitionAvailability';
+
 export type VoiceProviderModeId = 'off' | 'happier' | 'byo' | 'local';
 
 export type VoiceProviderUnavailableReason =
@@ -23,6 +25,8 @@ export type VoiceProviderUnavailableReason =
     | 'models_error'
     | 'models_unknown'
     | 'native_device_unavailable_on_web'
+    | 'native_device_speech_recognition_unavailable'
+    | 'native_device_speech_recognition_unknown'
     | 'unknown_provider';
 
 export type VoiceProviderReadiness =
@@ -101,7 +105,10 @@ export type ResolveVoiceProviderAvailabilityInput = Readonly<{
             runtimeState?: VoiceDaemonRuntimeAvailability;
             pcmCapture?: VoiceDaemonPcmCaptureAvailability;
         }>;
-        nativeDevice?: Readonly<{ requested: boolean }>;
+        nativeDevice?: Readonly<{
+            requested: boolean;
+            speechRecognition?: DeviceSpeechRecognitionAvailability;
+        }>;
     }>;
 }>;
 
@@ -111,7 +118,10 @@ function createDefaultLocalInput(platformOs: string): Required<NonNullable<Resol
             ? { support: 'unknown', onDevice: 'unknown' }
             : { support: 'unavailable' },
         daemon: { featureEnabled: false, route: 'unavailable', modelState: 'unknown', runtimeState: 'unknown' },
-        nativeDevice: { requested: platformOs !== 'web' },
+        nativeDevice: {
+            requested: platformOs !== 'web',
+            speechRecognition: 'unknown',
+        },
     };
 }
 
@@ -326,6 +336,12 @@ function resolveNativeDevicePath(
     }
     if (!nativeDevice.requested) {
         return unavailablePath('nativeDevice', 'unknown_provider', 'unknown');
+    }
+    if (nativeDevice.speechRecognition === 'unavailable') {
+        return unavailablePath('nativeDevice', 'native_device_speech_recognition_unavailable');
+    }
+    if (nativeDevice.speechRecognition !== 'available') {
+        return unavailablePath('nativeDevice', 'native_device_speech_recognition_unknown', 'unknown');
     }
     return {
         pathId: 'nativeDevice',

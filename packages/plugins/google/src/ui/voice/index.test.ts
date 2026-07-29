@@ -31,6 +31,12 @@ describe('Google bundled voice UI contribution', () => {
     const ttsSettings = tts?.internal.createSettingsSpec('google_cloud');
     expect(sttSettings?.schemaVersion).toBe(2);
     expect(ttsSettings?.schemaVersion).toBe(2);
+    expect(sttSettings?.privacyDisclosureKey).toBe(
+      'settingsVoice.realtimeProviders.google.privacyDisclosure',
+    );
+    expect(ttsSettings?.privacyDisclosureKey).toBe(
+      'settingsVoice.realtimeProviders.google.privacyDisclosure',
+    );
     expect(sttSettings).not.toHaveProperty('configKey');
     expect(ttsSettings).not.toHaveProperty('configKey');
     expect(sttSettings?.parseConfig({ model: 'gemini-test', language: 'fr' })).toEqual({

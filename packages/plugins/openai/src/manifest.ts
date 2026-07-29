@@ -128,6 +128,14 @@ export const PLUGIN_MANIFEST = Object.freeze({
         readiness: { requirements: ['credential'] },
         turn: { cancelResponse: true, bargeIn: true },
       },
+      settings: {
+        schemaVersion: 1,
+        fields: [],
+        privacyDisclosure: {
+          key: 'settingsVoice.realtimeProviders.openai.privacyDisclosure',
+          fallback: 'Audio and conversation content are sent from this device to OpenAI using WebRTC. Happier uses the selected Saved Voice API key, OpenAI Connected Service, or experimental Codex OAuth account to mint short-lived client authentication; connected accounts are accessed through the selected machine. OpenAI processes the live conversation under the selected account and may retain received data according to that account’s settings and OpenAI’s terms. Happier’s server and relay do not carry live audio. Voice context-sharing controls are separate from this provider processing.',
+        },
+      },
       accountMediation: {
         credentialSlots: [{ id: 'api_key', scope: 'account' }],
         operations: [{

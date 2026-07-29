@@ -45,6 +45,16 @@ describe('resolveVoiceRoleReadiness', () => {
     })).toMatchObject({ status: 'incompatible', code: 'role_unsupported' });
   });
 
+  it('keeps built-in Device TTS ready without applying the Dictation STT capability fact', () => {
+    expect(resolveVoiceRoleReadiness({
+      registry: createDefaultVoiceProviderRegistry(),
+      role: 'conversation_tts',
+      providerId: 'device',
+      platform: 'ios',
+      facts: { ...readyFacts, runtime: 'unknown' },
+    })).toMatchObject({ status: 'ready', code: 'ready' });
+  });
+
   it('fails Google speech roles closed when required provider facts are unknown', () => {
     const googleRegistry = createDefaultVoiceProviderRegistry();
     expect(resolveVoiceRoleReadiness({

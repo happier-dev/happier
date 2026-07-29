@@ -1013,8 +1013,16 @@ describe('VoiceProviderSection', () => {
                 && candidate.props.agentId?.pluginId === 'happier.agent.codex'
                 && candidate.props.agentId?.localId === 'codex');
         expect(fields).toHaveLength(1);
-        expect(tree.findAllByType('ItemGroup' as any)
-            .find((candidate: any) => candidate.props.footer === 'Audio and the Codex Live conversation are sent from this device to OpenAI using WebRTC. The selected Codex session runs on the selected machine. OpenAI may receive bounded startup and session context and delegated Codex results so the conversation can continue and responses can be spoken. Happier’s server and relay do not carry Codex Live audio; the Happier daemon/app-server still carries signaling, session lifecycle, delegation, tools, and permission control. Provider-operated network relays may participate.')).toBeTruthy();
+        const disclosureFooter = tree.findAllByType('ItemGroup' as any)
+            .map((candidate: any) => candidate.props.footer)
+            .find((footer: unknown): footer is string => (
+                typeof footer === 'string'
+                && footer.includes('Codex Live conversation')
+                && footer.includes('selected machine')
+                && footer.includes('provider-native runtime storage')
+                && footer.includes('does not delete or rewrite')
+            ));
+        expect(disclosureFooter).toBeTruthy();
         await act(async () => fields[0]?.props.onChange(binding));
         expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
             providerId: 'realtime_codex',

@@ -558,18 +558,28 @@ describe('createDeviceSttController', () => {
     }));
   });
 
-  it('surfaces an unavailable recognizer through a typed sink error instead of throwing', async () => {
+  it('surfaces an unavailable recognizer before any microphone permission or capture', async () => {
+    isRecognitionAvailable.mockClear();
     isRecognitionAvailable.mockReturnValueOnce(false);
+    requestMicrophonePermission.mockClear();
+    requestPermissionsAsync.mockClear();
+    acquireAudioSession.mockClear();
+    const micSession = createMicSession();
     const sink = createSink();
     const { createDeviceSttController } = await import('./DeviceSttController');
     const controller = createDeviceSttController({ getSettings: () => baseSettings(false) });
 
-    await controller.start({ micSession: createMicSession(), sink });
+    await controller.start({ micSession, sink });
 
     expect(sink.onError).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'provider_error',
       reason: 'device_stt_unavailable',
     }));
+    expect(isRecognitionAvailable).toHaveBeenCalledTimes(1);
+    expect(requestMicrophonePermission).not.toHaveBeenCalled();
+    expect(requestPermissionsAsync).not.toHaveBeenCalled();
+    expect(micSession.ensureActive).not.toHaveBeenCalled();
+    expect(acquireAudioSession).not.toHaveBeenCalled();
     const reportedFailure = sink.onError.mock.calls[0]?.[0];
     const stopResult = await controller.stop();
 

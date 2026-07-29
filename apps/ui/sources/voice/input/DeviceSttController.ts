@@ -16,6 +16,7 @@ import {
 } from '@happier-dev/audio-stream-native';
 
 import type { SttController, SttStartParams, SttStopResult } from './sttController';
+import { readDeviceSpeechRecognitionAvailability } from './deviceSpeechRecognitionAvailability';
 
 type DeviceSttHandle = {
   sessionId: string;
@@ -269,6 +270,23 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
       throw new Error('mic_session_required');
     }
 
+    const recognitionModuleStage = await runSetupStage(() => import('expo-speech-recognition'));
+    if (recognitionModuleStage.cancelled) {
+      recordSetupCancellation();
+      return;
+    }
+    const { ExpoSpeechRecognitionModule } = recognitionModuleStage.value;
+
+    if (readDeviceSpeechRecognitionAvailability(ExpoSpeechRecognitionModule) !== 'available') {
+      const unavailableError = createVoiceMachineError({
+        kind: 'provider_error',
+        reason: 'device_stt_unavailable',
+      });
+      completedResult = { error: unavailableError };
+      safelyNotifyObserver(() => sink.onError(unavailableError));
+      return;
+    }
+
     const microphonePermissionStage = await runSetupStage(requestMicrophonePermission);
     if (microphonePermissionStage.cancelled) {
       recordSetupCancellation();
@@ -278,23 +296,6 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     if (!microphonePermission.granted) {
       showMicrophonePermissionDeniedAlert(microphonePermission.canAskAgain);
       throw new Error('mic_permission_denied');
-    }
-
-    const recognitionModuleStage = await runSetupStage(() => import('expo-speech-recognition'));
-    if (recognitionModuleStage.cancelled) {
-      recordSetupCancellation();
-      return;
-    }
-    const { ExpoSpeechRecognitionModule } = recognitionModuleStage.value;
-
-    if (typeof ExpoSpeechRecognitionModule?.isRecognitionAvailable === 'function' && !ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
-      const unavailableError = createVoiceMachineError({
-        kind: 'provider_error',
-        reason: 'device_stt_unavailable',
-      });
-      completedResult = { error: unavailableError };
-      safelyNotifyObserver(() => sink.onError(unavailableError));
-      return;
     }
 
     // `expo-speech-recognition` logs noisy "not supported on web" warnings for this call.

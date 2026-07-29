@@ -24,7 +24,12 @@ describe('bundled realtime provider settings projection', () => {
       const internalProviderSettings = 'providerSettings' in entry.internal
         ? entry.internal.providerSettings
         : undefined;
-      expect(registryEntry?.providerSettings && internalProviderSettings).toBeFalsy();
+      if (registryEntry?.providerSettings && internalProviderSettings) {
+        expect(registryEntry.providerSettings.schemaVersion).toBe(internalProviderSettings.schemaVersion);
+        expect(registryEntry.providerSettings.defaultConfig).toEqual(internalProviderSettings.defaultConfig);
+        expect(registryEntry.providerSettings.parseConfig(internalProviderSettings.defaultConfig))
+          .toEqual(internalProviderSettings.parseConfig(internalProviderSettings.defaultConfig));
+      }
       const providerSettings = registryEntry?.providerSettings ?? internalProviderSettings;
       if (providerId === 'realtime_codex') {
         expect(createSettingsSection).toBeUndefined();
@@ -57,6 +62,21 @@ describe('bundled realtime provider settings projection', () => {
         expect(readPrivacyDisclosure(providerSettings)).toBe(
           'Audio and conversation content are sent from this device to ElevenLabs through the ElevenLabs client connection. Depending on the selected setup, Happier may also send ElevenLabs bounded agent instructions, client-tool definitions and results, and authentication or provisioning requests needed for the feature. Happier’s server may participate in hosted authentication and usage accounting, but neither Happier’s server nor relay carries the live conversation audio. ElevenLabs may process and retain received data under your ElevenLabs account settings and its terms. Voice context-sharing controls are separate from this provider processing.',
         );
+      }
+      if (providerId === 'realtime_openai' || providerId === 'realtime_grok') {
+        expect(readPrivacyDisclosure(providerSettings)).toMatchObject({
+          key: providerId === 'realtime_openai'
+            ? 'settingsVoice.realtimeProviders.openai.privacyDisclosure'
+            : 'settingsVoice.realtimeProviders.xai.privacyDisclosure',
+        });
+        expect(providerSettings).not.toHaveProperty('defaultConfig.mode');
+        expect(
+          isRecord(providerSettings)
+          && typeof providerSettings.parseConfig === 'function'
+          && isRecord(internalProviderSettings)
+            ? providerSettings.parseConfig(internalProviderSettings.defaultConfig)
+            : null,
+        ).not.toBeNull();
       }
       expect(typeof createSettingsSection).toBe('function');
       if (typeof createSettingsSection !== 'function') throw new Error('invalid bundled provider settings descriptor');

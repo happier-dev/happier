@@ -1544,6 +1544,60 @@ describe('Codex app-server realtime V3 adapter', () => {
     expect(fixture.client.dispose).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['null', null],
+    ['array', []],
+    ['non-empty object', { stopped: true }],
+  ] as const)('rejects a fulfilled %s stop response without releasing the terminal thread fence', async (
+    _label,
+    stopResponse,
+  ) => {
+    const fixture = createClientFixture({
+      request: async (method) => {
+        if (method === 'experimentalFeature/list') {
+          return featurePage([{ name: 'realtime_conversation', enabled: true }]);
+        }
+        if (method === 'thread/realtime/stop') return stopResponse;
+        return {};
+      },
+    });
+    const conversation = createConversation(fixture);
+    const starting = conversation.start({
+      transport: { kind: 'webrtc', offerSdp: 'offer' },
+    });
+    await vi.waitFor(() => expect(fixture.request).toHaveBeenCalledWith(
+      'thread/realtime/start',
+      expect.any(Object),
+    ));
+    const started = await settleSuccessfulStart(fixture, starting);
+    const terminalEvents: AgentSessionRealtimeLifecycleEvent[] = [];
+    started.handle.watch((event) => terminalEvents.push(event));
+
+    await expect(started.handle.stop()).resolves.toMatchObject({
+      status: 'unavailable',
+      diagnostic: { code: 'codex_realtime_stop_response_invalid' },
+    });
+    expect(terminalEvents).toEqual([{
+      kind: 'terminal',
+      reason: 'error',
+      diagnostic: expect.objectContaining({
+        code: 'codex_realtime_stop_response_invalid',
+      }),
+    }]);
+    await expect(conversation.start({
+      transport: { kind: 'webrtc', offerSdp: 'retry-after-invalid-stop' },
+    })).resolves.toMatchObject({
+      status: 'unavailable',
+      diagnostic: { code: 'codex_realtime_retry_unavailable' },
+    });
+    expect(
+      fixture.request.mock.calls.filter(([method]) => method === 'thread/realtime/stop'),
+    ).toHaveLength(1);
+    expect(
+      fixture.request.mock.calls.filter(([method]) => method === 'thread/realtime/start'),
+    ).toHaveLength(1);
+  });
+
   it('isolates throwing lifecycle watchers and retains terminal replay through one upstream stop', async () => {
     const fixture = createClientFixture();
     const startPromise = createConversation(fixture).start({

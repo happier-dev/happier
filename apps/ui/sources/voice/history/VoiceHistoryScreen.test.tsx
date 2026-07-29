@@ -185,6 +185,115 @@ describe('VoiceHistoryScreen', () => {
     expect(screen.findByTestId('voice-history-load-older')).toBeNull();
   });
 
+  it('keeps the latest reachable search query when an older-page load completes', async () => {
+    const page = createDeferred<{
+      loaded: number;
+      hasMore: boolean;
+      status: 'no_more';
+    }>();
+    const messages: Message[] = [
+      voiceMessage({
+        id: 'old-query',
+        role: 'assistant',
+        text: 'An older release note',
+        createdAt: 100,
+        source: OPENAI_SOURCE,
+      }),
+      voiceMessage({
+        id: 'latest-query',
+        role: 'assistant',
+        text: 'The latest deployment status',
+        createdAt: 200,
+        source: XAI_SOURCE,
+      }),
+    ];
+    const consumer = createVoiceHistoryConsumer(createDeps(messages, {
+      loadOlderMessages: async () => await page.promise,
+    }));
+    const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+    const screen = await renderScreen(
+      <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
+    );
+
+    await act(async () => {
+      screen.changeTextByTestId('voice-history-search', 'older');
+    });
+    await act(async () => {
+      screen.pressByTestId('voice-history-load-older');
+      await Promise.resolve();
+    });
+    await act(async () => {
+      screen.changeTextByTestId('voice-history-search', 'latest');
+    });
+    expect(screen.getTextContent()).toContain('The latest deployment status');
+    expect(screen.getTextContent()).not.toContain('An older release note');
+
+    await act(async () => {
+      page.resolve({ loaded: 0, hasMore: false, status: 'no_more' });
+      await page.promise;
+      await Promise.resolve();
+    });
+
+    expect(screen.getTextContent()).toContain('The latest deployment status');
+    expect(screen.getTextContent()).not.toContain('An older release note');
+  });
+
+  it('keeps the latest reachable search query when an export completes', async () => {
+    const page = createDeferred<{
+      loaded: number;
+      hasMore: boolean;
+      status: 'no_more';
+    }>();
+    const messages: Message[] = [
+      voiceMessage({
+        id: 'old-query',
+        role: 'assistant',
+        text: 'An older release note',
+        createdAt: 100,
+        source: OPENAI_SOURCE,
+      }),
+      voiceMessage({
+        id: 'latest-query',
+        role: 'assistant',
+        text: 'The latest deployment status',
+        createdAt: 200,
+        source: XAI_SOURCE,
+      }),
+    ];
+    const saveExportArtifact = vi.fn(async () => undefined);
+    const consumer = createVoiceHistoryConsumer(createDeps(messages, {
+      loadOlderMessages: async () => await page.promise,
+    }));
+    const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+    const screen = await renderScreen(
+      <VoiceHistoryScreen consumer={consumer} saveExportArtifact={saveExportArtifact} />,
+    );
+
+    await act(async () => {
+      screen.changeTextByTestId('voice-history-search', 'older');
+    });
+    await act(async () => {
+      screen.pressByTestId('voice-history-export');
+      await Promise.resolve();
+    });
+    await act(async () => {
+      screen.changeTextByTestId('voice-history-search', 'latest');
+    });
+    expect(screen.getTextContent()).toContain('The latest deployment status');
+    expect(screen.getTextContent()).not.toContain('An older release note');
+
+    await act(async () => {
+      page.resolve({ loaded: 0, hasMore: false, status: 'no_more' });
+      await page.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(saveExportArtifact).toHaveBeenCalledTimes(1);
+    expect(screen.getTextContent()).toContain('The latest deployment status');
+    expect(screen.getTextContent()).not.toContain('An older release note');
+  });
+
   it('exports the bounded canonical artifact and clears the whole carrier only after destructive confirmation', async () => {
     const messages: Message[] = [
       voiceMessage({

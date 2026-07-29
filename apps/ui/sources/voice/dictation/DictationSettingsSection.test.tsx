@@ -57,11 +57,19 @@ import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
 import { DictationSettingsSection } from './DictationSettingsSection';
 
 const localAvailability = {
+  browserSpeech: {
+    support: 'available',
+    onDevice: 'available',
+  },
   daemon: {
     featureEnabled: true,
     route: 'direct',
     modelState: 'ready',
     runtimeState: 'available',
+  },
+  nativeDevice: {
+    requested: true,
+    speechRecognition: 'available',
   },
 } as never;
 

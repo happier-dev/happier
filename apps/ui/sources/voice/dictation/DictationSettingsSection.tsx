@@ -203,6 +203,7 @@ export function DictationSettingsSection(props: Readonly<{
               platform: resolveRuntimePlatform(),
               executionMachineId: props.executionMachineId,
               daemon: props.localAvailability.daemon ?? null,
+              localAvailability: props.localAvailability,
             }));
           }}
         />

@@ -4,6 +4,7 @@ import { externalSessionOperationTranslations } from './externalSessionOperation
 import { externalSessionSettingsTranslations } from './externalSessionSettingsTranslations';
 import { pluginPermissionTranslations } from './pluginPermissionTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
+import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
 
 /**
  * Japanese translations for the Happier app
@@ -587,7 +588,7 @@ export const ja = {
         discarded: '一時アップロードを破棄しました。',
         unavailable: 'この一時アップロードは利用できなくなりました。',
     },
-    voice: voiceReadinessTranslations,
+    voice: voiceReadinessTranslations.ja,
     pluginPermissions: pluginPermissionTranslations.ja,
     pluginSurfaces: {
         offlineSnapshot: {
@@ -9949,11 +9950,12 @@ settingsSession: {
       byoSubtitle: "自分のElevenLabs APIキーとエージェントを使用",
     },
     realtimeProviders: {
+      ...voiceProviderPrivacyTranslations.ja,
       codex: {
         sectionTitle: "Codex Live アカウント",
         accountTitle: "グローバル音声アカウント",
         accountSubtitle: "グローバル Codex Voice が使用する接続済みサービスのアカウントまたはアカウントグループを指定します。ダイレクト音声は常に開いているセッションを使用します。",
-        privacyDisclosure: "音声と Codex Live の会話は、WebRTC を使用してこのデバイスから OpenAI に送信されます。選択した Codex セッションは、選択したマシン上で実行されます。会話を継続して応答を読み上げるため、OpenAI は限定された起動時およびセッションのコンテキストと委任された Codex の結果を受信する場合があります。Happier のサーバーとリレーは Codex Live の音声を中継しませんが、Happier の daemon/app-server は引き続きシグナリング、セッションのライフサイクル、委任、ツール、権限制御を処理します。プロバイダーが運用するネットワークリレーが通信に参加する場合があります。",
+        privacyDisclosure: "音声と Codex Live の会話は、WebRTC を使用してこのデバイスから OpenAI に送信されます。選択した Codex セッションと接続サービスのアカウントは、選択したマシン経由で動作します。会話を継続して応答を読み上げるため、OpenAI は限定された起動時およびセッションのコンテキストと委任された Codex の結果を受信する場合があります。Happier のサーバーとリレーは Codex Live の音声を中継しませんが、Happier の daemon/app-server は引き続きシグナリング、セッションのライフサイクル、委任、ツール、権限制御を処理します。プロバイダーが運用するネットワークリレーが通信に参加する場合があります。Codex または OpenAI は、選択したアカウントとプロバイダーのポリシーに従い、開発者向け指示、リアルタイム会話資料、関連診断をプロバイダー固有のランタイムストレージに保持する場合があります。Happier はそのプロバイダー固有データを削除または書き換えません。",
       },
     },
     ui: {

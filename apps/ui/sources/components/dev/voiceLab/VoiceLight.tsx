@@ -23,7 +23,7 @@ import {
  *
  * The concepts differ in spatial structure — a band, a sphere, a composer, a
  * column of type. They deliberately share the light itself, because that is what
- * makes them all read as Happier rather than five unrelated widgets.
+ * makes them all read as Happier rather than nine unrelated widgets.
  *
  * A bloom is a hard-edged circle put through a blur. That is the cheapest way to
  * get a true radial falloff that is identical on web and native, composites on

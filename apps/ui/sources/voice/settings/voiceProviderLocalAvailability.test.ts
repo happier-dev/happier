@@ -106,6 +106,25 @@ function modelStatus(
 }
 
 describe('resolveVoiceProviderLocalAvailability', () => {
+    it.each([
+        ['available', 'available'],
+        ['unavailable', 'unavailable'],
+        ['unknown', 'unknown'],
+    ] as const)(
+        'preserves the passive native Device STT recognition fact when it is %s',
+        (nativeDeviceSpeechRecognition, expected) => {
+            expect(resolveVoiceProviderLocalAvailability({
+                platformOs: 'ios',
+                daemonFeatureEnabled: false,
+                serverFeatures: null,
+                nativeDeviceSpeechRecognition,
+            }).nativeDevice).toEqual({
+                requested: true,
+                speechRecognition: expected,
+            });
+        },
+    );
+
     it('maps disabled server-routed live-stream relay to daemon relay-disabled while browser Local remains selectable', () => {
         const localAvailability = resolveVoiceProviderLocalAvailability({
             platformOs: 'web',

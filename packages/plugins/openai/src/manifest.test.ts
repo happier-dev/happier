@@ -81,4 +81,18 @@ describe('OpenAI Voice plugin manifest', () => {
       hostAccess: ['realtime-openai-codex-account', 'realtime-openai-api'],
     }));
   });
+
+  it('declares the selected-account processing disclosure without promising provider deletion', () => {
+    const disclosure = PLUGIN_MANIFEST.contributes.voiceProviders[0]?.settings?.privacyDisclosure;
+    expect(disclosure).toMatchObject({
+      key: 'settingsVoice.realtimeProviders.openai.privacyDisclosure',
+    });
+    const fallback = typeof disclosure === 'string' ? disclosure : disclosure?.fallback ?? '';
+    expect(fallback).toMatch(/audio/iu);
+    expect(fallback).toMatch(/conversation/iu);
+    expect(fallback).toMatch(/OpenAI/iu);
+    expect(fallback).toMatch(/selected .*account|Saved Voice API key/iu);
+    expect(fallback).toMatch(/may retain/iu);
+    expect(fallback).not.toMatch(/delete.*OpenAI|OpenAI.*delet/iu);
+  });
 });

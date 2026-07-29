@@ -285,6 +285,53 @@ describe('i18n integrity', () => {
         expect(untranslated).toEqual([]);
     });
 
+    it('keeps selectable provider privacy and local-resumption semantics localized', () => {
+        const locales = [
+            { code: 'en', root: en, idToken: 'ID', negativeToken: 'does not' },
+            { code: 'ru', root: ru, idToken: 'идентификатор', negativeToken: 'не' },
+            { code: 'pl', root: pl, idToken: 'identyfikator', negativeToken: 'nie' },
+            { code: 'es', root: es, idToken: 'identificador', negativeToken: 'no' },
+            { code: 'it', root: itLocale, idToken: 'identificatore', negativeToken: 'non' },
+            { code: 'pt', root: pt, idToken: 'identificador', negativeToken: 'não' },
+            { code: 'ca', root: ca, idToken: 'identificador', negativeToken: 'no' },
+            { code: 'zh-Hans', root: zhHans, idToken: '标识符', negativeToken: '不会' },
+            { code: 'zh-Hant', root: zhHant, idToken: '識別碼', negativeToken: '不會' },
+            { code: 'ja', root: ja, idToken: 'ID', negativeToken: '削除しません' },
+        ];
+
+        const failures = locales.flatMap(({ code, root, idToken, negativeToken }) => {
+            const realtimeProviders = root.settingsVoice?.realtimeProviders;
+            const disclosures = [
+                realtimeProviders?.openai?.privacyDisclosure,
+                realtimeProviders?.xai?.privacyDisclosure,
+                realtimeProviders?.google?.privacyDisclosure,
+                realtimeProviders?.codex?.privacyDisclosure,
+            ];
+            const resumption = realtimeProviders?.resumption;
+            const forgetCopy = [
+                resumption?.forgetTitle,
+                resumption?.forgetSubtitle,
+                resumption?.forgotten,
+                resumption?.unsupported,
+                resumption?.failed,
+            ];
+            const combinedForgetCopy = forgetCopy.filter((value) => typeof value === 'string').join(' ');
+            const subtitle = typeof resumption?.forgetSubtitle === 'string' ? resumption.forgetSubtitle : '';
+            return [
+                ...(disclosures.every((value) => typeof value === 'string' && value.trim().length > 0)
+                    ? [] : [`${code}: missing provider disclosure`]),
+                ...(forgetCopy.every((value) => typeof value === 'string' && value.trim().length > 0)
+                    ? [] : [`${code}: incomplete forget copy`]),
+                ...(combinedForgetCopy.includes('Happier') && combinedForgetCopy.includes(idToken)
+                    ? [] : [`${code}: forget copy does not identify Happier's saved id`]),
+                ...(subtitle.includes('xAI') && subtitle.toLocaleLowerCase().includes(negativeToken.toLocaleLowerCase())
+                    ? [] : [`${code}: forget subtitle does not disclaim xAI deletion`]),
+            ];
+        });
+
+        expect(failures).toEqual([]);
+    });
+
     it('keeps the provider settings namespace complete in every supported locale', () => {
         const expected = flattenTranslationLeaves(en.settingsProviders)
             .map((leaf) => ({ key: leaf.key, kind: leaf.kind }))

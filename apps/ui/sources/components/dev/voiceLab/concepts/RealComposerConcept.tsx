@@ -21,26 +21,22 @@ const PLANET = 26;
  * you are judging is the real chip row, the real send/dictate/stop button, the
  * real panel radius, and the real responsive behaviour.
  *
- * **What this proves:** the real composer mounts standalone, and
- * `extraActionChips.render(ctx)` is a full node escape hatch, so Voice can be
- * contributed without redesigning a 3272-line component.
+ * **What this proves:** the real composer mounts standalone and accepts the
+ * three additive optional seams this fixture consumes: `fieldAccessory`,
+ * `trailingAccessory`, and `submitDictation={false}`.
  *
- * **What it does NOT prove:** placement. `extraActionChips` renders into the
- * LEFT action row, which in a real session already carries model, mode, target,
- * permission, account, attach, mention, branch and diff chips. Voice does not
- * belong there. The right side has one control and room for a second — but
- * `AgentInput` has no trailing slot, so that placement needs a small additive
- * prop. See `ComposerConcept` for the proposed right-hand cluster.
+ * **What it does NOT prove:** production adoption. These seams have no non-lab
+ * consumer today, and this fixture does not select a placement or authorize
+ * production wiring.
  *
- * The two composer props that matter here, quoted from `AgentInput.tsx`:
+ * The composer decisions exercised here are:
  *
- *   dictationPressHandler = voiceEnabled && props.sessionId ? handleDictationPress : undefined   // :1482
- *   canStopFromComposer   = Boolean(props.onAbort && props.showAbortButton)                      // :2351
+ *   `fieldAccessory` pins Dictation to the text field.
+ *   `trailingAccessory` places Voice immediately before submit/stop.
+ *   `submitDictation={false}` prevents Dictation from shadowing Stop when empty.
  *
- * So the trailing slot resolves exactly as it does in production: dictation mic
- * when the composer is empty, send when it has content, **stop** while the agent
- * is working. Voice never touches it — it lives in the chip row, which is why
- * "stop the turn" and "end Voice" can both be reachable at once.
+ * With those opt-in props, "stop the turn" and "end Voice" are both reachable
+ * in the fixture. Omitted props preserve the existing composer behavior.
  */
 export function RealComposerConcept(props: VoiceConceptProps) {
     const tokens = useVoiceLabTokens();

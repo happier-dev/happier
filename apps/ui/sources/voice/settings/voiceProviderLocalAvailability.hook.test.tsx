@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit';
 
 const pcmCaptureAvailabilityMock = vi.hoisted(() => vi.fn(() => 'available'));
+const isRecognitionAvailableMock = vi.hoisted(() => vi.fn(() => true));
+const requestSpeechPermissionsMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -74,7 +76,28 @@ vi.mock('@/voice/runtime/daemonInference/resolveDaemonSpeechPcmCaptureAvailabili
     resolveDaemonSpeechPcmCaptureAvailability: () => pcmCaptureAvailabilityMock(),
 }));
 
+vi.mock('expo-speech-recognition', () => ({
+    ExpoSpeechRecognitionModule: {
+        isRecognitionAvailable: isRecognitionAvailableMock,
+        requestPermissionsAsync: requestSpeechPermissionsMock,
+    },
+}));
+
 describe('useVoiceProviderLocalAvailability', () => {
+    it('loads native recognition support passively without requesting microphone permission', async () => {
+        isRecognitionAvailableMock.mockReturnValueOnce(false);
+        const { useVoiceProviderLocalAvailability } = await import('./voiceProviderLocalAvailability');
+
+        const hook = await renderHook(() => useVoiceProviderLocalAvailability());
+
+        expect(hook.getCurrent().nativeDevice).toEqual({
+            requested: true,
+            speechRecognition: 'unavailable',
+        });
+        expect(isRecognitionAvailableMock).toHaveBeenCalledTimes(1);
+        expect(requestSpeechPermissionsMock).not.toHaveBeenCalled();
+    });
+
     it('passes native daemon PCM capture availability into the provider resolver', async () => {
         const { useVoiceProviderLocalAvailability } = await import('./voiceProviderLocalAvailability');
         const { resolveVoiceProviderAvailability } = await import('./resolveVoiceProviderAvailability');

@@ -215,6 +215,7 @@ export type BundledVoiceSpeechSettingsDescriptor = Readonly<{
   titleKey: string;
   subtitleKey: string;
   detailKey: string;
+  privacyDisclosureKey?: string;
   iconName: string;
   credential: Readonly<{
     kind: 'api_key';

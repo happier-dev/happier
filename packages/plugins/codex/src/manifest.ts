@@ -5,7 +5,7 @@ import { CODEX_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js
 
 const CODEX_REALTIME_VOICE_PRIVACY_DISCLOSURE = Object.freeze({
   key: 'settingsVoice.realtimeProviders.codex.privacyDisclosure',
-  fallback: 'Audio and the Codex Live conversation are sent from this device to OpenAI using WebRTC. The selected Codex session runs on the selected machine. OpenAI may receive bounded startup and session context and delegated Codex results so the conversation can continue and responses can be spoken. Happier’s server and relay do not carry Codex Live audio; the Happier daemon/app-server still carries signaling, session lifecycle, delegation, tools, and permission control. Provider-operated network relays may participate.',
+  fallback: 'Audio and the Codex Live conversation are sent from this device to OpenAI using WebRTC. The selected Codex session and Connected Services account run through the selected machine. OpenAI may receive bounded startup and session context and delegated Codex results so the conversation can continue and responses can be spoken. Happier’s server and relay do not carry Codex Live audio; the Happier daemon/app-server still carries signaling, session lifecycle, delegation, tools, and permission control. Provider-operated network relays may participate. Codex or OpenAI may retain developer instructions, realtime conversation material, and related diagnostics in provider-native runtime storage according to the selected account and provider policies; Happier does not delete or rewrite that provider-native data.',
 });
 
 const CODEX_AGENT_CONTRIBUTION_IDENTITY = 'codex';

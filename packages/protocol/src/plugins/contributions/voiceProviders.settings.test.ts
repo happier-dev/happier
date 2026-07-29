@@ -20,6 +20,29 @@ const baseContribution = Object.freeze({
 });
 
 describe('Voice provider structured settings declarations', () => {
+  it('accepts a localized disclosure without inventing a provider setting', () => {
+    const parsed = PluginContributesV2Schema.parse({
+      voiceProviders: [{
+        ...baseContribution,
+        settings: {
+          schemaVersion: 1,
+          fields: [],
+          privacyDisclosure: {
+            key: 'settingsVoice.realtimeProviders.openai.privacyDisclosure',
+            fallback: 'Audio and conversation content are processed by OpenAI.',
+          },
+        },
+      }],
+    });
+
+    expect(parsed.voiceProviders[0]?.settings).toMatchObject({
+      fields: [],
+      privacyDisclosure: {
+        key: 'settingsVoice.realtimeProviders.openai.privacyDisclosure',
+      },
+    });
+  });
+
   it('accepts a bounded localized privacy disclosure beside declarative account settings', () => {
     const parsed = PluginContributesV2Schema.parse({
       voiceProviders: [{

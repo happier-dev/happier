@@ -11,7 +11,6 @@ import {
 } from '@happier-dev/protocol';
 
 import {
-  getAgentCore,
   isAgentId,
   resolveBundledAgentIdFromContributionIdentity,
 } from '@/agents/catalog/catalog';
@@ -22,7 +21,6 @@ import {
   buildConnectedServiceAccountGroupOptionsByServiceId,
   buildConnectedServiceProfileOptionsByServiceId,
   buildConnectedServicesBindingsPayload,
-  resolveAgentSupportedConnectedServiceIds,
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { Item } from '@/components/ui/lists/Item';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -96,7 +94,6 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
     const parsed = PluginContributionIdentityV1Schema.safeParse(props.agentId);
     return parsed.success ? parsed.data : null;
   }, [props.agentId]);
-  const agentCore = bundledAgentId ? getAgentCore(bundledAgentId) : null;
   const declaredServiceIds = React.useMemo(
     () => Array.isArray(props.serviceIds)
       ? new Set(props.serviceIds.flatMap((serviceId) => {
@@ -107,24 +104,18 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
     [props.serviceIds],
   );
   const supportedServiceIds = React.useMemo(
-    () => agentCore
-      ? resolveAgentSupportedConnectedServiceIds({
-        agentCore,
-      }).filter((serviceId) => declaredServiceIds.has(serviceId))
-      : qualifiedAgent
-        ? [...declaredServiceIds]
-        : [],
-    [agentCore, declaredServiceIds, qualifiedAgent],
+    () => [...declaredServiceIds],
+    [declaredServiceIds],
   );
   const profileOptionsByServiceId = React.useMemo(
     () => buildConnectedServiceProfileOptionsByServiceId({
       accountProfileConnectedServicesV2: profile.connectedServicesV2 ?? [],
-      agentCore,
+      // Voice declarations own eligibility; this projection keeps canonical profile health only.
+      agentCore: null,
       supportedConnectedServiceIds: supportedServiceIds,
       labelsByKey: settings.connectedServicesProfileLabelByKey ?? {},
     }),
     [
-      agentCore,
       profile.connectedServicesV2,
       settings.connectedServicesProfileLabelByKey,
       supportedServiceIds,
@@ -163,7 +154,7 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
     supportedServiceIds,
   ]);
 
-  if (!agentCore && !qualifiedAgent) return null;
+  if (!bundledAgentId && !qualifiedAgent) return null;
 
   const title = typeof props.title === 'string'
     ? props.title

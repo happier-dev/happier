@@ -20,7 +20,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "sessionInfo.grokSessionId": "Grok session ID",
     "sessionInfo.grokSessionIdCopied": "Grok session ID copied",
     "settingsVoice.mode.codexRealtime": "Codex Realtime (Experimental)",
-    "settingsVoice.mode.codexRealtimeSubtitle": "Speak directly with the active Codex agent session."
+    "settingsVoice.mode.codexRealtimeSubtitle": "Speak directly with the active Codex agent session.",
+    "settingsVoice.realtimeProviders.google.privacyDisclosure": "Audio sent for transcription is processed by Google Gemini, and text sent for speech is processed by Google Cloud Text-to-Speech. Happier sends these requests through the selected execution machine using that machine’s Google API credential. Google may retain received data according to the selected Google account’s settings and Google’s terms."
   }
 } as const);
 

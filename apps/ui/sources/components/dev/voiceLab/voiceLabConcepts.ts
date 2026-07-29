@@ -12,10 +12,10 @@ import type { VoiceConceptSpec } from './conceptTypes';
 /**
  * The concept board.
  *
- * These five differ in **spatial and interaction model**, not in colour or
- * radius. One is an edge, one is a free object, one is a state of an existing
- * control, one is pure typography, one is a substance. If two of them could be
- * swapped by changing a stylesheet, one of them should not exist.
+ * These nine differ in **spatial and interaction model**, not merely colour or
+ * radius. The board includes the five original reference directions plus four
+ * later composites and real-composer placements. If two could be swapped by
+ * changing a stylesheet, one of them should not exist.
  */
 export const VOICE_LAB_CONCEPTS: readonly VoiceConceptSpec[] = [
     {
@@ -56,15 +56,16 @@ export const VOICE_LAB_CONCEPTS: readonly VoiceConceptSpec[] = [
         id: 'real-composer',
         name: 'Real composer',
         thesis: 'The proposal mounted on the actual AgentInput — not a replica.',
-        model: 'Voice contributed through the composer’s existing `extraActionChips` slot. Zero changes to AgentInput.',
+        model: 'The actual AgentInput using three additive optional seams: `fieldAccessory`, `trailingAccessory`, and `submitDictation={false}`.',
         strengths: [
-            'Additive: `extraActionChips.render(ctx)` is already a full node escape hatch',
-            'Trailing slot resolves exactly as production does — dictation / send / stop — untouched',
+            'Exercises the shipped composer rather than a replica, including all three opt-in seams',
+            '`fieldAccessory` keeps Dictation on the field while `trailingAccessory` keeps Voice beside submit',
+            '`submitDictation={false}` un-shadows Stop coding turn while the separate speech controls are present',
             'You are judging the real chip row, radius, density and responsive behaviour',
         ],
         risks: [
-            'The chip row is already dense; Voice competes for width at narrow sidebar sizes',
-            'Chip-scale is small for a meter — legibility needs checking at real widths',
+            'All three seams are dormant outside the lab; this exploration does not select or authorize a production consumer',
+            'The trailing action row is already dense; adjacent Voice and submit/stop controls need checking at real widths',
         ],
         cost: 'low',
         Component: RealComposerConcept,
@@ -111,7 +112,7 @@ export const VOICE_LAB_CONCEPTS: readonly VoiceConceptSpec[] = [
         strengths: [
             'Genuinely persists across navigation — the only concept that models Global Voice honestly',
             'Best mobile ergonomics: thumb-reachable, movable away from the keyboard',
-            'The sphere is the strongest identity object of the five',
+            'The sphere is the strongest identity object on the current board',
         ],
         risks: [
             'Directly collides with the existing pet overlay: needs a stated coexistence policy',
@@ -144,7 +145,7 @@ export const VOICE_LAB_CONCEPTS: readonly VoiceConceptSpec[] = [
         thesis: 'The transcript is the interface. State lives in type, not in light.',
         model: 'Typographic. Status set at display scale with tight tracking; one rule whose fill tracks speech energy.',
         strengths: [
-            'Calmest of the five over a long working day',
+            'Calmest direction on the current board over a long working day',
             'Strongest state legibility with colour removed',
             'Lowest performance and accessibility risk by a wide margin',
         ],
@@ -166,7 +167,7 @@ export const VOICE_LAB_CONCEPTS: readonly VoiceConceptSpec[] = [
             'Reads as alive without a single waveform bar',
         ],
         risks: [
-            'The highest exhaustion risk of the five; must go near-still when nobody speaks',
+            'The highest exhaustion risk on the current board; must go near-still when nobody speaks',
             'Continuous surface motion beside a diff or terminal violates the concentration rule',
             'Vessel chrome reintroduces exactly the rounded container Aurora removes',
         ],

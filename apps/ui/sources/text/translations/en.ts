@@ -2,6 +2,7 @@ import { externalSessionOperationTranslations } from './externalSessionOperation
 import { externalSessionSettingsTranslations } from './externalSessionSettingsTranslations';
 import { pluginPermissionTranslations } from './pluginPermissionTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
+import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Create a server, import host JSON, or install a recommended preset.',
@@ -475,7 +476,7 @@ export const en = {
         discarded: 'The staged upload was discarded.',
         unavailable: 'This staged upload is no longer available.',
     },
-    voice: voiceReadinessTranslations,
+    voice: voiceReadinessTranslations.en,
     pluginPermissions: pluginPermissionTranslations.en,
     pluginSurfaces: {
         offlineSnapshot: {
@@ -9907,13 +9908,15 @@ settingsSession: {
             },
         },
         realtimeProviders: {
+            ...voiceProviderPrivacyTranslations.en,
             codex: {
                 sectionTitle: 'Codex Live account',
                 accountTitle: 'Global Voice account',
                 accountSubtitle: 'Choose the exact Connected Services account or account group used by Global Codex Voice. Direct Voice always uses the open session.',
-                privacyDisclosure: 'Audio and the Codex Live conversation are sent from this device to OpenAI using WebRTC. The selected Codex session runs on the selected machine. OpenAI may receive bounded startup and session context and delegated Codex results so the conversation can continue and responses can be spoken. Happier’s server and relay do not carry Codex Live audio; the Happier daemon/app-server still carries signaling, session lifecycle, delegation, tools, and permission control. Provider-operated network relays may participate.',
+                privacyDisclosure: 'Audio and the Codex Live conversation are sent from this device to OpenAI using WebRTC. The selected Codex session and Connected Services account run through the selected machine. OpenAI may receive bounded startup and session context and delegated Codex results so the conversation can continue and responses can be spoken. Happier’s server and relay do not carry Codex Live audio; the Happier daemon/app-server still carries signaling, session lifecycle, delegation, tools, and permission control. Provider-operated network relays may participate. Codex or OpenAI may retain developer instructions, realtime conversation material, and related diagnostics in provider-native runtime storage according to the selected account and provider policies; Happier does not delete or rewrite that provider-native data.',
             },
             xai: {
+                ...voiceProviderPrivacyTranslations.en.xai,
                 setup: {
                     footer: 'Your xAI API key is stored as a synced SavedSecret in your Happier account secrets. It is only materialized for the bounded xAI Realtime operation.',
                 },
@@ -10011,11 +10014,7 @@ settingsSession: {
                 confirmTitle: 'Enable conversation resumption?',
                 confirmBody: 'The provider may retain a conversation identifier for up to {minutes} minutes so interrupted sessions can reconnect.',
                 confirmAction: 'Enable',
-                forgetTitle: 'Forget provider conversation',
-                forgetSubtitle: 'Delete the current provider-side resumption state now.',
-                forgotten: 'The provider conversation was forgotten.',
-                unsupported: 'This provider cannot forget the current conversation from this session.',
-                failed: 'The provider conversation could not be forgotten. Please try again.',
+                ...voiceProviderPrivacyTranslations.en.resumption,
             },
             links: {
                 title: 'Provider resources',

@@ -30,4 +30,15 @@ describe('Google voice plugin manifest', () => {
     expect(serialized).not.toContain('google_gemini');
     expect(serialized).not.toContain('google_cloud');
   });
+
+  it('owns the Google speech processing disclosure in its UI locale contribution', () => {
+    const english = PLUGIN_MANIFEST.contributes.ui.translations.find(
+      (translation) => translation.locale === 'en',
+    );
+    const disclosure = english?.messages['settingsVoice.realtimeProviders.google.privacyDisclosure'];
+    expect(disclosure).toMatch(/Google Gemini/iu);
+    expect(disclosure).toMatch(/Google Cloud Text-to-Speech/iu);
+    expect(disclosure).toMatch(/selected execution machine/iu);
+    expect(disclosure).toMatch(/may retain/iu);
+  });
 });

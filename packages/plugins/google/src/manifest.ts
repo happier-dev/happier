@@ -16,5 +16,13 @@ export const PLUGIN_MANIFEST = Object.freeze({
       platforms: ['web', 'ios', 'android'],
       capabilities: { readiness: { requirements: ['credential'] } },
     }],
+    ui: {
+      translations: [{
+        locale: 'en',
+        messages: {
+          'settingsVoice.realtimeProviders.google.privacyDisclosure': 'Audio sent for transcription is processed by Google Gemini, and text sent for speech is processed by Google Cloud Text-to-Speech. Happier sends these requests through the selected execution machine using that machine’s Google API credential. Google may retain received data according to the selected Google account’s settings and Google’s terms.',
+        },
+      }],
+    },
   },
 });

@@ -2981,7 +2981,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     }
   });
 
-  it('reports connected-service auth switching unsafe only while realtime is attached', async () => {
+  it('reports connected-service auth switching unsafe while realtime retains thread authority', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-plugin-realtime-identity-'));
     try {
       await mkdir(codexHome, { recursive: true });
@@ -3027,10 +3027,156 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         ok: true,
         runtime: {
           safeToProbe: true,
-          safeToApply: true,
+          safeToApply: false,
           inProviderTurn: false,
         },
       });
+      await runtime.dispose();
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks realtime identity changes without provider mutation and applies the exact binding once after runtime replacement', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-plugin-realtime-auth-fence-'));
+    try {
+      await mkdir(codexHome, { recursive: true });
+      const runtime = asConnectedServiceAuthRuntime(createRuntime({
+        processEnv: { CODEX_HOME: codexHome },
+      }));
+      const initialRequest = {
+        serviceId: 'openai-codex',
+        authGeneration: {
+          credential: buildConnectedCodexCredential('target'),
+          credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+          forcedWorkspaceId: 'acct_target',
+          selection: {
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'team',
+            activeProfileId: 'target',
+            fallbackProfileId: 'backup',
+            generation: 12,
+          },
+        },
+      };
+      await expect(runtime.applyConnectedServiceAuthGeneration(initialRequest))
+        .resolves.toMatchObject({ ok: true, activeAccountId: 'acct_target' });
+      await startCodexAppServerRuntime(runtime);
+      const realtimeHandle = await startActiveRealtimeAttachment(runtime);
+      const authStoreBeforeIdentityChange = await readFile(join(codexHome, 'auth.json'), 'utf8');
+      const loginCountBeforeIdentityChange = clientState.requests.filter(
+        ({ method }) => method === 'account/login/start',
+      ).length;
+      const identityChangeRequest = {
+        serviceId: 'openai-codex',
+        authGeneration: {
+          credential: buildConnectedCodexCredential('backup'),
+          credentialRevision: 'csr_ZYXWVUTSRQPONMLKJHGFEDCBA1',
+          forcedWorkspaceId: 'acct_target',
+          selection: {
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'team',
+            activeProfileId: 'backup',
+            fallbackProfileId: 'target',
+            generation: 13,
+          },
+        },
+      };
+
+      await expect(runtime.applyConnectedServiceAuthGeneration(identityChangeRequest))
+        .resolves.toMatchObject({
+          ok: false,
+          errorCode: 'auth_identity_change_restart_required',
+          recovery: 'restart_resume',
+        });
+      expect(clientState.requests.filter(
+        ({ method }) => method === 'account/login/start',
+      )).toHaveLength(loginCountBeforeIdentityChange);
+      await expect(readFile(join(codexHome, 'auth.json'), 'utf8'))
+        .resolves.toBe(authStoreBeforeIdentityChange);
+
+      await expect(realtimeHandle.stop()).resolves.toEqual({ status: 'stopped' });
+      await expect(runtime.applyConnectedServiceAuthGeneration(identityChangeRequest))
+        .resolves.toMatchObject({
+          ok: false,
+          errorCode: 'auth_identity_change_restart_required',
+          recovery: 'restart_resume',
+        });
+      expect(clientState.requests.filter(
+        ({ method }) => method === 'account/login/start',
+      )).toHaveLength(loginCountBeforeIdentityChange);
+      await runtime.dispose();
+
+      const replacementRuntime = asConnectedServiceAuthRuntime(createRuntime({
+        processEnv: { CODEX_HOME: codexHome },
+      }));
+      await expect(replacementRuntime.applyConnectedServiceAuthGeneration(identityChangeRequest))
+        .resolves.toMatchObject({
+          ok: true,
+          activeAccountId: 'acct_target',
+        });
+      expect(clientState.requests.filter(
+        ({ method }) => method === 'account/login/start',
+      )).toHaveLength(loginCountBeforeIdentityChange + 1);
+      await replacementRuntime.dispose();
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a same-binding credential refresh continuous during realtime', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-plugin-realtime-auth-refresh-'));
+    try {
+      await mkdir(codexHome, { recursive: true });
+      const runtime = asConnectedServiceAuthRuntime(createRuntime({
+        processEnv: { CODEX_HOME: codexHome },
+      }));
+      const selection = {
+        kind: 'profile',
+        serviceId: 'openai-codex',
+        profileId: 'target',
+      };
+      await runtime.applyConnectedServiceAuthGeneration({
+        serviceId: 'openai-codex',
+        authGeneration: {
+          credential: buildConnectedCodexCredential('target'),
+          credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+          forcedWorkspaceId: 'acct_target',
+          selection,
+        },
+      });
+      await startCodexAppServerRuntime(runtime);
+      const realtimeHandle = await startActiveRealtimeAttachment(runtime);
+      const refreshedCredential = buildConnectedCodexCredential('target');
+      const loginCountBeforeRefresh = clientState.requests.filter(
+        ({ method }) => method === 'account/login/start',
+      ).length;
+
+      await expect(runtime.applyConnectedServiceAuthGeneration({
+        serviceId: 'openai-codex',
+        authGeneration: {
+          credential: {
+            ...refreshedCredential,
+            oauth: {
+              ...refreshedCredential.oauth,
+              accessToken: 'refreshed-target-access',
+              refreshToken: 'refreshed-target-refresh',
+            },
+          },
+          credentialRevision: 'csr_ZYXWVUTSRQPONMLKJHGFEDCBA1',
+          forcedWorkspaceId: 'acct_target',
+          selection,
+        },
+      })).resolves.toMatchObject({
+        ok: true,
+        activeAccountId: 'acct_target',
+      });
+      expect(clientState.requests.filter(
+        ({ method }) => method === 'account/login/start',
+      )).toHaveLength(loginCountBeforeRefresh + 1);
+      await expect(realtimeHandle.stop()).resolves.toEqual({ status: 'stopped' });
       await runtime.dispose();
     } finally {
       await rm(codexHome, { recursive: true, force: true });
@@ -3319,21 +3465,15 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     }
   });
 
-  it('applies live auth during an in-flight turn without interrupting that turn', async () => {
+  it('blocks a connected-service identity change during an in-flight turn without interrupting that turn', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-plugin-live-auth-busy-'));
     try {
       await mkdir(codexHome, { recursive: true });
-      clientState.deferTurnStartForPrompt('busy prompt');
       const runtime = asConnectedServiceAuthRuntime(createRuntime({
         processEnv: { CODEX_HOME: codexHome },
       }));
-      const send = runtime.send({ v: 1, text: 'busy prompt' });
-      await waitForRequestCount('turn/start', 1);
-
-      await expect(runtime.applyConnectedServiceAuthGeneration({
+      await runtime.applyConnectedServiceAuthGeneration({
         serviceId: 'openai-codex',
-        reason: 'same_provider_account_exhausted',
-        requireDirectLiveHotApply: true,
         authGeneration: {
           credential: buildConnectedCodexCredential('target'),
           forcedWorkspaceId: 'acct_target',
@@ -3343,20 +3483,36 @@ describe('Codex app-server temporary recoverable turn failures', () => {
             profileId: 'target',
           },
         },
+      });
+      clientState.deferTurnStartForPrompt('busy prompt');
+      const send = runtime.send({ v: 1, text: 'busy prompt' });
+      await waitForRequestCount('turn/start', 1);
+      const loginCountBeforeIdentityChange = clientState.requests.filter(
+        ({ method }) => method === 'account/login/start',
+      ).length;
+
+      await expect(runtime.applyConnectedServiceAuthGeneration({
+        serviceId: 'openai-codex',
+        reason: 'same_provider_account_exhausted',
+        requireDirectLiveHotApply: true,
+        authGeneration: {
+          credential: buildConnectedCodexCredential('backup'),
+          forcedWorkspaceId: 'acct_target',
+          selection: {
+            kind: 'profile',
+            serviceId: 'openai-codex',
+            profileId: 'backup',
+          },
+        },
       })).resolves.toMatchObject({
-        ok: true,
-        appliedVia: 'direct_live_hot_auth',
-        activeAccountId: 'acct_target',
+        ok: false,
+        errorCode: 'auth_identity_change_restart_required',
+        recovery: 'restart_resume',
       });
 
-      expect(clientState.requests).toContainEqual({
-        method: 'account/login/start',
-        params: {
-          type: 'chatgptAuthTokens',
-          accessToken: 'target-access',
-          chatgptAccountId: 'acct_target',
-        },
-      });
+      expect(clientState.requests.filter(
+        ({ method }) => method === 'account/login/start',
+      )).toHaveLength(loginCountBeforeIdentityChange);
       clientState.resolveDeferredTurnStart('turn-busy');
       await send;
       const completion = waitForCodexAppServerRuntimeTurnCompletion(runtime);

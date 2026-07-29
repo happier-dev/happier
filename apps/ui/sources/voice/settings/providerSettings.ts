@@ -303,7 +303,11 @@ function extractBundledOwner(raw: unknown): VoiceProviderSettingsOwner | null {
   const publicDeclaration = PluginVoiceProviderContributionV1Schema.safeParse(raw.declaration);
   if (publicDeclaration.success
     && publicDeclaration.data.kind === 'conversation'
-    && publicDeclaration.data.settings !== undefined) {
+    && publicDeclaration.data.settings !== undefined
+    && (
+      publicDeclaration.data.settings.fields.length > 0
+      || publicDeclaration.data.settings.connectedServicesBinding !== undefined
+    )) {
     const settings = createExternalVoiceProviderSettingsDescriptor(publicDeclaration.data.settings);
     const legacyMigration = isRecord(raw.internal) && isRecord(raw.internal.legacySettingsMigration)
       ? raw.internal.legacySettingsMigration

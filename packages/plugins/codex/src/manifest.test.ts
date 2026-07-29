@@ -115,7 +115,7 @@ describe('Codex plugin manifest', () => {
         fields: [],
         privacyDisclosure: {
           key: 'settingsVoice.realtimeProviders.codex.privacyDisclosure',
-          fallback: 'Audio and the Codex Live conversation are sent from this device to OpenAI using WebRTC. The selected Codex session runs on the selected machine. OpenAI may receive bounded startup and session context and delegated Codex results so the conversation can continue and responses can be spoken. Happier’s server and relay do not carry Codex Live audio; the Happier daemon/app-server still carries signaling, session lifecycle, delegation, tools, and permission control. Provider-operated network relays may participate.',
+          fallback: 'Audio and the Codex Live conversation are sent from this device to OpenAI using WebRTC. The selected Codex session and Connected Services account run through the selected machine. OpenAI may receive bounded startup and session context and delegated Codex results so the conversation can continue and responses can be spoken. Happier’s server and relay do not carry Codex Live audio; the Happier daemon/app-server still carries signaling, session lifecycle, delegation, tools, and permission control. Provider-operated network relays may participate. Codex or OpenAI may retain developer instructions, realtime conversation material, and related diagnostics in provider-native runtime storage according to the selected account and provider policies; Happier does not delete or rewrite that provider-native data.',
         },
         connectedServicesBinding: {
           id: 'globalConnectedServices',
@@ -131,5 +131,11 @@ describe('Codex plugin manifest', () => {
         exportName: 'activate',
       },
     }]);
+    const disclosure = PLUGIN_MANIFEST.contributes.voiceProviders[0]?.settings?.privacyDisclosure;
+    const fallback = typeof disclosure === 'string' ? disclosure : disclosure?.fallback ?? '';
+    expect(fallback).toMatch(/selected .*account/iu);
+    expect(fallback).toMatch(/provider-native runtime storage/iu);
+    expect(fallback).toMatch(/may retain/iu);
+    expect(fallback).toMatch(/does not delete or rewrite/iu);
   });
 });

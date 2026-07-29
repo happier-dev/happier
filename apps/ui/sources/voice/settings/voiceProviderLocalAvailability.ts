@@ -26,6 +26,10 @@ import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featur
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { readEndpointFromMachineState } from '@/sync/domains/machines/peer/mediation/stream/productionRouteHttp';
 import { storage } from '@/sync/domains/state/storage';
+import {
+    readDeviceSpeechRecognitionAvailability,
+    type DeviceSpeechRecognitionAvailability,
+} from '@/voice/input/deviceSpeechRecognitionAvailability';
 import { resolveDaemonSpeechPcmCaptureAvailability } from '@/voice/runtime/daemonInference/resolveDaemonSpeechPcmCaptureAvailability';
 
 import type {
@@ -369,6 +373,7 @@ export function resolveVoiceProviderLocalAvailability(input: Readonly<{
     daemonPcmCapture?: VoiceDaemonPcmCaptureAvailability;
     daemonDirectRouteAvailability?: VoiceDaemonDirectRouteAvailability;
     nativeDeviceRequested?: boolean;
+    nativeDeviceSpeechRecognition?: DeviceSpeechRecognitionAvailability;
 }>): VoiceProviderLocalAvailability {
     const platformOs = input.platformOs ?? Platform.OS;
     const defaultBrowserSpeechCapability = getDefaultBrowserWebSpeechCapability(platformOs);
@@ -389,8 +394,39 @@ export function resolveVoiceProviderLocalAvailability(input: Readonly<{
         },
         nativeDevice: {
             requested: input.nativeDeviceRequested ?? platformOs !== 'web',
+            speechRecognition: input.nativeDeviceSpeechRecognition ?? 'unknown',
         },
     };
+}
+
+function useNativeDeviceSpeechRecognitionAvailability(
+    platformOs: string = Platform.OS,
+): DeviceSpeechRecognitionAvailability {
+    const [availability, setAvailability] = React.useState<DeviceSpeechRecognitionAvailability>('unknown');
+
+    React.useEffect(() => {
+        if (platformOs === 'web') {
+            setAvailability('unknown');
+            return;
+        }
+
+        let active = true;
+        void import('expo-speech-recognition').then(
+            ({ ExpoSpeechRecognitionModule }) => {
+                if (!active) return;
+                setAvailability(readDeviceSpeechRecognitionAvailability(ExpoSpeechRecognitionModule));
+            },
+            () => {
+                if (!active) return;
+                setAvailability('unknown');
+            },
+        );
+        return () => {
+            active = false;
+        };
+    }, [platformOs]);
+
+    return availability;
 }
 
 export function useVoiceProviderLocalAvailability(input: Readonly<{
@@ -401,6 +437,7 @@ export function useVoiceProviderLocalAvailability(input: Readonly<{
     const localPolicySettings = useFeatureLocalPolicySettings();
     const serverFeatures = getCachedReadyServerFeatures();
     const browserSpeechCapability = useBrowserWebSpeechCapability();
+    const nativeDeviceSpeechRecognition = useNativeDeviceSpeechRecognitionAvailability();
     const daemonPcmCapture = resolveDaemonSpeechPcmCaptureAvailability();
     const daemonDirectRouteAvailability = resolveFixedMachineDirectRouteAvailability({
         serverFeatures,
@@ -420,6 +457,7 @@ export function useVoiceProviderLocalAvailability(input: Readonly<{
             daemonRuntimeState: input.daemonRuntimeState,
             daemonPcmCapture,
             daemonDirectRouteAvailability,
+            nativeDeviceSpeechRecognition,
         }),
         [
             browserSpeechCapability,
@@ -428,6 +466,7 @@ export function useVoiceProviderLocalAvailability(input: Readonly<{
             daemonPcmCapture,
             input.daemonModelState,
             input.daemonRuntimeState,
+            nativeDeviceSpeechRecognition,
             serverFeatures,
         ],
     );

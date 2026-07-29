@@ -1,5 +1,6 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PluginContributesV2Schema } from '@happier-dev/protocol';
 
 import { renderScreen } from '@/dev/testkit';
@@ -7,6 +8,18 @@ import { renderScreen } from '@/dev/testkit';
 const featureState = vi.hoisted(() => ({
   accountGroups: false,
 }));
+const profileState = vi.hoisted(() => ({
+  connectedServicesV2: [] as Array<{
+    serviceId: string;
+    profiles: Array<{
+      profileId: string;
+      status: 'connected';
+      kind: 'oauth' | 'token';
+      providerEmail: string;
+    }>;
+  }>,
+}));
+const modalShow = vi.hoisted(() => vi.fn());
 
 vi.mock('expo-router', async () => {
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -20,18 +33,32 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: () => featureState.accountGroups,
 }));
 vi.mock('@/sync/store/hooks', () => ({
-  useProfile: () => ({ connectedServicesV2: [] }),
+  useProfile: () => profileState,
   useSettings: () => ({
     connectedServicesProfileLabelByKey: {},
     connectedServicesDefaultProfileByServiceId: {},
   }),
 }));
+vi.mock('@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent', () => ({
+  NewSessionConnectedServicesSelectionContent: (props: Record<string, unknown>) =>
+    React.createElement('ConnectedServicesPicker', props),
+}));
+vi.mock('@/modal', async () => {
+  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+  return createModalModuleMock({ spies: { show: modalShow } }).module;
+});
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
   return createTextModuleMock({ translate: (key) => key });
 });
 
 describe('VoiceGlobalConnectedServicesBindingField', () => {
+  beforeEach(() => {
+    featureState.accountGroups = false;
+    profileState.connectedServicesV2 = [];
+    modalShow.mockClear();
+  });
+
   it('keeps the declared core binding interactive when optional account groups are disabled', async () => {
     const { VoiceGlobalConnectedServicesBindingField } = await import(
       './VoiceGlobalConnectedServicesBindingField'
@@ -54,6 +81,87 @@ describe('VoiceGlobalConnectedServicesBindingField', () => {
       showChevron: true,
     });
     expect(item.props.onPress).toEqual(expect.any(Function));
+  });
+
+  it.each([
+    {
+      caseName: 'the bundled Agent metadata omits the declared service',
+      serviceId: 'anthropic',
+      profileId: 'anthropic-work',
+      kind: 'token' as const,
+    },
+    {
+      caseName: 'the bundled Agent metadata marks the healthy profile kind unsupported',
+      serviceId: 'openai-codex',
+      profileId: 'codex-token',
+      kind: 'token' as const,
+    },
+  ])('shows and selects the healthy Voice-declared profile when $caseName', async ({
+    serviceId,
+    profileId,
+    kind,
+  }) => {
+    profileState.connectedServicesV2 = [{
+      serviceId,
+      profiles: [{
+        profileId,
+        status: 'connected',
+        kind,
+        providerEmail: `${profileId}@example.com`,
+      }],
+    }];
+    const onChange = vi.fn();
+    const { VoiceGlobalConnectedServicesBindingField } = await import(
+      './VoiceGlobalConnectedServicesBindingField'
+    );
+    const screen = await renderScreen(<VoiceGlobalConnectedServicesBindingField
+      agentId="codex"
+      serviceIds={[serviceId]}
+      title="Voice account"
+      value={null}
+      onChange={onChange}
+    />);
+
+    const item = screen.tree.findByType('Item' as any);
+    expect(item.props.onPress).toEqual(expect.any(Function));
+    act(() => item.props.onPress());
+
+    const modalConfig = modalShow.mock.calls[0]?.[0] as {
+      component: React.ComponentType<Record<string, unknown>>;
+      props: Record<string, unknown>;
+    } | undefined;
+    expect(modalConfig).toBeDefined();
+    if (!modalConfig) throw new Error('expected Connected Services picker modal');
+    const pickerScreen = await renderScreen(React.createElement(
+      modalConfig.component,
+      { ...modalConfig.props, onClose: vi.fn() },
+    ));
+    const picker = pickerScreen.tree.findByType('ConnectedServicesPicker' as any);
+
+    expect(picker.props.supportedServiceIds).toEqual([serviceId]);
+    expect(picker.props.profileOptionsByServiceId[serviceId]).toEqual([
+      expect.objectContaining({
+        profileId,
+        status: 'connected',
+        kind,
+      }),
+    ]);
+
+    act(() => picker.props.setBindingForService(serviceId, {
+      source: 'connected',
+      selection: 'profile',
+      profileId,
+    }));
+    expect(onChange).toHaveBeenCalledWith({
+      v: 1,
+      bindingsByServiceId: {
+        [serviceId]: {
+          source: 'connected',
+          selection: 'profile',
+          profileId,
+        },
+      },
+    });
   });
 
   it('uses a schema-valid installed qualified Agent without falling back through its colliding bundled local id', async () => {
