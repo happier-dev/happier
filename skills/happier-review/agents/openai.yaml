@@ -1,0 +1,4 @@
+interface:
+  display_name: "Happier Review"
+  short_description: "Deep evidence-based review and QA orchestration"
+  default_prompt: "Use $happier-review to deeply review the requested target and its affected corridor with evidence-based QA."

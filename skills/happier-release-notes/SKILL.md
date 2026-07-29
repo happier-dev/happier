@@ -11,11 +11,10 @@ Create curated, explicit story-deck content for Happier releases with offline-sa
 
 ## Read First
 
-1. Re-read repo `AGENTS.md`.
-2. Read `apps/ui/release-notes/README.md`.
-3. Read `apps/ui/release-notes/releases/README.md`.
-4. Inspect the current card contract in `apps/ui/sources/changelog/releaseNotes/types.ts` and schema limits in `storyDeckCardLimits.ts`.
-5. If editing UI behavior, follow TDD and use the canonical UI testkit.
+1. Read `apps/ui/release-notes/README.md`.
+2. Read `apps/ui/release-notes/releases/README.md`.
+3. Inspect the current card contract in `apps/ui/sources/changelog/releaseNotes/types.ts` and schema limits in `storyDeckCardLimits.ts`.
+4. If editing UI behavior, follow TDD and use the canonical UI testkit.
 
 ## Author A Release
 

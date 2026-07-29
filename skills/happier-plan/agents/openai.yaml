@@ -1,0 +1,4 @@
+interface:
+  display_name: "Happier Plan"
+  short_description: "Author user-requested, executable Happier plans"
+  default_prompt: "Use $happier-plan to create or materially refine the Happier repository plan I explicitly requested."

@@ -1,436 +1,325 @@
 # Agent Constitution
 
-This file is the canonical cross-tool constitution for this repository. Re-read it at the start of each task and after context compaction. Also read the nearest package `AGENTS.md`/`CLAUDE.md` for package-specific rules.
+This file is the canonical cross-tool constitution for this repository.
 
 ## Tier 0 — the ten invariants
 
-If you retain nothing else under pressure, retain these. The rest of this file elaborates them.
-
 1. Git safety: never switch branches, reset, restore, clean, or otherwise discard local work in the primary checkout.
-2. Never remove or "clean up" unrelated uncommitted changes — they may belong to another in-flight agent.
-3. Production behavior changes require test-first (verify RED before GREEN); content-only and mechanical changes do not.
-4. Mock system boundaries only; never internal logic.
-5. Split-brain (two active owners deciding the same domain concept) is a correctness bug — fix the owning choke point, not the symptom.
-6. Evidence first: base fixes on observed facts; distinguish observed vs derived vs assumed; never claim a check ran when it did not.
-7. Root cause over workaround; an unavoidable mitigation stays narrow, tested, and labeled with its follow-up fix.
-8. Feature gates fail closed; encryption envelopes are parsed explicitly, never assumed.
-9. Product runtime paths must be binary-safe: no direct `node`/`npm`/`npx`/`pnpm`/`yarn`/`bunx` spawns.
-10. Report outcomes faithfully: lead with the result, end with residual risk, never bury a failed or skipped check.
+2. Never remove or “clean up” unrelated uncommitted changes; dirty work is normal in this shared checkout and is not proof that another agent owns the file.
+3. Production behavior changes require test-first RED → GREEN; content-only and mechanical changes do not.
+4. Mock genuine system boundaries only, never internal logic.
+5. Split-brain ownership is a correctness bug: fix the canonical owner, not a local symptom, and never give a consumer authority in a live path before its producer and lifecycle are proven.
+6. Evidence first: distinguish observed, derived, and assumed claims; never claim a check ran when it did not.
+7. Root cause over workaround; any unavoidable mitigation stays narrow, tested, labeled, and paired with its follow-up fix.
+8. Feature gates fail closed when used, but refactors replace the canonical owner in place unless a gate is justified by a genuine new capability, rollout control, or supported compatibility transition; encryption envelopes are parsed explicitly rather than assumed.
+9. Product runtime paths are binary-safe: no direct `node`/`npm`/`npx`/`pnpm`/`yarn`/`bunx` spawns.
+10. Report outcomes faithfully: lead with the result, surface failed or skipped checks, and end with residual risk.
 
-## Read order
+## Instruction routing
 
-1. Root `AGENTS.md` (this file).
-2. Nearest package instructions:
+1. For every package in scope, follow its nearest package instructions:
    - UI: `apps/ui/AGENTS.md`
    - CLI: `apps/cli/AGENTS.md`
    - Server: `apps/server/AGENTS.md`
    - Stack: `apps/stack/AGENTS.md`
-3. Task-specific skills when relevant, especially:
-   - `skills/happier-testing` for repo-specific testing and lane selection.
-   - `skills/happier-diagnose` for Happier daemon/session/provider/auth issues.
-   - `test-driven-development` before behavior-changing implementation.
-   - `find-docs` (Context7) before using post-training library/package knowledge.
-   - `agent-browser` / `agent-device` / Argent skills for browser or device QA.
-   - `autoreview` for closeout review after non-trivial edits.
-   - `skills/decompose-gates` when planning hard or multi-part work or writing lane briefs.
-   - `skills/verify-claims` before trusting subagent/lane reports or building decisions on unverified claims.
-   - `skills/attack-conclusion` before closing out non-trivial changes or root-cause verdicts.
-   - `skills/handoff-report` when reporting substantive findings or completed work.
-4. `docs/agent-craft.md` — the working method behind these rules (reading requests, decomposition, risk-weighted verification, re-derivation, self-attack, handoff). Re-read it when a task is hard, ambiguous, or high-stakes.
+   If the relevant instructions are not already present in active context, read them before changing that package. Do not reread instructions already present unless they changed during the task or context loss made their contents unavailable.
+2. Use repository skills when relevant:
+   - `skills/happier-plan` only when the user explicitly asks to create, replace, or materially refine a repository plan. Do not invoke it merely because work is complex or multi-step.
+   - `skills/happier-implement` for repository feature, change, fix, refactor, migration, mechanical transformation, and accepted review-fix implementation. It owns the common implementation workflow whether or not a repository plan exists.
+   - `skills/happier-implement-plan` additionally when the user explicitly asks to implement, execute, resume, or complete an approved repository plan. It layers plan authority, execution state, amendments, and completeness over `happier-implement`; it does not author or redesign the plan.
+   - `skills/happier-review` as the only general Happier review/QA orchestrator for plans, session changes, worktrees, branches/PRs, features, affected code corridors, and review-fix loops. The superseded generic `review-protocol` and `code-reviewer` skills are archived and must not be invoked for this repository.
+   - `skills/happier-testing` for TDD, test quality, lane selection, and live validation.
+   - `skills/happier-diagnose` for read-only runtime/support diagnosis of daemon, session, provider, auth, or connectivity incidents. A requested repository fix proceeds through `happier-implement` after the evidence is established.
+   - `skills/happier-compatibility` for wire, persistence, mixed-version, upgrade, rollback, and `remote-dev` → `dev` compatibility work.
+   - `skills/decompose-gates` for hard multi-part work and lane briefs.
+   - `skills/verify-claims` before relying on delegated or externally reported claims.
+   - `skills/attack-conclusion` before non-trivial handoff.
+   - `skills/handoff-report` for substantive findings and completed work.
+3. Use available tool-specific skills when the task calls for them: current-docs/Context7 for version-sensitive library behavior, browser/device skills for live QA, and autoreview at an approved substantial review boundary, explicit user-requested review point, or risk-selected closeout—not automatically for every non-trivial edit.
+4. Read `docs/agent-craft.md` when the task is hard, ambiguous, high-stakes, or context loss has made the working method materially unclear.
 
-## Core operating policy
+## Scope, autonomy, and completion
 
-- **Follow through:** if the user's intent is clear and the next step is reversible and low-risk, proceed without asking.
-- Ask permission only when a step is irreversible, has external side effects, requires sensitive information, or requires a material product/design choice.
-- Treat the task as incomplete until all requested items are handled or explicitly marked `[blocked]` with the missing data.
-- For multi-item work, keep an internal checklist and verify coverage before finalizing.
-- Persist to an implemented, verified, clearly reported outcome whenever feasible.
-- Prefer parallel tool calls for independent retrieval/lookup steps; do not parallelize dependent or speculative work.
-- Protect context: load the minimum relevant snippets, avoid dumping logs/build artifacts, and summarize large artifacts by path.
+- For answer, explain, review, diagnose, explore, or plan requests: inspect the relevant materials and report; do not implement unless the user also asks for changes.
+- For change, build, fix, or refactor requests: make the requested in-scope local changes and run relevant non-destructive validation without asking first.
+- Ask before destructive actions, external writes, sensitive-data access, costly operations, or a material expansion of product/design scope.
+- If the user’s intent is clear and the next step is reversible and in scope, proceed.
+- Treat the task as incomplete until every requested item is handled or marked `[blocked]` with the missing fact and next action.
+- For multi-item work, track coverage internally and verify it before finalizing.
+- Parallelize independent retrieval; keep dependent work sequential and synthesize retrieved evidence before acting.
 
-## Reading the request
+## Plan authority and lifecycle
 
-Establish what is actually being asked before choosing how to respond.
+- Create, replace, materially refine, or expand a repository plan only when the user explicitly asks. An internal ephemeral checklist is not a repository plan; do not create plan files or invoke plan-authoring workflows on agent initiative.
+- After the user approves a plan, treat its required outcomes, ownership, interfaces, compatibility obligations, removals, user flows, exclusions, and acceptance criteria as the execution contract. Do not silently reinterpret, simplify, expand, substitute, or redesign them.
+- A mechanism-sized design decision must name the approved requirement, constitution rule, external contract, reproduced failure, or reachable derived risk it serves. Do not add coordination, exactly-once semantics, fencing, generations, new identities, timers, cross-restart durability, or similar topology merely as defensive hardening; apply the deletion test, and remove the mechanism when its requirement no longer exists. User approval of a plan authorizes the plan as a whole; item-level user re-ratification is required only for unresolved product decisions or material amendments.
+- Before acting on an approved plan, read the complete plan if it is not already present in active context, orient to the assigned lane and current load-bearing code, and begin implementation. Do not create a separate plan-review or preflight-review phase unless the user requested one or the implementation basis materially changed.
+- Implementation may update execution status and evidence in the plan's designated tracking sections. It may not change the approved contract, acceptance criteria, or design decisions without user approval.
+- Use best judgment only for implementation details the plan intentionally leaves open. Material ambiguity requires clarification; unrelated discoveries are reported without expanding scope.
+- If new primary evidence shows that an approved requirement is unsafe, contradictory, impossible, based on a materially changed contract, or cannot serve the approved intent, pause the affected work. Record the evidence, propose the smallest amendment, and obtain user approval before deviating; continue independent unaffected work only when doing so cannot prejudge the amendment.
+- Evidence can challenge a plan but cannot supersede it by itself. Use `AMENDMENT_REQUIRED` while awaiting a decision and `SUPERSEDED_BY_APPROVED_AMENDMENT` only after the user approves the documented replacement.
+- For delegated implementation, each meaningful lane reads the complete approved plan unless it is already in active context, then receives a concise self-contained lane brief with exact ownership, paths, dependencies, acceptance checks, validation, and stop conditions. Do not duplicate the whole plan or parent transcript in the brief; reference the on-disk plan and use minimal inherited conversation context.
 
-- Classify the mode first: a question wants an assessment, not a patch; a change order wants a verified change; an exploration wants a map of options, not a commitment. When the user describes a problem, the deliverable is your findings — report and stop; fix when asked.
-- Find the goal one level up: if the literal ask is a means, name the end it serves before choosing the fix. The right fix for the end may not touch the thing literally named.
-- Check the embedded diagnosis: "fix the retry logic" assumes retry logic is at fault. That assumption arrived with the request and was not verified by it — verify it before honoring it.
-- Restate scope in one sentence. Keep adjacent-but-unasked work out unless it is required for a coherent fix, and say so when it is.
+## Efficient execution and uncertainty resolution
+
+- Use maximum useful parallelism: keep ready independent retrieval, implementation, QA preparation, and verification moving when doing so shortens the critical path. Do not target a fleet size, create filler lanes, or parallelize work whose next decision depends on unfinished evidence.
+- Dirty or concurrently edited files are expected. File dirtiness, an existing diff, or another lane having touched a file does not establish ownership and is not a reason to skip in-scope work. Inspect the current bytes and diff, preserve compatible changes, and layer the requested change on top.
+- Coordinate when there is an actual collision: the same edit hunk, incompatible changes to one live contract or conceptual seam, destructive rewrites/moves, generated outputs with one producer, or an exclusive mutable runtime resource. Resolve compatible overlap directly; ask only when the competing intents cannot be reconciled from the plan and evidence.
+- Treat uncertainty as an investigation task, not a stopping condition. Name the missing fact and the observation that would resolve it, then inspect code, history, tests, schemas, logs, runtime state, or current primary documentation. Mark `[blocked]` only after meaningful safe retrieval cannot resolve a decision-material ambiguity or when user authority/external state is genuinely required.
+- For repetitive or repo-wide mechanical work, first consider existing repository scripts, compiler-assisted renames, AST-aware codemods, structured search/replace, formatters, or a bounded one-off transformation. Prefer them when they reduce omissions and total turns; preview or scope the transformation, inspect the diff, and run representative plus relevant broader validation. Do not build a codemod when a few direct edits are safer and faster.
+- Batch independent reads and deterministic checks when useful, reduce bulky output before returning it to the model, and use the narrowest tool loop that preserves required evidence. Efficiency never authorizes skipping canonical-owner discovery, RED/GREEN proof, or risk-appropriate validation.
+- Amortize expensive validation across the smallest coherent batch that shares its build, generated output, runtime, or artifact. Intermediate implementation handoffs use focused RED/GREEN plus risk-selected adjacent checks; they may defer an expensive integrated/package/live lane only by naming the unrun check, the exact later boundary that owns it, and the prerequisite for running it. Deferred evidence cannot close a gate or support `VERIFIED_COMPLETE`.
+- Use one monitor for an exclusive long-running build, publisher, runtime resource, or test lane. Once healthy progress is established, park dependent work and resume it on a material state transition; do not relaunch the same watcher or blocked command without new evidence. Continue ready source-level, test-preparation, review, or other no-build work in parallel.
+- Process artifacts are costs, not evidence. Use the smallest orchestration, tracking, and review structure that preserves execution continuity and can falsify decision-material claims. Do not create source/worktree/plan hashes, candidate manifests, leases, receipts, custody logs, mirrored status systems, per-lane ledgers, task-count gates, or repeated review rounds unless an approved product or release protocol requires that exact mechanism. Product-defined integrity hashes, package SRI, release checksums, persisted identities, and security protocols are unaffected.
 
 ## Product priorities
 
-Performance and long-term maintainability are paramount product requirements, not afterthoughts.
+- Performance and long-term maintainability are product requirements for user-facing, sync, transcript, terminal, provider, server, and daemon flows.
+- Do not trade correctness, accessibility, state continuity, privacy, or user trust for micro-optimizations.
+- For performance-sensitive work, prefer measured evidence such as timings, render counts, profiler output, focused performance tests, or a clear explanation of why measurement was not feasible.
+- React/UI state changes preserve subscription locality and referential stability and avoid preventable broad rerender/recomputation churn; do not add blanket memoization or caches without evidence that they improve the real bottleneck.
+- A performance optimization is incomplete if it regresses user-visible behavior, freshness, continuity, accessibility, responsive layout, platform behavior, or failure/recovery UX.
+- Windows, Linux, and macOS are first-class for CLI, daemon, terminal, install/update, filesystem/path, process, and integration behavior. Do not introduce POSIX-only or single-shell assumptions; validate every materially affected platform path or report the unvalidated platform and residual risk.
+- Prefer designs with fewer competing paths, clearer ownership, stronger invariants, and less future drift.
 
-- Treat responsiveness, scalability, and resource usage as acceptance criteria for user-facing, sync, transcript, terminal, provider, server, and daemon flows.
-- Do not trade away correctness, accessibility, state continuity, privacy, or user trust for micro-optimizations.
-- Prefer measured evidence for performance-sensitive work: before/after timings, render counts, profiler output, targeted performance tests, or a clear explanation of why measurement was not feasible.
-- Long-term maintainability matters more than preserving a small diff. If the correct fix requires a coherent refactor, do it and validate it.
-- Favor fixes that simplify the durable architecture: fewer competing paths, clearer ownership, stronger invariants, and less future drift.
+## Discovery and evidence before change
 
-## Evidence-first work
+Before changing production behavior:
 
-Base fixes and refactors on observed facts, not assumptions.
+- Observe current behavior and, for bugs, reproduce or identify the failing path when feasible.
+- Trace the relevant path through inputs, normalization, state/persistence, feature decisions, provider/catalog hooks, callers, readers/writers, tests, and user-visible outputs.
+- Search by symbol and by domain identifiers such as routes, commands, config keys, feature ids, provider ids, event types, storage keys, schema names, environment variables, errors, fixtures, and UI identifiers.
+- Search the touched path and surrounding domain for **split-brains**: existing, similar, competing, or parallel owners, implementations, registries, parsers, normalizers, state machines, schemas, feature decisions, compatibility adapters, readers, or writers for the same concept.
+- Identify the canonical owner, existing implementations, adjacent compatibility paths, and existing tests before choosing where to change behavior. Reuse, extend, refine, extract, consolidate, migrate, or remove at that owner before adding logic.
+- Before implementing against an external or another-program-owned contract, characterize its success, failure, cancellation, and recovery behavior from primary evidence and record the exact contract version or evidence basis used by the implementation/review slice.
+- An existing same-concept split-brain in the touched corridor is part of the correctness scope even when it predates the task. Do not build on one side, add a third path, or leave competing decision-makers active. If the canonical correction materially exceeds authorized scope, mark `[blocked]` rather than shipping another local path.
+- Do not infer behavior solely from filenames, comments, or stale documentation; verify against implementation, tests, logs, schemas, or runtime observations.
+- Treat discovery as incomplete until you can name:
+  - the canonical owner;
+  - the affected callers, readers, and writers;
+  - the relevant tests and harnesses;
+  - any split-brain, parallel implementation, bypass, or compatibility path;
+  - why the proposed change belongs at that owner.
+- If one of those remains materially unknown, keep investigating. Once they are known and the required evidence is sufficient, stop searching rather than collecting optional confirmation.
+- State what evidence is missing and what would verify it when a conclusion remains uncertain.
 
-- Inspect current code, call sites, tests, logs, schemas, and runtime behavior before changing code.
-- For bugs, reproduce or identify the failing path before fixing whenever feasible.
-- Distinguish observed facts, hypotheses, and decisions in reasoning and final reports.
-- Do not infer behavior solely from file names, comments, or stale docs; verify against implementation or tests.
-- Prefer instrumentation or focused tests over speculative fixes when the cause is unclear.
-- If evidence is missing, say what is missing and what would verify it.
-- Do not claim a test, typecheck, build, or manual QA passed unless it actually ran.
-- If blocked, name the blocker and the next concrete action.
+## Risk-weighted execution
 
-## Risk-weighted verification
+- Risk is probability of error × cost of error × silence of failure. Persistence formats, dedupe keys, migrations, encryption envelopes, watermarks, and outward writes deserve more verification than loud compile/runtime failures.
+- Before implementation, identify the two or three places where an error would be most damaging or least visible and design verification around them.
+- Audit boring mechanical stretches as deliberately as the interesting core.
+- For implementation work:
+  1. establish current behavior and the canonical owner;
+  2. inventory existing coverage and choose the smallest meaningful RED test when behavior changes;
+  3. make the smallest coherent systemic change;
+  4. run the narrowest relevant GREEN check;
+  5. broaden validation according to risk;
+  6. self-review for bypasses, duplicate paths, neighboring cases, and environment gaps.
 
-Verification effort follows risk, not difficulty or interest.
+## Scope-preserving solution economy
 
-- Risk = probability of being wrong × cost of being wrong × silence of the failure. Silent failure modes (persistence formats, dedupe keys, migrations, encryption envelopes, watermarks) outrank loud ones (typecheck errors, crashes).
-- Irreversible or outward-facing steps — schema migrations, data writes, published API shapes, external sends — get extra confirmation before execution.
-- Boring mechanical stretches hide more defects than interesting cores: attention decays where interest does. Audit the mechanical 80%; spot-check the clever 20%.
-- Before starting, name the two or three "if I'm wrong anywhere, it's here" spots and design verification for those spots specifically. Generic suite runs are uniform effort against non-uniform risk.
+- Establish the complete authorized outcome before optimizing the solution. Explicit user requirements and approved-plan obligations—including integration, migration, removals, compatibility, UX, security, accessibility, platform behavior, performance, testing, and validation—are not optional complexity. Simplify only inside that boundary; changing an approved outcome requires the normal clarification or amendment process.
+- Solution economy does not mean localism. Scope follows the required behavior, invariant, canonical owner, and materially affected corridor—not only the file, function, package, or user-visible path named in the request. A change is incomplete when it repairs the named path while leaving the same reachable defect, divergent decision, bypass, or split-brain elsewhere.
+- Before adding code, files, abstractions, dependencies, configuration, state, or coordination, consider the options in this order:
+  1. add nothing when the complete requirement already holds or the proposed mechanism is speculative;
+  2. fix, reuse, refine, consolidate, or replace through the canonical owner, migrating every materially affected consumer and removing active competing owners or bypasses;
+  3. use the language or standard library;
+  4. use a native platform capability when it satisfies every affected product surface and contract;
+  5. use an existing dependency already owned by the affected package when it reduces total lifetime complexity;
+  6. otherwise add the smallest clear, coherent, consumed implementation.
+- Choose the earliest option that fully satisfies the complete contract and minimizes total lifetime complexity. Do not force an earlier rung when it worsens ownership, UX, compatibility, security, performance, platform behavior, or maintenance.
+- Optimize for fewer concepts, decision-makers, branches, dependencies, invalid states, failure paths, and facts callers must know—not the fewest characters, lines, files, tests, or diff hunks. Prefer direct idiomatic code over clever one-liners.
+- A broad refactor is not overengineering when evidence shows it is necessary to establish one authoritative behavior, migrate consumers, remove duplicated decisions or active split-brains, eliminate invalid states, or prevent predictable divergence. Do not absorb unrelated debt, but do not classify necessary systemic work as unrelated merely because it crosses files or packages.
+- When a deliberately simpler implementation relies on a bounded scale, topology, platform, or lifecycle assumption, encode that assumption through a type, invariant, assertion, or test when practical. Otherwise add a narrow owner-local explanation of the current ceiling and the observable condition that would invalidate it; do not build the hypothetical upgrade path or create a new debt ledger without a real requirement.
+- This discipline governs solution selection. It does not cap discovery, testing, QA, security analysis, compatibility validation, review findings, documentation, or an explanation the user requested.
 
-## Root-cause discipline
+## Durable design and justified complexity
 
-Fix the cause, not the symptom.
+- Optimize for total system complexity and code health over the expected lifetime, not the smallest diff. A coherent fix may be broad or difficult; do not preserve a wrong owner, active split brain, or fragile state model merely to keep the patch small.
+- Fix the owning cause rather than adding a workaround, duplicate path, or similar-but-different implementation. Design from the canonical owner and caller-visible contract so new behavior becomes a natural extension of the system rather than a bolted-on exception.
+- Before adding a protocol, state machine, registry, table, lease, credential, generation, gate, or parallel path, name the reproduced failure or live consumer it serves and why the existing owner cannot enforce the contract. Apply the deletion test: if removing the mechanism removes only complexity while the required behavior still holds, do not build it.
+- Land behavior as the smallest consumed vertical through its real entry point, owner, and output. Do not build a dormant horizontal replacement spine and weave its consumer branches into live paths while its producer or activation remains absent.
+- Prefer designs that increase locality and leverage: fewer places deciding the same rule, less knowledge required by callers, fewer invalid states, moving parts, and failure modes, and a clearer interface.
+- Typed models, state machines, registries, lookup tables, interfaces, and adapters are tools, not defaults or anti-patterns. Use them when observed domain variation, lifecycle, ownership, or invariants justify them and they remove distributed branching, duplicated rules, lockstep edits, or invalid states.
+- A broader refactor is justified when evidence shows repeated or divergent logic, recurring special cases, cross-layer leakage, callers changing in lockstep, an interface exposing implementation knowledge, or repeated implementation friction caused by the current shape. Name that evidence and the complexity the refactor removes.
+- Reject an abstraction when it adds concepts, modes, configuration, dependencies, failure paths, or indirection without reducing caller knowledge, duplicate decisions, branching, lifecycle risk, or future change cost. A single implementation is a reason to examine the seam, not an automatic veto; a real external boundary or enforced invariant may justify it.
+- Do not centralize coincidental similarity across distinct bounded contexts. Parse and normalize at boundaries, enforce domain rules in the domain owner, and keep adapters thin unless behavior truly belongs there.
+- If the domain is inherently complex, model that complexity explicitly rather than hiding it in simplistic local code that pushes the burden into callers, synchronized flags, compatibility paths, or operations.
+- When a change establishes a new owner, crosses package boundaries, introduces persistence or concurrency, or materially changes a public interface, compare plausible designs before committing. If implementation repeatedly fights the chosen shape, stop and redesign; for routine work, follow the existing owner and patterns.
+- If the systemic fix is genuinely blocked, mark `[blocked]` and explain the required owner-level change; do not present a local mitigation as complete.
 
-- Do not implement workarounds, band-aids, duplicate paths, or similar-but-different logic when the owning cause can be fixed.
-- If a temporary mitigation is genuinely necessary, keep it narrow, label why it exists, test it, and state the follow-up root-cause fix.
-- When fixing a bug, search for the same pattern in nearby owners and shared abstractions.
-- Centralize or reuse the canonical path when the same issue exists elsewhere; do not leave parallel implementations to drift.
-- If the root cause crosses package boundaries, identify the owning boundary first, then make the smallest coherent cross-package change.
+## Compatibility and version skew
 
-## Systemic changes and split-brain prevention
+- Use `skills/happier-compatibility` and read `docs/compatibility.md` when a change affects cross-component wire behavior, persisted/session/settings formats, schemas or migrations, feature/capability negotiation, installer/service state, upgrades, coexistence, or rollback.
+- Compatibility obligations come from active released stable/preview component contracts and explicitly supported older releases. Resolve each component from immutable tags plus artifact/deploy evidence; rolling tags are only discovery pointers. `dev` builds, abandoned experiments, and undeployed internal paths are not lasting obligations unless a repository-specific predecessor rule says otherwise.
+- Map affected producers, consumers, readers, writers, and persisted artifacts. Distinguish wire, semantic, persistence, and operational compatibility; preserve the seam, not old internal architecture.
+- New readers accept supported released shapes and new writes use the canonical current shape. Require old readers to accept new writes only when mixed-version coexistence or rollback makes that direction reachable.
+- For incompatible format or protocol transitions, use the narrowest necessary prepare/expand → activate/migrate → contract sequence. Compatibility adapters remain seam-owned, delegate domain decisions to the single canonical owner, and record their source release/predecessor plus removal condition.
+- Validate affected reachable old/new directions without manufacturing Cartesian matrices, shims, fixture families, or fallbacks for seams the change cannot exercise. Prefer one discriminating test per material direction plus risk-selected end-to-end flows, using real artifacts or provenance-pinned vectors rather than reconstructed current-type fixtures.
 
-Treat split-brain implementations as correctness bugs. A split brain is any case where two or more active owners, registries, parsers, state machines, schemas, feature gates, provider paths, or normalization layers can make independent decisions for the same domain concept.
+### `remote-dev` predecessor frontier
 
-- Do not hand off patchwork fixes. A local fix is acceptable only when the behavior truly belongs locally; otherwise fix the owning choke point.
-- Before changing behavior, map the relevant system path: inputs, normalization, state/persistence, feature gates, provider/catalog hooks, callers, readers, tests, and user-visible outputs.
-- Search beyond the immediate file for parallel logic using symbols, routes, commands, config keys, feature ids, provider ids, event types, storage keys, schema names, env vars, test fixtures, and UI identifiers.
-- If multiple paths implement the same concept, choose or create one canonical owner and migrate all in-scope callers/readers/writers to it in the same coherent change.
-- Reuse, extend, move, or extract existing code before adding new logic. New duplicate registries, fallback branches, helper stacks, or similar-but-different implementations are forbidden unless required for deployed compatibility.
-- Apply invariants at the correct layer: parse/normalize at boundaries, enforce domain rules in the domain owner, and keep UI/CLI/server adapters thin unless the behavior is adapter-specific.
-- Do not centralize coincidental duplication. If similar code represents genuinely different bounded contexts, keep it separate and name the distinction.
-- Compatibility paths must be narrow, boundary-owned, tested, and documented by the deployed shape/version they support. New writes should use the canonical path.
-- If the systemic fix is too large or blocked, do not disguise a workaround as complete. Mark `[blocked]`, explain the required canonical fix, and keep any temporary mitigation narrow and tested.
-- Before handoff, search for bypasses of the canonical owner, stale alternate paths, duplicate registries, direct callers, and compatibility leftovers; remove them or explain why they remain.
+- `../remote-dev` is the moving predecessor expected to ship first. Inspect its real current relevant files—including committed, staged, and unstaged changes—not only releases or `HEAD`; record the inspected `HEAD`, dirty status, diff/basis, and paths without modifying the sibling.
+- Treat observable wire/data/state shapes its current code can produce or consume as prospective inputs, while released shapes remain hard obligations. Preserve those contracts, not sibling internals or every superseded intermediary; when it evolves before deployment, refresh the comparison and remove support needed only by a replaced never-released shape.
+- Dirty work may be incomplete or concurrently owned. Separate observation from inferred intent, do not encode contradictory speculative interpretations, and recheck affected sibling paths before handoff when they were dirty or advanced. Validate the reachable mixed-version directions and predecessor-created data against `dev`'s canonical implementation.
 
-## Execution loop
+## Multi-agent and Git safety
 
-Use this loop for implementation work:
-
-1. Understand current behavior and reproduce/observe the issue when feasible.
-2. Map the relevant code paths, owners, readers, writers, and tests.
-3. Find the existing canonical owner/pattern.
-4. Write or adjust the smallest meaningful test when behavior changes.
-5. Make the smallest coherent systemic change at the owning choke point.
-6. Run the narrowest relevant check.
-7. Broaden validation before handoff.
-8. Self-review for duplicate paths, bypasses, and split-brain risk.
-
-## Multi-agent safety
-
-This repo is often edited by multiple agents at once.
-
-- Never remove, revert, overwrite, or “clean up” unrelated changes just because they are unexpected.
-- Before touching a file, assume uncommitted changes may belong to another in-flight agent unless proven otherwise.
-- If a change appears accidental but is unrelated to your task, ask before altering it.
-- Do not create ad-hoc summary/report/status files. Use the final response or approved project locations only.
-
-## Git safety (non-negotiable)
-
+- Assume the checkout is actively shared and uncommitted changes are normal. They may be concurrent work, but they do not reserve a file; inspect and preserve them while adding compatible in-scope changes.
+- Never remove, revert, overwrite, or “clean up” unrelated work. If an unrelated change looks accidental, ask before altering it.
+- Do not create ad-hoc summary, report, or status files; use the final response or an approved project location.
 - Never switch branches in the primary checkout.
-- Do not create/delete branches unless explicitly requested.
-- Never run or emulate destructive git cleanup without explicit approval, including:
-  - `git reset`
-  - `git restore`
-  - `git clean`
-  - `git checkout`
-  - `git switch`
-  - any command whose purpose is to discard local work
-- Use read-only git commands for inspection (`status`, `diff`, `log --no-pager`) unless the user asked for a mutation.
+- Do not create or delete branches unless explicitly requested.
+- Never run or emulate destructive cleanup without explicit approval, including `git reset`, `git restore`, `git clean`, `git checkout`, `git switch`, or any command intended to discard work.
+- Use read-only Git commands for inspection unless the user requested a mutation.
+- Never stage (`git add`) or commit except when executing an explicitly requested commit (from the user or an approved plan). When a commit is requested, assemble it by explicit pathspec from current bytes; never trust or wholesale-commit an inherited index.
+- For shared multi-program work, record one active authority for each conceptual seam. A dependent plan consumes that owner's contract; two plans must not independently design or write the same live seam. Plans that overlap existing work name `Supersedes:`, `Extends:`, and `Consumes:` relationships or stop for adjudication.
+- A long-running multi-program effort maintains one current-status pointer in its existing canonical tracking document (current integration boundary, blockers, and superseded predecessors). This is a section in an existing file, not a new registry, lease system, or mandatory artifact for routine single-agent work.
+- A dormant or gated program must not half-land changes to live dispatch, session lifecycle, persistence, migrations, daemon startup/shutdown, or other runtime paths. Such a live-path change is its own consumed vertical with RED evidence and the risk-appropriate composed/live gate.
 
-## Testing and TDD
+## Testing: contract value, not test volume
 
 ### Behavior-change rule
 
-- Any production behavior change requires TDD: write/update a relevant failing test first, verify RED, implement minimal GREEN, refactor with tests green.
-- Do a test inventory before adding tests: search existing coverage by symbol/module, route/command, config key, feature id, component, error code, and package-local harnesses.
-- Prefer updating or consolidating existing tests over adding overlapping tests.
-- If implementation already exists before a test, stop and restore test-first order where feasible; otherwise explicitly report the exception and rationale.
+- Any production behavior change requires TDD: write or update the relevant test first, verify RED for the intended reason, implement minimal GREEN, then refactor with tests green.
+- Content-only Markdown/template/copy changes, styling-only changes without interaction/accessibility/visibility impact, and mechanical renames/moves/formatting do not require new tests; run relevant existing checks.
+- TDD proves an observable behavior contract. It does not require a new test for every changed function, branch, helper, or file.
 
-### What does not need new tests
+### Test selection and quality
 
-- Content-only Markdown/template/copy changes that do not affect executable runtime behavior.
-- CSS/styling-only changes unless they alter interaction, accessibility, or visibility semantics.
-- Mechanical renames/moves/formatting with no runtime effect, though relevant existing checks should still run.
+- Inventory existing tests by owner/symbol, route/command, config or feature id, component, error code, and package harness before writing a test.
+- Prefer strengthening or consolidating the most relevant existing owner-level test over adding overlapping coverage.
+- A valid RED test fails because the intended behavior is missing or wrong. Failure from fixtures, mocks, setup, wording, syntax, or unrelated runtime errors is not valid RED.
+- Test through the canonical/public owner boundary when practical and exercise real internal logic.
+- One discriminating test is more valuable than many shallow permutations. Add cases only for materially distinct contracts, boundaries, or failure modes.
+- A useful test distinguishes the intended implementation from at least one plausible incorrect implementation. If it would pass both, strengthen or remove it.
+- Do not add runtime tests that merely restate TypeScript types, mirror implementation structure, assert pass-through wiring or incidental call counts, or police wording, Markdown, whitespace, raw styles, or example values.
+- Assert stable outcomes, state, error type/code/shape/status, and published contracts rather than implementation details or exact prose.
+- Remove or consolidate redundant tests introduced or exposed by the change.
 
-### Test quality rules
+### Mock boundaries
 
-- No content-policing tests that primarily pin wording, Markdown formatting, whitespace, or example config values.
-- Assert observable behavior and stable contracts, not incidental implementation details or exact user-facing prose.
-- Test error type/code/shape/status rather than full message wording unless the message is a published contract.
-- Keep positive fixtures aligned with the real runtime contract when capabilities, feature flags, session state, or availability become required.
-- Reset shared state in tests using dynamic imports, module caches, mutable globals, or reused mocks.
+- A system boundary is outside the owning process’s deterministic internal logic: third-party APIs/services, OS/process adapters, platform/native SDKs, network transports, persistent databases, clocks, randomness, or environment adapters.
+- Internal domain services, parsers, normalization, reducers/selectors, stores, orchestration helpers, provider catalogs, feature decisions, and state machines are not mockable boundaries.
+- Use canonical package testkits before creating boundary mocks. When a boundary mock is necessary, preserve the real internal path beneath it, mirror the real schema, document why, and assert outcomes/state rather than only calls.
+- UI tests prefer `apps/ui/sources/dev/testkit/**` and `@/dev/testkit` for shared boundaries.
 
-### No internal mocks
+### Validation
 
-- Test real internal behavior. Do not mock domain logic, reducers/selectors, parsers, normalization, permission/state machines, store logic, or orchestration helpers.
-- Boundary mocks are allowed for system boundaries only: third-party APIs, payment/email providers, platform/native SDKs, OS/process/time/random/env adapters.
-- If a boundary mock is used, document why and assert outcomes/state, not only call counts.
-- Use canonical package testkits/helpers before creating new mocks or fixtures.
-- UI tests should prefer `apps/ui/sources/dev/testkit/**` and imports from `@/dev/testkit` for common boundaries (`expo-router`, `@/text`, `@/modal`, `react-native`, `react-native-unistyles`, storage).
-
-### Validation lanes
-
-- For tight RED/GREEN loops, run the smallest relevant test slice.
-- Before handoff, run the touched package typecheck/build lane and the relevant broader test lane.
-- Canonical repo lanes are documented in `docs/testing.md` and `apps/docs/content/docs/development/testing.mdx`.
-- TypeScript changes require the relevant package typecheck/build-enforcing lane before handoff.
-
-### Live validation doctrine
-
-- Owner-test-green ≠ done for user-visible behavior. Live gates (browser QA against the running stack, on-device QA) are ship gates; host tests encode what the live loop taught, afterwards.
-- When a defect family repeatedly escapes host tests, switch to live-in-the-loop: one session with both source rights and the running app, iterating fix → hot reload → replay the exact failing recipe → verify live. Closure requires a live PASS in the same session.
-- Full-suite gates must be deterministic: run them twice back-to-back. Order-dependent flakes from leaked module singletons masquerade as green; a single passing run proves nothing.
-- Large suites may need `NODE_OPTIONS=--max-old-space-size=8192` (the ChatList host suite OOMs at 4GB).
-- The dev stack hot-reloads the working tree; mid-task edits are live in the user's app, so a "regression" reported during active work is often a half-landed edit being served. Stabilize first (finish or back out, remove instrumentation, live-verify) before starting new defect work.
-- Device QA must pin bundles: full Metro reload, Fast Refresh off, attest the loaded module via a probe.
+- Use the smallest relevant slice for RED/GREEN loops.
+- Use the validation ladder in `skills/happier-testing`: focused source RED/GREEN first, one risk-selected adjacent lane next, package typecheck/build once per coherent integrated batch, loaded-runtime QA for claims that depend on the real process/bundle, and pack/install/release proof only for packaged-artifact claims.
+- After source and loaded-runtime QA converge, build one settled candidate and reuse that exact candidate across every applicable artifact, platform, install, compatibility, and release QA lane. Rebuild only when an accepted fix changes candidate-reachable bytes; the superseded candidate's evidence cannot be carried forward.
+- Before a substantial integrated or package handoff, run the touched package’s required typecheck/build-enforcing lane and relevant broader test lane. An intermediate lane handoff may defer that expensive boundary under the explicit deferral contract above; a final handoff must run it or report the gate blocked.
+- User-visible behavior also needs the risk-appropriate live gate when runnable; use `skills/happier-testing` for lane, rerun, device, browser, and live-validation rules.
+- For user-visible or environment-dependent programs, name the composed live recipe and required runtime identity before implementation. A green owner test, registered-but-uninvoked wiring, or a still-running command is not completion; run the recipe against the observed loaded runtime/build identity or mark it `[blocked]` with the missing prerequisite. Identifying what ran is evidence for that claim, not a source freeze or a requirement to package source-driven/hot-reloaded paths.
+- Never claim a test, typecheck, build, or manual QA passed unless it actually ran. Report skipped or unavailable validation and why.
 
 ## Type safety and code hygiene
 
-- TypeScript must remain strict. Do not weaken `tsconfig` or type rules to make tests/builds pass.
-- `@ts-ignore` is forbidden.
-- `@ts-expect-error` is allowed only with a short rationale and only on the exact expected-failure line.
-- Broad `as any` casts are forbidden except in narrow boundary fixtures/harnesses with a one-line justification.
+- Keep TypeScript strict; do not weaken `tsconfig` or type rules to pass checks.
+- `@ts-ignore` is forbidden. Use `@ts-expect-error` only on the exact expected-failure line with a short rationale.
+- Broad `as any` is forbidden except in a narrow boundary fixture/harness with a one-line justification.
 - Prefer `satisfies`, explicit interfaces, typed fixtures, and canonical schemas over casting.
-- No TODO/FIXME placeholders in production code.
-- No stray `console.log` or debug statements.
-- Remove dead code and commented-out code blocks.
+- No production TODO/FIXME placeholders, stray debug output, dead code, or commented-out blocks.
 
 ### TypeScript compiler ownership
 
-- First-party typechecks and builds use the native TypeScript 7 compiler provided by `@typescript/native`. Run the repository or package scripts (`yarn typecheck`, workspace `typecheck`/`build`, or the documented package lane). `yarn tsc ...` is also safe from the repository root and every TypeScript-owning workspace because those scripts delegate to the same native runner; for a direct ad hoc invocation, use `node scripts/workspaces/runTypeScriptCli.mjs ...`.
-- Never invoke or introduce a bare `tsc`, `npx tsc`, `node_modules/.bin/tsc`, or `typescript/bin/tsc` path. Those can select the retained TypeScript 5 API package instead of the repository compiler.
-- `scripts/workspaces/resolveTypeScriptCliInvocation.mjs` is the only compiler-selection owner. Build orchestrators must import that resolver or use `runTypeScriptCli.mjs` / `buildTypeScriptPackageDist.mjs`; do not create fallback candidates or retry TypeScript 7 diagnostics with another compiler.
-- The `typescript` dependency intentionally remains on 5.9 for programmatic compiler-API consumers and ecosystem integrations. Do not remove it, use it for compilation, or upgrade it independently of `@typescript/native` without inventorying and validating every direct TypeScript API consumer and generator integration.
+- First-party compilation uses TypeScript 7 from `@typescript/native` through repository/workspace scripts. For an ad hoc development invocation, use `node scripts/workspaces/runTypeScriptCli.mjs ...`.
+- Never invoke bare `tsc`, `npx tsc`, `node_modules/.bin/tsc`, or `typescript/bin/tsc`; those can select the retained TypeScript 5 API package.
+- `scripts/workspaces/resolveTypeScriptCliInvocation.mjs` is the only compiler-selection owner. Orchestrators import it or use `runTypeScriptCli.mjs`/`buildTypeScriptPackageDist.mjs`; never add compiler fallbacks.
+- The `typescript` dependency remains on 5.9 for compiler-API consumers. Do not use it for compilation, remove it, or upgrade it independently without inventorying and validating those consumers.
+- The direct-`node` prohibition applies to shipped product runtime paths, not documented repository development commands.
 
-## Engineering taste
+## Files, folders, and moves
 
-- Optimize for readability over cleverness.
-- Prefer one obvious path over multiple parallel mechanisms.
-- Do not invent abstractions until repeated real use justifies them.
-- Do add or extract an abstraction when it removes real duplication, prevents competing logic, or makes an illegal state unrepresentable.
-- Make illegal states unrepresentable where practical.
-- Delete obsolete code when your change makes it obsolete.
-- “Simple” means lower long-term system complexity, not necessarily fewer changed lines or the smallest immediate patch.
-- Keep changes coherent and reviewable; avoid unrelated drive-by edits.
-- If a refactor is necessary to solve the problem well, do it as part of the same coherent change and explain why.
-- If you notice a valuable but unrelated refactor, mention it or ask before doing it.
-
-## Implementation quality
-
-- Read first: inspect existing owners, helpers, harnesses, builders, and patterns before implementing.
-- Reuse or extend canonical implementations instead of adding similar-but-different logic.
-- Before adding new logic, search by symbol, route/command, config key, feature id, store key, error code, provider id, and test helper to find the existing owner.
-- If similar logic already exists, extend or extract the canonical owner instead of creating a second path.
-- Keep code with its natural owner: shared primitives in shared packages, package-specific logic in the owning package.
-- Prefer focused modules and cohesive folders over god files or grab-bag folders.
-- Before handoff, search for stale alternate paths, duplicate registries, leftover compatibility layers, and direct callers that bypass the canonical abstraction.
-
-## Files, folders, and ownership
-
-Prefer small, focused files organized under coherent domain folders.
-
-- Avoid god files. If a file mixes responsibilities or becomes hard to scan, split it into domain-owned pieces.
-- Prefer a folder with several focused files over one large file with unrelated sections.
-- Reuse the nearest existing domain folder before creating a new top-level folder.
-- Keep related behavior together under the same domain owner; do not scatter one feature across unrelated areas.
-- When a folder accumulates too many files to scan comfortably, introduce meaningful subfolders and regroup related files by domain/behavior.
-- Use folder context to keep filenames short. Do not encode the whole path into the filename.
-  - Prefer `providers/connections/resolve.ts`.
-  - Avoid `providers/providerConnectionResolutionManager.ts`.
-- Do not create parent folders solely to shorten filenames or satisfy a mechanical split. A nested folder must represent a real domain/subdomain with a coherent owner.
-- Compound folder names are acceptable when the compound term is the domain concept. Do not split `terminalHost` into `terminal/host` unless `terminal` is itself a real parent domain with meaningful sibling subdomains.
-- Names should be short but purpose-revealing; do not make them cryptic.
-- Short generic filenames such as `registry.ts`, `resolve.ts`, `adapter.ts`, or `types.ts` are acceptable only inside a narrow folder that supplies the missing domain context. At broad roots, use more specific names.
-- Avoid vague files such as `utils.ts`, `helpers.ts`, `manager.ts`, `misc.ts`, or `common.ts` unless the surrounding folder gives them a narrow, obvious meaning.
-- Local one-off helpers should stay near their only use. Shared files should represent a real shared domain concept.
-- Split by responsibility/domain boundary, not mechanically one function per file or one noun per folder.
-
-## Renames, moves, and canonical paths
-
-When introducing a new canonical path, finish the migration.
-
-- Update all imports/callers in the same change.
-- Do not leave old and new paths in parallel.
-- Do not add compatibility shims for internal moves unless explicitly requested or required for a published external API.
-- Use codemods/search-replace for broad moves, but verify the result with targeted grep and typecheck.
-- Preserve canonical import style:
-  - Keep `@/...` aliases in UI code.
-  - Do not convert alias imports into fragile long relative imports.
-  - Respect package-local aliases and package export boundaries.
-- Update related barrels, package exports, tests, docs, mocks, and testkits when they reference the moved path.
-- If full migration is genuinely blocked, stop and report `[blocked]` with the exact remaining callers and blocker.
+- Keep code with its natural owner and prefer focused modules in cohesive domain folders.
+- Reuse the nearest real domain folder before creating a top-level bucket; do not create taxonomy-only or one-function folder ladders.
+- Use folder context to keep filenames short and purpose-revealing. Avoid vague `utils`, `helpers`, `manager`, `misc`, or `common` names unless a narrow parent supplies the missing meaning.
+- Keep one-off helpers near their only use; shared modules must represent a real shared concept.
+- Split by responsibility/domain boundary, not mechanically by function or noun.
+- Preserve package aliases and export boundaries during moves; do not replace stable aliases with fragile long relative imports.
+- Delete obsolete files and paths when the canonical migration makes them unnecessary.
 
 ## Path canonicalization
 
-Do not hand-roll `~` or home-directory path handling. Use the owning helper for the layer you edit:
+Do not hand-roll home-directory handling. Use the owning helper:
 
 - UI absolute expansion: `apps/ui/sources/utils/path/pathUtils.ts#resolveAbsolutePath`
 - UI display formatting: `apps/ui/sources/utils/sessions/formatPathRelativeToHome.ts`
 - CLI env/path expansion: `apps/cli/src/utils/path/expandHomeDirPath.ts`
 - CLI handoff normalization: `apps/cli/src/session/handoff/paths/sessionHandoffPathNormalization.ts`
 
-When editing path behavior, treat Windows as first-class:
-
-- accept both `~/...` and `~\\...`
-- trim trailing `/` and `\\` at the home boundary
-- normalize mixed separators when values are used for equality, dedupe, repo identity, or persistence keys
-- guard against sibling-prefix collisions (`C:\\Users\\alice` must not match `C:\\Users\\alice2`)
+For path equality, identity, dedupe, or persistence keys, accept both `~/...` and `~\\...`, trim both separator styles at the home boundary, normalize mixed separators, and guard sibling-prefix collisions such as `C:\\Users\\alice` versus `C:\\Users\\alice2`.
 
 ## Agent and Provider architecture
 
-**Agents** are executable coding backends such as Claude Code and Codex. **Providers** are model sources such as OpenRouter, DeepSeek, Ollama, and LM Studio. Do not use one term for the other.
+Agents are executable coding backends such as Claude Code and Codex. Providers are model sources such as OpenRouter, DeepSeek, Ollama, and LM Studio. Do not use one term for the other. Read `docs/agents-catalog.md` and `docs/providers.md` when changing these domains.
 
-Agent-specific behavior must live behind the canonical Agent catalog/registry surfaces:
+- Agent contributions live in `packages/plugins/<agentId>/src/agent/**` and project through `apps/cli/src/agent/catalog/**`. Agent UI contributions live in `packages/plugins/<agentId>/src/ui/**` and project through `apps/ui/sources/agents/catalog/**` and `registry/**`.
+- Do not recreate the retired `apps/cli/src/backends/**` or `apps/ui/sources/agents/providers/**` host trees.
+- Protocol-owned Agent policy/defaults belong in `packages/protocol/src/agents/<agentId>/**`.
+- Provider contributions live in `packages/plugins/<providerId>/src/provider/**` and project through `contributes.providers`.
+- Provider definitions, connections, grants, selections, catalogs, and migrations belong in `packages/protocol/src/providers/**`.
+- Provider-agnostic CLI resolution/probing/materialization belongs in `apps/cli/src/providers/**`; Provider UI composition belongs in `apps/ui/sources/providers/**`.
+- Generic host code must not branch on Agent or Provider ids when a typed contribution, catalog hook, registry result, or Agent provider-binding adapter can own the variation.
+- Internal packages may use `src/providers/<providerId>` only when “provider” is that package’s genuine bounded-domain term, not an alias for executable Agents.
 
-- Shared Agent facts belong in `packages/agents/*`.
-- CLI executable Agent wiring is projected through `apps/cli/src/agent/catalog/**` from Agent plugin contributions.
-- Agent runtime leaves belong in `packages/plugins/<agentId>/src/agent/**` unless an explicit transitional catalog hook still owns a CLI-local leaf.
-- Agent UI facts and behavior belong in `packages/plugins/<agentId>/src/ui/**`; host composition belongs in `apps/ui/sources/agents/catalog/**` and `apps/ui/sources/agents/registry/**` through generated plugin projections.
-- Do not recreate `apps/cli/src/backends/**` or `apps/ui/sources/agents/providers/**`; those retired host trees are fenced off by runtime-unification closure tests.
-- Protocol Agent-specific executable logic/policy/defaults must live under `packages/protocol/src/agents/<agentId>/**` when protocol is the owning layer.
-- Shared/core code must not branch on Agent ids when behavior can be obtained through a catalog entry, adapter hook, or registry result.
+## Runtime core, plugin platform, and SDK seam
 
-Model Provider facts and behavior use the first-class Provider contracts:
+Read `.project/plans/plugin-platform-preview-convergence/CONTRACTS.md` and `.project/plans/runtime-unification-v2/architecture/00-north-star.md` before changing runtime core, the plugin platform, or the SDK. The predecessor `.project/plans/plugin-platform-pre-v1-consolidation/**` corpus is historical evidence only and cannot supply current status, gates, or implementation authority.
 
-- Provider contributions live in `packages/plugins/<providerId>/src/provider/**` and project through `contributes.providers`; built-ins use the same path as third-party plugins.
-- Provider definitions, connections, grants, selections, catalogs, and migrations are owned by `packages/protocol/src/providers/**`.
-- Provider-agnostic daemon resolution/probing/materialization lives in `apps/cli/src/providers/**`; Provider UI composition lives in `apps/ui/sources/providers/**`.
-- Generic host code must not branch on Provider ids. Add typed contribution facts or an Agent provider-binding adapter rather than a special case.
-- Internal packages may use `src/providers/<providerId>` only when “provider” is that package's genuine bounded-domain term (for example SCM providers), not as an alias for executable Agents.
+- The centralized host runtime owns executable session and turn lifecycle, prompt admission/queueing/custody, canonical lifecycle projection, effective activity/thinking, work-state arbitration, pending-queue pumping, message streaming, transcript writes, and the process-terminal fact. Plugins provide provider-native codecs, correlation, authoritative evidence, and typed contributions; they do not become parallel owners of host state.
+- Plugins register behavior through the single `activate(api)` ABI and only for manifest-declared ids in the matching contribution family. Plugin leaves reach the host through the public SDK/services seam and must not import host internals.
+- Retired escape hatches must not gain new consumers: `registerProviderRuntime`, parallel Agent/runtime registries, `RuntimeControlContribution`, `getSession*ControlAdapter` caches, whole-metadata state patching, `initialRuntimeState`, post-construction `startOrLoadSession`, method-presence fallbacks, provider-written applied-rollback events, and provider-owned `setThinking`. Existing migration-only uses require a named positive-consumer migration and are removed atomically after the canonical replacement is proven; do not delete a compatibility seam while first-party plugins still depend on it.
+- `packages/plugin-sdk/` is the only public host↔plugin interface and stays minimal. `RuntimeCoreV1`, `AcpSessionRuntimeV1`, raw lifecycle controls, and agent-meaning `provider`/`backend` are transitional or retired vocabulary: do not add uses or publish them as graduated API. Remove predecessor exports, factories, and host adapters only after native `AgentRuntime` consumers have replaced every reachable first-party use.
+- Runtime events converge on one canonical strict-schema union. Stable events use bounded strict schemas and reject unknown top-level fields; provider-native bags and generic `{ kind, data }` streams are not public ABI. Any compatibility period with two unions names the active producer/consumer directions and the contraction condition. `@happier/runtime/*`, `@happier/lifecycle/*`, and `@happier/session/*` are host-emit-only namespaces.
+- Each contribution family has one catalog/normalizer/projection owner, generated projections are authoritative, and feature/availability/confirmation decisions use the shared policy owner. Do not add a second registry, catalog, loader, or decision engine for a concept the platform already centralizes.
 
-Details: `docs/agents-catalog.md` for Agents and `docs/providers.md` for model Providers.
+## Feature, encryption, and runtime triggers
 
-## Feature gating
+- Feature work: read `docs/feature-gating.md` before deciding that a gate is appropriate. Refactors and replacements are in-place by default; genuine new/experimental capabilities use canonical feature ids/decision helpers, enforce dependencies centrally, gate only on `readServerEnabledBit(...) === true`, and treat missing/malformed bits as disabled. `capabilities` are diagnostic, not gates.
+- Encryption/storage work: read `docs/encryption.md`. Parse `{ t: 'encrypted', c }` and `{ t: 'plain', v }` explicitly, enforce storage-mode/content compatibility at write boundaries, and keep sharing/data-key requirements mode-correct.
+- Runtime/install/package work: read `docs/binary-runtime.md` and `docs/cli-architecture.md`. Shipped paths must work without system Node/package managers, detection/install/validation/spawn must share one source of truth, and the importing package owns each dependency. Published hosts bundle the internal workspace dependency closure.
 
-Use the canonical feature system only. Do not add ad-hoc env checks, direct payload poking, or feature-specific inference logic.
+## Context-efficient tools and retrieval
 
-- Feature ids/dependencies live in `packages/protocol/src/features/catalog.ts`.
-- Feature decisions live in protocol decision helpers and package-local decision services.
-- Server-represented gates are booleans under `features.<featureId path>.enabled`.
-- `capabilities` may explain details/diagnostics but must not be used as a gate.
-- Treat missing or malformed server enabled bits as disabled. Checks must be `readServerEnabledBit(payload, featureId) === true`.
-- Enforce dependencies through `applyFeatureDependencies(...)`; do not duplicate dependency logic at call sites.
-- Server route gating must use the central server feature gate helpers.
+- Do not reduce required discovery to save tokens. Search broadly when needed to find canonical owners, callers/readers/writers, tests, duplicates, compatibility paths, or unknown scope.
+- Keep broad computation separate from transcript volume: prefer matching-file inventories, totals, grouped/deduplicated results, and relevant excerpts over dumping every matching line.
+- When `rtk` is available and supports the intended command, prefer `rtk <command ...>` for potentially verbose searches, file/log reads, Git operations, tests, container commands, and database queries.
+- Do not spend unrelated task turns installing or debugging RTK. If unavailable or semantics/evidence require raw output, use a bounded raw command.
+- Do not add extra model/tool turns merely to save a small output; use a command-aware reducer or one bounded command when possible.
+- Seek minimum sufficient evidence. After each result, identify which required fact remains missing and retrieve only for those gaps, an explicitly exhaustive request, or a materially unsupported claim.
+- Stop when the requested outcome and evidence bar are satisfied; do not keep searching merely for reassurance, optional examples, or better phrasing.
+- Empty, partial, or suspiciously narrow output is not proof of absence; try one or two meaningful alternative retrieval paths.
+- Compression is a preview, not destruction of evidence. For failures, ambiguity, security/data/schema work, or exact final verification, inspect the saved raw artifact or rerun a targeted raw command.
 
-Details: `docs/feature-gating.md`.
+## Current docs and Graphify
 
-## Encryption storage modes
+- Use available Context7/current official documentation when library behavior is version-sensitive, post-training, uncertain, or material to correctness.
+- For cross-module architecture questions where graph relationships are material, read `graphify-out/GRAPH_REPORT.md` and use Graphify when available. Use its wiki only if `graphify-out/wiki/index.md` exists.
+- Updating Graphify after substantial code changes is useful but not a handoff blocker; report it only when it was required or attempted.
 
-Happier supports encrypted-at-rest and plaintext-at-rest session storage. This is a storage-mode choice, not a transport/authentication choice.
+## Adversarial review and handoff
 
-- Server storage policy: `required_e2ee | optional | plaintext_only`.
-- Account/session encryption mode: `e2ee | plain`.
-- Message/pending content envelope:
-  - encrypted: `{ t: 'encrypted', c: string }`
-  - plain: `{ t: 'plain', v: unknown }`
-- Always enforce mode/content-kind compatibility at HTTP, socket, and pending write choke points.
-- Never assume content is encrypted. Parse the envelope and branch explicitly.
-- Plain sessions must not require `encryptedDataKey` for sharing; e2ee sharing/public-share must require a valid encrypted data-key envelope.
-- Gate plaintext behavior only through canonical feature ids: `encryption.plaintextStorage`, `encryption.accountOptOut`.
-
-Details: `docs/encryption.md`.
-
-## Binary-safe runtime and internal packages
-
-Happier ships binary installers. First-party runtime paths must work on machines without system `node`, `npm`, `npx`, `pnpm`, `yarn`, or `bunx`.
-
-- Do not directly spawn `node` or package managers in product runtime paths; use centralized managed runtime/tool abstractions.
-- Before adding/changing provider install/update/runtime flows, classify the path as system-first backend CLI, managed-first prerequisite, managed package, vendor install recipe, or managed JS-runtime-dependent.
-- Provider detection, install status, daemon validation, runtime spawning, and installables must share the same source of truth.
-- Backend CLIs should prefer user/system installs by default unless an explicit source-preference setting says otherwise.
-- Internal workspace dependencies must be declared by the package that imports them. Published hosts must bundle the internal workspace dependency closure.
-
-Details: `docs/binary-runtime.md` and `docs/cli-architecture.md`.
-
-## Package-specific instruction highlights
-
-### UI (`apps/ui`)
-
-- Use themed colors/tokens, app text primitives, translated strings, layout width constraints, and the app modal/popover systems.
-- Treat UI responsiveness, state continuity, scroll stability, and render efficiency as core UX requirements.
-- Do not introduce provider branching in generic UI/sync code; consume provider behavior through the UI registry.
-- Follow `apps/ui/AGENTS.md` for UI structure, i18n, typography, settings, modal/popover, and workspace/worktree UX rules.
-
-### CLI (`apps/cli`)
-
-- Keep provider execution behind plugin/catalog runtime contributions and shared runtime logic provider-agnostic.
-- Preserve file logging/no-console-noise behavior for agent sessions.
-- Follow `apps/cli/AGENTS.md` for CLI layout, daemon, backend catalog, binary-runtime, and packaging rules.
-
-### Server (`apps/server`)
-
-- Do not change Prisma schema unless schema/data-model changes are explicitly in scope.
-- When schema changes are in scope, own the complete migration work: update schemas, create migrations, inspect SQL, keep affected providers in sync, and validate.
-- Migration reset/db-push/custom SQL is allowed when appropriate for the task and target database, but shared/staging/production/user-data databases require explicit approval.
-- Use transactions and `afterTx` correctly; do not perform non-transactional side effects inside DB transactions.
-- Validate inputs with Zod and keep retryable API operations idempotent.
-- Follow `apps/server/AGENTS.md` for server-specific storage/action/privacy rules.
-
-### Stack (`apps/stack`)
-
-- Use `hstack` for stack/worktree/dev/test orchestration.
-- Preserve stack-owned process isolation, ephemeral-port behavior, and multi-daemon expectations.
-- Follow `apps/stack/AGENTS.md` for stack-specific command discipline and test lanes.
-
-## Context7 and current docs
-
-Use Context7 before implementing or validating work that touches configured post-training packages or when current library/framework/API behavior matters. If Context7 is unavailable, state that and use the best available official docs/source.
-
-## Graphify
-
-This project has a graphify knowledge graph at `graphify-out/`.
-
-- Before architecture/codebase relationship answers, read `graphify-out/GRAPH_REPORT.md` for corpus/community context.
-- If `graphify-out/wiki/index.md` exists, navigate it before raw files.
-- Prefer graphify queries/paths/explanations for cross-module relationship questions when graphify tooling is available.
-- After substantial code changes, running `graphify update .` is recommended when a shell is available. Do not let it block handoff; if skipped, note it as remaining.
-
-## Adversarial review by default
-
-Non-trivial work gets an adversarial pass before it is treated as done — automatically, not on request.
-
-- The author always runs the self-attack (`skills/attack-conclusion`) before handoff: alternative cause, neighboring cases, blast radius, environment gap, hypothesis lock.
-- Independence scales with stakes: routine changes → author self-attack; delegated lane/corridor deliverables → an independent session runs `skills/verify-claims` against the deliverable's claims; ship gates (releases, user-visible behavior, schema/data changes) → independent review by a different mind than the author, with re-measured evidence.
-- The reviewer's brief is to refute, not confirm: re-derive claims via a different path, re-run numbers at the recorded basis, and attempt the failure the author says cannot happen.
-- Findings from the adversarial pass lead the handoff. A pass that found nothing states what was attacked and how — "reviewed, no findings" without the attack list is not a review.
-
-## Commit messages
-
-Use Conventional Commits for commits and squash messages:
-
-```text
-<type>[optional scope][!]: <description>
-```
-
-Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `build`, `ci`, `perf`, `revert`.
-
-## Final handoff
-
-Before finalizing:
-
-- Lead with the outcome, then evidence-pointed reasoning, then residual risk. Never bury a failed check, skipped step, or scope change mid-report.
+- Run a compact in-place `skills/attack-conclusion` self-check before every non-trivial handoff: test an alternative cause, neighboring cases, blast radius, environment gap, and hypothesis lock. Routine author self-checks create no separate reviewer, workspace, report, or approval gate; record only changes they caused and unresolved risk.
+- For deep reviews, plan-completeness audits, worktree/feature audits, or review-plus-QA/fix loops, use `skills/happier-review` so the target basis, affected corridor, findings, QA obligations, and evidence are handled coherently.
+- The orchestrator checks delegated outputs sufficiently for integration using current source/diffs, deciding tests, compiler results, and runtime evidence. Formally re-derive load-bearing delegated claims whose falseness changes a readiness, architecture, security, data, compatibility, or shipment decision at the next substantial review boundary; deterministic inventories and mechanical transformations may be verified by scripts or focused inspection. Release, schema/data, security-critical, and user-visible ship gates require a different reviewer with re-measured decision-material evidence.
+- Review to refute, not confirm. Lead with any finding; if none, state what was attacked and how.
+- Review findings are candidate claims, not work orders. Reproduce or re-derive each claim, then separately adjudicate its impact, proposed response, and authority; a confirmed defect may have an overengineered proposed fix, and a material plan deviation remains `AMENDMENT_REQUIRED`. A mechanism-sized response requires a reproduced failure, reachable risk, or named live consumer.
+- Review is available for moving, dirty, partial, or completed work. Record a concise observed basis—plan revision when applicable, current HEAD and dirty-state acknowledgement, relevant paths/flows, checks run, and runtime artifact where relevant—without freezing, hashing, leasing, or globally snapshotting the worktree. Moving-work review is advisory and may report useful findings; a completion verdict reconciles only materially affected observations against the current implementation and deciding evidence. Formal independent review is normally batched at substantial integration boundaries, explicit user-requested review points, and high-risk ship gates—not every lane, commit, gate, or microchange. After accepted fixes, review the finding delta and affected corridor; repeat a full round only when the contract, architecture, scope, boundary, or risk materially changed.
+- A plan-wide program reuses its canonical plan QA matrix and at most one review workspace for each substantial integrated boundary. Sublanes, findings, fixes, and reruns contribute evidence to that existing boundary record; they do not create parallel QA ledgers or one workspace per lane.
+- Final reports lead with the outcome, then evidence-pointed reasoning, then residual risk.
 - Verify every requested item is covered or marked `[blocked]`.
-- Report tests/typechecks/docs checks actually run; do not fabricate evidence.
-- Mention any validation you could not run and why.
-- For non-trivial behavior changes, report the canonical owner/choke point used and any duplicate or legacy paths removed or intentionally left.
-- Ensure no unapproved `*_SUMMARY.md`, `*_ANALYSIS.md`, or similar report files were created.
+- Report checks actually run and validation that could not run.
+- For behavior changes, repeat the split-brain audit across the touched corridor; name the canonical owner and every duplicate, bypass, legacy, or compatibility path removed or intentionally retained, including why a retained path is not a competing owner.
+- Ensure no unapproved `*_SUMMARY.md`, `*_ANALYSIS.md`, or similar report file was created.
+- Use Conventional Commits for commits and squash messages: `<type>[optional scope][!]: <description>`.
 
 ## Critical reminder
 
-- Do not discard unrelated work.
-- Behavior-changing code needs test-first validation.
-- Mock only system boundaries, never internal logic.
-- Use canonical catalogs/helpers instead of parallel implementations.
-- Keep feature gates fail-closed, encryption envelopes explicit, and runtime paths binary-safe.
+Before finalizing:
+
+- Preserve existing work: do not discard unrelated changes or switch branches in the primary checkout.
+- Confirm the canonical owner, relevant consumers, and surrounding same-concept paths were inspected; refactor touched split-brains and do not leave a competing active implementation or bypass.
+- If behavior changed, prove RED → GREEN with the smallest meaningful owner-level test, mock only genuine system boundaries, and run relevant validation.
+- Report the outcome honestly, including failed or skipped checks, blockers, and residual risk.

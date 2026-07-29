@@ -1,181 +1,98 @@
-## Big picture (what lives where)
+# Happier Stack Instructions
 
-### This package (`@happier-dev/stack`)
+Package-specific instructions for `apps/stack` (`@happier-dev/stack`). These supplement the root constitution and override broader guidance where more specific.
 
-- `scripts/*.mjs`: orchestration CLIs (setup/bootstrap, run/dev/build, stacks, worktrees, service, tailscale, mobile, tools).
+## Ownership
 
-### Your local installation (defaults)
+`@happier-dev/stack` provides local stack/worktree/dev orchestration for the Happier monorepo.
 
-- Home: `~/.happier-stack`
-- Workspace: `~/.happier-stack/workspace`
-- Default repo checkout: `<workspace>/main`
-- Dev checkout (worktree): `<workspace>/dev`
-- Worktree categories: `<workspace>/{pr,local,tmp}/...`
-- Stack storage: `~/.happier/stacks/<stack>/...` (stack env file: `~/.happier/stacks/<stack>/env`)
+- `scripts/*.mjs` — setup/bootstrap, run/dev/build, stacks, worktrees, service, tailscale, mobile, tools.
+- Default home: `~/.happier-stack`.
+- Default workspace: `~/.happier-stack/workspace`.
+- Main checkout: `<workspace>/main` (stable launcher/default state).
+- Dev checkout/worktrees: `<workspace>/dev`, `<workspace>/pr/**`, `<workspace>/local/**`, `<workspace>/tmp/**`.
+- Stack storage: `~/.happier/stacks/<stack>/**`.
 
-### Happier monorepo
+## Command discipline
 
-- `apps/ui` (UI)
-- `apps/cli` (CLI + daemon)
-- `apps/server` (server; light/full flavors)
-
----
-
-## Non-negotiables (agents)
-
-### Command discipline (only use `hstack ...`)
-
-Use hstack for everything:
+Use `hstack` for stack-managed workflows:
 
 - `hstack start` / `hstack dev`
 - `hstack typecheck` / `hstack lint` / `hstack test` / `hstack build`
-- `hstack stack ...` (isolated stacks)
-- `hstack wt ...` (repo worktrees)
+- `hstack stack ...`
+- `hstack wt ...`
 - `hstack tailscale ...` / `hstack service ...`
-- `hstack tools ...` (setup-pr/review-pr/import/review/edison)
+- `hstack tools ...` for maintained stack tools
 
-Do not run these directly in the monorepo:
+Do not run stack-scoped commands directly inside monorepo checkouts when a stack command exists (`yarn dev`, `yarn start`, raw `expo`, raw `tsc`/`eslint`, raw `docker compose`, raw `git worktree`). If a low-level command is needed repeatedly, prefer adding or using a stack command.
 
-- `yarn dev`, `yarn start`, `expo ...`, `tsc`, `eslint`, `docker compose ...`
-- raw `git worktree ...` (use `hstack wt ...`)
+## Worktrees
 
-If you’re tempted to run a low-level command, route it through `hstack` (or add a `hstack` subcommand).
+- Do not develop directly in `<workspace>/main`; treat it as stable launcher state.
+- Make changes in `<workspace>/dev`, `<workspace>/pr/**`, `<workspace>/local/**`, or `<workspace>/tmp/**`.
+- Use `hstack wt ...` for worktree operations.
+- Do not switch branches in the primary checkout.
 
-### You must develop in worktrees only
+Common commands:
 
-- Do **not** develop directly in the default checkout (typically `<workspace>/main`).
-  - Treat it as **read-only** “launcher defaults”.
-- All changes should happen inside:
-  - `<workspace>/dev` (first-class dev worktree)
-  - `<workspace>/pr/<...>` (PR worktrees)
-  - `<workspace>/local/<owner>/<...>` (local worktrees; owner is your local username)
-  - `<workspace>/tmp/<owner>/<...>` (throwaway worktrees)
-
-### You must test changes inside isolated stacks
-
-- When testing a feature/PR, create an isolated stack and point it at your worktree:
-  - `hstack stack new exp1 --interactive`
-  - `hstack stack wt exp1 -- use <owner/branch|/abs/path>`
-- Avoid editing `env.local` by hand; prefer stack env files and `hstack stack env ...`.
-
----
-
-## Worktrees (monorepo-only)
-
-### Layout
-
-The workspace contains:
-
-- `main/` (stable checkout; treat as read-only)
-- `dev/` (first-class dev worktree)
-- categorized worktrees:
-  - `pr/<...>`
-  - `local/<owner>/<...>`
-  - `tmp/<owner>/<...>`
-
-Examples:
-
-- `<workspace>/pr/123-fix-thing`
-- `<workspace>/local/<you>/my-patch`
-
-### Common commands
-
-- Create: `hstack wt new pr/my-feature --from=upstream --use`
-- PR checkout: `hstack wt pr 123 --use`
-- Switch active checkout: `hstack wt use pr/123-fix-thing`
-- List/status: `hstack wt list` / `hstack wt status`
-
-### Targeting a worktree without mutating a stack
-
-Pass a one-shot override:
-
-- `hstack stack typecheck <stack> --repo=dev`
-- `hstack stack build <stack> --repo=pr/123-fix-thing`
-- `hstack stack build <stack> --repo=/abs/path/to/monorepo`
-
----
-
-## Main stack safety
-
-The default stack (`main`) is meant to stay stable.
-
-By default, `hstack wt use` refuses to repoint `main` to an arbitrary worktree/path. Recommended flow:
-
-- Create a new stack and switch that stack:
-  - `hstack stack new exp1 --interactive`
-  - `hstack stack wt exp1 -- use pr/123-fix-thing`
-
-Override (only if you really mean it):
-
-- `hstack wt use pr/123-fix-thing --force`
-
----
-
-## Safety invariants (must not regress)
-
-These are intentional safety properties. Preserve them unless explicitly redesigning them.
-
-### Process isolation (stacks)
-
-- Never kill by port in stack mode.
-- Stack stop/restart must kill only stack-owned processes (PIDs recorded in `stack.runtime.json` / stack markers).
-
-### Ephemeral ports (non-main stacks)
-
-- Non-main stacks pick ports at start time; ports are recorded in `stack.runtime.json`.
-- `--restart` must reuse previous runtime ports or fail closed if occupied.
-
-### Watch mode
-
-- Watcher restarts must be stack-owned (PID verified). Unknown PIDs must not be restarted.
-
-### Tailscale Serve
-
-- Do not auto-enable/repoint Tailscale Serve for non-main stacks by default.
-
-### Daemons
-
-- Multiple daemons are expected (one per stack).
-- Never “fix” issues by killing all daemons.
-
----
-
-## Auth + secrets
-
-- Configure a seed stack once (recommended: `dev-auth`).
-- New stacks can reuse auth without re-login:
-  - `hstack stack auth <name> copy-from dev-auth`
-
-Environment knobs:
-
-- `HAPPIER_STACK_AUTH_SEED_FROM=<seed>`
-- `HAPPIER_STACK_AUTO_AUTH_SEED=1`
-
----
-
-## Commit messages (Conventional Commits)
-
-Use Conventional Commits for all commits (and for squash messages):
-
-```text
-<type>[optional scope][!]: <description>
+```bash
+hstack wt new pr/my-feature --from=upstream --use
+hstack wt pr 123 --use
+hstack wt use pr/123-fix-thing
+hstack wt list
+hstack wt status
 ```
 
-Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `build`, `ci`, `perf`, `revert`
+## Stacks
 
----
+Test feature/PR work inside an isolated stack when stack services are involved:
 
-## Stack testing rules
+```bash
+hstack stack new exp1 --interactive
+hstack stack wt exp1 -- use <owner/branch|/abs/path>
+```
 
-- Keep stack on native `node --test`. Do not migrate stack tests to Vitest or Playwright conventions.
-- Canonical stack runner/discovery helpers live under `scripts/utils/test/**`.
-- Canonical stack-local testkit primitives live under `scripts/testkit/core/**`.
-- Prefer reusing those helpers over adding new ad hoc tempdir/env/spawn wrappers in test files or domain testkits.
+Prefer stack env files and `hstack stack env ...` over hand-editing `env.local`.
+
+The default `main` stack should stay stable. Prefer creating a new stack and pointing it at the worktree under test.
+
+## Safety invariants
+
+Preserve these unless the task explicitly redesigns stack behavior:
+
+- Never kill by port in stack mode.
+- Stack stop/restart kills only stack-owned processes recorded in runtime state or stack markers.
+- Non-main stacks pick ports at start time; runtime ports are recorded in `stack.runtime.json`.
+- `--restart` should reuse previous runtime ports or fail closed if occupied.
+- Watcher restarts must be stack-owned and PID-verified.
+- Do not auto-enable/repoint Tailscale Serve for non-main stacks by default.
+- Multiple daemons are expected across stacks; never fix stack issues by killing all daemons.
+
+## Auth and secrets
+
+- Configure a seed stack once, commonly `dev-auth`.
+- New stacks can reuse auth with `hstack stack auth <name> copy-from dev-auth`.
+- If the seed is unknown, fall back to copying from `main` only when appropriate for the local setup.
+
+## Testing
+
+- Keep stack tests on native `node --test`; do not migrate stack tests to Vitest or Playwright.
 - Unit tests use `*.test.mjs`.
 - Integration tests use `*.integration.test.mjs` and remain serial.
-- Real integration tests use `*.real.integration.test.mjs`, remain serial, and must stay opt-in behind `HAPPIER_STACK_RUN_REAL_INTEGRATION_TESTS=1`.
-- Exclude vendored/generated artifacts from stack test discovery and migration inventories.
-- Use the package lanes when validating stack test infrastructure:
-  - `yarn --cwd apps/stack test:unit`
-  - `yarn --cwd apps/stack test:integration`
-  - If `yarn` is not on PATH in the current environment, use `corepack yarn ...`.
+- Real integration tests use `*.real.integration.test.mjs`, remain serial, and require `HAPPIER_STACK_RUN_REAL_INTEGRATION_TESTS=1`.
+- Canonical runner/discovery helpers live under `scripts/utils/test/**`.
+- Canonical stack-local testkit primitives live under `scripts/testkit/core/**`.
+- Prefer existing helpers over ad hoc tempdir/env/spawn wrappers.
+
+Validation lanes:
+
+```bash
+yarn --cwd apps/stack test:unit
+yarn --cwd apps/stack test:integration
+```
+
+If `yarn` is not on PATH, use `corepack yarn ...`.
+
+## Commit messages
+
+Use Conventional Commits as defined in the root `AGENTS.md` ("Commit messages").

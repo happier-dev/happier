@@ -10,6 +10,9 @@
 !packages/**
 !scripts
 !scripts/**
+!docker
+!docker/dev-box
+!docker/dev-box/**
 
 # Exclude local dependency trees and generated artifacts that the Dockerfile never copies.
 **/node_modules

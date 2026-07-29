@@ -1,0 +1,4 @@
+interface:
+  display_name: "Happier Compatibility"
+  short_description: "Audit and validate released and mixed-version contracts."
+  default_prompt: "Analyze this change for split-brain ownership and released or predecessor compatibility risks."

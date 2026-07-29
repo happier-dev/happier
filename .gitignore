@@ -38,6 +38,34 @@ yarn-error.*
 .playwright-mcp/
 .yarn-cache/
 .yarn-global/
+.argent/
+__pycache__/
+*.py[cod]
+
+# Local agent/orchestration state and reports
+**/.project/
+/.sisyphus/
+/.antigravitycli/
+/.claude-lane-reports/
+/subagents/
+/.impl-*-report.md
+/.fix-*-report.md
+/.reviews-*.md
+/qa-wave.md
+/LEDGER.md
+
+# Interrupted package copies, probes, and runner snapshots
+**/.tmp.*/
+**/.restore.*/
+**/.backup.*/
+**/.runner-snapshots/
+/apps/cli/dist.probe.manual/
+/apps/cli/prime-isolated-home/
+/apps/cli/.g3-real-child-*/
+/apps/cli/.project-permission-result.json
+
+# Nested sibling-checkout snapshots must never enter this repository
+/remote-dev/
 
 # local build/log artifacts
 apps/cli/.dist.hstack-backup/
@@ -56,6 +84,7 @@ apps/server/output/
 
 # typescript
 *.tsbuildinfo
+*.tsbuildinfo.*
 packages/*/.tsconfig.build.*.json
 packages/protocol/src/features/embeddedFeaturePolicies.generated.ts
 
@@ -65,11 +94,6 @@ packages/protocol/src/features/embeddedFeaturePolicies.generated.ts
 CLAUDE.local.md
 
 .dev/worktree/*
-.project/*
-!.project/plans/
-.project/plans/*
-!.project/plans/runtime-unification-v2/
-!.project/plans/runtime-unification-v2/**
 
 # Development planning notes (keep local, don't commit)
 notes/
@@ -80,14 +104,6 @@ notes/
 .edison/_locks/
 .edison/config.local/
 .edison/session/
-.project/logs/
-.project/archive/
-.project/.session-id
-.project/sessions/_tx/
-.project/sessions/_locks/
-.project/qa/evidence-snapshots/
-.project/qa/locks/
-.project/qa/score-history/
 .happier/local/
 /output
 /apps/ui/.agent-device/
@@ -97,6 +113,7 @@ notes/
 
 # Android build artifacts
 packages/*/android/build/
+packages/*/android/.cxx/
 packages/*/ios/vendor/
 packages/*/rust/*/target/
 /.tmp
@@ -115,6 +132,7 @@ _.env.pipeline.production.local
 
 # Local probe/debug scratch files
 /apps/cli/tmp-*
+/--fullpage
 
 # Local QA screenshots
 /authoring-qa-*.png
@@ -129,11 +147,24 @@ _.env.pipeline.production.local
 /opencode-auth-picker-*.png
 /runtime-status-session-before-reload.png
 /ui-postfix-review-snapshot.md
+/z[0-9]*.png
 /.codex-tmp
 /apps/stack/output
-/apps/ui/src-tauri/vendor
+
+# Canonical packed-plugin fixture: committed package bytes intentionally include
+# generated UI artifacts so clean-checkout pack/projection tests exercise the
+# exact installed file-set integrity path.
+!/apps/cli/src/plugins/testkit/fixtures/packed-external-voice-provider/.happier/
+!/apps/cli/src/plugins/testkit/fixtures/packed-external-voice-provider/.happier/plugin.json
+!/apps/cli/src/plugins/testkit/fixtures/packed-external-voice-provider/dist/
+!/apps/cli/src/plugins/testkit/fixtures/packed-external-voice-provider/dist/**
+/apps/ui/src-tauri/vendor/*
+!/apps/ui/src-tauri/vendor/wry/
+!/apps/ui/src-tauri/vendor/wry/**
+/apps/ui/src-tauri/vendor/wry/target/
 
 /cli/.dist*
 /packages/cli-common/.dist*
 /.clawpatch
 /apply_fix.py
+/.reviews

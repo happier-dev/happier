@@ -1,255 +1,115 @@
 ---
 name: happier-diagnose
-description: Diagnose a problem with a Happier session, the daemon, a provider (Claude/Codex/OpenCode), auth, or connectivity. Pulls the correct logs, finds a true root cause from evidence only, presents findings, and optionally uploads a private diagnostics bundle to Happier developers and/or files a sanitized public GitHub issue (the two are complementary). Use when the user reports a bug, says Happier is broken/stuck/misbehaving, asks to debug/diagnose/triage/troubleshoot Happier, or shares a Happier session ID and asks what went wrong.
+description: Diagnose and explain a Happier runtime, session, daemon, provider (Claude/Codex/OpenCode), authentication, or connectivity incident from logs, structured diagnostics, runtime state, and source evidence without modifying repository implementation. Use for support investigation, incident triage, session-ID analysis, or when the user asks what went wrong; if the user requests a repository fix, hand the established evidence to happier-implement.
 metadata: {"openclaw":{"requires":{"bins":["happier"]},"homepage":"https://github.com/happier-dev/happier"}}
 ---
 
 # Happier Diagnose
 
-Investigate a Happier issue from real evidence (logs, doctor output, source), determine the root cause at high confidence, and present findings. Then — only with explicit user consent — upload a private diagnostics bundle to Happier developers **and/or** open a sanitized public GitHub issue. The two paths are complementary: the private bundle gives maintainers raw artifacts; the public issue gives them (and the community) a searchable, durable record. Doing both is normal. Mostly hands-off; minimize questions to the user.
+Investigate a Happier runtime/support incident from primary evidence, determine the originating cause when the evidence supports it, and report what is known, what is derived, and what remains unverified. Diagnosis is read-only: do not edit repository source or silently turn the investigation into a fix.
 
-## Evidence rules (read first)
+If the user requests a repository correction, finish the diagnosis or establish the deciding evidence, then use `skills/happier-implement` and its bug-fix loop. User-side recovery actions, private diagnostics upload, and public issue creation remain separate actions with their own authority.
 
-- **High confidence only.** Never guess. Every claim in the final root cause must be traceable to a specific log line, a `happier doctor` field, or a specific source file (with line numbers). If you cannot reach high confidence, say "Inconclusive — here's what I observed and what's missing" rather than inventing a story.
-- **Symptom ≠ root cause.** A failed RPC call is a symptom; the daemon being stale, the access key being missing, or a provider returning 429 is a root cause.
-- **No fabricated paths or flags.** If a path, file, or command is not in this skill, in the user's logs, or in code you have actually read, do not include it.
-- **Concrete code references are welcomed.** The Happier maintainers prefer issues that name specific files (`apps/ui/sources/.../AgentInput.tsx:1759`), include code snippets, and propose a hypothesis. This is repo-relative — different from the user's filesystem paths, which must be sanitized in public issues. See `CONTRIBUTING.md`: "A well-written issue ... is often more useful than a PR."
+## 1. Establish the observed incident
 
-## Process
+Inspect evidence already supplied or locally available before asking the user for more. Capture:
 
-### 1. Capture the problem (one question max)
+- observed behavior and failure window;
+- expected behavior when it is established;
+- affected session, daemon, provider, server, account, host, and platform;
+- version/build/runtime identity;
+- what still works and the practical impact;
+- whether the user wants diagnosis only, local recovery guidance, or later reporting.
 
-If the user has not already described the issue, ask exactly one question: "What's happening, and is there a Happier session ID involved?" Then start investigating immediately. Do not interrogate.
+If no usable description or evidence exists, ask one concise question that requests the symptom and any Happier session ID or copied session metadata. Do not interrogate or ask for information that safe local/CLI inspection can retrieve.
 
-### 2. Get the session context
+Do not guess an expected result. Derive it from the user's stated expectation, a current product/external contract, or observed canonical behavior. If it remains materially unspecified, report that ambiguity rather than forcing a root-cause verdict.
 
-Ask the user to send **either** of the following (prefer the first):
+## 2. Select the evidence path
 
-- **Preferred:** Open the affected session in the Happier app → Session info screen → press **Copy Metadata**, then paste the JSON. This contains every field needed (`sessionLogPath`, `flavor`, `claudeSessionId`/`codexSessionId`, `host`, `path`, `version`, `os`, `hostPid`, `happyHomeDir`, `machineId`, `startedBy`).
-- **Fallback:** The Happier session ID alone, then run `happier session status <id> --json` to fetch metadata server-side. (See the `happier-session-control` skill for the JSON contract.)
+Read [runtime-evidence.md](references/runtime-evidence.md) when session metadata, doctor/auth state, Happier logs, provider transcripts, connected-service homes, or installed-version source is needed. In the built-in `/happier-diagnose` prompt, use the bundled runtime-evidence reference included below.
 
-If the issue is daemon-wide and not session-specific, skip the session metadata and go straight to step 3.
+Start with evidence that can discriminate among likely failure layers:
 
-### 3. Run doctor before reading any log
+- supplied metadata, logs, and screenshots;
+- structured session status and runtime diagnostics;
+- daemon/server/provider timelines;
+- process, port, filesystem, persistence, browser/network, or service state;
+- current or installed-version source, schemas, and tests when they establish reachability or interpret a logged event.
 
-```bash
-happier doctor --json
-happier auth status --json
-```
+Run `happier doctor --json` and `happier auth status --json` when daemon, server, authentication, lifecycle, process, or connectivity state is material. Do not make doctor a mandatory prelude to an unrelated UI-only or already-decided failure.
 
-`doctor` answers most questions without log digging: daemon up, control port reachable, server reachable, auth state, runaway processes, version mismatch, settings sanity. Read its output before opening logs.
+Prefer `metadata.sessionLogPath` and `metadata.happyHomeDir` over guessed locations. Anchor searches on time, session/provider IDs, PID, host, and operation. Absence is evidence only about the named files, patterns, and time range searched.
 
-### 4. Pull the right logs
+Protect sensitive evidence. Keep raw secrets, credentials, machine identities, full session IDs, and private logs out of public output. Quote only the minimum redacted excerpt needed to support a claim.
 
-**Always trust `metadata.sessionLogPath` and `metadata.happyHomeDir` over any guess.** Different binaries use different home dirs, and `$HAPPIER_HOME_DIR` overrides them. Common values seen in the wild:
+## 3. Diagnose the originating layer
 
-- Release CLI → `~/.happier/logs/`
-- Preview CLI → `~/.happier-preview/logs/`
-- Dev CLI → `~/.happier-dev/logs/`
-- Custom → wherever `$HAPPIER_HOME_DIR` points
+Separate symptom, propagation, and cause. Classify where the failure entered:
 
-If `metadata.sessionLogPath` is missing, fall through the candidate dirs above (in order) and use a glob; never assume a single fixed location.
+- user/account/environment configuration;
+- daemon, process, service, or connectivity lifecycle;
+- provider or external service contract;
+- authentication, authorization, encryption, or key state;
+- canonical Happier implementation;
+- persisted/session state or compatibility;
+- test/harness or stale runtime artifact;
+- unrelated system.
 
-#### Happier session log
+Trace the observed input and state through the owning decision, side effects, consumers, and visible failure. A nearby error is not automatically causal; prove that it is reachable with the observed inputs and explains the failure.
 
-Primary: read `metadata.sessionLogPath` (absolute path). Fallback if absent — search for the file matching `metadata.hostPid`:
+When evidence supports materially different explanations, name the plausible alternatives and obtain the cheapest observation that distinguishes them. Do not manufacture a second hypothesis when the cause is directly established, and stop expanding the search once the decision-material cause and impact are supported.
 
-```bash
-# substitute <happyHomeDir> from metadata, or fall through ~/.happier-dev → ~/.happier → ~/.happier-preview
-find "<happyHomeDir>/logs" -maxdepth 1 -name "*-pid-<metadata.hostPid>.log" -not -name "*-daemon.log"
-```
+Reject a root-cause claim unless supported by primary evidence such as:
 
-Filename format is `YYYY-MM-DD-HH-MM-SS-pid-<pid>.log` (verified on disk).
+- a correlated log/transcript event naming the failure;
+- a structured diagnostic or runtime field contradicting healthy state;
+- process, network, persistence, or platform state demonstrating the failure;
+- source/schema behavior that produces the observed outcome from the observed inputs;
+- a controlled reproduction or recovery action that discriminates the cause.
 
-#### Daemon log
+If the evidence is insufficient, report `INCONCLUSIVE` with the observations, plausible remaining causes when material, and the exact evidence that would decide them. Do not pad.
 
-Most recent `*-daemon.log` in `<happyHomeDir>/logs/`. Correlate timestamps with the failure window. There is usually only one active daemon at a time, but stale daemons leave their logs behind, so sort by `mtime`.
+## 4. Evaluate the response separately
 
-#### Claude transcript (when `metadata.flavor === 'claude'` and `metadata.claudeSessionId` is set)
+A verified cause does not automatically verify a proposed fix.
 
-The directory name is the cwd with `/` replaced by `-` (no hash for short paths; only very long paths get a SHA-256 suffix). The session JSONL is named `<claudeSessionId>.jsonl`. **The reliable way is a recursive glob, not computing the path:**
+- For a safe user-side recovery such as re-authentication or a documented restart, provide the exact current command and explain its scope.
+- For a repository defect, identify the canonical owner, affected corridor, and root-cause fix direction; do not edit source unless the user requested implementation.
+- For a mitigation, label it as such, keep it narrow, and state the remaining owner-level correction.
+- For destructive local recovery, external writes, another user's session, managed processes, or shared server state, obtain explicit approval.
 
-```bash
-# search across all Claude project dirs at once
-find ~/.claude/projects -maxdepth 2 -name "<claudeSessionId>.jsonl" -type f
-```
+Do not delete access keys, daemon state, logs, sessions, or other user data without explicit approval.
 
-If nothing matches, ask the user whether their Claude data dir is non-default (`$CLAUDE_CONFIG_DIR` or similar) and re-run with that root.
+## 5. Present the diagnosis
 
-Note: alongside `<claudeSessionId>.jsonl` you may see a sibling **directory** of the same name — these are sub-session artifacts. The `.jsonl` file itself is the transcript.
+Lead with one of:
 
-Note on `--resume`: when a Happier session resumes a Claude session, Claude writes a NEW `<new-uuid>.jsonl` containing the full prior history with all `sessionId` fields rewritten to the new UUID. The original `<old-uuid>.jsonl` remains as a historical artifact. If you only have the older ID, the latest transcript may live in a different filename — sort the project dir's `.jsonl` files by `mtime` to find the active one.
+- **Root cause verified** — one sentence naming the cause rather than the symptom;
+- **Likely cause, not verified** — only when useful, with the missing discriminator;
+- **Inconclusive** — what was observed and what evidence is missing.
 
-#### Codex transcript (when `metadata.flavor === 'codex'` and `metadata.codexSessionId` is set)
+Then report:
 
-Codex stores rollouts under date-partitioned subdirs (and an `archived_sessions/` dir for older ones). Do **not** assume `~/.codex/sessions/rollout-*.jsonl` flat. Use a recursive glob:
+1. **Evidence** — redacted source pointers, timestamps/keys, and concise excerpts;
+2. **Impact** — what is broken and what remains unaffected;
+3. **Originating layer and canonical owner** — when established;
+4. **Recommended response** — user recovery, repository fix direction, mitigation, or next diagnostic action;
+5. **Response confidence** — separate from root-cause confidence;
+6. **Residual uncertainty** — what would invalidate the conclusion.
 
-```bash
-# CODEX_HOME defaults to ~/.codex; fall back to ~/.codex if unset
-find "${CODEX_HOME:-$HOME/.codex}" -type f \( -name "rollout-*-<codexSessionId>.jsonl" -o -name "rollout-*-<codexSessionId>.json" \) 2>/dev/null
-```
+Use `skills/attack-conclusion` against a supported alternative cause or concrete falsifier, neighboring sessions/platforms, stale-runtime gaps, and hypothesis lock before a high-confidence incident verdict. Use `skills/handoff-report` for the final ordering and epistemic labels.
 
-Both `.jsonl` (current) and `.json` (legacy) extensions exist. Filename pattern: `rollout-YYYY-MM-DDTHH-MM-SS-<codexSessionId>.jsonl`. Real-world locations include `~/.codex/sessions/<year>/<month>/<day>/`, `~/.codex/sessions/` directly (legacy flat), and `~/.codex/archived_sessions/` (rotated).
+## 6. Offer reporting only after diagnosis
 
-If the agent is also running on a connected-services daemon, Codex sessions can live under `<happyHomeDir>/servers/<serverId>/daemon/connected-services/homes/<connectedServiceId>/<profileId>/codex/codex-home/sessions/...` — same filename pattern, different root. Search this root only if the standard glob returns nothing.
+After presenting the diagnosis, offer private diagnostics upload and/or a sanitized public GitHub issue only when useful. Do not treat reporting as automatic or as proof of diagnosis.
 
-#### OpenCode transcript (when `metadata.flavor === 'opencode'` and `metadata.opencodeSessionId` is set)
+If the user opts in, read [reporting.md](references/reporting.md); in the built-in prompt, use the bundled reporting reference below. Obtain explicit consent separately for the private upload and the public issue. The two paths are complementary, but neither authorizes the other.
 
-OpenCode follows XDG storage. Base dir is `$XDG_DATA_HOME/opencode/` (defaults to `~/.local/share/opencode/` on macOS/Linux). There is no single transcript file — session content is keyed by session id (`ses_<...>`) across category subfolders inside `<base>/storage/` (e.g. `session_diff/`, `directory-readme/`, `agent-usage-reminder/`). Find every file for the session at once:
-
-```bash
-find "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/storage" -type f -name "<opencodeSessionId>.json" 2>/dev/null
-```
-
-Concatenate or `Read` each file. If a Happier connected-services daemon owns the OpenCode session, the same layout lives under `<happyHomeDir>/servers/<serverId>/daemon/connected-services/homes/<connectedServiceId>/<profileId>/opencode/...`.
-
-OpenCode also writes global timestamped logs to `<base>/opencode/log/<YYYY-MM-DDThhmmss>.log`. These are not per-session — correlate by the failure timestamp from the session log.
-
-#### Reading & searching
-
-Read with `Read` (not `cat`/`tail` via Bash) so secrets stay out of the shell pipeline. Search with ripgrep. Anchor on the failure timestamp and `metadata.hostPid` to filter noise.
-
-### 5. Cross-reference source code only when logs are insufficient
-
-If a log message points to specific behavior you cannot interpret without seeing the code, clone the repo at the user's installed version into a tempdir:
-
-```bash
-git clone --depth 1 --branch v<metadata.version> https://github.com/happier-dev/happier /tmp/happier-diagnose-<sessionId> \
-  || git clone --depth 1 https://github.com/happier-dev/happier /tmp/happier-diagnose-<sessionId>
-```
-
-Anchor reading on these directories: `apps/cli/src/`, `apps/server/sources/`, `packages/protocol/src/`, and the docs in `docs/` (`cli-architecture.md`, `protocol.md`, `encryption.md`, and the per-provider `*-feature-matrix.md`). Skip the clone if logs already explain the failure.
-
-### 6. Form the root cause
-
-Synthesize evidence into a single root cause. Reject a candidate cause unless you have at least one of:
-
-- A log line that names it (with timestamp).
-- A `doctor` field whose value contradicts a healthy state.
-- Source code that demonstrates the failure mode given the observed inputs.
-
-Common, evidence-anchored root causes to recognize (each with the log/field that confirms it):
-
-- **Auth missing/expired** — `happier auth status --json` returns unauthenticated, or `access.key` absent in `<happyHomeDir>/`.
-- **Daemon down or stale** — `doctor` reports daemon not reachable; `daemon.state.json` PID does not match a running process; runaway happier processes listed.
-- **Server unreachable** — `happier server test` fails; daemon log shows Socket.IO connect timeouts.
-- **Provider rate limit / credentials** — provider transcript shows 429 or 401; CLI session log surfaces the provider error.
-- **Encryption / key mismatch** — session log mentions decrypt failure; client `dataEncryptionKey` does not match server's.
-- **RPC method not available** — error code `RPC_METHOD_NOT_AVAILABLE`; capabilities probe shows the method missing for the provider/server policy.
-- **Version mismatch** — `metadata.version` (CLI) older than daemon's recorded version in `daemon.state.json`.
-- **Tmux/terminal attach** — `metadata.terminal.tmuxFallbackReason` populated.
-
-If evidence is thin: say so. Do not pad.
-
-### 7. Present findings to the user
-
-Output this template directly in the chat, before offering any uploads:
-
-<diagnosis-template>
-
-**Root cause** — One sentence naming the cause (not the symptom).
-
-**Evidence** — Bulleted, each with the source:
-- `<repo-path-or-doctor-field>:<line-or-key>` — quoted snippet (≤120 chars, redact secrets).
-
-**Impact** — What's broken because of this, and what's not.
-
-**Recommended fix** — The smallest change that resolves the cause. If user-side (re-auth, restart daemon, set env var), give the exact command. If it's a Happier bug, name the file(s) and a concrete proposed change — the maintainers welcome this level of detail in issues.
-
-**Confidence** — high / medium / inconclusive, with one sentence on why.
-
-</diagnosis-template>
-
-### 8. Offer to share — two paths, complementary, explicit consent for each
-
-After presenting findings, ask the user (verbatim):
-
-> "Want me to send this to Happier developers? I can do either or both — they're complementary:
-> A) **Private diagnostics upload** to Happier's bug-report service (logs and the relevant transcripts — only Happier developers see it).
-> B) **Public GitHub issue** at `happier-dev/happier` with reproduction steps, root cause, and (if Path A ran) the diagnostics `reportId` so maintainers can correlate."
-
-Wait for the user to pick. Confirm before each action. Never run either without an explicit "yes". If the user picks both, run Path A first so its `reportId` can be referenced in Path B's body.
-
-#### Path A — Private upload via `happier bug-report`
-
-This collects diagnostics, redacts and sanitizes them, uploads to Happier's bug-report service, and prints a `reportId` and `issueUrl` on success. Attach the specific session log and provider transcript you located in step 4 — they're the most useful artifacts for the maintainers.
-
-```bash
-happier bug-report \
-  --title "<short, specific title from root cause>" \
-  --summary "<2-4 sentence summary>" \
-  --current-behavior "<what user observed>" \
-  --expected-behavior "<what should have happened>" \
-  --repro-step "<step 1>" --repro-step "<step 2>" \
-  --frequency <always|often|sometimes|once> \
-  --severity <blocker|high|medium|low> \
-  --session-id <happier-session-id-from-metadata> \
-  --attach-session-log <metadata.sessionLogPath> \
-  --attach-provider-transcript <claude-or-codex-or-opencode-transcript-path> \
-  --include-diagnostics \
-  --accept-privacy-notice
-```
-
-Notes:
-- Repeat `--attach-provider-transcript <path>` (or `--attach <path>`) if there are multiple files.
-- Add `--existing-issue-number <N>` to comment on an existing issue instead of opening a new one.
-- Use `--no-include-diagnostics` (and drop the `--attach-*` flags) if the user wants to submit without artifacts.
-- Capture the printed `reportId` and `issueUrl` and show both back to the user.
-
-#### Path B — Public GitHub issue via `gh`
-
-Only when the user opted into Path B. First verify `gh` is installed and authenticated (`gh auth status`); if not, tell the user and stop — do not proceed.
-
-Match the format of `happier-dev/happier#91` and `#93` (the maintainers' canonical examples). Title: specific and descriptive, with a platform prefix when relevant — e.g. `Android: Expand/open icon on tool items unresponsive to touch`, not `icon broken`. Body sections, in this order: `## Description`, optional `### Observed behavior` (numbered), `## Root Cause` (with code snippets and repo-relative `path/to/file.ts:line` references), `## Suggested Fix` (concrete code or approach), `## Affected Files` (bulleted with line numbers), and `## Environment` (CLI version, OS, provider).
-
-Repo-relative paths (`apps/ui/sources/components/...:1759`) and code snippets are encouraged. Do **not** include: log contents, the user's absolute filesystem paths, hostnames, machine IDs, full Happier session IDs, full provider session IDs, access keys, or API tokens. If Path A ran, include the `reportId` so maintainers can correlate.
-
-```bash
-gh issue create --repo happier-dev/happier \
-  --title "<platform prefix if relevant>: <specific, descriptive title>" \
-  --body "$(cat <<'EOF'
-## Description
-
-<one paragraph: what the user did, what they expected, what actually happened>
-
-### Observed behavior
-
-1. <step + outcome>
-2. <step + outcome>
-3. <step + outcome>
-
-## Root Cause
-
-<one or two paragraphs naming the cause, then code snippets from the repo with file:line references. Quote 5-15 lines of relevant code in fenced blocks.>
-
-## Suggested Fix
-
-<concrete code change or approach. Code block if applicable.>
-
-## Affected Files
-
-- `apps/.../File.tsx` (line N — <one-line note>)
-- `apps/.../Other.ts` (line M — <one-line note>)
-
-## Environment
-
-- Happier CLI: <metadata.version>
-- OS: <metadata.os>
-- Provider: <metadata.flavor>
-- Diagnostics: reportId=<from Path A, if available>
-EOF
-)"
-```
-
-If the user only has a symptom and no concrete code-level finding (i.e., step 6 returned "inconclusive"), still file the issue — the contribution guidelines explicitly value "a well-written issue ... clear repro steps, platform context, observed vs expected behavior" even without a hypothesis. In that case, omit `## Root Cause` and `## Suggested Fix` and lead with `## Description` + `### Steps to reproduce`. Show the user the issue URL after creation.
-
-## Privacy
-
-- **Path A (private upload)**: only Happier developers see the bundle. `happier bug-report` redacts and sanitizes for you — you don't need to pre-redact files before passing them to `--attach-*`.
-- **Path B (public GitHub issue)**: world-readable forever. **Allowed in the body:** repo-relative paths, code snippets from the public repo, reproduction steps, platform info. **Never include in the body:** log contents, the user's absolute filesystem paths, hostnames, machine IDs, full session IDs, access keys, OAuth tokens, or provider API keys.
-
-## When to stop and ask
-
-- The fix would change shared state outside the user's machine (server, GitHub, another user's session).
-- Evidence is inconclusive but the user is pushing for a fix anyway — say so and let them decide.
-- The "fix" requires deleting files (`access.key`, `daemon.state.json`, log files): confirm first.
+## Stop and ask when
+
+- required evidence is sensitive and access was not authorized;
+- a recovery action is destructive or changes shared/external state;
+- another user's session or a user-managed process would be affected;
+- the expected behavior requires a product decision;
+- the evidence is inconclusive and the user requests implementation anyway.

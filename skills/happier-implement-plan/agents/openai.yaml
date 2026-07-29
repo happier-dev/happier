@@ -1,0 +1,4 @@
+interface:
+  display_name: "Happier Implement Plan"
+  short_description: "Execute approved Happier plans efficiently"
+  default_prompt: "Use $happier-implement-plan to execute or resume the approved Happier repository plan I named."
