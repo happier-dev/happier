@@ -400,7 +400,11 @@ export function normalizeVoiceSettingsLocalDelta<T extends object>(
     const diagnosticsNormalized = normalizeVoiceDiagnosticsLocalDelta(delta, current);
     const deltaRecord = diagnosticsNormalized as Record<string, unknown>;
     const currentRecord = current as Readonly<Record<string, unknown>> | undefined;
-    const canonical = readCanonicalVoiceForDelta(deltaRecord, currentRecord);
+    const canonical = hasOwn(deltaRecord, VOICE_SETTINGS_ACCOUNT_SETTING_KEY)
+        ? parseVoiceSettingsPersistenceV1(deltaRecord[VOICE_SETTINGS_ACCOUNT_SETTING_KEY])
+        : hasOwn(deltaRecord, 'voice')
+            ? parseVoiceSettingsPersistenceV1(deltaRecord.voice)
+            : readCanonicalVoiceForDelta(deltaRecord, currentRecord);
     if (!canonical || (!hasOwn(deltaRecord, 'voice') && !hasOwn(deltaRecord, VOICE_SETTINGS_ACCOUNT_SETTING_KEY))) {
         return diagnosticsNormalized;
     }

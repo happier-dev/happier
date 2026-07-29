@@ -6,9 +6,14 @@ import {
 } from '@/sync/encryption/secretSettings';
 
 import { parsePendingSettings } from '../state/persistence';
+import {
+    readLocalConversationVoiceSettings,
+    writeLocalConversationVoiceSettings,
+} from './voiceSettings';
 import { settingsParse } from './settings';
 import {
     VOICE_SETTINGS_CURRENT_WRITER_MARKER,
+    normalizeVoiceSettingsLocalDelta,
     normalizeVoiceSettingsServerDelta,
 } from './voiceSettingsPersistence';
 
@@ -65,6 +70,60 @@ function predecessorVoiceWrite(
 }
 
 describe('Voice provider selection persistence compatibility', () => {
+    it('makes current UI Dictation and Local Voice STT selections authoritative over the compatibility sidecar', () => {
+        const current = settingsParse({
+            voice: {
+                providerId: 'local_conversation',
+                dictation: {
+                    sttBinding: 'explicit',
+                    stt: { provider: 'local_neural' },
+                },
+                providers: {
+                    local_conversation: {
+                        schemaVersion: 1,
+                        config: {
+                            stt: { provider: 'local_neural' },
+                            tts: { provider: 'device' },
+                        },
+                    },
+                },
+            },
+        });
+        const currentConversation = readLocalConversationVoiceSettings(current.voice);
+        const nextVoice = writeLocalConversationVoiceSettings(
+            {
+                ...current.voice,
+                dictation: {
+                    ...current.voice.dictation,
+                    stt: {
+                        ...current.voice.dictation.stt,
+                        provider: 'device',
+                    },
+                },
+            },
+            {
+                ...currentConversation,
+                stt: {
+                    ...currentConversation.stt,
+                    provider: 'device',
+                },
+            },
+        );
+
+        const normalized = normalizeVoiceSettingsLocalDelta(
+            { voice: nextVoice },
+            current,
+        ) as Readonly<{
+            voice: typeof nextVoice;
+            voiceSettingsV1: typeof nextVoice;
+        }>;
+
+        expect(normalized.voice.dictation.stt.provider).toBe('device');
+        expect(normalized.voiceSettingsV1.dictation.stt.provider).toBe('device');
+        expect(readLocalConversationVoiceSettings(normalized.voice).stt.provider).toBe('device');
+        expect(readLocalConversationVoiceSettings(normalized.voiceSettingsV1).stt.provider).toBe('device');
+    });
+
     it('survives a predecessor whole-object write with the exact external config', () => {
         // Provenance-pinned vector from remote-dev at REMOTE_DEV_PREDECESSOR_HEAD:
         // accountSettingsParse preserves unknown account-root fields, while
